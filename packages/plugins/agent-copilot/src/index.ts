@@ -283,6 +283,11 @@ function createCopilotAgent(): Agent {
     name: "copilot",
     processName: "copilot",
 
+    // Deliver prompts via runtime.sendMessage() post-launch, matching
+    // Claude Code's pattern.  This avoids -i flag issues where Copilot's
+    // Ink TUI can drop subsequent Enter keys for follow-up messages.
+    promptDelivery: "post-launch" as const,
+
     getLaunchCommand(config: AgentLaunchConfig): string {
       const binary = resolvedBinary ?? "copilot";
       const parts: string[] = [shellEscape(binary)];
@@ -295,11 +300,8 @@ function createCopilotAgent(): Agent {
       // the system prompt content through AGENTS.md (written separately
       // by setupWorkspaceHooks) rather than as a CLI argument.
 
-      if (config.prompt) {
-        // -i starts interactive mode and immediately executes the prompt,
-        // keeping the session alive for AO to inject follow-up messages.
-        parts.push("-i", shellEscape(config.prompt));
-      }
+      // No prompt flag here — prompt is delivered post-launch via
+      // runtime.sendMessage() to keep Copilot in interactive mode.
       return parts.join(" ");
     },
 

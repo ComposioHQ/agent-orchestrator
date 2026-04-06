@@ -2088,17 +2088,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
       }
 
-      // Confirmation failed — the text may have been pasted but Enter was
-      // dropped (a known issue with some Ink-based TUIs where the Enter key
-      // arrives before the TUI has fully processed the pasted text). Retry
-      // the full message once more as a safety net before giving up.
-      try {
-        await runtimePlugin.sendMessage(handle, message);
-        // Give the retry a moment to take effect before returning.
-        await sleep(SEND_CONFIRMATION_POLL_MS);
-      } catch {
-        // Retry is best-effort — don't throw if it fails.
-      }
+      // Message was already sent via runtimePlugin.sendMessage above — if we
+      // cannot *confirm* delivery (e.g. agent is slow to show output), treat it
+      // as a soft success rather than throwing.  Throwing here caused the caller
+      // to report failure, which prevented the dispatch-hash from updating and
+      // led to duplicate messages on the next poll cycle.
       return;
     };
 

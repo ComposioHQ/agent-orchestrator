@@ -1,4 +1,4 @@
-# @composio/ao-plugin-agent-codex
+# @composio/ao-plugin-agent-copilot
 
 ## 0.2.0
 
