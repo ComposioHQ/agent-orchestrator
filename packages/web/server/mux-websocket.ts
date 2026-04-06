@@ -48,7 +48,7 @@ interface SessionPatch {
  * Broadcasts session patches to all subscribed callbacks.
  * Lazily connects on first subscriber, disconnects when the last one leaves.
  */
-class SessionBroadcaster {
+export class SessionBroadcaster {
   private subscribers = new Set<(sessions: SessionPatch[]) => void>();
   private abortController: AbortController | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
