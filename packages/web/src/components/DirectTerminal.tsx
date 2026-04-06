@@ -341,7 +341,7 @@ export function DirectTerminal({
         }
 
         // Fit terminal to container
-        fit.fit();
+        try { fit.fit(); } catch { /* dimensions not ready yet */ }
 
         // Deferred fit to handle cases where container wasn't sized yet
         const deferredFitTimeout = setTimeout(() => {
@@ -516,7 +516,7 @@ export function DirectTerminal({
         // Handle window resize
         const handleResize = () => {
           if (fit) {
-            fit.fit();
+            try { fit.fit(); } catch { /* dimensions not ready yet */ }
             resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
           }
         };
@@ -648,7 +648,7 @@ export function DirectTerminal({
 
       // Container is at target size, now resize terminal
       terminal.refresh(0, terminal.rows - 1);
-      fit.fit();
+      try { fit.fit(); } catch { /* dimensions not ready yet */ }
       terminal.refresh(0, terminal.rows - 1);
 
       // Send new size to server via mux
