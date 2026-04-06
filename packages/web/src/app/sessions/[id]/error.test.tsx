@@ -7,6 +7,15 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh }),
 }));
 
+vi.mock("next/link", () => ({
+  default: ({
+    children,
+    ...props
+  }: React.PropsWithChildren<React.AnchorHTMLAttributes<HTMLAnchorElement>>) => (
+    <a {...props}>{children}</a>
+  ),
+}));
+
 import SessionError from "./error";
 
 describe("Session error boundary", () => {

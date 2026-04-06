@@ -120,7 +120,9 @@ export default function SessionPage() {
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
       if (res.status === 404) {
-        setSessionMissing(true);
+        if (!hasLoadedSessionRef.current) {
+          setSessionMissing(true);
+        }
         setLoading(false);
         return;
       }
