@@ -237,7 +237,7 @@ describe("destroy()", () => {
     // We need to emit exit when the process receives the signal.
     const destroyPromise = runtime.destroy(handle);
 
-    // Give the event loop a tick for destroy to register its "exit" listener
+    // Small delay before emitting exit to simulate real async process teardown
     await new Promise((r) => setTimeout(r, 10));
     child.exitCode = 0;
     child.emit("exit", 0, null);

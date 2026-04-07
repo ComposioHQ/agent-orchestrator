@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { getProjectBaseDir, type OrchestratorConfig } from "@composio/ao-core";
+import { getProjectBaseDir, killProcessTree, type OrchestratorConfig } from "@composio/ao-core";
 
 const LIFECYCLE_PID_FILE = "lifecycle-worker.pid";
 const LIFECYCLE_LOG_FILE = "lifecycle-worker.log";
@@ -227,12 +227,7 @@ export async function stopLifecycleWorker(
     return false;
   }
 
-  try {
-    process.kill(status.pid, "SIGTERM");
-  } catch {
-    clearLifecycleWorkerPid(config, projectId, status.pid);
-    return false;
-  }
+  await killProcessTree(status.pid, "SIGTERM");
 
   const deadline = Date.now() + STOP_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -243,11 +238,7 @@ export async function stopLifecycleWorker(
     await sleep(100);
   }
 
-  try {
-    process.kill(status.pid, "SIGKILL");
-  } catch {
-    // Best effort hard stop
-  }
+  await killProcessTree(status.pid, "SIGKILL");
 
   clearLifecycleWorkerPid(config, projectId, status.pid);
   return true;

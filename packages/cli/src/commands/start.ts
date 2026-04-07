@@ -1329,10 +1329,10 @@ export function registerStart(program: Command): void {
                 project = config.projects[newId];
                 // Continue to startup below
               } else if (choice === "restart") {
-                try { process.kill(running.pid, "SIGTERM"); } catch { /* already dead */ }
+                await killProcessTree(running.pid, "SIGTERM");
                 if (!(await waitForExit(running.pid, 5000))) {
                   console.log(chalk.yellow("  Process didn't exit cleanly, sending SIGKILL..."));
-                  try { process.kill(running.pid, "SIGKILL"); } catch { /* already dead */ }
+                  await killProcessTree(running.pid, "SIGKILL");
                 }
                 await unregister();
                 console.log(chalk.yellow("\n  Stopped existing instance. Restarting...\n"));
@@ -1416,11 +1416,7 @@ export function registerStop(program: Command): void {
           if (opts.all) {
             // --all: kill via running.json if available, then fallback to config
             if (running) {
-              try {
-                process.kill(running.pid, "SIGTERM");
-              } catch {
-                // Already dead
-              }
+              await killProcessTree(running.pid, "SIGTERM");
               await unregister();
               console.log(
                 chalk.green(`\n✓ Stopped AO on port ${running.port}`),
@@ -1462,11 +1458,7 @@ export function registerStop(program: Command): void {
           // Stop dashboard — kill parent PID from running.json, then also stop
           // any dashboard child process via lsof (parent SIGTERM may not propagate)
           if (running) {
-            try {
-              process.kill(running.pid, "SIGTERM");
-            } catch {
-              // Already dead
-            }
+            await killProcessTree(running.pid, "SIGTERM");
             await unregister();
           }
           await stopDashboard(running?.port ?? port);
