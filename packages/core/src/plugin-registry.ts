@@ -411,13 +411,10 @@ export function createPluginRegistry(): PluginRegistry {
       }
     },
 
-    async loadFromConfig(
+    async loadExternals(
       config: OrchestratorConfig,
       importFn?: (pkg: string) => Promise<unknown>,
     ): Promise<void> {
-      // Load built-ins with orchestrator config so plugins receive their settings
-      await this.loadBuiltins(config, importFn);
-
       const doImport = importFn ?? ((pkg: string) => import(pkg));
       // Build index once for O(1) lookups when matching plugins to external entries
       const externalIndex = buildExternalPluginIndex(config._externalPluginEntries);
@@ -465,6 +462,15 @@ export function createPluginRegistry(): PluginRegistry {
           process.stderr.write(`[plugin-registry] Failed to load plugin "${specifier}": ${error}\n`);
         }
       }
+    },
+
+    async loadFromConfig(
+      config: OrchestratorConfig,
+      importFn?: (pkg: string) => Promise<unknown>,
+    ): Promise<void> {
+      // Load built-ins with orchestrator config so plugins receive their settings
+      await this.loadBuiltins(config, importFn);
+      await this.loadExternals(config, importFn);
     },
   };
 }
