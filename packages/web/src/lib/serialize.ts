@@ -16,8 +16,9 @@ import {
   type ProjectConfig,
   type OrchestratorConfig,
   type PluginRegistry,
+  isOrchestratorSession,
+  isTerminalSession,
 } from "@composio/ao-core";
-import { isOrchestratorSession, isTerminalSession } from "@composio/ao-core/types";
 import type {
   DashboardSession,
   DashboardPR,

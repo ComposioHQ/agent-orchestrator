@@ -553,7 +553,7 @@ function DashboardInner({
                     PRs
                   </a>
                 ) : null}
-                {!allProjectsView && !isMobile ? (
+                {!allProjectsView && !isMobile && projectId ? (
                   <OrchestratorControl orchestrators={activeOrchestrators} projectId={projectId} />
                 ) : null}
                 <ThemeToggle />
@@ -767,12 +767,10 @@ function OrchestratorControl({
   projectId,
 }: {
   orchestrators: DashboardOrchestratorLink[];
-  projectId?: string;
+  projectId: string;
 }) {
   // Build the orchestrators picker URL
-  const orchestratorsHref = projectId
-    ? `/orchestrators?project=${encodeURIComponent(projectId)}`
-    : "/orchestrators";
+  const orchestratorsHref = `/orchestrators?project=${encodeURIComponent(projectId)}`;
 
   if (orchestrators.length === 0) {
     // Show "Orchestrators" button that links to picker even when no orchestrators running
