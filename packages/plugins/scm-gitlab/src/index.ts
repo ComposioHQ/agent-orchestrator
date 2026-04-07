@@ -24,13 +24,13 @@ import {
   type ReviewComment,
   type AutomatedComment,
   type MergeReadiness,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import {
   getWebhookHeader,
   parseWebhookBranchRef,
   parseWebhookJsonObject,
   parseWebhookTimestamp,
-} from "@composio/ao-core/scm-webhook-utils";
+} from "@aoagents/ao-core/scm-webhook-utils";
 
 import { glab, parseJSON, stripHost } from "./glab-utils.js";
 

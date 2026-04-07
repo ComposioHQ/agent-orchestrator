@@ -14,7 +14,7 @@ import { join } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { parse as yamlParse, parseDocument } from "yaml";
-import { findConfigFile } from "@composio/ao-core";
+import { findConfigFile } from "@aoagents/ao-core";
 import {
   probeGateway,
   validateToken,

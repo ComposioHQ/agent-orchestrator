@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Postinstall script for @composio/ao (npm/yarn global installs).
+ * Postinstall script for @aoagents/ao (npm/yarn global installs).
  *
  * Fixes node-pty's spawn-helper binary missing the execute bit.
  * node-pty@1.1.0 ships spawn-helper without +x; the monorepo works around

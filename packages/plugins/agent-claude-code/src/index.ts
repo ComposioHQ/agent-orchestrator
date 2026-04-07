@@ -15,7 +15,7 @@ import {
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -270,7 +270,7 @@ interface JsonlLine {
  * Read only the last chunk of a JSONL file to extract the last entry's type
  * and the file's modification time. This is optimized for polling — it avoids
  * reading the entire file (which `getSessionInfo()` does for full cost/summary).
- * Now uses the shared readLastJsonlEntry utility from @composio/ao-core.
+ * Now uses the shared readLastJsonlEntry utility from @aoagents/ao-core.
  */
 
 /**
@@ -720,7 +720,17 @@ function createClaudeCodeAgent(): Agent {
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return { state: "exited", timestamp: exitedAt };
+      if (!running) {
+        // Grace period: don't report "exited" for freshly created sessions
+        // where the agent process may not have launched yet (race between
+        // tmux session creation and the agent binary starting).
+        const STARTUP_GRACE_MS = 60_000;
+        const ageMs = Date.now() - session.createdAt.getTime();
+        if (ageMs < STARTUP_GRACE_MS) {
+          return { state: "idle", timestamp: session.createdAt };
+        }
+        return { state: "exited", timestamp: exitedAt };
+      }
 
       // Process is running - check JSONL session file for activity
       if (!session.workspacePath) {

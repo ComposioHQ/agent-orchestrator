@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
-import type { Session } from "@composio/ao-core";
+import type { Session } from "@aoagents/ao-core";
 
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),

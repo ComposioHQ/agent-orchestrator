@@ -11,7 +11,7 @@ import {
   type OrchestratorConfig,
   type PluginRegistry,
   type PluginSlot,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { runRepoScript } from "../lib/script-runner.js";
 import { detectOpenClawInstallation, validateToken } from "../lib/openclaw-probe.js";
 import { importPluginModuleFromSource } from "../lib/plugin-store.js";

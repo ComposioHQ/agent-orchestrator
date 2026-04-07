@@ -5,7 +5,7 @@ import {
   getAgentByNameFromRegistry,
   getSCMFromRegistry,
 } from "../../src/lib/plugins.js";
-import type { Agent, OrchestratorConfig, PluginRegistry, SCM } from "@composio/ao-core";
+import type { Agent, OrchestratorConfig, PluginRegistry, SCM } from "@aoagents/ao-core";
 
 function makeConfig(
   defaultAgent: string,

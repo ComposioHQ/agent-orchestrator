@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { OrchestratorSelector, type Orchestrator } from "@/components/OrchestratorSelector";
 import { getServices } from "@/lib/services";
 import { getAllProjects } from "@/lib/project-name";
-import { generateSessionPrefix } from "@composio/ao-core";
+import { generateSessionPrefix } from "@aoagents/ao-core";
 import { mapSessionsToOrchestrators } from "@/lib/orchestrator-utils";
 
 export const dynamic = "force-dynamic";

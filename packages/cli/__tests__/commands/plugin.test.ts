@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
 import { parse as parseYaml } from "yaml";
-import type { PluginManifest, PluginModule } from "@composio/ao-core";
+import type { PluginManifest, PluginModule } from "@aoagents/ao-core";
 
 const {
   mockFindConfigFile,
@@ -24,7 +24,7 @@ const {
   mockUninstallPackageFromStore: vi.fn(),
 }));
 
-vi.mock("@composio/ao-core", async (importOriginal) => {
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
@@ -48,7 +48,7 @@ vi.mock("../../src/commands/setup.js", () => ({
 
 import { registerPlugin } from "../../src/commands/plugin.js";
 
-const OPENCLAW_PACKAGE = "@composio/ao-plugin-notifier-openclaw";
+const OPENCLAW_PACKAGE = "@aoagents/ao-plugin-notifier-openclaw";
 const GOOSE_PACKAGE = "@example/ao-plugin-agent-goose";
 
 function makePlugin(slot: PluginManifest["slot"], name: string): PluginModule {
@@ -221,7 +221,7 @@ describe("plugin command", () => {
     };
     expect(packageJson.name).toBe("@alice/ao-plugin-notifier-acme-alerts");
     expect(packageJson.author).toBe("Alice");
-    expect(packageJson.dependencies?.["@composio/ao-core"]).toBe("^0.2.0");
+    expect(packageJson.dependencies?.["@aoagents/ao-core"]).toBe("^0.2.0");
 
     const entrypoint = readFileSync(join(targetDir, "src", "index.ts"), "utf-8");
     expect(entrypoint).toContain('slot: "notifier" as const');
