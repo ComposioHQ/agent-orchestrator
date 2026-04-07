@@ -1,0 +1,82 @@
+packages/web/src/components/ProjectSidebar.tsx
+  463c6ca133718c76 7,22,25,29,59,99,101-104,106,109-133,138-144,148-149,151,160-174,176-178,180-188,191-193,195-198,201-208,215-229,231-233,235,237-241,244-248,257-258,260-265,267,269,271-272,274,276-279,283-284,286,288-290,292-296
+  1a554ec8b735447e 23,37-55,189,209-210,212-214,234,236,242-243,249-256,266,268,270,280-281,285,287
+packages/web/src/app/globals.css
+  1c70601610fd2184 498-513
+  463c6ca133718c76 829,1617,1619-1622,1625,1627,1629-1630,1632,1635-1636,1639-1640,1642-1646,1649,1653,1655-1657,1659-1663,1666-1668,1671,1675-1685,1694-1699,1702-1704,1707,1709-1717,1720-1722,1733,1735,1737,1745-1747,1749-1750,1754-1755,1769,1771-1773,1776,1778-1787,1795-1799,1801
+  1a554ec8b735447e 841-842,847-848,1609-1610,1626,1688-1691,1708,1725-1726,1729,1734,1740-1742,1752-1753,1756,1759-1766,1777
+  0d3b44e93554642f 239,249,252-253,279,1896
+packages/web/server/direct-terminal-ws.ts
+  1c70601610fd2184 168
+packages/web/src/components/DirectTerminal.tsx
+  1c70601610fd2184 261,263,537-545
+packages/web/server/__tests__/direct-terminal-ws.integration.test.ts
+  1c70601610fd2184 345,354,573
+DESIGN.md
+  463c6ca133718c76 79-88,248-254
+packages/web/src/app/api/events/route.ts
+  1c70601610fd2184 29,97-99,113-119,125-129,140-144,173,211
+packages/web/src/components/SessionDetail.tsx
+  1c70601610fd2184 400-415
+packages/web/src/components/Dashboard.tsx
+  463c6ca133718c76 98,109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "625afa3fd841acf9706ee64a83449f0d1637d6a6",
+  "prompts": {
+    "0d3b44e93554642f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8caff92b-7966-4838-a913-19502d99da66",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 6,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    },
+    "1a554ec8b735447e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d6745-e08a-7071-b26a-edd19d631d6d",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 88,
+      "total_deletions": 23,
+      "accepted_lines": 88,
+      "overriden_lines": 0
+    },
+    "1c70601610fd2184": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44fdbbc2-107f-4408-843e-0be64720d760",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 70,
+      "total_deletions": 21,
+      "accepted_lines": 70,
+      "overriden_lines": 0
+    },
+    "463c6ca133718c76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ededdf0a-e9d0-43a0-840f-cbe91170a967",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 390,
+      "total_deletions": 622,
+      "accepted_lines": 281,
+      "overriden_lines": 0
+    }
+  }
+}
