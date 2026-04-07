@@ -34,6 +34,7 @@ import {
   type EventPriority,
   type ProjectConfig as _ProjectConfig,
   type PREnrichmentData,
+  type CICheck,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
@@ -196,10 +197,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
-  /** Tracks when a session's runtime was first observed dead (for grace period). */
-  const runtimeDeadSince = new Map<SessionId, number>();
-  /** Grace period (ms) before transitioning to "killed" on runtime death. */
-  const RUNTIME_DEAD_GRACE_MS = 30_000;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -210,6 +207,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
    * Key format: "${owner}/${repo}#${number}"
    */
   const prEnrichmentCache = new Map<string, PREnrichmentData>();
+
+  /**
+   * Per-session timestamp of last review backlog API check.
+   * Used to throttle getPendingComments/getAutomatedComments to at most once per 2 minutes.
+   * In-memory only — resets on restart (acceptable since it's a rate-limit hint, not state).
+   */
+  const lastReviewBacklogCheckAt = new Map<SessionId, number>();
+
+  /** Throttle interval for review backlog API calls (2 minutes). */
+  const REVIEW_BACKLOG_THROTTLE_MS = 2 * 60 * 1000;
 
   /**
    * Populate the PR enrichment cache using batch GraphQL queries.
@@ -239,7 +246,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const [owner, repo] = p.repo.split("/");
         return owner === pr.owner && repo === pr.repo;
       });
-      if (!project?.scm) continue;
+      if (!project?.scm?.plugin) continue;
 
       const pluginKey = project.scm.plugin;
       if (!prsByPlugin.has(pluginKey)) {
@@ -348,39 +355,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (!project) return session.status;
 
     const agentName = resolveAgentSelection({
-      role: resolveSessionRole(session.id, session.metadata),
+      role: resolveSessionRole(
+        session.id,
+        session.metadata,
+        project.sessionPrefix,
+        Object.values(config.projects).map((p) => p.sessionPrefix),
+      ),
       project,
       defaults: config.defaults,
       persistedAgent: session.metadata["agent"],
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
 
-    // 1. Check if runtime is alive (with grace period to handle transient failures)
+    // 1. Check if runtime is alive
     if (session.runtimeHandle) {
       const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
       if (runtime) {
         const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
-        if (!alive) {
-          const now = Date.now();
-          const firstDead = runtimeDeadSince.get(session.id);
-          if (firstDead === undefined) {
-            // First time seeing dead runtime — start grace period
-            runtimeDeadSince.set(session.id, now);
-            return session.status;
-          }
-          if (now - firstDead < RUNTIME_DEAD_GRACE_MS) {
-            // Still within grace period — keep current status
-            return session.status;
-          }
-          // Grace period expired — runtime is confirmed dead
-          return "killed";
-        }
-        // Runtime is alive — clear any pending grace period
-        runtimeDeadSince.delete(session.id);
+        if (!alive) return "killed";
       }
     }
 
@@ -713,7 +709,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return reactionConfig ? (reactionConfig as ReactionConfig) : null;
   }
 
-  function updateSessionMetadata(session: Session, updates: Partial<Record<string, string>>): void {
+  function updateSessionMetadata(
+    session: Session,
+    updates: Partial<Record<string, string>>,
+  ): void {
     const project = config.projects[session.projectId];
     if (!project) return;
 
@@ -746,7 +745,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
 
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
     const humanReactionKey = "changes-requested";
@@ -755,6 +754,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (TERMINAL_STATUSES.has(newStatus)) {
       clearReactionTracker(session.id, humanReactionKey);
       clearReactionTracker(session.id, automatedReactionKey);
+      lastReviewBacklogCheckAt.delete(session.id);
       updateSessionMetadata(session, {
         lastPendingReviewFingerprint: "",
         lastPendingReviewDispatchHash: "",
@@ -765,6 +765,27 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
       return;
     }
+
+    // Throttle review backlog API calls to at most once per 2 minutes.
+    // Comments don't change faster than this in practice, and the SCM calls
+    // (getPendingComments + getAutomatedComments) consume API quota on every poll.
+    //
+    // Exception: bypass throttle when a transition reaction just fired for a
+    // review reaction key. The transitionReaction branch records
+    // lastPendingReviewDispatchHash, which requires the current fingerprint from
+    // the API. If we throttle here, that metadata never gets written and the
+    // next unthrottled poll sees a "new" fingerprint, clears the reaction tracker,
+    // and fires a duplicate dispatch.
+    const hasRelevantTransition =
+      transitionReaction?.key === humanReactionKey ||
+      transitionReaction?.key === automatedReactionKey;
+    if (!hasRelevantTransition) {
+      const lastCheckAt = lastReviewBacklogCheckAt.get(session.id) ?? 0;
+      if (Date.now() - lastCheckAt < REVIEW_BACKLOG_THROTTLE_MS) {
+        return;
+      }
+    }
+    lastReviewBacklogCheckAt.set(session.id, Date.now());
 
     const [pendingResult, automatedResult] = await Promise.allSettled([
       scm.getPendingComments(session.pr),
@@ -846,9 +867,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // --- Automated (bot) review comments ---
     if (automatedComments !== null) {
-      const automatedFingerprint = makeFingerprint(automatedComments.map((comment) => comment.id));
+      const automatedFingerprint = makeFingerprint(
+        automatedComments.map((comment) => comment.id),
+      );
       const lastAutomatedFingerprint = session.metadata["lastAutomatedReviewFingerprint"] ?? "";
-      const lastAutomatedDispatchHash = session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
+      const lastAutomatedDispatchHash =
+        session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
 
       if (automatedFingerprint !== lastAutomatedFingerprint) {
         clearReactionTracker(session.id, automatedReactionKey);
@@ -888,6 +912,262 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /**
+   * Format CI check failures into a human-readable message for the agent.
+   * Includes check names, statuses, and links for debugging.
+   */
+  function formatCIFailureMessage(failedChecks: CICheck[]): string {
+    const lines = [
+      "CI checks are failing on your PR. Here are the failed checks:",
+      "",
+    ];
+    for (const check of failedChecks) {
+      const status = check.conclusion ?? check.status;
+      const link = check.url ? ` — ${check.url}` : "";
+      lines.push(`- **${check.name}**: ${status}${link}`);
+    }
+    lines.push(
+      "",
+      "Investigate the failures, fix the issues, and push again.",
+    );
+    return lines.join("\n");
+  }
+
+  /**
+   * Dispatch CI failure details to the agent session when new or changed
+   * failures are detected. Follows the same fingerprinting/deduplication
+   * pattern as maybeDispatchReviewBacklog().
+   */
+  async function maybeDispatchCIFailureDetails(
+    session: Session,
+    _oldStatus: SessionStatus,
+    newStatus: SessionStatus,
+    transitionReaction?: { key: string; result: ReactionResult | null },
+  ): Promise<void> {
+    const project = config.projects[session.projectId];
+    if (!project || !session.pr) return;
+
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    if (!scm) return;
+
+    const ciReactionKey = "ci-failed";
+
+    // Clear tracking when PR is closed/merged
+    if (newStatus === "merged" || newStatus === "killed") {
+      clearReactionTracker(session.id, ciReactionKey);
+      updateSessionMetadata(session, {
+        lastCIFailureFingerprint: "",
+        lastCIFailureDispatchHash: "",
+        lastCIFailureDispatchAt: "",
+      });
+      return;
+    }
+
+    // Only dispatch CI details when in ci_failed state
+    if (newStatus !== "ci_failed") {
+      // CI is no longer failing — clear tracking so next failure is dispatched fresh
+      const lastFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
+      if (lastFingerprint) {
+        clearReactionTracker(session.id, ciReactionKey);
+        updateSessionMetadata(session, {
+          lastCIFailureFingerprint: "",
+          lastCIFailureDispatchHash: "",
+          lastCIFailureDispatchAt: "",
+        });
+      }
+      return;
+    }
+
+    // Fetch individual CI checks for failure details.
+    // Use batch enrichment data when available to avoid an extra REST call;
+    // fall back to getCIChecks() when the batch didn't run this cycle.
+    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+    const cachedEnrichment = prEnrichmentCache.get(prKey);
+
+    let checks: CICheck[];
+    if (cachedEnrichment?.ciChecks !== undefined) {
+      checks = cachedEnrichment.ciChecks;
+    } else {
+      try {
+        checks = await scm.getCIChecks(session.pr);
+      } catch {
+        // Failed to fetch checks — skip this cycle
+        return;
+      }
+    }
+
+    const failedChecks = checks.filter(
+      (c) => c.status === "failed" || c.conclusion?.toUpperCase() === "FAILURE",
+    );
+    if (failedChecks.length === 0) return;
+
+    const ciFingerprint = makeFingerprint(
+      failedChecks.map((c) => `${c.name}:${c.status}:${c.conclusion ?? ""}`),
+    );
+    const lastCIFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
+    const lastCIDispatchHash = session.metadata["lastCIFailureDispatchHash"] ?? "";
+
+    // Reset reaction tracker when failure set changes
+    if (ciFingerprint !== lastCIFingerprint && transitionReaction?.key !== ciReactionKey) {
+      clearReactionTracker(session.id, ciReactionKey);
+    }
+    if (ciFingerprint !== lastCIFingerprint) {
+      updateSessionMetadata(session, {
+        lastCIFailureFingerprint: ciFingerprint,
+      });
+    }
+
+    // If transition already sent a ci-failed reaction with the static message,
+    // skip this cycle but do NOT record dispatch hash — the next poll will send
+    // the detailed CI failure info with check names and URLs.
+    if (
+      transitionReaction?.key === ciReactionKey &&
+      transitionReaction.result?.success
+    ) {
+      return;
+    }
+
+    // Skip if we already dispatched this exact failure set
+    if (ciFingerprint === lastCIDispatchHash) return;
+
+    // Dispatch CI failure details directly via sessionManager.send() rather than
+    // executeReaction() to avoid consuming the ci-failed reaction's retry budget.
+    // The transition reaction owns escalation; this is a follow-up info delivery.
+    const reactionConfig = getReactionConfigForSession(session, ciReactionKey);
+    if (
+      reactionConfig &&
+      reactionConfig.action &&
+      (reactionConfig.auto !== false || reactionConfig.action === "notify")
+    ) {
+      const detailedMessage = formatCIFailureMessage(failedChecks);
+
+      try {
+        if (reactionConfig.action === "send-to-agent") {
+          await sessionManager.send(session.id, detailedMessage);
+        } else {
+          // For "notify" action, send to human notifiers instead
+          const event = createEvent("ci.failing", {
+            sessionId: session.id,
+            projectId: session.projectId,
+            message: detailedMessage,
+            data: { failedChecks: failedChecks.map((c) => c.name) },
+          });
+          await notifyHuman(event, reactionConfig.priority ?? "warning");
+        }
+
+        updateSessionMetadata(session, {
+          lastCIFailureDispatchHash: ciFingerprint,
+          lastCIFailureDispatchAt: new Date().toISOString(),
+        });
+      } catch {
+        // Send failed — will retry on next poll cycle
+      }
+    }
+  }
+
+  /**
+   * Dispatch merge conflict notifications to the agent session.
+   * Conflicts are detected from the PR enrichment cache or getMergeability()
+   * and dispatched independently of the session status (conflicts can coexist
+   * with ci_failed, changes_requested, etc.).
+   */
+  async function maybeDispatchMergeConflicts(
+    session: Session,
+    newStatus: SessionStatus,
+  ): Promise<void> {
+    const project = config.projects[session.projectId];
+    if (!project || !session.pr) return;
+
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    if (!scm) return;
+
+    const conflictReactionKey = "merge-conflicts";
+
+    // Clear tracking when PR is closed/merged
+    if (newStatus === "merged" || newStatus === "killed") {
+      clearReactionTracker(session.id, conflictReactionKey);
+      updateSessionMetadata(session, {
+        lastMergeConflictDispatched: "",
+      });
+      return;
+    }
+
+    // Only check for conflicts on open PRs
+    if (
+      newStatus !== "pr_open" &&
+      newStatus !== "ci_failed" &&
+      newStatus !== "review_pending" &&
+      newStatus !== "changes_requested" &&
+      newStatus !== "approved" &&
+      newStatus !== "mergeable"
+    ) {
+      return;
+    }
+
+    // Check for conflicts using cached enrichment data or fallback to individual call.
+    // When batch enrichment ran (cachedData is present), use its hasConflicts value
+    // to avoid 3 redundant REST calls from getMergeability() — the batch already
+    // fetched the mergeable/mergeStateStatus fields via GraphQL.
+    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+    const cachedData = prEnrichmentCache.get(prKey);
+
+    let hasConflicts: boolean;
+    if (cachedData) {
+      // Batch ran — trust its data (undefined means CONFLICTING wasn't set → no conflicts)
+      hasConflicts = cachedData.hasConflicts ?? false;
+    } else {
+      // Batch didn't run this cycle — fall back to individual API call
+      try {
+        const mergeReadiness = await scm.getMergeability(session.pr);
+        hasConflicts = !mergeReadiness.noConflicts;
+      } catch {
+        return;
+      }
+    }
+
+    const lastDispatched = session.metadata["lastMergeConflictDispatched"] ?? "";
+
+    if (hasConflicts) {
+      // Already dispatched for current conflict state — skip
+      if (lastDispatched === "true") return;
+
+      const reactionConfig = getReactionConfigForSession(session, conflictReactionKey);
+      if (
+        reactionConfig &&
+        reactionConfig.action &&
+        (reactionConfig.auto !== false || reactionConfig.action === "notify")
+      ) {
+        try {
+          if (reactionConfig.action === "send-to-agent") {
+            const message =
+              reactionConfig.message ??
+              "Your branch has merge conflicts. Rebase on the default branch and resolve them.";
+            await sessionManager.send(session.id, message);
+          } else {
+            const event = createEvent("merge.conflicts", {
+              sessionId: session.id,
+              projectId: session.projectId,
+              message: `${session.id}: PR has merge conflicts`,
+            });
+            await notifyHuman(event, reactionConfig.priority ?? "warning");
+          }
+
+          updateSessionMetadata(session, {
+            lastMergeConflictDispatched: "true",
+          });
+        } catch {
+          // Send failed — will retry on next poll cycle
+        }
+      }
+    } else if (lastDispatched === "true") {
+      // Conflicts resolved — clear so we can re-dispatch if they recur
+      clearReactionTracker(session.id, conflictReactionKey);
+      updateSessionMetadata(session, {
+        lastMergeConflictDispatched: "",
+      });
+    }
+  }
+
   /** Send a notification to all configured notifiers. */
   async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<void> {
     const eventWithPriority = { ...event, priority };
@@ -905,11 +1185,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
-  /** Maximum auto-restore attempts before giving up and letting "killed" persist. */
-  const MAX_AUTO_RESTORE_ATTEMPTS = 3;
-  /** Track auto-restore attempts per session (in-memory, resets on restart). */
-  const autoRestoreAttempts = new Map<SessionId, number>();
-
   /** Poll a single session and handle state transitions. */
   async function checkSession(session: Session): Promise<void> {
     // Use tracked state if available; otherwise use the persisted metadata status
@@ -918,68 +1193,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const tracked = states.get(session.id);
     const oldStatus =
       tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
-    let newStatus = await determineStatus(session);
+    const newStatus = await determineStatus(session);
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
-
-    // Auto-restore: when a non-terminal session transitions to "killed",
-    // attempt to restore it automatically before persisting the transition.
-    const determinedKilled = newStatus === "killed";
-    if (
-      determinedKilled &&
-      oldStatus !== "killed" &&
-      oldStatus !== "merged" &&
-      oldStatus !== "terminated" &&
-      oldStatus !== "done"
-    ) {
-      const attempts = autoRestoreAttempts.get(session.id) ?? 0;
-      if (attempts < MAX_AUTO_RESTORE_ATTEMPTS) {
-        autoRestoreAttempts.set(session.id, attempts + 1);
-        const correlationId = createCorrelationId("auto-restore");
-        try {
-          await sessionManager.restore(session.id);
-          observer.recordOperation({
-            metric: "lifecycle_poll",
-            operation: "auto-restore",
-            outcome: "success",
-            correlationId,
-            projectId: session.projectId,
-            sessionId: session.id,
-            data: { attempt: attempts + 1 },
-            level: "info",
-          });
-          // Restore succeeded — keep the old status, skip the killed transition.
-          // The next poll cycle will detect the restored session as alive.
-          runtimeDeadSince.delete(session.id);
-          autoRestoreAttempts.delete(session.id);
-          newStatus = oldStatus;
-        } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          observer.recordOperation({
-            metric: "lifecycle_poll",
-            operation: "auto-restore",
-            outcome: "failure",
-            correlationId,
-            projectId: session.projectId,
-            sessionId: session.id,
-            reason: errorMsg,
-            data: { attempt: attempts + 1, maxAttempts: MAX_AUTO_RESTORE_ATTEMPTS },
-            level: "warn",
-          });
-          // Restore failed — if we haven't exhausted attempts, keep old status
-          // so we retry on the next poll cycle.
-          if (attempts + 1 < MAX_AUTO_RESTORE_ATTEMPTS) {
-            newStatus = oldStatus;
-          }
-          // else: let "killed" persist after max attempts
-        }
-      }
-    }
-
-    // Reset auto-restore counter only when determineStatus() naturally returns
-    // a non-killed status (session genuinely recovered, not just suppressed).
-    if (!determinedKilled && autoRestoreAttempts.has(session.id)) {
-      autoRestoreAttempts.delete(session.id);
-    }
 
     if (newStatus !== oldStatus) {
       const correlationId = createCorrelationId("lifecycle-transition");
@@ -1058,7 +1273,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       states.set(session.id, newStatus);
     }
 
-    await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
+    await Promise.allSettled([
+      maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
+      maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
+      maybeDispatchMergeConflicts(session, newStatus),
+    ]);
   }
 
   /** Run one polling cycle across all sessions. */
@@ -1088,20 +1307,23 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
 
-      // Prune stale entries from states and reactionTrackers for sessions
-      // that no longer appear in the session list (e.g., after kill/cleanup)
+      // Prune stale entries from states, reactionTrackers, and lastReviewBacklogCheckAt
+      // for sessions that no longer appear in the session list (e.g., after kill/cleanup)
       const currentSessionIds = new Set(sessions.map((s) => s.id));
       for (const trackedId of states.keys()) {
         if (!currentSessionIds.has(trackedId)) {
           states.delete(trackedId);
-          runtimeDeadSince.delete(trackedId);
-          autoRestoreAttempts.delete(trackedId);
         }
       }
       for (const trackerKey of reactionTrackers.keys()) {
         const sessionId = trackerKey.split(":")[0];
         if (sessionId && !currentSessionIds.has(sessionId)) {
           reactionTrackers.delete(trackerKey);
+        }
+      }
+      for (const sessionId of lastReviewBacklogCheckAt.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          lastReviewBacklogCheckAt.delete(sessionId);
         }
       }
 
