@@ -173,6 +173,17 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+// Platform adapter — centralized cross-platform branching
+export {
+  isWindows,
+  getDefaultRuntime,
+  getShell,
+  killProcessTree,
+  findPidByPort,
+  getEnvDefaults,
+  _resetShellCache,
+} from "./platform.js";
+
 // Config generator — auto-generate config from repo URL
 export {
   isRepoUrl,
