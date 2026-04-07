@@ -167,15 +167,16 @@ export function create(): Runtime {
 
         // Give it 5 seconds, then force kill
         await new Promise<void>((resolve) => {
-          const timeout = setTimeout(async () => {
-            if (child.exitCode === null && child.signalCode === null) {
-              if (pid) {
-                await killProcessTree(pid, "SIGKILL");
-              } else {
-                child.kill("SIGKILL");
-              }
-            }
-            resolve();
+          const timeout = setTimeout(() => {
+            Promise.resolve(
+              child.exitCode === null && child.signalCode === null
+                ? pid
+                  ? killProcessTree(pid, "SIGKILL")
+                  : void child.kill("SIGKILL")
+                : undefined,
+            )
+              .catch(() => {})
+              .finally(resolve);
           }, 5000);
           child.once("exit", () => {
             clearTimeout(timeout);
