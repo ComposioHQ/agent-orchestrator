@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Session, RuntimeHandle, AgentLaunchConfig, WorkspaceHooksConfig } from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
@@ -14,6 +14,7 @@ const {
   mockMkdir,
   mockChmod,
   mockExistsSync,
+  mockIsWindows,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
   mockReaddir: vi.fn(),
@@ -24,6 +25,7 @@ const {
   mockMkdir: vi.fn().mockResolvedValue(undefined),
   mockChmod: vi.fn().mockResolvedValue(undefined),
   mockExistsSync: vi.fn().mockReturnValue(false),
+  mockIsWindows: vi.fn(() => false),
 }));
 
 vi.mock("node:child_process", () => {
@@ -50,7 +52,15 @@ vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
-import { create, manifest, default as defaultExport, resetPsCache, METADATA_UPDATER_SCRIPT } from "./index.js";
+vi.mock("@composio/ao-core", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    isWindows: mockIsWindows,
+  };
+});
+
+import { create, manifest, default as defaultExport, resetPsCache, METADATA_UPDATER_SCRIPT, METADATA_UPDATER_SCRIPT_NODE } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -130,6 +140,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetPsCache();
   mockHomedir.mockReturnValue("/mock/home");
+  // Default: non-Windows so existing tests are unaffected
+  mockIsWindows.mockReturnValue(false);
 });
 
 describe("plugin manifest & exports", () => {
@@ -865,5 +877,105 @@ describe("hook setup — relative path (symlink-safe)", () => {
   it("skips postLaunchSetup when workspacePath is null", async () => {
     await agent.postLaunchSetup!(makeSession({ workspacePath: null }));
     expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+});
+
+// =========================================================================
+// setupWorkspaceHooks on win32 — Node.js hook script
+// =========================================================================
+describe("setupWorkspaceHooks on win32", () => {
+  const agent = create();
+
+  /** Extract the hook command written to settings.json */
+  function getWrittenHookCommand(): string {
+    const settingsWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    expect(settingsWrite).toBeDefined();
+    const parsed = JSON.parse(settingsWrite![1] as string);
+    return parsed.hooks.PostToolUse[0].hooks[0].command;
+  }
+
+  /** Get the content written to the hook script file */
+  function getWrittenScriptContent(ext: string): string | undefined {
+    const scriptWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith(ext),
+    );
+    return scriptWrite ? (scriptWrite[1] as string) : undefined;
+  }
+
+  beforeEach(() => {
+    mockIsWindows.mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    mockIsWindows.mockReturnValue(false);
+  });
+
+  it("writes a Node.js hook script instead of bash on Windows", async () => {
+    await agent.setupWorkspaceHooks!(
+      "C:\\\\Users\\\\dev\\\\workspace",
+      {} as WorkspaceHooksConfig,
+    );
+
+    // The .js file must have been written
+    const jsContent = getWrittenScriptContent("metadata-updater.js");
+    expect(jsContent).toBeDefined();
+    expect(jsContent).toContain("#!/usr/bin/env node");
+
+    // Must not contain bash-isms
+    expect(jsContent).not.toContain("#!/usr/bin/env bash");
+    expect(jsContent).not.toContain("jq");
+    expect(jsContent).not.toContain("grep");
+    expect(jsContent).not.toContain("sed");
+
+    // The .sh file must NOT have been written
+    const shContent = getWrittenScriptContent("metadata-updater.sh");
+    expect(shContent).toBeUndefined();
+  });
+
+  it("uses node command in settings.json hook command on Windows", async () => {
+    await agent.setupWorkspaceHooks!(
+      "C:\\\\Users\\\\dev\\\\workspace",
+      {} as WorkspaceHooksConfig,
+    );
+
+    const hookCommand = getWrittenHookCommand();
+    expect(hookCommand).toBe("node .claude/metadata-updater.js");
+    expect(hookCommand).not.toContain(".sh");
+  });
+
+  it("skips chmod on win32", async () => {
+    await agent.setupWorkspaceHooks!(
+      "C:\\\\Users\\\\dev\\\\workspace",
+      {} as WorkspaceHooksConfig,
+    );
+
+    expect(mockChmod).not.toHaveBeenCalled();
+  });
+
+  it("exports METADATA_UPDATER_SCRIPT_NODE with Node.js shebang", () => {
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("#!/usr/bin/env node");
+    expect(METADATA_UPDATER_SCRIPT_NODE).not.toContain("jq");
+    expect(METADATA_UPDATER_SCRIPT_NODE).not.toContain("grep");
+    expect(METADATA_UPDATER_SCRIPT_NODE).not.toContain("sed");
+  });
+
+  it("Node.js hook script handles gh pr create detection", () => {
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("gh");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("pr");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("create");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("updateMetadataKey");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("pr_open");
+  });
+
+  it("Node.js hook script handles git checkout -b detection", () => {
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("checkout");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("-b");
+  });
+
+  it("Node.js hook script handles gh pr merge detection", () => {
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("pr\\s+merge");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("merged");
   });
 });

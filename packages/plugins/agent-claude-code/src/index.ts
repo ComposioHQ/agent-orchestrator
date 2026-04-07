@@ -2,6 +2,7 @@ import {
   shellEscape,
   readLastJsonlEntry,
   normalizeAgentPermissionMode,
+  isWindows,
   DEFAULT_READY_THRESHOLD_MS,
   DEFAULT_ACTIVE_WINDOW_MS,
   type Agent,
@@ -182,6 +183,156 @@ fi
 # No matching command, exit silently
 echo '{}'
 exit 0
+`;
+
+// =============================================================================
+// Metadata Updater Hook Script — Node.js (Windows)
+// =============================================================================
+
+/**
+ * Node.js equivalent of METADATA_UPDATER_SCRIPT for Windows.
+ * Reads JSON from stdin, parses it with Node built-ins, and updates the
+ * key=value metadata file.  No bash, jq, grep, sed, or chmod needed.
+ * Exported for testing.
+ */
+export const METADATA_UPDATER_SCRIPT_NODE = `#!/usr/bin/env node
+// Metadata Updater Hook for Agent Orchestrator (Node.js — Windows)
+//
+// This PostToolUse hook automatically updates session metadata when:
+// - gh pr create: extracts PR URL and writes to metadata
+// - git checkout -b / git switch -c: extracts branch name and writes to metadata
+// - gh pr merge: updates status to "merged"
+
+const { readFileSync, writeFileSync, renameSync, existsSync } = require("node:fs");
+const { join } = require("node:path");
+
+const AO_DATA_DIR = process.env.AO_DATA_DIR || join(process.env.HOME || process.env.USERPROFILE || "", ".ao-sessions");
+const AO_SESSION = process.env.AO_SESSION || "";
+
+// Read hook input from stdin (fd 0 is cross-platform, no /dev/stdin needed)
+let inputRaw = "";
+try {
+  inputRaw = readFileSync(0, "utf-8");
+} catch {
+  inputRaw = "";
+}
+
+let input;
+try {
+  input = JSON.parse(inputRaw || "{}");
+} catch {
+  process.stdout.write("{}\\n");
+  process.exit(0);
+}
+
+const toolName = input.tool_name || "";
+const command = (input.tool_input && input.tool_input.command) || "";
+const output = input.tool_response || "";
+const exitCode = typeof input.exit_code === "number" ? input.exit_code : 0;
+
+// Only process successful commands
+if (exitCode !== 0) {
+  process.stdout.write("{}\\n");
+  process.exit(0);
+}
+
+// Only process Bash tool calls
+if (toolName !== "Bash") {
+  process.stdout.write("{}\\n");
+  process.exit(0);
+}
+
+// Validate AO_SESSION is set
+if (!AO_SESSION) {
+  process.stdout.write(JSON.stringify({ systemMessage: "AO_SESSION environment variable not set, skipping metadata update" }) + "\\n");
+  process.exit(0);
+}
+
+const metadataFile = join(AO_DATA_DIR, AO_SESSION);
+
+if (!existsSync(metadataFile)) {
+  process.stdout.write(JSON.stringify({ systemMessage: "Metadata file not found: " + metadataFile }) + "\\n");
+  process.exit(0);
+}
+
+/**
+ * Update or append a key=value line in the metadata file (atomic via temp file).
+ */
+function updateMetadataKey(key, value) {
+  const lines = readFileSync(metadataFile, "utf-8").split("\\n");
+  let found = false;
+  const updated = lines.map((line) => {
+    if (line.startsWith(key + "=")) {
+      found = true;
+      return key + "=" + value;
+    }
+    return line;
+  });
+  if (!found) {
+    // Insert before the trailing empty line (if any) so the file ends cleanly
+    updated.push(key + "=" + value);
+  }
+  const tmpFile = metadataFile + ".tmp." + process.pid;
+  writeFileSync(tmpFile, updated.join("\\n"), "utf-8");
+  renameSync(tmpFile, metadataFile);
+}
+
+// Strip leading cd ... && / cd ... ; prefixes (agents frequently cd into a
+// worktree before running the real command)
+let cleanCommand = command;
+const cdPrefixRe = /^\\s*cd\\s+\\S.*?\\s+(?:&&|;)\\s+(.*)/;
+let m;
+while ((m = cdPrefixRe.exec(cleanCommand)) !== null && /^\\s*cd\\s/.test(cleanCommand)) {
+  cleanCommand = m[1];
+}
+
+// Detect: gh pr create
+if (/^gh\\s+pr\\s+create/.test(cleanCommand)) {
+  const prMatch = output.match(/https:\\/\\/github[.]com\\/[^/]+\\/[^/]+\\/pull\\/\\d+/);
+  if (prMatch) {
+    const prUrl = prMatch[0];
+    updateMetadataKey("pr", prUrl);
+    updateMetadataKey("status", "pr_open");
+    process.stdout.write(JSON.stringify({ systemMessage: "Updated metadata: PR created at " + prUrl }) + "\\n");
+    process.exit(0);
+  }
+}
+
+// Detect: git checkout -b <branch> or git switch -c <branch>
+const checkoutNewBranch = cleanCommand.match(/^git\\s+checkout\\s+-b\\s+(\\S+)/) ||
+  cleanCommand.match(/^git\\s+switch\\s+-c\\s+(\\S+)/);
+if (checkoutNewBranch) {
+  const branch = checkoutNewBranch[1];
+  if (branch) {
+    updateMetadataKey("branch", branch);
+    process.stdout.write(JSON.stringify({ systemMessage: "Updated metadata: branch = " + branch }) + "\\n");
+    process.exit(0);
+  }
+}
+
+// Detect: git checkout <branch> or git switch <branch> (without -b/-c)
+// Only update if branch looks like a feature branch (contains / or -)
+const checkoutBranch = cleanCommand.match(/^git\\s+checkout\\s+([^\\s-]+[/-][^\\s]+)/) ||
+  cleanCommand.match(/^git\\s+switch\\s+([^\\s-]+[/-][^\\s]+)/);
+if (checkoutBranch) {
+  const branch = checkoutBranch[1];
+  if (branch && branch !== "HEAD") {
+    updateMetadataKey("branch", branch);
+    process.stdout.write(JSON.stringify({ systemMessage: "Updated metadata: branch = " + branch }) + "\\n");
+    process.exit(0);
+  }
+}
+
+// Detect: gh pr merge
+if (/^gh\\s+pr\\s+merge/.test(cleanCommand)) {
+  updateMetadataKey("status", "merged");
+  process.stdout.write(JSON.stringify({ systemMessage: "Updated metadata: status = merged" }) + "\\n");
+  process.exit(0);
+}
+
+// No matching command
+process.stdout.write("{}\\n");
+process.exit(0);
 `;
 
 // =============================================================================
@@ -559,10 +710,9 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
  * @param workspacePath - Path to the workspace directory
  * @param hookCommand - Command string for the hook (can use variables like $CLAUDE_PROJECT_DIR)
  */
-async function setupHookInWorkspace(workspacePath: string, hookCommand: string): Promise<void> {
+async function setupHookInWorkspace(workspacePath: string, _hookCommand: string): Promise<void> {
   const claudeDir = join(workspacePath, ".claude");
   const settingsPath = join(claudeDir, "settings.json");
-  const hookScriptPath = join(claudeDir, "metadata-updater.sh");
 
   // Create .claude directory if it doesn't exist
   try {
@@ -571,9 +721,21 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
     // Directory might already exist
   }
 
-  // Write the metadata updater script
-  await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
-  await chmod(hookScriptPath, 0o755); // Make executable
+  // On Windows: write a Node.js hook script, skip chmod (not needed).
+  // On Unix: write the bash hook script and make it executable.
+  let hookCommand: string;
+  if (isWindows()) {
+    const hookScriptPath = join(claudeDir, "metadata-updater.js");
+    await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT_NODE, "utf-8");
+    // No chmod — Windows uses file extension for executability
+    // Use `node` to invoke the script (Windows won't run .js via shebang)
+    hookCommand = "node .claude/metadata-updater.js";
+  } else {
+    const hookScriptPath = join(claudeDir, "metadata-updater.sh");
+    await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
+    await chmod(hookScriptPath, 0o755); // Make executable
+    hookCommand = ".claude/metadata-updater.sh";
+  }
 
   // Read existing settings if present
   let existingSettings: Record<string, unknown> = {};
@@ -603,7 +765,11 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
       const hDef = hooksList[j];
       if (typeof hDef !== "object" || hDef === null || Array.isArray(hDef)) continue;
       const def = hDef as Record<string, unknown>;
-      if (typeof def["command"] === "string" && def["command"].includes("metadata-updater.sh")) {
+      if (
+        typeof def["command"] === "string" &&
+        (def["command"].includes("metadata-updater.sh") ||
+          def["command"].includes("metadata-updater.js"))
+      ) {
         hookIndex = i;
         hookDefIndex = j;
         break;
