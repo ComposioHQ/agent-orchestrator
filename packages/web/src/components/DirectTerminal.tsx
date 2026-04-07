@@ -5,6 +5,10 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
 import { attachTouchScroll } from "@/lib/terminal-touch-scroll";
+import {
+  setTerminalConnection,
+  clearTerminalConnection,
+} from "@/lib/terminal-connection-store";
 import { TerminalSkeleton } from "./Skeleton";
 
 const SCROLLBAR_WIDTH = 5; // matches .xterm-viewport::-webkit-scrollbar { width: 5px }
@@ -224,6 +228,8 @@ export function DirectTerminal({
   const [followOutput, setFollowOutput] = useState(true);
   const followOutputRef = useRef(true);
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const programmaticScrollRef = useRef(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [fontSize, setFontSize] = useState(FONT_SIZE_DEFAULT);
   const [showFontSettings, setShowFontSettings] = useState(false);
   const fontSettingsRef = useRef<HTMLDivElement>(null);
@@ -262,6 +268,14 @@ export function DirectTerminal({
   useEffect(() => {
     followOutputRef.current = followOutput;
   }, [followOutput]);
+
+  // Publish connection status to the shared store so the top bar can show
+  // a global reconnection indicator.
+  useEffect(() => {
+    const key = `${sessionId}:${variant}`;
+    setTerminalConnection(key, { status, attempt: reconnectAttempt, error });
+    return () => clearTerminalConnection(key);
+  }, [sessionId, variant, status, reconnectAttempt, error]);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -493,27 +507,44 @@ export function DirectTerminal({
 
         const handleViewportScroll = () => {
           if (!viewport) return;
+          // Ignore scroll events triggered by our own programmatic scrolls.
+          // Without this, every auto-scroll-to-bottom on incoming data would
+          // re-fire this handler with nearBottom=true, immediately resetting
+          // followOutput=true and racing user scroll-up before the React
+          // state propagates to followOutputRef.
+          if (programmaticScrollRef.current) {
+            programmaticScrollRef.current = false;
+            return;
+          }
           const distFromBottom =
             viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
           if (distFromBottom < 24) {
+            // User scrolled to bottom — resume following immediately
+            followOutputRef.current = true;
             setFollowOutput(true);
             if (scrollIdleTimerRef.current) {
               clearTimeout(scrollIdleTimerRef.current);
               scrollIdleTimerRef.current = null;
             }
           } else {
+            // User scrolled away from bottom — pause follow synchronously so
+            // the next data arrival doesn't snap us back down before the
+            // React state has had a chance to update.
+            followOutputRef.current = false;
             setFollowOutput(false);
-            // Auto-resume after 3s idle if near bottom (~2 screen heights)
             if (scrollIdleTimerRef.current) {
               clearTimeout(scrollIdleTimerRef.current);
             }
+            // Auto-resume after 3s idle when within ~2 screen heights of bottom
             const viewportHeight = viewport.clientHeight || 400;
             if (distFromBottom < viewportHeight * 2) {
               scrollIdleTimerRef.current = setTimeout(() => {
                 scrollIdleTimerRef.current = null;
                 if (viewport) {
+                  programmaticScrollRef.current = true;
                   viewport.scrollTop = viewport.scrollHeight;
                 }
+                followOutputRef.current = true;
                 setFollowOutput(true);
               }, 3000);
             }
@@ -569,6 +600,7 @@ export function DirectTerminal({
           websocket.onopen = () => {
             console.log("[DirectTerminal] WebSocket connected");
             reconnectAttemptRef.current = 0;
+            setReconnectAttempt(0);
             setStatus("connected");
             setError(null);
 
@@ -596,6 +628,7 @@ export function DirectTerminal({
             } else {
               terminal.write(data);
               if (followOutputRef.current && viewport) {
+                programmaticScrollRef.current = true;
                 viewport.scrollTop = viewport.scrollHeight;
               }
             }
@@ -622,6 +655,7 @@ export function DirectTerminal({
             const attempt = reconnectAttemptRef.current;
             const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
             reconnectAttemptRef.current = attempt + 1;
+            setReconnectAttempt(attempt + 1);
 
             console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
             setStatus("connecting");
@@ -941,7 +975,11 @@ export function DirectTerminal({
               const viewport = terminalInstance.current?.element?.querySelector(
                 ".xterm-viewport",
               ) as HTMLElement | null;
-              if (viewport) viewport.scrollTop = viewport.scrollHeight;
+              if (viewport) {
+                programmaticScrollRef.current = true;
+                viewport.scrollTop = viewport.scrollHeight;
+              }
+              followOutputRef.current = true;
               setFollowOutput(true);
             }}
             className="absolute bottom-3 right-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] shadow-md active:scale-95"

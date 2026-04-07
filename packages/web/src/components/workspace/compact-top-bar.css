@@ -237,3 +237,16 @@
     align-items: flex-start;
   }
 }
+
+@keyframes compact-top-bar-reconnect-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.compact-top-bar__reconnect-bar {
+  animation: compact-top-bar-reconnect-slide 1.4s ease-in-out infinite;
+}
