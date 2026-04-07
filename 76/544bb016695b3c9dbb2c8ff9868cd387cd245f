@@ -1,0 +1,23 @@
+packages/web/src/components/SessionDetailSkeleton.tsx
+  1f25d6c95dc376d4 9-10,14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "76544bb016695b3c9dbb2c8ff9868cd387cd245f",
+  "prompts": {
+    "1f25d6c95dc376d4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "429b44ba-451b-48df-b72b-f9ae2e085bee",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 1,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
