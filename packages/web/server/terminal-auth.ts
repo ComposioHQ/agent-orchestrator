@@ -226,23 +226,28 @@ function shouldTrustProxyHeaders(): boolean {
   return process.env["AO_TRUST_PROXY_HEADERS"]?.trim().toLowerCase() === "true";
 }
 
+function getTrustedProxyIdentity(
+  headers: HeaderSource,
+): { actorId: string; actorSource: string } | undefined {
+  const proxyIdentityHeaders = [
+    ["x-forwarded-user", "header:x-forwarded-user"],
+    ["x-auth-request-user", "header:x-auth-request-user"],
+    ["x-remote-user", "header:x-remote-user"],
+  ] as const;
+
+  for (const [headerName, source] of proxyIdentityHeaders) {
+    const value = getHeaderValue(headers, headerName)?.trim();
+    if (value) {
+      return { actorId: value, actorSource: source };
+    }
+  }
+
+  return undefined;
+}
+
 function resolveActor(headers: HeaderSource, remoteAddress?: string): TerminalActor {
   const trustProxyHeaders = shouldTrustProxyHeaders();
-  const explicitActor = trustProxyHeaders
-    ? getHeaderValue(headers, "x-forwarded-user")?.trim() ||
-      getHeaderValue(headers, "x-auth-request-user")?.trim() ||
-      getHeaderValue(headers, "x-remote-user")?.trim()
-    : undefined;
-
-  const explicitSource = trustProxyHeaders
-    ? getHeaderValue(headers, "x-forwarded-user")?.trim()
-      ? "header:x-forwarded-user"
-      : getHeaderValue(headers, "x-auth-request-user")?.trim()
-        ? "header:x-auth-request-user"
-        : getHeaderValue(headers, "x-remote-user")?.trim()
-          ? "header:x-remote-user"
-          : undefined
-    : undefined;
+  const proxyIdentity = trustProxyHeaders ? getTrustedProxyIdentity(headers) : undefined;
 
   const forwardedFor = trustProxyHeaders
     ? getHeaderValue(headers, "x-forwarded-for")
@@ -255,10 +260,10 @@ function resolveActor(headers: HeaderSource, remoteAddress?: string): TerminalAc
     remoteAddress ||
     "unknown";
 
-  if (explicitActor) {
+  if (proxyIdentity) {
     return {
-      actorId: explicitActor,
-      actorSource: explicitSource ?? "header",
+      actorId: proxyIdentity.actorId,
+      actorSource: proxyIdentity.actorSource,
       clientIp,
     };
   }
@@ -557,72 +562,7 @@ export function verifyTerminalAccess(input: {
   headers: HeaderSource;
   remoteAddress?: string;
 }): TerminalSessionRecord & { actorId: string; actorSource: string } {
-  if (!validateSessionId(input.sessionId)) {
-    consumeRateLimit("failure:session", input.remoteAddress ?? "unknown", FAILURE_LIMIT);
-    throw new TerminalAuthError("Invalid session ID", 400, "invalid_session");
-  }
-
-  const actor = resolveActor(input.headers, input.remoteAddress);
-  consumeRateLimit("connect:actor", `${actor.actorId}:${actor.clientIp}`, CONNECT_LIMIT);
-  consumeRateLimit("connect:session", `${actor.actorId}:${input.sessionId}`, CONNECT_SESSION_LIMIT);
-
-  const session = resolveSessionRecord(input.sessionId);
-  const cookieHeader = getHeaderValue(input.headers, "cookie");
-  const cookies = parseCookies(cookieHeader);
-  const cookieToken = cookies[getTerminalCookieName(input.sessionId)];
-
-  if (!cookieToken) {
-    consumeRateLimit("failure:token", `${actor.clientIp}:${input.sessionId}`, FAILURE_LIMIT);
-    recordAuthEvent({
-      surface: "attach",
-      outcome: "failure",
-      sessionId: session.sessionId,
-      projectId: session.projectId,
-      actorId: actor.actorId,
-      ownerId: session.ownerId,
-      reason: "auth_required",
-      statusCode: 401,
-    });
-    throw new TerminalAuthError("Missing terminal token", 401, "auth_required");
-  }
-
-  const { secret } = getAuthContext();
-  const payload = decodeAndVerifyToken(cookieToken, secret);
-
-  if (
-    payload.sessionId !== session.sessionId ||
-    payload.projectId !== session.projectId ||
-    payload.ownerId !== session.ownerId ||
-    payload.actorId !== actor.actorId
-  ) {
-    consumeRateLimit("failure:mismatch", `${actor.clientIp}:${input.sessionId}`, FAILURE_LIMIT);
-    recordAuthEvent({
-      surface: "attach",
-      outcome: "failure",
-      sessionId: session.sessionId,
-      projectId: session.projectId,
-      actorId: actor.actorId,
-      ownerId: session.ownerId,
-      reason: "token_invalid",
-      statusCode: 401,
-    });
-    throw new TerminalAuthError("Invalid terminal token", 401, "token_invalid");
-  }
-
-  recordAuthEvent({
-    surface: "attach",
-    outcome: "success",
-    sessionId: session.sessionId,
-    projectId: session.projectId,
-    actorId: actor.actorId,
-    ownerId: session.ownerId,
-  });
-
-  return {
-    ...session,
-    actorId: actor.actorId,
-    actorSource: actor.actorSource,
-  };
+  return verifyTerminalAccessInternal(input, { consumeRateLimits: true });
 }
 
 /**
@@ -640,17 +580,39 @@ export function verifyTerminalAccessNoRateLimit(input: {
   headers: HeaderSource;
   remoteAddress?: string;
 }): TerminalSessionRecord & { actorId: string; actorSource: string } {
+  return verifyTerminalAccessInternal(input, { consumeRateLimits: false });
+}
+
+function verifyTerminalAccessInternal(
+  input: {
+    sessionId: string;
+    headers: HeaderSource;
+    remoteAddress?: string;
+  },
+  options: { consumeRateLimits: boolean },
+): TerminalSessionRecord & { actorId: string; actorSource: string } {
   if (!validateSessionId(input.sessionId)) {
+    if (options.consumeRateLimits) {
+      consumeRateLimit("failure:session", input.remoteAddress ?? "unknown", FAILURE_LIMIT);
+    }
     throw new TerminalAuthError("Invalid session ID", 400, "invalid_session");
   }
 
   const actor = resolveActor(input.headers, input.remoteAddress);
+  if (options.consumeRateLimits) {
+    consumeRateLimit("connect:actor", `${actor.actorId}:${actor.clientIp}`, CONNECT_LIMIT);
+    consumeRateLimit("connect:session", `${actor.actorId}:${input.sessionId}`, CONNECT_SESSION_LIMIT);
+  }
+
   const session = resolveSessionRecord(input.sessionId);
   const cookieHeader = getHeaderValue(input.headers, "cookie");
   const cookies = parseCookies(cookieHeader);
   const cookieToken = cookies[getTerminalCookieName(input.sessionId)];
 
   if (!cookieToken) {
+    if (options.consumeRateLimits) {
+      consumeRateLimit("failure:token", `${actor.clientIp}:${input.sessionId}`, FAILURE_LIMIT);
+    }
     recordAuthEvent({
       surface: "attach",
       outcome: "failure",
@@ -673,6 +635,9 @@ export function verifyTerminalAccessNoRateLimit(input: {
     payload.ownerId !== session.ownerId ||
     payload.actorId !== actor.actorId
   ) {
+    if (options.consumeRateLimits) {
+      consumeRateLimit("failure:mismatch", `${actor.clientIp}:${input.sessionId}`, FAILURE_LIMIT);
+    }
     recordAuthEvent({
       surface: "attach",
       outcome: "failure",
