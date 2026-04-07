@@ -207,12 +207,22 @@ export function useSessionEvents(
     // Note: empty array is intentional — it means all sessions were removed and we
     // must still run the membership-key comparison to trigger scheduleRefresh().
 
-    dispatch({ type: "snapshot", patches: muxSessions as SSESnapshotEvent["sessions"] });
+    // muxSessions is global (all projects). Filter to only sessions in the
+    // current project-scoped state so we don't trigger spurious refreshes
+    // when viewing a single-project page.
+    const currentIds = new Set(sessionsRef.current.map((s) => s.id));
+    const scopedMuxSessions = muxSessions.filter((s) => currentIds.has(s.id));
+    // The mux feed is global, but the page is project-scoped. We can't tell from
+    // a mux patch whether an unknown ID belongs to this project — only /api/sessions
+    // knows. So if we see ANY id we don't have, trigger a refresh to find out.
+    const hasUnknownIds = muxSessions.some((s) => !currentIds.has(s.id));
+
+    dispatch({ type: "snapshot", patches: scopedMuxSessions as SSESnapshotEvent["sessions"] });
 
     const currentMembershipKey = createMembershipKey(sessionsRef.current);
-    const snapshotMembershipKey = createMembershipKey(muxSessions);
+    const snapshotMembershipKey = createMembershipKey(scopedMuxSessions);
 
-    if (currentMembershipKey !== snapshotMembershipKey) {
+    if (hasUnknownIds || currentMembershipKey !== snapshotMembershipKey) {
       pendingMembershipKeyRef.current = snapshotMembershipKey;
       scheduleRefresh();
     } else if (Date.now() - lastRefreshAtRef.current >= STALE_REFRESH_INTERVAL_MS) {
