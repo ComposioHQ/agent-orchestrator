@@ -10,62 +10,88 @@
  */
 
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir, platform } from "node:os";
 import { join, resolve } from "node:path";
-import { execSync } from "node:child_process";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig, type OrchestratorConfig } from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
-// Service file generators
+// Escaping helpers
 // ---------------------------------------------------------------------------
 
-function sanitizeProjectId(projectId: string): string {
+/** Sanitize a projectId to a safe filename component. */
+export function sanitizeProjectId(projectId: string): string {
   return projectId.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
+/** Escape a string for safe inclusion in XML text content. */
+export function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+/**
+ * Quote a value for systemd unit files.
+ * Wraps in double quotes and escapes internal backslashes, quotes, and dollar signs.
+ */
+export function quoteSystemdValue(str: string): string {
+  const escaped = str
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, "$$$$"); // systemd uses $$ for literal $
+  return `"${escaped}"`;
+}
+
+// ---------------------------------------------------------------------------
+// Service file generators (exported for testing)
+// ---------------------------------------------------------------------------
+
 function resolveAoBinary(): string {
-  // Try to find the ao binary from the current process
   const entry = process.argv[1];
   if (entry && existsSync(entry)) {
     return resolve(entry);
   }
-  // Fall back to looking in PATH
   try {
-    return execSync("which ao", { encoding: "utf-8" }).trim();
+    return execFileSync("which", ["ao"], { encoding: "utf-8" }).trim();
   } catch {
     return "ao";
   }
 }
 
-function generateLaunchdPlist(
+export function generateLaunchdPlist(
   projectId: string,
   aoBinary: string,
   configPath: string,
 ): string {
   const safeId = sanitizeProjectId(projectId);
   const logDir = join(homedir(), "Library", "Logs", "ao");
+  // All interpolated values are XML-escaped to prevent malformed plist
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.composio.ao-lifecycle.${safeId}</string>
+  <string>com.composio.ao-lifecycle.${escapeXml(safeId)}</string>
 
   <key>ProgramArguments</key>
   <array>
-    <string>${aoBinary}</string>
+    <string>${escapeXml(aoBinary)}</string>
     <string>lifecycle-worker</string>
-    <string>${projectId}</string>
+    <string>${escapeXml(projectId)}</string>
   </array>
 
   <key>EnvironmentVariables</key>
   <dict>
     <key>AO_CONFIG_PATH</key>
-    <string>${configPath}</string>
+    <string>${escapeXml(configPath)}</string>
     <key>PATH</key>
-    <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:${join(homedir(), ".local", "bin")}</string>
+    <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:${escapeXml(join(homedir(), ".local", "bin"))}</string>
   </dict>
 
   <key>RunAtLoad</key>
@@ -81,28 +107,29 @@ function generateLaunchdPlist(
   <integer>30</integer>
 
   <key>StandardOutPath</key>
-  <string>${join(logDir, `lifecycle-${safeId}.log`)}</string>
+  <string>${escapeXml(join(logDir, `lifecycle-${safeId}.log`))}</string>
   <key>StandardErrorPath</key>
-  <string>${join(logDir, `lifecycle-${safeId}.log`)}</string>
+  <string>${escapeXml(join(logDir, `lifecycle-${safeId}.log`))}</string>
 </dict>
 </plist>
 `;
 }
 
-function generateSystemdUnit(
+export function generateSystemdUnit(
   projectId: string,
   aoBinary: string,
   configPath: string,
 ): string {
   const safeId = sanitizeProjectId(projectId);
+  // ExecStart and Environment values are quoted to handle spaces/special chars
   return `[Unit]
-Description=AO Lifecycle Worker (${projectId})
+Description=AO Lifecycle Worker (${safeId})
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=${aoBinary} lifecycle-worker ${projectId}
-Environment=AO_CONFIG_PATH=${configPath}
+ExecStart=${quoteSystemdValue(aoBinary)} lifecycle-worker ${quoteSystemdValue(projectId)}
+Environment=${quoteSystemdValue(`AO_CONFIG_PATH=${configPath}`)}
 Restart=on-failure
 RestartSec=30
 
@@ -117,7 +144,7 @@ WantedBy=default.target
 }
 
 // ---------------------------------------------------------------------------
-// Install / Uninstall
+// Path helpers
 // ---------------------------------------------------------------------------
 
 function getLaunchdPath(projectId: string): string {
@@ -129,6 +156,10 @@ function getSystemdPath(projectId: string): string {
   const safeId = sanitizeProjectId(projectId);
   return join(homedir(), ".config", "systemd", "user", `ao-lifecycle-${safeId}.service`);
 }
+
+// ---------------------------------------------------------------------------
+// Install / Uninstall / Status
+// ---------------------------------------------------------------------------
 
 interface InstallResult {
   servicePath: string;
@@ -152,7 +183,7 @@ function installService(
     // Unload existing if present (ignore errors)
     if (existsSync(plistPath)) {
       try {
-        execSync(`launchctl unload "${plistPath}" 2>/dev/null`, { stdio: "ignore" });
+        execFileSync("launchctl", ["unload", plistPath], { stdio: "ignore" });
       } catch {
         // May not be loaded
       }
@@ -163,7 +194,7 @@ function installService(
 
     let activated = false;
     try {
-      execSync(`launchctl load "${plistPath}"`, { stdio: "pipe" });
+      execFileSync("launchctl", ["load", plistPath], { stdio: "pipe" });
       activated = true;
     } catch {
       // Load failed — user can manually load
@@ -181,9 +212,9 @@ function installService(
 
     let activated = false;
     try {
-      execSync("systemctl --user daemon-reload", { stdio: "pipe" });
+      execFileSync("systemctl", ["--user", "daemon-reload"], { stdio: "pipe" });
       const safeId = sanitizeProjectId(projectId);
-      execSync(`systemctl --user enable --now ao-lifecycle-${safeId}.service`, {
+      execFileSync("systemctl", ["--user", "enable", "--now", `ao-lifecycle-${safeId}.service`], {
         stdio: "pipe",
       });
       activated = true;
@@ -207,7 +238,7 @@ function uninstallService(projectId: string): { removed: boolean; servicePath: s
     }
 
     try {
-      execSync(`launchctl unload "${plistPath}" 2>/dev/null`, { stdio: "ignore" });
+      execFileSync("launchctl", ["unload", plistPath], { stdio: "ignore" });
     } catch {
       // May not be loaded
     }
@@ -224,7 +255,7 @@ function uninstallService(projectId: string): { removed: boolean; servicePath: s
 
     const safeId = sanitizeProjectId(projectId);
     try {
-      execSync(`systemctl --user disable --now ao-lifecycle-${safeId}.service 2>/dev/null`, {
+      execFileSync("systemctl", ["--user", "disable", "--now", `ao-lifecycle-${safeId}.service`], {
         stdio: "ignore",
       });
     } catch {
@@ -234,7 +265,7 @@ function uninstallService(projectId: string): { removed: boolean; servicePath: s
     unlinkSync(unitPath);
 
     try {
-      execSync("systemctl --user daemon-reload", { stdio: "pipe" });
+      execFileSync("systemctl", ["--user", "daemon-reload"], { stdio: "pipe" });
     } catch {
       // Best effort
     }
@@ -256,7 +287,7 @@ function getServiceStatus(projectId: string): { installed: boolean; running: boo
     const safeId = sanitizeProjectId(projectId);
     let running = false;
     try {
-      const output = execSync(`launchctl list 2>/dev/null`, { encoding: "utf-8" });
+      const output = execFileSync("launchctl", ["list"], { encoding: "utf-8" });
       running = output.includes(`com.composio.ao-lifecycle.${safeId}`);
     } catch {
       // Can't determine status
@@ -272,7 +303,7 @@ function getServiceStatus(projectId: string): { installed: boolean; running: boo
     const safeId = sanitizeProjectId(projectId);
     let running = false;
     try {
-      execSync(`systemctl --user is-active ao-lifecycle-${safeId}.service`, {
+      execFileSync("systemctl", ["--user", "is-active", `ao-lifecycle-${safeId}.service`], {
         stdio: "pipe",
       });
       running = true;
