@@ -39,7 +39,7 @@ const zoneConfig: Record<
   pending: {
     label: "Pending",
     color: "var(--color-status-attention)",
-    caption: "Blocked on system state",
+    caption: "Waiting on external state",
   },
   working: {
     label: "Working",
