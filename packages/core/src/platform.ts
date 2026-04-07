@@ -103,10 +103,12 @@ export async function findPidByPort(port: number): Promise<string | null> {
     if (isWindows()) {
       // netstat -ano shows all connections with PIDs
       const { stdout } = await execFileAsync("netstat", ["-ano"]);
+      const portPattern = new RegExp(`:${port}(?!\\d)`);
       for (const line of stdout.split("\n")) {
-        // Match LISTENING state on the target port
-        if (line.includes(`:${port}`) && line.includes("LISTENING")) {
-          const parts = line.trim().split(/\s+/);
+        // Match LISTENING state on the target local port exactly
+        const parts = line.trim().split(/\s+/);
+        const localAddress = parts[1];
+        if (line.includes("LISTENING") && localAddress && portPattern.test(localAddress)) {
           const pid = parts[parts.length - 1];
           if (pid && /^\d+$/.test(pid)) return pid;
         }
