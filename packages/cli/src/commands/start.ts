@@ -1087,7 +1087,15 @@ async function runStartup(
       "existing sessions found — select one in the dashboard",
     );
   } else if (opts?.orchestrator !== false && !reused) {
-    console.log(chalk.cyan("Orchestrator:"), `tmux attach -t ${tmuxTarget}`);
+    const orchSessionId = selectedOrchestratorId ?? sessionId;
+    if (opts?.dashboard !== false) {
+      console.log(
+        chalk.cyan("Orchestrator:"),
+        `http://localhost:${port}/sessions/${orchSessionId}`,
+      );
+    } else {
+      console.log(chalk.cyan("Orchestrator:"), `tmux attach -t ${tmuxTarget}`);
+    }
   } else if (reused) {
     console.log(chalk.cyan("Orchestrator:"), `reused existing session (${sessionId})`);
   }
