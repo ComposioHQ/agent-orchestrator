@@ -56,9 +56,7 @@ import { registerSetup } from "../../src/commands/setup.js";
 
 const MINIMAL_CONFIG = `
 port: 3000
-defaults:
-  notifiers:
-    - desktop
+defaults: {}
 projects:
   my-app:
     name: my-app
@@ -70,7 +68,6 @@ const CONFIG_WITH_OPENCLAW = `
 port: 3000
 defaults:
   notifiers:
-    - desktop
     - openclaw
 notifiers:
   openclaw:
@@ -235,8 +232,36 @@ describe("setup openclaw command", () => {
 
       const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
       expect(writtenYaml).toContain("openclaw");
-      // Should have both desktop and openclaw in defaults.notifiers
-      expect(writtenYaml).toContain("desktop");
+      expect(writtenYaml).not.toContain("desktop");
+    });
+
+    it("does not add desktop to defaults.notifiers when initializing notifiers", async () => {
+      // Config with no notifiers at all
+      mockReadFileSync.mockReturnValue(`
+port: 3000
+defaults: {}
+projects:
+  my-app:
+    name: my-app
+`);
+      const program = createProgram();
+
+      await program.parseAsync([
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "tok",
+        "--non-interactive",
+      ]);
+
+      const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
+      const parsed = parseYaml(writtenYaml) as { defaults?: { notifiers?: string[] } };
+      expect(parsed.defaults?.notifiers).not.toContain("desktop");
+      expect(parsed.defaults?.notifiers).toContain("openclaw");
     });
 
     it("does not duplicate openclaw in defaults.notifiers", async () => {

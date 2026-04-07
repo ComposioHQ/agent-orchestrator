@@ -582,7 +582,7 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
       runtime: "tmux",
       agent,
       workspace: "worktree",
-      notifiers: ["desktop"],
+      notifiers: [],
     },
     projects: {
       [projectId]: {
