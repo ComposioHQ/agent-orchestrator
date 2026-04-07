@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig } from "@composio/ao-core";
+import { killProcessTree, loadConfig } from "@composio/ao-core";
 import { findWebDir, buildDashboardEnv, waitForPortAndOpen } from "../lib/web-dir.js";
 import {
   findRunningDashboardPid,
@@ -40,11 +40,7 @@ export function registerDashboard(program: Command): void {
           console.log(
             chalk.dim(`Stopping dashboard (PID ${runningPid}) on port ${port}...`),
           );
-          try {
-            process.kill(parseInt(runningPid, 10), "SIGTERM");
-          } catch {
-            // Process already exited (ESRCH) — that's fine
-          }
+          await killProcessTree(parseInt(runningPid, 10));
           // Wait for port to be released
           await waitForPortFree(port, 5000);
         }

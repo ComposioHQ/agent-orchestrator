@@ -159,14 +159,12 @@ export function create(): Runtime {
       }
       if (child.exitCode === null && child.signalCode === null) {
         const pid = child.pid;
-        if (pid) {
-          await killProcessTree(pid, "SIGTERM");
-        } else {
-          child.kill("SIGTERM");
-        }
 
-        // Give it 5 seconds, then force kill
-        await new Promise<void>((resolve) => {
+        // Register the exit listener BEFORE sending the kill signal to avoid
+        // the race where the process exits during the async killProcessTree
+        // call and the "exit" event fires before the listener is attached,
+        // causing the full 5-second timeout to always elapse on Windows.
+        const waitForExit = new Promise<void>((resolve) => {
           const timeout = setTimeout(() => {
             Promise.resolve(
               child.exitCode === null && child.signalCode === null
@@ -178,11 +176,22 @@ export function create(): Runtime {
               .catch(() => {})
               .finally(resolve);
           }, 5000);
+
           child.once("exit", () => {
             clearTimeout(timeout);
             resolve();
           });
         });
+
+        // Send SIGTERM after the listener is registered so we cannot miss
+        // the exit event regardless of how quickly the process terminates.
+        if (pid) {
+          await killProcessTree(pid, "SIGTERM");
+        } else {
+          child.kill("SIGTERM");
+        }
+
+        await waitForExit;
       }
 
       processes.delete(handle.id);
