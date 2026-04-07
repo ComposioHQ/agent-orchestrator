@@ -46,7 +46,7 @@ describe("cli entrypoint", () => {
     expect(rejectionHandler).toBeTypeOf("function");
     rejectionHandler?.(error);
 
-    expect(errorSpy).toHaveBeenCalledWith(error.message);
+    expect(errorSpy).toHaveBeenCalledWith(`Error: ${error.message}`);
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
