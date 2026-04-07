@@ -1,6 +1,11 @@
 import type { Command } from "commander";
 import chalk from "chalk";
-import { createCorrelationId, createProjectObserver, loadConfig } from "@composio/ao-core";
+import {
+  createCorrelationId,
+  createProjectObserver,
+  loadConfig,
+  type RecoveredSession,
+} from "@composio/ao-core";
 import { getLifecycleManager } from "../lib/create-session-manager.js";
 import {
   clearLifecycleWorkerPid,
@@ -121,6 +126,47 @@ export function registerLifecycleWorker(program: Command): void {
         correlationId: createCorrelationId("lifecycle-worker"),
         details: { projectId, pid: process.pid, intervalMs },
       });
+
+      // Recover dead sessions before starting the polling loop.
+      // This handles machine-restart persistence: sessions left in "working"
+      // state when the machine died are detected, archived, and respawned.
+      try {
+        const recovered = await lifecycle.recoverDeadSessions();
+        if (recovered.length > 0) {
+          const respawned = recovered.filter((r: RecoveredSession) => r.respawned).length;
+          const failed = recovered.filter((r: RecoveredSession) => r.respawnError).length;
+          console.log(
+            chalk.yellow(
+              `Recovered ${recovered.length} dead session(s): ${respawned} respawned, ${failed} failed`,
+            ),
+          );
+          observer.recordOperation({
+            metric: "lifecycle_poll",
+            operation: "lifecycle.boot_recovery",
+            outcome: "success",
+            correlationId: createCorrelationId("lifecycle-worker"),
+            projectId,
+            data: { total: recovered.length, respawned, failed },
+            level: "info",
+          });
+        }
+      } catch (err) {
+        // Recovery failure is non-fatal — the worker should still start
+        console.error(
+          chalk.red(
+            `Dead session recovery failed: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+        observer.recordOperation({
+          metric: "lifecycle_poll",
+          operation: "lifecycle.boot_recovery",
+          outcome: "failure",
+          correlationId: createCorrelationId("lifecycle-worker"),
+          projectId,
+          reason: err instanceof Error ? err.message : String(err),
+          level: "error",
+        });
+      }
 
       // Periodic heartbeat so we can verify the worker is alive from the log
       heartbeat = setInterval(() => {

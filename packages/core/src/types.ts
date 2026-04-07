@@ -1464,6 +1464,27 @@ export interface LifecycleManager {
 
   /** Force-check a specific session now */
   check(sessionId: SessionId): Promise<void>;
+
+  /**
+   * Scan active sessions for dead processes and recover them.
+   * - Transitions dead sessions to "terminated" and archives them
+   * - Optionally respawns sessions that have an issueId (triggers resume chain)
+   * Returns IDs of sessions that were recovered (archived + respawned).
+   */
+  recoverDeadSessions(): Promise<RecoveredSession[]>;
+}
+
+/** Result of a dead-session recovery attempt. */
+export interface RecoveredSession {
+  sessionId: SessionId;
+  projectId: string;
+  issueId?: string;
+  /** Whether the session was archived (always true for recovered sessions) */
+  archived: boolean;
+  /** Whether spawn() was called to respawn the session */
+  respawned: boolean;
+  /** If respawn failed, the error message */
+  respawnError?: string;
 }
 
 /** Plugin registry — discovery + loading */

@@ -13,6 +13,7 @@ import { registerVerify } from "./commands/verify.js";
 import { registerDoctor } from "./commands/doctor.js";
 import { registerUpdate } from "./commands/update.js";
 import { registerSetup } from "./commands/setup.js";
+import { registerService } from "./commands/service.js";
 import { registerPlugin } from "./commands/plugin.js";
 import { getConfigInstruction } from "./lib/config-instruction.js";
 import { getCliVersion } from "./options/version.js";
@@ -41,6 +42,7 @@ export function createProgram(): Command {
   registerDoctor(program);
   registerUpdate(program);
   registerSetup(program);
+  registerService(program);
   registerPlugin(program);
 
   program
