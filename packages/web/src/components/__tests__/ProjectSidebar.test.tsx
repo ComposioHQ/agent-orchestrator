@@ -10,6 +10,13 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/",
 }));
 
+vi.mock("next-themes", () => ({
+  useTheme: () => ({
+    resolvedTheme: "light",
+    setTheme: vi.fn(),
+  }),
+}));
+
 describe("ProjectSidebar", () => {
   const projects = [
     { id: "project-1", name: "Project One", sessionPrefix: "project-1" },
@@ -46,6 +53,7 @@ describe("ProjectSidebar", () => {
     expect(screen.getByText("Projects")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Project One" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Project Two" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /switch to dark mode/i })).toBeInTheDocument();
   });
 
   it("marks the active project row as the current page", () => {

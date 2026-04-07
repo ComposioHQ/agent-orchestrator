@@ -98,9 +98,11 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   const [failedAction, setFailedAction] = useState<string | null>(null);
   const [sendingQuickReply, setSendingQuickReply] = useState<string | null>(null);
   const [sentQuickReply, setSentQuickReply] = useState<string | null>(null);
+  const [killConfirming, setKillConfirming] = useState(false);
   const [replyText, setReplyText] = useState("");
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickReplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const killConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const level = getAttentionLevel(session);
   const pr = session.pr;
 
@@ -136,6 +138,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
     return () => {
       if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
       if (quickReplyTimerRef.current) clearTimeout(quickReplyTimerRef.current);
+      if (killConfirmTimerRef.current) clearTimeout(killConfirmTimerRef.current);
     };
   }, []);
 
@@ -169,20 +172,35 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   const isDone = level === "done";
   const secondaryText = session.issueLabel
     ? `${session.issueLabel}${session.issueTitle ? ` · ${session.issueTitle}` : ""}`
-    : session.issueTitle ?? (session.summary && session.summary !== title ? session.summary : null);
+    : (session.issueTitle ??
+      (session.summary && session.summary !== title ? session.summary : null));
   const cardFrameClass = isReadyToMerge
     ? "session-card--merge-frame"
     : alerts.length > 0
       ? "session-card--alert-frame"
       : "session-card--fixed";
-  const dynamicCardStyle =
-    alerts.length > 0
-      ? {
-          minHeight: `${242 + Math.max(0, alerts.length - 2) * 44}px`,
-        }
-      : isReadyToMerge
-        ? { minHeight: "264px" }
-        : undefined;
+  const accentClass = isReadyToMerge
+    ? "session-card--accent-merge"
+    : level === "working"
+      ? "session-card--accent-working"
+      : level === "respond"
+        ? "session-card--accent-respond"
+        : level === "review" || level === "pending"
+          ? "session-card--accent-attention"
+          : "session-card--accent-default";
+
+  const handleKillClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (killConfirming) {
+      if (killConfirmTimerRef.current) clearTimeout(killConfirmTimerRef.current);
+      setKillConfirming(false);
+      onKill?.(session.id);
+      return;
+    }
+    setKillConfirming(true);
+    if (killConfirmTimerRef.current) clearTimeout(killConfirmTimerRef.current);
+    killConfirmTimerRef.current = setTimeout(() => setKillConfirming(false), 2000);
+  };
 
   /* ── Done card variant ──────────────────────────────────────────── */
   if (isDone) {
@@ -231,9 +249,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
 
         {/* Row 2: Title */}
         <div className="px-3.5 pb-2">
-          <p
-            className="session-card-done__title text-[13px] font-semibold leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden"
-          >
+          <p className="session-card-done__title text-[13px] font-semibold leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
             {title}
           </p>
         </div>
@@ -266,15 +282,20 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               #{pr.number}
             </a>
           )}
-          {pr && !rateLimited && (prUnenriched ? (
-            <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
-          ) : (
-            <span className="done-meta-chip font-[var(--font-mono)]">
-              <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
-              <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>{" "}
-              {getSizeLabel(pr.additions, pr.deletions)}
-            </span>
-          ))}
+          {pr &&
+            !rateLimited &&
+            (prUnenriched ? (
+              <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
+            ) : (
+              <span className="done-meta-chip font-[var(--font-mono)]">
+                <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
+                <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>{" "}
+                {getSizeLabel(pr.additions, pr.deletions)}
+                <span className="sr-only">
+                  {`+${pr.additions} -${pr.deletions} ${getSizeLabel(pr.additions, pr.deletions)}`}
+                </span>
+              </span>
+            ))}
         </div>
 
         {/* Expandable detail panel */}
@@ -396,20 +417,19 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   return (
     <div
       className={cn(
-        "session-card border",
+        "session-card kanban-card-enter border",
         cardFrameClass,
-        "hover:border-[var(--color-border-strong)]",
-        `card-glow-${level}`,
-        isReadyToMerge
-          ? "card-merge-ready border-[color-mix(in_srgb,var(--color-status-ready)_30%,transparent)]"
-          : "border-[var(--color-border-default)]",
+        accentClass,
+        isReadyToMerge && "card-merge-ready",
       )}
-      style={dynamicCardStyle}
     >
-      {/* Header row: dot + session ID + terminal link */}
-      <div className="session-card__header flex items-center gap-2 px-4 pt-4 pb-2">
-        {isReadyToMerge ? <ActivityDot activity="ready" /> : <ActivityDot activity={session.activity} />}
-        <span className="font-[var(--font-mono)] text-[11px] tracking-wide text-[var(--color-text-muted)]">
+      <div className="session-card__header flex items-center gap-2 px-3 pt-3 pb-1.5">
+        {isReadyToMerge ? (
+          <ActivityDot activity="ready" />
+        ) : (
+          <ActivityDot activity={session.activity} />
+        )}
+        <span className="card__id font-[var(--font-mono)] text-[10px] tracking-[0.04em] text-[var(--color-text-muted)]">
           {session.id}
         </span>
         <div className="flex-1" />
@@ -438,7 +458,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           <a
             href={`/sessions/${encodeURIComponent(session.id)}`}
             onClick={(e) => e.stopPropagation()}
-            className="session-card__control inline-flex items-center justify-center gap-1.5 border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-1 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
+            className="session-card__control inline-flex items-center justify-center gap-1.5 border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2 py-1 font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
           >
             <svg
               className="session-card__control-icon"
@@ -457,22 +477,18 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
       </div>
 
       <div className="session-card__body flex min-h-0 flex-1 flex-col">
-        {/* Title — its own row, bigger, can wrap */}
-        <div className="session-card__title-wrap px-4 pb-2">
+        <div className="card__title-wrap px-3 pb-2">
           <p
             className={cn(
-              "session-card__title leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden",
-              level === "working"
-                ? "text-[13px] font-medium text-[var(--color-text-secondary)]"
-                : "text-[14px] font-semibold text-[var(--color-text-primary)]",
+              "card__title text-[12px] font-semibold leading-[1.45] text-[var(--color-text-primary)] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden",
+              level === "working" && "font-medium text-[var(--color-text-secondary)]",
             )}
           >
             {title}
           </p>
         </div>
 
-        {/* Meta row: branch + PR# + diff size (simplified for merge-ready) */}
-        <div className="session-card__meta flex flex-wrap items-center gap-1.5 px-4 pb-2">
+        <div className="card__meta flex flex-wrap items-center gap-[5px] px-3 pb-2">
           {session.branch && (
             <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)]">
               {session.branch}
@@ -484,31 +500,37 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="font-[var(--font-mono)] text-[11px] font-bold text-[var(--color-text-primary)] underline-offset-2 hover:underline"
+              className="card__pr font-[var(--font-mono)] text-[11px] font-bold text-[var(--color-text-primary)] underline-offset-2 hover:underline"
             >
               #{pr.number}
             </a>
           )}
-          {pr && !rateLimited && (prUnenriched ? (
-            <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
-          ) : (
-            <span className="inline-flex items-center rounded-full bg-[var(--color-chip-bg)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] font-semibold text-[var(--color-text-muted)]">
-              +{pr.additions} -{pr.deletions} {getSizeLabel(pr.additions, pr.deletions)}
-            </span>
-          ))}
+          {pr &&
+            !rateLimited &&
+            (prUnenriched ? (
+              <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
+            ) : (
+              <span className="card__diff inline-flex items-center bg-[var(--color-bg-subtle)] px-[5px] py-[1px] font-[var(--font-mono)] text-[10px]">
+                <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
+                <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>{" "}
+                {getSizeLabel(pr.additions, pr.deletions)}
+                <span className="sr-only">
+                  {`+${pr.additions} -${pr.deletions} ${getSizeLabel(pr.additions, pr.deletions)}`}
+                </span>
+              </span>
+            ))}
         </div>
 
         {secondaryText && (
-          <div className="px-4 pb-2">
+          <div className="px-3 pb-2">
             <p className="session-card__secondary text-[11px] text-[var(--color-text-muted)]">
               {secondaryText}
             </p>
           </div>
         )}
 
-        {/* Rate limited indicator */}
         {rateLimited && pr?.state === "open" && (
-          <div className="px-4 pb-2">
+          <div className="px-3 pb-2">
             <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
               <svg
                 className="h-3 w-3 text-[var(--color-text-tertiary)]"
@@ -526,70 +548,69 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         )}
 
         {!rateLimited && alerts.length > 0 && (
-          <div className="session-card__actions px-4 pb-2 pt-0.5">
-            <div className="session-card__alert-grid">
-              {alerts.slice(0, 3).map((alert) => (
-                <span
-                  key={alert.key}
-                  className="session-card__alert-pill inline-flex items-stretch overflow-hidden border"
-                  style={{
-                    borderColor:
-                      alert.borderColor ?? alert.color ?? "var(--color-border-default)",
-                  }}
-                >
-                  <a
-                    href={alert.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className={cn(
-                      "min-w-0 flex-1 truncate whitespace-nowrap px-2 py-0.5 font-[var(--font-mono)] text-[11px] font-medium !underline [text-decoration-skip-ink:none] [text-underline-offset:2px] hover:brightness-125",
-                      alert.className,
-                    )}
-                    style={alert.color ? { color: alert.color } : undefined}
-                  >
-                    {alert.count !== undefined && (
-                      <>
-                        <span className="font-bold">{alert.count}</span>{" "}
-                      </>
-                    )}
-                    {alert.label}
-                    {alert.notified && (
-                      <span className="ml-1 opacity-60" title="Agent has been notified"> · notified</span>
-                    )}
-                  </a>
-                  {alert.actionLabel && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleAction(alert.key, alert.actionMessage ?? "");
-                      }}
-                      disabled={sendingAction === alert.key}
-                      className={cn(
-                        "border-l px-2 py-0.5 font-[var(--font-mono)] text-[11px] font-medium transition-colors disabled:opacity-50",
-                        failedAction === alert.key &&
-                          "bg-[var(--color-tint-red)] text-[var(--color-status-error)]",
-                        alert.actionClassName,
-                      )}
-                      style={{
-                        borderColor:
-                          alert.borderColor ?? alert.color ?? "var(--color-border-default)",
-                      }}
-                    >
-                      {sendingAction === alert.key
-                        ? "sent!"
-                        : failedAction === alert.key
-                          ? "failed"
-                          : alert.actionLabel}
-                    </button>
+          <div className="card__alerts flex flex-col items-start gap-1 px-3 pb-2">
+            {alerts.slice(0, 3).map((alert) => (
+              <span
+                key={alert.key}
+                className="alert-pill inline-flex items-stretch overflow-hidden border font-[var(--font-mono)] text-[11px]"
+                style={{
+                  borderColor: alert.borderColor ?? alert.color ?? "var(--color-border-default)",
+                }}
+              >
+                <a
+                  href={alert.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className={cn(
+                    "alert-pill__label min-w-0 flex-1 truncate whitespace-nowrap px-2 py-[3px] font-medium !underline [text-decoration-skip-ink:none] [text-underline-offset:2px] hover:brightness-125",
+                    alert.className,
                   )}
-                </span>
-              ))}
-            </div>
+                  style={alert.color ? { color: alert.color } : undefined}
+                >
+                  {alert.count !== undefined && (
+                    <>
+                      <span className="font-bold">{alert.count}</span>{" "}
+                    </>
+                  )}
+                  {alert.label}
+                  {alert.notified && (
+                    <span className="ml-1 opacity-60" title="Agent has been notified">
+                      {" "}
+                      · notified
+                    </span>
+                  )}
+                </a>
+                {alert.actionLabel && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleAction(alert.key, alert.actionMessage ?? "");
+                    }}
+                    disabled={sendingAction === alert.key}
+                    className={cn(
+                      "alert-pill__action border-l px-2 py-[3px] font-medium text-[10px] uppercase tracking-[0.04em] transition-transform-[160ms] disabled:opacity-50",
+                      failedAction === alert.key &&
+                        "bg-[var(--color-tint-red)] text-[var(--color-status-error)]",
+                      alert.actionClassName,
+                    )}
+                    style={{
+                      borderColor:
+                        alert.borderColor ?? alert.color ?? "var(--color-border-default)",
+                    }}
+                  >
+                    {sendingAction === alert.key
+                      ? "sent!"
+                      : failedAction === alert.key
+                        ? "failed"
+                        : alert.actionLabel}
+                  </button>
+                )}
+              </span>
+            ))}
           </div>
         )}
 
-        {/* Quick reply — inside card body, above footer */}
         {level === "respond" && (
           <div className="quick-reply" onClick={(e) => e.stopPropagation()}>
             {session.summary && !session.summaryIsFallback && (
@@ -645,13 +666,13 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           </div>
         )}
 
-        <div className="session-card__footer mt-auto flex items-center justify-between gap-2 border-t border-[var(--color-border-subtle)] px-4 py-2.5">
+        <div className="session-card__footer mt-auto flex items-center justify-between gap-2 border-t border-[var(--color-border-subtle)] px-3 py-2">
           {session.issueUrl ? (
             <a
               href={session.issueUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="min-w-0 truncate text-[11px] text-[var(--color-accent)] hover:underline"
+              className="card__issue min-w-0 truncate text-[11px] text-[var(--color-accent)] hover:underline"
             >
               {session.issueLabel || session.issueUrl}
             </a>
@@ -680,32 +701,32 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                 <circle cx="18" cy="18" r="2" />
                 <circle cx="18" cy="6" r="2" />
                 <path d="M8 6h5a3 3 0 0 1 3 3v7" />
-                <path d="M8 6h5a3 3 0 0 0 3-3V8" />
               </svg>
               merge
             </button>
-          ) : !isTerminal && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onKill?.(session.id);
-              }}
-              aria-label="Terminate session"
-              className="session-card__control session-card__terminate inline-flex shrink-0 cursor-pointer items-center justify-center border border-[color-mix(in_srgb,var(--color-status-error)_35%,transparent)] px-2.5 py-1 text-[11px] text-[var(--color-status-error)] transition-colors hover:border-[var(--color-status-error)] hover:bg-[var(--color-tint-red)]"
-            >
-              <svg
-                className="session-card__control-icon"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
+          ) : (
+            !isTerminal && (
+              <button
+                onClick={handleKillClick}
+                aria-label="Terminate session"
+                className={cn(
+                  "session-card__control session-card__terminate btn--danger inline-flex shrink-0 cursor-pointer items-center justify-center border px-2 py-1 font-[var(--font-mono)] text-[11px] transition-transform-[160ms]",
+                  killConfirming && "is-confirming",
+                )}
               >
-                <path d="M3 6h18" />
-                <path d="M8 6V4h8v2" />
-                <path d="M19 6l-1 14H6L5 6" />
-                <path d="M10 11v6M14 11v6" />
-              </svg>
-            </button>
+                <svg
+                  className="session-card__control-icon"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4h8v2" />
+                  <path d="M19 6l-1 14H6L5 6" />
+                </svg>
+              </button>
+            )
           )}
         </div>
       </div>
@@ -773,7 +794,7 @@ function getAlerts(session: DashboardSession): Alert[] {
         notified: Boolean(meta["lastCIFailureDispatchHash"]),
         actionLabel: "ask to fix",
         actionMessage: `Please fix the failing CI checks on ${pr.url}`,
-        actionClassName: "bg-[var(--color-alert-ci-bg)] text-white hover:brightness-110",
+        actionClassName: "bg-[var(--color-alert-ci-bg)] hover:brightness-110",
       });
     } else if (failCount === 0) {
       alerts.push({
@@ -794,7 +815,7 @@ function getAlerts(session: DashboardSession): Alert[] {
         notified: Boolean(meta["lastCIFailureDispatchHash"]),
         actionLabel: "ask to fix",
         actionMessage: `Please fix the failing CI checks on ${pr.url}`,
-        actionClassName: "bg-[var(--color-alert-ci-bg)] text-white hover:brightness-110",
+        actionClassName: "bg-[var(--color-alert-ci-bg)] hover:brightness-110",
       });
     }
   }
@@ -809,7 +830,7 @@ function getAlerts(session: DashboardSession): Alert[] {
       notified: Boolean(meta["lastPendingReviewDispatchHash"]),
       actionLabel: "ask to address",
       actionMessage: `Please address the requested changes on ${pr.url}`,
-      actionClassName: "bg-[var(--color-alert-changes-bg)] text-white hover:brightness-110",
+      actionClassName: "bg-[var(--color-alert-changes-bg)] hover:brightness-110",
     });
   } else if (!pr.isDraft && (pr.reviewDecision === "pending" || pr.reviewDecision === "none")) {
     alerts.push({
@@ -820,7 +841,7 @@ function getAlerts(session: DashboardSession): Alert[] {
       url: pr.url,
       actionLabel: "ask to post",
       actionMessage: `Post ${pr.url} on slack asking for a review.`,
-      actionClassName: "bg-[var(--color-alert-review-bg)] text-white hover:brightness-110",
+      actionClassName: "bg-[var(--color-alert-review-bg)] hover:brightness-110",
     });
   }
 
@@ -834,7 +855,7 @@ function getAlerts(session: DashboardSession): Alert[] {
       notified: meta["lastMergeConflictDispatched"] === "true",
       actionLabel: "ask to fix",
       actionMessage: `Please resolve the merge conflicts on ${pr.url} by rebasing on the base branch`,
-      actionClassName: "bg-[var(--color-alert-conflict-bg)] text-white hover:brightness-110",
+      actionClassName: "bg-[var(--color-alert-conflict-bg)] hover:brightness-110",
     });
   }
 
@@ -850,7 +871,7 @@ function getAlerts(session: DashboardSession): Alert[] {
       url: firstUrl,
       actionLabel: "ask to resolve",
       actionMessage: `Please address all unresolved review comments on ${pr.url}`,
-      actionClassName: "bg-[var(--color-alert-comment-bg)] text-white hover:brightness-110",
+      actionClassName: "bg-[var(--color-alert-comment-bg)] hover:brightness-110",
     });
   }
 
