@@ -11,6 +11,15 @@ const nextConfig = {
     "@composio/ao-plugin-tracker-linear",
     "@composio/ao-plugin-workspace-worktree",
   ],
+  webpack: (config) => {
+    if (process.platform === "win32") {
+      config.snapshot = {
+        ...config.snapshot,
+        managedPaths: [/^(.+?[\\/]node_modules[\\/])/],
+      };
+    }
+    return config;
+  },
   async headers() {
     return [
       {
