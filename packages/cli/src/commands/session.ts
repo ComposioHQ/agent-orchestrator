@@ -95,23 +95,26 @@ export function registerSession(program: Command): void {
 
           // Priority: live branch from workspace > metadata branch > empty string
           const branchStr = (s.workspacePath && liveBranch) ? liveBranch : (s.branch || "");
-          const role = isOrchestratorSessionName(config, s.id, projectId) ? "orchestrator" : "worker";
           const prUrl = s.metadata["pr"] ?? null;
 
-          jsonOutput.push({
-            id: s.id,
-            projectId,
-            projectName: project.name || projectId,
-            role,
-            branch: branchStr || null,
-            status: s.status,
-            issueId: s.issueId,
-            pr: prUrl,
-            workspacePath: s.workspacePath,
-            lastActivityAt: activityTs ? new Date(activityTs).toISOString() : null,
-          });
-
           if (opts.json) {
+            const role = isOrchestratorSessionName(config, s.id, projectId)
+              ? "orchestrator"
+              : "worker";
+
+            jsonOutput.push({
+              id: s.id,
+              projectId,
+              projectName: project.name || projectId,
+              role,
+              branch: branchStr || null,
+              status: s.status,
+              issueId: s.issueId,
+              pr: prUrl,
+              workspacePath: s.workspacePath,
+              lastActivityAt: activityTs ? new Date(activityTs).toISOString() : null,
+            });
+
             continue;
           }
 
