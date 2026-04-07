@@ -31,9 +31,10 @@ export function humanizeBranch(branch: string): string {
  *   1. PR title         — human-visible deliverable name
  *   2. Issue title       — human-written task description
  *   3. Humanized branch  — stable task identifier when no explicit title exists
- *   4. Quality summary   — useful, but can drift as the session evolves
- *   5. Any summary       — even a fallback excerpt is better than nothing
- *   6. Status text       — absolute fallback
+ *   4. Pinned summary    — first quality summary, stable across agent updates
+ *   5. Quality summary   — live summary, but can drift as the session evolves
+ *   6. Any summary       — even a fallback excerpt is better than nothing
+ *   7. Status text       — absolute fallback
  */
 export function getSessionTitle(session: DashboardSession): string {
   // 1. PR title — always best
@@ -45,14 +46,18 @@ export function getSessionTitle(session: DashboardSession): string {
   // 3. Humanized branch — stable semantic fallback
   if (session.branch) return humanizeBranch(session.branch);
 
-  // 4. Quality summary — skip fallback summaries (truncated spawn prompts)
+  // 4. Pinned summary — first quality summary, stable across agent updates
+  const pinnedSummary = session.metadata["pinnedSummary"];
+  if (pinnedSummary) return pinnedSummary;
+
+  // 5. Quality summary — skip fallback summaries (truncated spawn prompts)
   if (session.summary && !session.summaryIsFallback) {
     return session.summary;
   }
 
-  // 5. Any summary — even fallback excerpts beat raw status text
+  // 6. Any summary — even fallback excerpts beat raw status text
   if (session.summary) return session.summary;
 
-  // 6. Status
+  // 7. Status
   return session.status;
 }

@@ -191,7 +191,7 @@ describe("sessionToDashboard", () => {
     expect(dashboard.summaryIsFallback).toBe(false);
   });
 
-  it("should prefer pinnedSummary over agentInfo summary", () => {
+  it("should use live agentInfo summary even when pinnedSummary is set in metadata", () => {
     const coreSession = createCoreSession({
       agentInfo: {
         summary: "Latest live summary from agent",
@@ -202,22 +202,26 @@ describe("sessionToDashboard", () => {
     });
     const dashboard = sessionToDashboard(coreSession);
 
-    expect(dashboard.summary).toBe("First pinned summary");
+    // pinnedSummary must NOT replace dashboard.summary — live summary wins
+    expect(dashboard.summary).toBe("Latest live summary from agent");
     expect(dashboard.summaryIsFallback).toBe(false);
+    // pinnedSummary remains accessible via metadata for title selection
+    expect(dashboard.metadata["pinnedSummary"]).toBe("First pinned summary");
   });
 
-  it("should prefer pinnedSummary over metadata summary", () => {
+  it("should use metadata summary when pinnedSummary is also set (pinnedSummary only for titles)", () => {
     const coreSession = createCoreSession({
       agentInfo: null,
       metadata: { pinnedSummary: "Pinned summary", summary: "Metadata summary" },
     });
     const dashboard = sessionToDashboard(coreSession);
 
-    expect(dashboard.summary).toBe("Pinned summary");
+    // pinnedSummary must NOT override the regular metadata summary
+    expect(dashboard.summary).toBe("Metadata summary");
     expect(dashboard.summaryIsFallback).toBe(false);
   });
 
-  it("should fall through to agentInfo when pinnedSummary is empty", () => {
+  it("should use agentInfo summary regardless of pinnedSummary value", () => {
     const coreSession = createCoreSession({
       agentInfo: {
         summary: "Agent summary",

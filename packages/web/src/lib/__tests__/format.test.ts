@@ -197,4 +197,37 @@ describe("getSessionTitle", () => {
     });
     expect(getSessionTitle(session)).toBe("Investigating flaky PR enrichment");
   });
+
+  it("uses pinnedSummary from metadata before live summary when no branch or issue title", () => {
+    const session = makeSession({
+      summary: "Drifting live summary from latest agent output",
+      summaryIsFallback: false,
+      issueTitle: null,
+      branch: null,
+      metadata: { pinnedSummary: "Stable pinned title" },
+    });
+    expect(getSessionTitle(session)).toBe("Stable pinned title");
+  });
+
+  it("skips pinnedSummary when branch is present (branch takes priority)", () => {
+    const session = makeSession({
+      summary: "Live summary",
+      summaryIsFallback: false,
+      issueTitle: null,
+      branch: "feat/my-feature",
+      metadata: { pinnedSummary: "Pinned summary" },
+    });
+    expect(getSessionTitle(session)).toBe("My Feature");
+  });
+
+  it("falls through to live summary when pinnedSummary is empty", () => {
+    const session = makeSession({
+      summary: "Live quality summary",
+      summaryIsFallback: false,
+      issueTitle: null,
+      branch: null,
+      metadata: { pinnedSummary: "" },
+    });
+    expect(getSessionTitle(session)).toBe("Live quality summary");
+  });
 });
