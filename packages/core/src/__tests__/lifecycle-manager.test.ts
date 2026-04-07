@@ -199,6 +199,59 @@ describe("check (single session)", () => {
     expect(mockSessionManager.restore).toHaveBeenCalledWith("app-1");
   });
 
+  it("clears grace period when runtime recovers mid-grace", async () => {
+    const isAliveMock = vi.mocked(plugins.runtime.isAlive);
+    isAliveMock.mockResolvedValueOnce(false); // first check: dead
+    isAliveMock.mockResolvedValue(true); // subsequent: recovered
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    // First check: grace period starts, status preserved
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("working");
+
+    // Second check: runtime recovered, status stays working, no restore attempted
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("working");
+    expect(mockSessionManager.restore).not.toHaveBeenCalled();
+  });
+
+  it("resets auto-restore counter after natural recovery", async () => {
+    const isAliveMock = vi.mocked(plugins.runtime.isAlive);
+    const restoreMock = vi.mocked(mockSessionManager.restore);
+
+    // First: dead, then dead, then dead → restore succeeds → recovered
+    isAliveMock.mockResolvedValueOnce(false);
+    isAliveMock.mockResolvedValueOnce(false);
+    restoreMock.mockResolvedValueOnce(makeSession({ status: "working" }));
+    isAliveMock.mockResolvedValue(true); // after restore
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1"); // grace starts
+    vi.advanceTimersByTime(31_000);
+    await lm.check("app-1"); // restore attempt 1 succeeds
+    expect(restoreMock).toHaveBeenCalledTimes(1);
+
+    // Now simulate dying again later — counter should have been reset,
+    // so we get another full set of attempts rather than starting at 1.
+    isAliveMock.mockResolvedValue(false);
+    restoreMock.mockRejectedValue(new Error("restore failed"));
+
+    await lm.check("app-1"); // new grace starts
+    vi.advanceTimersByTime(31_000);
+    await lm.check("app-1"); // attempt 1 of fresh cycle
+    await lm.check("app-1"); // attempt 2
+    await lm.check("app-1"); // attempt 3 → killed
+    expect(lm.getStates().get("app-1")).toBe("killed");
+    // Total restore calls: 1 (first cycle) + 3 (second cycle) = 4
+    expect(restoreMock).toHaveBeenCalledTimes(4);
+  });
+
   it("detects killed state when getActivityState returns exited and restore fails", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "exited" });
     vi.mocked(mockSessionManager.restore).mockRejectedValue(new Error("restore failed"));

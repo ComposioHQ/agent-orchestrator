@@ -1093,6 +1093,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       for (const trackedId of states.keys()) {
         if (!currentSessionIds.has(trackedId)) {
           states.delete(trackedId);
+          runtimeDeadSince.delete(trackedId);
+          autoRestoreAttempts.delete(trackedId);
         }
       }
       for (const trackerKey of reactionTrackers.keys()) {
