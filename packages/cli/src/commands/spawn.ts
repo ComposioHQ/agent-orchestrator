@@ -119,17 +119,11 @@ async function spawnSession(
       }
     }
 
-    spinner.succeed(
-      claimedPrUrl
-        ? `Session ${chalk.green(session.id)} created and claimed PR`
-        : `Session ${chalk.green(session.id)} created`,
-    );
-
     const issueLabel = issueId ? ` for issue #${issueId}` : "";
     const claimLabel = claimedPrUrl ? ` (claimed ${claimedPrUrl})` : "";
-    console.log(
-      `Session ${session.id} spawned${issueLabel}${claimLabel}. ` +
-        `View it in the dashboard or attach with: ${chalk.cyan(`ao session attach ${session.id}`)}`,
+    spinner.succeed(
+      `Session ${chalk.green(session.id)} spawned${issueLabel}${claimLabel}. ` +
+        `View in the dashboard (if running) or attach with: ${chalk.cyan(`ao session attach ${session.id}`)}`,
     );
 
     // Warn if prompt delivery failed (for post-launch agents like Claude Code)

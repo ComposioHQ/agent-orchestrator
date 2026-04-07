@@ -32,14 +32,15 @@ vi.mock("../../src/lib/shell.js", () => ({
   getTmuxActivity: vi.fn().mockResolvedValue(null),
 }));
 
+const mockSpinner = {
+  start: vi.fn().mockReturnThis(),
+  stop: vi.fn().mockReturnThis(),
+  succeed: vi.fn().mockReturnThis(),
+  fail: vi.fn().mockReturnThis(),
+  text: "",
+};
 vi.mock("ora", () => ({
-  default: () => ({
-    start: vi.fn().mockReturnThis(),
-    stop: vi.fn().mockReturnThis(),
-    succeed: vi.fn().mockReturnThis(),
-    fail: vi.fn().mockReturnThis(),
-    text: "",
-  }),
+  default: () => mockSpinner,
 }));
 
 vi.mock("@composio/ao-core", async (importOriginal) => {
@@ -114,6 +115,10 @@ beforeEach(() => {
     throw new Error(`process.exit(${code})`);
   });
 
+  mockSpinner.start.mockReturnThis();
+  mockSpinner.stop.mockReturnThis();
+  mockSpinner.succeed.mockReturnThis();
+  mockSpinner.fail.mockReturnThis();
   mockSessionManager.spawn.mockReset();
   mockSessionManager.list.mockReset();
   mockSessionManager.claimPR.mockReset();
@@ -304,10 +309,10 @@ describe("spawn command", () => {
 
     await program.parseAsync(["node", "test", "spawn"]);
 
-    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(output).toContain("ao session attach app-7");
-    expect(output).not.toContain("tmux attach");
-    expect(output).not.toContain("8474d6f29887-app-7");
+    const succeedMsg = String(mockSpinner.succeed.mock.calls[0]?.[0] ?? "");
+    expect(succeedMsg).toContain("ao session attach app-7");
+    expect(succeedMsg).not.toContain("tmux attach");
+    expect(succeedMsg).not.toContain("8474d6f29887-app-7");
   });
 
   it("passes --agent flag to sessionManager.spawn()", async () => {
@@ -502,9 +507,9 @@ describe("spawn command", () => {
       assignOnGithub: undefined,
     });
 
-    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(output).toContain("https://github.com/org/repo/pull/123");
-    expect(output).toContain("ao session attach app-1");
+    const succeedMsg = String(mockSpinner.succeed.mock.calls[0]?.[0] ?? "");
+    expect(succeedMsg).toContain("https://github.com/org/repo/pull/123");
+    expect(succeedMsg).toContain("ao session attach app-1");
   });
 
   it("passes GitHub assignment flag through to claimPR", async () => {
