@@ -1111,7 +1111,7 @@ async function runStartup(
     } else {
       console.log(
         chalk.cyan("Orchestrator:"),
-        `http://localhost:${port}/sessions/${orchSessionId}`,
+        `ao session attach ${orchSessionId}`,
       );
     }
   } else if (reused) {
