@@ -846,9 +846,12 @@ function createClaudeCodeAgent(): Agent {
 
     createInjector(child: ChildProcess): MessageInjector | null {
       let sessionId = "default";
+      let partial = "";
       child.stdout?.on("data", (data: Buffer) => {
-        const text = data.toString("utf-8");
-        for (const line of text.split("\n")) {
+        const text = partial + data.toString("utf-8");
+        const lines = text.split("\n");
+        partial = lines.pop() ?? "";
+        for (const line of lines) {
           if (line.trim().startsWith("{")) {
             try {
               const parsed = JSON.parse(line) as Record<string, unknown>;
