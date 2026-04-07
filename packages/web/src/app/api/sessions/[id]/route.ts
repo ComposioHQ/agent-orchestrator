@@ -4,6 +4,7 @@ import {
   sessionToDashboard,
   resolveProject,
   enrichSessionPR,
+  enrichSessionsMetadataFast,
   enrichSessionsMetadata,
 } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
@@ -22,10 +23,17 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
     const dashboardSession = sessionToDashboard(coreSession);
 
-    // Enrich metadata (issue labels, agent summaries, issue titles)
-    await enrichSessionsMetadata([coreSession], [dashboardSession], config, registry);
+    // Fast-first response: enrich only synchronous labels + local summary I/O.
+    // Warm issue-title cache in the background for later requests.
+    await enrichSessionsMetadataFast([coreSession], [dashboardSession], config, registry);
+    void enrichSessionsMetadata(
+      [coreSession],
+      [sessionToDashboard(coreSession)],
+      config,
+      registry,
+    ).catch(() => {});
 
-    // Enrich PR — serve cache immediately, refresh in background if stale
+    // Enrich PR — serve cache immediately, refresh in background if stale.
     if (coreSession.pr) {
       const project = resolveProject(coreSession, config.projects);
       const scm = getSCM(registry, project);
@@ -34,8 +42,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
           cacheOnly: true,
         });
         if (!cached) {
-          // Nothing cached yet — block once to populate, then future calls use cache
-          await enrichSessionPR(dashboardSession, scm, coreSession.pr);
+          void enrichSessionPR(sessionToDashboard(coreSession), scm, coreSession.pr).catch(
+            () => {},
+          );
         }
       }
     }

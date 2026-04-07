@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionDetail } from "../SessionDetail";
 import { makePR, makeSession } from "../../__tests__/helpers";
@@ -52,16 +52,19 @@ describe("SessionDetail mobile navbar", () => {
     );
 
     const nav = screen.getByRole("navigation", { name: /session navigation/i });
-    expect(nav).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/?project=my-app");
-    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=my-app");
-    expect(screen.getAllByRole("link", { name: "Orchestrator" }).at(-1)).toHaveAttribute(
-      "aria-current",
+    expect(nav).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Dashboard" }).getAttribute("href")).toBe(
+      "/?project=my-app",
+    );
+    expect(screen.getByRole("link", { name: "PRs" }).getAttribute("href")).toBe(
+      "/prs?project=my-app",
+    );
+    expect(screen.getAllByRole("link", { name: "Orchestrator" }).at(-1)?.getAttribute("aria-current")).toBe(
       "page",
     );
     expect(screen.getAllByText("Orchestrator session title")).toHaveLength(1);
-    expect(screen.queryByText("agents")).not.toBeInTheDocument();
-    expect(screen.queryByText("responding")).not.toBeInTheDocument();
+    expect(screen.queryByText("agents")).toBeNull();
+    expect(screen.queryByText("responding")).toBeNull();
   });
 
   it("routes PRs to the dedicated page from worker session pages", () => {
@@ -76,9 +79,10 @@ describe("SessionDetail mobile navbar", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=my-app");
-    expect(screen.getAllByRole("link", { name: "Orchestrator" }).at(-1)).toHaveAttribute(
-      "href",
+    expect(screen.getByRole("link", { name: "PRs" }).getAttribute("href")).toBe(
+      "/prs?project=my-app",
+    );
+    expect(screen.getAllByRole("link", { name: "Orchestrator" }).at(-1)?.getAttribute("href")).toBe(
       "/sessions/my-app-orchestrator",
     );
   });
@@ -97,16 +101,14 @@ describe("SessionDetail mobile navbar", () => {
 
     const nav = screen.getByRole("navigation", { name: /session navigation/i });
 
-    expect(within(nav).getByRole("link", { name: "Dashboard" })).toHaveAttribute(
-      "href",
+    expect(within(nav).getByRole("link", { name: "Dashboard" }).getAttribute("href")).toBe(
       "/?project=my-app",
     );
-    expect(within(nav).getByRole("link", { name: "PRs" })).toHaveAttribute(
-      "href",
+    expect(within(nav).getByRole("link", { name: "PRs" }).getAttribute("href")).toBe(
       "/prs?project=my-app",
     );
-    expect(within(nav).queryByRole("link", { name: "Orchestrator" })).not.toBeInTheDocument();
-    expect(within(nav).queryByRole("button", { name: "Orchestrator" })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: "Orchestrator" })).toBeNull();
+    expect(within(nav).queryByRole("button", { name: "Orchestrator" })).toBeNull();
   });
 
   it("keeps branch and PR chips in the compact mobile header", () => {
@@ -123,12 +125,12 @@ describe("SessionDetail mobile navbar", () => {
       />,
     );
 
-    expect(screen.getByText("Compact mobile header")).toBeInTheDocument();
-    expect(screen.getByText("feat/compact-header")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "PR #77" })).toHaveClass(
+    expect(screen.getByText("Compact mobile header")).toBeTruthy();
+    expect(screen.getByText("feat/compact-header")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "PR #77" }).className).toContain(
       "session-detail-link-pill--link",
     );
-    expect(screen.getByRole("link", { name: "feat/compact-header" })).toHaveClass(
+    expect(screen.getByRole("link", { name: "feat/compact-header" }).className).toContain(
       "session-detail-link-pill--link",
     );
   });
@@ -171,14 +173,14 @@ describe("SessionDetail mobile navbar", () => {
       />,
     );
 
-    expect(screen.getByText(/CI failing/i)).toBeInTheDocument();
-    expect(screen.getByText(/Changes requested/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 unresolved comments/i)).toBeInTheDocument();
-    expect(screen.getByText("Unresolved Comments")).toBeInTheDocument();
-    expect(screen.getByText("Fix null handling")).toBeInTheDocument();
-    expect(screen.getByText("build")).toBeInTheDocument();
-    expect(screen.getByText("lint")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ask Agent to Fix" })).toBeInTheDocument();
+    expect(screen.getByText(/CI failing/i)).toBeTruthy();
+    expect(screen.getByText(/Changes requested/i)).toBeTruthy();
+    expect(screen.getByText(/2 unresolved comments/i)).toBeTruthy();
+    expect(screen.getByText("Unresolved Comments")).toBeTruthy();
+    expect(screen.getByText("Fix null handling")).toBeTruthy();
+    expect(screen.getByText("build")).toBeTruthy();
+    expect(screen.getByText("lint")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ask Agent to Fix" })).toBeTruthy();
   });
 
   it("shows the merged badge styling for merged PR sessions", () => {
@@ -199,10 +201,28 @@ describe("SessionDetail mobile navbar", () => {
     );
 
     const mergedBadge = screen.getByText("Merged");
-    expect(mergedBadge).toBeInTheDocument();
-    expect(mergedBadge).toHaveStyle({
-      color: "var(--color-text-secondary)",
-      background: "var(--color-chip-bg)",
-    });
+    expect(mergedBadge).toBeTruthy();
+    expect(mergedBadge.getAttribute("style")).toContain("var(--color-text-secondary)");
+    expect(mergedBadge.getAttribute("style")).toContain("var(--color-chip-bg)");
+  });
+
+  it("defers terminal mount on mobile until requested", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-mobile-terminal",
+          projectId: "my-app",
+          summary: "Terminal lazy load",
+        })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    expect(screen.queryByTestId("direct-terminal")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open Live Terminal" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Live Terminal" }));
+
+    expect(screen.getByTestId("direct-terminal").textContent).toContain("worker-mobile-terminal");
   });
 });

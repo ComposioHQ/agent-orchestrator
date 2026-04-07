@@ -324,6 +324,8 @@ export function SessionDetail({
   const searchParams = useSearchParams();
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const startFullscreen = searchParams.get("fullscreen") === "true";
+  const [viewportReady, setViewportReady] = useState(false);
+  const [showTerminal, setShowTerminal] = useState(startFullscreen);
   const pr = session.pr;
   const activity = (session.activity && activityMeta[session.activity]) ?? {
     label: session.activity ?? "unknown",
@@ -353,6 +355,16 @@ export function SessionDetail({
     if (!projectOrchestratorId) return null;
     return `/sessions/${encodeURIComponent(projectOrchestratorId)}`;
   }, [isOrchestrator, projectOrchestratorId, session.id]);
+
+  useEffect(() => {
+    setViewportReady(true);
+  }, [isMobile]);
+
+  useEffect(() => {
+    if (startFullscreen || (viewportReady && !isMobile)) {
+      setShowTerminal(true);
+    }
+  }, [isMobile, startFullscreen, viewportReady]);
 
   return (
     <div className="session-detail-page min-h-screen bg-[var(--color-bg-base)]">
@@ -397,14 +409,30 @@ export function SessionDetail({
                 Live Terminal
               </span>
             </div>
-            <DirectTerminal
-              sessionId={session.id}
-              startFullscreen={startFullscreen}
-              variant={terminalVariant}
-              height={terminalHeight}
-              isOpenCodeSession={isOpenCodeSession}
-              reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-            />
+            {showTerminal ? (
+              <DirectTerminal
+                sessionId={session.id}
+                startFullscreen={startFullscreen}
+                variant={terminalVariant}
+                height={terminalHeight}
+                isOpenCodeSession={isOpenCodeSession}
+                reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+              />
+            ) : (
+              <div className="rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-elevated)] px-4 py-4">
+                <p className="text-[12px] leading-relaxed text-[var(--color-text-secondary)]">
+                  Terminal loading is deferred on mobile to keep the first page load fast over
+                  slower networks.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowTerminal(true)}
+                  className="mt-3 inline-flex items-center gap-2 rounded-md bg-[var(--color-accent)] px-3 py-2 text-[12px] font-semibold text-white transition-opacity hover:opacity-90"
+                >
+                  Open Live Terminal
+                </button>
+              </div>
+            )}
           </section>
 
           {pr ? (

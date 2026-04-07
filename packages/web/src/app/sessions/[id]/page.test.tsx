@@ -129,6 +129,7 @@ describe("SessionPage project polling", () => {
     await flushAsyncWork();
 
     expect(fetch).toHaveBeenCalledWith("/api/sessions/worker-1");
+    expect(fetch).not.toHaveBeenCalledWith("/api/projects");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2_000);
@@ -158,14 +159,6 @@ describe("SessionPage project polling", () => {
   it("routes 404 responses through notFound()", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/projects") {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ projects: [] }),
-        } as Response;
-      }
-
       if (url === "/api/sessions/worker-1") {
         return {
           ok: false,
@@ -183,20 +176,12 @@ describe("SessionPage project polling", () => {
     await flushAsyncWork();
 
     expect(notFoundSpy).toHaveBeenCalled();
-    expect(screen.queryByTestId("session-detail")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-detail")).toBeNull();
   });
 
   it("throws non-404 session fetch failures to the route error boundary", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/projects") {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ projects: [] }),
-        } as Response;
-      }
-
       if (url === "/api/sessions/worker-1") {
         return {
           ok: false,
@@ -218,6 +203,6 @@ describe("SessionPage project polling", () => {
 
     await flushAsyncWork();
 
-    expect(screen.getByTestId("route-error")).toHaveTextContent("HTTP 500");
+    expect(screen.getByTestId("route-error").textContent).toContain("HTTP 500");
   });
 });

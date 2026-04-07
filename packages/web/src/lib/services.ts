@@ -90,7 +90,7 @@ async function initServices(): Promise<Services> {
   // instead of being statically analyzed/bundled by Next.
   const nodeImport = (specifier: string): Promise<unknown> =>
     import(/* webpackIgnore: true */ specifier);
-  await registry.loadExternals(config, nodeImport);
+  await registry.loadFromConfig(config, nodeImport);
 
   const sessionManager = createSessionManager({ config, registry });
 
