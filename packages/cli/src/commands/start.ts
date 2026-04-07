@@ -1542,8 +1542,12 @@ export function registerStart(program: Command): void {
                 }
               } else if (choice === "restart") {
                 killRunningInstance(running, "SIGTERM");
-                if (!(await waitForExit(running.pid, 5000))) {
-                  console.log(chalk.yellow("  Process didn't exit cleanly, sending SIGKILL..."));
+                const allPids = [running.pid, ...(running.secondaryPids ?? [])];
+                const exitResults = await Promise.all(allPids.map((pid) => waitForExit(pid, 5000)));
+                if (!exitResults.every(Boolean)) {
+                  console.log(
+                    chalk.yellow("  Some processes didn't exit cleanly, sending SIGKILL..."),
+                  );
                   killRunningInstance(running, "SIGKILL");
                 }
                 await unregister();
