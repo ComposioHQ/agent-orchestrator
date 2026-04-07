@@ -25,6 +25,8 @@ const {
   mockSpawn,
   mockEnsureLifecycleWorker,
   mockStopLifecycleWorker,
+  mockFindPidByPort,
+  mockKillProcessTree,
 } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockExecSilent: vi.fn(),
@@ -43,6 +45,8 @@ const {
   mockSpawn: vi.fn(),
   mockEnsureLifecycleWorker: vi.fn(),
   mockStopLifecycleWorker: vi.fn(),
+  mockFindPidByPort: vi.fn(),
+  mockKillProcessTree: vi.fn(),
 }));
 
 const { mockDetectOpenClawInstallation } = vi.hoisted(() => ({
@@ -92,6 +96,8 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
       if (path) return actual.loadConfig(path);
       return mockConfigRef.current;
     },
+    findPidByPort: mockFindPidByPort,
+    killProcessTree: mockKillProcessTree,
   };
 });
 
@@ -244,6 +250,10 @@ beforeEach(() => {
   });
   mockStopLifecycleWorker.mockReset();
   mockStopLifecycleWorker.mockResolvedValue(true);
+  mockFindPidByPort.mockReset();
+  mockFindPidByPort.mockResolvedValue(null);
+  mockKillProcessTree.mockReset();
+  mockKillProcessTree.mockResolvedValue(undefined);
   mockDetectOpenClawInstallation.mockReset();
   mockDetectOpenClawInstallation.mockResolvedValue({
     state: "missing",
@@ -1077,6 +1087,28 @@ describe("stop command", () => {
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
       purgeOpenCode: true,
     });
+  });
+
+  it("calls killProcessTree with numeric PID when findPidByPort returns a PID", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.get.mockResolvedValue(null);
+    mockFindPidByPort.mockResolvedValue("1234");
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
+    expect(mockKillProcessTree).toHaveBeenCalledWith(1234);
+  });
+
+  it("does not call killProcessTree when findPidByPort returns null", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.get.mockResolvedValue(null);
+    mockFindPidByPort.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
+    expect(mockKillProcessTree).not.toHaveBeenCalled();
   });
 });
 
