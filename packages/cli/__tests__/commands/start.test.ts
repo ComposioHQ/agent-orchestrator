@@ -853,12 +853,12 @@ describe("start command — orchestrator session strategy display", () => {
     await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
 
     const output = getLoggedOutput();
-    expect(output).toContain("tmux attach -t tmux-session-1");
+    expect(output).toContain("http://localhost:3000/sessions/app-orchestrator");
     expect(output).not.toContain("reused existing session");
   });
 
   it.each(["delete", "ignore", "delete-new", "ignore-new", "kill-previous"] as const)(
-    "uses attach messaging when strategy is %s",
+    "uses session URL messaging when strategy is %s",
     async (orchestratorSessionStrategy) => {
       mockConfigRef.current = makeConfig({
         "my-app": makeProject({ orchestratorSessionStrategy }),
@@ -877,7 +877,7 @@ describe("start command — orchestrator session strategy display", () => {
       await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
 
       const output = getLoggedOutput();
-      expect(output).toContain("tmux attach -t tmux-session-1");
+      expect(output).toContain("http://localhost:3000/sessions/app-orchestrator");
       expect(output).not.toContain("reused existing session");
     },
   );
@@ -900,8 +900,8 @@ describe("start command — orchestrator session strategy display", () => {
 
     const output = getLoggedOutput();
     // When --no-dashboard is used, auto-selects the most recent orchestrator
-    // and shows the tmux attach command (not the dashboard selection message)
-    expect(output).toContain("tmux attach -t tmux-session-existing");
+    // and shows the session URL (not the dashboard selection message)
+    expect(output).toContain("http://localhost:3000/sessions/app-orchestrator");
     expect(output).not.toContain("existing sessions found — select one in the dashboard");
 
     // Should NOT spawn a new orchestrator when existing ones exist

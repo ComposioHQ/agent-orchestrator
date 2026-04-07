@@ -288,7 +288,7 @@ describe("spawn command", () => {
     });
   });
 
-  it("shows ao session attach command instead of raw tmux attach", async () => {
+  it("shows dashboard URL instead of raw tmux attach", async () => {
     const fakeSession: Session = {
       id: "app-7",
       projectId: "my-app",
@@ -309,10 +309,10 @@ describe("spawn command", () => {
 
     await program.parseAsync(["node", "test", "spawn"]);
 
-    const succeedMsg = String(mockSpinner.succeed.mock.calls[0]?.[0] ?? "");
-    expect(succeedMsg).toContain("ao session attach app-7");
-    expect(succeedMsg).not.toContain("tmux attach");
-    expect(succeedMsg).not.toContain("8474d6f29887-app-7");
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("http://localhost:3000/sessions/app-7");
+    expect(output).not.toContain("tmux attach");
+    expect(output).not.toContain("8474d6f29887-app-7");
   });
 
   it("passes --agent flag to sessionManager.spawn()", async () => {
@@ -509,7 +509,8 @@ describe("spawn command", () => {
 
     const succeedMsg = String(mockSpinner.succeed.mock.calls[0]?.[0] ?? "");
     expect(succeedMsg).toContain("https://github.com/org/repo/pull/123");
-    expect(succeedMsg).toContain("ao session attach app-1");
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("http://localhost:3000/sessions/app-1");
   });
 
   it("passes GitHub assignment flag through to claimPR", async () => {

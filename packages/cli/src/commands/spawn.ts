@@ -121,10 +121,11 @@ async function spawnSession(
 
     const issueLabel = issueId ? ` for issue #${issueId}` : "";
     const claimLabel = claimedPrUrl ? ` (claimed ${claimedPrUrl})` : "";
+    const port = config.port ?? 3000;
     spinner.succeed(
-      `Session ${chalk.green(session.id)} spawned${issueLabel}${claimLabel}. ` +
-        `View in the dashboard (if running) or attach with: ${chalk.cyan(`ao session attach ${session.id}`)}`,
+      `Session ${chalk.green(session.id)} spawned${issueLabel}${claimLabel}`,
     );
+    console.log(`  View:     ${chalk.dim(`http://localhost:${port}/sessions/${session.id}`)}`);
 
     // Warn if prompt delivery failed (for post-launch agents like Claude Code)
     const promptDelivered = session.metadata?.promptDelivered;

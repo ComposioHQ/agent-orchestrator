@@ -304,8 +304,8 @@ export function registerSession(program: Command): void {
         if (restored.branch) {
           console.log(chalk.dim(`  Branch:   ${restored.branch}`));
         }
-        const tmuxTarget = restored.runtimeHandle?.id ?? sessionName;
-        console.log(chalk.dim(`  Attach:   tmux attach -t ${tmuxTarget}`));
+        const port = config.port ?? 3000;
+        console.log(chalk.dim(`  View:     http://localhost:${port}/sessions/${sessionName}`));
       } catch (err) {
         if (err instanceof SessionNotRestorableError) {
           console.error(chalk.red(`Cannot restore: ${err.reason}`));
