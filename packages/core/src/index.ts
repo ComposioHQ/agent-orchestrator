@@ -181,7 +181,6 @@ export {
   killProcessTree,
   findPidByPort,
   getEnvDefaults,
-  _resetShellCache,
 } from "./platform.js";
 
 // Config generator — auto-generate config from repo URL
