@@ -33,14 +33,18 @@ const originalPlatform = process.platform;
 type ExecCb = (err: Error | null, result: { stdout: string; stderr: string }) => void;
 
 function resolveExecFile(stdout: string): void {
-  mockExecFile.mockImplementationOnce((_cmd, _args, callback: unknown) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  mockExecFile.mockImplementationOnce((_cmd: any, _args: any, callback: unknown) => {
     (callback as ExecCb)(null, { stdout, stderr: "" });
+    return {} as ReturnType<typeof childProcess.execFile>;
   });
 }
 
 function rejectExecFile(err: Error): void {
-  mockExecFile.mockImplementationOnce((_cmd, _args, callback: unknown) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  mockExecFile.mockImplementationOnce((_cmd: any, _args: any, callback: unknown) => {
     (callback as ExecCb)(err, { stdout: "", stderr: "" });
+    return {} as ReturnType<typeof childProcess.execFile>;
   });
 }
 
@@ -75,7 +79,7 @@ describe("resolveWindowsShell", () => {
     mockExecFileSync.mockImplementationOnce(() => {
       throw new Error("pwsh not found");
     });
-    mockExecFileSync.mockImplementationOnce(() => undefined);
+    mockExecFileSync.mockImplementationOnce(() => "");
 
     const mod = await import("../platform.js");
     mod._resetShellCache();
