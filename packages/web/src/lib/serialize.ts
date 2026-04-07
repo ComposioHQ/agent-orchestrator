@@ -401,6 +401,12 @@ function prepareSessionMetadataEnrichment(
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
     if (!tracker) return;
     enrichSessionIssue(dashboardSessions[i], tracker, project);
+    // The fast path must still hydrate cached titles so detail pages can
+    // benefit from background warming done by earlier requests.
+    const cachedTitle = issueTitleCache.get(dashboardSessions[i].issueUrl);
+    if (cachedTitle) {
+      dashboardSessions[i].issueTitle = cachedTitle;
+    }
   });
 
   // Agent summaries (local disk I/O — reads agent JSONL)

@@ -8,6 +8,8 @@ import {
   type OrchestratorConfig,
   type PluginRegistry,
   type SCM,
+  type Tracker,
+  type ProjectConfig,
 } from "@composio/ao-core";
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
@@ -146,9 +148,28 @@ const mockSCM: SCM = {
   })),
 };
 
+const mockTracker: Pick<Tracker, "name" | "issueLabel" | "getIssue"> = {
+  name: "github",
+  issueLabel: (issueUrl: string) => {
+    const parts = issueUrl.split("/");
+    return parts[parts.length - 1] || issueUrl;
+  },
+  getIssue: vi.fn(async (identifier: string) => ({
+    id: identifier,
+    title: `Cached title for ${identifier}`,
+    description: null,
+    url: `https://github.com/acme/my-app/issues/${identifier}`,
+    state: "open",
+    labels: [],
+  })),
+};
+
 const mockRegistry: PluginRegistry = {
   register: vi.fn(),
-  get: vi.fn(() => mockSCM) as PluginRegistry["get"],
+  get: vi.fn((slot: string) => {
+    if (slot === "tracker") return mockTracker;
+    return mockSCM;
+  }) as PluginRegistry["get"],
   list: vi.fn(() => []),
   loadBuiltins: vi.fn(async () => {}),
   loadExternals: vi.fn(async () => {}),
@@ -397,6 +418,41 @@ describe("API Routes", () => {
       enrichFastSpy.mockRestore();
       enrichFullSpy.mockRestore();
       enrichPRSpy.mockRestore();
+    });
+
+    it("hydrates issueTitle from cache during the fast path", async () => {
+      const coreSession = makeSession({
+        id: "backend-cached-issue",
+        issueId: "https://github.com/acme/my-app/issues/1270",
+        summary: null,
+      });
+      (mockSessionManager.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce(coreSession);
+      const previousTracker = mockConfig.projects["my-app"]?.tracker;
+      mockConfig.projects["my-app"] = {
+        ...mockConfig.projects["my-app"],
+        tracker: { plugin: "github" },
+      };
+
+      const warmed = serialize.sessionToDashboard(coreSession);
+      serialize.enrichSessionIssue(warmed, mockTracker as Tracker, mockConfig.projects["my-app"] as ProjectConfig);
+      await serialize.enrichSessionIssueTitle(
+        warmed,
+        mockTracker as Tracker,
+        mockConfig.projects["my-app"] as ProjectConfig,
+      );
+
+      const response = await sessionGET(
+        makeRequest("http://localhost:3000/api/sessions/backend-cached-issue"),
+        { params: Promise.resolve({ id: "backend-cached-issue" }) },
+      );
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.issueTitle).toBe("Cached title for 1270");
+      mockConfig.projects["my-app"] = {
+        ...mockConfig.projects["my-app"],
+        tracker: previousTracker,
+      };
     });
   });
 
