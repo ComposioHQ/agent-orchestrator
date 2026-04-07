@@ -6,7 +6,6 @@
  */
 
 import {
-  isOrchestratorSession,
   type Session,
   type Agent,
   type SCM,
@@ -16,6 +15,7 @@ import {
   type OrchestratorConfig,
   type PluginRegistry,
 } from "@composio/ao-core";
+import { isOrchestratorSession, isTerminalSession } from "@composio/ao-core/types";
 import type {
   DashboardSession,
   DashboardPR,
@@ -77,12 +77,13 @@ export function listDashboardOrchestrators(
     ([projectId, p]) => p.sessionPrefix ?? projectId,
   );
   return sessions
-    .filter((session) =>
-      isOrchestratorSession(
-        session,
-        projects[session.projectId]?.sessionPrefix ?? session.projectId,
-        allSessionPrefixes,
-      ),
+    .filter(
+      (session) =>
+        isOrchestratorSession(
+          session,
+          projects[session.projectId]?.sessionPrefix ?? session.projectId,
+          allSessionPrefixes,
+        ) && !isTerminalSession(session),
     )
     .map((session) => ({
       id: session.id,

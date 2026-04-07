@@ -22,6 +22,7 @@ import {
   enrichSessionsMetadata,
   enrichSessionsMetadataFast,
   computeStats,
+  listDashboardOrchestrators,
 } from "../serialize";
 import { prCache, prCacheKey } from "../cache";
 import type { DashboardSession } from "../types";
@@ -1129,5 +1130,144 @@ describe("basicPRToDashboard defaults", () => {
 
     expect(dashboard.pr?.enriched).toBe(false);
     expect(dashboard.pr?.mergeability.blockers).toEqual([]);
+  });
+});
+
+describe("listDashboardOrchestrators", () => {
+  const projects: Record<string, ProjectConfig> = {
+    myproject: {
+      name: "My Project",
+      sessionPrefix: "myproject",
+      repo: { owner: "test", name: "repo" },
+      branch: "main",
+    },
+  };
+
+  it("should include active orchestrator sessions", () => {
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "myproject-orchestrator",
+        projectId: "myproject",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("myproject-orchestrator");
+    expect(result[0].projectName).toBe("My Project");
+  });
+
+  it("should exclude killed orchestrator sessions", () => {
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "myproject-orchestrator",
+        projectId: "myproject",
+        status: "killed",
+        activity: null,
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(0);
+  });
+
+  it("should exclude terminated orchestrator sessions", () => {
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "myproject-orchestrator",
+        projectId: "myproject",
+        status: "terminated",
+        activity: null,
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(0);
+  });
+
+  it("should exclude orchestrator sessions with exited activity", () => {
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "myproject-orchestrator",
+        projectId: "myproject",
+        status: "working",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(0);
+  });
+
+  it("should exclude done orchestrator sessions", () => {
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "myproject-orchestrator",
+        projectId: "myproject",
+        status: "done",
+        activity: null,
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(0);
+  });
+
+  it("should only include live orchestrators when mixed with dead ones", () => {
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "myproject-orchestrator-1",
+        projectId: "myproject",
+        status: "killed",
+        activity: null,
+        metadata: { role: "orchestrator" },
+      }),
+      createCoreSession({
+        id: "myproject-orchestrator-2",
+        projectId: "myproject",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+      }),
+      createCoreSession({
+        id: "myproject-orchestrator-3",
+        projectId: "myproject",
+        status: "terminated",
+        activity: null,
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("myproject-orchestrator-2");
+  });
+
+  it("should not include regular worker sessions", () => {
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "myproject-1",
+        projectId: "myproject",
+        status: "working",
+        activity: "active",
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(0);
   });
 });
