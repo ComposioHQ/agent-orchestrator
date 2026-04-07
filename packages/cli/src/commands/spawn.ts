@@ -13,6 +13,7 @@ import {
   type DecomposerConfig,
   DEFAULT_DECOMPOSER_CONFIG,
 } from "@composio/ao-core";
+import { DEFAULT_PORT } from "../lib/constants.js";
 import { exec } from "../lib/shell.js";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -121,7 +122,7 @@ async function spawnSession(
 
     const issueLabel = issueId ? ` for issue #${issueId}` : "";
     const claimLabel = claimedPrUrl ? ` (claimed ${claimedPrUrl})` : "";
-    const port = config.port ?? 3000;
+    const port = config.port ?? DEFAULT_PORT;
     spinner.succeed(
       `Session ${chalk.green(session.id)} spawned${issueLabel}${claimLabel}`,
     );

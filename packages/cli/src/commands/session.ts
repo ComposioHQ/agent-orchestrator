@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig, SessionNotRestorableError, WorkspaceMissingError } from "@composio/ao-core";
+import { DEFAULT_PORT } from "../lib/constants.js";
 import { git, getTmuxActivity, tmux } from "../lib/shell.js";
 import { formatAge } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -304,7 +305,7 @@ export function registerSession(program: Command): void {
         if (restored.branch) {
           console.log(chalk.dim(`  Branch:   ${restored.branch}`));
         }
-        const port = config.port ?? 3000;
+        const port = config.port ?? DEFAULT_PORT;
         console.log(chalk.dim(`  View:     http://localhost:${port}/sessions/${sessionName}`));
       } catch (err) {
         if (err instanceof SessionNotRestorableError) {

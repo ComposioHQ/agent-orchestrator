@@ -66,7 +66,7 @@ import { detectOpenClawInstallation } from "../lib/openclaw-probe.js";
 import { applyOpenClawCredentials } from "../lib/credential-resolver.js";
 import { findProjectForDirectory } from "../lib/project-resolution.js";
 
-const DEFAULT_PORT = 3000;
+import { DEFAULT_PORT } from "../lib/constants.js";
 const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
 // =============================================================================
@@ -1444,7 +1444,7 @@ export function registerStop(program: Command): void {
           const config = loadConfig();
           const { projectId: _projectId, project } = await resolveProject(config, projectArg, "stop");
           const sessionId = `${project.sessionPrefix}-orchestrator`;
-          const port = config.port ?? 3000;
+          const port = config.port ?? DEFAULT_PORT;
 
           console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(project.name)}\n`));
 

@@ -3,6 +3,7 @@ import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
 import { exec, getTmuxSessions } from "../lib/shell.js";
 import { matchesPrefix, stripHashPrefix } from "../lib/session-utils.js";
+import { DEFAULT_PORT } from "../lib/constants.js";
 
 async function openInTerminal(sessionName: string, newWindow?: boolean): Promise<boolean> {
   try {
@@ -60,7 +61,7 @@ export function registerOpen(program: Command): void {
         ),
       );
 
-      const port = config.port ?? 3000;
+      const port = config.port ?? DEFAULT_PORT;
       for (const session of sessionsToOpen.sort()) {
         const opened = await openInTerminal(session, opts.newWindow);
         if (opened) {
