@@ -11,7 +11,7 @@ import { createServer, type Server } from "node:http";
 import { spawn } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { homedir, userInfo } from "node:os";
-import { createCorrelationId } from "@composio/ao-core";
+import { createCorrelationId, DIRECT_TERMINAL_CONTROL_PREFIX } from "@composio/ao-core";
 
 // node-pty is an optionalDependency — it requires native compilation and may
 // not be available on all platforms. Load it dynamically so the rest of the
@@ -29,8 +29,6 @@ try {
 }
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
-
-const DIRECT_TERMINAL_CONTROL_PREFIX = "\0__AO_TERM__";
 
 interface TerminalSession {
   viewerId: string;
@@ -126,8 +124,8 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       return { cols: 80, rows: 24 };
     }
 
-    let cols = 80;
-    let rows = 24;
+    let cols = 0;
+    let rows = 0;
     for (const viewer of viewers.values()) {
       cols = Math.max(cols, viewer.cols);
       rows = Math.max(rows, viewer.rows);
@@ -301,7 +299,15 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     viewers.set(viewerId, session);
     sessionViewers.set(sessionId, viewers);
     syncRepresentativeSession(sessionId);
-    applySharedResize(sessionId);
+    // Only broadcast sync_size when joining an existing shared session.
+    // For the first viewer there is nobody to sync with, and the client
+    // reports its actual viewport immediately via the initial "resize"
+    // message sent in onopen — no sync_size is needed here and sending
+    // the fallback 80×24 would cause the terminal to briefly overflow the
+    // container before the correct size arrives.
+    if (viewers.size > 1) {
+      applySharedResize(sessionId);
+    }
 
     metrics.totalConnections += 1;
     metrics.activeConnections = getActiveViewerCount();

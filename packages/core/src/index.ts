@@ -93,6 +93,7 @@ export {
   normalizeRetryConfig,
   readLastJsonlEntry,
   resolveProjectIdForSessionId,
+  DIRECT_TERMINAL_CONTROL_PREFIX,
 } from "./utils.js";
 export {
   getWebhookHeader,
