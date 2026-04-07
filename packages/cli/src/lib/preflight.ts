@@ -129,7 +129,15 @@ async function checkRuntime(runtime: string, runtimeConfig?: RuntimeConfig): Pro
   }
   if (runtime === "docker") {
     await checkDocker(runtimeConfig);
+    return;
   }
+  if (runtime === "process") {
+    return;
+  }
+
+  throw new Error(
+    `Unknown runtime "${runtime}". Configure a supported runtime plugin (tmux, docker, process) or check for typos in your config/flags.`,
+  );
 }
 
 /**

@@ -171,6 +171,19 @@ describe("preflight.checkDocker", () => {
   });
 });
 
+describe("preflight.checkRuntime", () => {
+  it("passes through process runtime without extra checks", async () => {
+    await expect(preflight.checkRuntime("process")).resolves.toBeUndefined();
+    expect(mockExec).not.toHaveBeenCalled();
+  });
+
+  it("throws for unknown runtime names", async () => {
+    await expect(preflight.checkRuntime("dokcer")).rejects.toThrow(
+      'Unknown runtime "dokcer"',
+    );
+  });
+});
+
 describe("preflight.checkGhAuth", () => {
   it("passes when gh is installed and authenticated", async () => {
     mockExec.mockResolvedValue({ stdout: "ok", stderr: "" });
