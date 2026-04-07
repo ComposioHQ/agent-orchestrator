@@ -1273,6 +1273,22 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       states.set(session.id, newStatus);
     }
 
+    // Pin first quality summary for title stability
+    if (
+      session.agentInfo?.summary &&
+      !session.agentInfo.summaryIsFallback &&
+      !session.metadata["pinnedSummary"]
+    ) {
+      const trimmed = session.agentInfo.summary.replace(/[\n\r]/g, " ").trim();
+      if (trimmed.length >= 5) {
+        try {
+          updateSessionMetadata(session, { pinnedSummary: trimmed });
+        } catch {
+          // Non-critical: title just won't be pinned this cycle
+        }
+      }
+    }
+
     await Promise.allSettled([
       maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),

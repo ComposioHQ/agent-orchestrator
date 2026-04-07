@@ -184,8 +184,8 @@ describe("PRStatus", () => {
 // ── SessionCard ──────────────────────────────────────────────────────
 
 describe("SessionCard", () => {
-  it("renders session id and summary", () => {
-    const session = makeSession({ id: "backend-1", summary: "Fixing auth" });
+  it("renders summary when no PR, issue title, or branch title exists", () => {
+    const session = makeSession({ id: "backend-1", summary: "Fixing auth", branch: null });
     render(<SessionCard session={session} />);
     expect(screen.getByText("backend-1")).toBeInTheDocument();
     expect(screen.getByText("Fixing auth")).toBeInTheDocument();

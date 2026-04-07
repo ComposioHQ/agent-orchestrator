@@ -1306,6 +1306,7 @@ export interface SessionMetadata {
   terminalWsPort?: number;
   directTerminalWsPort?: number;
   opencodeSessionId?: string;
+  pinnedSummary?: string; // First quality summary, pinned for display stability
 }
 
 // =============================================================================
