@@ -420,6 +420,22 @@
   padding-left: 24px;
 }
 
+.workspace-markdown-preview ul {
+  list-style: disc outside;
+}
+
+.workspace-markdown-preview ol {
+  list-style: decimal outside;
+}
+
+.workspace-markdown-preview ul ul {
+  list-style: circle outside;
+}
+
+.workspace-markdown-preview ul ul ul {
+  list-style: square outside;
+}
+
 .workspace-markdown-preview li {
   margin: 4px 0;
   color: #d4d4d4;
