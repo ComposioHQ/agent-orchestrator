@@ -35,6 +35,13 @@ interface TerminalHealthMetrics {
   lastErrorReason?: string;
 }
 
+interface TerminalServerError {
+  code: "port_exhausted" | "terminal_start_timeout" | "terminal_unavailable";
+  statusCode: number;
+  message: string;
+  logMessage: string;
+}
+
 const instances = new Map<string, TtydInstance>();
 const metrics: TerminalHealthMetrics = {
   activeInstances: 0,
@@ -319,13 +326,63 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
 }
 
 function asTerminalAuthError(error: unknown): TerminalAuthError {
-  return error instanceof TerminalAuthError
-    ? error
-    : new TerminalAuthError(
-        error instanceof Error ? error.message : "Terminal authorization failed",
-        503,
-        "config_unavailable",
-      );
+  if (error instanceof TerminalAuthError) {
+    return error;
+  }
+
+  return new TerminalAuthError(
+    "Terminal authorization failed",
+    503,
+    "config_unavailable",
+  );
+}
+
+function classifyTerminalServerError(error: unknown): TerminalServerError {
+  const logMessage = error instanceof Error ? error.message : String(error);
+
+  if (logMessage.startsWith("Port exhaustion:")) {
+    return {
+      code: "port_exhausted",
+      statusCode: 503,
+      message: "Terminal capacity exhausted",
+      logMessage,
+    };
+  }
+
+  if (logMessage.includes("did not become ready within")) {
+    return {
+      code: "terminal_start_timeout",
+      statusCode: 503,
+      message: "Terminal startup timed out",
+      logMessage,
+    };
+  }
+
+  return {
+    code: "terminal_unavailable",
+    statusCode: 503,
+    message: "Failed to start terminal",
+    logMessage,
+  };
+}
+
+function handleTerminalStartupError(
+  sessionId: string,
+  error: unknown,
+): TerminalServerError {
+  const terminalError = classifyTerminalServerError(error);
+  console.error(`[Terminal] Failed to prepare terminal for ${sessionId}:`, terminalError.logMessage);
+  metrics.totalErrors += 1;
+  metrics.lastErrorAt = new Date().toISOString();
+  metrics.lastErrorReason = terminalError.logMessage;
+  recordWebsocketMetric({
+    metric: "websocket_error",
+    outcome: "failure",
+    sessionId,
+    reason: terminalError.code,
+    data: { message: terminalError.logMessage },
+  });
+  return terminalError;
 }
 
 function proxyHttpRequest(
@@ -474,9 +531,14 @@ const server = createServer(async (req, res) => {
         headers: req.headers,
         remoteAddress: req.socket.remoteAddress,
       });
-      const instance = getOrSpawnTtyd(authorized.sessionId, authorized.tmuxSessionName);
-      await waitForTtyd(instance.port, authorized.sessionId);
-      proxyHttpRequest(req, res, instance.port, `${url.pathname}${url.search}`, sessionId);
+      try {
+        const instance = getOrSpawnTtyd(authorized.sessionId, authorized.tmuxSessionName);
+        await waitForTtyd(instance.port, authorized.sessionId);
+        proxyHttpRequest(req, res, instance.port, `${url.pathname}${url.search}`, sessionId);
+      } catch (error) {
+        const terminalError = handleTerminalStartupError(sessionId, error);
+        writeJsonError(res, terminalError.statusCode, terminalError.message);
+      }
     } catch (error) {
       const authError = asTerminalAuthError(error);
       recordWebsocketMetric({
@@ -485,12 +547,7 @@ const server = createServer(async (req, res) => {
         sessionId,
         reason: authError.code,
       });
-      writeJsonError(
-        res,
-        authError.statusCode,
-        authError.message,
-        authError.retryAfterSeconds,
-      );
+      writeJsonError(res, authError.statusCode, authError.message, authError.retryAfterSeconds);
     }
     return;
   }
@@ -528,9 +585,14 @@ server.on("upgrade", (req, socket, head) => {
         headers: req.headers,
         remoteAddress: req.socket.remoteAddress,
       });
-      const instance = getOrSpawnTtyd(authorized.sessionId, authorized.tmuxSessionName);
-      await waitForTtyd(instance.port, authorized.sessionId);
-      proxyUpgradeRequest(req, socket, head, instance.port, sessionId);
+      try {
+        const instance = getOrSpawnTtyd(authorized.sessionId, authorized.tmuxSessionName);
+        await waitForTtyd(instance.port, authorized.sessionId);
+        proxyUpgradeRequest(req, socket, head, instance.port, sessionId);
+      } catch (error) {
+        const terminalError = handleTerminalStartupError(sessionId, error);
+        writeUpgradeError(socket, terminalError.statusCode, terminalError.message);
+      }
     } catch (error) {
       const authError = asTerminalAuthError(error);
       recordWebsocketMetric({
@@ -539,12 +601,7 @@ server.on("upgrade", (req, socket, head) => {
         sessionId,
         reason: authError.code,
       });
-      writeUpgradeError(
-        socket,
-        authError.statusCode,
-        authError.message,
-        authError.retryAfterSeconds,
-      );
+      writeUpgradeError(socket, authError.statusCode, authError.message, authError.retryAfterSeconds);
     }
   })();
 });

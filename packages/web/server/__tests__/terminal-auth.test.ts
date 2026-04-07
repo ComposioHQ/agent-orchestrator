@@ -1,0 +1,106 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getSessionsDir, writeMetadata } from "@composio/ao-core";
+import {
+  issueTerminalAccess,
+  resetTerminalAuthStateForTests,
+  verifyTerminalAccess,
+} from "../terminal-auth.js";
+
+const TEST_ACTOR = "terminal-auth-tester";
+const TEST_SESSION = "ao-321";
+
+let tempRoot: string;
+let projectDir: string;
+let sessionsDir: string;
+let previousConfigPath: string | undefined;
+
+function writeConfig(configPath: string, rootProjectDir: string): void {
+  writeFileSync(
+    configPath,
+    `port: 3000
+defaults:
+  runtime: tmux
+  agent: claude-code
+  workspace: worktree
+  notifiers: []
+projects:
+  terminal-fixtures:
+    name: Terminal Fixtures
+    repo: acme/terminal-fixtures
+    path: ${JSON.stringify(rootProjectDir)}
+    defaultBranch: main
+    sessionPrefix: ao
+    tracker:
+      plugin: github
+    scm:
+      plugin: github
+`,
+    "utf-8",
+  );
+}
+
+function ensureSessionMetadata(sessionId: string): void {
+  writeMetadata(sessionsDir, sessionId, {
+    worktree: projectDir,
+    branch: `session/${sessionId}`,
+    status: "working",
+    project: "terminal-fixtures",
+    ownerId: TEST_ACTOR,
+    ownerSource: "test",
+    tmuxName: `${sessionId}-tmux`,
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+}
+
+describe("terminal auth", () => {
+  beforeAll(() => {
+    tempRoot = mkdtempSync(join(tmpdir(), "ao-terminal-auth-unit-"));
+    projectDir = join(tempRoot, "terminal-fixtures");
+    mkdirSync(projectDir, { recursive: true });
+
+    const configPath = join(tempRoot, "agent-orchestrator.yaml");
+    writeConfig(configPath, projectDir);
+
+    previousConfigPath = process.env.AO_CONFIG_PATH;
+    process.env.AO_CONFIG_PATH = configPath;
+    sessionsDir = getSessionsDir(configPath, projectDir);
+  });
+
+  beforeEach(() => {
+    resetTerminalAuthStateForTests();
+  });
+
+  afterAll(() => {
+    resetTerminalAuthStateForTests();
+    if (previousConfigPath === undefined) {
+      Reflect.deleteProperty(process.env, "AO_CONFIG_PATH");
+    } else {
+      process.env.AO_CONFIG_PATH = previousConfigPath;
+    }
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it("ignores malformed unrelated cookies when the terminal cookie is valid", () => {
+    ensureSessionMetadata(TEST_SESSION);
+
+    const grant = issueTerminalAccess({
+      sessionId: TEST_SESSION,
+      headers: { "x-ao-actor-id": TEST_ACTOR },
+    });
+
+    const authorized = verifyTerminalAccess({
+      sessionId: TEST_SESSION,
+      headers: {
+        "x-ao-actor-id": TEST_ACTOR,
+        cookie: `broken=%ZZ; ${grant.cookieName}=${encodeURIComponent(grant.token)}`,
+      },
+    });
+
+    expect(authorized.sessionId).toBe(TEST_SESSION);
+    expect(authorized.tmuxSessionName).toBe(`${TEST_SESSION}-tmux`);
+    expect(authorized.actorId).toBe(TEST_ACTOR);
+  });
+});

@@ -2,7 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist-server",
-    "rootDir": ".",
+    "rootDir": "server",
     "module": "Node16",
     "moduleResolution": "Node16",
     "declaration": false,
@@ -10,6 +10,6 @@
     "sourceMap": false,
     "verbatimModuleSyntax": false
   },
-  "include": ["server", "src/lib/server"],
+  "include": ["server"],
   "exclude": ["server/__tests__"]
 }
