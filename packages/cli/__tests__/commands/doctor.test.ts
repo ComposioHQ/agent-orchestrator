@@ -32,6 +32,13 @@ vi.mock("@composio/ao-core", () => ({
   findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
   getObservabilityBaseDir: () => "/tmp/.agent-orchestrator/observability",
   loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
+  resolveNotifierTarget: (config: { notifiers?: Record<string, { plugin?: string }> }, reference: string) => {
+    const configured = config.notifiers?.[reference];
+    return {
+      reference,
+      pluginName: configured?.plugin ?? reference,
+    };
+  },
 }));
 
 vi.mock("../../src/lib/openclaw-probe.js", () => ({

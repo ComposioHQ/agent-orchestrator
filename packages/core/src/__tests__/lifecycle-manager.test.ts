@@ -1328,6 +1328,93 @@ describe("reactions", () => {
       expect.objectContaining({ type: "merge.completed" }),
     );
   });
+
+  it("resolves notifier aliases from notificationRouting before dispatch", async () => {
+    const notifier = createMockNotifier();
+    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+
+    const configWithAliasRouting: OrchestratorConfig = {
+      ...config,
+      notifiers: {
+        alerts: {
+          plugin: "desktop",
+        },
+      },
+      notificationRouting: {
+        ...config.notificationRouting,
+        action: ["alerts"],
+      },
+    };
+
+    const registry: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return plugins.runtime;
+        if (slot === "agent") return plugins.agent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return notifier;
+        return null;
+      }),
+    };
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "approved", pr: makePR() }),
+      registry,
+      configOverride: configWithAliasRouting,
+    });
+
+    await lm.check("app-1");
+
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "merge.completed" }),
+    );
+  });
+
+  it("resolves notifier aliases from defaults.notifiers when routing falls back", async () => {
+    const notifier = createMockNotifier();
+    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+
+    const configWithAliasDefaults: OrchestratorConfig = {
+      ...config,
+      defaults: {
+        ...config.defaults,
+        notifiers: ["alerts"],
+      },
+      notifiers: {
+        alerts: {
+          plugin: "desktop",
+        },
+      },
+      notificationRouting: {
+        urgent: ["desktop"],
+        warning: ["desktop"],
+        info: ["desktop"],
+      } as OrchestratorConfig["notificationRouting"],
+    };
+
+    const registry: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return plugins.runtime;
+        if (slot === "agent") return plugins.agent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return notifier;
+        return null;
+      }),
+    };
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "approved", pr: makePR() }),
+      registry,
+      configOverride: configWithAliasDefaults,
+    });
+
+    await lm.check("app-1");
+
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "merge.completed" }),
+    );
+  });
 });
 
 describe("pollAll terminal status accounting", () => {

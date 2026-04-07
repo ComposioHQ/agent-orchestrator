@@ -126,6 +126,7 @@ export {
   createProjectObserver,
   readObservabilitySummary,
 } from "./observability.js";
+export { resolveNotifierTarget } from "./notifier-resolution.js";
 export type {
   ObservabilityMetricName,
   ObservabilityHealthStatus,
