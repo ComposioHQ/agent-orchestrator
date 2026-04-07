@@ -102,7 +102,6 @@ async function spawnSession(
       agent,
     });
 
-    let branchStr = session.branch ?? "";
     let claimedPrUrl: string | null = null;
 
     if (claimOptions?.claimPr) {
@@ -111,7 +110,6 @@ async function spawnSession(
         const claimResult = await sm.claimPR(session.id, claimOptions.claimPr, {
           assignOnGithub: claimOptions.assignOnGithub,
         });
-        branchStr = claimResult.pr.branch;
         claimedPrUrl = claimResult.pr.url;
       } catch (err) {
         throw new Error(
@@ -127,14 +125,16 @@ async function spawnSession(
         : `Session ${chalk.green(session.id)} created`,
     );
 
-    console.log(`  Worktree: ${chalk.dim(session.workspacePath ?? "-")}`);
-    if (branchStr) console.log(`  Branch:   ${chalk.dim(branchStr)}`);
-    if (claimedPrUrl) console.log(`  PR:       ${chalk.dim(claimedPrUrl)}`);
+    const issueLabel = issueId ? ` for issue #${issueId}` : "";
+    const claimLabel = claimedPrUrl ? ` (claimed ${claimedPrUrl})` : "";
+    console.log(
+      `Session ${session.id} spawned${issueLabel}${claimLabel}. ` +
+        `View it in the dashboard or attach with: ${chalk.cyan(`ao session attach ${session.id}`)}`,
+    );
 
     // Warn if prompt delivery failed (for post-launch agents like Claude Code)
-    const promptDelivered = session.metadata?.promptDelivered === "true";
-    if (!promptDelivered) {
-      console.log();
+    const promptDelivered = session.metadata?.promptDelivered;
+    if (promptDelivered === "false") {
       console.warn(
         chalk.yellow(
           `  ⚠ Prompt delivery failed — agent may be idle.\n` +
@@ -143,14 +143,10 @@ async function spawnSession(
       );
     }
 
-    // Show the tmux name for attaching (stored in metadata or runtimeHandle)
-    const tmuxTarget = session.runtimeHandle?.id ?? session.id;
-    console.log(`  Attach:   ${chalk.dim(`tmux attach -t ${tmuxTarget}`)}`);
-    console.log();
-
     // Open terminal tab if requested
     if (openTab) {
       try {
+        const tmuxTarget = session.runtimeHandle?.id ?? session.id;
         await exec("open-iterm-tab", [tmuxTarget]);
       } catch {
         // Terminal plugin not available
