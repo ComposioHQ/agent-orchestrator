@@ -35,8 +35,9 @@ import {
   type ProjectConfig as _ProjectConfig,
   type PREnrichmentData,
   type CICheck,
+  type RecoveredSession,
 } from "./types.js";
-import { updateMetadata } from "./metadata.js";
+import { updateMetadata, listMetadata, readMetadataRaw, deleteMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveNotifierTarget } from "./notifier-resolution.js";
@@ -1423,6 +1424,150 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /**
+   * Scan active sessions for dead processes and recover them.
+   * Called once on lifecycle-worker startup (before polling begins).
+   *
+   * For each active (non-terminal) session:
+   * 1. Check if the agent process is still running
+   * 2. If dead: transition to "terminated", archive the metadata
+   * 3. If the session had an issueId and the project allows respawn:
+   *    call spawn() to trigger the resume chain from PR #900
+   */
+  async function recoverDeadSessions(): Promise<RecoveredSession[]> {
+    const correlationId = createCorrelationId("lifecycle-recovery");
+    const results: RecoveredSession[] = [];
+
+    // Iterate all projects in scope
+    const projectEntries = scopedProjectId
+      ? [[scopedProjectId, config.projects[scopedProjectId]] as const]
+      : (Object.entries(config.projects) as [string, _ProjectConfig][]);
+
+    for (const [projectId, project] of projectEntries) {
+      if (!project) continue;
+      const sessionsDir = getSessionsDir(config.configPath, project.path);
+
+      for (const sessionId of listMetadata(sessionsDir)) {
+        const raw = readMetadataRaw(sessionsDir, sessionId);
+        if (!raw) continue;
+
+        const status = raw["status"] as SessionStatus | undefined;
+        // Only check non-terminal sessions (working, spawning, pr_open, etc.)
+        if (status && TERMINAL_STATUSES.has(status)) continue;
+
+        // Skip orchestrator sessions — they manage themselves
+        if (raw["role"] === "orchestrator" || sessionId.endsWith("-orchestrator")) continue;
+
+        // Resolve agent plugin for isProcessRunning
+        const agentName = raw["agent"] ?? config.defaults.agent;
+        const agent = registry.get<Agent>("agent", agentName);
+        if (!agent) continue;
+
+        // Check if runtime is alive first
+        let processAlive = false;
+        const runtimeHandleStr = raw["runtimeHandle"];
+        if (runtimeHandleStr) {
+          try {
+            const handle = JSON.parse(runtimeHandleStr) as { id: string; runtimeName: string; data: Record<string, unknown> };
+            const runtimeName = handle.runtimeName ?? project.runtime ?? config.defaults.runtime;
+            const runtime = registry.get<Runtime>("runtime", runtimeName);
+            if (runtime) {
+              processAlive = await runtime.isAlive(handle).catch(() => false);
+            }
+            if (!processAlive) {
+              // Double-check with agent's isProcessRunning
+              processAlive = await agent.isProcessRunning(handle).catch(() => false);
+            }
+          } catch {
+            // Can't parse handle — treat as dead
+            processAlive = false;
+          }
+        }
+        // No runtime handle at all means the session never fully started — treat as dead
+
+        if (processAlive) continue;
+
+        // Session is dead — transition to terminated and archive
+        observer.recordOperation({
+          metric: "lifecycle_poll",
+          operation: "lifecycle.dead_session_detected",
+          outcome: "success",
+          correlationId,
+          projectId,
+          sessionId,
+          data: { previousStatus: status ?? "unknown" },
+          level: "warn",
+        });
+
+        updateMetadata(sessionsDir, sessionId, { status: "terminated" });
+        deleteMetadata(sessionsDir, sessionId, /* archive */ true);
+
+        const result: RecoveredSession = {
+          sessionId,
+          projectId,
+          issueId: raw["issue"],
+          archived: true,
+          respawned: false,
+        };
+
+        // Auto-respawn if session had an issueId and project allows it
+        const respawnStrategy = project.workerRespawnStrategy ?? "resume";
+        if (raw["issue"] && respawnStrategy !== "fresh") {
+          try {
+            await sessionManager.spawn({
+              projectId,
+              issueId: raw["issue"],
+              agent: raw["agent"],
+            });
+            result.respawned = true;
+            observer.recordOperation({
+              metric: "lifecycle_poll",
+              operation: "lifecycle.dead_session_respawned",
+              outcome: "success",
+              correlationId,
+              projectId,
+              sessionId,
+              data: { issueId: raw["issue"], strategy: respawnStrategy },
+              level: "info",
+            });
+          } catch (err) {
+            result.respawnError = err instanceof Error ? err.message : String(err);
+            observer.recordOperation({
+              metric: "lifecycle_poll",
+              operation: "lifecycle.dead_session_respawn_failed",
+              outcome: "failure",
+              correlationId,
+              projectId,
+              sessionId,
+              reason: result.respawnError,
+              level: "error",
+            });
+          }
+        }
+
+        results.push(result);
+      }
+    }
+
+    if (results.length > 0) {
+      observer.recordOperation({
+        metric: "lifecycle_poll",
+        operation: "lifecycle.recovery_complete",
+        outcome: "success",
+        correlationId,
+        projectId: scopedProjectId,
+        data: {
+          total: results.length,
+          respawned: results.filter((r) => r.respawned).length,
+          failed: results.filter((r) => r.respawnError).length,
+        },
+        level: "info",
+      });
+    }
+
+    return results;
+  }
+
   return {
     start(intervalMs = 30_000): void {
       if (pollTimer) return; // Already running
@@ -1447,5 +1592,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (!session) throw new Error(`Session ${sessionId} not found`);
       await checkSession(session);
     },
+
+    recoverDeadSessions,
   };
 }

@@ -43,6 +43,37 @@ export async function ensureLifecycleWorker(
   const observer = createProjectObserver(config, "lifecycle-service");
   const lifecycle = await getLifecycleManager(config, projectId);
 
+  // Recover dead sessions before starting the polling loop.
+  // This handles machine-restart persistence: sessions left in "working"
+  // state when the machine died are detected, archived, and respawned.
+  try {
+    const recovered = await lifecycle.recoverDeadSessions();
+    if (recovered.length > 0) {
+      const respawned = recovered.filter((r) => r.respawned).length;
+      const failed = recovered.filter((r) => r.respawnError).length;
+      observer.recordOperation({
+        metric: "lifecycle_poll",
+        operation: "lifecycle.boot_recovery",
+        outcome: "success",
+        correlationId: createCorrelationId("lifecycle-service"),
+        projectId,
+        data: { total: recovered.length, respawned, failed },
+        level: "info",
+      });
+    }
+  } catch (err) {
+    // Recovery failure is non-fatal — the worker should still start
+    observer.recordOperation({
+      metric: "lifecycle_poll",
+      operation: "lifecycle.boot_recovery",
+      outcome: "failure",
+      correlationId: createCorrelationId("lifecycle-service"),
+      projectId,
+      reason: err instanceof Error ? err.message : String(err),
+      level: "error",
+    });
+  }
+
   lifecycle.start(intervalMs);
 
   observer.setHealth({
