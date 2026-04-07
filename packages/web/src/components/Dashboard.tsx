@@ -7,13 +7,13 @@ import {
   type DashboardSession,
   type DashboardStats,
   type AttentionLevel,
-  type GlobalPauseState,
   type DashboardOrchestratorLink,
   getAttentionLevel,
   isPRRateLimited,
   isPRMergeReady,
 } from "@/lib/types";
 import { AttentionZone } from "./AttentionZone";
+import { SessionCard } from "./SessionCard";
 import { DynamicFavicon, countNeedingAttention } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
@@ -31,7 +31,6 @@ interface DashboardProps {
   projectId?: string;
   projectName?: string;
   projects?: ProjectInfo[];
-  initialGlobalPause?: GlobalPauseState | null;
   orchestrators?: DashboardOrchestratorLink[];
 }
 
@@ -68,7 +67,6 @@ function DashboardInner({
   projectId,
   projectName,
   projects = [],
-  initialGlobalPause = null,
   orchestrators,
 }: DashboardProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
@@ -79,16 +77,14 @@ function DashboardInner({
     }
     return levels;
   }, [initialSessions]);
-  const { sessions, globalPause, connectionStatus, sseAttentionLevels } = useSessionEvents(
+  const { sessions, connectionStatus, sseAttentionLevels } = useSessionEvents(
     initialSessions,
-    initialGlobalPause,
     projectId,
     initialAttentionLevels,
   );
   const searchParams = useSearchParams();
   const activeSessionId = searchParams.get("session") ?? undefined;
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
-  const [globalPauseDismissed, setGlobalPauseDismissed] = useState(false);
   const [activeOrchestrators, setActiveOrchestrators] =
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
@@ -106,6 +102,7 @@ function DashboardInner({
     mode: "preview" | "confirm-kill";
   } | null>(null);
   const [sheetSessionOverride, setSheetSessionOverride] = useState<DashboardSession | null>(null);
+  const [doneExpanded, setDoneExpanded] = useState(false);
   const sessionsRef = useRef(sessions);
   const hasSeededMobileExpansionRef = useRef(false);
   sessionsRef.current = sessions;
@@ -482,15 +479,6 @@ function DashboardInner({
     [sessions],
   );
 
-  const resumeAtLabel = useMemo(() => {
-    if (!globalPause) return null;
-    return new Date(globalPause.pausedUntil).toLocaleString();
-  }, [globalPause]);
-
-  useEffect(() => {
-    setGlobalPauseDismissed(false);
-  }, [globalPause?.pausedUntil, globalPause?.reason, globalPause?.sourceSessionId]);
-
   return (
     <>
     <ConnectionBar status={connectionStatus} />
@@ -600,45 +588,6 @@ function DashboardInner({
           </section>
         ) : null}
 
-        {globalPause && !globalPauseDismissed && (
-          <div className="dashboard-alert mb-6 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-error)_25%,transparent)] bg-[var(--color-tint-red)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-error)]">
-            <svg
-              className="h-3.5 w-3.5 shrink-0"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              viewBox="0 0 24 24"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 8v4M12 16h.01" />
-            </svg>
-            <span className="flex-1">
-              <strong>Orchestrator paused:</strong> {globalPause.reason}
-              {resumeAtLabel && (
-                <span className="ml-2 opacity-75">Resume after {resumeAtLabel}</span>
-              )}
-              {globalPause.sourceSessionId && (
-                <span className="ml-2 opacity-75">(Source: {globalPause.sourceSessionId})</span>
-              )}
-            </span>
-            <button
-              onClick={() => setGlobalPauseDismissed(true)}
-              className="ml-1 shrink-0 opacity-60 hover:opacity-100"
-              aria-label="Dismiss"
-            >
-              <svg
-                className="h-3.5 w-3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        )}
-
         {anyRateLimited && !rateLimitDismissed && (
           <div className="dashboard-alert mb-6 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-attention)_25%,transparent)] bg-[var(--color-tint-yellow)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
             <svg
@@ -735,7 +684,46 @@ function DashboardInner({
           </div>
         )}
 
-        {!allProjectsView && !hasAnySessions && <EmptyState />}
+        {!allProjectsView && grouped.done.length > 0 && (
+          <div className="done-bar mt-6">
+            <button
+              type="button"
+              className="done-bar__toggle"
+              onClick={() => setDoneExpanded((v) => !v)}
+              aria-expanded={doneExpanded}
+            >
+              <svg
+                className={`done-bar__chevron${doneExpanded ? " done-bar__chevron--open" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+              <span>Done / Terminated</span>
+              <span className="done-bar__count">{grouped.done.length}</span>
+              <span className="done-bar__rule" aria-hidden="true" />
+            </button>
+            {doneExpanded && (
+              <div className="done-bar__cards">
+                {grouped.done.map((session) => (
+                  <SessionCard
+                    key={session.id}
+                    session={session}
+                    onSend={handleSend}
+                    onKill={handleKill}
+                    onMerge={handleMerge}
+                    onRestore={handleRestore}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!allProjectsView && !hasAnySessions && grouped.done.length === 0 && <EmptyState />}
 
       </div>
     </div>
@@ -1072,3 +1060,4 @@ function BoardLegendItem({ label, tone }: { label: string; tone: string }) {
     </span>
   );
 }
+

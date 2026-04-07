@@ -262,6 +262,63 @@ describe("loadBuiltins", () => {
     });
   });
 
+  it("strips package loading metadata from notifier config", async () => {
+    const registry = createPluginRegistry();
+    const fakeWebhook = makePlugin("notifier", "webhook");
+    const cfg = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      notifiers: {
+        mywebhook: {
+          plugin: "webhook",
+          // package field is allowed for resolution but should be stripped:
+          package: "@composio/ao-plugin-notifier-webhook",
+          // These are plugin-specific fields that should be passed through:
+          url: "https://webhook.example.com/notify",
+          retries: 3,
+        },
+      },
+    });
+
+    await registry.loadBuiltins(cfg, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-webhook") return fakeWebhook;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    // Loading metadata (package) should be stripped to prevent leakage
+    // Plugin-specific fields (url, retries) should be passed through
+    expect(fakeWebhook.create).toHaveBeenCalledWith({
+      url: "https://webhook.example.com/notify",
+      retries: 3,
+      configPath: "/test/config.yaml",
+    });
+  });
+
+  it("warns and skips when path is used alongside plugin name in notifier config", async () => {
+    const registry = createPluginRegistry();
+    const fakeWebhook = makePlugin("notifier", "webhook");
+    const cfg = makeOrchestratorConfig({
+      notifiers: {
+        mywebhook: {
+          plugin: "webhook",
+          path: "./some/path", // This triggers the collision check
+        },
+      },
+    });
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await registry.loadBuiltins(cfg, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-webhook") return fakeWebhook;
+      return null;
+    });
+
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('"path" field conflicts with reserved'));
+    stderrSpy.mockRestore();
+
+    // Plugin should not be registered due to config error
+    expect(registry.get("notifier", "webhook")).toBeNull();
+  });
+
   it("does not match notifier key when explicit plugin points to another notifier", async () => {
     const registry = createPluginRegistry();
     const fakeOpenClaw = makePlugin("notifier", "openclaw");
@@ -453,5 +510,426 @@ describe("loadFromConfig", () => {
 
     expect(importFn).not.toHaveBeenCalledWith("@example/ao-plugin-agent-goose");
     expect(registry.get("agent", "goose")).toBeNull();
+  });
+});
+
+describe("External plugin manifest validation", () => {
+  it("accepts matching manifest.name and expectedPluginName", async () => {
+    const registry = createPluginRegistry();
+
+    const mockPlugin = {
+      manifest: { name: "jira", slot: "tracker" as const, version: "1.0.0", description: "Jira tracker" },
+      create: vi.fn(() => ({})),
+    };
+
+    const importFn = vi.fn(async () => mockPlugin);
+
+    const config = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      plugins: [
+        { name: "jira", source: "npm", package: "@acme/ao-plugin-tracker-jira", enabled: true },
+      ],
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          name: "proj1",
+          defaultBranch: "main",
+          sessionPrefix: "test",
+          tracker: { plugin: "jira", package: "@acme/ao-plugin-tracker-jira" },
+        },
+      },
+      _externalPluginEntries: [
+        {
+          source: "projects.proj1.tracker",
+          location: { kind: "project", projectId: "proj1", configType: "tracker" },
+          slot: "tracker",
+          package: "@acme/ao-plugin-tracker-jira",
+          expectedPluginName: "jira",
+        },
+      ],
+    });
+
+    // Should not throw
+    await registry.loadFromConfig(config, importFn);
+    expect(registry.get("tracker", "jira")).not.toBeNull();
+  });
+
+  it("warns when manifest.name does not match expectedPluginName but still registers plugin", async () => {
+    const registry = createPluginRegistry();
+
+    const mockPlugin = {
+      manifest: { name: "jira-enterprise", slot: "tracker" as const, version: "1.0.0", description: "Jira Enterprise" },
+      create: vi.fn(() => ({})),
+    };
+
+    const importFn = vi.fn(async () => mockPlugin);
+
+    const config = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      plugins: [
+        { name: "jira", source: "npm", package: "@acme/ao-plugin-tracker-jira", enabled: true },
+      ],
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          name: "proj1",
+          defaultBranch: "main",
+          sessionPrefix: "test",
+          tracker: { plugin: "jira", package: "@acme/ao-plugin-tracker-jira" },
+        },
+      },
+      _externalPluginEntries: [
+        {
+          source: "projects.proj1.tracker",
+          location: { kind: "project", projectId: "proj1", configType: "tracker" },
+          slot: "tracker",
+          package: "@acme/ao-plugin-tracker-jira",
+          expectedPluginName: "jira",
+        },
+      ],
+    });
+
+    // Should warn about validation failure but still register the plugin
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await registry.loadFromConfig(config, importFn);
+
+    // Plugin should still be registered under its manifest.name
+    expect(registry.get("tracker", "jira-enterprise")).not.toBeNull();
+
+    // Should have logged a validation warning
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Config validation failed for projects.proj1.tracker"),
+    );
+    stderrSpy.mockRestore();
+  });
+
+  it("infers plugin name when expectedPluginName is not specified", async () => {
+    const registry = createPluginRegistry();
+
+    const mockPlugin = {
+      manifest: { name: "jira", slot: "tracker" as const, version: "1.0.0", description: "Jira tracker" },
+      create: vi.fn(() => ({})),
+    };
+
+    const importFn = vi.fn(async () => mockPlugin);
+
+    const config = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      plugins: [
+        { name: "jira", source: "npm", package: "@acme/ao-plugin-tracker-jira", enabled: true },
+      ],
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          name: "proj1",
+          defaultBranch: "main",
+          sessionPrefix: "test",
+          // Plugin field will be updated with manifest.name
+          tracker: { plugin: "jira", package: "@acme/ao-plugin-tracker-jira" },
+        },
+      },
+      _externalPluginEntries: [
+        {
+          source: "projects.proj1.tracker",
+          location: { kind: "project", projectId: "proj1", configType: "tracker" },
+          slot: "tracker",
+          package: "@acme/ao-plugin-tracker-jira",
+          // No expectedPluginName - should accept any manifest.name
+        },
+      ],
+    });
+
+    await registry.loadFromConfig(config, importFn);
+
+    // Plugin should be registered under manifest.name
+    expect(registry.get("tracker", "jira")).not.toBeNull();
+    // Config should be updated with actual manifest.name
+    expect(config.projects.proj1.tracker?.plugin).toBe("jira");
+  });
+
+  it("updates config with actual manifest.name for notifiers", async () => {
+    const registry = createPluginRegistry();
+
+    const mockPlugin = {
+      manifest: { name: "ms-teams", slot: "notifier" as const, version: "1.0.0", description: "Teams notifier" },
+      create: vi.fn(() => ({})),
+    };
+
+    const importFn = vi.fn(async () => mockPlugin);
+
+    const config = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      plugins: [
+        { name: "teams", source: "npm", package: "@acme/ao-plugin-notifier-teams", enabled: true },
+      ],
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          name: "proj1",
+          defaultBranch: "main",
+          sessionPrefix: "test",
+        },
+      },
+      notifiers: {
+        myteams: { plugin: "teams", package: "@acme/ao-plugin-notifier-teams" },
+      },
+      _externalPluginEntries: [
+        {
+          source: "notifiers.myteams",
+          location: { kind: "notifier", notifierId: "myteams" },
+          slot: "notifier",
+          package: "@acme/ao-plugin-notifier-teams",
+          // No expectedPluginName - will accept any manifest.name
+        },
+      ],
+    });
+
+    await registry.loadFromConfig(config, importFn);
+
+    // Config should be updated with actual manifest.name
+    expect(config.notifiers?.myteams?.plugin).toBe("ms-teams");
+    // Plugin should be registered under manifest.name
+    expect(registry.get("notifier", "ms-teams")).not.toBeNull();
+  });
+
+  it("passes notifier config to plugin even when manifest name differs from temp name", async () => {
+    const registry = createPluginRegistry();
+
+    const mockPlugin = {
+      manifest: { name: "ms-teams", slot: "notifier" as const, version: "1.0.0", description: "Teams notifier" },
+      create: vi.fn(() => ({})),
+    };
+
+    const importFn = vi.fn(async () => mockPlugin);
+
+    const config = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      plugins: [
+        // Temp name is "teams" (from package name), but manifest.name is "ms-teams"
+        { name: "teams", source: "npm", package: "@acme/ao-plugin-notifier-teams", enabled: true },
+      ],
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          name: "proj1",
+          defaultBranch: "main",
+          sessionPrefix: "test",
+        },
+      },
+      notifiers: {
+        myteams: {
+          plugin: "teams", // Temp name - will be updated to "ms-teams"
+          package: "@acme/ao-plugin-notifier-teams",
+          webhookUrl: "https://teams.webhook.url/abc123",
+          channel: "#alerts",
+        },
+      },
+      _externalPluginEntries: [
+        {
+          source: "notifiers.myteams",
+          location: { kind: "notifier", notifierId: "myteams" },
+          slot: "notifier",
+          package: "@acme/ao-plugin-notifier-teams",
+          // No expectedPluginName - config.plugin will be updated to manifest.name
+        },
+      ],
+    });
+
+    await registry.loadFromConfig(config, importFn);
+
+    // Config should be updated BEFORE extractPluginConfig is called
+    expect(config.notifiers?.myteams?.plugin).toBe("ms-teams");
+
+    // Plugin should receive its config (webhookUrl, channel) despite name mismatch
+    expect(mockPlugin.create).toHaveBeenCalledWith({
+      webhookUrl: "https://teams.webhook.url/abc123",
+      channel: "#alerts",
+      configPath: "/test/config.yaml",
+    });
+
+    // Plugin should be registered
+    expect(registry.get("notifier", "ms-teams")).not.toBeNull();
+  });
+
+  it("warns when plugin slot does not match config slot", async () => {
+    const registry = createPluginRegistry();
+
+    const mockPlugin = {
+      manifest: { name: "jira", slot: "notifier" as const, version: "1.0.0", description: "Wrong slot!" },
+      create: vi.fn(() => ({})),
+    };
+
+    const importFn = vi.fn(async () => mockPlugin);
+
+    const config = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      plugins: [
+        { name: "jira", source: "npm", package: "@acme/ao-plugin-tracker-jira", enabled: true },
+      ],
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          name: "proj1",
+          defaultBranch: "main",
+          sessionPrefix: "test",
+          tracker: { plugin: "jira", package: "@acme/ao-plugin-tracker-jira" },
+        },
+      },
+      _externalPluginEntries: [
+        {
+          source: "projects.proj1.tracker",
+          location: { kind: "project", projectId: "proj1", configType: "tracker" },
+          slot: "tracker", // Expected tracker
+          package: "@acme/ao-plugin-tracker-jira",
+        },
+      ],
+    });
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await registry.loadFromConfig(config, importFn);
+
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining("has slot \"notifier\" but was configured as \"tracker\""),
+    );
+    stderrSpy.mockRestore();
+  });
+
+  it("updates all projects sharing same external plugin with manifest.name", async () => {
+    const registry = createPluginRegistry();
+
+    const mockPlugin = {
+      manifest: { name: "jira-cloud", slot: "tracker" as const, version: "1.0.0", description: "Jira Cloud" },
+      create: vi.fn(() => ({})),
+    };
+
+    const importFn = vi.fn(async () => mockPlugin);
+
+    const config = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      plugins: [
+        { name: "jira", source: "npm", package: "@acme/ao-plugin-tracker-jira", enabled: true },
+      ],
+      projects: {
+        proj1: {
+          path: "/repos/test1",
+          repo: "org/test1",
+          name: "proj1",
+          defaultBranch: "main",
+          sessionPrefix: "test1",
+          tracker: { plugin: "jira", package: "@acme/ao-plugin-tracker-jira" },
+        },
+        proj2: {
+          path: "/repos/test2",
+          repo: "org/test2",
+          name: "proj2",
+          defaultBranch: "main",
+          sessionPrefix: "test2",
+          // Same external plugin as proj1
+          tracker: { plugin: "jira", package: "@acme/ao-plugin-tracker-jira" },
+        },
+      },
+      _externalPluginEntries: [
+        {
+          source: "projects.proj1.tracker",
+          location: { kind: "project", projectId: "proj1", configType: "tracker" },
+          slot: "tracker",
+          package: "@acme/ao-plugin-tracker-jira",
+          // No expectedPluginName - will accept any manifest.name
+        },
+        {
+          source: "projects.proj2.tracker",
+          location: { kind: "project", projectId: "proj2", configType: "tracker" },
+          slot: "tracker",
+          package: "@acme/ao-plugin-tracker-jira",
+          // No expectedPluginName - will accept any manifest.name
+        },
+      ],
+    });
+
+    await registry.loadFromConfig(config, importFn);
+
+    // Both projects should be updated with the actual manifest.name
+    expect(config.projects.proj1.tracker?.plugin).toBe("jira-cloud");
+    expect(config.projects.proj2.tracker?.plugin).toBe("jira-cloud");
+    // Plugin should be registered under manifest.name
+    expect(registry.get("tracker", "jira-cloud")).not.toBeNull();
+  });
+
+  it("registers plugin even when one project has misconfigured expectedPluginName", async () => {
+    const registry = createPluginRegistry();
+
+    const mockPlugin = {
+      manifest: { name: "jira-cloud", slot: "tracker" as const, version: "1.0.0", description: "Jira Cloud" },
+      create: vi.fn(() => ({})),
+    };
+
+    const importFn = vi.fn(async () => mockPlugin);
+
+    const config = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      plugins: [
+        { name: "jira", source: "npm", package: "@acme/ao-plugin-tracker-jira", enabled: true },
+      ],
+      projects: {
+        proj1: {
+          path: "/repos/test1",
+          repo: "org/test1",
+          name: "proj1",
+          defaultBranch: "main",
+          sessionPrefix: "test1",
+          tracker: { plugin: "jira", package: "@acme/ao-plugin-tracker-jira" },
+        },
+        proj2: {
+          path: "/repos/test2",
+          repo: "org/test2",
+          name: "proj2",
+          defaultBranch: "main",
+          sessionPrefix: "test2",
+          // Same external plugin but with WRONG explicit plugin name
+          tracker: { plugin: "wrong-name", package: "@acme/ao-plugin-tracker-jira" },
+        },
+      },
+      _externalPluginEntries: [
+        {
+          source: "projects.proj1.tracker",
+          location: { kind: "project", projectId: "proj1", configType: "tracker" },
+          slot: "tracker",
+          package: "@acme/ao-plugin-tracker-jira",
+          // No expectedPluginName - will accept any manifest.name
+        },
+        {
+          source: "projects.proj2.tracker",
+          location: { kind: "project", projectId: "proj2", configType: "tracker" },
+          slot: "tracker",
+          package: "@acme/ao-plugin-tracker-jira",
+          expectedPluginName: "wrong-name", // Mismatches manifest.name "jira-cloud"
+        },
+      ],
+    });
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await registry.loadFromConfig(config, importFn);
+
+    // Plugin should STILL be registered despite proj2's misconfiguration
+    expect(registry.get("tracker", "jira-cloud")).not.toBeNull();
+
+    // proj1 should be updated correctly (no expectedPluginName = accepts any)
+    expect(config.projects.proj1.tracker?.plugin).toBe("jira-cloud");
+
+    // proj2's config should NOT be updated (validation failed)
+    expect(config.projects.proj2.tracker?.plugin).toBe("wrong-name");
+
+    // Should have logged a warning about proj2's validation failure
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Config validation failed for projects.proj2.tracker"),
+    );
+
+    stderrSpy.mockRestore();
   });
 });

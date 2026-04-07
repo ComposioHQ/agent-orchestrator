@@ -20,6 +20,7 @@ import {
   enrichSessionAgentSummary,
   enrichSessionIssueTitle,
   enrichSessionsMetadata,
+  enrichSessionsMetadataFast,
   computeStats,
 } from "../serialize";
 import { prCache, prCacheKey } from "../cache";
@@ -190,6 +191,51 @@ describe("sessionToDashboard", () => {
     expect(dashboard.summaryIsFallback).toBe(false);
   });
 
+  it("should use live agentInfo summary even when pinnedSummary is set in metadata", () => {
+    const coreSession = createCoreSession({
+      agentInfo: {
+        summary: "Latest live summary from agent",
+        summaryIsFallback: false,
+        agentSessionId: "abc123",
+      },
+      metadata: { pinnedSummary: "First pinned summary" },
+    });
+    const dashboard = sessionToDashboard(coreSession);
+
+    // pinnedSummary must NOT replace dashboard.summary — live summary wins
+    expect(dashboard.summary).toBe("Latest live summary from agent");
+    expect(dashboard.summaryIsFallback).toBe(false);
+    // pinnedSummary remains accessible via metadata for title selection
+    expect(dashboard.metadata["pinnedSummary"]).toBe("First pinned summary");
+  });
+
+  it("should use metadata summary when pinnedSummary is also set (pinnedSummary only for titles)", () => {
+    const coreSession = createCoreSession({
+      agentInfo: null,
+      metadata: { pinnedSummary: "Pinned summary", summary: "Metadata summary" },
+    });
+    const dashboard = sessionToDashboard(coreSession);
+
+    // pinnedSummary must NOT override the regular metadata summary
+    expect(dashboard.summary).toBe("Metadata summary");
+    expect(dashboard.summaryIsFallback).toBe(false);
+  });
+
+  it("should use agentInfo summary regardless of pinnedSummary value", () => {
+    const coreSession = createCoreSession({
+      agentInfo: {
+        summary: "Agent summary",
+        summaryIsFallback: false,
+        agentSessionId: "abc123",
+      },
+      metadata: { pinnedSummary: "" },
+    });
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.summary).toBe("Agent summary");
+    expect(dashboard.summaryIsFallback).toBe(false);
+  });
+
   it("should convert PRInfo to DashboardPR with defaults", () => {
     const pr = createPRInfo();
     const coreSession = createCoreSession({ pr });
@@ -204,7 +250,8 @@ describe("sessionToDashboard", () => {
     expect(dashboard.pr?.deletions).toBe(0);
     expect(dashboard.pr?.ciStatus).toBe("none");
     expect(dashboard.pr?.reviewDecision).toBe("none");
-    expect(dashboard.pr?.mergeability.blockers).toContain("Data not loaded");
+    expect(dashboard.pr?.mergeability.blockers).toEqual([]);
+    expect(dashboard.pr?.enriched).toBe(false);
   });
 
   it("should set pr to null when session has no PR", () => {
@@ -808,6 +855,41 @@ describe("enrichSessionsMetadata", () => {
     expect(dashboard.issueTitle).toBe("Fix auth bug");
   });
 
+  it("starts issue-title fetches before agent summaries finish", async () => {
+    let resolveSummary: ((value: { summary: string; summaryIsFallback: false; agentSessionId: string }) => void) | null = null;
+
+    const tracker = mockTracker("Fix auth bug");
+    const agent = {
+      ...mockAgent(),
+      getSessionInfo: vi.fn().mockImplementation(
+        () => new Promise((resolve) => {
+          resolveSummary = resolve;
+        }),
+      ),
+    } as Agent;
+    const registry = mockRegistry(tracker, agent);
+
+    const core = createCoreSession({ issueId: `${urlBase}-parallel` });
+    const dashboard = sessionToDashboard(core);
+
+    const enrichmentPromise = enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+    await Promise.resolve();
+
+    expect(tracker.getIssue).toHaveBeenCalledTimes(1);
+    expect(dashboard.issueLabel).toBe("#42");
+    expect(dashboard.summary).toBeNull();
+
+    resolveSummary?.({
+      summary: "Implementing auth fix",
+      summaryIsFallback: false,
+      agentSessionId: "abc",
+    });
+    await enrichmentPromise;
+
+    expect(dashboard.summary).toBe("Implementing auth fix");
+    expect(dashboard.issueTitle).toBe("Fix auth bug");
+  });
+
   it("should skip sessions without issue URLs", async () => {
     const tracker = mockTracker();
     const agent = mockAgent();
@@ -948,6 +1030,61 @@ describe("enrichSessionsMetadata", () => {
   });
 });
 
+describe("enrichSessionsMetadataFast", () => {
+  it("should enrich issue labels and agent summaries but NOT issue titles", async () => {
+    const urlBase = "https://github.com/test/repo/issues/fast";
+    const tracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({ id: "99", title: "Should not be called", url: urlBase }),
+      issueLabel: vi.fn().mockReturnValue("#99"),
+    } as unknown as Tracker;
+    const agent: Agent = {
+      getSessionInfo: vi.fn().mockResolvedValue({
+        summary: "Fast summary",
+        summaryIsFallback: false,
+        agentSessionId: "abc",
+      }),
+    } as unknown as Agent;
+    const registry = {
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "tracker") return tracker;
+        if (slot === "agent") return agent;
+        return null;
+      }),
+    } as unknown as PluginRegistry;
+
+    const config: OrchestratorConfig = {
+      projects: {
+        test: {
+          path: "/test",
+          repo: "test/repo",
+          defaultBranch: "main",
+          sessionPrefix: "test-",
+          tracker: { plugin: "mock-tracker" },
+        },
+      } as Record<string, ProjectConfig>,
+      defaults: { agent: "mock-agent", runtime: "tmux" },
+      configPath: "/test/config.yaml",
+    } as OrchestratorConfig;
+
+    const core = createCoreSession({
+      issueId: `${urlBase}-fast`,
+      agentInfo: undefined,
+    });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadataFast([core], [dashboard], config, registry);
+
+    // Issue label should be set (synchronous)
+    expect(dashboard.issueLabel).toBe("#99");
+    // Agent summary should be set (local I/O)
+    expect(dashboard.summary).toBe("Fast summary");
+    // Issue title should NOT be set (tracker API is not called by fast path)
+    expect(dashboard.issueTitle).toBeNull();
+    expect(tracker.getIssue).not.toHaveBeenCalled();
+  });
+});
+
 describe("computeStats", () => {
   function makeDashboard(overrides: Partial<DashboardSession> = {}): DashboardSession {
     return {
@@ -1030,11 +1167,12 @@ describe("basicPRToDashboard defaults", () => {
     expect(dashboard.pr?.reviewDecision).not.toBe("changes_requested");
   });
 
-  it("should have explicit blocker indicating data not loaded", () => {
+  it("should mark unenriched PR with enriched: false", () => {
     const pr = createPRInfo();
     const coreSession = createCoreSession({ pr });
     const dashboard = sessionToDashboard(coreSession);
 
-    expect(dashboard.pr?.mergeability.blockers).toContain("Data not loaded");
+    expect(dashboard.pr?.enriched).toBe(false);
+    expect(dashboard.pr?.mergeability.blockers).toEqual([]);
   });
 });

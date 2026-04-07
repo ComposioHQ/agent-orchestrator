@@ -84,15 +84,6 @@ export type {
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
 
-
-// Global pause constants and utilities
-export {
-  GLOBAL_PAUSE_UNTIL_KEY,
-  GLOBAL_PAUSE_REASON_KEY,
-  GLOBAL_PAUSE_SOURCE_KEY,
-  parsePauseUntil,
-} from "./global-pause.js";
-
 // Shared utilities
 export {
   shellEscape,

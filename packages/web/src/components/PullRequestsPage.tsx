@@ -43,7 +43,7 @@ export function PullRequestsPage({
     }
     return levels;
   }, [initialSessions]);
-  const { sessions, sseAttentionLevels } = useSessionEvents(initialSessions, null, projectId, initialAttentionLevels);
+  const { sessions, sseAttentionLevels } = useSessionEvents(initialSessions, projectId, initialAttentionLevels);
   const searchParams = useSearchParams();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
