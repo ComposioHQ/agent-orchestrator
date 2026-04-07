@@ -223,6 +223,7 @@ export function DirectTerminal({
   const [reloadError, setReloadError] = useState<string | null>(null);
   const [followOutput, setFollowOutput] = useState(true);
   const followOutputRef = useRef(true);
+  const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [fontSize, setFontSize] = useState(FONT_SIZE_DEFAULT);
   const [showFontSettings, setShowFontSettings] = useState(false);
   const fontSettingsRef = useRef<HTMLDivElement>(null);
@@ -492,12 +493,30 @@ export function DirectTerminal({
 
         const handleViewportScroll = () => {
           if (!viewport) return;
-          const nearBottom =
-            viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 24;
-          if (nearBottom) {
+          const distFromBottom =
+            viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+          if (distFromBottom < 24) {
             setFollowOutput(true);
+            if (scrollIdleTimerRef.current) {
+              clearTimeout(scrollIdleTimerRef.current);
+              scrollIdleTimerRef.current = null;
+            }
           } else {
             setFollowOutput(false);
+            // Auto-resume after 3s idle if near bottom (~2 screen heights)
+            if (scrollIdleTimerRef.current) {
+              clearTimeout(scrollIdleTimerRef.current);
+            }
+            const viewportHeight = viewport.clientHeight || 400;
+            if (distFromBottom < viewportHeight * 2) {
+              scrollIdleTimerRef.current = setTimeout(() => {
+                scrollIdleTimerRef.current = null;
+                if (viewport) {
+                  viewport.scrollTop = viewport.scrollHeight;
+                }
+                setFollowOutput(true);
+              }, 3000);
+            }
           }
         };
         viewport?.addEventListener("scroll", handleViewportScroll, { passive: true });
@@ -625,6 +644,10 @@ export function DirectTerminal({
           viewport?.removeEventListener("scroll", handleViewportScroll);
           inputDisposable?.dispose();
           inputDisposable = null;
+          if (scrollIdleTimerRef.current) {
+            clearTimeout(scrollIdleTimerRef.current);
+            scrollIdleTimerRef.current = null;
+          }
           if (reconnectTimerRef.current) {
             clearTimeout(reconnectTimerRef.current);
             reconnectTimerRef.current = null;
@@ -921,9 +944,13 @@ export function DirectTerminal({
               if (viewport) viewport.scrollTop = viewport.scrollHeight;
               setFollowOutput(true);
             }}
-            className="absolute bottom-2 right-2 z-20 border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[12px] text-[var(--color-text-primary)] shadow-sm"
+            className="absolute bottom-3 right-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] shadow-md active:scale-95"
+            aria-label="Jump to latest"
+            title="Jump to latest"
           >
-            Jump to latest ↓
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
           </button>
         ) : null}
         <div

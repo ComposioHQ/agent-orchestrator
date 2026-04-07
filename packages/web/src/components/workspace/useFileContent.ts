@@ -75,16 +75,20 @@ export function useFileContent(sessionId: string, filePath: string | null) {
       setState({ data, error: null, loading: false });
     } catch (err) {
       console.error("Failed to fetch file content:", err);
-      setState({
-        data: null,
-        error: {
-          error: "fetch_error",
-          message: "Failed to fetch file content",
-          path: filePath,
-          size: 0,
-        },
+      setState((prev) => ({
+        // Keep previous data on transient errors so the user sees stale
+        // content instead of an error screen. The 5s poll will recover.
+        data: prev.data,
+        error: prev.data
+          ? null // suppress error when we have stale data to show
+          : {
+              error: "fetch_error",
+              message: "Failed to fetch file content",
+              path: filePath,
+              size: 0,
+            },
         loading: false,
-      });
+      }));
     }
   }, [sessionId, filePath]);
 
