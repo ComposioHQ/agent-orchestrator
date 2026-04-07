@@ -1,6 +1,6 @@
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
-import { createWriteStream, existsSync, mkdirSync, type WriteStream } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, watch, type FSWatcher, type WriteStream } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { shellEscape, type Runtime, type RuntimeCreateConfig, type RuntimeHandle, type RuntimeMetrics, type AttachInfo, type MessageInjector, type PluginModule, type PluginManifest } from "@composio/ao-core";
@@ -78,6 +78,79 @@ interface SessionEntry {
   claudeSessionId: string;
   companionTmuxName: string | null;
   injector: MessageInjector | null;
+  /** Highest inbox message id already delivered to the agent (any path). */
+  lastDeliveredId: number;
+  /** fs.watch on inbox.jsonl for idle-agent backup delivery. */
+  inboxWatcher: FSWatcher | null;
+  /** Serializes deliveries so injector + watcher never write to stdin concurrently. */
+  deliveryChain: Promise<void>;
+}
+
+/**
+ * Read inbox.jsonl, return entries with id > minId.
+ * Best-effort — malformed lines are skipped.
+ */
+function readInboxAfter(inboxPath: string, minId: number): Array<{ id: number; message: string }> {
+  let raw: string;
+  try {
+    raw = readFileSync(inboxPath, "utf-8");
+  } catch {
+    return [];
+  }
+  const out: Array<{ id: number; message: string }> = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const obj = JSON.parse(line) as { id?: number; message?: string };
+      if (typeof obj.id === "number" && obj.id > minId && typeof obj.message === "string") {
+        out.push({ id: obj.id, message: obj.message });
+      }
+    } catch { /* skip malformed */ }
+  }
+  return out;
+}
+
+/**
+ * Write a single message to the agent's stdin using the agent-appropriate format.
+ * Best-effort: returns false if stdin is unavailable or write fails.
+ */
+async function writeToAgentStdin(entry: SessionEntry, message: string): Promise<boolean> {
+  const child = entry.process;
+  const stdin = child?.stdin;
+  if (!stdin || !stdin.writable) return false;
+
+  const payload = entry.agentName === "claude-code"
+    ? formatNdjsonUserMessage(message, entry.claudeSessionId)
+    : message;
+
+  return new Promise<boolean>((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      stdin.removeListener("error", onError);
+      resolve(ok);
+    };
+    const onError = () => finish(false);
+    stdin.once("error", onError);
+    stdin.write(payload + "\n", (err) => finish(!err));
+  });
+}
+
+/**
+ * Idle-delivery sidecar: drain undelivered inbox entries and push them to
+ * the agent's stdin. All deliveries are serialized via entry.deliveryChain
+ * so the injector and watcher never interleave writes.
+ */
+function scheduleInboxDrain(entry: SessionEntry): void {
+  entry.deliveryChain = entry.deliveryChain.then(async () => {
+    const pending = readInboxAfter(entry.files.inbox, entry.lastDeliveredId);
+    for (const item of pending) {
+      const ok = await writeToAgentStdin(entry, item.message);
+      if (!ok) return; // stdin gone — stop, agent will be torn down soon
+      entry.lastDeliveredId = item.id;
+    }
+  }).catch(() => { /* swallow — sidecar is best-effort */ });
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +306,9 @@ export function create(): Runtime {
         claudeSessionId: "default",
         companionTmuxName: handleId,
         injector: null,
+        lastDeliveredId: 0,
+        inboxWatcher: null,
+        deliveryChain: Promise.resolve(),
       };
       sessions.set(handleId, entry);
 
@@ -369,6 +445,20 @@ export function create(): Runtime {
         }
       }
 
+      // Idle-delivery sidecar: fs.watch on inbox.jsonl. Single-writer model —
+      // all stdin writes go through entry.deliveryChain so the watcher can never
+      // race the injector. Disabled via AO_DISABLE_INBOX_SIDECAR=1.
+      if (process.env.AO_DISABLE_INBOX_SIDECAR !== "1") {
+        try {
+          entry.inboxWatcher = watch(entry.files.inbox, { persistent: false }, () => {
+            scheduleInboxDrain(entry);
+          });
+          entry.inboxWatcher.on("error", () => { /* best-effort */ });
+        } catch {
+          // Inbox file may not exist yet on some platforms — sidecar disabled.
+        }
+      }
+
       // Companion tmux session for terminal viewing (ALL agents).
       await createCompanionTmux(handleId, config.workspacePath, logPath);
 
@@ -418,6 +508,12 @@ export function create(): Runtime {
         try { await entry.injector.close(); } catch { /* best-effort */ }
       }
 
+      // Close inbox sidecar watcher.
+      if (entry.inboxWatcher) {
+        try { entry.inboxWatcher.close(); } catch { /* best-effort */ }
+        entry.inboxWatcher = null;
+      }
+
       // Destroy companion tmux session (terminal viewing only).
       if (entry.companionTmuxName) {
         await destroyCompanionTmux(entry.companionTmuxName);
@@ -434,12 +530,15 @@ export function create(): Runtime {
         throw new Error(`No session found for ${handle.id}`);
       }
 
-      // Always write to inbox first (durable record).
+      // Always write to inbox first (durable record). Capture the assigned id
+      // so the sidecar watcher can skip messages we deliver here.
+      let writtenId: number;
       try {
-        appendInboxMessage(
+        const written = appendInboxMessage(
           entry.files.inbox, entry.sessionId, entry.epoch,
           "instruction" as InboxMessageType, message, generateDedupKey(),
         );
+        writtenId = written?.id ?? 0;
       } catch (err) {
         throw new Error(
           `Failed to write message to inbox for session ${entry.sessionId}: ` +
@@ -449,6 +548,9 @@ export function create(): Runtime {
       }
 
       // Agent-specific injection. ZERO tmux send-keys in any path.
+      // Mark the id as delivered BEFORE invoking the injector so a
+      // concurrent fs.watch fire does not double-deliver this same message.
+      if (writtenId > entry.lastDeliveredId) entry.lastDeliveredId = writtenId;
       if (entry.injector) {
         // Use agent-provided injector (Claude Code NDJSON, Codex JSON-RPC, etc.)
         try {
