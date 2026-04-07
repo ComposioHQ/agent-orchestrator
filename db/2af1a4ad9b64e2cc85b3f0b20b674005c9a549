@@ -1,0 +1,34 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "db2af1a4ad9b64e2cc85b3f0b20b674005c9a549",
+  "prompts": {
+    "c7642d13ddb11c10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5af9095-96c8-408e-bfd6-a9fd3bb2f2e5",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 27,
+      "overriden_lines": 0
+    },
+    "fb6460de0865daf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c16619-f3dc-47c9-968c-c85b3c0382d5",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
