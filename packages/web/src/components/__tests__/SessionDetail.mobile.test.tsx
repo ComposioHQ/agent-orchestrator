@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionDetail } from "../SessionDetail";
 import { makePR, makeSession } from "../../__tests__/helpers";
@@ -223,5 +223,25 @@ describe("SessionDetail mobile navbar", () => {
       color: "var(--color-text-secondary)",
       background: "var(--color-chip-bg)",
     });
+  });
+
+  it("defers terminal mount on mobile until requested", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-mobile-terminal",
+          projectId: "my-app",
+          summary: "Terminal lazy load",
+        })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Live Terminal" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Live Terminal" }));
+
+    expect(screen.getByTestId("direct-terminal").textContent).toContain("worker-mobile-terminal");
   });
 });

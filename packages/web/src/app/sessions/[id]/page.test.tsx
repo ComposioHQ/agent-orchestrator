@@ -8,9 +8,10 @@ const notFoundError = new Error("NEXT_NOT_FOUND");
 const notFoundSpy = vi.fn(() => {
   throw notFoundError;
 });
+const useParamsSpy = vi.fn(() => ({ id: "worker-1" }));
 
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ id: "worker-1" }),
+  useParams: useParamsSpy,
   notFound: notFoundSpy,
 }));
 
@@ -37,6 +38,25 @@ function makeWorkerSession(): DashboardSession {
     lastActivityAt: new Date().toISOString(),
     pr: null,
     metadata: {},
+  };
+}
+
+function makeOrchestratorSession(): DashboardSession {
+  return {
+    id: "my-app-orchestrator",
+    projectId: "my-app",
+    status: "working",
+    activity: "active",
+    branch: null,
+    issueId: null,
+    issueUrl: null,
+    issueLabel: null,
+    summary: "Orchestrator",
+    summaryIsFallback: false,
+    createdAt: new Date().toISOString(),
+    lastActivityAt: new Date().toISOString(),
+    pr: null,
+    metadata: { role: "orchestrator" },
   };
 }
 
@@ -71,6 +91,7 @@ describe("SessionPage project polling", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     sessionDetailSpy.mockClear();
+    useParamsSpy.mockReturnValue({ id: "worker-1" });
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     const eventSourceMock = {
@@ -129,6 +150,7 @@ describe("SessionPage project polling", () => {
     await flushAsyncWork();
 
     expect(fetch).toHaveBeenCalledWith("/api/sessions/worker-1");
+    expect(fetch).not.toHaveBeenCalledWith("/api/projects");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2_000);
@@ -158,14 +180,6 @@ describe("SessionPage project polling", () => {
   it("routes 404 responses through notFound()", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/projects") {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ projects: [] }),
-        } as Response;
-      }
-
       if (url === "/api/sessions/worker-1") {
         return {
           ok: false,
@@ -183,20 +197,12 @@ describe("SessionPage project polling", () => {
     await flushAsyncWork();
 
     expect(notFoundSpy).toHaveBeenCalled();
-    expect(screen.queryByTestId("session-detail")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-detail")).toBeNull();
   });
 
   it("throws non-404 session fetch failures to the route error boundary", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/projects") {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ projects: [] }),
-        } as Response;
-      }
-
       if (url === "/api/sessions/worker-1") {
         return {
           ok: false,
@@ -218,6 +224,67 @@ describe("SessionPage project polling", () => {
 
     await flushAsyncWork();
 
-    expect(screen.getByTestId("route-error")).toHaveTextContent("HTTP 500");
+    expect(screen.getByTestId("route-error").textContent).toContain("HTTP 500");
+  });
+
+  it("excludes the orchestrator session from its own zone counts", async () => {
+    useParamsSpy.mockReturnValue({ id: "my-app-orchestrator" });
+
+    const orchestratorSession = makeOrchestratorSession();
+    const workerSession = makeWorkerSession();
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/sessions/my-app-orchestrator") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => orchestratorSession,
+        } as Response;
+      }
+
+      if (url === "/api/sessions?project=my-app") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            sessions: [orchestratorSession, workerSession],
+            orchestratorId: "my-app-orchestrator",
+          }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+
+    render(<SessionPage />);
+    await flushAsyncWork();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    await flushAsyncWork();
+
+    const lastCall = sessionDetailSpy.mock.calls.at(-1)?.[0] as {
+      orchestratorZones?: {
+        merge: number;
+        respond: number;
+        review: number;
+        pending: number;
+        working: number;
+        done: number;
+      };
+    };
+
+    expect(lastCall.orchestratorZones).toEqual({
+      merge: 0,
+      respond: 0,
+      review: 0,
+      pending: 0,
+      working: 1,
+      done: 0,
+    });
   });
 });

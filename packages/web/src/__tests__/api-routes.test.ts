@@ -151,6 +151,7 @@ const mockRegistry: PluginRegistry = {
   get: vi.fn(() => mockSCM) as PluginRegistry["get"],
   list: vi.fn(() => []),
   loadBuiltins: vi.fn(async () => {}),
+  loadExternals: vi.fn(async () => {}),
   loadFromConfig: vi.fn(async () => {}),
 };
 
@@ -195,6 +196,7 @@ vi.mock("@/lib/services", () => ({
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
+import { GET as sessionGET } from "@/app/api/sessions/[id]/route";
 import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
@@ -365,6 +367,36 @@ describe("API Routes", () => {
       metadataSpy.mockRestore();
       enrichSpy.mockRestore();
       vi.useRealTimers();
+    });
+  });
+
+  describe("GET /api/sessions/[id]", () => {
+    it("returns the session without blocking on cold PR enrichment", async () => {
+      const enrichFastSpy = vi
+        .spyOn(serialize, "enrichSessionsMetadataFast")
+        .mockResolvedValue(undefined);
+      const enrichFullSpy = vi
+        .spyOn(serialize, "enrichSessionsMetadata")
+        .mockImplementation(() => new Promise<void>(() => {}));
+      const enrichPRSpy = vi
+        .spyOn(serialize, "enrichSessionPR")
+        .mockResolvedValueOnce(false)
+        .mockImplementation(() => new Promise<boolean>(() => {}));
+
+      const response = await sessionGET(
+        makeRequest("http://localhost:3000/api/sessions/backend-7"),
+        { params: Promise.resolve({ id: "backend-7" }) },
+      );
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.id).toBe("backend-7");
+      expect(enrichFastSpy).toHaveBeenCalled();
+      expect(enrichPRSpy).toHaveBeenCalled();
+
+      enrichFastSpy.mockRestore();
+      enrichFullSpy.mockRestore();
+      enrichPRSpy.mockRestore();
     });
   });
 

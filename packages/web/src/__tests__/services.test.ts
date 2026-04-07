@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const {
   mockLoadConfig,
   mockRegister,
+  mockLoadExternals,
   mockCreateSessionManager,
   mockRegistry,
   tmuxPlugin,
@@ -15,18 +16,21 @@ const {
 } = vi.hoisted(() => {
   const mockLoadConfig = vi.fn();
   const mockRegister = vi.fn();
+  const mockLoadExternals = vi.fn();
   const mockCreateSessionManager = vi.fn();
   const mockRegistry = {
     register: mockRegister,
     get: vi.fn(),
     list: vi.fn(),
     loadBuiltins: vi.fn(),
+    loadExternals: mockLoadExternals,
     loadFromConfig: vi.fn(),
   };
 
   return {
     mockLoadConfig,
     mockRegister,
+    mockLoadExternals,
     mockCreateSessionManager,
     mockRegistry,
     tmuxPlugin: { manifest: { name: "tmux" } },
@@ -69,6 +73,8 @@ describe("services", () => {
   beforeEach(() => {
     vi.resetModules();
     mockRegister.mockClear();
+    mockLoadExternals.mockReset();
+    mockLoadExternals.mockResolvedValue(undefined);
     mockCreateSessionManager.mockReset();
     mockLoadConfig.mockReset();
     mockLoadConfig.mockReturnValue({
@@ -118,6 +124,8 @@ describe("pollBacklog", () => {
   beforeEach(async () => {
     vi.resetModules();
     mockRegister.mockClear();
+    mockLoadExternals.mockReset();
+    mockLoadExternals.mockResolvedValue(undefined);
     mockCreateSessionManager.mockReset();
     mockLoadConfig.mockReset();
     mockUpdateIssue.mockClear();

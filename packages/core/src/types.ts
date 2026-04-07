@@ -1475,6 +1475,12 @@ export interface PluginRegistry {
     importFn?: (pkg: string) => Promise<unknown>,
   ): Promise<void>;
 
+  /** Load only external plugins declared in config (npm packages, local paths) */
+  loadExternals(
+    config: OrchestratorConfig,
+    importFn?: (pkg: string) => Promise<unknown>,
+  ): Promise<void>;
+
   /** Load plugins from config (npm packages, local paths) */
   loadFromConfig(
     config: OrchestratorConfig,
