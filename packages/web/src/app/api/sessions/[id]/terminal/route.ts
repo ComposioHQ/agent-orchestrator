@@ -22,6 +22,10 @@ function getRequestProtocol(request: NextRequest): string {
   return request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol.replace(":", "");
 }
 
+function getClientIp(request: NextRequest): string | undefined {
+  return request.ip;
+}
+
 function buildTerminalUrl(request: NextRequest, terminalPort: string, sessionId: string): string {
   const protocol = getRequestProtocol(request);
   const hostHeader = request.headers.get("host") ?? request.nextUrl.host;
@@ -36,7 +40,11 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const grant = issueTerminalAccess({ sessionId: id, headers: request.headers });
+    const grant = issueTerminalAccess({
+      sessionId: id,
+      headers: request.headers,
+      remoteAddress: getClientIp(request),
+    });
     const terminalPort = normalizePort(process.env.TERMINAL_PORT, 14800);
     const directTerminalPort = normalizePort(process.env.DIRECT_TERMINAL_PORT, 14801);
     const proxyWsPath = normalizeProxyPath(
