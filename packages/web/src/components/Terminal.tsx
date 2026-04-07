@@ -11,6 +11,10 @@ interface TerminalProps {
  * Terminal embed using ttyd (iframe).
  * ttyd handles xterm.js, WebSocket, ANSI rendering, resize, input — everything.
  * We just request a ttyd URL from our terminal server and embed it.
+ *
+ * The token (60s TTL) is auto-refreshed every 50 seconds via periodic POSTs
+ * to keep the httpOnly cookie alive even if the iframe's WebSocket drops
+ * due to network hiccups or sleep/wake cycles.
  */
 export function Terminal({ sessionId }: TerminalProps) {
   const [fullscreen, setFullscreen] = useState(false);
@@ -18,21 +22,34 @@ export function Terminal({ sessionId }: TerminalProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/terminal`, {
-      method: "POST",
-      cache: "no-store",
-    })
-      .then((res) => {
+    const fetchTerminalUrl = async () => {
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/terminal`, {
+          method: "POST",
+          cache: "no-store",
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<{ terminalUrl: string }>;
-      })
-      .then((data) => {
+        const data = (await res.json()) as { terminalUrl: string };
         setTerminalUrl(data.terminalUrl);
-      })
-      .catch((err) => {
+        setError(null);
+      } catch (err) {
         console.error("[Terminal] Failed to get terminal URL:", err);
         setError("Failed to connect to terminal server");
-      });
+      }
+    };
+
+    // Initial fetch
+    void fetchTerminalUrl();
+
+    // Auto-refresh token every 50 seconds (token TTL is 60s)
+    // This keeps the httpOnly cookie alive even across transient network disconnects
+    const refreshInterval = setInterval(() => {
+      void fetchTerminalUrl();
+    }, 50_000);
+
+    return () => {
+      clearInterval(refreshInterval);
+    };
   }, [sessionId]);
 
   return (

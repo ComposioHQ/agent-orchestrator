@@ -15,6 +15,7 @@ import {
   type OrchestratorConfig,
   type ProjectObserver,
 } from "@composio/ao-core";
+import { validateSessionId } from "./tmux-utils.js";
 
 type HeaderSource = Headers | IncomingHttpHeaders | Record<string, string | string[] | undefined>;
 
@@ -85,7 +86,6 @@ const FAILURE_LIMIT = { max: 12, windowMs: 60_000 };
 const TOKEN_TTL_MS = 60_000;
 const SECRET_FILE_NAME = "terminal-auth-secret";
 const COOKIE_PREFIX = "ao_terminal_";
-const VALID_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
 
 const rateLimiters = new Map<string, RateLimitState>();
 
@@ -100,10 +100,6 @@ let cachedContext:
 export function resetTerminalAuthStateForTests(): void {
   cachedContext = undefined;
   rateLimiters.clear();
-}
-
-function validateSessionId(sessionId: string): boolean {
-  return VALID_SESSION_ID.test(sessionId);
 }
 
 function getHeaderValue(headers: HeaderSource, name: string): string | undefined {
@@ -397,6 +393,21 @@ function encodeToken(payload: TerminalTokenPayload, secret: string): string {
   return `${payloadBase64}.${signPayload(payloadBase64, secret)}`;
 }
 
+function assertTerminalTokenPayload(record: Record<string, unknown>): TerminalTokenPayload {
+  // Validate each field; this conversion is safe because we've already checked all types above
+  return {
+    v: record["v"] as 1,
+    purpose: record["purpose"] as "terminal_access",
+    sessionId: record["sessionId"] as string,
+    projectId: record["projectId"] as string,
+    ownerId: record["ownerId"] as string,
+    actorId: record["actorId"] as string,
+    iat: record["iat"] as number,
+    exp: record["exp"] as number,
+    nonce: record["nonce"] as string,
+  };
+}
+
 function decodeAndVerifyToken(token: string, secret: string): TerminalTokenPayload {
   const [payloadBase64, signature] = token.split(".");
   if (!payloadBase64 || !signature) {
@@ -436,7 +447,7 @@ function decodeAndVerifyToken(token: string, secret: string): TerminalTokenPaylo
     throw new TerminalAuthError("Invalid terminal token", 401, "token_invalid");
   }
 
-  const payload = tokenRecord as unknown as TerminalTokenPayload;
+  const payload = assertTerminalTokenPayload(tokenRecord);
   if (payload.exp <= Date.now()) {
     throw new TerminalAuthError("Terminal token expired", 401, "token_expired");
   }
