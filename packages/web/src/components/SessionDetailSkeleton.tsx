@@ -6,10 +6,12 @@
  * route-level loading.tsx and the client-side loading branch in page.tsx.
  */
 
+import { cn } from "@/lib/cn";
+
 function Bone({ className }: { className?: string }) {
   return (
     <div
-      className={`animate-pulse rounded bg-[var(--color-bg-subtle)] ${className ?? ""}`}
+      className={cn("animate-pulse rounded bg-[var(--color-bg-subtle)]", className)}
     />
   );
 }
