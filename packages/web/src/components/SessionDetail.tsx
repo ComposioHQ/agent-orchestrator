@@ -37,6 +37,8 @@ const activityMeta: Record<string, { label: string; color: string }> = {
   blocked: { label: "Blocked", color: "var(--color-status-error)" },
   exited: { label: "Exited", color: "var(--color-status-error)" },
 };
+// Defer terminal mount on mobile to keep the first view fast on slower networks.
+const MOBILE_TERMINAL_DELAY_MS = 150;
 
 function cleanBugbotComment(body: string): { title: string; description: string } {
   const isBugbot = body.includes("<!-- DESCRIPTION START -->") || body.includes("### ");
@@ -358,12 +360,21 @@ export function SessionDetail({
   }, [isMobile]);
 
   useEffect(() => {
-    if (startFullscreen || (viewportReady && !isMobile)) {
+    if (!viewportReady) return;
+
+    if (startFullscreen || !isMobile) {
       setShowTerminal(true);
+      return;
     }
+
+    const timer = window.setTimeout(() => {
+      setShowTerminal(true);
+    }, MOBILE_TERMINAL_DELAY_MS);
+
+    return () => window.clearTimeout(timer);
   }, [isMobile, startFullscreen, viewportReady]);
 
-  const shouldShowDeferredTerminalCta = viewportReady && isMobile && !showTerminal;
+  const shouldShowDeferredTerminalPlaceholder = viewportReady && isMobile && !showTerminal;
 
   return (
     <div className="session-detail-page min-h-screen bg-[var(--color-bg-base)]">
@@ -417,19 +428,12 @@ export function SessionDetail({
                 isOpenCodeSession={isOpenCodeSession}
                 reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
               />
-            ) : shouldShowDeferredTerminalCta ? (
+            ) : shouldShowDeferredTerminalPlaceholder ? (
               <div className="rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-elevated)] px-4 py-4">
                 <p className="text-[12px] leading-relaxed text-[var(--color-text-secondary)]">
-                  Terminal loading is deferred on mobile to keep the first page load fast over
-                  slower networks.
+                  Loading the live terminal after the page settles to keep the first view fast on
+                  slower mobile networks.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setShowTerminal(true)}
-                  className="mt-3 inline-flex items-center gap-2 rounded-md bg-[var(--color-accent)] px-3 py-2 text-[12px] font-semibold text-white transition-opacity hover:opacity-90"
-                >
-                  Open Live Terminal
-                </button>
               </div>
             ) : (
               <div

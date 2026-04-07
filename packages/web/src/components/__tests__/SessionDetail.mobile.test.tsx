@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionDetail } from "../SessionDetail";
 import { makePR, makeSession } from "../../__tests__/helpers";
@@ -242,6 +242,8 @@ describe("SessionDetail mobile navbar", () => {
   });
 
   it("defers terminal mount on mobile until requested", () => {
+    vi.useFakeTimers();
+
     render(
       <SessionDetail
         session={makeSession({
@@ -254,11 +256,17 @@ describe("SessionDetail mobile navbar", () => {
     );
 
     expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open Live Terminal" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Live Terminal" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Loading the live terminal after the page settles/i),
+    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Open Live Terminal" }));
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
 
     expect(screen.getByTestId("direct-terminal").textContent).toContain("worker-mobile-terminal");
+    vi.useRealTimers();
   });
 
   it("does not flash the mobile terminal CTA on desktop", () => {
