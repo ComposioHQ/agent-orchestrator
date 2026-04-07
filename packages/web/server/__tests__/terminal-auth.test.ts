@@ -17,6 +17,7 @@ let projectDir: string;
 let sessionsDir: string;
 let previousConfigPath: string | undefined;
 let previousTerminalActorId: string | undefined;
+let previousTrustProxyHeaders: string | undefined;
 
 function writeConfig(configPath: string, rootProjectDir: string): void {
   writeFileSync(
@@ -67,8 +68,10 @@ describe("terminal auth", () => {
 
     previousConfigPath = process.env.AO_CONFIG_PATH;
     previousTerminalActorId = process.env.AO_TERMINAL_ACTOR_ID;
+    previousTrustProxyHeaders = process.env.AO_TRUST_PROXY_HEADERS;
     process.env.AO_CONFIG_PATH = configPath;
     process.env.AO_TERMINAL_ACTOR_ID = TEST_ACTOR;
+    Reflect.deleteProperty(process.env, "AO_TRUST_PROXY_HEADERS");
     sessionsDir = getSessionsDir(configPath, projectDir);
   });
 
@@ -87,6 +90,11 @@ describe("terminal auth", () => {
       Reflect.deleteProperty(process.env, "AO_TERMINAL_ACTOR_ID");
     } else {
       process.env.AO_TERMINAL_ACTOR_ID = previousTerminalActorId;
+    }
+    if (previousTrustProxyHeaders === undefined) {
+      Reflect.deleteProperty(process.env, "AO_TRUST_PROXY_HEADERS");
+    } else {
+      process.env.AO_TRUST_PROXY_HEADERS = previousTrustProxyHeaders;
     }
     rmSync(tempRoot, { recursive: true, force: true });
   });
@@ -109,5 +117,51 @@ describe("terminal auth", () => {
     expect(authorized.sessionId).toBe(TEST_SESSION);
     expect(authorized.tmuxSessionName).toBe(`${TEST_SESSION}-tmux`);
     expect(authorized.actorId).toBe(TEST_ACTOR);
+  });
+
+  it("does not trust proxy identity headers by default", () => {
+    const sessionId = "ao-proxy-headers-off";
+    writeMetadata(sessionsDir, sessionId, {
+      worktree: projectDir,
+      branch: `session/${sessionId}`,
+      status: "working",
+      project: "terminal-fixtures",
+      ownerId: "proxy-owner",
+      ownerSource: "test",
+      tmuxName: `${sessionId}-tmux`,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(() =>
+      issueTerminalAccess({
+        sessionId,
+        headers: { "x-forwarded-user": "proxy-owner" },
+      }),
+    ).toThrow("Session ownership denied");
+  });
+
+  it("trusts proxy identity headers only when AO_TRUST_PROXY_HEADERS=true", () => {
+    process.env.AO_TRUST_PROXY_HEADERS = "true";
+
+    const sessionId = "ao-proxy-headers-on";
+    writeMetadata(sessionsDir, sessionId, {
+      worktree: projectDir,
+      branch: `session/${sessionId}`,
+      status: "working",
+      project: "terminal-fixtures",
+      ownerId: "proxy-owner",
+      ownerSource: "test",
+      tmuxName: `${sessionId}-tmux`,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const grant = issueTerminalAccess({
+      sessionId,
+      headers: { "x-forwarded-user": "proxy-owner" },
+      remoteAddress: "127.0.0.1",
+    });
+
+    expect(grant.actorId).toBe("proxy-owner");
+    expect(grant.actorSource).toBe("header:x-forwarded-user");
   });
 });

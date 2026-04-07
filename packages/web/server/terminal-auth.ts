@@ -191,26 +191,36 @@ function resolveFallbackActor(): { actorId: string; actorSource: string } {
   return { actorId: userInfo().username, actorSource: "os:userInfo" };
 }
 
-function resolveActor(headers: HeaderSource, remoteAddress?: string): TerminalActor {
-  const explicitActor =
-    getHeaderValue(headers, "x-forwarded-user")?.trim() ||
-    getHeaderValue(headers, "x-auth-request-user")?.trim() ||
-    getHeaderValue(headers, "x-remote-user")?.trim();
+function shouldTrustProxyHeaders(): boolean {
+  return process.env["AO_TRUST_PROXY_HEADERS"]?.trim().toLowerCase() === "true";
+}
 
-  const explicitSource = getHeaderValue(headers, "x-forwarded-user")?.trim()
+function resolveActor(headers: HeaderSource, remoteAddress?: string): TerminalActor {
+  const trustProxyHeaders = shouldTrustProxyHeaders();
+  const explicitActor = trustProxyHeaders
+    ? getHeaderValue(headers, "x-forwarded-user")?.trim() ||
+      getHeaderValue(headers, "x-auth-request-user")?.trim() ||
+      getHeaderValue(headers, "x-remote-user")?.trim()
+    : undefined;
+
+  const explicitSource = trustProxyHeaders
+    ? getHeaderValue(headers, "x-forwarded-user")?.trim()
       ? "header:x-forwarded-user"
       : getHeaderValue(headers, "x-auth-request-user")?.trim()
         ? "header:x-auth-request-user"
         : getHeaderValue(headers, "x-remote-user")?.trim()
           ? "header:x-remote-user"
-          : undefined;
+          : undefined
+    : undefined;
 
-  const forwardedFor = getHeaderValue(headers, "x-forwarded-for")
-    ?.split(",")[0]
-    ?.trim();
+  const forwardedFor = trustProxyHeaders
+    ? getHeaderValue(headers, "x-forwarded-for")
+        ?.split(",")[0]
+        ?.trim()
+    : undefined;
   const clientIp =
     forwardedFor ||
-    getHeaderValue(headers, "x-real-ip")?.trim() ||
+    (trustProxyHeaders ? getHeaderValue(headers, "x-real-ip")?.trim() : undefined) ||
     remoteAddress ||
     "unknown";
 

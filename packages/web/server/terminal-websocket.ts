@@ -325,16 +325,8 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
   return instance;
 }
 
-function asTerminalAuthError(error: unknown): TerminalAuthError {
-  if (error instanceof TerminalAuthError) {
-    return error;
-  }
-
-  return new TerminalAuthError(
-    "Terminal authorization failed",
-    503,
-    "config_unavailable",
-  );
+function asTerminalAuthError(error: unknown): TerminalAuthError | undefined {
+  return error instanceof TerminalAuthError ? error : undefined;
 }
 
 function classifyTerminalServerError(error: unknown): TerminalServerError {
@@ -507,18 +499,31 @@ const server = createServer(async (req, res) => {
       );
     } catch (error) {
       const authError = asTerminalAuthError(error);
-      recordWebsocketMetric({
-        metric: "websocket_error",
-        outcome: "failure",
-        sessionId,
-        reason: authError.code,
-      });
-      writeJsonError(
-        res,
-        authError.statusCode,
-        authError.message,
-        authError.retryAfterSeconds,
-      );
+      if (authError) {
+        recordWebsocketMetric({
+          metric: "websocket_error",
+          outcome: "failure",
+          sessionId,
+          reason: authError.code,
+        });
+        writeJsonError(
+          res,
+          authError.statusCode,
+          authError.message,
+          authError.retryAfterSeconds,
+        );
+      } else {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[Terminal] Auth verifier failed for ${sessionId}:`, message);
+        recordWebsocketMetric({
+          metric: "websocket_error",
+          outcome: "failure",
+          sessionId,
+          reason: "auth_verifier_unavailable",
+          data: { message },
+        });
+        writeJsonError(res, 503, "Terminal authorization unavailable");
+      }
     }
     return;
   }
@@ -541,13 +546,26 @@ const server = createServer(async (req, res) => {
       }
     } catch (error) {
       const authError = asTerminalAuthError(error);
-      recordWebsocketMetric({
-        metric: "websocket_error",
-        outcome: "failure",
-        sessionId,
-        reason: authError.code,
-      });
-      writeJsonError(res, authError.statusCode, authError.message, authError.retryAfterSeconds);
+      if (authError) {
+        recordWebsocketMetric({
+          metric: "websocket_error",
+          outcome: "failure",
+          sessionId,
+          reason: authError.code,
+        });
+        writeJsonError(res, authError.statusCode, authError.message, authError.retryAfterSeconds);
+      } else {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[Terminal] Auth verifier failed for ${sessionId}:`, message);
+        recordWebsocketMetric({
+          metric: "websocket_error",
+          outcome: "failure",
+          sessionId,
+          reason: "auth_verifier_unavailable",
+          data: { message },
+        });
+        writeJsonError(res, 503, "Terminal authorization unavailable");
+      }
     }
     return;
   }
@@ -595,13 +613,26 @@ server.on("upgrade", (req, socket, head) => {
       }
     } catch (error) {
       const authError = asTerminalAuthError(error);
-      recordWebsocketMetric({
-        metric: "websocket_error",
-        outcome: "failure",
-        sessionId,
-        reason: authError.code,
-      });
-      writeUpgradeError(socket, authError.statusCode, authError.message, authError.retryAfterSeconds);
+      if (authError) {
+        recordWebsocketMetric({
+          metric: "websocket_error",
+          outcome: "failure",
+          sessionId,
+          reason: authError.code,
+        });
+        writeUpgradeError(socket, authError.statusCode, authError.message, authError.retryAfterSeconds);
+      } else {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[Terminal] Auth verifier failed for ${sessionId}:`, message);
+        recordWebsocketMetric({
+          metric: "websocket_error",
+          outcome: "failure",
+          sessionId,
+          reason: "auth_verifier_unavailable",
+          data: { message },
+        });
+        writeUpgradeError(socket, 503, "Terminal authorization unavailable");
+      }
     }
   })();
 });
