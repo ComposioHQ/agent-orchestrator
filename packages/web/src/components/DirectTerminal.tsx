@@ -12,6 +12,8 @@ import "xterm/css/xterm.css";
 import type { ITheme, Terminal as TerminalType } from "xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 
+export const DIRECT_TERMINAL_CONTROL_PREFIX = "\0__AO_TERM__";
+
 interface DirectTerminalProps {
   sessionId: string;
   startFullscreen?: boolean;
@@ -344,6 +346,20 @@ export function DirectTerminal({
         // because `ao start` can choose terminal ports dynamically at runtime.
         const runtimeConnectionConfig: TerminalConnectionConfig = {};
         let runtimeFetchDone = false;
+        let refreshRafId = 0;
+        const scrollableTerminal = terminal as TerminalType & {
+          scrollToBottom?: () => void;
+          resize?: (cols: number, rows: number) => void;
+        };
+
+        const scheduleCanvasRefresh = () => {
+          if (refreshRafId) return;
+          refreshRafId = requestAnimationFrame(() => {
+            refreshRafId = 0;
+            scrollableTerminal.scrollToBottom?.();
+            terminal.refresh(0, Math.max(terminal.rows - 1, 0));
+          });
+        };
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
@@ -365,6 +381,7 @@ export function DirectTerminal({
             terminal.write(writeBuffer.join(""));
             writeBuffer.length = 0;
             bufferBytes = 0;
+            scheduleCanvasRefresh();
           }
         };
 
@@ -494,11 +511,31 @@ export function DirectTerminal({
                 rows: terminal.rows,
               }),
             );
+
+            scheduleCanvasRefresh();
           };
 
           websocket.onmessage = (event) => {
             const data =
               typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
+            if (data.startsWith(DIRECT_TERMINAL_CONTROL_PREFIX)) {
+              try {
+                const payload = JSON.parse(
+                  data.slice(DIRECT_TERMINAL_CONTROL_PREFIX.length),
+                ) as { type?: string; cols?: number; rows?: number };
+                if (
+                  payload.type === "sync_size" &&
+                  typeof payload.cols === "number" &&
+                  typeof payload.rows === "number"
+                ) {
+                  scrollableTerminal.resize?.(payload.cols, payload.rows);
+                  scheduleCanvasRefresh();
+                }
+              } catch {
+                // Ignore malformed control frames and keep processing terminal output.
+              }
+              return;
+            }
             if (selectionActive) {
               writeBuffer.push(data);
               bufferBytes += data.length;
@@ -509,6 +546,7 @@ export function DirectTerminal({
               }
             } else {
               terminal.write(data);
+              scheduleCanvasRefresh();
             }
           };
 
@@ -550,6 +588,7 @@ export function DirectTerminal({
         cleanup = () => {
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
+          if (refreshRafId) cancelAnimationFrame(refreshRafId);
           window.removeEventListener("resize", handleResize);
           inputDisposable?.dispose();
           inputDisposable = null;

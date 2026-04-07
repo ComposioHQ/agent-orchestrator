@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DirectTerminal } from "../DirectTerminal";
+import { DIRECT_TERMINAL_CONTROL_PREFIX, DirectTerminal } from "../DirectTerminal";
 
 const replaceMock = vi.fn();
 let searchParams = new URLSearchParams();
@@ -16,6 +16,7 @@ vi.mock("next-themes", () => ({
 }));
 
 class MockTerminal {
+  static instances: MockTerminal[] = [];
   options: Record<string, unknown>;
   parser = {
     registerCsiHandler: vi.fn(),
@@ -23,9 +24,15 @@ class MockTerminal {
   };
   cols = 80;
   rows = 24;
+  resize = vi.fn((cols: number, rows: number) => {
+    this.cols = cols;
+    this.rows = rows;
+  });
+  scrollToBottom = vi.fn();
 
   constructor(options: Record<string, unknown>) {
     this.options = options;
+    MockTerminal.instances.push(this);
   }
 
   loadAddon() {}
@@ -93,6 +100,7 @@ describe("DirectTerminal render", () => {
     searchParams = new URLSearchParams();
     replaceMock.mockReset();
     MockWebSocket.instances = [];
+    MockTerminal.instances = [];
     Object.defineProperty(document, "fonts", {
       configurable: true,
       value: { ready: Promise.resolve() },
@@ -125,5 +133,27 @@ describe("DirectTerminal render", () => {
     expect(screen.getByText("ao-orchestrator")).toHaveStyle({ color: "var(--color-accent)" });
     expect(screen.getByText("XDA")).toHaveStyle({ color: "var(--color-accent)" });
     expect(MockWebSocket.instances[0]?.url).toContain("/ao-terminal-ws?session=ao-orchestrator");
+  });
+
+  it("applies shared terminal sizes sent by the server", async () => {
+    render(<DirectTerminal sessionId="ao-mobile-shared" />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Connected")).toBeInTheDocument(),
+    );
+
+    const terminal = MockTerminal.instances[0];
+    const ws = MockWebSocket.instances[0];
+
+    ws.onmessage?.({
+      data: `${DIRECT_TERMINAL_CONTROL_PREFIX}${JSON.stringify({
+        type: "sync_size",
+        cols: 120,
+        rows: 40,
+      })}`,
+    });
+
+    expect(terminal.resize).toHaveBeenCalledWith(120, 40);
+    await waitFor(() => expect(terminal.scrollToBottom).toHaveBeenCalled());
   });
 });

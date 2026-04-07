@@ -30,6 +30,8 @@ try {
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
 
+const DIRECT_TERMINAL_CONTROL_PREFIX = "\0__AO_TERM__";
+
 interface TerminalSession {
   viewerId: string;
   sessionId: string;
@@ -142,6 +144,15 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     const { cols, rows } = getSharedSize(sessionId);
     for (const viewer of viewers.values()) {
       viewer.pty.resize(cols, rows);
+      if (viewer.ws.readyState === WebSocket.OPEN) {
+        viewer.ws.send(
+          `${DIRECT_TERMINAL_CONTROL_PREFIX}${JSON.stringify({
+            type: "sync_size",
+            cols,
+            rows,
+          })}`,
+        );
+      }
     }
   };
 
@@ -290,6 +301,7 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     viewers.set(viewerId, session);
     sessionViewers.set(sessionId, viewers);
     syncRepresentativeSession(sessionId);
+    applySharedResize(sessionId);
 
     metrics.totalConnections += 1;
     metrics.activeConnections = getActiveViewerCount();
