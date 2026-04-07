@@ -38,7 +38,7 @@ interface DirectTerminalWsUrlOptions {
   directTerminalPort?: string;
 }
 
-interface RuntimeTerminalConfigResponse {
+interface TerminalAccessResponse {
   directTerminalPort?: unknown;
   proxyWsPath?: unknown;
 }
@@ -65,7 +65,7 @@ function normalizePathValue(value: unknown): string | undefined {
 }
 
 function parseRuntimeTerminalConfig(payload: unknown): TerminalConnectionConfig {
-  const response = (payload ?? {}) as RuntimeTerminalConfigResponse;
+  const response = (payload ?? {}) as TerminalAccessResponse;
   return {
     directTerminalPort: normalizePortValue(response.directTerminalPort),
     proxyWsPath: normalizePathValue(response.proxyWsPath),
@@ -340,8 +340,6 @@ export function DirectTerminal({
         // Fit terminal to container
         fit.fit();
 
-        // Runtime WS config cache. We do not rely on build-time NEXT_PUBLIC_* here
-        // because `ao start` can choose terminal ports dynamically at runtime.
         const runtimeConnectionConfig: TerminalConnectionConfig = {};
         let runtimeFetchDone = false;
 
@@ -429,43 +427,42 @@ export function DirectTerminal({
         });
 
         async function resolveConnectionConfig(): Promise<TerminalConnectionConfig> {
-          const fromBuild: TerminalConnectionConfig = {
-            proxyWsPath: normalizePathValue(process.env.NEXT_PUBLIC_TERMINAL_WS_PATH),
-            directTerminalPort: normalizePortValue(process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT),
-          };
-
-          if (!fromBuild.proxyWsPath && !runtimeFetchDone) {
+          if (!runtimeFetchDone) {
             runtimeFetchDone = true;
             const controller = new AbortController();
-            const fetchTimeout = setTimeout(() => controller.abort(), 1500);
+            const fetchTimeout = setTimeout(() => controller.abort(), 3000);
             try {
-              const response = await fetch("/api/runtime/terminal", {
+              const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/terminal`, {
+                method: "POST",
                 cache: "no-store",
                 signal: controller.signal,
               });
-              if (response.ok) {
-                const runtimeConfig = parseRuntimeTerminalConfig(await response.json());
-                runtimeConnectionConfig.proxyWsPath = runtimeConfig.proxyWsPath;
-                runtimeConnectionConfig.directTerminalPort = runtimeConfig.directTerminalPort;
+              if (!response.ok) {
+                throw new Error(`Failed to authorize terminal: HTTP ${response.status}`);
               }
-            } catch {
-              // Runtime config endpoint is optional (timeout or network failure); fallback to build-time values.
+              const runtimeConfig = parseRuntimeTerminalConfig(await response.json());
+              runtimeConnectionConfig.proxyWsPath = runtimeConfig.proxyWsPath;
+              runtimeConnectionConfig.directTerminalPort = runtimeConfig.directTerminalPort;
             } finally {
               clearTimeout(fetchTimeout);
             }
           }
 
-          return {
-            proxyWsPath: runtimeConnectionConfig.proxyWsPath ?? fromBuild.proxyWsPath,
-            directTerminalPort:
-              runtimeConnectionConfig.directTerminalPort ?? fromBuild.directTerminalPort,
-          };
+          return runtimeConnectionConfig;
         }
 
         async function connectWebSocket() {
           if (!mounted) return;
 
-          const config = await resolveConnectionConfig();
+          let config: TerminalConnectionConfig;
+          try {
+            config = await resolveConnectionConfig();
+          } catch (err) {
+            permanentErrorRef.current = true;
+            setStatus("error");
+            setError(err instanceof Error ? err.message : "Failed to authorize terminal");
+            return;
+          }
           if (!mounted) return;
 
           const wsUrl = buildDirectTerminalWsUrl({

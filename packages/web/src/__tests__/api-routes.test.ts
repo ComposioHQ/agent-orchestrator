@@ -12,6 +12,21 @@ import {
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
 
+const { issueTerminalAccessMock } = vi.hoisted(() => ({
+  issueTerminalAccessMock: vi.fn((input: { sessionId: string }) => ({
+    sessionId: input.sessionId,
+    projectId: "my-app",
+    ownerId: "test-user",
+    ownerSource: "header:x-ao-actor-id",
+    tmuxSessionName: input.sessionId,
+    actorId: "test-user",
+    actorSource: "header:x-ao-actor-id",
+    expiresAt: "2026-01-01T00:00:00.000Z",
+    token: "signed-terminal-token",
+    cookieName: `ao_terminal_${input.sessionId}`,
+  })),
+}));
+
 // ── Mock Data ─────────────────────────────────────────────────────────
 // Provides test sessions covering the key states the dashboard needs.
 
@@ -192,6 +207,20 @@ vi.mock("@/lib/services", () => ({
   getSCM: vi.fn(() => mockSCM),
 }));
 
+vi.mock("@/lib/server/terminal-auth", () => ({
+  TerminalAuthError: class TerminalAuthError extends Error {
+    constructor(
+      message: string,
+      public readonly statusCode: number,
+      public readonly code: string,
+      public readonly retryAfterSeconds?: number,
+    ) {
+      super(message);
+    }
+  },
+  issueTerminalAccess: issueTerminalAccessMock,
+}));
+
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
@@ -206,6 +235,7 @@ import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
 import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
 import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
+import { POST as terminalAccessPOST } from "@/app/api/sessions/[id]/terminal/route";
 import { GET as verifyGET, POST as verifyPOST } from "@/app/api/verify/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
@@ -217,6 +247,7 @@ function makeRequest(url: string, init?: RequestInit): NextRequest {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  issueTerminalAccessMock.mockClear();
   // Re-set default return values
   (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
   (mockSessionManager.get as ReturnType<typeof vi.fn>).mockImplementation(
@@ -454,6 +485,25 @@ describe("API Routes", () => {
     it("sets Cache-Control: no-store header", async () => {
       const res = await runtimeTerminalGET();
       expect(res.headers.get("Cache-Control")).toBe("no-store");
+    });
+  });
+
+  describe("POST /api/sessions/[id]/terminal", () => {
+    it("issues a session-scoped terminal cookie and returns connection info", async () => {
+      const req = makeRequest("/api/sessions/backend-3/terminal", { method: "POST" });
+      const res = await terminalAccessPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.sessionId).toBe("backend-3");
+      expect(data.terminalUrl).toBe("http://localhost:14800/terminal/backend-3/");
+      expect(data.directTerminalPort).toBe("14801");
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
+      expect(res.cookies.get("ao_terminal_backend-3")?.value).toBe("signed-terminal-token");
+      expect(issueTerminalAccessMock).toHaveBeenCalledWith({
+        sessionId: "backend-3",
+        headers: req.headers,
+      });
     });
   });
 

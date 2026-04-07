@@ -117,7 +117,13 @@ describe("DirectTerminal render", () => {
   it("renders the shared accent chrome for orchestrator terminals", async () => {
     render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/runtime/terminal", expect.any(Object)));
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith("/api/sessions/ao-orchestrator/terminal", {
+        method: "POST",
+        cache: "no-store",
+        signal: expect.any(AbortSignal),
+      }),
+    );
     await waitFor(() =>
       expect(screen.getByText("Connected")).toBeInTheDocument(),
     );

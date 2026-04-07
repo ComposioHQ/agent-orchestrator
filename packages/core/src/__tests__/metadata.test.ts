@@ -44,6 +44,8 @@ describe("writeMetadata + readMetadata", () => {
       worktree: "/tmp/w",
       branch: "main",
       status: "pr_open",
+      ownerId: "terminal-owner",
+      ownerSource: "header:x-forwarded-user",
       issue: "https://linear.app/team/issue/INT-100",
       pr: "https://github.com/org/repo/pull/42",
       prAutoDetect: "off",
@@ -55,6 +57,8 @@ describe("writeMetadata + readMetadata", () => {
 
     const meta = readMetadata(dataDir, "app-2");
     expect(meta).not.toBeNull();
+    expect(meta!.ownerId).toBe("terminal-owner");
+    expect(meta!.ownerSource).toBe("header:x-forwarded-user");
     expect(meta!.issue).toBe("https://linear.app/team/issue/INT-100");
     expect(meta!.pr).toBe("https://github.com/org/repo/pull/42");
     expect(meta!.prAutoDetect).toBe("off");

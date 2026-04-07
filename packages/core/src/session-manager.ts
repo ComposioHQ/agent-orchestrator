@@ -14,7 +14,7 @@
 import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { promisify } from "node:util";
 import {
   isIssueNotFoundError,
@@ -216,6 +216,20 @@ const SEND_CONFIRMATION_OUTPUT_LINES = 20;
 const SEND_BOOTSTRAP_READY_TIMEOUT_MS = 20_000;
 const SEND_BOOTSTRAP_STABLE_POLLS = 2;
 
+function resolveSessionOwner(): { ownerId: string; ownerSource: string } {
+  const envOwnerId = process.env["AO_SESSION_OWNER_ID"]?.trim();
+  if (envOwnerId) {
+    return { ownerId: envOwnerId, ownerSource: "env:AO_SESSION_OWNER_ID" };
+  }
+
+  const envUser = process.env["USER"]?.trim();
+  if (envUser) {
+    return { ownerId: envUser, ownerSource: "env:USER" };
+  }
+
+  return { ownerId: userInfo().username, ownerSource: "os:userInfo" };
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -257,6 +271,7 @@ export interface SessionManagerDeps {
 /** Create a SessionManager instance. */
 export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionManager {
   const { config, registry } = deps;
+  const sessionOwner = resolveSessionOwner();
 
   interface LocatedSession {
     raw: Record<string, string>;
@@ -1152,6 +1167,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         worktree: workspacePath,
         branch,
         status: "spawning",
+        ownerId: sessionOwner.ownerId,
+        ownerSource: sessionOwner.ownerSource,
         tmuxName, // Store tmux name for mapping
         issue: spawnConfig.issueId,
         project: spawnConfig.projectId,
@@ -1463,6 +1480,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         worktree: workspacePath,
         branch,
         status: "working",
+        ownerId: sessionOwner.ownerId,
+        ownerSource: sessionOwner.ownerSource,
         role: "orchestrator",
         tmuxName,
         project: orchestratorConfig.projectId,
@@ -2321,6 +2340,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         worktree: raw["worktree"] ?? "",
         branch: raw["branch"] ?? "",
         status: raw["status"] ?? "killed",
+        ownerId: raw["ownerId"],
+        ownerSource: raw["ownerSource"],
         role: raw["role"],
         tmuxName: raw["tmuxName"],
         issue: raw["issue"],

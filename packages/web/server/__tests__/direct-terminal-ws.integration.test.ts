@@ -14,16 +14,26 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import { request, type IncomingMessage } from "node:http";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { WebSocket } from "ws";
+import { getSessionsDir, writeMetadata } from "@composio/ao-core";
+import { issueTerminalAccess, resetTerminalAuthStateForTests } from "../terminal-auth.js";
 import { findTmux } from "../tmux-utils.js";
 import { createDirectTerminalServer, type DirectTerminalServer } from "../direct-terminal-ws.js";
 
 const TMUX = findTmux();
 const TEST_SESSION = `ao-test-integration-${process.pid}`;
 const TEST_HASH_SESSION = `abcdef123456-${TEST_SESSION}`;
+const TEST_ACTOR = "integration-tester";
 
 let terminal: DirectTerminalServer;
 let port: number;
+let tempRoot: string;
+let projectDir: string;
+let sessionsDir: string;
+let previousConfigPath: string | undefined;
 
 // =============================================================================
 // Helpers
@@ -46,9 +56,36 @@ function httpGet(path: string): Promise<{ status: number; body: string }> {
   });
 }
 
-function connectWs(sessionId: string): Promise<WebSocket> {
+function ensureSessionMetadata(sessionId: string, tmuxSessionName = sessionId): void {
+  writeMetadata(sessionsDir, sessionId, {
+    worktree: projectDir,
+    branch: `session/${sessionId}`,
+    status: "working",
+    project: "terminal-fixtures",
+    ownerId: TEST_ACTOR,
+    ownerSource: "test",
+    tmuxName: tmuxSessionName,
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+}
+
+function createTerminalCookie(sessionId: string): string {
+  const grant = issueTerminalAccess({
+    sessionId,
+    headers: { "x-ao-actor-id": TEST_ACTOR },
+  });
+  return `${grant.cookieName}=${encodeURIComponent(grant.token)}`;
+}
+
+function connectWs(sessionId: string, tmuxSessionName = sessionId): Promise<WebSocket> {
+  ensureSessionMetadata(sessionId, tmuxSessionName);
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://localhost:${port}/ws?session=${sessionId}`);
+    const ws = new WebSocket(`ws://localhost:${port}/ws?session=${sessionId}`, {
+      headers: {
+        Cookie: createTerminalCookie(sessionId),
+        "x-ao-actor-id": TEST_ACTOR,
+      },
+    });
     ws.on("open", () => resolve(ws));
     ws.on("error", reject);
     setTimeout(() => reject(new Error("WebSocket connect timeout")), 5000);
@@ -107,6 +144,39 @@ function waitForMarker(ws: WebSocket, marker: string, timeoutMs = 3000): Promise
 // =============================================================================
 
 beforeAll(() => {
+  tempRoot = mkdtempSync(join(tmpdir(), "ao-terminal-auth-"));
+  projectDir = join(tempRoot, "terminal-fixtures");
+  mkdirSync(projectDir, { recursive: true });
+
+  const configPath = join(tempRoot, "agent-orchestrator.yaml");
+  writeFileSync(
+    configPath,
+    `port: 3000
+defaults:
+  runtime: tmux
+  agent: claude-code
+  workspace: worktree
+  notifiers: []
+projects:
+  terminal-fixtures:
+    name: Terminal Fixtures
+    repo: acme/terminal-fixtures
+    path: ${JSON.stringify(projectDir)}
+    defaultBranch: main
+    sessionPrefix: ao
+    tracker:
+      plugin: github
+    scm:
+      plugin: github
+`,
+    "utf-8",
+  );
+
+  previousConfigPath = process.env.AO_CONFIG_PATH;
+  process.env.AO_CONFIG_PATH = configPath;
+  sessionsDir = getSessionsDir(configPath, projectDir);
+  resetTerminalAuthStateForTests();
+
   // Create test tmux sessions
   execFileSync(TMUX, ["new-session", "-d", "-s", TEST_SESSION, "-x", "80", "-y", "24"], {
     timeout: 5000,
@@ -114,6 +184,7 @@ beforeAll(() => {
   execFileSync(TMUX, ["new-session", "-d", "-s", TEST_HASH_SESSION, "-x", "80", "-y", "24"], {
     timeout: 5000,
   });
+  ensureSessionMetadata(TEST_SESSION);
 
   // Start the server on a random port
   terminal = createDirectTerminalServer(TMUX);
@@ -123,6 +194,7 @@ beforeAll(() => {
 });
 
 afterEach(() => {
+  resetTerminalAuthStateForTests();
   // Clean up any active sessions from tests
   for (const [, session] of terminal.activeSessions) {
     session.pty.kill();
@@ -133,6 +205,14 @@ afterEach(() => {
 
 afterAll(() => {
   terminal.shutdown();
+  resetTerminalAuthStateForTests();
+
+  if (previousConfigPath === undefined) {
+    Reflect.deleteProperty(process.env, "AO_CONFIG_PATH");
+  } else {
+    process.env.AO_CONFIG_PATH = previousConfigPath;
+  }
+  rmSync(tempRoot, { recursive: true, force: true });
 
   // Kill test tmux sessions
   try {
@@ -485,7 +565,7 @@ describe("hash-prefixed session resolution", () => {
     });
 
     try {
-      const ws = await connectWs(hashOnlySession);
+      const ws = await connectWs(hashOnlySession, hashPrefixedName);
 
       // Should have resolved via hash-prefix match and connected
       const data = await waitForWsData(ws);
@@ -510,7 +590,7 @@ describe("hash-prefixed session resolution", () => {
     });
 
     try {
-      const ws = await connectWs(hashOnlySession);
+      const ws = await connectWs(hashOnlySession, hashPrefixedName);
       await waitForWsData(ws);
 
       const marker = `HASH_CMD_${Date.now()}`;
@@ -537,7 +617,7 @@ describe("hash-prefixed session resolution", () => {
     });
 
     try {
-      const ws = await connectWs(hashOnlySession);
+      const ws = await connectWs(hashOnlySession, hashPrefixedName);
       await waitForWsData(ws);
 
       // The activeSessions map should use the user-facing ID, not the hash-prefixed tmux name

@@ -227,6 +227,8 @@ describe("spawn", () => {
     expect(meta!.status).toBe("spawning");
     expect(meta!.project).toBe("my-app");
     expect(meta!.issue).toBe("INT-42");
+    expect(meta!.ownerId).toBeTruthy();
+    expect(meta!.ownerSource).toBeTruthy();
   });
 
   it("reuses OpenCode session mapping by issue when available", async () => {

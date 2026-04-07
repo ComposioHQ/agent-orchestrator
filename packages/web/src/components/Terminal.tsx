@@ -18,18 +18,16 @@ export function Terminal({ sessionId }: TerminalProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const port = process.env.NEXT_PUBLIC_TERMINAL_PORT ?? "14800";
-    // Use current hostname instead of hardcoded localhost
-    const protocol = window.location.protocol;
-    const hostname = window.location.hostname;
-    // URL-encode sessionId to prevent special characters from breaking the URL
-    fetch(`${protocol}//${hostname}:${port}/terminal?session=${encodeURIComponent(sessionId)}`)
+    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/terminal`, {
+      method: "POST",
+      cache: "no-store",
+    })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<{ url: string }>;
+        return res.json() as Promise<{ terminalUrl: string }>;
       })
       .then((data) => {
-        setTerminalUrl(data.url);
+        setTerminalUrl(data.terminalUrl);
       })
       .catch((err) => {
         console.error("[Terminal] Failed to get terminal URL:", err);

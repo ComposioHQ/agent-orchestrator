@@ -12,6 +12,7 @@ import { spawn } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { homedir, userInfo } from "node:os";
 import { createCorrelationId } from "@composio/ao-core";
+import { TerminalAuthError, verifyTerminalAccess } from "./terminal-auth.js";
 
 // node-pty is an optionalDependency — it requires native compilation and may
 // not be available on all platforms. Load it dynamically so the rest of the
@@ -27,7 +28,7 @@ try {
   console.warn("[DirectTerminal] node-pty not available — direct terminal will be disabled.");
   console.warn("[DirectTerminal] Install it with: npm install node-pty");
 }
-import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { findTmux } from "./tmux-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
 
 interface TerminalSession {
@@ -141,31 +142,31 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       return;
     }
 
-    // Validate session ID format
-    if (!validateSessionId(sessionId)) {
-      console.error("[DirectTerminal] Invalid session ID:", sessionId);
+    let tmuxSessionId: string;
+    try {
+      const authorized = verifyTerminalAccess({
+        sessionId,
+        headers: req.headers,
+        remoteAddress: req.socket.remoteAddress,
+      });
+      tmuxSessionId = authorized.tmuxSessionName;
+    } catch (error) {
+      const authError =
+        error instanceof TerminalAuthError
+          ? error
+          : new TerminalAuthError(
+              error instanceof Error ? error.message : "Terminal authorization failed",
+              503,
+              "config_unavailable",
+            );
+      console.error("[DirectTerminal] Authorization failed:", authError.message);
       recordWebsocketMetric({
         metric: "websocket_error",
         outcome: "failure",
         sessionId,
-        reason: "Invalid session ID",
+        reason: authError.code,
       });
-      ws.close(1008, "Invalid session ID");
-      return;
-    }
-
-    // Resolve tmux session name: try exact match first, then suffix match
-    // (hash-prefixed sessions like "8474d6f29887-ao-15" are accessed by user-facing ID "ao-15")
-    const tmuxSessionId = resolveTmuxSession(sessionId, TMUX);
-    if (!tmuxSessionId) {
-      console.error("[DirectTerminal] tmux session not found:", sessionId);
-      recordWebsocketMetric({
-        metric: "websocket_error",
-        outcome: "failure",
-        sessionId,
-        reason: "Session not found",
-      });
-      ws.close(1008, "Session not found");
+      ws.close(authError.statusCode === 429 ? 1013 : 1008, authError.message);
       return;
     }
 

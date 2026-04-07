@@ -1373,6 +1373,8 @@ export interface SessionMetadata {
   worktree: string;
   branch: string;
   status: string;
+  ownerId?: string;
+  ownerSource?: string;
   tmuxName?: string; // Globally unique tmux session name (includes hash)
   issue?: string;
   pr?: string;

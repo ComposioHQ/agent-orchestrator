@@ -2,21 +2,17 @@
  * Terminal server that manages ttyd instances for tmux sessions.
  *
  * Runs alongside Next.js. Spawns a ttyd process per session on demand,
- * each on a unique port. The dashboard embeds ttyd via iframe.
- *
- * ttyd handles all the hard parts: xterm.js, WebSocket, ANSI rendering,
- * cursor positioning, resize, input — battle-tested and correct.
- *
- * TODO: Add authentication middleware to verify:
- *   - User is authenticated
- *   - User owns the requested session
- *   - Rate limiting for terminal access
+ * each on a unique localhost port. The dashboard stays on this server's
+ * public port while authenticated HTTP and WebSocket proxying forward
+ * requests to the internal ttyd instance.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer, request } from "node:http";
+import { createServer, request, type IncomingMessage, type ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
 import { createCorrelationId } from "@composio/ao-core";
-import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { TerminalAuthError, verifyTerminalAccess } from "./terminal-auth.js";
+import { findTmux } from "./tmux-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
 
 /** Cached full path to tmux binary */
@@ -51,6 +47,58 @@ let nextPort = 7800; // Start ttyd instances from port 7800
 const MAX_PORT = 7900; // Prevent unbounded port allocation
 
 const { config: observabilityConfig, observer } = createObserverContext("terminal-websocket");
+
+function getTerminalProxyPath(sessionId: string): string {
+  return `/terminal/${sessionId}`;
+}
+
+function extractProxySessionId(pathname: string): string | null {
+  const match = pathname.match(/^\/terminal\/([a-zA-Z0-9_-]+)(?:\/.*)?$/);
+  return match?.[1] ?? null;
+}
+
+function writeJsonError(
+  res: ServerResponse,
+  statusCode: number,
+  message: string,
+  retryAfterSeconds?: number,
+): void {
+  if (retryAfterSeconds !== undefined) {
+    res.setHeader("Retry-After", String(retryAfterSeconds));
+  }
+  res.writeHead(statusCode, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: message }));
+}
+
+function writeUpgradeError(
+  socket: Duplex,
+  statusCode: number,
+  message: string,
+  retryAfterSeconds?: number,
+): void {
+  const statusText =
+    statusCode === 400
+      ? "Bad Request"
+      : statusCode === 401
+        ? "Unauthorized"
+        : statusCode === 403
+          ? "Forbidden"
+          : statusCode === 404
+            ? "Not Found"
+            : statusCode === 429
+              ? "Too Many Requests"
+              : "Service Unavailable";
+  const lines = [
+    `HTTP/1.1 ${statusCode} ${statusText}`,
+    "Connection: close",
+    "Content-Type: text/plain; charset=utf-8",
+    `Content-Length: ${Buffer.byteLength(message)}`,
+  ];
+  if (retryAfterSeconds !== undefined) {
+    lines.push(`Retry-After: ${retryAfterSeconds}`);
+  }
+  socket.end(`${lines.join("\r\n")}\r\n\r\n${message}`);
+}
 
 function recordWebsocketMetric(input: {
   metric: "websocket_connect" | "websocket_disconnect" | "websocket_error";
@@ -112,13 +160,13 @@ function waitForTtyd(port: number, sessionId: string, timeoutMs = 3000): Promise
 
       const req = request(
         {
-          hostname: "localhost",
+          hostname: "127.0.0.1",
           port,
-          path: `/${sessionId}/`,
+          path: `${getTerminalProxyPath(sessionId)}/`,
           method: "GET",
           timeout: 500,
         },
-        (_res) => {
+        () => {
           // Any response (even 404) means ttyd is listening
           cleanup();
           resolve();
@@ -131,14 +179,12 @@ function waitForTtyd(port: number, sessionId: string, timeoutMs = 3000): Promise
         if (settled) return;
         req.destroy();
         pendingReq = null;
-        // Schedule retry but track the timeout ID
         timeoutId = setTimeout(checkReady, 100);
       });
 
       req.on("error", () => {
         if (settled) return;
         pendingReq = null;
-        // Connection refused or other error - ttyd not ready yet, retry
         timeoutId = setTimeout(checkReady, 100);
       });
 
@@ -152,7 +198,7 @@ function waitForTtyd(port: number, sessionId: string, timeoutMs = 3000): Promise
 /**
  * Spawn or reuse a ttyd instance for a tmux session.
  *
- * @param sessionId - User-facing session ID (used for base-path and URL)
+ * @param sessionId - User-facing session ID (used for base-path and proxy URL)
  * @param tmuxSessionName - Actual tmux session name (may be hash-prefixed)
  */
 function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstance {
@@ -168,14 +214,11 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
     return existing;
   }
 
-  // Allocate port: reuse from pool if available, otherwise increment
   let port: number;
   if (availablePorts.size > 0) {
-    // Reuse a recycled port
     port = availablePorts.values().next().value as number;
     availablePorts.delete(port);
   } else {
-    // Allocate new port
     if (nextPort >= MAX_PORT) {
       throw new Error(`Port exhaustion: reached maximum of ${MAX_PORT - 7800} terminal instances`);
     }
@@ -186,20 +229,16 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
   metrics.totalSpawns += 1;
   metrics.lastSpawnAt = new Date().toISOString();
 
-  // Enable mouse mode for scrollback support
   const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "mouse", "on"]);
-  mouseProc.on("error", (err) => {
-    console.error(`[Terminal] Failed to set mouse mode for ${tmuxSessionName}:`, err.message);
+  mouseProc.on("error", (error) => {
+    console.error(`[Terminal] Failed to set mouse mode for ${tmuxSessionName}:`, error.message);
   });
 
-  // Hide the green status bar for cleaner appearance
   const statusProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "status", "off"]);
-  statusProc.on("error", (err) => {
-    console.error(`[Terminal] Failed to hide status bar for ${tmuxSessionName}:`, err.message);
+  statusProc.on("error", (error) => {
+    console.error(`[Terminal] Failed to hide status bar for ${tmuxSessionName}:`, error.message);
   });
 
-  // Use user-facing sessionId for base-path (matches URL the dashboard uses)
-  // Use tmuxSessionName for tmux attach (may be hash-prefixed)
   const proc = spawn(
     "ttyd",
     [
@@ -207,15 +246,13 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
       "--port",
       String(port),
       "--base-path",
-      `/${sessionId}`,
+      getTerminalProxyPath(sessionId),
       TMUX,
       "attach-session",
       "-t",
       tmuxSessionName,
     ],
-    {
-      stdio: ["ignore", "pipe", "pipe"],
-    },
+    { stdio: ["ignore", "pipe", "pipe"] },
   );
 
   proc.stdout?.on("data", (data: Buffer) => {
@@ -226,16 +263,12 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
     console.log(`[Terminal] ttyd ${sessionId}: ${data.toString().trim()}`);
   });
 
-  // Use once() for cleanup handlers to prevent race condition when both exit and error fire
   proc.once("exit", (code) => {
     console.log(`[Terminal] ttyd ${sessionId} exited with code ${code}`);
-    // Only delete if this is still the current instance (prevents race with error handler)
     const current = instances.get(sessionId);
     if (current?.process === proc) {
       instances.delete(sessionId);
       metrics.activeInstances = instances.size;
-      // Only recycle port on clean exit (code 0), not on errors
-      // Failed ttyd processes may leave ports in TIME_WAIT state
       if (code === 0) {
         availablePorts.add(port);
       }
@@ -249,26 +282,23 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
     });
   });
 
-  proc.once("error", (err) => {
-    console.error(`[Terminal] ttyd ${sessionId} error:`, err.message);
-    // Only delete if this is still the current instance (prevents race with exit handler)
+  proc.once("error", (error) => {
+    console.error(`[Terminal] ttyd ${sessionId} error:`, error.message);
     const current = instances.get(sessionId);
     if (current?.process === proc) {
       instances.delete(sessionId);
       metrics.activeInstances = instances.size;
-      // Don't recycle port on error - may still be in use or TIME_WAIT
     }
     metrics.totalErrors += 1;
     metrics.lastErrorAt = new Date().toISOString();
-    metrics.lastErrorReason = err.message;
+    metrics.lastErrorReason = error.message;
     recordWebsocketMetric({
       metric: "websocket_error",
       outcome: "failure",
       sessionId,
-      reason: err.message,
+      reason: error.message,
       data: { port },
     });
-    // Kill any running process
     try {
       proc.kill();
     } catch {
@@ -288,116 +318,183 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
   return instance;
 }
 
-// Simple HTTP API for the dashboard to request terminal URLs
+function asTerminalAuthError(error: unknown): TerminalAuthError {
+  return error instanceof TerminalAuthError
+    ? error
+    : new TerminalAuthError(
+        error instanceof Error ? error.message : "Terminal authorization failed",
+        503,
+        "config_unavailable",
+      );
+}
+
+function proxyHttpRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  targetPort: number,
+  targetPath: string,
+  sessionId: string,
+): void {
+  const proxyReq = request(
+    {
+      hostname: "127.0.0.1",
+      port: targetPort,
+      method: req.method,
+      path: targetPath,
+      headers: {
+        ...req.headers,
+        host: `127.0.0.1:${targetPort}`,
+      },
+    },
+    (proxyRes) => {
+      res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
+      proxyRes.pipe(res);
+    },
+  );
+
+  proxyReq.on("error", (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[Terminal] HTTP proxy failed for ${sessionId}:`, message);
+    writeJsonError(res, 502, "Terminal proxy failed");
+  });
+
+  req.pipe(proxyReq);
+}
+
+function proxyUpgradeRequest(
+  req: IncomingMessage,
+  socket: Duplex,
+  head: Buffer,
+  targetPort: number,
+  sessionId: string,
+): void {
+  const proxyReq = request({
+    hostname: "127.0.0.1",
+    port: targetPort,
+    method: req.method,
+    path: req.url ?? "/",
+    headers: {
+      ...req.headers,
+      host: `127.0.0.1:${targetPort}`,
+    },
+  });
+
+  proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
+    const statusLine = `HTTP/1.1 ${proxyRes.statusCode ?? 101} ${proxyRes.statusMessage ?? "Switching Protocols"}`;
+    const headerLines = Object.entries(proxyRes.headers).flatMap(([name, value]) => {
+      if (value === undefined) return [];
+      return Array.isArray(value)
+        ? value.map((item) => `${name}: ${item}`)
+        : [`${name}: ${value}`];
+    });
+
+    socket.write(`${statusLine}\r\n${headerLines.join("\r\n")}\r\n\r\n`);
+    if (proxyHead.length > 0) {
+      socket.write(proxyHead);
+    }
+    if (head.length > 0) {
+      proxySocket.write(head);
+    }
+    proxySocket.pipe(socket);
+    socket.pipe(proxySocket);
+  });
+
+  proxyReq.on("response", (proxyRes) => {
+    proxyRes.resume();
+    writeUpgradeError(socket, proxyRes.statusCode ?? 502, "Terminal upgrade rejected");
+  });
+
+  proxyReq.on("error", (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[Terminal] WebSocket proxy failed for ${sessionId}:`, message);
+    writeUpgradeError(socket, 502, "Terminal proxy failed");
+  });
+
+  proxyReq.end();
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
 
-  // CORS for dashboard - allow requests from the same host as the dashboard
-  // TODO: Replace with proper session-based authentication
-  const origin = req.headers.origin;
-  if (origin && origin !== "null") {
-    // Extract hostname from origin and compare with request host
-    try {
-      const originUrl = new URL(origin);
-      const requestHost = req.headers.host;
-      // Allow if origin hostname matches request host (supports remote deployments)
-      if (requestHost && originUrl.hostname === requestHost.split(":")[0]) {
-        res.setHeader("Access-Control-Allow-Origin", origin);
-      }
-    } catch {
-      // Invalid origin URL, don't set CORS header
-    }
-  } else {
-    // Allow null origin (file:// or local HTML files)
-    res.setHeader("Access-Control-Allow-Origin", "*");
-  }
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  if (req.method === "OPTIONS") {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-
-  // GET /terminal?session=ao-1 → returns { url, port }
   if (url.pathname === "/terminal") {
     const sessionId = url.searchParams.get("session");
     if (!sessionId) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Missing session parameter" }));
+      writeJsonError(res, 400, "Missing session parameter");
       recordWebsocketMetric({
         metric: "websocket_error",
         outcome: "failure",
-        reason: "Missing session parameter",
+        reason: "missing_session_parameter",
       });
       return;
     }
 
-    // Validate session ID to prevent path traversal and injection
-    if (!validateSessionId(sessionId)) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Invalid session ID" }));
-      recordWebsocketMetric({
-        metric: "websocket_error",
-        outcome: "failure",
-        sessionId,
-        reason: "Invalid session ID",
-      });
-      return;
-    }
-
-    // Resolve tmux session name: try exact match first, then suffix match
-    // (hash-prefixed sessions like "8474d6f29887-ao-15" are accessed by user-facing ID "ao-15")
-    const tmuxSessionId = resolveTmuxSession(sessionId, TMUX);
-    if (!tmuxSessionId) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Session not found" }));
-      recordWebsocketMetric({
-        metric: "websocket_error",
-        outcome: "failure",
-        sessionId,
-        reason: "Session not found",
-      });
-      return;
-    }
-
-    // Spawn ttyd and wait for it to be ready (catch port exhaustion and startup failures)
     try {
-      const instance = getOrSpawnTtyd(sessionId, tmuxSessionId);
-      await waitForTtyd(instance.port, sessionId);
-
-      // Use the request host to construct the terminal URL (supports remote access)
+      verifyTerminalAccess({
+        sessionId,
+        headers: req.headers,
+        remoteAddress: req.socket.remoteAddress,
+      });
       const host = req.headers.host ?? "localhost";
-      const protocol = req.headers["x-forwarded-proto"] ?? "http";
+      const forwardedProto = req.headers["x-forwarded-proto"];
+      const protocol =
+        typeof forwardedProto === "string" && forwardedProto.length > 0
+          ? forwardedProto
+          : "http";
 
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
-          url: `${protocol}://${host.split(":")[0]}:${instance.port}/${sessionId}/`,
-          port: instance.port,
+          url: `${protocol}://${host}${getTerminalProxyPath(sessionId)}/`,
           sessionId,
         }),
       );
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[Terminal] Failed to start terminal for ${sessionId}:`, errorMsg);
-      metrics.totalErrors += 1;
-      metrics.lastErrorAt = new Date().toISOString();
-      metrics.lastErrorReason = errorMsg;
+    } catch (error) {
+      const authError = asTerminalAuthError(error);
       recordWebsocketMetric({
         metric: "websocket_error",
         outcome: "failure",
         sessionId,
-        reason: errorMsg,
+        reason: authError.code,
       });
-      res.writeHead(503, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Failed to start terminal" }));
+      writeJsonError(
+        res,
+        authError.statusCode,
+        authError.message,
+        authError.retryAfterSeconds,
+      );
     }
     return;
   }
 
-  // GET /health
+  const sessionId = extractProxySessionId(url.pathname);
+  if (sessionId) {
+    try {
+      const authorized = verifyTerminalAccess({
+        sessionId,
+        headers: req.headers,
+        remoteAddress: req.socket.remoteAddress,
+      });
+      const instance = getOrSpawnTtyd(authorized.sessionId, authorized.tmuxSessionName);
+      await waitForTtyd(instance.port, authorized.sessionId);
+      proxyHttpRequest(req, res, instance.port, `${url.pathname}${url.search}`, sessionId);
+    } catch (error) {
+      const authError = asTerminalAuthError(error);
+      recordWebsocketMetric({
+        metric: "websocket_error",
+        outcome: "failure",
+        sessionId,
+        reason: authError.code,
+      });
+      writeJsonError(
+        res,
+        authError.statusCode,
+        authError.message,
+        authError.retryAfterSeconds,
+      );
+    }
+    return;
+  }
+
   if (url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(
@@ -415,13 +512,49 @@ const server = createServer(async (req, res) => {
   res.end("Not found");
 });
 
+server.on("upgrade", (req, socket, head) => {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const sessionId = extractProxySessionId(url.pathname);
+
+  if (!sessionId) {
+    writeUpgradeError(socket, 404, "Not found");
+    return;
+  }
+
+  void (async () => {
+    try {
+      const authorized = verifyTerminalAccess({
+        sessionId,
+        headers: req.headers,
+        remoteAddress: req.socket.remoteAddress,
+      });
+      const instance = getOrSpawnTtyd(authorized.sessionId, authorized.tmuxSessionName);
+      await waitForTtyd(instance.port, authorized.sessionId);
+      proxyUpgradeRequest(req, socket, head, instance.port, sessionId);
+    } catch (error) {
+      const authError = asTerminalAuthError(error);
+      recordWebsocketMetric({
+        metric: "websocket_error",
+        outcome: "failure",
+        sessionId,
+        reason: authError.code,
+      });
+      writeUpgradeError(
+        socket,
+        authError.statusCode,
+        authError.message,
+        authError.retryAfterSeconds,
+      );
+    }
+  })();
+});
+
 const PORT = parseInt(process.env.TERMINAL_PORT ?? "14800", 10);
 
 server.listen(PORT, () => {
   console.log(`[Terminal] Server listening on port ${PORT}`);
 });
 
-// Graceful shutdown — kill all ttyd instances
 function shutdown(signal: string) {
   console.log(`[Terminal] Received ${signal}, shutting down...`);
   for (const [, instance] of instances) {
@@ -431,8 +564,6 @@ function shutdown(signal: string) {
     console.log("[Terminal] Server closed");
     process.exit(0);
   });
-  // Force exit after 5s if graceful shutdown hangs
-  // Use unref() so this timer doesn't prevent process exit if server closes quickly
   const forceExitTimer = setTimeout(() => {
     console.error("[Terminal] Forced shutdown after timeout");
     process.exit(1);

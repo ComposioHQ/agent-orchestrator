@@ -75,6 +75,8 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     worktree: raw["worktree"] ?? "",
     branch: raw["branch"] ?? "",
     status: raw["status"] ?? "unknown",
+    ownerId: raw["ownerId"],
+    ownerSource: raw["ownerSource"],
     tmuxName: raw["tmuxName"],
     issue: raw["issue"],
     pr: raw["pr"],
@@ -126,6 +128,8 @@ export function writeMetadata(
     status: metadata.status,
   };
 
+  if (metadata.ownerId) data["ownerId"] = metadata.ownerId;
+  if (metadata.ownerSource) data["ownerSource"] = metadata.ownerSource;
   if (metadata.tmuxName) data["tmuxName"] = metadata.tmuxName;
   if (metadata.issue) data["issue"] = metadata.issue;
   if (metadata.pr) data["pr"] = metadata.pr;
