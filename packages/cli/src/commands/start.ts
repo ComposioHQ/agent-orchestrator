@@ -31,6 +31,7 @@ import {
   isOrchestratorSession,
   isTerminalSession,
   ConfigNotFoundError,
+  getDefaultRuntime,
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
@@ -579,7 +580,7 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
   const config: Record<string, unknown> = {
     port: port ?? DEFAULT_PORT,
     defaults: {
-      runtime: "tmux",
+      runtime: getDefaultRuntime(),
       agent,
       workspace: "worktree",
       notifiers: [],

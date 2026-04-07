@@ -14,8 +14,9 @@ port: 3000
 # directTerminalPort: 14801
 
 # Default plugins (these are the defaults — you can omit this section)
+# runtime defaults to 'tmux' on Linux/macOS, 'process' on Windows
 defaults:
-  runtime: tmux           # tmux | process
+  # runtime: tmux         # tmux (Linux/macOS default) | process (Windows default)
   agent: claude-code      # claude-code | codex | aider | opencode
   # orchestrator:
   #   agent: claude-code
