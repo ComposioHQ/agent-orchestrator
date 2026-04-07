@@ -5,6 +5,11 @@
  * 1. Raw Session History — transcripts from agents (already exists in agent JSONL)
  * 2. Session Memory — per-session structured JSON extracted by AO at session end
  * 3. Project Memory — aggregated knowledge injected into new sessions
+ *
+ * IMPORTANT: When modifying any schema in this file (SessionMemorySchema,
+ * ProjectMemorySchema, etc.), increment MEMORY_VERSION and update the
+ * `version: z.literal(N)` fields to match. This ensures old persisted
+ * data can be detected and migrated.
  */
 
 import { z } from "zod";
