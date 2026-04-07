@@ -48,7 +48,7 @@ import {
   findFreePort,
   MAX_PORT_SCAN,
 } from "../lib/web-dir.js";
-import { cleanNextCache } from "../lib/dashboard-rebuild.js";
+import { rebuildDashboardProductionArtifacts } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
 import { register, unregister, isAlreadyRunning, getRunning, waitForExit } from "../lib/running-state.js";
 import { isHumanCaller } from "../lib/caller-context.js";
@@ -582,7 +582,7 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
       runtime: "tmux",
       agent,
       workspace: "worktree",
-      notifiers: ["desktop"],
+      notifiers: [],
     },
     projects: {
       [projectId]: {
@@ -749,22 +749,29 @@ export async function createConfigOnly(): Promise<void> {
  * Start dashboard server in the background.
  * Returns the child process handle for cleanup.
  */
+/* c8 ignore start -- process-spawning startup code, tested via integration/onboarding */
 async function startDashboard(
   port: number,
   webDir: string,
   configPath: string | null,
   terminalPort?: number,
   directTerminalPort?: number,
+  devMode?: boolean,
 ): Promise<ChildProcess> {
   const env = await buildDashboardEnv(port, configPath, terminalPort, directTerminalPort);
 
-  // Detect dev vs production: the `server/` source directory only exists in the
-  // monorepo. Published npm packages only have `dist-server/`.
-  const isDevMode = existsSync(resolve(webDir, "server"));
+  // Detect monorepo vs npm install: the `server/` source directory only exists
+  // in the monorepo. Published npm packages only have `dist-server/`.
+  const isMonorepo = existsSync(resolve(webDir, "server"));
+
+  // In monorepo: use HMR dev server only when --dev is passed explicitly.
+  // Default is optimized production server for faster loading.
+  const useDevServer = isMonorepo && devMode === true;
 
   let child: ChildProcess;
-  if (isDevMode) {
-    // Monorepo development: use pnpm run dev (tsx, HMR, etc.)
+  if (useDevServer) {
+    // Monorepo with --dev: use pnpm run dev (tsx watch, HMR, etc.)
+    console.log(chalk.dim("  Mode: development (HMR enabled)"));
     child = spawn("pnpm", ["run", "dev"], {
       cwd: webDir,
       stdio: "inherit",
@@ -772,8 +779,13 @@ async function startDashboard(
       env,
     });
   } else {
-    // Production (installed from npm): use pre-built start-all script
-    child = spawn("node", [resolve(webDir, "dist-server", "start-all.js")], {
+    // Production: use pre-built start-all script.
+    if (isMonorepo) {
+      console.log(chalk.dim("  Mode: optimized (production bundles)"));
+      console.log(chalk.dim("  Tip: use --dev for hot reload when editing dashboard UI\n"));
+    }
+    const startScript = resolve(webDir, "dist-server", "start-all.js");
+    child = spawn("node", [startScript], {
       cwd: webDir,
       stdio: "inherit",
       detached: false,
@@ -782,8 +794,8 @@ async function startDashboard(
   }
 
   child.on("error", (err) => {
-    const cmd = isDevMode ? "pnpm" : "node";
-    const args = isDevMode ? ["run", "dev"] : [resolve(webDir, "dist-server", "start-all.js")];
+    const cmd = useDevServer ? "pnpm" : "node";
+    const args = useDevServer ? ["run", "dev"] : [resolve(webDir, "dist-server", "start-all.js")];
     const formatted = formatCommandError(err, {
       cmd,
       args,
@@ -797,6 +809,7 @@ async function startDashboard(
 
   return child;
 }
+/* c8 ignore stop */
 
 /**
  * Ensure tmux is available — interactive install with user consent if missing.
@@ -899,7 +912,7 @@ async function runStartup(
   config: OrchestratorConfig,
   projectId: string,
   project: ProjectConfig,
-  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean },
+  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean; dev?: boolean },
 ): Promise<number> {
   // Ensure tmux is available before doing anything — covers all entry paths
   // (normal start, URL start, retry with existing config)
@@ -950,10 +963,15 @@ async function runStartup(
       port = newPort;
     }
     const webDir = findWebDir(); // throws with install-specific guidance if not found
-    await preflight.checkBuilt(webDir);
-
+    // Dev mode (HMR) only works in the monorepo where `server/` source exists.
+    // For npm installs, --dev is silently ignored and production server runs,
+    // so preflight must still verify production artifacts exist.
+    const isMonorepo = existsSync(resolve(webDir, "server"));
+    const willUseDevServer = isMonorepo && opts?.dev === true;
     if (opts?.rebuild) {
-      await cleanNextCache(webDir);
+      await rebuildDashboardProductionArtifacts(webDir);
+    } else if (!willUseDevServer) {
+      await preflight.checkBuilt(webDir);
     }
 
     spinner.start("Starting dashboard");
@@ -963,6 +981,7 @@ async function runStartup(
       config.configPath,
       config.terminalPort,
       config.directTerminalPort,
+      opts?.dev,
     );
     spinner.succeed(`Dashboard starting on http://localhost:${port}`);
     console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
@@ -1021,30 +1040,26 @@ async function runStartup(
     );
 
     if (existingOrchestrators.length > 0) {
-      // Existing orchestrators found
-      if (opts?.dashboard === false) {
-        // No dashboard — auto-select the most recently active orchestrator
-        const sortedOrchestrators = [...existingOrchestrators].sort(
-          (a, b) => (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0),
-        );
-        const selected = sortedOrchestrators[0];
-        selectedOrchestratorId = selected.id;
-        // Use runtimeHandle.id if available, otherwise fall back to the session ID
-        tmuxTarget = selected.runtimeHandle?.id ?? selected.id;
-        spinner.succeed(
-          `Using existing orchestrator session: ${selected.id}` +
-            (existingOrchestrators.length > 1
-              ? ` (${existingOrchestrators.length - 1} other session(s) available)`
-              : ""),
-        );
-      } else {
-        // Dashboard available — let the user select
+      // Existing orchestrators found — always auto-select the most recently active one.
+      // With a single orchestrator, navigate directly to its session page.
+      // With multiple orchestrators, keep the selection page so the user can choose or spawn a
+      // new one — the dashboard only links to one orchestrator per project, so the selection page
+      // is the only startup path for multi-orchestrator projects.
+      const sortedOrchestrators = [...existingOrchestrators].sort(
+        (a, b) => (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0),
+      );
+      const selected = sortedOrchestrators[0];
+      selectedOrchestratorId = selected.id;
+      // Use runtimeHandle.id if available, otherwise fall back to the session ID
+      tmuxTarget = selected.runtimeHandle?.id ?? selected.id;
+      if (opts?.dashboard !== false && existingOrchestrators.length > 1) {
         hasExistingOrchestrators = true;
-        spinner.info(
-          `Found ${existingOrchestrators.length} existing orchestrator session(s). ` +
-            `Open the dashboard to select or start a new one.`,
-        );
       }
+      spinner.succeed(
+        `Using existing orchestrator session: ${selected.id}` +
+          (existingOrchestrators.length > 1
+            ? ` (${existingOrchestrators.length - 1} other session(s) available)` : ""),
+      );
     } else {
       // No existing orchestrators — spawn a new one
       try {
@@ -1090,7 +1105,7 @@ async function runStartup(
   if (hasExistingOrchestrators) {
     console.log(
       chalk.cyan("Orchestrator:"),
-      "existing sessions found — select one in the dashboard",
+      "multiple sessions found — select one in the dashboard",
     );
   } else if (opts?.orchestrator !== false && !reused) {
     console.log(chalk.cyan("Orchestrator:"), `tmux attach -t ${tmuxTarget}`);
@@ -1110,13 +1125,15 @@ async function runStartup(
     }
   }
 
-  // Auto-open browser to orchestrator session page (or selection page) once the server is ready.
+  // Auto-open browser once the server is ready.
+  // With a single orchestrator (or a newly created one), navigate directly to the session page.
+  // With multiple existing orchestrators, open the selection page so the user can choose or
+  // spawn a new one — the dashboard only links one orchestrator per project.
   // Polls the port instead of using a fixed delay — deterministic and works regardless of
   // how long Next.js takes to compile. AbortController cancels polling on early exit.
   let openAbort: AbortController | undefined;
   if (opts?.dashboard !== false) {
     openAbort = new AbortController();
-    // If existing orchestrators found, open the selection page; otherwise open the session page
     const orchestratorUrl = hasExistingOrchestrators
       ? `http://localhost:${port}/orchestrators?project=${projectId}`
       : `http://localhost:${port}/sessions/${selectedOrchestratorId ?? sessionId}`;
@@ -1176,6 +1193,7 @@ export function registerStart(program: Command): void {
     .option("--no-dashboard", "Skip starting the dashboard server")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
     .option("--rebuild", "Clean and rebuild dashboard before starting")
+    .option("--dev", "Use Next.js dev server with hot reload (for dashboard UI development)")
     .option("--interactive", "Prompt to configure config settings")
     .action(
       async (
@@ -1184,6 +1202,7 @@ export function registerStart(program: Command): void {
           dashboard?: boolean;
           orchestrator?: boolean;
           rebuild?: boolean;
+          dev?: boolean;
           interactive?: boolean;
         },
       ) => {

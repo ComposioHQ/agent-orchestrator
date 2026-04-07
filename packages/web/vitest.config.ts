@@ -50,6 +50,7 @@ export default defineConfig({
         find: "@composio/ao-plugin-tracker-linear",
         replacement: resolve(__dirname, "../plugins/tracker-linear/src/index.ts"),
       },
+      { find: "server-only", replacement: resolve(__dirname, "./src/__tests__/server-only-mock.ts") },
       { find: "@", replacement: resolve(__dirname, "./src") },
     ],
   },

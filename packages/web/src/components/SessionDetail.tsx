@@ -6,9 +6,20 @@ import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
+import dynamic from "next/dynamic";
+import { getSessionTitle } from "@/lib/format";
 import { CICheckList } from "./CIBadge";
-import { DirectTerminal } from "./DirectTerminal";
 import { MobileBottomNav } from "./MobileBottomNav";
+
+const DirectTerminal = dynamic(
+  () => import("./DirectTerminal").then((m) => ({ default: m.DirectTerminal })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[440px] animate-pulse rounded bg-[var(--color-bg-primary)]" />
+    ),
+  },
+);
 
 interface OrchestratorZones {
   merge: number;
@@ -36,10 +47,6 @@ const activityMeta: Record<string, { label: string; color: string }> = {
   blocked: { label: "Blocked", color: "var(--color-status-error)" },
   exited: { label: "Exited", color: "var(--color-status-error)" },
 };
-
-function getSessionHeadline(session: DashboardSession): string {
-  return session.issueTitle ?? session.summary ?? session.id;
-}
 
 function cleanBugbotComment(body: string): { title: string; description: string } {
   const isBugbot = body.includes("<!-- DESCRIPTION START -->") || body.includes("### ");
@@ -329,7 +336,7 @@ export function SessionDetail({
     label: session.activity ?? "unknown",
     color: "var(--color-text-muted)",
   };
-  const headline = getSessionHeadline(session);
+  const headline = getSessionTitle(session);
 
   const accentColor = "var(--color-accent)";
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";

@@ -55,6 +55,7 @@ describe("Dashboard mobile layout", () => {
       makeSession({
         id: `needs-input-${index + 1}`,
         summary: `Need approval ${index + 1}`,
+        branch: null,
         status: "needs_input",
         activity: "waiting_input",
       }),
@@ -83,18 +84,18 @@ describe("Dashboard mobile layout", () => {
 
     render(<Dashboard initialSessions={[session]} />);
 
-    expect(screen.getByRole("link", { name: /go to need approval to proceed/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /go to mobile density/i })).toHaveAttribute(
       "href",
       "/sessions/respond-1",
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /open need approval to proceed/i }));
+      fireEvent.click(screen.getByRole("button", { name: /open mobile density/i }));
     });
 
     expect(screen.getByRole("link", { name: "Open session" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Terminate" })).toBeInTheDocument();
-    expect(screen.getAllByText("Need approval to proceed").length).toBeGreaterThan(1);
+    expect(screen.getAllByText("Mobile Density").length).toBeGreaterThan(1);
     expect(screen.getAllByText("respond").length).toBeGreaterThan(0);
     expect(screen.getAllByText("needs input").length).toBeGreaterThan(0);
     expect(screen.getByText("waiting input")).toBeInTheDocument();
@@ -116,7 +117,7 @@ describe("Dashboard mobile layout", () => {
     const { rerender } = render(<Dashboard initialSessions={[session]} />);
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /open need approval to proceed/i }));
+      fireEvent.click(screen.getByRole("button", { name: /open mobile density/i }));
     });
 
     expect(screen.getByRole("button", { name: "Terminate" })).toBeInTheDocument();
@@ -219,12 +220,14 @@ describe("Dashboard mobile layout", () => {
             status: "needs_input",
             activity: "waiting_input",
             summary: "Need approval to proceed",
+            branch: null,
           }),
           makeSession({
             id: "working-1",
             status: "running",
             activity: "active",
             summary: "Implement dashboard filters",
+            branch: null,
           }),
         ]}
       />,
@@ -245,6 +248,7 @@ describe("Dashboard mobile layout", () => {
             status: "needs_input",
             activity: "waiting_input",
             summary: "Need approval to proceed",
+            branch: null,
           }),
         ]}
       />,
@@ -264,12 +268,14 @@ describe("Dashboard mobile layout", () => {
             status: "needs_input",
             activity: "waiting_input",
             summary: "Need approval to proceed",
+            branch: null,
           }),
           makeSession({
             id: "working-1",
             status: "running",
             activity: "active",
             summary: "Implement dashboard filters",
+            branch: null,
           }),
         ]}
       />,
@@ -289,6 +295,7 @@ describe("Dashboard mobile layout", () => {
             status: "needs_input",
             activity: "waiting_input",
             summary: "Need approval to proceed",
+            branch: null,
             lastActivityAt: new Date(Date.now() + 1_000).toISOString(),
           }),
           makeSession({
@@ -296,6 +303,7 @@ describe("Dashboard mobile layout", () => {
             status: "running",
             activity: "active",
             summary: "Implement dashboard filters",
+            branch: null,
             lastActivityAt: new Date(Date.now() + 2_000).toISOString(),
           }),
         ]}

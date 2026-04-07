@@ -117,7 +117,7 @@ export function PullRequestsPage({
                 <div>
                   <h1 className="dashboard-title">{projectName ? `${projectName} PRs` : "Pull Requests"}</h1>
                   <p className="dashboard-subtitle">
-                    Review active pull requests without the dashboard board chrome.
+                    Open pull requests created by agents{allProjectsView ? " across all projects" : " in this project"}.
                   </p>
                 </div>
               </div>

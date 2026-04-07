@@ -7,6 +7,7 @@ import { SessionDetail } from "@/components/SessionDetail";
 import { type DashboardSession, type ActivityState, getAttentionLevel, type AttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
 import type { ProjectInfo } from "@/lib/project-name";
+import { getSessionTitle } from "@/lib/format";
 import { useSSESessionActivity } from "@/hooks/useSSESessionActivity";
 
 function truncate(s: string, max: number): string {
@@ -29,12 +30,8 @@ function buildSessionTitle(
 
   if (isOrchestrator) {
     detail = "Orchestrator Terminal";
-  } else if (session.pr) {
-    detail = `#${session.pr.number} ${truncate(session.pr.branch, 30)}`;
-  } else if (session.branch) {
-    detail = truncate(session.branch, 30);
   } else {
-    detail = "Session Detail";
+    detail = truncate(getSessionTitle(session), 40);
   }
 
   return emoji ? `${emoji} ${id} | ${detail}` : `${id} | ${detail}`;

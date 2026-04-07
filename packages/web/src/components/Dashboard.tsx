@@ -633,6 +633,7 @@ function DashboardInner({
                   <circle cx="12" cy="12" r="10" />
                   <path d="M12 8v4M12 16h.01" />
                 </svg>
+<<<<<<< HEAD
                 <span className="flex-1">
                   GitHub API rate limited — PR data (CI status, review state, sizes) may be stale.
                   Will retry automatically on next refresh.
@@ -652,6 +653,170 @@ function DashboardInner({
                     <path d="M18 6 6 18M6 6l12 12" />
                   </svg>
                 </button>
+=======
+              </button>
+            )}
+            <div className="dashboard-hero__primary">
+              <div className="dashboard-hero__heading">
+                <div className="dashboard-hero__copy">
+                  <h1 className="dashboard-title">
+                    {projectName ?? "Orchestrator"}
+                  </h1>
+                  <p className="dashboard-subtitle">
+                    Live agent sessions, pull requests, and merge status.
+                  </p>
+                </div>
+              </div>
+              {!isMobile ? <StatusCards stats={liveStats} /> : null}
+            </div>
+
+            <div className="dashboard-hero__meta">
+              <div className="flex items-center gap-3">
+                {showDesktopPrsLink ? (
+                  <a
+                    href={prsHref}
+                    className="dashboard-prs-link orchestrator-btn flex items-center gap-2 px-4 py-2 text-[12px] font-semibold hover:no-underline"
+                  >
+                    <svg
+                      className="h-3.5 w-3.5 opacity-75"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path d="M4 6h16M4 12h16M4 18h10" />
+                    </svg>
+                    PRs
+                  </a>
+                ) : null}
+                {!allProjectsView && !isMobile ? (
+                  <OrchestratorControl orchestrators={activeOrchestrators} />
+                ) : null}
+                <ThemeToggle />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {isMobile ? (
+          <section className="mobile-priority-row" aria-label="Needs attention">
+            <div className="mobile-priority-row__label">Needs attention</div>
+            <MobileActionStrip
+              grouped={grouped}
+              onPillTap={handlePillTap}
+            />
+          </section>
+        ) : null}
+
+        {isMobile ? (
+          <section className="mobile-filter-row" aria-label="Dashboard filters">
+            {MOBILE_FILTERS.map((filter) => (
+              <button
+                key={filter.value}
+                type="button"
+                className="mobile-filter-chip"
+                data-active={mobileFilter === filter.value ? "true" : "false"}
+                onClick={() => setMobileFilter(filter.value)}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </section>
+        ) : null}
+
+        {anyRateLimited && !rateLimitDismissed && (
+          <div className="dashboard-alert mb-6 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-attention)_25%,transparent)] bg-[var(--color-tint-yellow)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
+            <svg
+              className="h-3.5 w-3.5 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 8v4M12 16h.01" />
+            </svg>
+            <span className="flex-1">
+              GitHub API rate limited — PR data (CI status, review state, sizes) may be stale. Will
+              retry automatically on next refresh.
+            </span>
+            <button
+              onClick={() => setRateLimitDismissed(true)}
+              className="ml-1 shrink-0 opacity-60 hover:opacity-100"
+              aria-label="Dismiss"
+            >
+              <svg
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
+
+        {allProjectsView && (
+          <ProjectOverviewGrid
+            overviews={projectOverviews}
+            onSpawnOrchestrator={handleSpawnOrchestrator}
+            spawningProjectIds={spawningProjectIds}
+            spawnErrors={spawnErrors}
+          />
+        )}
+
+        {!allProjectsView && hasAnySessions && (
+          <div className="kanban-board-wrap">
+            <div className="board-section-head">
+              <div>
+                <h2 className="board-section-head__title">Attention Board</h2>
+                <p className="board-section-head__subtitle">
+                  Sessions sorted by what needs your attention.
+                </p>
+              </div>
+              <div className="board-section-head__legend">
+                <BoardLegendItem label="Human action" tone="var(--color-status-error)" />
+                <BoardLegendItem label="Review queue" tone="var(--color-accent-orange)" />
+                <BoardLegendItem label="Ready to land" tone="var(--color-status-ready)" />
+              </div>
+            </div>
+
+            {isMobile ? (
+              <div id="mobile-board" className="accordion-board">
+                {visibleMobileLevels.map((level) => (
+                  <AttentionZone
+                    key={level}
+                    level={level}
+                    sessions={grouped[level]}
+                    onSend={handleSend}
+                    onKill={handleKill}
+                    onMerge={handleMerge}
+                    onRestore={handleRestore}
+                    collapsed={expandedLevel !== level}
+                    onToggle={handleAccordionToggle}
+                    compactMobile
+                    onPreview={handlePreview}
+                    resetKey={mobileFilter}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="kanban-board">
+                {KANBAN_LEVELS.map((level) => (
+                  <AttentionZone
+                    key={level}
+                    level={level}
+                    sessions={grouped[level]}
+                    onSend={handleSend}
+                    onKill={handleKill}
+                    onMerge={handleMerge}
+                    onRestore={handleRestore}
+                  />
+                ))}
+>>>>>>> main
               </div>
             )}
 
