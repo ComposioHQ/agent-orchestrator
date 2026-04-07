@@ -36,7 +36,7 @@ vi.mock("node:fs", () => ({
 }));
 
 vi.mock("node:os", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:os")>();
+  const original = await importOriginal() as typeof import("node:os");
   return {
     ...original,
     platform: () => mockPlatform(),
@@ -347,6 +347,33 @@ describe("installService", () => {
 
     expect(() => installService("my-app", mockConfig)).toThrow("Unsupported platform");
   });
+
+  it("falls back to 'ao' binary when which fails", () => {
+    mockPlatform.mockReturnValue("darwin");
+    mockExistsSync.mockImplementation((path: string) => {
+      if (path === "/usr/local/bin/ao") return false;
+      return false;
+    });
+    mockExecFileSync.mockImplementation((cmd: string) => {
+      if (cmd === "which") throw new Error("not in PATH");
+      return "";
+    });
+
+    const result = installService("my-app", mockConfig);
+    expect(result.activated).toBe(true);
+    // Verify the generated content uses fallback "ao" or resolved path
+    const writtenContent = mockWriteFileSync.mock.calls[0][1] as string;
+    expect(writtenContent).toContain("<string>ao</string>");
+  });
+
+  it("handles writeFileSync failure during install", () => {
+    mockPlatform.mockReturnValue("darwin");
+    mockWriteFileSync.mockImplementation(() => {
+      throw new Error("disk full");
+    });
+
+    expect(() => installService("my-app", mockConfig)).toThrow("disk full");
+  });
 });
 
 describe("uninstallService", () => {
@@ -429,6 +456,35 @@ describe("uninstallService", () => {
   it("throws on unsupported platform", () => {
     mockPlatform.mockReturnValue("win32");
     expect(() => uninstallService("my-app")).toThrow("Unsupported platform");
+  });
+
+  it("handles systemctl disable failure gracefully", () => {
+    mockPlatform.mockReturnValue("linux");
+    mockExistsSync.mockImplementation((path: string) => {
+      if (typeof path === "string" && path.endsWith(".service")) return true;
+      return false;
+    });
+    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === "disable") throw new Error("not running");
+      return "";
+    });
+
+    const result = uninstallService("my-app");
+    expect(result.removed).toBe(true); // Still removes file
+    expect(mockUnlinkSync).toHaveBeenCalled();
+  });
+
+  it("handles unlinkSync failure gracefully", () => {
+    mockPlatform.mockReturnValue("darwin");
+    mockExistsSync.mockImplementation((path: string) => {
+      if (typeof path === "string" && path.endsWith(".plist")) return true;
+      return false;
+    });
+    mockUnlinkSync.mockImplementation(() => {
+      throw new Error("permission denied");
+    });
+
+    expect(() => uninstallService("my-app")).toThrow("permission denied");
   });
 });
 
