@@ -433,8 +433,46 @@ export function DirectTerminal({
           }
         });
 
+        // Resume the live tail. For normal buffer this scrolls the viewport;
+        // for alternate buffer (tmux/vim) this sends `q` to exit tmux copy-mode.
+        const resumeLiveTail = () => {
+          const t = terminalInstance.current;
+          if (!t) return;
+          if (t.buffer.active.type === "normal") {
+            const vp = t.element?.querySelector<HTMLElement>(".xterm-viewport");
+            if (vp) {
+              programmaticScrollRef.current = true;
+              vp.scrollTop = vp.scrollHeight;
+            }
+          } else {
+            const sock = ws.current;
+            if (sock?.readyState === WebSocket.OPEN) sock.send("q");
+          }
+          followOutputRef.current = true;
+          setFollowOutput(true);
+        };
+
         // Touch scroll (mobile) — uses modular helper from lib/terminal-touch-scroll
-        const removeTouchScroll = attachTouchScroll(terminal, () => ws.current);
+        const removeTouchScroll = attachTouchScroll(terminal, () => ws.current, {
+          onScrollAway: () => {
+            followOutputRef.current = false;
+            setFollowOutput(false);
+            // Cancel any pending auto-resume — user is moving away.
+            if (scrollIdleTimerRef.current) {
+              clearTimeout(scrollIdleTimerRef.current);
+              scrollIdleTimerRef.current = null;
+            }
+          },
+          onScrollTowardLatest: () => {
+            // User is moving back toward the bottom — arm a short idle timer
+            // so we auto-resume only when they're heading home.
+            if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
+            scrollIdleTimerRef.current = setTimeout(() => {
+              scrollIdleTimerRef.current = null;
+              resumeLiveTail();
+            }, 1000);
+          },
+        });
 
         // WebSocket URL (stable across reconnects)
         // When accessed via reverse proxy (HTTPS on standard port), use path-based
@@ -546,7 +584,7 @@ export function DirectTerminal({
                 }
                 followOutputRef.current = true;
                 setFollowOutput(true);
-              }, 3000);
+              }, 1000);
             }
           }
         };
@@ -972,12 +1010,23 @@ export function DirectTerminal({
           <button
             type="button"
             onClick={() => {
-              const viewport = terminalInstance.current?.element?.querySelector(
-                ".xterm-viewport",
-              ) as HTMLElement | null;
-              if (viewport) {
-                programmaticScrollRef.current = true;
-                viewport.scrollTop = viewport.scrollHeight;
+              const t = terminalInstance.current;
+              if (t && t.buffer.active.type !== "normal") {
+                // Alt buffer (tmux/vim): exit copy-mode to return to live tail.
+                const sock = ws.current;
+                if (sock?.readyState === WebSocket.OPEN) sock.send("q");
+              } else {
+                const viewport = t?.element?.querySelector(
+                  ".xterm-viewport",
+                ) as HTMLElement | null;
+                if (viewport) {
+                  programmaticScrollRef.current = true;
+                  viewport.scrollTop = viewport.scrollHeight;
+                }
+              }
+              if (scrollIdleTimerRef.current) {
+                clearTimeout(scrollIdleTimerRef.current);
+                scrollIdleTimerRef.current = null;
               }
               followOutputRef.current = true;
               setFollowOutput(true);

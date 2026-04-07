@@ -25,26 +25,17 @@ const activityMeta: Record<string, { label: string; color: string }> = {
 export function CompactTopBar({ session, collapsed, toggleCollapsed, verticalLayout, onToggleVertical, onToggleSidebar }: CompactTopBarProps) {
   const router = useRouter();
   const meta = (session.activity && activityMeta[session.activity]) || { label: session.activity ?? "unknown", color: "var(--color-text-secondary)" };
-  const { reconnecting, attempt } = useAggregatedTerminalConnection();
+  const { reconnecting } = useAggregatedTerminalConnection();
 
   return (
     <div className="compact-top-bar relative">
       {reconnecting && (
-        <>
-          <div
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[2px] overflow-hidden"
-            aria-hidden
-          >
-            <div className="compact-top-bar__reconnect-bar h-full w-1/3 bg-[var(--color-accent)]" />
-          </div>
-          <div
-            className="pointer-events-none absolute right-2 bottom-[3px] z-20 text-[10px] font-medium text-[var(--color-accent)]"
-            role="status"
-            aria-live="polite"
-          >
-            Reconnecting{attempt > 0 ? ` · attempt ${attempt}` : "…"}
-          </div>
-        </>
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[2px] overflow-hidden"
+          aria-hidden
+        >
+          <div className="compact-top-bar__reconnect-bar h-full w-1/3 bg-[var(--color-accent)]" />
+        </div>
       )}
       <div className="compact-top-bar__left">
         {/* Sidebar toggle — collapses/expands on desktop, opens overlay on mobile */}
