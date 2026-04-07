@@ -1,15 +1,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import * as fs from "node:fs";
 import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync } from "node:fs";
-import { join, resolve, basename, dirname } from "node:path";
+import { join, resolve, basename, dirname, sep } from "node:path";
 import { homedir } from "node:os";
-import type {
-  PluginModule,
-  Workspace,
-  WorkspaceCreateConfig,
-  WorkspaceInfo,
-  ProjectConfig,
-} from "@composio/ao-core";
+import { getShell, isWindows, type PluginModule, type Workspace, type WorkspaceCreateConfig, type WorkspaceInfo, type ProjectConfig } from "@composio/ao-core";
 
 /** Timeout for git commands (30 seconds) */
 const GIT_TIMEOUT = 30_000;
@@ -325,9 +320,10 @@ export function create(config?: Record<string, unknown>): Workspace {
 
           const sourcePath = join(repoPath, symlinkPath);
           const targetPath = resolve(info.path, symlinkPath);
+          const normalizedBase = resolve(info.path);
 
           // Verify resolved target is still within the workspace
-          if (!targetPath.startsWith(info.path + "/") && targetPath !== info.path) {
+          if (!targetPath.startsWith(normalizedBase + sep) && targetPath !== normalizedBase) {
             throw new Error(
               `Symlink target "${symlinkPath}" resolves outside workspace: ${targetPath}`,
             );
@@ -347,15 +343,25 @@ export function create(config?: Record<string, unknown>): Workspace {
 
           // Ensure parent directory exists for nested symlink targets
           mkdirSync(dirname(targetPath), { recursive: true });
-          symlinkSync(sourcePath, targetPath);
+          try {
+            symlinkSync(sourcePath, targetPath);
+          } catch (err) {
+            if (isWindows()) {
+              // Symlinks require admin/Developer Mode on Windows — fall back to copy
+              fs.cpSync(sourcePath, targetPath, { recursive: true });
+            } else {
+              throw err;
+            }
+          }
         }
       }
 
       // Run postCreate hooks
       // NOTE: commands run with full shell privileges — they come from trusted YAML config
       if (project.postCreate) {
+        const shell = getShell();
         for (const command of project.postCreate) {
-          await execFileAsync("sh", ["-c", command], { cwd: info.path });
+          await execFileAsync(shell.cmd, shell.args(command), { cwd: info.path });
         }
       }
     },

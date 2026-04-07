@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getShell } from "@composio/ao-core";
 
 const DEFAULT_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../");
 
@@ -19,11 +20,13 @@ export function resolveScriptPath(scriptName: string): string {
 }
 
 export async function runRepoScript(scriptName: string, args: string[]): Promise<number> {
-  const shell = process.env["AO_BASH_PATH"] || "bash";
+  const shellOverride = process.env["AO_BASH_PATH"];
+  const shell = shellOverride ?? getShell().cmd;
   const scriptPath = resolveScriptPath(scriptName);
+  const shellArgs = shellOverride ? [scriptPath, ...args] : [...getShell().args(scriptPath), ...args];
 
   return await new Promise<number>((resolveExit, reject) => {
-    const child = spawn(shell, [scriptPath, ...args], {
+    const child = spawn(shell, shellArgs, {
       cwd: resolveRepoRoot(),
       env: process.env,
       stdio: "inherit",

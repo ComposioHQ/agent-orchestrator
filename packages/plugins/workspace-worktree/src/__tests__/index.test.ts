@@ -16,9 +16,15 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn(),
   lstatSync: vi.fn(),
   symlinkSync: vi.fn(),
+  cpSync: vi.fn(),
   rmSync: vi.fn(),
   mkdirSync: vi.fn(),
   readdirSync: vi.fn(),
+}));
+
+vi.mock("@composio/ao-core", () => ({
+  getShell: vi.fn(() => ({ cmd: "sh", args: (c: string) => ["-c", c] })),
+  isWindows: vi.fn(() => false),
 }));
 
 vi.mock("node:os", () => ({
@@ -30,7 +36,8 @@ vi.mock("node:os", () => ({
 // ---------------------------------------------------------------------------
 
 import * as childProcess from "node:child_process";
-import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, symlinkSync, cpSync, rmSync, mkdirSync, readdirSync } from "node:fs";
+import * as core from "@composio/ao-core";
 import { create, manifest } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -44,9 +51,12 @@ const mockExecFileAsync = (childProcess.execFile as any)[
 const mockExistsSync = existsSync as ReturnType<typeof vi.fn>;
 const mockLstatSync = lstatSync as ReturnType<typeof vi.fn>;
 const mockSymlinkSync = symlinkSync as ReturnType<typeof vi.fn>;
+const mockCpSync = cpSync as ReturnType<typeof vi.fn>;
 const mockRmSync = rmSync as ReturnType<typeof vi.fn>;
 const mockMkdirSync = mkdirSync as ReturnType<typeof vi.fn>;
 const mockReaddirSync = readdirSync as ReturnType<typeof vi.fn>;
+const mockGetShell = core.getShell as ReturnType<typeof vi.fn>;
+const mockIsWindows = core.isWindows as ReturnType<typeof vi.fn>;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -848,24 +858,90 @@ describe("workspace.postCreate()", () => {
     });
   });
 
-  it("runs postCreate commands", async () => {
+  it("runs postCreate commands using getShell()", async () => {
     const ws = create();
     const project = makeProject({
       postCreate: ["pnpm install", "pnpm build"],
     });
 
-    // Two sh -c calls
+    mockGetShell.mockReturnValue({ cmd: "sh", args: (c: string) => ["-c", c] });
+
+    // Two shell calls
     mockExecFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
     mockExecFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
 
     await ws.postCreate!(workspaceInfo, project);
 
+    expect(mockGetShell).toHaveBeenCalled();
     expect(mockExecFileAsync).toHaveBeenCalledWith("sh", ["-c", "pnpm install"], {
       cwd: "/mock-home/.worktrees/myproject/session-1",
     });
     expect(mockExecFileAsync).toHaveBeenCalledWith("sh", ["-c", "pnpm build"], {
       cwd: "/mock-home/.worktrees/myproject/session-1",
     });
+  });
+
+  it("uses Windows shell (pwsh) when getShell returns pwsh", async () => {
+    const ws = create();
+    const project = makeProject({ postCreate: ["npm install"] });
+
+    mockGetShell.mockReturnValue({
+      cmd: "pwsh",
+      args: (c: string) => ["-NoLogo", "-NonInteractive", "-Command", c],
+    });
+    mockExecFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
+
+    await ws.postCreate!(workspaceInfo, project);
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "pwsh",
+      ["-NoLogo", "-NonInteractive", "-Command", "npm install"],
+      { cwd: "/mock-home/.worktrees/myproject/session-1" },
+    );
+  });
+
+  it("falls back to cpSync when symlinkSync fails on Windows (B19)", async () => {
+    const ws = create();
+    // Use workspaceInfo as-is — path check now uses sep so it works on all platforms
+    const project = makeProject({ symlinks: ["node_modules"] });
+
+    mockIsWindows.mockReturnValue(true);
+    mockExistsSync.mockReturnValueOnce(true); // sourcePath exists
+    mockLstatSync.mockImplementationOnce(() => {
+      throw new Error("ENOENT");
+    });
+
+    const symlinkError = Object.assign(new Error("symlink requires elevation"), { code: "EPERM" });
+    mockSymlinkSync.mockImplementationOnce(() => {
+      throw symlinkError;
+    });
+
+    await ws.postCreate!(workspaceInfo, project);
+
+    expect(mockCpSync).toHaveBeenCalledWith(
+      expect.stringContaining("node_modules"),
+      expect.stringContaining("node_modules"),
+      { recursive: true },
+    );
+  });
+
+  it("re-throws symlink errors on non-Windows (B19)", async () => {
+    const ws = create();
+    const project = makeProject({ symlinks: ["node_modules"] });
+
+    mockIsWindows.mockReturnValue(false);
+    mockExistsSync.mockReturnValueOnce(true);
+    mockLstatSync.mockImplementationOnce(() => {
+      throw new Error("ENOENT");
+    });
+
+    const symlinkError = new Error("permission denied");
+    mockSymlinkSync.mockImplementationOnce(() => {
+      throw symlinkError;
+    });
+
+    await expect(ws.postCreate!(workspaceInfo, project)).rejects.toThrow("permission denied");
+    expect(mockCpSync).not.toHaveBeenCalled();
   });
 
   it("does nothing when no symlinks or postCreate configured", async () => {
@@ -899,7 +975,7 @@ describe("workspace.postCreate()", () => {
     expect(mockSymlinkSync).toHaveBeenCalledTimes(1);
     expect(mockExecFileAsync).toHaveBeenCalledWith("sh", ["-c", "pnpm install"], {
       cwd: "/mock-home/.worktrees/myproject/session-1",
-    });
+    }); // getShell() returns { cmd: "sh", args: ["-c", cmd] } in tests
   });
 
   it("expands tilde in project path for symlink sources", async () => {

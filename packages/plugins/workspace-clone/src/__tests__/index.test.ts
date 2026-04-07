@@ -10,6 +10,10 @@ vi.mock("node:child_process", () => {
   return { execFile: mockExecFile };
 });
 
+vi.mock("@composio/ao-core", () => ({
+  getShell: vi.fn(() => ({ cmd: "sh", args: (c: string) => ["-c", c] })),
+}));
+
 // Mock node:fs
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(),
@@ -52,6 +56,9 @@ function makeProject(overrides?: Partial<ProjectConfig>): ProjectConfig {
 
 // Import after mocks are set up
 import clonePlugin, { manifest, create } from "../index.js";
+import * as core from "@composio/ao-core";
+
+const mockGetShell = core.getShell as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -591,7 +598,7 @@ describe("workspace.list()", () => {
 // workspace.postCreate()
 // ---------------------------------------------------------------------------
 describe("workspace.postCreate()", () => {
-  it("runs each postCreate command via sh -c", async () => {
+  it("runs each postCreate command using getShell()", async () => {
     const workspace = create();
 
     const info = {
@@ -605,12 +612,15 @@ describe("workspace.postCreate()", () => {
       postCreate: ["pnpm install", "pnpm build"],
     });
 
+    mockGetShell.mockReturnValue({ cmd: "sh", args: (c: string) => ["-c", c] });
+
     // Two commands
     mockGitSuccess("");
     mockGitSuccess("");
 
     await workspace.postCreate!(info, project);
 
+    expect(mockGetShell).toHaveBeenCalled();
     expect(mockExecFileAsync).toHaveBeenCalledTimes(2);
 
     expect(mockExecFileAsync).toHaveBeenNthCalledWith(1, "sh", ["-c", "pnpm install"], {
@@ -620,6 +630,33 @@ describe("workspace.postCreate()", () => {
     expect(mockExecFileAsync).toHaveBeenNthCalledWith(2, "sh", ["-c", "pnpm build"], {
       cwd: "/mock-home/.ao-clones/proj/sess",
     });
+  });
+
+  it("uses Windows shell (pwsh) when getShell returns pwsh", async () => {
+    const workspace = create();
+
+    const info = {
+      path: "/mock-home/.ao-clones/proj/sess",
+      branch: "feat/branch",
+      sessionId: "sess",
+      projectId: "proj",
+    };
+
+    const project = makeProject({ postCreate: ["npm install"] });
+
+    mockGetShell.mockReturnValue({
+      cmd: "pwsh",
+      args: (c: string) => ["-NoLogo", "-NonInteractive", "-Command", c],
+    });
+    mockGitSuccess("");
+
+    await workspace.postCreate!(info, project);
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "pwsh",
+      ["-NoLogo", "-NonInteractive", "-Command", "npm install"],
+      { cwd: "/mock-home/.ao-clones/proj/sess" },
+    );
   });
 
   it("does nothing when postCreate is undefined", async () => {
