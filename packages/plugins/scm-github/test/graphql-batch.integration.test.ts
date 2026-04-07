@@ -15,8 +15,8 @@ const SKIP_INTEGRATION_TESTS = !GITHUB_TOKEN;
 describe.skipIf(SKIP_INTEGRATION_TESTS)("GraphQL Batch Enrichment Integration", () => {
   const testPRs = [
     {
-      owner: "ComposioHQ",
-      repo: "agent-orchestrator",
+      owner: "aoagents",
+      repo: "ao",
       number: 1,
       url: "https://github.com/ComposioHQ/agent-orchestrator/pull/1",
       title: "Test PR",
@@ -42,8 +42,8 @@ describe.skipIf(SKIP_INTEGRATION_TESTS)("GraphQL Batch Enrichment Integration", 
   it("should handle non-existent PR gracefully", async () => {
     const nonExistentPRs = [
       {
-        owner: "ComposioHQ",
-        repo: "agent-orchestrator",
+        owner: "aoagents",
+        repo: "ao",
         number: 99999999,
         url: "https://github.com/ComposioHQ/agent-orchestrator/pull/99999999",
         title: "Non-existent",
@@ -67,8 +67,8 @@ describe.skipIf(SKIP_INTEGRATION_TESTS)("GraphQL Batch Enrichment Integration", 
     // Test with multiple PRs from the same repo
     const multiPRs = [
       {
-        owner: "ComposioHQ",
-        repo: "agent-orchestrator",
+        owner: "aoagents",
+        repo: "ao",
         number: 1,
         url: "https://github.com/ComposioHQ/agent-orchestrator/pull/1",
         title: "PR 1",
@@ -77,8 +77,8 @@ describe.skipIf(SKIP_INTEGRATION_TESTS)("GraphQL Batch Enrichment Integration", 
         isDraft: false,
       },
       {
-        owner: "ComposioHQ",
-        repo: "agent-orchestrator",
+        owner: "aoagents",
+        repo: "ao",
         number: 2,
         url: "https://github.com/ComposioHQ/agent-orchestrator/pull/2",
         title: "PR 2",
@@ -111,8 +111,8 @@ describe.skipIf(SKIP_INTEGRATION_TESTS)("GraphQL Batch Enrichment Integration", 
   it("should handle PRs from different repositories", async () => {
     const multiRepoPRs = [
       {
-        owner: "ComposioHQ",
-        repo: "agent-orchestrator",
+        owner: "aoagents",
+        repo: "ao",
         number: 1,
         url: "https://github.com/ComposioHQ/agent-orchestrator/pull/1",
         title: "PR in repo 1",

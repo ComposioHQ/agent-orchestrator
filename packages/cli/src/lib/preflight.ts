@@ -34,7 +34,7 @@ async function checkPort(port: number): Promise<void> {
  */
 async function checkBuilt(webDir: string): Promise<void> {
   const isNpmInstall = isInstalledUnderNodeModules(webDir);
-  const corePkgDir = findPackageUp(webDir, "@composio", "ao-core");
+  const corePkgDir = findPackageUp(webDir, "@aoagents", "ao-core");
   if (!corePkgDir) {
     const hint = isNpmInstall
       ? "Run: npm install -g @composio/ao@latest"
