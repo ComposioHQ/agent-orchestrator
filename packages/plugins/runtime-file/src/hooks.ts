@@ -264,9 +264,15 @@ if [[ -z "$FILE" ]]; then
   exit 0
 fi
 
-# Resolve to absolute path (agent may pass relative paths)
-if [[ "$FILE" != /* ]]; then
-  FILE="\${PWD}/$FILE"
+# Normalize to a path RELATIVE to the worktree root so two sessions touching
+# the same source file (e.g. src/auth.ts) produce identical strings — required
+# for the rebase coordinator's Set-based overlap detection. Absolute paths
+# inside the workspace are stripped; absolute paths outside are kept verbatim
+# (they intentionally won't match other worktrees).
+if [[ "$FILE" = /* ]]; then
+  case "$FILE" in
+    "\${PWD}"/*) FILE="\${FILE#\${PWD}/}" ;;
+  esac
 fi
 
 WORKING_FILES=".ao/working-files.jsonl"

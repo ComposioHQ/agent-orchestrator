@@ -172,10 +172,11 @@ export function appendMessage(
     if (err instanceof Error && err.message.includes("size limit")) throw err;
   }
 
+  // Compute the prospective id WITHOUT committing it. The counter is only
+  // advanced after the size check passes — otherwise an oversized message
+  // would burn an id and leave a permanent gap in the JSONL stream.
   const counterKey = `${sessionId}:${source}`;
   const nextId = (messageCounters.get(counterKey) ?? 0) + 1;
-  messageCounters.set(counterKey, nextId);
-  persistCounters();
 
   const entry: ProtocolMessage = {
     v: 1,
@@ -197,6 +198,9 @@ export function appendMessage(
     );
   }
 
+  // Size check passed — commit the counter and append.
+  messageCounters.set(counterKey, nextId);
+  persistCounters();
   appendFileSync(filePath, line, { encoding: "utf-8", flag: "a" });
   return entry;
 }
