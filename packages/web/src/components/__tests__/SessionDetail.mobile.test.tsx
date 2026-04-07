@@ -241,7 +241,7 @@ describe("SessionDetail mobile navbar", () => {
     });
   });
 
-  it("defers terminal mount on mobile until requested", () => {
+  it("defers terminal mount on mobile until requested", async () => {
     vi.useFakeTimers();
 
     render(
@@ -265,8 +265,10 @@ describe("SessionDetail mobile navbar", () => {
       vi.advanceTimersByTime(200);
     });
 
-    expect(screen.getByTestId("direct-terminal").textContent).toContain("worker-mobile-terminal");
     vi.useRealTimers();
+
+    const terminal = await screen.findByTestId("direct-terminal");
+    expect(terminal.textContent).toContain("worker-mobile-terminal");
   });
 
   it("does not flash the mobile terminal CTA on desktop", () => {
