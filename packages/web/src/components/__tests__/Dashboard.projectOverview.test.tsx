@@ -165,3 +165,57 @@ describe("Dashboard project overview cards", () => {
     expect(screen.getAllByRole("button", { name: "Spawn Orchestrator" })).toHaveLength(2);
   });
 });
+
+describe("Dashboard OrchestratorControl in single-project view", () => {
+  beforeEach(() => {
+    global.EventSource = vi.fn(
+      () =>
+        ({
+          onmessage: null,
+          onerror: null,
+          close: vi.fn(),
+        }) as unknown as EventSource,
+    );
+    global.fetch = vi.fn();
+  });
+
+  it("shows orchestrators link to picker when no orchestrators are running", () => {
+    render(
+      <Dashboard
+        initialSessions={[makeSession({ projectId: "my-app" })]}
+        projectId="my-app"
+        projectName="My App"
+        orchestrators={[]}
+      />,
+    );
+
+    const orchestratorsLink = screen.getByRole("link", { name: /orchestrators/i });
+    expect(orchestratorsLink).toHaveAttribute("href", "/orchestrators?project=my-app");
+  });
+
+  it("shows dropdown with Manage all orchestrators link for multiple orchestrators", () => {
+    // Need orchestrators from different projects to avoid mergeOrchestrators deduplication
+    render(
+      <Dashboard
+        initialSessions={[makeSession({ projectId: "my-app" })]}
+        projectId="my-app"
+        projectName="My App"
+        orchestrators={[
+          { id: "my-app-orchestrator", projectId: "my-app", projectName: "My App" },
+          { id: "other-orchestrator", projectId: "other-app", projectName: "Other App" },
+        ]}
+      />,
+    );
+
+    // Find the dropdown summary element
+    const dropdown = screen.getByText("2 orchestrators");
+    expect(dropdown).toBeInTheDocument();
+
+    // Click to open dropdown
+    fireEvent.click(dropdown);
+
+    // Check for the "Manage all orchestrators" link
+    const manageLink = screen.getByRole("link", { name: /Manage all orchestrators/i });
+    expect(manageLink).toHaveAttribute("href", "/orchestrators?project=my-app");
+  });
+});

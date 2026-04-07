@@ -318,6 +318,62 @@ describe("API Routes", () => {
       expect(mockSessionManager.list).toHaveBeenCalledWith("docs-app");
     });
 
+    it("returns enriched orchestrators when orchestratorOnly=true", async () => {
+      const orchestratorSessions: Session[] = [
+        makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          status: "working",
+          activity: "active",
+          metadata: { role: "orchestrator" },
+        }),
+        makeSession({
+          id: "docs-orchestrator",
+          projectId: "docs-app",
+          status: "pr_open",
+          activity: "idle",
+          metadata: { role: "orchestrator" },
+        }),
+      ];
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        orchestratorSessions,
+      );
+
+      const res = await sessionsGET(
+        makeRequest("http://localhost:3000/api/sessions?orchestratorOnly=true"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      // orchestratorOnly returns empty sessions array
+      expect(data.sessions).toEqual([]);
+
+      // Enriched orchestrators should include activity/status fields
+      expect(data.orchestrators).toHaveLength(2);
+      expect(data.orchestrators[0]).toMatchObject({
+        id: expect.any(String),
+        projectId: expect.any(String),
+        projectName: expect.any(String),
+        activity: expect.any(String),
+        status: expect.any(String),
+        createdAt: expect.any(String),
+        lastActivityAt: expect.any(String),
+      });
+
+      // Verify activity state from sessions is included
+      const myAppOrchestrator = data.orchestrators.find(
+        (o: { projectId: string }) => o.projectId === "my-app",
+      );
+      expect(myAppOrchestrator.activity).toBe("active");
+      expect(myAppOrchestrator.status).toBe("working");
+
+      const docsOrchestrator = data.orchestrators.find(
+        (o: { projectId: string }) => o.projectId === "docs-app",
+      );
+      expect(docsOrchestrator.activity).toBe("idle");
+      expect(docsOrchestrator.status).toBe("pr_open");
+    });
+
     it("enriches all PRs concurrently, not sequentially", async () => {
       vi.useFakeTimers();
 
