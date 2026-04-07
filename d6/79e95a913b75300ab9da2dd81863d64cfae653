@@ -1,0 +1,29 @@
+packages/web/src/lib/__tests__/serialize.test.ts
+  c0157cab8bfae20d 194,205-206,208-209,212,219-220,224
+packages/web/src/lib/__tests__/format.test.ts
+  c0157cab8bfae20d 200-232
+packages/web/src/lib/serialize.ts
+  c0157cab8bfae20d 51,64
+packages/web/src/lib/format.ts
+  c0157cab8bfae20d 34-37,49-53,58,61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "d679e95a913b75300ab9da2dd81863d64cfae653",
+  "prompts": {
+    "c0157cab8bfae20d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88a9f098-94fc-4e59-9a00-35c490cd546a",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 55,
+      "total_deletions": 14,
+      "accepted_lines": 55,
+      "overriden_lines": 0
+    }
+  }
+}
