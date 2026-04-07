@@ -36,7 +36,7 @@ vi.mock("node:fs", () => ({
 }));
 
 vi.mock("node:os", async (importOriginal) => {
-  const original = await importOriginal() as typeof import("node:os");
+  const original = await importOriginal();
   return {
     ...original,
     platform: () => mockPlatform(),
