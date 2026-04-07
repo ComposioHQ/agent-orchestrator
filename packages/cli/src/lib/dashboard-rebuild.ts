@@ -6,7 +6,8 @@
 import { resolve } from "node:path";
 import { existsSync, rmSync } from "node:fs";
 import ora from "ora";
-import { exec, execSilent } from "./shell.js";
+import { findPidByPort } from "@composio/ao-core";
+import { exec } from "./shell.js";
 
 /**
  * Check if the web directory is inside a node_modules tree (npm/yarn global install).
@@ -34,12 +35,7 @@ export function assertDashboardRebuildSupported(webDir: string): void {
  * Returns null if no process is found.
  */
 export async function findRunningDashboardPid(port: number): Promise<string | null> {
-  const lsofOutput = await execSilent("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
-  if (!lsofOutput) return null;
-
-  const pid = lsofOutput.split("\n")[0]?.trim();
-  if (!pid || !/^\d+$/.test(pid)) return null;
-  return pid;
+  return findPidByPort(port);
 }
 
 /**

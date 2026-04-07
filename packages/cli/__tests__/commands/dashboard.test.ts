@@ -3,15 +3,22 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const { mockExec, mockExecSilent } = vi.hoisted(() => ({
+const { mockExec, mockFindPidByPort } = vi.hoisted(() => ({
   mockExec: vi.fn(),
-  mockExecSilent: vi.fn(),
+  mockFindPidByPort: vi.fn(),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
   exec: mockExec,
-  execSilent: mockExecSilent,
 }));
+
+vi.mock("@composio/ao-core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@composio/ao-core")>();
+  return {
+    ...actual,
+    findPidByPort: mockFindPidByPort,
+  };
+});
 
 vi.mock("ora", () => ({
   default: () => ({
@@ -28,7 +35,7 @@ let tmpDir: string;
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-dashboard-test-"));
   mockExec.mockReset();
-  mockExecSilent.mockReset();
+  mockFindPidByPort.mockReset();
   mockExec.mockResolvedValue({ stdout: "", stderr: "" });
 });
 
@@ -70,17 +77,17 @@ describe("cleanNextCache", () => {
 
 describe("findRunningDashboardPid", () => {
   it("returns PID when a process is listening", async () => {
-    mockExecSilent.mockResolvedValue("12345");
+    mockFindPidByPort.mockResolvedValue("12345");
 
     const { findRunningDashboardPid } = await import("../../src/lib/dashboard-rebuild.js");
 
     const pid = await findRunningDashboardPid(3000);
     expect(pid).toBe("12345");
-    expect(mockExecSilent).toHaveBeenCalledWith("lsof", ["-ti", ":3000", "-sTCP:LISTEN"]);
+    expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
   });
 
   it("returns null when no process is listening", async () => {
-    mockExecSilent.mockResolvedValue(null);
+    mockFindPidByPort.mockResolvedValue(null);
 
     const { findRunningDashboardPid } = await import("../../src/lib/dashboard-rebuild.js");
 
