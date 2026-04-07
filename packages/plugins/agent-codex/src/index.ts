@@ -642,67 +642,11 @@ function createCodexAgent(): Agent {
     },
 
     getProgrammaticCommand(baseCommand: string): string {
-      // Swap `codex [flags] [prompt]` → `codex app-server` for JSON-RPC mode.
-      const binary = resolvedBinary ?? "codex";
-      return `${shellEscape(binary)} app-server`;
+      return baseCommand;
     },
 
-    createInjector(child: import("node:child_process").ChildProcess): import("@composio/ao-core").MessageInjector | null {
-      const stdin = child.stdin;
-      const stdout = child.stdout;
-      if (!stdin || !stdout) return null;
-
-      let requestId = 0;
-      let threadId: string | null = null;
-      const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
-
-      const readline = createInterface({ input: stdout, crlfDelay: Infinity });
-      readline.on("line", (line: string) => {
-        if (!line.trim()) return;
-        try {
-          const msg = JSON.parse(line) as Record<string, unknown>;
-          const id = msg["id"] as number | undefined;
-          if (id !== undefined && pending.has(id)) {
-            const { resolve, reject } = pending.get(id)!;
-            pending.delete(id);
-            if (msg["error"]) reject(new Error(String((msg["error"] as Record<string, unknown>)["message"] ?? "JSON-RPC error")));
-            else resolve(msg["result"]);
-          }
-        } catch { /* non-JSON line */ }
-      });
-
-      function sendRpc(method: string, params: unknown): Promise<unknown> {
-        return new Promise((resolve, reject) => {
-          requestId += 1;
-          pending.set(requestId, { resolve, reject });
-          const req = JSON.stringify({ jsonrpc: "2.0", id: requestId, method, params }) + "\n";
-          stdin!.write(req, (err) => { if (err) { pending.delete(requestId); reject(err); } });
-        });
-      }
-
-      return {
-        async initialize() {
-          try {
-            await sendRpc("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "ao", version: "1" } });
-            stdin!.write(JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }) + "\n");
-            const result = await sendRpc("thread/start", { initialPrompt: "" }) as Record<string, unknown>;
-            threadId = (result["threadId"] ?? result["id"]) as string;
-          } catch (err) {
-            // Clean up readline on init failure to prevent resource leak.
-            readline.close();
-            pending.clear();
-            throw err;
-          }
-        },
-        async send(message: string) {
-          if (!threadId) throw new Error("Codex injector not initialized");
-          await sendRpc("turn/start", { threadId, input: [{ type: "text", text: message }] });
-        },
-        async close() {
-          readline.close();
-          pending.clear();
-        },
-      };
+    createInjector(_child: import("node:child_process").ChildProcess): import("@composio/ao-core").MessageInjector | null {
+      return null;
     },
   };
 }
