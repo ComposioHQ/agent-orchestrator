@@ -42,45 +42,42 @@ export async function GET(request: Request) {
     );
 
     if (orchestratorOnly) {
-      let enrichedOrchestrators: EnrichedOrchestratorLink[] = [];
-      try {
-        // Build a Map for O(1) session lookups
-        const orchestratorSessionsById = new Map(
-          visibleSessions
-            .filter((s) =>
-              isOrchestratorSession(
-                s,
-                config.projects[s.projectId]?.sessionPrefix ?? s.projectId,
-                allSessionPrefixes,
-              ),
-            )
-            .map((s) => [s.id, s] as const),
-        );
+      // Build a Map for O(1) session lookups
+      const orchestratorSessionsById = new Map(
+        visibleSessions
+          .filter((s) =>
+            isOrchestratorSession(
+              s,
+              config.projects[s.projectId]?.sessionPrefix ?? s.projectId,
+              allSessionPrefixes,
+            ),
+          )
+          .map((s) => [s.id, s] as const),
+      );
 
-        enrichedOrchestrators = orchestrators.map((link) => {
-          const session = orchestratorSessionsById.get(link.id);
-          return {
-            id: link.id,
-            projectId: link.projectId,
-            projectName: link.projectName,
-            activity: session?.activity ?? null,
-            status: session?.status ?? null,
-            createdAt: session ? session.createdAt.toISOString() : null,
-            lastActivityAt: session ? session.lastActivityAt.toISOString() : null,
-          };
-        });
-      } finally {
-        recordApiObservation({
-          config,
-          method: "GET",
-          path: "/api/sessions",
-          correlationId,
-          startedAt,
-          outcome: "success",
-          statusCode: 200,
-          data: { orchestratorOnly: true, orchestratorCount: orchestrators.length },
-        });
-      }
+      const enrichedOrchestrators: EnrichedOrchestratorLink[] = orchestrators.map((link) => {
+        const session = orchestratorSessionsById.get(link.id);
+        return {
+          id: link.id,
+          projectId: link.projectId,
+          projectName: link.projectName,
+          activity: session?.activity ?? null,
+          status: session?.status ?? null,
+          createdAt: session ? session.createdAt.toISOString() : null,
+          lastActivityAt: session ? session.lastActivityAt.toISOString() : null,
+        };
+      });
+
+      recordApiObservation({
+        config,
+        method: "GET",
+        path: "/api/sessions",
+        correlationId,
+        startedAt,
+        outcome: "success",
+        statusCode: 200,
+        data: { orchestratorOnly: true, orchestratorCount: orchestrators.length },
+      });
 
       return jsonWithCorrelation(
         {
