@@ -11,6 +11,7 @@ import { writeFile, mkdir, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
+import { isWindows } from "./platform.js";
 
 // =============================================================================
 // Constants
@@ -32,7 +33,7 @@ function getAoBinDir(): string {
 }
 
 /** Current version of wrapper scripts — bump when scripts change */
-const WRAPPER_VERSION = "0.2.0";
+const WRAPPER_VERSION = "0.3.0";
 
 // =============================================================================
 // PATH Builder
@@ -43,7 +44,8 @@ const WRAPPER_VERSION = "0.2.0";
  * Deduplicates entries and ensures /usr/local/bin is early for gh resolution.
  */
 export function buildAgentPath(basePath: string | undefined): string {
-  const inherited = (basePath ?? DEFAULT_PATH).split(":").filter(Boolean);
+  const delimiter = isWindows() ? ";" : ":";
+  const inherited = (basePath ?? DEFAULT_PATH).split(delimiter).filter(Boolean);
   const ordered: string[] = [];
   const seen = new Set<string>();
 
@@ -54,11 +56,13 @@ export function buildAgentPath(basePath: string | undefined): string {
   };
 
   add(getAoBinDir());
-  add(PREFERRED_GH_BIN_DIR);
+  if (!isWindows()) {
+    add(PREFERRED_GH_BIN_DIR);
+  }
 
   for (const entry of inherited) add(entry);
 
-  return ordered.join(":");
+  return ordered.join(delimiter);
 }
 
 // =============================================================================
@@ -259,6 +263,265 @@ fi
 exit \$exit_code
 `;
 
+// =============================================================================
+// Node.js Wrapper Scripts (Windows)
+// =============================================================================
+
+/**
+ * Build a Node.js wrapper script for a given binary (gh or git).
+ *
+ * On Windows, bash scripts cannot be executed directly, so we generate:
+ *  - <name>.js  — the actual interception logic (Node.js)
+ *  - <name>.cmd — a tiny CMD shim: @node "%~dp0<name>.js" %*
+ *
+ * The .js script replicates what the bash wrapper does:
+ *  - gh:  intercepts `gh pr create` and `gh pr merge`
+ *  - git: intercepts `git checkout -b` and `git switch -c`
+ *
+ * @param name           - "gh" or "git"
+ * @param realBinaryPath - Absolute path to the real binary, or empty string to
+ *                         resolve at runtime via PATH (excluding the wrapper dir).
+ */
+export function buildNodeWrapper(
+  name: "gh" | "git",
+  realBinaryPath: string,
+): string {
+  if (name === "gh") {
+    return buildGhNodeWrapper(realBinaryPath);
+  }
+  return buildGitNodeWrapper(realBinaryPath);
+}
+
+function buildGhNodeWrapper(realBinaryPath: string): string {
+  return `#!/usr/bin/env node
+// ao gh wrapper (Windows Node.js) — auto-updates session metadata on PR operations
+"use strict";
+const { spawnSync } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+
+// ---------------------------------------------------------------------------
+// Real binary resolution
+// ---------------------------------------------------------------------------
+const AO_BIN_DIR = path.dirname(__filename);
+
+function findRealGh() {
+  const explicit = process.env["GH_PATH"] || "";
+  if (explicit) {
+    try {
+      const resolved = path.resolve(explicit);
+      const dir = path.dirname(resolved);
+      if (dir !== AO_BIN_DIR && fs.existsSync(resolved)) return resolved;
+    } catch {}
+  }
+
+  // Walk PATH, skip wrapper directory
+  const pathDirs = (process.env["PATH"] || "").split(path.delimiter);
+  for (const dir of pathDirs) {
+    if (!dir || path.resolve(dir) === AO_BIN_DIR) continue;
+    for (const ext of ["", ".exe", ".cmd"]) {
+      const candidate = path.join(dir, "gh" + ext);
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        return candidate;
+      } catch {}
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Metadata update
+// ---------------------------------------------------------------------------
+function updateAoMetadata(key, value) {
+  const aoDir = process.env["AO_DATA_DIR"] || "";
+  const aoSession = process.env["AO_SESSION"] || "";
+  if (!aoDir || !aoSession) return;
+
+  // Validate session — no path separators or traversal
+  if (aoSession.includes("/") || aoSession.includes("\\\\") || aoSession.includes("..")) return;
+
+  // Validate key
+  if (!/^[a-zA-Z0-9_-]+$/.test(key)) return;
+
+  const metadataFile = path.join(aoDir, aoSession);
+  if (!fs.existsSync(metadataFile)) return;
+
+  // Strip newlines from value
+  const cleanValue = String(value).replace(/[\\r\\n]/g, "");
+
+  let content;
+  try { content = fs.readFileSync(metadataFile, "utf8"); } catch { return; }
+
+  const lines = content.split("\\n");
+  const keyPrefix = key + "=";
+  const idx = lines.findIndex(l => l.startsWith(keyPrefix));
+  if (idx >= 0) {
+    lines[idx] = key + "=" + cleanValue;
+  } else {
+    // Insert before trailing empty lines
+    lines.push(key + "=" + cleanValue);
+  }
+
+  const tmpFile = metadataFile + ".tmp." + process.pid;
+  try {
+    fs.writeFileSync(tmpFile, lines.join("\\n"), "utf8");
+    fs.renameSync(tmpFile, metadataFile);
+  } catch {
+    try { fs.unlinkSync(tmpFile); } catch {}
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+const realGh = ${realBinaryPath ? JSON.stringify(realBinaryPath) + " || findRealGh()" : "findRealGh()"};
+if (!realGh) {
+  process.stderr.write("ao-wrapper: gh not found in PATH\\n");
+  process.exit(127);
+}
+
+const args = process.argv.slice(2);
+const sub1 = args[0] || "";
+const sub2 = args[1] || "";
+const key = sub1 + "/" + sub2;
+
+if (key === "pr/create" || key === "pr/merge") {
+  const result = spawnSync(realGh, args, {
+    stdio: ["inherit", "pipe", "pipe"],
+    encoding: "utf8",
+  });
+
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+
+  if (result.status === 0) {
+    const output = (result.stdout || "") + (result.stderr || "");
+    if (key === "pr/create") {
+      const match = output.match(/https:\\/\\/github\\.com\\/[^/]+\\/[^/]+\\/pull\\/[0-9]+/);
+      if (match) {
+        updateAoMetadata("pr", match[0]);
+        updateAoMetadata("status", "pr_open");
+      }
+    } else if (key === "pr/merge") {
+      updateAoMetadata("status", "merged");
+    }
+  }
+
+  process.exit(result.status ?? 1);
+} else {
+  const result = spawnSync(realGh, args, { stdio: "inherit" });
+  process.exit(result.status ?? 1);
+}
+`;
+}
+
+function buildGitNodeWrapper(realBinaryPath: string): string {
+  return `#!/usr/bin/env node
+// ao git wrapper (Windows Node.js) — auto-updates session metadata on branch operations
+"use strict";
+const { spawnSync } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+
+// ---------------------------------------------------------------------------
+// Real binary resolution
+// ---------------------------------------------------------------------------
+const AO_BIN_DIR = path.dirname(__filename);
+
+function findRealGit() {
+  const pathDirs = (process.env["PATH"] || "").split(path.delimiter);
+  for (const dir of pathDirs) {
+    if (!dir || path.resolve(dir) === AO_BIN_DIR) continue;
+    for (const ext of ["", ".exe", ".cmd"]) {
+      const candidate = path.join(dir, "git" + ext);
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        return candidate;
+      } catch {}
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Metadata update (same as gh wrapper)
+// ---------------------------------------------------------------------------
+function updateAoMetadata(key, value) {
+  const aoDir = process.env["AO_DATA_DIR"] || "";
+  const aoSession = process.env["AO_SESSION"] || "";
+  if (!aoDir || !aoSession) return;
+
+  if (aoSession.includes("/") || aoSession.includes("\\\\") || aoSession.includes("..")) return;
+  if (!/^[a-zA-Z0-9_-]+$/.test(key)) return;
+
+  const metadataFile = path.join(aoDir, aoSession);
+  if (!fs.existsSync(metadataFile)) return;
+
+  const cleanValue = String(value).replace(/[\\r\\n]/g, "");
+
+  let content;
+  try { content = fs.readFileSync(metadataFile, "utf8"); } catch { return; }
+
+  const lines = content.split("\\n");
+  const keyPrefix = key + "=";
+  const idx = lines.findIndex(l => l.startsWith(keyPrefix));
+  if (idx >= 0) {
+    lines[idx] = key + "=" + cleanValue;
+  } else {
+    lines.push(key + "=" + cleanValue);
+  }
+
+  const tmpFile = metadataFile + ".tmp." + process.pid;
+  try {
+    fs.writeFileSync(tmpFile, lines.join("\\n"), "utf8");
+    fs.renameSync(tmpFile, metadataFile);
+  } catch {
+    try { fs.unlinkSync(tmpFile); } catch {}
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+const realGit = ${realBinaryPath ? JSON.stringify(realBinaryPath) + " || findRealGit()" : "findRealGit()"};
+if (!realGit) {
+  process.stderr.write("ao-wrapper: git not found in PATH\\n");
+  process.exit(127);
+}
+
+const args = process.argv.slice(2);
+const result = spawnSync(realGit, args, { stdio: "inherit" });
+const exitCode = result.status ?? 1;
+
+if (exitCode === 0) {
+  const sub1 = args[0] || "";
+  const sub2 = args[1] || "";
+  const key = sub1 + "/" + sub2;
+
+  if (key === "checkout/-b" || key === "switch/-c") {
+    const branch = args[2];
+    if (branch) updateAoMetadata("branch", branch);
+  } else if (sub1 === "checkout" || sub1 === "switch") {
+    // Existing branch switch — only track feature-looking branches (contain / or -)
+    let branch = sub2;
+    // If sub2 is a flag, the actual branch name is in args[2]
+    if (branch && branch.startsWith("-")) branch = args[2] || "";
+    if (
+      branch &&
+      branch !== "HEAD" &&
+      !branch.startsWith("-") &&
+      (branch.includes("/") || branch.includes("-"))
+    ) {
+      updateAoMetadata("branch", branch);
+    }
+  }
+}
+
+process.exit(exitCode);
+`;
+}
+
 /**
  * Section appended to AGENTS.md as a secondary signal. The PATH-based wrappers
  * handle metadata updates automatically, but AGENTS.md reinforces the intent
@@ -317,16 +580,33 @@ export async function setupPathWrapperWorkspace(workspacePath: string): Promise<
   }
 
   if (needsUpdate) {
-    await atomicWriteFile(
-      join(getAoBinDir(), "ao-metadata-helper.sh"),
-      AO_METADATA_HELPER,
-      0o755,
-    );
-    // Write wrappers atomically, then write the version marker last.
-    // If we crash between wrapper writes and marker write, the next
-    // invocation will redo the writes (safe: wrappers are idempotent).
-    await atomicWriteFile(join(getAoBinDir(), "gh"), GH_WRAPPER, 0o755);
-    await atomicWriteFile(join(getAoBinDir(), "git"), GIT_WRAPPER, 0o755);
+    if (isWindows()) {
+      // On Windows: generate Node.js .js wrappers + .cmd shims.
+      // Bash scripts can't be executed directly on Windows.
+      // Write wrappers atomically, then write the version marker last.
+      for (const name of ["gh", "git"] as const) {
+        const wrapperBase = join(getAoBinDir(), name);
+        const nodeScript = buildNodeWrapper(name, "");
+        await atomicWriteFile(wrapperBase + ".js", nodeScript, 0o644);
+        // .cmd shim: delegates to node <wrapper>.js forwarding all args
+        await atomicWriteFile(
+          wrapperBase + ".cmd",
+          `@node "%~dp0${name}.js" %*\r\n`,
+          0o644,
+        );
+      }
+    } else {
+      await atomicWriteFile(
+        join(getAoBinDir(), "ao-metadata-helper.sh"),
+        AO_METADATA_HELPER,
+        0o755,
+      );
+      // Write wrappers atomically, then write the version marker last.
+      // If we crash between wrapper writes and marker write, the next
+      // invocation will redo the writes (safe: wrappers are idempotent).
+      await atomicWriteFile(join(getAoBinDir(), "gh"), GH_WRAPPER, 0o755);
+      await atomicWriteFile(join(getAoBinDir(), "git"), GIT_WRAPPER, 0o755);
+    }
     await atomicWriteFile(markerPath, WRAPPER_VERSION, 0o644);
   }
 

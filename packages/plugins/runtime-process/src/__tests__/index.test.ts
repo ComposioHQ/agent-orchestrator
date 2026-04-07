@@ -9,9 +9,14 @@ const { mockSpawn } = vi.hoisted(() => ({
   mockSpawn: vi.fn(),
 }));
 
-vi.mock("node:child_process", () => ({
-  spawn: mockSpawn,
-}));
+vi.mock("node:child_process", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawn: mockSpawn,
+  };
+});
 
 import { create, manifest, default as defaultExport } from "../index.js";
 
@@ -97,19 +102,25 @@ describe("manifest & exports", () => {
 // runtime.create()
 // =========================================================================
 describe("create()", () => {
-  it("spawns process with shell:true, detached:true, correct cwd and env", async () => {
+  it("spawns process with platform shell, detached:!isWindows(), correct cwd and env", async () => {
     const child = createMockChild();
     mockSpawn.mockReturnValue(child);
 
     const runtime = create();
     await runtime.create(defaultConfig());
 
+    // shell is getShell().cmd (a string like "pwsh", "bash", "/bin/sh") — never the boolean true
+    const spawnArgs = mockSpawn.mock.calls[0][1] as { shell: string; detached: boolean };
+    expect(typeof spawnArgs.shell).toBe("string");
+    expect(spawnArgs.shell.length).toBeGreaterThan(0);
+
+    // detached is false on Windows, true on other platforms
+    const expectedDetached = process.platform !== "win32";
     expect(mockSpawn).toHaveBeenCalledWith(
       "echo hello",
       expect.objectContaining({
         cwd: "/tmp/workspace",
-        shell: true,
-        detached: true,
+        detached: expectedDetached,
         stdio: ["pipe", "pipe", "pipe"],
       }),
     );

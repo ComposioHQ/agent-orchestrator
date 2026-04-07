@@ -1,11 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import type {
-  PluginModule,
-  Runtime,
-  RuntimeCreateConfig,
-  RuntimeHandle,
-  RuntimeMetrics,
-  AttachInfo,
+import {
+  getShell,
+  isWindows,
+  type PluginModule,
+  type Runtime,
+  type RuntimeCreateConfig,
+  type RuntimeHandle,
+  type RuntimeMetrics,
+  type AttachInfo,
 } from "@composio/ao-core";
 
 export const manifest = {
@@ -57,16 +59,18 @@ export function create(): Runtime {
       };
       processes.set(handleId, entry);
 
-      // NOTE: shell:true is intentional — launchCommand comes from trusted YAML config
+      // NOTE: shell:getShell().cmd is intentional — launchCommand comes from trusted YAML config
       // and may contain pipes, redirects, or other shell syntax.
+      // On Windows, getShell().cmd resolves to pwsh (or powershell.exe), which supports
+      // $(cat file) substitution unlike cmd.exe (which shell:true would use).
       let child: ChildProcess;
       try {
         child = spawn(config.launchCommand, {
           cwd: config.workspacePath,
           env: { ...process.env, ...config.environment },
           stdio: ["pipe", "pipe", "pipe"],
-          shell: true,
-          detached: true, // Own process group so destroy() can kill child commands
+          shell: getShell().cmd,
+          detached: !isWindows(), // Own process group so destroy() can kill child commands (not supported on Windows)
         });
       } catch (err: unknown) {
         processes.delete(handleId);
