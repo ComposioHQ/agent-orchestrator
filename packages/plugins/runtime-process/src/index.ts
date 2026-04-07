@@ -1,11 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import type {
-  PluginModule,
-  Runtime,
-  RuntimeCreateConfig,
-  RuntimeHandle,
-  RuntimeMetrics,
-  AttachInfo,
+import {
+  isWindows,
+  killProcessTree,
+  type PluginModule,
+  type Runtime,
+  type RuntimeCreateConfig,
+  type RuntimeHandle,
+  type RuntimeMetrics,
+  type AttachInfo,
 } from "@composio/ao-core";
 
 export const manifest = {
@@ -66,7 +68,7 @@ export function create(): Runtime {
           env: { ...process.env, ...config.environment },
           stdio: ["pipe", "pipe", "pipe"],
           shell: true,
-          detached: true, // Own process group so destroy() can kill child commands
+          detached: !isWindows(), // Own process group so destroy() can kill child commands (Unix only)
         });
       } catch (err: unknown) {
         processes.delete(handleId);
@@ -156,30 +158,19 @@ export function create(): Runtime {
         return;
       }
       if (child.exitCode === null && child.signalCode === null) {
-        // Kill the entire process group (negative PID) so child commands
-        // spawned by the shell are also terminated, not just the shell itself.
         const pid = child.pid;
         if (pid) {
-          try {
-            process.kill(-pid, "SIGTERM");
-          } catch {
-            // Process group may not exist — fall back to direct kill
-            child.kill("SIGTERM");
-          }
+          await killProcessTree(pid, "SIGTERM");
         } else {
           child.kill("SIGTERM");
         }
 
-        // Give it 5 seconds, then SIGKILL — use once() to avoid listener leaks
+        // Give it 5 seconds, then force kill
         await new Promise<void>((resolve) => {
-          const timeout = setTimeout(() => {
+          const timeout = setTimeout(async () => {
             if (child.exitCode === null && child.signalCode === null) {
               if (pid) {
-                try {
-                  process.kill(-pid, "SIGKILL");
-                } catch {
-                  child.kill("SIGKILL");
-                }
+                await killProcessTree(pid, "SIGKILL");
               } else {
                 child.kill("SIGKILL");
               }

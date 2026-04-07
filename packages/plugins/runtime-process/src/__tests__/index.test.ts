@@ -1,16 +1,23 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import type { RuntimeHandle } from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock — must be set up before import
 // ---------------------------------------------------------------------------
-const { mockSpawn } = vi.hoisted(() => ({
+const { mockSpawn, mockIsWindows, mockKillProcessTree } = vi.hoisted(() => ({
   mockSpawn: vi.fn(),
+  mockIsWindows: vi.fn(() => false),
+  mockKillProcessTree: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("node:child_process", () => ({
   spawn: mockSpawn,
+}));
+
+vi.mock("@composio/ao-core", () => ({
+  isWindows: mockIsWindows,
+  killProcessTree: mockKillProcessTree,
 }));
 
 import { create, manifest, default as defaultExport } from "../index.js";
@@ -97,7 +104,7 @@ describe("manifest & exports", () => {
 // runtime.create()
 // =========================================================================
 describe("create()", () => {
-  it("spawns process with shell:true, detached:true, correct cwd and env", async () => {
+  it("spawns process with shell:true, detached:true on non-Windows, correct cwd and env", async () => {
     const child = createMockChild();
     mockSpawn.mockReturnValue(child);
 
@@ -226,13 +233,6 @@ describe("destroy()", () => {
     const runtime = create();
     const handle = await runtime.create(defaultConfig());
 
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-
-    // Simulate exit after SIGTERM
-    child.kill.mockImplementation(() => {
-      // ignored — process.kill(-pid) is used instead
-    });
-
     // When destroy is called, it sends SIGTERM then waits for exit.
     // We need to emit exit when the process receives the signal.
     const destroyPromise = runtime.destroy(handle);
@@ -244,10 +244,8 @@ describe("destroy()", () => {
 
     await destroyPromise;
 
-    // process.kill(-pid, "SIGTERM") should have been called
-    expect(killSpy).toHaveBeenCalledWith(-12345, "SIGTERM");
-
-    killSpy.mockRestore();
+    // killProcessTree should have been called with pid and SIGTERM
+    expect(mockKillProcessTree).toHaveBeenCalledWith(12345, "SIGTERM");
   });
 
   it("does not throw for unknown handle (no-op)", async () => {
@@ -265,15 +263,11 @@ describe("destroy()", () => {
     // Simulate the process having exited already
     child.exitCode = 0;
 
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-
     await runtime.destroy(handle);
 
-    // Should NOT have called process.kill since process already exited
-    expect(killSpy).not.toHaveBeenCalled();
+    // Should NOT have called killProcessTree since process already exited
+    expect(mockKillProcessTree).not.toHaveBeenCalled();
     expect(child.kill).not.toHaveBeenCalled();
-
-    killSpy.mockRestore();
   });
 
   it("escalates to SIGKILL after 5 second timeout", async () => {
@@ -290,8 +284,6 @@ describe("destroy()", () => {
     // "spawn" was scheduled via nextTick in createMockChild, which ran
     const handle = await createPromise;
 
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-
     const destroyPromise = runtime.destroy(handle);
 
     // Advance past the 5-second timeout — process never exits
@@ -299,24 +291,20 @@ describe("destroy()", () => {
 
     await destroyPromise;
 
-    // Should have called SIGTERM first, then SIGKILL
-    expect(killSpy).toHaveBeenCalledWith(-12345, "SIGTERM");
-    expect(killSpy).toHaveBeenCalledWith(-12345, "SIGKILL");
+    // Should have called SIGTERM first, then SIGKILL via killProcessTree
+    expect(mockKillProcessTree).toHaveBeenCalledWith(12345, "SIGTERM");
+    expect(mockKillProcessTree).toHaveBeenCalledWith(12345, "SIGKILL");
 
-    killSpy.mockRestore();
     vi.useRealTimers();
   });
 
-  it("falls back to child.kill when process.kill(-pid) throws", async () => {
+  it("falls back to child.kill when pid is undefined", async () => {
     const child = createMockChild();
+    child.pid = undefined as unknown as number; // simulate missing PID
     mockSpawn.mockReturnValue(child);
 
     const runtime = create();
     const handle = await runtime.create(defaultConfig());
-
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
-      throw new Error("ESRCH");
-    });
 
     const destroyPromise = runtime.destroy(handle);
 
@@ -326,10 +314,10 @@ describe("destroy()", () => {
 
     await destroyPromise;
 
-    // process.kill threw, so child.kill should have been called as fallback
+    // pid was undefined, so child.kill should have been called as fallback
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-
-    killSpy.mockRestore();
+    // killProcessTree should NOT have been called since there's no pid
+    expect(mockKillProcessTree).not.toHaveBeenCalled();
   });
 });
 
@@ -672,6 +660,102 @@ describe("output buffer truncation", () => {
     expect(outputLines[outputLines.length - 1]).toBe("line-1199");
     // Should NOT contain the first lines (they were truncated)
     expect(output).not.toContain("line-0\n");
+  });
+});
+
+// =========================================================================
+// Windows compatibility
+// =========================================================================
+describe("Windows compatibility", () => {
+  afterEach(() => {
+    mockIsWindows.mockReturnValue(false);
+    mockKillProcessTree.mockResolvedValue(undefined);
+  });
+
+  it("does not set detached:true on win32", async () => {
+    mockIsWindows.mockReturnValue(true);
+
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child);
+
+    const runtime = create();
+    await runtime.create(defaultConfig({ sessionId: "win-spawn-test" }));
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "echo hello",
+      expect.objectContaining({
+        detached: false,
+      }),
+    );
+  });
+
+  it("sets detached:true on non-Windows", async () => {
+    mockIsWindows.mockReturnValue(false);
+
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child);
+
+    const runtime = create();
+    await runtime.create(defaultConfig({ sessionId: "unix-spawn-test" }));
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "echo hello",
+      expect.objectContaining({
+        detached: true,
+      }),
+    );
+  });
+
+  it("uses killProcessTree instead of process.kill(-pid) on win32", async () => {
+    mockIsWindows.mockReturnValue(true);
+
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child);
+
+    const runtime = create();
+    const handle = await runtime.create(defaultConfig({ sessionId: "win-kill-test" }));
+
+    const processSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    // Emit exit shortly after destroy is called
+    const destroyPromise = runtime.destroy(handle);
+    await new Promise((r) => setTimeout(r, 10));
+    child.exitCode = 0;
+    child.emit("exit", 0, null);
+
+    await destroyPromise;
+
+    // killProcessTree should have been called with the pid
+    expect(mockKillProcessTree).toHaveBeenCalledWith(12345, "SIGTERM");
+    // process.kill(-pid) should NOT have been called
+    expect(processSpy).not.toHaveBeenCalledWith(-12345, "SIGTERM");
+
+    processSpy.mockRestore();
+  });
+
+  it("uses killProcessTree for SIGKILL escalation on win32", async () => {
+    vi.useFakeTimers();
+    mockIsWindows.mockReturnValue(true);
+
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child);
+
+    const runtime = create();
+    const createPromise = runtime.create(defaultConfig({ sessionId: "win-sigkill-test" }));
+    await vi.runAllTimersAsync();
+    const handle = await createPromise;
+
+    const destroyPromise = runtime.destroy(handle);
+
+    // Advance past the 5-second timeout — process never exits
+    await vi.advanceTimersByTimeAsync(5100);
+
+    await destroyPromise;
+
+    expect(mockKillProcessTree).toHaveBeenCalledWith(12345, "SIGTERM");
+    expect(mockKillProcessTree).toHaveBeenCalledWith(12345, "SIGKILL");
+
+    vi.useRealTimers();
   });
 });
 
