@@ -5,6 +5,7 @@ import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SidebarContext } from "@/components/workspace/SidebarContext";
 import { NewTerminalModal } from "@/components/NewTerminalModal";
+import { ReconnectingPill } from "@/components/ReconnectingPill";
 import { cn } from "@/lib/cn";
 import { isKilledSession, getAttentionLevel, type DashboardOrchestratorLink, type DashboardSession } from "@/lib/types";
 import type { ProjectInfo } from "@/lib/project-name";
@@ -413,6 +414,9 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
 
         {/* New Terminal Modal */}
         <NewTerminalModal open={newTerminalModalOpen} onClose={() => setNewTerminalModalOpen(false)} />
+
+        {/* Global reconnecting indicator (top-right pill) */}
+        <ReconnectingPill />
       </div>
     </SidebarContext.Provider>
   );

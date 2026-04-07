@@ -344,10 +344,14 @@ function ProjectSidebarInner({
     reviewLoad: reviewLoadCount,
   } = sessionsByProject;
 
+  const spawnModalProject = spawnModalProjectId
+    ? projects.find((p) => p.id === spawnModalProjectId)
+    : null;
   const spawnModal =
     spawnModalProjectId ? (
       <SpawnSessionModal
         projectId={spawnModalProjectId}
+        projectName={spawnModalProject?.name ?? spawnModalProjectId}
         open
         onClose={() => setSpawnModalProjectId(null)}
         onSessionCreated={onSessionCreated}
@@ -398,17 +402,18 @@ function ProjectSidebarInner({
                         const title = getSessionSidebarLabel(session);
                         const displayTitle = stripBranchHashPrefix(title);
                         const abbr = displayTitle.slice(0, 3).toUpperCase();
+                        const sessionHref = `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`;
                         return (
-                          <button
+                          <a
                             key={session.id}
-                            type="button"
-                            onClick={() =>
-                              router.push(
-                                `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`,
-                              )
-                            }
+                            href={sessionHref}
+                            onClick={(e) => {
+                              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                              e.preventDefault();
+                              router.push(sessionHref);
+                            }}
                             className={cn(
-                              "project-sidebar__collapsed-session-btn",
+                              "project-sidebar__collapsed-session-btn no-underline",
                               isSessionActive && "project-sidebar__collapsed-session-btn--active",
                               level === "respond" && "animate-[activity-pulse_2s_ease-in-out_infinite]",
                             )}
@@ -417,7 +422,7 @@ function ProjectSidebarInner({
                           >
                             <span className="project-sidebar__session-abbr-first">{abbr[0]}</span>
                             <span className="project-sidebar__session-abbr-rest">{abbr.slice(1)}</span>
-                          </button>
+                          </a>
                         );
                       })}
                       {workerSessions.length > 5 && (
@@ -616,25 +621,18 @@ function ProjectSidebarInner({
                       const title = getSessionSidebarLabel(session);
                       const primary = stripBranchHashPrefix(title);
                       const idShort = session.id.slice(0, 8);
+                      const sessionHref = `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`;
                       return (
-                        <div
+                        <a
                           key={session.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() =>
-                            router.push(
-                              `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`,
-                            )
-                          }
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              router.push(
-                                `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`,
-                              );
-                            }
+                          href={sessionHref}
+                          onClick={(e) => {
+                            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                            e.preventDefault();
+                            router.push(sessionHref);
                           }}
                           className={cn(
-                            "project-sidebar__session group flex w-full cursor-pointer items-start gap-2 py-[6px] pl-3 pr-2 transition-colors",
+                            "project-sidebar__session group flex w-full cursor-pointer items-start gap-2 py-[6px] pl-3 pr-2 no-underline transition-colors",
                             isSessionActive
                               ? "project-sidebar__session--active text-[var(--color-accent)]"
                               : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]",
@@ -653,7 +651,7 @@ function ProjectSidebarInner({
                           <span className="project-sidebar__session-tone ml-auto shrink-0 pt-0.5 text-[10px] text-[var(--color-text-muted)]">
                             {sessionToneLabel[level]}
                           </span>
-                        </div>
+                        </a>
                       );
                     })}
                     <button

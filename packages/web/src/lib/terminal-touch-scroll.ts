@@ -23,9 +23,22 @@ export interface TouchScrollConfig {
   speedMultiplier?: number;
   /** tmux prefix key (e.g. "\x02" for Ctrl-b, "\x01" for Ctrl-a). Default: "\x02" */
   tmuxPrefix?: string;
+  /**
+   * Called whenever the user swipes to view older content (scrolls away from
+   * the live tail). Fires for both normal and alternate buffers. The viewport
+   * `scroll` listener already covers normal-buffer scroll-away in xterm, but
+   * in alternate buffer (tmux/vim) the viewport never scrolls, so this is the
+   * only signal available.
+   */
+  onScrollAway?: () => void;
+  /**
+   * Called whenever the user swipes toward newer content. Lets the host
+   * re-arm an idle timer that may auto-resume the live tail.
+   */
+  onScrollTowardLatest?: () => void;
 }
 
-const DEFAULT_CONFIG: Required<TouchScrollConfig> = {
+const DEFAULT_CONFIG: Required<Omit<TouchScrollConfig, "onScrollAway" | "onScrollTowardLatest">> = {
   deadZone: 8,
   verticalDominance: 1.5,
   maxLinesPerEvent: 6,
@@ -107,6 +120,15 @@ export function attachTouchScroll(
     lastY = e.clientY;
 
     const boostedDelta = lineDelta * opts.speedMultiplier;
+
+    // Notify host of direction so it can manage followOutput / idle timers.
+    // lineDelta > 0 = swipe down = view older content (scroll away from live tail).
+    // lineDelta < 0 = swipe up   = view newer content (toward live tail).
+    if (lineDelta > 0) {
+      config.onScrollAway?.();
+    } else {
+      config.onScrollTowardLatest?.();
+    }
 
     if (terminal.buffer.active.type === "normal") {
       terminal.scrollLines(boostedDelta);

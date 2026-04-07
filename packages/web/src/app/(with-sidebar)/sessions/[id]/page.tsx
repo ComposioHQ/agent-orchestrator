@@ -3,6 +3,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
+import {
+  setTerminalConnection,
+  clearTerminalConnection,
+} from "@/lib/terminal-connection-store";
 import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
 import { FileTree } from "@/components/workspace/FileTree";
 import { FilePreview } from "@/components/workspace/FilePreview";
@@ -61,7 +65,7 @@ export default function SessionPage() {
   const projectId = searchParams.get("project") ?? "";
 
   const [session, setSession] = useState<DashboardSession | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [, setError] = useState<string | null>(null);
 
   // Stub session for immediate render
   const stubSession = createStubSession(id, projectId);
@@ -77,6 +81,7 @@ export default function SessionPage() {
   }, [session, id]);
 
   const fetchSession = useCallback(async () => {
+    const connKey = `session-api:${id}`;
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
       if (res.status === 404) {
@@ -87,10 +92,19 @@ export default function SessionPage() {
       const data = (await res.json()) as DashboardSession;
       setSession(data);
       setError(null);
+      clearTerminalConnection(connKey);
     } catch (err) {
       console.error("Failed to fetch session:", err);
       setError("Failed to load session");
+      // Surface as a "reconnecting" entry so the global pill shows up.
+      setTerminalConnection(connKey, { status: "connecting", attempt: 1 });
     }
+  }, [id]);
+
+  // Clear the connection-store entry on unmount.
+  useEffect(() => {
+    const connKey = `session-api:${id}`;
+    return () => clearTerminalConnection(connKey);
   }, [id]);
 
   useEffect(() => {
@@ -135,14 +149,6 @@ export default function SessionPage() {
           ),
         }}
       </WorkspaceLayout>
-      {error && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[rgba(0,0,0,0.9)]">
-          <div className="text-[13px] text-[var(--color-status-error)]">{error}</div>
-          <a href="/" className="mt-4 text-[12px] text-[var(--color-accent)] hover:underline">
-            ← Back to dashboard
-          </a>
-        </div>
-      )}
     </>
   );
 }

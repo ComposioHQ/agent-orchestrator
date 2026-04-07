@@ -5,6 +5,10 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
 import { attachTouchScroll } from "@/lib/terminal-touch-scroll";
+import {
+  setTerminalConnection,
+  clearTerminalConnection,
+} from "@/lib/terminal-connection-store";
 import { TerminalSkeleton } from "./Skeleton";
 
 const SCROLLBAR_WIDTH = 5; // matches .xterm-viewport::-webkit-scrollbar { width: 5px }
@@ -223,6 +227,9 @@ export function DirectTerminal({
   const [reloadError, setReloadError] = useState<string | null>(null);
   const [followOutput, setFollowOutput] = useState(true);
   const followOutputRef = useRef(true);
+  const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const programmaticScrollRef = useRef(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [fontSize, setFontSize] = useState(FONT_SIZE_DEFAULT);
   const [showFontSettings, setShowFontSettings] = useState(false);
   const fontSettingsRef = useRef<HTMLDivElement>(null);
@@ -261,6 +268,14 @@ export function DirectTerminal({
   useEffect(() => {
     followOutputRef.current = followOutput;
   }, [followOutput]);
+
+  // Publish connection status to the shared store so the top bar can show
+  // a global reconnection indicator.
+  useEffect(() => {
+    const key = `${sessionId}:${variant}`;
+    setTerminalConnection(key, { status, attempt: reconnectAttempt, error });
+    return () => clearTerminalConnection(key);
+  }, [sessionId, variant, status, reconnectAttempt, error]);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -418,8 +433,46 @@ export function DirectTerminal({
           }
         });
 
+        // Resume the live tail. For normal buffer this scrolls the viewport;
+        // for alternate buffer (tmux/vim) this sends `q` to exit tmux copy-mode.
+        const resumeLiveTail = () => {
+          const t = terminalInstance.current;
+          if (!t) return;
+          if (t.buffer.active.type === "normal") {
+            const vp = t.element?.querySelector<HTMLElement>(".xterm-viewport");
+            if (vp) {
+              programmaticScrollRef.current = true;
+              vp.scrollTop = vp.scrollHeight;
+            }
+          } else {
+            const sock = ws.current;
+            if (sock?.readyState === WebSocket.OPEN) sock.send("q");
+          }
+          followOutputRef.current = true;
+          setFollowOutput(true);
+        };
+
         // Touch scroll (mobile) — uses modular helper from lib/terminal-touch-scroll
-        const removeTouchScroll = attachTouchScroll(terminal, () => ws.current);
+        const removeTouchScroll = attachTouchScroll(terminal, () => ws.current, {
+          onScrollAway: () => {
+            followOutputRef.current = false;
+            setFollowOutput(false);
+            // Cancel any pending auto-resume — user is moving away.
+            if (scrollIdleTimerRef.current) {
+              clearTimeout(scrollIdleTimerRef.current);
+              scrollIdleTimerRef.current = null;
+            }
+          },
+          onScrollTowardLatest: () => {
+            // User is moving back toward the bottom — arm a short idle timer
+            // so we auto-resume only when they're heading home.
+            if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
+            scrollIdleTimerRef.current = setTimeout(() => {
+              scrollIdleTimerRef.current = null;
+              resumeLiveTail();
+            }, 1000);
+          },
+        });
 
         // WebSocket URL (stable across reconnects)
         // When accessed via reverse proxy (HTTPS on standard port), use path-based
@@ -492,12 +545,47 @@ export function DirectTerminal({
 
         const handleViewportScroll = () => {
           if (!viewport) return;
-          const nearBottom =
-            viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 24;
-          if (nearBottom) {
+          // Ignore scroll events triggered by our own programmatic scrolls.
+          // Without this, every auto-scroll-to-bottom on incoming data would
+          // re-fire this handler with nearBottom=true, immediately resetting
+          // followOutput=true and racing user scroll-up before the React
+          // state propagates to followOutputRef.
+          if (programmaticScrollRef.current) {
+            programmaticScrollRef.current = false;
+            return;
+          }
+          const distFromBottom =
+            viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+          if (distFromBottom < 24) {
+            // User scrolled to bottom — resume following immediately
+            followOutputRef.current = true;
             setFollowOutput(true);
+            if (scrollIdleTimerRef.current) {
+              clearTimeout(scrollIdleTimerRef.current);
+              scrollIdleTimerRef.current = null;
+            }
           } else {
+            // User scrolled away from bottom — pause follow synchronously so
+            // the next data arrival doesn't snap us back down before the
+            // React state has had a chance to update.
+            followOutputRef.current = false;
             setFollowOutput(false);
+            if (scrollIdleTimerRef.current) {
+              clearTimeout(scrollIdleTimerRef.current);
+            }
+            // Auto-resume after 3s idle when within ~2 screen heights of bottom
+            const viewportHeight = viewport.clientHeight || 400;
+            if (distFromBottom < viewportHeight * 2) {
+              scrollIdleTimerRef.current = setTimeout(() => {
+                scrollIdleTimerRef.current = null;
+                if (viewport) {
+                  programmaticScrollRef.current = true;
+                  viewport.scrollTop = viewport.scrollHeight;
+                }
+                followOutputRef.current = true;
+                setFollowOutput(true);
+              }, 1000);
+            }
           }
         };
         viewport?.addEventListener("scroll", handleViewportScroll, { passive: true });
@@ -550,6 +638,7 @@ export function DirectTerminal({
           websocket.onopen = () => {
             console.log("[DirectTerminal] WebSocket connected");
             reconnectAttemptRef.current = 0;
+            setReconnectAttempt(0);
             setStatus("connected");
             setError(null);
 
@@ -577,6 +666,7 @@ export function DirectTerminal({
             } else {
               terminal.write(data);
               if (followOutputRef.current && viewport) {
+                programmaticScrollRef.current = true;
                 viewport.scrollTop = viewport.scrollHeight;
               }
             }
@@ -603,6 +693,7 @@ export function DirectTerminal({
             const attempt = reconnectAttemptRef.current;
             const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
             reconnectAttemptRef.current = attempt + 1;
+            setReconnectAttempt(attempt + 1);
 
             console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
             setStatus("connecting");
@@ -625,6 +716,10 @@ export function DirectTerminal({
           viewport?.removeEventListener("scroll", handleViewportScroll);
           inputDisposable?.dispose();
           inputDisposable = null;
+          if (scrollIdleTimerRef.current) {
+            clearTimeout(scrollIdleTimerRef.current);
+            scrollIdleTimerRef.current = null;
+          }
           if (reconnectTimerRef.current) {
             clearTimeout(reconnectTimerRef.current);
             reconnectTimerRef.current = null;
@@ -915,15 +1010,34 @@ export function DirectTerminal({
           <button
             type="button"
             onClick={() => {
-              const viewport = terminalInstance.current?.element?.querySelector(
-                ".xterm-viewport",
-              ) as HTMLElement | null;
-              if (viewport) viewport.scrollTop = viewport.scrollHeight;
+              const t = terminalInstance.current;
+              if (t && t.buffer.active.type !== "normal") {
+                // Alt buffer (tmux/vim): exit copy-mode to return to live tail.
+                const sock = ws.current;
+                if (sock?.readyState === WebSocket.OPEN) sock.send("q");
+              } else {
+                const viewport = t?.element?.querySelector(
+                  ".xterm-viewport",
+                ) as HTMLElement | null;
+                if (viewport) {
+                  programmaticScrollRef.current = true;
+                  viewport.scrollTop = viewport.scrollHeight;
+                }
+              }
+              if (scrollIdleTimerRef.current) {
+                clearTimeout(scrollIdleTimerRef.current);
+                scrollIdleTimerRef.current = null;
+              }
+              followOutputRef.current = true;
               setFollowOutput(true);
             }}
-            className="absolute bottom-2 right-2 z-20 border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[12px] text-[var(--color-text-primary)] shadow-sm"
+            className="absolute bottom-3 right-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] shadow-md active:scale-95"
+            aria-label="Jump to latest"
+            title="Jump to latest"
           >
-            Jump to latest ↓
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
           </button>
         ) : null}
         <div

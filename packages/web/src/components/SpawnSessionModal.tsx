@@ -7,6 +7,7 @@ import type { DashboardSession } from "@/lib/types";
 
 export interface SpawnSessionModalProps {
   projectId: string;
+  projectName?: string;
   open: boolean;
   onClose: () => void;
   onSpawned?: (sessionId: string) => void;
@@ -15,6 +16,7 @@ export interface SpawnSessionModalProps {
 
 export function SpawnSessionModal({
   projectId,
+  projectName,
   open,
   onClose,
   onSpawned,
@@ -153,7 +155,9 @@ export function SpawnSessionModal({
       >
         <div className="mb-4 flex items-start justify-between gap-3">
           <h2 id="spawn-modal-title" className="text-[15px] font-semibold text-[var(--color-text-primary)]">
-            Spawn session
+            Spawn session{projectName ? (
+              <> in <span className="text-[var(--color-accent)]">{projectName}</span></>
+            ) : null}
           </h2>
           <button
             type="button"

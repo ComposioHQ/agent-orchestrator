@@ -6,7 +6,7 @@ import { QuickOpen } from "./QuickOpen";
 import { usePaneSizes } from "./usePaneSizes";
 import "./workspace.css";
 import { useSidebarContext } from "./SidebarContext";
-import { loadSessionFileState, saveSessionFileState } from "./sessionFileState";
+import { loadSessionFileState, loadFileScrollTop, saveSessionFileState } from "./sessionFileState";
 import { type ReactNode, useRef, useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 
@@ -182,13 +182,12 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
   // Restore preview scroll after file content loads
   useEffect(() => {
     if (!selectedFile) return;
-    
-    const stored = loadSessionFileState(session.id);
-    const targetScroll = stored?.filePath === selectedFile ? stored.scrollTop : 0;
-    
+
+    const targetScroll = loadFileScrollTop(session.id, selectedFile);
+
     if (restoredScrollForFileRef.current === `${session.id}:${selectedFile}`) return;
     restoredScrollForFileRef.current = `${session.id}:${selectedFile}`;
-    
+
     if (targetScroll === 0) return;
     
     // Poll until content is loaded and scrollable
