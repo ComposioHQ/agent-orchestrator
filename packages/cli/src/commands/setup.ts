@@ -290,7 +290,7 @@ function writeOpenClawConfig(
 
   // Add "openclaw" to defaults.notifiers if not already present
   if (!rawConfig.defaults) rawConfig.defaults = {};
-  if (!rawConfig.defaults.notifiers) rawConfig.defaults.notifiers = ["desktop"];
+  if (!rawConfig.defaults.notifiers) rawConfig.defaults.notifiers = [];
   if (!Array.isArray(rawConfig.defaults.notifiers)) {
     rawConfig.defaults.notifiers = [rawConfig.defaults.notifiers];
   }

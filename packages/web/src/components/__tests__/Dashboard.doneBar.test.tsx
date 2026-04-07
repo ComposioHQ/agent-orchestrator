@@ -57,6 +57,6 @@ describe("Dashboard done bar", () => {
 
   it("does not show empty state when only done sessions exist", () => {
     render(<Dashboard initialSessions={[DONE_SESSION]} />);
-    expect(screen.queryByText(/No sessions running/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No active sessions/i)).not.toBeInTheDocument();
   });
 });

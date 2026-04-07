@@ -40,6 +40,7 @@ describe("SessionDetail mobile navbar", () => {
       projectId: "my-app",
       metadata: { role: "orchestrator" },
       summary: "Orchestrator session title",
+      branch: null,
     });
 
     render(
@@ -133,6 +134,24 @@ describe("SessionDetail mobile navbar", () => {
     expect(screen.getByRole("link", { name: "feat/compact-header" }).className).toContain(
       "session-detail-link-pill--link",
     );
+  });
+
+  it("prefers issue title over changing summary text", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-stable-title",
+          projectId: "my-app",
+          issueTitle: "Fix stable session titles",
+          summary: "Responding to latest review comment",
+          branch: "fix/stable-session-titles",
+        })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    expect(screen.getByText("Fix stable session titles")).toBeInTheDocument();
+    expect(screen.queryByText("Responding to latest review comment")).not.toBeInTheDocument();
   });
 
   it("preserves CI and unresolved review comment detail on mobile session pages", () => {

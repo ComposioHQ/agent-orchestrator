@@ -96,6 +96,18 @@ describe("writeMetadata + readMetadata", () => {
     expect(content).not.toContain("pr=");
     expect(content).not.toContain("summary=");
   });
+
+  it("serializes pinnedSummary field when present", () => {
+    writeMetadata(dataDir, "app-5", {
+      worktree: "/tmp/w",
+      branch: "feat/test",
+      status: "working",
+      pinnedSummary: "First quality summary",
+    });
+
+    const content = readFileSync(join(dataDir, "app-5"), "utf-8");
+    expect(content).toContain("pinnedSummary=First quality summary\n");
+  });
 });
 
 describe("readMetadataRaw", () => {

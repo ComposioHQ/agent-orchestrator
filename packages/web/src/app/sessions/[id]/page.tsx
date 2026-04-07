@@ -26,12 +26,8 @@ function buildSessionTitle(
 
   if (isOrchestrator) {
     detail = "Orchestrator Terminal";
-  } else if (session.pr) {
-    detail = `#${session.pr.number} ${truncate(session.pr.branch, 30)}`;
-  } else if (session.branch) {
-    detail = truncate(session.branch, 30);
   } else {
-    detail = "Session Detail";
+    detail = truncate(getSessionTitle(session), 40);
   }
 
   return emoji ? `${emoji} ${id} | ${detail}` : `${id} | ${detail}`;

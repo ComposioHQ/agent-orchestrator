@@ -1672,3 +1672,106 @@ describe("rate limiting optimizations", () => {
     expect(getPendingMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("summary pinning", () => {
+  it("pins first quality summary when pinnedSummary not set", async () => {
+    const session = makeSession({
+      status: "working",
+      agentInfo: {
+        summary: "Implementing authentication flow",
+        summaryIsFallback: false,
+        agentSessionId: "abc",
+      },
+      metadata: {},
+    });
+    const lm = setupCheck("app-1", { session });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta!["pinnedSummary"]).toBe("Implementing authentication flow");
+  });
+
+  it("skips pinning when summaryIsFallback is true", async () => {
+    const session = makeSession({
+      status: "working",
+      agentInfo: {
+        summary: "You are working on issue #42...",
+        summaryIsFallback: true,
+        agentSessionId: "abc",
+      },
+      metadata: {},
+    });
+    const lm = setupCheck("app-1", { session });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta!["pinnedSummary"]).toBeUndefined();
+  });
+
+  it("skips pinning when pinnedSummary already exists", async () => {
+    const session = makeSession({
+      status: "working",
+      agentInfo: {
+        summary: "New summary that should not overwrite",
+        summaryIsFallback: false,
+        agentSessionId: "abc",
+      },
+      metadata: { pinnedSummary: "Original pinned summary" },
+    });
+    const lm = setupCheck("app-1", {
+      session,
+      metaOverrides: { pinnedSummary: "Original pinned summary" },
+    });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta!["pinnedSummary"]).toBe("Original pinned summary");
+  });
+
+  it("skips pinning when trimmed summary is shorter than 5 chars", async () => {
+    const session = makeSession({
+      status: "working",
+      agentInfo: {
+        summary: "  Hi ",
+        summaryIsFallback: false,
+        agentSessionId: "abc",
+      },
+      metadata: {},
+    });
+    const lm = setupCheck("app-1", { session });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta!["pinnedSummary"]).toBeUndefined();
+  });
+
+  it("does not throw when metadata write fails", async () => {
+    const session = makeSession({
+      status: "working",
+      agentInfo: {
+        summary: "Valid summary for pinning",
+        summaryIsFallback: false,
+        agentSessionId: "abc",
+      },
+      metadata: {},
+    });
+    // Use a config with invalid path to trigger write failure
+    const badConfig = {
+      ...config,
+      projects: {
+        "my-app": {
+          ...config.projects["my-app"],
+          path: "/nonexistent/path/that/does/not/exist",
+        },
+      },
+    };
+    const lm = setupCheck("app-1", { session, configOverride: badConfig });
+
+    // Should not throw — error is swallowed
+    await expect(lm.check("app-1")).resolves.not.toThrow();
+  });
+});

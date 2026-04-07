@@ -1,3 +1,5 @@
+import "server-only";
+
 import { cache } from "react";
 import { loadConfig } from "@composio/ao-core";
 
