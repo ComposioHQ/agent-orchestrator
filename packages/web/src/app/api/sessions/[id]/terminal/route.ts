@@ -67,19 +67,16 @@ export async function POST(
 
     return response;
   } catch (error) {
-    const authError =
-      error instanceof TerminalAuthError
-        ? error
-        : new TerminalAuthError(
-            error instanceof Error ? error.message : "Terminal authorization failed",
-            503,
-            "config_unavailable",
-          );
-
-    const response = NextResponse.json({ error: authError.message }, { status: authError.statusCode });
-    if (authError.retryAfterSeconds !== undefined) {
-      response.headers.set("Retry-After", String(authError.retryAfterSeconds));
+    if (error instanceof TerminalAuthError) {
+      const response = NextResponse.json({ error: error.message }, { status: error.statusCode });
+      if (error.retryAfterSeconds !== undefined) {
+        response.headers.set("Retry-After", String(error.retryAfterSeconds));
+      }
+      return response;
     }
-    return response;
+
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[Terminal] Failed to issue terminal access for ${id}:`, message);
+    return NextResponse.json({ error: "Terminal authorization unavailable" }, { status: 503 });
   }
 }

@@ -505,6 +505,19 @@ describe("API Routes", () => {
         headers: req.headers,
       });
     });
+
+    it("returns 503 when terminal issuance backend is unavailable", async () => {
+      issueTerminalAccessMock.mockImplementationOnce(() => {
+        throw new Error("filesystem unavailable");
+      });
+
+      const req = makeRequest("/api/sessions/backend-3/terminal", { method: "POST" });
+      const res = await terminalAccessPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+
+      expect(res.status).toBe(503);
+      const data = await res.json();
+      expect(data.error).toBe("Terminal authorization unavailable");
+    });
   });
 
   // ── POST /api/spawn ────────────────────────────────────────────────
