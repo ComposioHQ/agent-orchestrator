@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { resolveLocalPluginEntrypoint, type InstalledPluginConfig, type PluginSlot } from "@composio/ao-core";
+import { resolveLocalPluginEntrypoint, type InstalledPluginConfig, type PluginSlot } from "@aoagents/ao-core";
 
 const registryData = createRequire(import.meta.url)("../assets/plugin-registry.json") as unknown[];
 
@@ -19,7 +19,7 @@ export interface MarketplacePluginEntry {
 
 export const BUNDLED_MARKETPLACE_PLUGIN_CATALOG = registryData as MarketplacePluginEntry[];
 export const DEFAULT_REMOTE_MARKETPLACE_REGISTRY_URL =
-  "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/packages/cli/src/assets/plugin-registry.json";
+  "https://raw.githubusercontent.com/aoagents/ao/main/packages/cli/src/assets/plugin-registry.json";
 
 const MARKETPLACE_CACHE_FILE = "plugin-registry.json";
 const MARKETPLACE_FETCH_TIMEOUT_MS = 30_000;
@@ -125,7 +125,7 @@ export async function refreshMarketplaceCatalog(
   return mergedEntries;
 }
 
-export { normalizeImportedPluginModule } from "@composio/ao-core";
+export { normalizeImportedPluginModule } from "@aoagents/ao-core";
 
 export function isLocalPluginReference(reference: string): boolean {
   return (

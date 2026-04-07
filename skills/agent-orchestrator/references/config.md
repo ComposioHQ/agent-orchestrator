@@ -74,7 +74,7 @@ projects:
 
 ## Notifier channels
 
-These are **optional** — only configure notifiers you actually use. None are required for core AO functionality. See the [AO documentation](https://github.com/ComposioHQ/agent-orchestrator) for notifier setup details.
+These are **optional** — only configure notifiers you actually use. None are required for core AO functionality. See the [AO documentation](https://github.com/aoagents/ao) for notifier setup details.
 
 ```yaml
 notifiers:

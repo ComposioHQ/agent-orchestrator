@@ -51,7 +51,7 @@ OpenClaw already supports:
 ## Request payload (Phase 0)
 ```json
 {
-  "message": "[AO Escalation] ao-5 failed CI 5 times on feat/ci-auto-injection. Last error: type mismatch in codex plugin. PR: github.com/ComposioHQ/agent-orchestrator/pull/123. Actions available: retry, skip, kill. Context: {\"sessionId\":\"ao-5\",\"projectId\":\"ao\",\"reason\":\"ci_failed\",\"attempts\":5}",
+  "message": "[AO Escalation] ao-5 failed CI 5 times on feat/ci-auto-injection. Last error: type mismatch in codex plugin. PR: github.com/aoagents/ao/pull/123. Actions available: retry, skip, kill. Context: {\"sessionId\":\"ao-5\",\"projectId\":\"ao\",\"reason\":\"ci_failed\",\"attempts\":5}",
   "name": "AO",
   "sessionKey": "hook:ao:ao-5",
   "wakeMode": "now",

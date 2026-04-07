@@ -25,7 +25,7 @@ describe("direct-terminal-ws.ts", () => {
     expect(source).toMatch(/from\s+["']\.\/tmux-utils/);
   });
 
-  it("does not import loadConfig from @composio/ao-core", () => {
+  it("does not import loadConfig from @aoagents/ao-core", () => {
     expect(source).not.toMatch(/import\s.*loadConfig.*from\s+["']@composio\/ao-core["']/);
   });
 
@@ -56,7 +56,7 @@ describe("terminal-websocket.ts", () => {
     expect(source).toMatch(/from\s+["']\.\/tmux-utils/);
   });
 
-  it("does not import loadConfig from @composio/ao-core", () => {
+  it("does not import loadConfig from @aoagents/ao-core", () => {
     expect(source).not.toMatch(/import\s.*loadConfig.*from\s+["']@composio\/ao-core["']/);
   });
 

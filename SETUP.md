@@ -60,7 +60,7 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
 ### Install via npm (recommended)
 
 ```bash
-npm install -g @composio/ao
+npm install -g @aoagents/ao
 
 # Verify
 ao --version
@@ -72,17 +72,17 @@ This installs the `ao` CLI globally along with all default plugins and the web d
 
 ```bash
 # Option 1: Use sudo
-sudo npm install -g @composio/ao
+sudo npm install -g @aoagents/ao
 
 # Option 2: Use npx (no global install needed)
-npx @composio/ao start
+npx @aoagents/ao start
 
 # Option 3: Fix npm permissions permanently (recommended)
 mkdir -p ~/.npm-global
 npm config set prefix '~/.npm-global'
 echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc
 source ~/.zshrc
-npm install -g @composio/ao
+npm install -g @aoagents/ao
 ```
 
 ### Build from Source (for contributors)
@@ -91,7 +91,7 @@ If you want to develop or contribute to Agent Orchestrator:
 
 ```bash
 # Clone the repository
-git clone https://github.com/ComposioHQ/agent-orchestrator
+git clone https://github.com/aoagents/ao
 cd agent-orchestrator
 
 # Run the setup script (installs deps, builds, links CLI)
@@ -385,7 +385,7 @@ curl -X POST -H 'Content-type: application/json' \
 To add a custom tracker (Jira, Asana, etc.), create a plugin:
 
 1. See plugin examples in `packages/plugins/tracker-*/`
-2. Implement the `Tracker` interface from `@composio/ao-core`
+2. Implement the `Tracker` interface from `@aoagents/ao-core`
 3. Register your plugin in the config
 
 See [Development Guide](./docs/DEVELOPMENT.md) for plugin development guidelines.
@@ -839,4 +839,4 @@ Useful for:
 
 ---
 
-**Need help?** Open an issue at: https://github.com/ComposioHQ/agent-orchestrator/issues
+**Need help?** Open an issue at: https://github.com/aoagents/ao/issues

@@ -17,8 +17,8 @@ import type {
   IssueUpdate,
   CreateIssueInput,
   ProjectConfig,
-} from "@composio/ao-core";
-import type { Composio } from "@composio/core";
+} from "@aoagents/ao-core";
+import type { Composio } from "@aoagents/core";
 
 // ---------------------------------------------------------------------------
 // Transport abstraction
@@ -137,7 +137,7 @@ function createComposioTransport(apiKey: string, entityId: string): GraphQLTrans
     if (!clientPromise) {
       clientPromise = (async () => {
         try {
-          const { Composio } = await import("@composio/core");
+          const { Composio } = await import("@aoagents/core");
           const client = new Composio({ apiKey });
           return client.tools;
         } catch (err: unknown) {
@@ -148,8 +148,8 @@ function createComposioTransport(apiKey: string, entityId: string): GraphQLTrans
             msg.includes("ERR_MODULE_NOT_FOUND")
           ) {
             throw new Error(
-              "Composio SDK (@composio/core) is not installed. " +
-                "Install it with: pnpm add @composio/core",
+              "Composio SDK (@aoagents/core) is not installed. " +
+                "Install it with: pnpm add @aoagents/core",
               { cause: err },
             );
           }

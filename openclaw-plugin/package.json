@@ -22,11 +22,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ComposioHQ/agent-orchestrator.git",
+    "url": "https://github.com/aoagents/ao.git",
     "directory": "openclaw-plugin"
   },
-  "homepage": "https://github.com/ComposioHQ/agent-orchestrator/tree/main/openclaw-plugin",
-  "bugs": "https://github.com/ComposioHQ/agent-orchestrator/issues",
+  "homepage": "https://github.com/aoagents/ao/tree/main/openclaw-plugin",
+  "bugs": "https://github.com/aoagents/ao/issues",
   "keywords": ["openclaw", "openclaw-plugin", "plugin", "agent-orchestrator", "composio", "ai-agents", "coding-agents"],
   "publishConfig": {
     "access": "public"

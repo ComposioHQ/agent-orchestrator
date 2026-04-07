@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
-// Mock @composio/core
+// Mock @aoagents/core
 // ---------------------------------------------------------------------------
 
 const { mockExecute, MockComposio } = vi.hoisted(() => {
@@ -12,12 +12,12 @@ const { mockExecute, MockComposio } = vi.hoisted(() => {
   return { mockExecute, MockComposio };
 });
 
-vi.mock("@composio/core", () => ({
+vi.mock("@aoagents/core", () => ({
   Composio: MockComposio,
 }));
 
 import { create } from "../src/index.js";
-import type { ProjectConfig } from "@composio/ao-core";
+import type { ProjectConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Fixtures

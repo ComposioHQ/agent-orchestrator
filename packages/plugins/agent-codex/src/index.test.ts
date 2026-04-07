@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig, AgentSpecificConfig } from "@composio/ao-core";
+import type { Session, RuntimeHandle, AgentLaunchConfig, AgentSpecificConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — available inside vi.mock factories
@@ -63,7 +63,7 @@ vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
-vi.mock("@composio/ao-core", async (importOriginal) => {
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,

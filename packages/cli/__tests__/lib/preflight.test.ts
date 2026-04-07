@@ -60,9 +60,9 @@ describe("preflight.checkBuilt", () => {
   });
 
   it("finds ao-core when hoisted one level up (npm global install layout)", async () => {
-    // /web/node_modules/@composio/ao-core     — miss
-    // /node_modules/@composio/ao-core         — hit
-    // /node_modules/@composio/ao-core/dist/index.js — exists
+    // /web/node_modules/@aoagents/ao-core     — miss
+    // /node_modules/@aoagents/ao-core         — hit
+    // /node_modules/@aoagents/ao-core/dist/index.js — exists
     // /web/.next/BUILD_ID and /web/dist-server/start-all.js — exist
     mockExistsSync
       .mockReturnValueOnce(false)
@@ -76,8 +76,8 @@ describe("preflight.checkBuilt", () => {
   it("throws npm hint when ao-core not found in global install", async () => {
     mockExistsSync.mockReturnValue(false);
     await expect(
-      preflight.checkBuilt("/usr/local/lib/node_modules/@composio/ao-web"),
-    ).rejects.toThrow("npm install -g @composio/ao@latest");
+      preflight.checkBuilt("/usr/local/lib/node_modules/@aoagents/ao-web"),
+    ).rejects.toThrow("npm install -g @aoagents/ao@latest");
   });
 
   it("throws pnpm hint when ao-core not found in monorepo", async () => {
@@ -115,8 +115,8 @@ describe("preflight.checkBuilt", () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
     await expect(
-      preflight.checkBuilt("/usr/local/lib/node_modules/@composio/ao-web"),
-    ).rejects.toThrow("npm install -g @composio/ao@latest");
+      preflight.checkBuilt("/usr/local/lib/node_modules/@aoagents/ao-web"),
+    ).rejects.toThrow("npm install -g @aoagents/ao@latest");
   });
 
   it("throws npm hint when ao-core dist is missing in global install", async () => {
@@ -125,8 +125,8 @@ describe("preflight.checkBuilt", () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
     await expect(
-      preflight.checkBuilt("/usr/local/lib/node_modules/@composio/ao-web"),
-    ).rejects.toThrow("npm install -g @composio/ao@latest");
+      preflight.checkBuilt("/usr/local/lib/node_modules/@aoagents/ao-web"),
+    ).rejects.toThrow("npm install -g @aoagents/ao@latest");
   });
 });
 

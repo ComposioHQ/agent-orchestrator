@@ -5,7 +5,7 @@
 Agent Orchestrator (AO) is a platform for spawning and managing parallel AI coding agents across distributed systems. It runs multiple agents (Claude Code, Codex, Aider, OpenCode) simultaneously — each in an isolated git worktree with its own PR — and provides a single dashboard to supervise them all. Agents autonomously fix CI failures, address review comments, and manage PRs.
 
 **Org:** ComposioHQ
-**Repo:** `github.com/ComposioHQ/agent-orchestrator`
+**Repo:** `github.com/aoagents/ao`
 **License:** MIT
 
 ## Monorepo Structure
@@ -62,12 +62,12 @@ pnpm dev                                    # Web dashboard (Next.js + 2 WS serv
 
 # Type checking
 pnpm typecheck                              # All packages
-pnpm --filter @composio/ao-web typecheck    # Web only
+pnpm --filter @aoagents/ao-web typecheck    # Web only
 
 # Testing
 pnpm test                                   # All packages (excludes web)
-pnpm --filter @composio/ao-web test         # Web tests
-pnpm --filter @composio/ao-web test:watch   # Web watch mode
+pnpm --filter @aoagents/ao-web test         # Web tests
+pnpm --filter @aoagents/ao-web test:watch   # Web watch mode
 pnpm test:integration                       # Integration tests
 
 # Lint & format
@@ -159,7 +159,7 @@ Hash = SHA-256 of config directory (first 12 chars). Prevents collision across m
 ### Imports
 
 - `@/` alias -> `packages/web/src/`
-- `@composio/ao-core` for core imports
+- `@aoagents/ao-core` for core imports
 - `workspace:*` for cross-package
 
 ### Web / Styling
@@ -212,7 +212,7 @@ Hash = SHA-256 of config directory (first 12 chars). Prevents collision across m
 
 ```
 packages/plugins/{slot}-{name}/
-├── package.json          # @composio/ao-plugin-{slot}-{name}
+├── package.json          # @aoagents/ao-plugin-{slot}-{name}
 ├── tsconfig.json         # extends ../../../tsconfig.base.json
 ├── src/
 │   ├── index.ts          # manifest + create + detect (default export)
@@ -221,7 +221,7 @@ packages/plugins/{slot}-{name}/
 
 ### Naming
 
-- Package: `@composio/ao-plugin-{slot}-{name}` (lowercase, hyphenated)
+- Package: `@aoagents/ao-plugin-{slot}-{name}` (lowercase, hyphenated)
 - `manifest.name` must match the `{name}` suffix (e.g. package `...-runtime-tmux` -> name: `"tmux"`)
 - `manifest.slot` must use `as const` to preserve the literal type
 
@@ -230,7 +230,7 @@ packages/plugins/{slot}-{name}/
 Every plugin default-exports a `PluginModule<T>`:
 
 ```typescript
-import type { PluginModule, Runtime } from "@composio/ao-core";
+import type { PluginModule, Runtime } from "@aoagents/ao-core";
 
 export const manifest = {
   name: "tmux",
@@ -294,7 +294,7 @@ import {
   PREFERRED_GH_PATH,            // /usr/local/bin/gh
   CI_STATUS, ACTIVITY_STATE, SESSION_STATUS,  // Constants
   type Session, type ProjectConfig, type RuntimeHandle,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 ```
 
 ### Testing
@@ -342,7 +342,7 @@ All agent plugins (claude-code, codex, aider, opencode, etc.) must implement the
 **Environment requirements:**
 - All agents must set `AO_SESSION_ID` and optionally `AO_ISSUE_ID`
 - All agents using PATH wrappers must prepend `~/.ao/bin` to PATH
-- Use `normalizeAgentPermissionMode` from `@composio/ao-core` (not a local duplicate)
+- Use `normalizeAgentPermissionMode` from `@aoagents/ao-core` (not a local duplicate)
 
 **Activity detection architecture:**
 

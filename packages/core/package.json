@@ -1,5 +1,5 @@
 {
-  "name": "@composio/ao-core",
+  "name": "@aoagents/ao-core",
   "version": "0.2.0",
   "description": "Core library — types, config, session manager, lifecycle manager, event bus",
   "license": "MIT",
@@ -29,12 +29,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ComposioHQ/agent-orchestrator.git",
+    "url": "https://github.com/aoagents/ao.git",
     "directory": "packages/core"
   },
-  "homepage": "https://github.com/ComposioHQ/agent-orchestrator",
+  "homepage": "https://github.com/aoagents/ao",
   "bugs": {
-    "url": "https://github.com/ComposioHQ/agent-orchestrator/issues"
+    "url": "https://github.com/aoagents/ao/issues"
   },
   "engines": {
     "node": ">=20.0.0"

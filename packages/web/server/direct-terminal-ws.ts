@@ -11,7 +11,7 @@ import { createServer, type Server } from "node:http";
 import { spawn } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { homedir, userInfo } from "node:os";
-import { createCorrelationId } from "@composio/ao-core";
+import { createCorrelationId } from "@aoagents/ao-core";
 
 // node-pty is an optionalDependency — it requires native compilation and may
 // not be available on all platforms. Load it dynamically so the rest of the

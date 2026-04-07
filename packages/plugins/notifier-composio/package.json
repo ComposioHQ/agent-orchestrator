@@ -1,5 +1,5 @@
 {
-  "name": "@composio/ao-plugin-notifier-composio",
+  "name": "@aoagents/ao-plugin-notifier-composio",
   "version": "0.2.0",
   "description": "Notifier plugin: Composio unified notifications (Slack, Discord, email)",
   "license": "MIT",
@@ -17,12 +17,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ComposioHQ/agent-orchestrator.git",
+    "url": "https://github.com/aoagents/ao.git",
     "directory": "packages/plugins/notifier-composio"
   },
-  "homepage": "https://github.com/ComposioHQ/agent-orchestrator",
+  "homepage": "https://github.com/aoagents/ao",
   "bugs": {
-    "url": "https://github.com/ComposioHQ/agent-orchestrator/issues"
+    "url": "https://github.com/aoagents/ao/issues"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -34,7 +34,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*"
+    "@aoagents/ao-core": "workspace:*"
   },
   "peerDependencies": {
     "composio-core": ">=0.5.0"
