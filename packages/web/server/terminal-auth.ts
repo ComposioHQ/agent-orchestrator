@@ -553,20 +553,6 @@ export function verifyTerminalAccess(input: {
     throw new TerminalAuthError("Invalid terminal token", 401, "token_invalid");
   }
 
-  if (session.ownerId !== actor.actorId) {
-    recordAuthEvent({
-      surface: "attach",
-      outcome: "failure",
-      sessionId: session.sessionId,
-      projectId: session.projectId,
-      actorId: actor.actorId,
-      ownerId: session.ownerId,
-      reason: "ownership_denied",
-      statusCode: 403,
-    });
-    throw new TerminalAuthError("Session ownership denied", 403, "ownership_denied");
-  }
-
   recordAuthEvent({
     surface: "attach",
     outcome: "success",

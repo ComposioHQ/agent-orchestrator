@@ -258,7 +258,9 @@ export function DirectTerminal({
     let cleanup: (() => void) | null = null;
     let inputDisposable: { dispose(): void } | null = null;
 
-    const PERMANENT_CLOSE_CODES = new Set([4001, 4004]); // auth failure, session not found
+    const PERMANENT_CLOSE_CODES = new Set([4004]); // session not found
+    const AUTH_CLOSE_CODES = new Set([1008, 4001]); // policy violation, auth failure
+    const MAX_AUTH_RETRY_ATTEMPTS = 3;
     const MAX_RECONNECT_DELAY = 15_000;
 
     Promise.all([
@@ -342,6 +344,13 @@ export function DirectTerminal({
 
         const runtimeConnectionConfig: TerminalConnectionConfig = {};
         let runtimeFetchDone = false;
+        let authRetryAttempts = 0;
+
+        const invalidateRuntimeConnectionConfig = () => {
+          runtimeFetchDone = false;
+          runtimeConnectionConfig.proxyWsPath = undefined;
+          runtimeConnectionConfig.directTerminalPort = undefined;
+        };
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
@@ -480,6 +489,7 @@ export function DirectTerminal({
           websocket.onopen = () => {
             console.log("[DirectTerminal] WebSocket connected");
             reconnectAttemptRef.current = 0;
+            authRetryAttempts = 0;
             setStatus("connected");
             setError(null);
 
@@ -517,6 +527,25 @@ export function DirectTerminal({
             console.log("[DirectTerminal] WebSocket closed:", event.code, event.reason);
 
             if (!mounted) return;
+
+            if (AUTH_CLOSE_CODES.has(event.code)) {
+              invalidateRuntimeConnectionConfig();
+              if (authRetryAttempts >= MAX_AUTH_RETRY_ATTEMPTS) {
+                permanentErrorRef.current = true;
+                setStatus("error");
+                setError("Terminal authorization expired. Please refresh and try again.");
+                return;
+              }
+
+              authRetryAttempts += 1;
+              const delay = Math.min(1000 * Math.pow(2, authRetryAttempts - 1), 4000);
+              setStatus("connecting");
+              setError(null);
+              reconnectTimerRef.current = setTimeout(() => {
+                void connectWebSocket();
+              }, delay);
+              return;
+            }
 
             // Permanent errors — don't retry
             if (PERMANENT_CLOSE_CODES.has(event.code)) {
