@@ -1519,35 +1519,68 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         // Auto-respawn if session had an issueId and project allows it
         const respawnStrategy = project.workerRespawnStrategy ?? "resume";
         if (raw["issue"] && respawnStrategy !== "fresh") {
-          try {
-            await sessionManager.spawn({
-              projectId,
-              issueId: raw["issue"],
-              agent: raw["agent"],
-            });
-            result.respawned = true;
+          // Pre-check: skip respawn if another session for the same issue already exists
+          // (e.g. a PR-managed session like pr_open). This avoids a spawn() dedup error
+          // after we've already archived the dead session.
+          let existingSessionForIssue: string | null = null;
+          for (const otherId of listMetadata(sessionsDir)) {
+            if (otherId === sessionId) continue; // skip ourselves (already archived but just in case)
+            const otherRaw = readMetadataRaw(sessionsDir, otherId);
+            if (!otherRaw) continue;
+            const otherStatus = otherRaw["status"] as SessionStatus | undefined;
+            if (otherStatus && TERMINAL_STATUSES.has(otherStatus)) continue;
+            if (otherRaw["issue"] === raw["issue"] && otherRaw["agent"] === raw["agent"]) {
+              existingSessionForIssue = otherId;
+              break;
+            }
+          }
+
+          if (existingSessionForIssue) {
             observer.recordOperation({
               metric: "lifecycle_poll",
-              operation: "lifecycle.dead_session_respawned",
+              operation: "lifecycle.dead_session_respawn_skipped",
               outcome: "success",
               correlationId,
               projectId,
               sessionId,
-              data: { issueId: raw["issue"], strategy: respawnStrategy },
+              data: {
+                issueId: raw["issue"],
+                existingSession: existingSessionForIssue,
+                reason: "another session already tracks this issue",
+              },
               level: "info",
             });
-          } catch (err) {
-            result.respawnError = err instanceof Error ? err.message : String(err);
-            observer.recordOperation({
-              metric: "lifecycle_poll",
-              operation: "lifecycle.dead_session_respawn_failed",
-              outcome: "failure",
-              correlationId,
-              projectId,
-              sessionId,
-              reason: result.respawnError,
-              level: "error",
-            });
+          } else {
+            try {
+              await sessionManager.spawn({
+                projectId,
+                issueId: raw["issue"],
+                agent: raw["agent"],
+              });
+              result.respawned = true;
+              observer.recordOperation({
+                metric: "lifecycle_poll",
+                operation: "lifecycle.dead_session_respawned",
+                outcome: "success",
+                correlationId,
+                projectId,
+                sessionId,
+                data: { issueId: raw["issue"], strategy: respawnStrategy },
+                level: "info",
+              });
+            } catch (err) {
+              result.respawnError = err instanceof Error ? err.message : String(err);
+              observer.recordOperation({
+                metric: "lifecycle_poll",
+                operation: "lifecycle.dead_session_respawn_failed",
+                outcome: "failure",
+                correlationId,
+                projectId,
+                sessionId,
+                reason: result.respawnError,
+                level: "error",
+              });
+            }
           }
         }
 
