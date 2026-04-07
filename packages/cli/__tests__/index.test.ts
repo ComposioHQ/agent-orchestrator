@@ -23,7 +23,18 @@ describe("cli entrypoint", () => {
   it("prints a clean message and exits 1 on ConfigNotFoundError", async () => {
     const { ConfigNotFoundError } = await import("@composio/ao-core");
     const error = new ConfigNotFoundError();
-    parseAsync.mockRejectedValue(error);
+    let rejectionHandler:
+      | ((reason: unknown) => unknown)
+      | undefined;
+
+    parseAsync.mockImplementation(
+      () =>
+        ({
+          catch: (handler: (reason: unknown) => unknown) => {
+            rejectionHandler = handler;
+          },
+        }) as Promise<void>,
+    );
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const exitSpy = vi
@@ -31,7 +42,9 @@ describe("cli entrypoint", () => {
       .mockImplementation(() => undefined as never);
 
     await import("../src/index.js");
-    await new Promise((r) => setTimeout(r, 0));
+
+    expect(rejectionHandler).toBeTypeOf("function");
+    rejectionHandler?.(error);
 
     expect(errorSpy).toHaveBeenCalledWith(error.message);
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -39,19 +52,22 @@ describe("cli entrypoint", () => {
 
   it("re-throws non-ConfigNotFoundError errors", async () => {
     const error = new Error("unexpected");
-    parseAsync.mockRejectedValue(error);
+    let rejectionHandler:
+      | ((reason: unknown) => unknown)
+      | undefined;
 
-    const caught: Error[] = [];
-    const nodeHandler = (reason: unknown) => {
-      caught.push(reason as Error);
-    };
-    process.on("unhandledRejection", nodeHandler);
+    parseAsync.mockImplementation(
+      () =>
+        ({
+          catch: (handler: (reason: unknown) => unknown) => {
+            rejectionHandler = handler;
+          },
+        }) as Promise<void>,
+    );
 
     await import("../src/index.js");
-    await new Promise((r) => setTimeout(r, 50));
 
-    process.off("unhandledRejection", nodeHandler);
-
-    expect(caught).toContain(error);
+    expect(rejectionHandler).toBeTypeOf("function");
+    expect(() => rejectionHandler?.(error)).toThrow(error);
   });
 });

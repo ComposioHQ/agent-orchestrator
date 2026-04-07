@@ -7,7 +7,7 @@ createProgram()
   .parseAsync()
   .catch((err) => {
     if (err instanceof ConfigNotFoundError) {
-      console.error(err.message);
+      console.error(`Error: ${err.message}`);
       process.exit(1);
       return;
     }
