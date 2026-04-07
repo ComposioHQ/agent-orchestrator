@@ -258,10 +258,20 @@ export function DirectTerminal({
     let cleanup: (() => void) | null = null;
     let inputDisposable: { dispose(): void } | null = null;
 
-    const PERMANENT_CLOSE_CODES = new Set([4004]); // session not found
-    const AUTH_CLOSE_CODES = new Set([1008, 4001]); // policy violation, auth failure
+    const AUTH_CLOSE_CODES = new Set([1008]); // policy violation / auth-class errors from server
+    const RATE_LIMIT_CLOSE_CODES = new Set([1013]); // Try again later
     const MAX_AUTH_RETRY_ATTEMPTS = 3;
     const MAX_RECONNECT_DELAY = 15_000;
+
+    const isPermanentAuthReason = (reason: string): boolean => {
+      const normalized = reason.trim().toLowerCase();
+      return (
+        normalized.includes("session not found") ||
+        normalized.includes("invalid session") ||
+        normalized.includes("missing session") ||
+        normalized.includes("ownership denied")
+      );
+    };
 
     Promise.all([
       import("xterm").then((mod) => mod.Terminal),
@@ -529,11 +539,23 @@ export function DirectTerminal({
             if (!mounted) return;
 
             if (AUTH_CLOSE_CODES.has(event.code)) {
+              const closeReason = event.reason || "Terminal authorization failed";
+              if (isPermanentAuthReason(closeReason)) {
+                permanentErrorRef.current = true;
+                setStatus("error");
+                setError(closeReason);
+                return;
+              }
+
               invalidateRuntimeConnectionConfig();
               if (authRetryAttempts >= MAX_AUTH_RETRY_ATTEMPTS) {
                 permanentErrorRef.current = true;
                 setStatus("error");
-                setError("Terminal authorization expired. Please refresh and try again.");
+                setError(
+                  event.reason
+                    ? `${event.reason}. Please refresh and try again.`
+                    : "Terminal authorization expired. Please refresh and try again.",
+                );
                 return;
               }
 
@@ -547,11 +569,17 @@ export function DirectTerminal({
               return;
             }
 
-            // Permanent errors — don't retry
-            if (PERMANENT_CLOSE_CODES.has(event.code)) {
-              permanentErrorRef.current = true;
-              setStatus("error");
-              setError(event.reason || `Connection refused (${event.code})`);
+            if (RATE_LIMIT_CLOSE_CODES.has(event.code)) {
+              const attempt = reconnectAttemptRef.current;
+              const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
+              reconnectAttemptRef.current = attempt + 1;
+
+              setStatus("connecting");
+              setError(event.reason || "Terminal busy. Retrying...");
+
+              reconnectTimerRef.current = setTimeout(() => {
+                void connectWebSocket();
+              }, delay);
               return;
             }
 
