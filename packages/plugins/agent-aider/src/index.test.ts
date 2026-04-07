@@ -279,6 +279,31 @@ describe("isProcessRunning", () => {
   });
 });
 
+describe("isProcessRunning with process runtime", () => {
+  it("returns true for a live PID", async () => {
+    const handle = {
+      id: "test-session",
+      runtimeName: "process",
+      data: { pid: process.pid }, // current process — known alive
+    };
+    const agent = create();
+    const result = await agent.isProcessRunning(handle as unknown as RuntimeHandle);
+    expect(result).toBe(true);
+  });
+
+  it("returns false for a dead PID", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementationOnce(() => {
+      const err = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+      throw err;
+    });
+    const handle = { id: "test", runtimeName: "process", data: { pid: 999999 } };
+    const agent = create();
+    const result = await agent.isProcessRunning(handle as any);
+    expect(result).toBe(false);
+    killSpy.mockRestore();
+  });
+});
+
 // =========================================================================
 // detectActivity — terminal output classification
 // =========================================================================
