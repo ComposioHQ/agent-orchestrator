@@ -12,12 +12,14 @@
     "next.config.js"
   ],
   "scripts": {
-    "dev": "concurrently \"npm:dev:next\" \"npm:dev:direct-terminal\"",
+    "dev": "concurrently \"npm:dev:next\" \"npm:dev:terminal\" \"npm:dev:direct-terminal\"",
     "dev:next": "next dev -p ${PORT:-3000}",
+    "dev:terminal": "tsx watch server/terminal-websocket.ts",
     "dev:direct-terminal": "tsx watch server/direct-terminal-ws.ts",
     "build": "next build && tsc -p tsconfig.server.json",
     "start": "next start",
     "start:all": "node dist-server/start-all.js",
+    "dev:optimized": "next build && tsc -p tsconfig.server.json && node dist-server/start-all.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -27,9 +29,7 @@
   },
   "dependencies": {
     "@composio/ao-core": "workspace:*",
-    "@composio/ao-plugin-agent-amp": "workspace:*",
     "@composio/ao-plugin-agent-claude-code": "workspace:*",
-    "@composio/ao-plugin-agent-cursor": "workspace:*",
     "@composio/ao-plugin-agent-opencode": "workspace:*",
     "@composio/ao-plugin-runtime-tmux": "workspace:*",
     "@composio/ao-plugin-scm-github": "workspace:*",
@@ -38,22 +38,19 @@
     "@composio/ao-plugin-workspace-worktree": "workspace:*",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
-    "@xterm/xterm": "^6.0.0",
-    "highlight.js": "^11.11.1",
-    "mermaid": "^11.14.0",
     "next": "^15.1.0",
     "next-themes": "^0.4.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-markdown": "^10.1.0",
-    "rehype-highlight": "^7.0.2",
-    "remark-gfm": "^4.0.1",
-    "ws": "^8.19.0"
+    "server-only": "^0.0.1",
+    "ws": "^8.19.0",
+    "xterm": "^5.3.0"
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
+    "@next/bundle-analyzer": "^15.1.0",
     "@tailwindcss/postcss": "^4.0.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.1.0",
@@ -61,6 +58,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.0",
+    "@vitest/coverage-v8": "^2.1.0",
     "concurrently": "^9.2.1",
     "jsdom": "^25.0.0",
     "node-gyp": "^12.2.0",
@@ -68,7 +66,6 @@
     "tailwindcss": "^4.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "@vitest/coverage-v8": "^2.1.0",
     "vitest": "^2.1.0"
   }
 }

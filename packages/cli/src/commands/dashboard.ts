@@ -11,7 +11,6 @@ import {
   waitForPortFree,
 } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
-import { DEFAULT_PORT } from "../lib/constants.js";
 
 export function registerDashboard(program: Command): void {
   program
@@ -23,7 +22,7 @@ export function registerDashboard(program: Command): void {
     /* c8 ignore start -- process-spawning startup code, tested via integration/onboarding */
     .action(async (opts: { port?: string; open?: boolean; rebuild?: boolean }) => {
       const config = loadConfig();
-      const port = opts.port ? parseInt(opts.port, 10) : (config.port ?? DEFAULT_PORT);
+      const port = opts.port ? parseInt(opts.port, 10) : (config.port ?? 3000);
 
       if (isNaN(port) || port < 1 || port > 65535) {
         console.error(chalk.red("Invalid port number. Must be 1-65535."));

@@ -1,3 +1,5 @@
+import "server-only";
+
 import { cache } from "react";
 import type { DashboardSession, DashboardOrchestratorLink } from "@/lib/types";
 import { getServices, getSCM } from "@/lib/services";
