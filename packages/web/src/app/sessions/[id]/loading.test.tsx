@@ -1,17 +1,17 @@
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import SessionLoading from "./loading";
 
 describe("SessionLoading", () => {
-  it("renders the session loading text", () => {
-    render(<SessionLoading />);
-    expect(screen.getByText("Loading session…")).toBeInTheDocument();
+  it("renders the skeleton shell with a stable header placeholder", () => {
+    const { container } = render(<SessionLoading />);
+    expect(container.querySelector(".session-page-header")).toBeInTheDocument();
   });
 
-  it("renders a spinning indicator", () => {
+  it("renders animated skeleton bones instead of a spinner", () => {
     const { container } = render(<SessionLoading />);
-    const spinner = container.querySelector(".animate-spin");
-    expect(spinner).toBeInTheDocument();
-    expect(spinner?.tagName.toLowerCase()).toBe("svg");
+    const bones = container.querySelectorAll(".animate-pulse");
+    expect(bones.length).toBeGreaterThanOrEqual(4);
+    expect(container.querySelector(".animate-spin")).not.toBeInTheDocument();
   });
 });

@@ -9,6 +9,7 @@ import { activityIcon } from "@/lib/activity-icons";
 import type { ProjectInfo } from "@/lib/project-name";
 import { getSessionTitle } from "@/lib/format";
 import { useSSESessionActivity } from "@/hooks/useSSESessionActivity";
+import { SessionDetailSkeleton } from "@/components/SessionDetailSkeleton";
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
@@ -225,11 +226,7 @@ export default function SessionPage() {
   }, [fetchSession, fetchProjectSessions, fetchSidebarSessions]);
 
   if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg-base)]">
-        <div className="text-[13px] text-[var(--color-text-tertiary)]">Loading session…</div>
-      </div>
-    );
+    return <SessionDetailSkeleton />;
   }
 
   if (sessionMissing) {

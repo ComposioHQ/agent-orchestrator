@@ -292,7 +292,7 @@ function _OrchestratorStatusStrip({
   crumbHref,
   crumbLabel,
 }: {
-  zones: OrchestratorZones;
+  zones?: OrchestratorZones;
   createdAt: string;
   headline: string;
   activityLabel: string;
@@ -316,47 +316,50 @@ function _OrchestratorStatusStrip({
     return () => clearInterval(id);
   }, [createdAt]);
 
-  const stats: Array<{ value: number; label: string; color: string; bg: string }> = [
-    {
-      value: zones.merge,
-      label: "merge-ready",
-      color: "var(--color-status-ready)",
-      bg: "color-mix(in srgb, var(--color-status-ready) 10%, transparent)",
-    },
-    {
-      value: zones.respond,
-      label: "responding",
-      color: "var(--color-status-error)",
-      bg: "color-mix(in srgb, var(--color-status-error) 10%, transparent)",
-    },
-    {
-      value: zones.review,
-      label: "review",
-      color: "var(--color-accent-orange)",
-      bg: "color-mix(in srgb, var(--color-accent-orange) 10%, transparent)",
-    },
-    {
-      value: zones.working,
-      label: "working",
-      color: "var(--color-accent-blue)",
-      bg: "color-mix(in srgb, var(--color-accent-blue) 10%, transparent)",
-    },
-    {
-      value: zones.pending,
-      label: "pending",
-      color: "var(--color-status-attention)",
-      bg: "color-mix(in srgb, var(--color-status-attention) 10%, transparent)",
-    },
-    {
-      value: zones.done,
-      label: "done",
-      color: "var(--color-text-tertiary)",
-      bg: "color-mix(in srgb, var(--color-text-tertiary) 14%, transparent)",
-    },
-  ].filter((s) => s.value > 0);
+  const stats: Array<{ value: number; label: string; color: string; bg: string }> | null = zones
+    ? [
+        {
+          value: zones.merge,
+          label: "merge-ready",
+          color: "var(--color-status-ready)",
+          bg: "color-mix(in srgb, var(--color-status-ready) 10%, transparent)",
+        },
+        {
+          value: zones.respond,
+          label: "responding",
+          color: "var(--color-status-error)",
+          bg: "color-mix(in srgb, var(--color-status-error) 10%, transparent)",
+        },
+        {
+          value: zones.review,
+          label: "review",
+          color: "var(--color-accent-orange)",
+          bg: "color-mix(in srgb, var(--color-accent-orange) 10%, transparent)",
+        },
+        {
+          value: zones.working,
+          label: "working",
+          color: "var(--color-accent-blue)",
+          bg: "color-mix(in srgb, var(--color-accent-blue) 10%, transparent)",
+        },
+        {
+          value: zones.pending,
+          label: "pending",
+          color: "var(--color-status-attention)",
+          bg: "color-mix(in srgb, var(--color-status-attention) 10%, transparent)",
+        },
+        {
+          value: zones.done,
+          label: "done",
+          color: "var(--color-text-tertiary)",
+          bg: "color-mix(in srgb, var(--color-text-tertiary) 14%, transparent)",
+        },
+      ].filter((s) => s.value > 0)
+    : null;
 
-  const total =
-    zones.merge + zones.respond + zones.review + zones.working + zones.pending + zones.done;
+  const total = zones
+    ? zones.merge + zones.respond + zones.review + zones.working + zones.pending + zones.done
+    : null;
 
   return (
     <div className="mx-auto max-w-[1180px] px-5 pt-5 lg:px-8">
@@ -372,47 +375,61 @@ function _OrchestratorStatusStrip({
         crumbLabel={crumbLabel}
         rightSlot={
           <div className="flex flex-wrap items-center gap-3 lg:justify-end">
-            <div className="flex items-baseline gap-1.5 mr-2">
-              <span className="text-[22px] font-bold leading-none tabular-nums text-[var(--color-text-primary)]">
-                {total}
-              </span>
-              <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
-            </div>
-
-            <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
-
-            {/* Per-zone pills */}
-            {stats.length > 0 ? (
-              stats.map((s) => (
-                <div
-                  key={s.label}
-                  className="flex items-center gap-1.5 px-2.5 py-1"
-                  style={{ background: s.bg }}
-                >
-                  <span
-                    className="text-[15px] font-bold leading-none tabular-nums"
-                    style={{ color: s.color }}
-                  >
-                    {s.value}
+            {total !== null ? (
+              <>
+                <div className="flex items-baseline gap-1.5 mr-2">
+                  <span className="text-[22px] font-bold leading-none tabular-nums text-[var(--color-text-primary)]">
+                    {total}
                   </span>
-                  <span
-                    className="text-[10px] font-medium"
-                    style={{ color: s.color, opacity: 0.8 }}
-                  >
-                    {s.label}
-                  </span>
+                  <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
                 </div>
-              ))
-            ) : (
-              <span className="text-[12px] text-[var(--color-text-tertiary)]">
-                no active agents
-              </span>
-            )}
 
-            {uptime && (
-              <span className="ml-auto font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
-                up {uptime}
-              </span>
+                <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
+
+                {/* Per-zone pills */}
+                {stats && stats.length > 0 ? (
+                  stats.map((s) => (
+                    <div
+                      key={s.label}
+                      className="flex items-center gap-1.5 px-2.5 py-1"
+                      style={{ background: s.bg }}
+                    >
+                      <span
+                        className="text-[15px] font-bold leading-none tabular-nums"
+                        style={{ color: s.color }}
+                      >
+                        {s.value}
+                      </span>
+                      <span
+                        className="text-[10px] font-medium"
+                        style={{ color: s.color, opacity: 0.8 }}
+                      >
+                        {s.label}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <span className="text-[12px] text-[var(--color-text-tertiary)]">
+                    no active agents
+                  </span>
+                )}
+
+                {uptime && (
+                  <span className="ml-auto font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+                    up {uptime}
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="flex items-baseline gap-1.5 mr-2">
+                  <div className="h-5 w-6 animate-pulse rounded bg-[var(--color-bg-subtle)]" />
+                  <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
+                </div>
+                <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
+                <div className="h-5 w-20 animate-pulse rounded bg-[var(--color-bg-subtle)]" />
+                <div className="h-5 w-16 animate-pulse rounded bg-[var(--color-bg-subtle)]" />
+              </>
             )}
           </div>
         }
@@ -562,7 +579,19 @@ export function SessionDetail({
             <main className="session-detail-page min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-base)]">
               <div className="session-detail-layout">
                 <main className="min-w-0">
-                  {(!isOrchestrator || (isOrchestrator && orchestratorZones)) && (
+                  {isOrchestrator ? (
+                    <_OrchestratorStatusStrip
+                      zones={orchestratorZones}
+                      createdAt={session.createdAt}
+                      headline={headline}
+                      activityLabel={activity.label}
+                      activityColor={activity.color}
+                      branch={session.branch}
+                      pr={pr}
+                      crumbHref={crumbHref}
+                      crumbLabel={crumbLabel}
+                    />
+                  ) : (
                     <SessionTopStrip
                       headline={headline}
                       crumbId={session.id}

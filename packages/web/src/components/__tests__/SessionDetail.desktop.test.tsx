@@ -186,4 +186,73 @@ describe("SessionDetail desktop layout", () => {
     expect(screen.getByText(/Terminal session has ended/i)).toBeInTheDocument();
     expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
   });
+
+  it("renders the orchestrator header immediately even when zones are undefined", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+          summary: "Orchestrator session",
+          branch: null,
+          createdAt: new Date().toISOString(),
+        })}
+        isOrchestrator
+        orchestratorZones={undefined}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    expect(screen.getAllByText("Orchestrator session").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("agents")).toBeInTheDocument();
+    expect(screen.getByText("Live Terminal")).toBeInTheDocument();
+  });
+
+  it("shows skeleton placeholders for orchestrator zones while loading", () => {
+    const { container } = render(
+      <SessionDetail
+        session={makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+          summary: "Loading zones test",
+          branch: null,
+          createdAt: new Date().toISOString(),
+        })}
+        isOrchestrator
+        orchestratorZones={undefined}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    const headerSide = container.querySelector(".session-detail-identity__actions--custom");
+    expect(headerSide).toBeInTheDocument();
+    const bones = headerSide?.querySelectorAll(".animate-pulse");
+    expect(bones?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  it("fills in orchestrator zone counts when data arrives", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+          summary: "Zones loaded test",
+          branch: null,
+          createdAt: new Date().toISOString(),
+        })}
+        isOrchestrator
+        orchestratorZones={{ merge: 1, respond: 0, review: 2, pending: 0, working: 3, done: 0 }}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    expect(screen.getByText("6")).toBeInTheDocument();
+    expect(screen.getByText("agents")).toBeInTheDocument();
+    expect(screen.getByText("merge-ready")).toBeInTheDocument();
+    expect(screen.getByText("review")).toBeInTheDocument();
+    expect(screen.getByText("working")).toBeInTheDocument();
+  });
 });
