@@ -363,6 +363,8 @@ export function SessionDetail({
     }
   }, [isMobile, startFullscreen, viewportReady]);
 
+  const shouldShowDeferredTerminalCta = viewportReady && isMobile && !showTerminal;
+
   return (
     <div className="session-detail-page min-h-screen bg-[var(--color-bg-base)]">
       {isOrchestrator && orchestratorZones && !isMobile && (
@@ -415,7 +417,7 @@ export function SessionDetail({
                 isOpenCodeSession={isOpenCodeSession}
                 reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
               />
-            ) : (
+            ) : shouldShowDeferredTerminalCta ? (
               <div className="rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-elevated)] px-4 py-4">
                 <p className="text-[12px] leading-relaxed text-[var(--color-text-secondary)]">
                   Terminal loading is deferred on mobile to keep the first page load fast over
@@ -429,6 +431,11 @@ export function SessionDetail({
                   Open Live Terminal
                 </button>
               </div>
+            ) : (
+              <div
+                className="h-[440px] animate-pulse rounded bg-[var(--color-bg-primary)]"
+                aria-hidden="true"
+              />
             )}
           </section>
 

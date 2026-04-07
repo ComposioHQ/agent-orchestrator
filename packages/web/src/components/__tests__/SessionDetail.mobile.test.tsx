@@ -29,6 +29,22 @@ function mockMobileViewport() {
   });
 }
 
+function mockDesktopViewport() {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 describe("SessionDetail mobile navbar", () => {
   beforeEach(() => {
     mockMobileViewport();
@@ -243,5 +259,23 @@ describe("SessionDetail mobile navbar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open Live Terminal" }));
 
     expect(screen.getByTestId("direct-terminal").textContent).toContain("worker-mobile-terminal");
+  });
+
+  it("does not flash the mobile terminal CTA on desktop", () => {
+    mockDesktopViewport();
+
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-desktop-terminal",
+          projectId: "my-app",
+          summary: "Desktop terminal load",
+        })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Open Live Terminal" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("direct-terminal").textContent).toContain("worker-desktop-terminal");
   });
 });
