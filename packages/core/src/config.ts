@@ -17,6 +17,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ConfigNotFoundError, type ExternalPluginEntryRef, type OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
+import { getDefaultRuntime } from "./platform.js";
 
 function inferScmPlugin(project: {
   repo: string;
@@ -208,7 +209,7 @@ const ProjectConfigSchema = z.object({
 });
 
 const DefaultPluginsSchema = z.object({
-  runtime: z.string().default("tmux"),
+  runtime: z.string().default(getDefaultRuntime()),
   agent: z.string().default("claude-code"),
   workspace: z.string().default("worktree"),
   notifiers: z.array(z.string()).default([]),
