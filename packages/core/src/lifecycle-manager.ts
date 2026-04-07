@@ -1522,6 +1522,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           // Pre-check: skip respawn if another session for the same issue already exists
           // (e.g. a PR-managed session like pr_open). This avoids a spawn() dedup error
           // after we've already archived the dead session.
+          // Resolve agent name the same way spawn() does — fall back to config default
+          // so the check matches spawn()'s dedup guard exactly.
+          const resolvedAgent = raw["agent"] ?? config.defaults.agent;
           let existingSessionForIssue: string | null = null;
           for (const otherId of listMetadata(sessionsDir)) {
             if (otherId === sessionId) continue; // skip ourselves (already archived but just in case)
@@ -1529,7 +1532,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             if (!otherRaw) continue;
             const otherStatus = otherRaw["status"] as SessionStatus | undefined;
             if (otherStatus && TERMINAL_STATUSES.has(otherStatus)) continue;
-            if (otherRaw["issue"] === raw["issue"] && otherRaw["agent"] === raw["agent"]) {
+            const otherAgent = otherRaw["agent"] ?? config.defaults.agent;
+            if (otherRaw["issue"] === raw["issue"] && otherAgent === resolvedAgent) {
               existingSessionForIssue = otherId;
               break;
             }
