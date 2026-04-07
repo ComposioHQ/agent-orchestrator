@@ -386,7 +386,13 @@ export function SessionDetail({
             />
           )}
 
-          <section className="mt-5">
+          {pr ? (
+            <section id="session-pr-section" className="mt-5">
+              <SessionDetailPRCard pr={pr} sessionId={session.id} metadata={session.metadata} />
+            </section>
+          ) : null}
+
+          <section className={pr ? "mt-6" : "mt-5"}>
             <div id="session-terminal-section" aria-hidden="true" />
             <div className="mb-3 flex items-center gap-2">
               <div
@@ -406,12 +412,6 @@ export function SessionDetail({
               reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
             />
           </section>
-
-          {pr ? (
-            <section id="session-pr-section" className="mt-6">
-              <SessionDetailPRCard pr={pr} sessionId={session.id} metadata={session.metadata} />
-            </section>
-          ) : null}
         </main>
       </div>
       {isMobile ? (
