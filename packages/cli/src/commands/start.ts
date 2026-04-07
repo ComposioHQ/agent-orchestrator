@@ -917,7 +917,7 @@ async function runStartup(
 ): Promise<number> {
   // Ensure tmux is available before doing anything — covers all entry paths
   // (normal start, URL start, retry with existing config)
-  const runtime = config.defaults?.runtime ?? "tmux";
+  const runtime = config.defaults?.runtime ?? getDefaultRuntime();
   if (runtime === "tmux") {
     await ensureTmux();
   }

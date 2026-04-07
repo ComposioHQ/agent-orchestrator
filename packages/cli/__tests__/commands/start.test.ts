@@ -1081,6 +1081,85 @@ describe("stop command", () => {
 });
 
 // ---------------------------------------------------------------------------
+// runtime fallback — platform-aware default (B01/B02/B21)
+// ---------------------------------------------------------------------------
+
+describe("start command — platform-aware runtime fallback", () => {
+  it("does not call ensureTmux when config has no runtime and platform is win32", async () => {
+    // Config with no defaults.runtime — the fallback kicks in.
+    const configWithoutRuntime: Record<string, unknown> = {
+      configPath: join(tmpDir, "agent-orchestrator.yaml"),
+      port: 3000,
+      defaults: {
+        // runtime intentionally absent
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: [],
+      },
+      projects: { "my-app": makeProject() },
+      notifiers: {},
+      notificationRouting: {},
+      reactions: {},
+    };
+    mockConfigRef.current = configWithoutRuntime;
+
+    // Simulate Windows — getDefaultRuntime() will return "process".
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+
+    try {
+      await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
+
+    // ensureTmux() calls execSilent("tmux", ["-V"]) — it must NOT have been called.
+    const tmuxChecks = mockExecSilent.mock.calls.filter(
+      (call) => String(call[0]) === "tmux" && Array.isArray(call[1]) && (call[1] as string[])[0] === "-V",
+    );
+    expect(tmuxChecks).toHaveLength(0);
+  });
+
+  it("calls ensureTmux when config has no runtime and platform is linux", async () => {
+    // Same config without runtime, but on a non-Windows platform.
+    const configWithoutRuntime: Record<string, unknown> = {
+      configPath: join(tmpDir, "agent-orchestrator.yaml"),
+      port: 3000,
+      defaults: {
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: [],
+      },
+      projects: { "my-app": makeProject() },
+      notifiers: {},
+      notificationRouting: {},
+      reactions: {},
+    };
+    mockConfigRef.current = configWithoutRuntime;
+
+    // Simulate Linux — getDefaultRuntime() returns "tmux", ensureTmux() must fire.
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+
+    try {
+      await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
+
+    // ensureTmux() must have checked for tmux availability.
+    const tmuxChecks = mockExecSilent.mock.calls.filter(
+      (call) => String(call[0]) === "tmux" && Array.isArray(call[1]) && (call[1] as string[])[0] === "-V",
+    );
+    expect(tmuxChecks.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // autoCreateConfig — config generation defaults
 // ---------------------------------------------------------------------------
 
