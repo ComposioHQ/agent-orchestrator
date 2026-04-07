@@ -88,11 +88,11 @@ beforeEach(() => {
 });
 
 describe("getProgrammaticCommand()", () => {
-  it("returns 'codex app-server' regardless of input", () => {
+  it("preserves the binary path from baseCommand and appends 'app-server'", () => {
     const agent = create();
     expect(agent.getProgrammaticCommand?.("codex --full-auto")).toBe("codex app-server");
     expect(agent.getProgrammaticCommand?.("codex --model gpt-4o --")).toBe("codex app-server");
-    expect(agent.getProgrammaticCommand?.("/usr/local/bin/codex")).toBe("codex app-server");
+    expect(agent.getProgrammaticCommand?.("/usr/local/bin/codex")).toBe("/usr/local/bin/codex app-server");
   });
 });
 
