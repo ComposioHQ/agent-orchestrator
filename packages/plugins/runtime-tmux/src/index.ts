@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
-import { writeFileSync, unlinkSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -109,42 +109,29 @@ export function create(): Runtime {
     },
 
     async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
-      // Clear any partial input
-      await tmux("send-keys", "-t", handle.id, "C-u");
-
-      // For long or multiline messages, use load-buffer + paste-buffer
-      // Use randomUUID to avoid temp file collisions on concurrent sends
-      if (message.includes("\n") || message.length > 200) {
-        const bufferName = `ao-${randomUUID()}`;
-        const tmpPath = join(tmpdir(), `ao-send-${randomUUID()}.txt`);
-        writeFileSync(tmpPath, message, { encoding: "utf-8", mode: 0o600 });
-        try {
-          await tmux("load-buffer", "-b", bufferName, tmpPath);
-          await tmux("paste-buffer", "-b", bufferName, "-t", handle.id, "-d");
-        } finally {
-          // Clean up temp file and tmux buffer (in case paste-buffer failed
-          // and the -d flag didn't delete it)
-          try {
-            unlinkSync(tmpPath);
-          } catch {
-            // ignore cleanup errors
-          }
-          try {
-            await tmux("delete-buffer", "-b", bufferName);
-          } catch {
-            // Buffer may already be deleted by -d flag — that's fine
-          }
-        }
-      } else {
-        // Use -l (literal) so text like "Enter" or "Space" isn't interpreted
-        // as tmux key names
-        await tmux("send-keys", "-t", handle.id, "-l", message);
+      // File-based message delivery: write to inbox JSONL in the workspace.
+      // Zero tmux send-keys in the communication path.
+      // The agent picks up messages via hooks (Claude Code) or polling.
+      const workspacePath = handle.data["workspacePath"] as string | undefined;
+      if (!workspacePath) {
+        throw new Error(
+          `Cannot send message to session "${handle.id}": no workspacePath in runtime handle`,
+        );
       }
 
-      // Small delay to let tmux process the pasted text before pressing Enter.
-      // Without this, Enter can arrive before the text is fully rendered.
-      await sleep(300);
-      await tmux("send-keys", "-t", handle.id, "Enter");
+      const inboxDir = join(workspacePath, ".ao");
+      mkdirSync(inboxDir, { recursive: true });
+      const inboxPath = join(inboxDir, "inbox.jsonl");
+
+      const entry = JSON.stringify({
+        ts: Date.now(),
+        type: "instruction",
+        message,
+        dedupKey: randomUUID(),
+      });
+
+      // O_APPEND atomic write (<4KB on ext4/APFS) — same guarantee as runtime-file.
+      appendFileSync(inboxPath, entry + "\n", "utf-8");
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {
