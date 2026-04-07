@@ -1,0 +1,39 @@
+packages/cli/__tests__/commands/dashboard.test.ts
+  64f98e6bccb3de18 172-229
+packages/cli/src/lib/dashboard-rebuild.ts
+  64f98e6bccb3de18 7,73-116
+packages/web/scripts/stamp-version.js
+  64f98e6bccb3de18 1-30
+packages/cli/src/commands/start.ts
+  64f98e6bccb3de18 51-53,978
+packages/web/package.json
+  64f98e6bccb3de18 19
+packages/cli/__tests__/commands/start.test.ts
+  64f98e6bccb3de18 116
+packages/ao/bin/postinstall.js
+  64f98e6bccb3de18 5-8,10-12,15,54-78
+packages/cli/src/commands/dashboard.ts
+  64f98e6bccb3de18 8,57
+packages/cli/__tests__/lib/dashboard-rebuild.test.ts
+  64f98e6bccb3de18 1-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "2839cd1df7d801a2122e71890a41d501930f88b0",
+  "prompts": {
+    "64f98e6bccb3de18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07a8fc84-f335-46f2-8707-059dad5cc430",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 344,
+      "total_deletions": 43,
+      "accepted_lines": 309,
+      "overriden_lines": 0
+    }
+  }
+}
