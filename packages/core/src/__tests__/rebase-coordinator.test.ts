@@ -344,7 +344,7 @@ describe("triggerRebaseForSiblings", () => {
     expect(results[0]!.message).toContain("fetch failed");
   });
 
-  it("catches exceptions thrown during sibling processing", async () => {
+  it("catches exceptions thrown during sibling processing and records error outcome", async () => {
     const aoDir = join(tmpDir, ".ao");
     mkdirSync(aoDir, { recursive: true });
     writeFileSync(join(aoDir, "working-files.jsonl"), '{"file":"src/shared.ts"}\n');
@@ -353,13 +353,43 @@ describe("triggerRebaseForSiblings", () => {
     mkdirSync(siblingAoDir, { recursive: true });
     writeFileSync(join(siblingAoDir, "working-files.jsonl"), '{"file":"src/shared.ts"}\n');
 
-    // Make execFile throw (not call cb) to simulate unexpected error
-    mockExecFile.mockImplementationOnce(() => { throw new Error("unexpected"); });
+    // Clean status, fetch, rebase, push all succeed — but sendMessage throws
+    gitOk("");  // status
+    gitOk("");  // fetch
+    gitOk("");  // rebase
+    gitOk("");  // push
+    sendMessage.mockRejectedValueOnce(new Error("network failure"));
+
+    const merged = makeSession({ workspacePath: tmpDir });
+    const sibling = makeSession({ id: "app-2", workspacePath: siblingDir, branch: "feat/app-2" });
+
+    // sendMessage throw is caught by safeSend (best-effort), so result is still clean
+    const results = await triggerRebaseForSiblings(merged, [sibling], "main", sendMessage);
+    expect(results[0]!.outcome).toBe("clean");
+  });
+
+  it("records error outcome with String(err) when caught error is not an Error instance", async () => {
+    const aoDir = join(tmpDir, ".ao");
+    mkdirSync(aoDir, { recursive: true });
+    writeFileSync(join(aoDir, "working-files.jsonl"), '{"file":"src/shared.ts"}\n');
+
+    const siblingAoDir = join(siblingDir, ".ao");
+    mkdirSync(siblingAoDir, { recursive: true });
+    writeFileSync(join(siblingAoDir, "working-files.jsonl"), '{"file":"src/shared.ts"}\n');
+
+    // git status returns a non-Error throw from execFile (hits String(err) path in runGit)
+    // runGit catches it and returns exitCode 1 with empty stderr
+    mockExecFile.mockImplementationOnce(
+      (_cmd: string, _args: string[], _opts: unknown, cb: (err: unknown) => void) =>
+        cb("string-only error"),
+    );
 
     const merged = makeSession({ workspacePath: tmpDir });
     const sibling = makeSession({ id: "app-2", workspacePath: siblingDir, branch: "feat/app-2" });
     const results = await triggerRebaseForSiblings(merged, [sibling], "main", sendMessage);
 
+    // runGit converts the string error to exitCode 1 → git status "failed"
     expect(results[0]!.outcome).toBe("error");
+    expect(results[0]!.message).toContain("git status failed");
   });
 });
