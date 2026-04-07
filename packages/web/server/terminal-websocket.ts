@@ -384,6 +384,7 @@ function proxyHttpRequest(
   targetPath: string,
   sessionId: string,
 ): void {
+  let proxyResponded = false;
   const proxyReq = request(
     {
       hostname: "127.0.0.1",
@@ -396,15 +397,40 @@ function proxyHttpRequest(
       },
     },
     (proxyRes) => {
+      proxyResponded = true;
       res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
       proxyRes.pipe(res);
+
+      proxyRes.on("error", (error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[Terminal] HTTP proxy response failed for ${sessionId}:`, message);
+        if (!res.writableEnded) {
+          res.destroy(error as Error);
+        }
+      });
     },
   );
 
   proxyReq.on("error", (error) => {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[Terminal] HTTP proxy failed for ${sessionId}:`, message);
-    writeJsonError(res, 502, "Terminal proxy failed");
+    if (!proxyResponded && !res.headersSent && !res.writableEnded) {
+      writeJsonError(res, 502, "Terminal proxy failed");
+      return;
+    }
+    if (!res.writableEnded) {
+      res.destroy(error as Error);
+    }
+  });
+
+  req.on("aborted", () => {
+    proxyReq.destroy();
+  });
+
+  req.on("error", (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[Terminal] HTTP request stream error for ${sessionId}:`, message);
+    proxyReq.destroy(error as Error);
   });
 
   req.pipe(proxyReq);
@@ -417,6 +443,7 @@ function proxyUpgradeRequest(
   targetPort: number,
   sessionId: string,
 ): void {
+  let upgraded = false;
   const proxyReq = request({
     hostname: "127.0.0.1",
     port: targetPort,
@@ -429,6 +456,8 @@ function proxyUpgradeRequest(
   });
 
   proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
+    upgraded = true;
+
     const statusLine = `HTTP/1.1 ${proxyRes.statusCode ?? 101} ${proxyRes.statusMessage ?? "Switching Protocols"}`;
     const headerLines = Object.entries(proxyRes.headers).flatMap(([name, value]) => {
       if (value === undefined) return [];
@@ -444,16 +473,52 @@ function proxyUpgradeRequest(
     if (head.length > 0) {
       proxySocket.write(head);
     }
+
+    proxySocket.on("error", (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[Terminal] Upstream socket error for ${sessionId}:`, message);
+      if (!socket.destroyed) {
+        socket.destroy(error as Error);
+      }
+    });
+
+    socket.on("error", (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[Terminal] Client socket error for ${sessionId}:`, message);
+      if (!proxySocket.destroyed) {
+        proxySocket.destroy(error as Error);
+      }
+    });
+
+    proxySocket.on("close", () => {
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+    });
+
+    socket.on("close", () => {
+      if (!proxySocket.destroyed) {
+        proxySocket.destroy();
+      }
+    });
+
     proxySocket.pipe(socket);
     socket.pipe(proxySocket);
   });
 
   proxyReq.on("response", (proxyRes) => {
+    if (upgraded) {
+      proxyRes.resume();
+      return;
+    }
     proxyRes.resume();
     writeUpgradeError(socket, proxyRes.statusCode ?? 502, "Terminal upgrade rejected");
   });
 
   proxyReq.on("error", (error) => {
+    if (upgraded) {
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[Terminal] WebSocket proxy failed for ${sessionId}:`, message);
     writeUpgradeError(socket, 502, "Terminal proxy failed");
