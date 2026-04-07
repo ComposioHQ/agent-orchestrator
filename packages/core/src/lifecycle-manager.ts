@@ -195,6 +195,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  /** Tracks when a session's runtime was first observed dead (for grace period). */
+  const runtimeDeadSince = new Map<SessionId, number>();
+  /** Grace period (ms) before transitioning to "killed" on runtime death. */
+  const RUNTIME_DEAD_GRACE_MS = 30_000;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -354,12 +358,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
 
-    // 1. Check if runtime is alive
+    // 1. Check if runtime is alive (with grace period to handle transient failures)
     if (session.runtimeHandle) {
       const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
       if (runtime) {
         const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
-        if (!alive) return "killed";
+        if (!alive) {
+          const now = Date.now();
+          const firstDead = runtimeDeadSince.get(session.id);
+          if (firstDead === undefined) {
+            // First time seeing dead runtime — start grace period
+            runtimeDeadSince.set(session.id, now);
+            return session.status;
+          }
+          if (now - firstDead < RUNTIME_DEAD_GRACE_MS) {
+            // Still within grace period — keep current status
+            return session.status;
+          }
+          // Grace period expired — runtime is confirmed dead
+          return "killed";
+        }
+        // Runtime is alive — clear any pending grace period
+        runtimeDeadSince.delete(session.id);
       }
     }
 
@@ -884,6 +904,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /** Maximum auto-restore attempts before giving up and letting "killed" persist. */
+  const MAX_AUTO_RESTORE_ATTEMPTS = 3;
+  /** Track auto-restore attempts per session (in-memory, resets on restart). */
+  const autoRestoreAttempts = new Map<SessionId, number>();
+
   /** Poll a single session and handle state transitions. */
   async function checkSession(session: Session): Promise<void> {
     // Use tracked state if available; otherwise use the persisted metadata status
@@ -892,8 +917,68 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const tracked = states.get(session.id);
     const oldStatus =
       tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
-    const newStatus = await determineStatus(session);
+    let newStatus = await determineStatus(session);
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
+
+    // Auto-restore: when a non-terminal session transitions to "killed",
+    // attempt to restore it automatically before persisting the transition.
+    const determinedKilled = newStatus === "killed";
+    if (
+      determinedKilled &&
+      oldStatus !== "killed" &&
+      oldStatus !== "merged" &&
+      oldStatus !== "terminated" &&
+      oldStatus !== "done"
+    ) {
+      const attempts = autoRestoreAttempts.get(session.id) ?? 0;
+      if (attempts < MAX_AUTO_RESTORE_ATTEMPTS) {
+        autoRestoreAttempts.set(session.id, attempts + 1);
+        const correlationId = createCorrelationId("auto-restore");
+        try {
+          await sessionManager.restore(session.id);
+          observer.recordOperation({
+            metric: "lifecycle_poll",
+            operation: "auto-restore",
+            outcome: "success",
+            correlationId,
+            projectId: session.projectId,
+            sessionId: session.id,
+            data: { attempt: attempts + 1 },
+            level: "info",
+          });
+          // Restore succeeded — keep the old status, skip the killed transition.
+          // The next poll cycle will detect the restored session as alive.
+          runtimeDeadSince.delete(session.id);
+          autoRestoreAttempts.delete(session.id);
+          newStatus = oldStatus;
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          observer.recordOperation({
+            metric: "lifecycle_poll",
+            operation: "auto-restore",
+            outcome: "failure",
+            correlationId,
+            projectId: session.projectId,
+            sessionId: session.id,
+            reason: errorMsg,
+            data: { attempt: attempts + 1, maxAttempts: MAX_AUTO_RESTORE_ATTEMPTS },
+            level: "warn",
+          });
+          // Restore failed — if we haven't exhausted attempts, keep old status
+          // so we retry on the next poll cycle.
+          if (attempts + 1 < MAX_AUTO_RESTORE_ATTEMPTS) {
+            newStatus = oldStatus;
+          }
+          // else: let "killed" persist after max attempts
+        }
+      }
+    }
+
+    // Reset auto-restore counter only when determineStatus() naturally returns
+    // a non-killed status (session genuinely recovered, not just suppressed).
+    if (!determinedKilled && autoRestoreAttempts.has(session.id)) {
+      autoRestoreAttempts.delete(session.id);
+    }
 
     if (newStatus !== oldStatus) {
       const correlationId = createCorrelationId("lifecycle-transition");
@@ -1008,6 +1093,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       for (const trackedId of states.keys()) {
         if (!currentSessionIds.has(trackedId)) {
           states.delete(trackedId);
+          runtimeDeadSince.delete(trackedId);
+          autoRestoreAttempts.delete(trackedId);
         }
       }
       for (const trackerKey of reactionTrackers.keys()) {

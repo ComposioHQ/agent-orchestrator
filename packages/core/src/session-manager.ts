@@ -1734,11 +1734,31 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           }
         }
 
-        // Check if runtime is dead
+        // Check if runtime is dead — but protect sessions in active states.
+        // The lifecycle manager will auto-restore these; cleanup should not
+        // destroy sessions that still have recoverable work.
         if (!shouldKill && session.runtimeHandle && plugins.runtime) {
           try {
             const alive = await plugins.runtime.isAlive(session.runtimeHandle);
-            if (!alive) shouldKill = true;
+            if (!alive) {
+              const activeStatuses: ReadonlySet<string> = new Set([
+                "working",
+                "spawning",
+                "needs_input",
+                "pr_open",
+                "ci_failed",
+                "review_pending",
+                "changes_requested",
+                "approved",
+                "mergeable",
+                "stuck",
+              ]);
+              if (!activeStatuses.has(session.status)) {
+                shouldKill = true;
+              }
+              // else: session is in an active state with dead runtime —
+              // skip cleanup, let lifecycle manager auto-restore it.
+            }
           } catch {
             // Can't check — skip
           }

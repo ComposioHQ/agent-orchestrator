@@ -6,6 +6,7 @@ import {
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
+  type ProjectConfig,
   type RuntimeHandle,
   type Session,
 } from "@composio/ao-core";
@@ -48,6 +49,13 @@ function createCursorAgent(): Agent {
       }
 
       return parts.join(" ");
+    },
+
+    async getRestoreCommand(_session: Session, _project: ProjectConfig): Promise<string | null> {
+      // Cursor's `--continue` resumes the latest chat session for the current
+      // workspace. Since restore launches in the same worktree, this brings
+      // back the prior conversation without needing to track a chat ID.
+      return "agent --continue";
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {

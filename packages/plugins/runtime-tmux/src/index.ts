@@ -168,12 +168,19 @@ export function create(): Runtime {
     },
 
     async isAlive(handle: RuntimeHandle): Promise<boolean> {
-      try {
-        await tmux("has-session", "-t", handle.id);
-        return true;
-      } catch {
-        return false;
+      // Retry once after a short delay to handle transient tmux server hiccups
+      // (e.g., system sleep/resume, momentary tmux server restart).
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await tmux("has-session", "-t", handle.id);
+          return true;
+        } catch {
+          if (attempt === 0) {
+            await sleep(500);
+          }
+        }
       }
+      return false;
     },
 
     async getMetrics(handle: RuntimeHandle): Promise<RuntimeMetrics> {
