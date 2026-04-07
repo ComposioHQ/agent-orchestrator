@@ -41,6 +41,7 @@ import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveNotifierTarget } from "./notifier-resolution.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { triggerRebaseForSiblings } from "./rebase-coordinator.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -198,6 +199,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  /** Cleanup functions for active fs.watch subscriptions, keyed by sessionId. */
+  const watcherCleanups = new Map<SessionId, () => void>();
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -1189,6 +1192,50 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  async function maybeRebaseSiblings(
+    session: Session,
+    oldStatus: SessionStatus,
+    newStatus: SessionStatus,
+  ): Promise<void> {
+    if (newStatus !== "merged" || oldStatus === "merged") return;
+    if (!session.workspacePath) return;
+
+    const project = config.projects[session.projectId];
+    if (!project) return;
+
+    try {
+      const allSessions = await sessionManager.list(session.projectId);
+      const siblings = allSessions.filter(
+        (s) =>
+          s.id !== session.id &&
+          !TERMINAL_STATUSES.has(s.status) &&
+          s.workspacePath != null &&
+          s.branch != null,
+      );
+
+      if (siblings.length === 0) return;
+
+      const results = await triggerRebaseForSiblings(
+        session,
+        siblings,
+        project.defaultBranch ?? "main",
+        (siblingId, message) => sessionManager.send(siblingId, message),
+      );
+
+      for (const r of results) {
+        const level = r.outcome === "error" ? "warn" : "info";
+        console[level](
+          `[lifecycle-manager] rebase ${r.outcome} sibling=${r.sessionId} merged=${session.id}: ${r.message.slice(0, 120)}`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[lifecycle-manager] maybeRebaseSiblings ${session.id}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   /** Poll a single session and handle state transitions. */
   async function checkSession(session: Session): Promise<void> {
     // Use tracked state if available; otherwise use the persisted metadata status
@@ -1297,6 +1344,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchMergeConflicts(session, newStatus),
+      maybeRebaseSiblings(session, oldStatus, newStatus),
     ]);
   }
 
@@ -1324,6 +1372,98 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // This reduces API calls from N×3 to 1 per poll cycle
       await populatePREnrichmentCache(sessionsToCheck);
 
+      // Set up fs.watch subscriptions for newly-seen sessions whose runtime
+      // supports watchEvents. This is additive — polling remains the source of
+      // truth. On Linux/NFS/Docker, fs.watch may be unreliable; failures are
+      // caught inside watchEvents itself and degrade silently.
+      for (const session of sessions) {
+        // Skip already-watched sessions and sessions without a runtime handle.
+        if (watcherCleanups.has(session.id)) continue;
+        if (!session.runtimeHandle) continue;
+
+        const project = config.projects[session.projectId];
+        if (!project) continue;
+
+        const runtimeName = project.runtime ?? config.defaults.runtime;
+        const runtime = registry.get<Runtime>("runtime", runtimeName);
+        if (!runtime?.watchEvents) continue;
+
+        try {
+          const unsubscribe = runtime.watchEvents(
+            session.runtimeHandle,
+            (events) => {
+              // Process each agent event from the file watcher callback.
+              for (const evt of events) {
+                if (!evt || typeof evt !== "object") continue;
+                const event = evt as Record<string, unknown>;
+                const type = event["type"] as string | undefined;
+
+                switch (type) {
+                  case "completion":
+                    // Agent signalled it has finished its task. Trigger an
+                    // immediate session check so the lifecycle state machine
+                    // can transition to "done"/"merged"/etc without waiting
+                    // for the next poll cycle.
+                    // Guard: skip if a poll is already in progress to prevent
+                    // double state transitions.
+                    if (!polling) {
+                      sessionManager.get(session.id).then((s) => {
+                        if (s) void checkSession(s);
+                      }).catch(() => {
+                        // Session may have been removed already — ignore.
+                      });
+                    }
+                    break;
+
+                  case "escalation":
+                    // Agent explicitly requests human attention.
+                    notifyHuman(
+                      createEvent("reaction.escalated", {
+                        sessionId: session.id,
+                        projectId: session.projectId,
+                        message:
+                          typeof event["message"] === "string"
+                            ? event["message"]
+                            : `${session.id}: agent escalation via file event`,
+                        data: event["data"] as Record<string, unknown> | undefined,
+                      }),
+                      "urgent",
+                    ).catch(() => {});
+                    break;
+
+                  case "status":
+                    // Informational heartbeat — log at debug level.
+                    console.log(
+                      `[lifecycle-manager] watchEvents status from ${session.id}:`,
+                      typeof event["message"] === "string" ? event["message"] : "(no message)",
+                    );
+                    break;
+
+                  case "ack":
+                    // Agent acknowledged a message — no orchestrator action needed.
+                    console.log(
+                      `[lifecycle-manager] watchEvents ack from ${session.id}:`,
+                      typeof event["message"] === "string" ? event["message"] : "(no message)",
+                    );
+                    break;
+
+                  default:
+                    // Unknown type — ignore; forward compatibility.
+                    break;
+                }
+              }
+            },
+          );
+          watcherCleanups.set(session.id, unsubscribe);
+        } catch (err) {
+          // watchEvents should not throw, but guard defensively.
+          console.warn(
+            `[lifecycle-manager] Failed to set up watchEvents for ${session.id}:`,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
 
@@ -1344,6 +1484,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       for (const sessionId of lastReviewBacklogCheckAt.keys()) {
         if (!currentSessionIds.has(sessionId)) {
           lastReviewBacklogCheckAt.delete(sessionId);
+        }
+      }
+      for (const watchedId of watcherCleanups.keys()) {
+        if (!currentSessionIds.has(watchedId)) {
+          try {
+            watcherCleanups.get(watchedId)?.();
+          } catch { /* best effort */ }
+          watcherCleanups.delete(watchedId);
         }
       }
 
@@ -1424,6 +1572,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         clearInterval(pollTimer);
         pollTimer = null;
       }
+      // Close all active fs.watch subscriptions.
+      for (const cleanup of watcherCleanups.values()) {
+        try {
+          cleanup();
+        } catch {
+          // best effort
+        }
+      }
+      watcherCleanups.clear();
     },
 
     getStates(): Map<SessionId, SessionStatus> {

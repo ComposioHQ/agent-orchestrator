@@ -1097,15 +1097,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const environment = plugins.agent.getEnvironment(agentLaunchConfig);
 
       handle = await plugins.runtime.create({
-        sessionId: tmuxName ?? sessionId, // Use tmux name for runtime if available
+        sessionId: tmuxName ?? sessionId,
         workspacePath,
         launchCommand,
+        agent: plugins.agent,
         environment: {
           ...environment,
           AO_SESSION: sessionId,
-          AO_DATA_DIR: sessionsDir, // Pass sessions directory (not root dataDir)
-          AO_SESSION_NAME: sessionId, // User-facing session name
-          ...(tmuxName && { AO_TMUX_NAME: tmuxName }), // Tmux session name if using new arch
+          AO_DATA_DIR: sessionsDir,
+          AO_SESSION_NAME: sessionId,
+          AO_AGENT_NAME: selection.agentName,
+          ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
           AO_CALLER_TYPE: "agent",
           AO_PROJECT_ID: spawnConfig.projectId,
           AO_CONFIG_PATH: config.configPath,
@@ -1427,11 +1429,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         sessionId: tmuxName ?? sessionId,
         workspacePath,
         launchCommand,
+        agent: plugins.agent,
         environment: {
           ...environment,
           AO_SESSION: sessionId,
           AO_DATA_DIR: sessionsDir,
           AO_SESSION_NAME: sessionId,
+          AO_AGENT_NAME: selection.agentName,
           ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
           AO_CALLER_TYPE: "orchestrator",
           AO_PROJECT_ID: orchestratorConfig.projectId,
@@ -2431,11 +2435,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       sessionId: tmuxName ?? sessionId,
       workspacePath,
       launchCommand,
+      agent: plugins.agent,
       environment: {
         ...environment,
         AO_SESSION: sessionId,
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,
+        AO_AGENT_NAME: selection.agentName,
         ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
         AO_CALLER_TYPE: "agent",
         ...(projectId && { AO_PROJECT_ID: projectId }),

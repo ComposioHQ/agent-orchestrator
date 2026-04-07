@@ -37,11 +37,14 @@ export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agen
 - Write a clear PR title and description explaining what changed and why.
 - Link the issue in the PR description so it auto-closes when merged.
 - If the repo has CI checks, make sure they pass before requesting review.
-- Respond to every review comment, even if just to acknowledge it.`;
+- Respond to every review comment, even if just to acknowledge it.
 
-// =============================================================================
-// TYPES
-// =============================================================================
+## Reporting Back to the Orchestrator
+A script \`ao-emit\` is available in your workspace at \`.ao/ao-emit\`. Use it to report status:
+- \`ao-emit completion "task done"\` — call this when you finish your task
+- \`ao-emit escalation "blocked on X"\` — call this when you are stuck and need help
+- \`ao-emit status "running tests"\` — call this to report progress at any point
+Always call \`ao-emit completion\` when done, and \`ao-emit escalation\` if you cannot proceed.`;
 
 export interface PromptBuildConfig {
   /** The project config from the orchestrator config */
