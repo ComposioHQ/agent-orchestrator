@@ -34,6 +34,7 @@ let tempRoot: string;
 let projectDir: string;
 let sessionsDir: string;
 let previousConfigPath: string | undefined;
+let previousTerminalActorId: string | undefined;
 
 // =============================================================================
 // Helpers
@@ -72,7 +73,7 @@ function ensureSessionMetadata(sessionId: string, tmuxSessionName = sessionId): 
 function createTerminalCookie(sessionId: string): string {
   const grant = issueTerminalAccess({
     sessionId,
-    headers: { "x-ao-actor-id": TEST_ACTOR },
+    headers: {},
   });
   return `${grant.cookieName}=${encodeURIComponent(grant.token)}`;
 }
@@ -83,7 +84,6 @@ function connectWs(sessionId: string, tmuxSessionName = sessionId): Promise<WebS
     const ws = new WebSocket(`ws://localhost:${port}/ws?session=${sessionId}`, {
       headers: {
         Cookie: createTerminalCookie(sessionId),
-        "x-ao-actor-id": TEST_ACTOR,
       },
     });
     ws.on("open", () => resolve(ws));
@@ -173,7 +173,9 @@ projects:
   );
 
   previousConfigPath = process.env.AO_CONFIG_PATH;
+  previousTerminalActorId = process.env.AO_TERMINAL_ACTOR_ID;
   process.env.AO_CONFIG_PATH = configPath;
+  process.env.AO_TERMINAL_ACTOR_ID = TEST_ACTOR;
   sessionsDir = getSessionsDir(configPath, projectDir);
   resetTerminalAuthStateForTests();
 
@@ -211,6 +213,11 @@ afterAll(() => {
     Reflect.deleteProperty(process.env, "AO_CONFIG_PATH");
   } else {
     process.env.AO_CONFIG_PATH = previousConfigPath;
+  }
+  if (previousTerminalActorId === undefined) {
+    Reflect.deleteProperty(process.env, "AO_TERMINAL_ACTOR_ID");
+  } else {
+    process.env.AO_TERMINAL_ACTOR_ID = previousTerminalActorId;
   }
   rmSync(tempRoot, { recursive: true, force: true });
 

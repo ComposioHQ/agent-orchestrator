@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { IncomingHttpHeaders } from "node:http";
 import { userInfo } from "node:os";
 import { join } from "node:path";
@@ -129,12 +129,43 @@ function getAuthContext(): { config: OrchestratorConfig; observer: ProjectObserv
   const secretDir = getObservabilityBaseDir(config.configPath);
   mkdirSync(secretDir, { recursive: true });
   const secretPath = join(secretDir, SECRET_FILE_NAME);
-  const secret = existsSync(secretPath)
-    ? readFileSync(secretPath, "utf-8").trim()
-    : randomBytes(32).toString("base64url");
+  const readSecret = (): string | undefined => {
+    try {
+      const value = readFileSync(secretPath, "utf-8").trim();
+      return value.length > 0 ? value : undefined;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    }
+  };
 
-  if (!existsSync(secretPath)) {
-    writeFileSync(secretPath, `${secret}\n`, { encoding: "utf-8", mode: 0o600 });
+  const existingSecret = readSecret();
+  if (existingSecret) {
+    cachedContext = { config, observer, secret: existingSecret };
+    return cachedContext;
+  }
+
+  const generatedSecret = randomBytes(32).toString("base64url");
+  try {
+    // Use an exclusive write to avoid cross-process TOCTOU races during initialization.
+    writeFileSync(secretPath, `${generatedSecret}\n`, {
+      encoding: "utf-8",
+      mode: 0o600,
+      flag: "wx",
+    });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EEXIST") {
+      throw error;
+    }
+  }
+
+  const secret = readSecret();
+  if (!secret) {
+    throw new Error("Terminal auth secret file is empty");
   }
 
   cachedContext = { config, observer, secret };
@@ -162,14 +193,11 @@ function resolveFallbackActor(): { actorId: string; actorSource: string } {
 
 function resolveActor(headers: HeaderSource, remoteAddress?: string): TerminalActor {
   const explicitActor =
-    getHeaderValue(headers, "x-ao-actor-id")?.trim() ||
     getHeaderValue(headers, "x-forwarded-user")?.trim() ||
     getHeaderValue(headers, "x-auth-request-user")?.trim() ||
     getHeaderValue(headers, "x-remote-user")?.trim();
 
-  const explicitSource = getHeaderValue(headers, "x-ao-actor-id")?.trim()
-    ? "header:x-ao-actor-id"
-    : getHeaderValue(headers, "x-forwarded-user")?.trim()
+  const explicitSource = getHeaderValue(headers, "x-forwarded-user")?.trim()
       ? "header:x-forwarded-user"
       : getHeaderValue(headers, "x-auth-request-user")?.trim()
         ? "header:x-auth-request-user"

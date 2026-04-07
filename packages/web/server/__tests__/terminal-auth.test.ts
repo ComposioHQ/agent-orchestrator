@@ -16,6 +16,7 @@ let tempRoot: string;
 let projectDir: string;
 let sessionsDir: string;
 let previousConfigPath: string | undefined;
+let previousTerminalActorId: string | undefined;
 
 function writeConfig(configPath: string, rootProjectDir: string): void {
   writeFileSync(
@@ -65,7 +66,9 @@ describe("terminal auth", () => {
     writeConfig(configPath, projectDir);
 
     previousConfigPath = process.env.AO_CONFIG_PATH;
+    previousTerminalActorId = process.env.AO_TERMINAL_ACTOR_ID;
     process.env.AO_CONFIG_PATH = configPath;
+    process.env.AO_TERMINAL_ACTOR_ID = TEST_ACTOR;
     sessionsDir = getSessionsDir(configPath, projectDir);
   });
 
@@ -80,6 +83,11 @@ describe("terminal auth", () => {
     } else {
       process.env.AO_CONFIG_PATH = previousConfigPath;
     }
+    if (previousTerminalActorId === undefined) {
+      Reflect.deleteProperty(process.env, "AO_TERMINAL_ACTOR_ID");
+    } else {
+      process.env.AO_TERMINAL_ACTOR_ID = previousTerminalActorId;
+    }
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
@@ -88,13 +96,12 @@ describe("terminal auth", () => {
 
     const grant = issueTerminalAccess({
       sessionId: TEST_SESSION,
-      headers: { "x-ao-actor-id": TEST_ACTOR },
+      headers: {},
     });
 
     const authorized = verifyTerminalAccess({
       sessionId: TEST_SESSION,
       headers: {
-        "x-ao-actor-id": TEST_ACTOR,
         cookie: `broken=%ZZ; ${grant.cookieName}=${encodeURIComponent(grant.token)}`,
       },
     });
