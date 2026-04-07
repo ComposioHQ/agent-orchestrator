@@ -11,7 +11,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import { createCorrelationId } from "@composio/ao-core";
-import { TerminalAuthError, verifyTerminalAccess } from "./terminal-auth.js";
+import { TerminalAuthError, verifyTerminalAccess, verifyTerminalAccessNoRateLimit } from "./terminal-auth.js";
 import { findTmux } from "./tmux-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
 
@@ -531,7 +531,7 @@ const server = createServer(async (req, res) => {
   const sessionId = extractProxySessionId(url.pathname);
   if (sessionId) {
     try {
-      const authorized = verifyTerminalAccess({
+      const authorized = verifyTerminalAccessNoRateLimit({
         sessionId,
         headers: req.headers,
         remoteAddress: req.socket.remoteAddress,

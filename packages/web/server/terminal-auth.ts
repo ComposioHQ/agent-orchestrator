@@ -86,6 +86,7 @@ const FAILURE_LIMIT = { max: 12, windowMs: 60_000 };
 const TOKEN_TTL_MS = 60_000;
 const SECRET_FILE_NAME = "terminal-auth-secret";
 const COOKIE_PREFIX = "ao_terminal_";
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000; // Clean expired entries every minute
 
 const rateLimiters = new Map<string, RateLimitState>();
 
@@ -97,9 +98,40 @@ let cachedContext:
     }
   | undefined;
 
+let cleanupInterval: NodeJS.Timeout | undefined;
+
+function startRateLimitCleanup(): void {
+  if (cleanupInterval !== undefined) {
+    return; // Already running
+  }
+
+  cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    let removed = 0;
+    for (const [key, state] of rateLimiters.entries()) {
+      if (state.resetAt <= now) {
+        rateLimiters.delete(key);
+        removed++;
+      }
+    }
+    if (removed > 0) {
+      // Silence in production; useful for debugging
+    }
+  }, RATE_LIMIT_CLEANUP_INTERVAL_MS);
+
+  // Ensure cleanup doesn't prevent process exit
+  if (cleanupInterval.unref) {
+    cleanupInterval.unref();
+  }
+}
+
 export function resetTerminalAuthStateForTests(): void {
   cachedContext = undefined;
   rateLimiters.clear();
+  if (cleanupInterval !== undefined) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = undefined;
+  }
 }
 
 function getHeaderValue(headers: HeaderSource, name: string): string | undefined {
@@ -119,6 +151,9 @@ function getAuthContext(): { config: OrchestratorConfig; observer: ProjectObserv
   if (cachedContext) {
     return cachedContext;
   }
+
+  // Start periodic cleanup of expired rate limit entries (lazy initialization)
+  startRateLimitCleanup();
 
   const config = loadConfig();
   const observer = createProjectObserver(config, "terminal-auth");
@@ -561,6 +596,83 @@ export function verifyTerminalAccess(input: {
     payload.actorId !== actor.actorId
   ) {
     consumeRateLimit("failure:mismatch", `${actor.clientIp}:${input.sessionId}`, FAILURE_LIMIT);
+    recordAuthEvent({
+      surface: "attach",
+      outcome: "failure",
+      sessionId: session.sessionId,
+      projectId: session.projectId,
+      actorId: actor.actorId,
+      ownerId: session.ownerId,
+      reason: "token_invalid",
+      statusCode: 401,
+    });
+    throw new TerminalAuthError("Invalid terminal token", 401, "token_invalid");
+  }
+
+  recordAuthEvent({
+    surface: "attach",
+    outcome: "success",
+    sessionId: session.sessionId,
+    projectId: session.projectId,
+    actorId: actor.actorId,
+    ownerId: session.ownerId,
+  });
+
+  return {
+    ...session,
+    actorId: actor.actorId,
+    actorSource: actor.actorSource,
+  };
+}
+
+/**
+ * Verify terminal access without consuming connection rate-limit tokens.
+ *
+ * Used for HTTP proxied requests to ttyd static assets (CSS, JS, favicon, etc.)
+ * which are already authenticated via the httpOnly token cookie. Connection
+ * rate limits should only apply to initial WebSocket upgrades and new connection
+ * attempts, not to subsequent authenticated requests.
+ *
+ * Still validates the session and token, and records auth events for observability.
+ */
+export function verifyTerminalAccessNoRateLimit(input: {
+  sessionId: string;
+  headers: HeaderSource;
+  remoteAddress?: string;
+}): TerminalSessionRecord & { actorId: string; actorSource: string } {
+  if (!validateSessionId(input.sessionId)) {
+    throw new TerminalAuthError("Invalid session ID", 400, "invalid_session");
+  }
+
+  const actor = resolveActor(input.headers, input.remoteAddress);
+  const session = resolveSessionRecord(input.sessionId);
+  const cookieHeader = getHeaderValue(input.headers, "cookie");
+  const cookies = parseCookies(cookieHeader);
+  const cookieToken = cookies[getTerminalCookieName(input.sessionId)];
+
+  if (!cookieToken) {
+    recordAuthEvent({
+      surface: "attach",
+      outcome: "failure",
+      sessionId: session.sessionId,
+      projectId: session.projectId,
+      actorId: actor.actorId,
+      ownerId: session.ownerId,
+      reason: "auth_required",
+      statusCode: 401,
+    });
+    throw new TerminalAuthError("Missing terminal token", 401, "auth_required");
+  }
+
+  const { secret } = getAuthContext();
+  const payload = decodeAndVerifyToken(cookieToken, secret);
+
+  if (
+    payload.sessionId !== session.sessionId ||
+    payload.projectId !== session.projectId ||
+    payload.ownerId !== session.ownerId ||
+    payload.actorId !== actor.actorId
+  ) {
     recordAuthEvent({
       surface: "attach",
       outcome: "failure",
