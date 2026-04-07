@@ -193,7 +193,7 @@ describe("plugin manifest & exports", () => {
     const agent = create();
     expect(agent.name).toBe("copilot");
     expect(agent.processName).toBe("copilot");
-    expect(agent.promptDelivery).toBe("post-launch");
+    expect(agent.promptDelivery).toBeUndefined();
   });
 });
 
@@ -234,12 +234,19 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'gpt-5-mini'");
   });
 
-  it("does not include prompt in launch command (delivered post-launch)", () => {
+  it("passes prompt via -i for interactive mode", () => {
     const cmd = create().getLaunchCommand(
       makeLaunchConfig({ prompt: "Fix the login bug" }),
     );
-    expect(cmd).not.toContain("-i");
-    expect(cmd).not.toContain("Fix the login bug");
+    expect(cmd).toMatch(/-i 'Fix the login bug'/);
+  });
+
+  it("shell-escapes prompts with quotes and special chars", () => {
+    const cmd = create().getLaunchCommand(
+      makeLaunchConfig({ prompt: "don't break; echo pwned" }),
+    );
+    // shellEscape wraps in single quotes, escapes internal quotes
+    expect(cmd).toContain("-i 'don'\\''t break; echo pwned'");
   });
 });
 
