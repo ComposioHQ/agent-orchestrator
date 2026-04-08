@@ -769,7 +769,8 @@ async function setupHookInWorkspace(workspacePath: string): Promise<void> {
       if (
         typeof def["command"] === "string" &&
         (def["command"].includes("metadata-updater.sh") ||
-          def["command"].includes("metadata-updater.js"))
+          def["command"].includes("metadata-updater.js") ||
+          def["command"].includes("metadata-updater.cjs"))
       ) {
         hookIndex = i;
         hookDefIndex = j;
@@ -1006,7 +1007,7 @@ function createClaudeCodeAgent(): Agent {
     async postLaunchSetup(session: Session): Promise<void> {
       if (!session.workspacePath) return;
 
-      await setupHookInWorkspace(session.workspacePath, ".claude/metadata-updater.sh");
+      await setupHookInWorkspace(session.workspacePath);
     },
   };
 }

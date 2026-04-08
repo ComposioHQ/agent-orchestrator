@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import {
   getShell,
   isWindows,
+  killProcessTree,
   type PluginModule,
   type Runtime,
   type RuntimeCreateConfig,
@@ -164,11 +165,17 @@ export function create(): Runtime {
         // spawned by the shell are also terminated, not just the shell itself.
         const pid = child.pid;
         if (pid) {
-          try {
-            process.kill(-pid, "SIGTERM");
-          } catch {
-            // Process group may not exist — fall back to direct kill
-            child.kill("SIGTERM");
+          if (isWindows()) {
+            // taskkill /T kills the entire process tree — process groups are not
+            // supported on Windows (detached: false) so process.kill(-pid) would throw.
+            await killProcessTree(pid);
+          } else {
+            try {
+              process.kill(-pid, "SIGTERM");
+            } catch {
+              // Process group may not exist — fall back to direct kill
+              child.kill("SIGTERM");
+            }
           }
         } else {
           child.kill("SIGTERM");
@@ -179,10 +186,15 @@ export function create(): Runtime {
           const timeout = setTimeout(() => {
             if (child.exitCode === null && child.signalCode === null) {
               if (pid) {
-                try {
-                  process.kill(-pid, "SIGKILL");
-                } catch {
-                  child.kill("SIGKILL");
+                if (isWindows()) {
+                  // killProcessTree already forced termination; if still alive, force again
+                  void killProcessTree(pid);
+                } else {
+                  try {
+                    process.kill(-pid, "SIGKILL");
+                  } catch {
+                    child.kill("SIGKILL");
+                  }
                 }
               } else {
                 child.kill("SIGKILL");

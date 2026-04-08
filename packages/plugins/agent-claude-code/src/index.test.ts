@@ -918,20 +918,22 @@ describe("setupWorkspaceHooks on win32", () => {
       {} as WorkspaceHooksConfig,
     );
 
-    // The .js file must have been written
-    const jsContent = getWrittenScriptContent("metadata-updater.js");
-    expect(jsContent).toBeDefined();
-    expect(jsContent).toContain("#!/usr/bin/env node");
+    // The .cjs file must have been written (.cjs forces CJS mode in ESM workspaces)
+    const cjsContent = getWrittenScriptContent("metadata-updater.cjs");
+    expect(cjsContent).toBeDefined();
+    expect(cjsContent).toContain("#!/usr/bin/env node");
 
     // Must not contain bash-isms
-    expect(jsContent).not.toContain("#!/usr/bin/env bash");
-    expect(jsContent).not.toContain("jq");
-    expect(jsContent).not.toContain("grep");
-    expect(jsContent).not.toContain("sed");
+    expect(cjsContent).not.toContain("#!/usr/bin/env bash");
+    expect(cjsContent).not.toContain("jq");
+    expect(cjsContent).not.toContain("grep");
+    expect(cjsContent).not.toContain("sed");
 
-    // The .sh file must NOT have been written
+    // The .sh and .js files must NOT have been written
     const shContent = getWrittenScriptContent("metadata-updater.sh");
     expect(shContent).toBeUndefined();
+    const jsContent = getWrittenScriptContent("metadata-updater.js");
+    expect(jsContent).toBeUndefined();
   });
 
   it("uses node command in settings.json hook command on Windows", async () => {
@@ -941,7 +943,7 @@ describe("setupWorkspaceHooks on win32", () => {
     );
 
     const hookCommand = getWrittenHookCommand();
-    expect(hookCommand).toBe("node .claude/metadata-updater.js");
+    expect(hookCommand).toBe("node .claude/metadata-updater.cjs");
     expect(hookCommand).not.toContain(".sh");
   });
 
@@ -977,5 +979,41 @@ describe("setupWorkspaceHooks on win32", () => {
   it("Node.js hook script handles gh pr merge detection", () => {
     expect(METADATA_UPDATER_SCRIPT_NODE).toContain("pr\\s+merge");
     expect(METADATA_UPDATER_SCRIPT_NODE).toContain("merged");
+  });
+
+  it("does not add duplicate hook entry when called twice on Windows", async () => {
+    // First call creates the hook
+    await agent.setupWorkspaceHooks!(
+      "C:\\\\Users\\\\dev\\\\workspace",
+      {} as WorkspaceHooksConfig,
+    );
+
+    // Simulate second call: settings.json now contains the .cjs hook
+    const firstSettings = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    expect(firstSettings).toBeDefined();
+    mockReadFile.mockResolvedValueOnce(firstSettings![1] as string);
+    vi.clearAllMocks();
+    mockIsWindows.mockReturnValue(true);
+
+    // Second call — should UPDATE the existing hook, not add a duplicate
+    await agent.setupWorkspaceHooks!(
+      "C:\\\\Users\\\\dev\\\\workspace",
+      {} as WorkspaceHooksConfig,
+    );
+
+    const secondSettings = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    expect(secondSettings).toBeDefined();
+    const parsed = JSON.parse(secondSettings![1] as string);
+    const hookEntries = parsed.hooks.PostToolUse as Array<{ hooks: Array<{ command: string }> }>;
+    // Count all hook commands matching our metadata updater
+    const metadataHooks = hookEntries.flatMap((e) => e.hooks).filter(
+      (h) => h.command.includes("metadata-updater"),
+    );
+    // Must be exactly 1 — no duplicates
+    expect(metadataHooks).toHaveLength(1);
   });
 });

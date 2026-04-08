@@ -5,8 +5,10 @@ import type { RuntimeHandle } from "@composio/ao-core";
 // ---------------------------------------------------------------------------
 // Hoisted mock — must be set up before import
 // ---------------------------------------------------------------------------
-const { mockSpawn } = vi.hoisted(() => ({
+const { mockSpawn, mockIsWindows, mockKillProcessTree } = vi.hoisted(() => ({
   mockSpawn: vi.fn(),
+  mockIsWindows: vi.fn(() => false),
+  mockKillProcessTree: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -15,6 +17,16 @@ vi.mock("node:child_process", async (importOriginal) => {
   return {
     ...actual,
     spawn: mockSpawn,
+  };
+});
+
+vi.mock("@composio/ao-core", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import("@composio/ao-core")>();
+  return {
+    ...actual,
+    isWindows: mockIsWindows,
+    killProcessTree: mockKillProcessTree,
   };
 });
 
@@ -72,6 +84,9 @@ function defaultConfig(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
+  mockIsWindows.mockReturnValue(false);
+  mockKillProcessTree.mockResolvedValue(undefined);
+  mockSpawn.mockReturnValue(createMockChild());
 });
 
 // =========================================================================
@@ -316,6 +331,31 @@ describe("destroy()", () => {
 
     killSpy.mockRestore();
     vi.useRealTimers();
+  });
+
+  it("uses killProcessTree on Windows instead of process.kill(-pid)", async () => {
+    mockIsWindows.mockReturnValue(true);
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child);
+
+    const runtime = create();
+    const handle = await runtime.create(defaultConfig());
+
+    const procesKillSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    const destroyPromise = runtime.destroy(handle);
+
+    await new Promise((r) => setTimeout(r, 10));
+    child.exitCode = 0;
+    child.emit("exit", 0, null);
+
+    await destroyPromise;
+
+    // On Windows: must use killProcessTree, NOT process.kill(-pid)
+    expect(mockKillProcessTree).toHaveBeenCalledWith(12345);
+    expect(procesKillSpy).not.toHaveBeenCalledWith(-12345, expect.anything());
+
+    procesKillSpy.mockRestore();
   });
 
   it("falls back to child.kill when process.kill(-pid) throws", async () => {
