@@ -10,6 +10,7 @@ import {
   setupPathWrapperWorkspace,
   PREFERRED_GH_PATH,
   asValidOpenCodeSessionId,
+  isWindows,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -24,6 +25,7 @@ import {
 } from "@composio/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
+import { readFileSync } from "node:fs";
 
 const execFileAsync = promisify(execFile);
 
@@ -231,14 +233,24 @@ function createOpenCodeAgent(): Agent {
       let promptValue: string | undefined;
       if (config.prompt) {
         if (config.systemPromptFile) {
-          promptValue = `"$(cat ${shellEscape(config.systemPromptFile)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt)})"`;
+          if (isWindows()) {
+            const sysContent = readFileSync(config.systemPromptFile, "utf-8");
+            promptValue = shellEscape(`${sysContent}\n\n${config.prompt}`);
+          } else {
+            promptValue = `"$(cat ${shellEscape(config.systemPromptFile)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt)})"`;
+          }
         } else if (config.systemPrompt) {
           promptValue = shellEscape(`${config.systemPrompt}\n\n${config.prompt}`);
         } else {
           promptValue = shellEscape(config.prompt);
         }
       } else if (config.systemPromptFile) {
-        promptValue = `"$(cat ${shellEscape(config.systemPromptFile)})"`;
+        if (isWindows()) {
+          const sysContent = readFileSync(config.systemPromptFile, "utf-8");
+          promptValue = shellEscape(sysContent);
+        } else {
+          promptValue = `"$(cat ${shellEscape(config.systemPromptFile)})"`;
+        }
       } else if (config.systemPrompt) {
         promptValue = shellEscape(config.systemPrompt);
       }
@@ -381,6 +393,8 @@ function createOpenCodeAgent(): Agent {
             .filter(Boolean);
           if (ttys.length === 0) return false;
 
+          // ps -eo is Unix-only; guard against stale tmux handles on Windows
+          if (isWindows()) return false;
           const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
             timeout: 30_000,
           });

@@ -17,6 +17,7 @@ const {
   mockCreateReadStream,
   mockHomedir,
   mockReadLastJsonlEntry,
+  mockIsWindows,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
   mockWriteFile: vi.fn().mockResolvedValue(undefined),
@@ -30,6 +31,7 @@ const {
   mockCreateReadStream: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
   mockReadLastJsonlEntry: vi.fn(),
+  mockIsWindows: vi.fn(() => false),
 }));
 
 vi.mock("node:child_process", () => {
@@ -68,6 +70,7 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
   return {
     ...actual,
     readLastJsonlEntry: mockReadLastJsonlEntry,
+    isWindows: mockIsWindows,
   };
 });
 
@@ -537,6 +540,14 @@ describe("isProcessRunning", () => {
 
   it("returns false for non-numeric PID", async () => {
     expect(await agent.isProcessRunning(makeProcessHandle("not-a-pid"))).toBe(false);
+  });
+
+  it("returns false for tmux handle on Windows without spawning ps", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockExecFileAsync.mockRejectedValue(new Error("ps not available on Windows"));
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(mockExecFileAsync).not.toHaveBeenCalledWith("ps", expect.anything(), expect.anything());
+    mockIsWindows.mockReturnValue(false);
   });
 });
 

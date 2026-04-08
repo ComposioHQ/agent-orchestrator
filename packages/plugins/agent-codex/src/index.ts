@@ -11,6 +11,7 @@ import {
   getActivityFallbackState,
   recordTerminalActivity,
   PREFERRED_GH_PATH,
+  isWindows,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -501,6 +502,8 @@ function createCodexAgent(): Agent {
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
+          // ps -eo is Unix-only; guard against stale tmux handles on Windows
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],

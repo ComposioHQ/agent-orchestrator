@@ -1,14 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-core";
 
-const { mockAppendActivityEntry, mockReadLastActivityEntry, mockRecordTerminalActivity } =
-  vi.hoisted(() => ({
-    mockAppendActivityEntry: vi.fn().mockResolvedValue(undefined),
-    mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
-    mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
-  }));
-
-const mockExecFileAsync = vi.fn();
+const {
+  mockAppendActivityEntry,
+  mockReadLastActivityEntry,
+  mockRecordTerminalActivity,
+  mockIsWindows,
+  mockReadFileSync,
+  mockExecFileAsync,
+} = vi.hoisted(() => ({
+  mockAppendActivityEntry: vi.fn().mockResolvedValue(undefined),
+  mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
+  mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
+  mockIsWindows: vi.fn(() => false),
+  mockReadFileSync: vi.fn(() => ""),
+  mockExecFileAsync: vi.fn(),
+}));
 
 vi.mock("@composio/ao-core", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -17,8 +24,11 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
     appendActivityEntry: mockAppendActivityEntry,
     readLastActivityEntry: mockReadLastActivityEntry,
     recordTerminalActivity: mockRecordTerminalActivity,
+    isWindows: mockIsWindows,
   };
 });
+
+vi.mock("node:fs", () => ({ readFileSync: mockReadFileSync }));
 
 vi.mock("node:child_process", () => ({
   execFile: (...args: unknown[]) => {
@@ -434,6 +444,25 @@ do the task'`,
     expect(cmd).toContain("opencode run --format json --title 'AO:sess-1'");
     expect(cmd).toContain('exec opencode --session "$SES_ID"');
   });
+
+  it("inlines systemPromptFile content on Windows (no prompt)", () => {
+    mockIsWindows.mockReturnValueOnce(true);
+    mockReadFileSync.mockReturnValueOnce("You are a senior engineer.");
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPromptFile: "C:\\prompts\\sys.md" }));
+    expect(cmd).toContain("You are a senior engineer.");
+    expect(cmd).not.toContain("$(cat");
+  });
+
+  it("inlines systemPromptFile content on Windows (with prompt)", () => {
+    mockIsWindows.mockReturnValueOnce(true);
+    mockReadFileSync.mockReturnValueOnce("Be concise.");
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "C:\\prompts\\sys.md", prompt: "Fix the bug" }),
+    );
+    expect(cmd).toContain("Be concise.");
+    expect(cmd).toContain("Fix the bug");
+    expect(cmd).not.toContain("$(cat");
+  });
 });
 
 describe("getEnvironment", () => {
@@ -517,6 +546,14 @@ describe("isProcessRunning", () => {
       return Promise.reject(new Error("unexpected"));
     });
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
+  });
+
+  it("returns false for tmux handle on Windows without spawning ps", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockExecFileAsync.mockRejectedValue(new Error("ps not available on Windows"));
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(mockExecFileAsync).not.toHaveBeenCalledWith("ps", expect.anything(), expect.anything());
+    mockIsWindows.mockReturnValue(false);
   });
 });
 
