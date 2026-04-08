@@ -27,10 +27,10 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
   brew install tmux
 
   # Install on Ubuntu/Debian
-  sudo apt install tmux
+  apt install tmux
 
   # Install on Fedora/RHEL
-  sudo dnf install tmux
+  dnf install tmux
   ```
 
 - **GitHub CLI** (for GitHub integration) - Required for PR creation, issue management
@@ -436,10 +436,10 @@ cp examples/simple-github.yaml agent-orchestrator.yaml
 brew install tmux
 
 # Ubuntu/Debian
-sudo apt install tmux
+apt install tmux
 
 # Fedora/RHEL
-sudo dnf install tmux
+dnf install tmux
 ```
 
 ### "gh auth failed"

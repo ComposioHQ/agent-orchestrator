@@ -203,6 +203,9 @@ check_launcher() {
     source "$(dirname "${BASH_SOURCE[0]}")/ensure-npm-prefix.sh"
     if (cd "$REPO_ROOT/packages/ao" && npm link >/dev/null 2>&1) && command -v ao >/dev/null 2>&1; then
       fixed "ao launcher refreshed with npm link"
+      if [ "${NEEDS_SHELL_RELOAD:-}" = true ]; then
+        warn "npm prefix was reconfigured. Restart your terminal or run: source ${SHELL_RC:-~/.zshrc}"
+      fi
       return
     fi
     warn "ao launcher refresh failed. Fix: cd $REPO_ROOT && bash scripts/setup.sh"

@@ -40,10 +40,10 @@ if [ ! -w "$NPM_PREFIX" ] 2>/dev/null; then
     SHELL_RC="$HOME/.zshrc"
   elif [ -f "$HOME/.bashrc" ]; then
     SHELL_RC="$HOME/.bashrc"
-  elif [ "$(basename "$SHELL")" = "zsh" ]; then
+  elif [ -n "${SHELL:-}" ] && [ "$(basename "$SHELL")" = "zsh" ]; then
     SHELL_RC="$HOME/.zshrc"
     touch "$SHELL_RC"
-  elif [ "$(basename "$SHELL")" = "bash" ]; then
+  elif [ -n "${SHELL:-}" ] && [ "$(basename "$SHELL")" = "bash" ]; then
     SHELL_RC="$HOME/.bashrc"
     touch "$SHELL_RC"
   fi
