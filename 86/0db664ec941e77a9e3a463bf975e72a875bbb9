@@ -1,0 +1,53 @@
+.gitignore
+  fdcedc78cd3a5960 5
+packages/web/src/components/Skeleton.tsx
+  38000bf70f0190d1 7,10-33
+packages/web/src/app/globals.css
+  38000bf70f0190d1 512-549
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "860db664ec941e77a9e3a463bf975e72a875bbb9",
+  "prompts": {
+    "38000bf70f0190d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e4ec426-8b38-466c-a8e9-00dc2e907aec",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 68,
+      "total_deletions": 22,
+      "accepted_lines": 63,
+      "overriden_lines": 0
+    },
+    "b0f15fc510007bd3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "097cab70-c727-4ad9-a244-ef5c7c76c51f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 170,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "fdcedc78cd3a5960": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "523a9f1a-2c4b-4f7a-90f4-0da0ebdf2a77",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 69,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
