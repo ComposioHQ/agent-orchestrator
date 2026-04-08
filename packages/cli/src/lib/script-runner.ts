@@ -21,7 +21,7 @@ export function resolveScriptPath(scriptName: string): string {
 
 export async function runRepoScript(scriptName: string, args: string[]): Promise<number> {
   const shellOverride = process.env["AO_BASH_PATH"];
-  const shell = shellOverride ?? getShell().cmd;
+  const shell = shellOverride || getShell().cmd;
   const scriptPath = resolveScriptPath(scriptName);
   // Unix: spawn(shell, [scriptPath, ...args]) uses file mode — args reach $1, $2, etc.
   // Windows (no override): use getShell().args() to include required flags (e.g. -Command for pwsh).
