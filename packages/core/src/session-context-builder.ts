@@ -71,21 +71,23 @@ export async function buildPreviousSessionContext(
 
       const { stdout } = await execFileAsync(
         "git",
-        ["-C", workspacePath, "log", "--oneline", branch, "--not", `origin/${defaultBranch}`, "--"],
+        ["-C", workspacePath, "log", "--oneline", `--max-count=${MAX_COMMITS + 1}`, branch, "--not", `origin/${defaultBranch}`, "--"],
         { timeout: 10_000 },
       );
       if (stdout.trim()) {
         const allCommits = stdout.trim().split("\n");
+        const hasMore = allCommits.length > MAX_COMMITS;
         if (onSameBranch) {
           // Gap 4: Commits are already in the working tree — don't list them redundantly
+          const countLabel = hasMore ? `${MAX_COMMITS}+` : String(allCommits.length);
           parts.push(
-            `\nThis branch has ${allCommits.length} existing commit(s) from a previous attempt. Review them with \`git log\`.`,
+            `\nThis branch has ${countLabel} existing commit(s) from a previous attempt. Review them with \`git log\`.`,
           );
         } else {
           const commits = allCommits.slice(0, MAX_COMMITS);
           parts.push(`\n### Commits Made\n${commits.map((c) => `- ${c}`).join("\n")}`);
-          if (allCommits.length > MAX_COMMITS) {
-            parts.push(`(${allCommits.length - MAX_COMMITS} more commits not shown)`);
+          if (hasMore) {
+            parts.push(`(more commits not shown)`);
           }
         }
       }

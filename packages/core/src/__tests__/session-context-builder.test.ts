@@ -236,7 +236,7 @@ describe("buildPreviousSessionContext", () => {
     expect(result).toContain("### Commits Made");
     const commitLines = result!.split("\n").filter((l: string) => l.startsWith("- "));
     expect(commitLines.length).toBeLessThanOrEqual(10);
-    expect(result).toContain("5 more commits not shown");
+    expect(result).toContain("more commits not shown");
   });
 
   it("always includes instructions when context is returned", async () => {
