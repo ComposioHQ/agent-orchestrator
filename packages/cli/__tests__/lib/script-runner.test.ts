@@ -24,6 +24,7 @@ vi.mock("node:url", () => ({
 
 vi.mock("@composio/ao-core", () => ({
   getShell: vi.fn(() => ({ cmd: "sh", args: (c: string) => ["-c", c] })),
+  isWindows: vi.fn(() => false),
 }));
 
 import * as childProcess from "node:child_process";
@@ -31,6 +32,7 @@ import * as core from "@composio/ao-core";
 import { runRepoScript } from "../../src/lib/script-runner.js";
 
 const mockGetShell = core.getShell as ReturnType<typeof vi.fn>;
+const mockIsWindows = core.isWindows as ReturnType<typeof vi.fn>;
 const mockSpawn = childProcess.spawn as ReturnType<typeof vi.fn>;
 
 function makeSpawnEventEmitter(exitCode = 0) {
@@ -55,6 +57,7 @@ function makeSpawnEventEmitter(exitCode = 0) {
 beforeEach(() => {
   vi.clearAllMocks();
   delete process.env["AO_BASH_PATH"];
+  mockIsWindows.mockReturnValue(false);
 });
 
 afterEach(() => {
@@ -91,7 +94,26 @@ describe("runRepoScript", () => {
     );
   });
 
-  it("uses pwsh when getShell returns pwsh and AO_BASH_PATH not set", async () => {
+  it("passes extra args to script in file mode on Unix (not dropped by -c)", async () => {
+    mockIsWindows.mockReturnValue(false);
+    mockGetShell.mockReturnValue({ cmd: "bash", args: (c: string) => ["-c", c] });
+    const child = makeSpawnEventEmitter(0);
+    mockSpawn.mockReturnValue(child);
+
+    await runRepoScript("test-script.sh", ["--fix", "--verbose"]);
+
+    const spawnCall = mockSpawn.mock.calls[0];
+    // File mode: [scriptPath, ...args] — extra args must NOT be preceded by -c
+    expect(spawnCall[1]).not.toContain("-c");
+    expect(spawnCall[1]).toContain("--fix");
+    expect(spawnCall[1]).toContain("--verbose");
+    // args must follow scriptPath directly, not as shell $0/$1
+    const scriptIdx = (spawnCall[1] as string[]).findIndex((a: string) => a.includes("test-script.sh"));
+    expect((spawnCall[1] as string[])[scriptIdx + 1]).toBe("--fix");
+  });
+
+  it("uses getShell().args() flags on Windows (no AO_BASH_PATH override)", async () => {
+    mockIsWindows.mockReturnValue(true);
     mockGetShell.mockReturnValue({
       cmd: "pwsh",
       args: (c: string) => ["-NoLogo", "-NonInteractive", "-Command", c],
@@ -103,11 +125,8 @@ describe("runRepoScript", () => {
 
     const spawnCall = mockSpawn.mock.calls[0];
     expect(spawnCall[0]).toBe("pwsh");
-    // When no AO_BASH_PATH override, args must come from getShell().args(scriptPath)
-    // not just [scriptPath]. For pwsh, the args array should start with pwsh flags.
     expect(spawnCall[1]).toEqual(
       expect.arrayContaining(["-NoLogo", "-NonInteractive", "-Command"]),
     );
-    expect(spawnCall[1]).not.toEqual(expect.arrayContaining(["-c"]));
   });
 });
