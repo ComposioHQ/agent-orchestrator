@@ -181,10 +181,11 @@ export function DirectTerminal({
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsPos, setSettingsPos] = useState<{ top: number; right: number } | null>(null);
   const [reconnectCount, setReconnectCount] = useState(0);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
+
+  const isLight = resolvedTheme === "light";
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -197,19 +198,6 @@ export function DirectTerminal({
     const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
     router.replace(newUrl, { scroll: false });
   }, [fullscreen, pathname, router, searchParams]);
-
-  // Compute settings panel position when it opens
-  useEffect(() => {
-    if (showSettings && settingsButtonRef.current) {
-      const rect = settingsButtonRef.current.getBoundingClientRect();
-      setSettingsPos({
-        top: rect.bottom + 4,
-        right: window.innerWidth - rect.right,
-      });
-    } else {
-      setSettingsPos(null);
-    }
-  }, [showSettings]);
 
   // Close settings panel on click outside or scroll
   useEffect(() => {
@@ -294,11 +282,11 @@ export function DirectTerminal({
       .then(([Terminal, FitAddon, WebLinksAddon, WebglAddon]) => {
         if (!mounted || !terminalRef.current) return;
 
-        const preset = getThemePreset(settings.themeName);
-        const activeTheme = {
-          ...(preset?.dark ?? terminalThemes.dark),
-          selectionBackground: settings.selectionColor,
-        };
+        const isDark = resolvedTheme !== "light";
+        const baseTheme = isDark
+          ? (getThemePreset(settings.themeName)?.dark ?? terminalThemes.dark)
+          : terminalThemes.light;
+        const activeTheme = { ...baseTheme, selectionBackground: settings.selectionColor };
 
         const terminal = new Terminal({
           cursorBlink: settings.cursorBlink,
@@ -306,7 +294,7 @@ export function DirectTerminal({
           cursorStyle: settings.cursorStyle,
           fontFamily: settings.fontFamily,
           theme: activeTheme,
-          minimumContrastRatio: 1,
+          minimumContrastRatio: isDark ? 1 : 7,
           scrollback: 10000,
           allowProposedApi: true,
           fastScrollModifier: "alt",
@@ -554,15 +542,20 @@ export function DirectTerminal({
     };
   }, [sessionId, variant]);
 
-  // Apply theme preset — selected theme always applies to terminal canvas
+  // Apply theme — light mode uses light theme, dark mode uses selected preset
   useEffect(() => {
     const terminal = terminalInstance.current;
     if (!terminal) return;
-    const preset = getThemePreset(settings.themeName);
-    const baseTheme = preset ? preset.dark : terminalThemes.dark;
-    terminal.options.theme = { ...baseTheme, selectionBackground: settings.selectionColor };
-    terminal.options.minimumContrastRatio = 1;
-  }, [terminalThemes, settings.themeName, settings.selectionColor]);
+    if (isLight) {
+      terminal.options.theme = { ...terminalThemes.light, selectionBackground: settings.selectionColor };
+      terminal.options.minimumContrastRatio = 7;
+    } else {
+      const preset = getThemePreset(settings.themeName);
+      const baseTheme = preset ? preset.dark : terminalThemes.dark;
+      terminal.options.theme = { ...baseTheme, selectionBackground: settings.selectionColor };
+      terminal.options.minimumContrastRatio = 1;
+    }
+  }, [isLight, terminalThemes, settings.themeName, settings.selectionColor]);
 
   // Apply font/cursor setting changes live
   useEffect(() => {
@@ -654,12 +647,11 @@ export function DirectTerminal({
 
   // ── Derived state for chrome ─────────────────────────────────────
 
-  const isLight = resolvedTheme === "light";
-
   const containerBg = useMemo(() => {
+    if (isLight) return "#fafafa";
     const preset = getThemePreset(settings.themeName);
     return preset?.dark.background ?? "#0d1117";
-  }, [settings.themeName]);
+  }, [isLight, settings.themeName]);
 
   // Chrome colors — adapt to light/dark
   const chrome = isLight
@@ -747,7 +739,7 @@ export function DirectTerminal({
     <div
       className={cn(
         "terminal-container border",
-        fullscreen ? "fixed inset-0 z-50 overflow-hidden rounded-none border-0" : "overflow-x-hidden",
+        fullscreen && "fixed inset-0 z-50 overflow-hidden rounded-none border-0",
       )}
       style={{
         background: containerBg,
@@ -886,14 +878,14 @@ export function DirectTerminal({
                 <circle cx="12" cy="12" r="3" />
               </svg>
             </button>
-            {/* Settings panel — fixed position computed via effect */}
-            {showSettings && settingsPos ? (
+            {/* Settings panel — absolute to button wrapper */}
+            {showSettings ? (
               <div
                 ref={settingsPanelRef}
                 style={{
-                  position: "fixed",
-                  top: settingsPos.top,
-                  right: settingsPos.right,
+                  position: "absolute",
+                  top: "calc(100% + 4px)",
+                  right: 0,
                   width: 300,
                   background: isLight ? chrome.panelBg : "#161b22",
                   border: `1px solid ${isLight ? chrome.barBorder : "#30363d"}`,
@@ -954,15 +946,25 @@ export function DirectTerminal({
                 {/* Divider */}
                 <div style={{ height: 1, background: isLight ? "#d8dee4" : "#21262d", margin: "14px 0" }} />
 
-                {/* Theme */}
-                <div style={{ marginBottom: 14 }}>
-                  <div className="settings-label" style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Theme</div>
+                {/* Theme — only active in dark mode */}
+                <div style={{ marginBottom: 14, opacity: isLight ? 0.5 : 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <span className="settings-label" style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500 }}>Theme</span>
+                    {isLight ? <span style={{ fontSize: 10, color: chrome.textMuted, fontStyle: "italic" }}>(dark mode only)</span> : null}
+                  </div>
                   <div style={{ display: "flex", gap: 6 }}>
                     {THEME_PRESETS.map((preset) => (
-                      <button key={preset.name} onClick={() => updateSettings({ themeName: preset.name })} title={preset.label} style={{
-                        width: 28, height: 28, borderRadius: 8, background: preset.swatch, cursor: "pointer", padding: 0,
-                        border: settings.themeName === preset.name ? `2px solid ${chrome.accent}` : "2px solid transparent",
-                      }} />
+                      <button
+                        key={preset.name}
+                        onClick={() => updateSettings({ themeName: preset.name })}
+                        title={preset.label}
+                        disabled={isLight}
+                        style={{
+                          width: 28, height: 28, borderRadius: 8, background: preset.swatch, padding: 0,
+                          cursor: isLight ? "default" : "pointer",
+                          border: settings.themeName === preset.name ? `2px solid ${chrome.accent}` : `2px solid ${isLight ? "#d1d9e0" : "transparent"}`,
+                        }}
+                      />
                     ))}
                   </div>
                 </div>
