@@ -165,6 +165,15 @@ export function create(): Runtime {
         // Kill the entire process group (negative PID) so child commands
         // spawned by the shell are also terminated, not just the shell itself.
         const pid = child.pid;
+
+        // Register exit listener BEFORE any async kill to avoid a race where
+        // the process exits during await killProcessTree and the "exit" event
+        // fires before we can listen — which would cause the 5s timeout to
+        // always fire on Windows.
+        const exitSettled = new Promise<void>((resolve) => {
+          child.once("exit", resolve);
+        });
+
         if (pid) {
           if (isWindows()) {
             // taskkill /T kills the entire process tree — process groups are not
@@ -182,32 +191,31 @@ export function create(): Runtime {
           child.kill("SIGTERM");
         }
 
-        // Give it 5 seconds, then SIGKILL — use once() to avoid listener leaks
-        await new Promise<void>((resolve) => {
-          const timeout = setTimeout(() => {
-            if (child.exitCode === null && child.signalCode === null) {
-              if (pid) {
-                if (isWindows()) {
-                  // killProcessTree already forced termination; if still alive, force again
-                  void killProcessTree(pid);
-                } else {
-                  try {
-                    process.kill(-pid, "SIGKILL");
-                  } catch {
-                    child.kill("SIGKILL");
+        // Give it 5 seconds, then SIGKILL
+        await Promise.race([
+          exitSettled,
+          new Promise<void>((resolve) => {
+            setTimeout(() => {
+              if (child.exitCode === null && child.signalCode === null) {
+                if (pid) {
+                  if (isWindows()) {
+                    // killProcessTree already forced termination; if still alive, force again
+                    void killProcessTree(pid);
+                  } else {
+                    try {
+                      process.kill(-pid, "SIGKILL");
+                    } catch {
+                      child.kill("SIGKILL");
+                    }
                   }
+                } else {
+                  child.kill("SIGKILL");
                 }
-              } else {
-                child.kill("SIGKILL");
               }
-            }
-            resolve();
-          }, 5000);
-          child.once("exit", () => {
-            clearTimeout(timeout);
-            resolve();
-          });
-        });
+              resolve();
+            }, 5000);
+          }),
+        ]);
       }
 
       processes.delete(handle.id);

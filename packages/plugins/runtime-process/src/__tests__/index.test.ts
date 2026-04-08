@@ -361,6 +361,32 @@ describe("destroy()", () => {
     procesKillSpy.mockRestore();
   });
 
+  it("resolves promptly when process exits during async killProcessTree (no 5s delay)", async () => {
+    // Regression test: exit listener must be registered BEFORE await killProcessTree
+    // so that if the process dies during the async kill, destroy() resolves immediately
+    // instead of waiting for the 5-second timeout.
+    mockIsWindows.mockReturnValue(true);
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child);
+
+    // Make killProcessTree emit exit synchronously mid-await to simulate the race
+    mockKillProcessTree.mockImplementation(async () => {
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+    });
+
+    const runtime = create();
+    const handle = await runtime.create(defaultConfig());
+
+    const start = Date.now();
+    await runtime.destroy(handle);
+    const elapsed = Date.now() - start;
+
+    // Should resolve well under 5 seconds — exit was caught before the timeout
+    expect(elapsed).toBeLessThan(1000);
+    expect(mockKillProcessTree).toHaveBeenCalledWith(12345);
+  });
+
   it("falls back to child.kill when process.kill(-pid) throws", async () => {
     const child = createMockChild();
     mockSpawn.mockReturnValue(child);
