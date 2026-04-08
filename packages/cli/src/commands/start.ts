@@ -32,6 +32,7 @@ import {
   isTerminalSession,
   ConfigNotFoundError,
   getDefaultRuntime,
+  isWindows,
   findPidByPort,
   killProcessTree,
   type OrchestratorConfig,
@@ -778,7 +779,7 @@ async function startDashboard(
     child = spawn("pnpm", ["run", "dev"], {
       cwd: webDir,
       stdio: "inherit",
-      detached: false,
+      detached: !isWindows(),
       env,
     });
   } else {
@@ -791,7 +792,7 @@ async function startDashboard(
     child = spawn("node", [startScript], {
       cwd: webDir,
       stdio: "inherit",
-      detached: false,
+      detached: !isWindows(),
       env,
     });
   }
