@@ -16,9 +16,6 @@ import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// No-op on Windows — different PTY mechanism
-if (process.platform === "win32") process.exit(0);
-
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function findPackageUp(startDir, ...segments) {
@@ -33,26 +30,28 @@ function findPackageUp(startDir, ...segments) {
   return null;
 }
 
-const nodePtyDir = findPackageUp(__dirname, "node-pty");
-if (!nodePtyDir) process.exit(0);
-
-const spawnHelper = resolve(
-  nodePtyDir,
-  "prebuilds",
-  `${process.platform}-${process.arch}`,
-  "spawn-helper",
-);
-
-if (!existsSync(spawnHelper)) process.exit(0);
-
-try {
-  chmodSync(spawnHelper, 0o755);
-  console.log("\u2713 node-pty spawn-helper permissions set");
-} catch {
-  console.warn("\u26a0\ufe0f  Could not set spawn-helper permissions (non-critical)");
+// --- 1. Fix node-pty spawn-helper permissions (non-Windows only) ---
+if (process.platform !== "win32") {
+  const nodePtyDir = findPackageUp(__dirname, "node-pty");
+  if (nodePtyDir) {
+    const spawnHelper = resolve(
+      nodePtyDir,
+      "prebuilds",
+      `${process.platform}-${process.arch}`,
+      "spawn-helper",
+    );
+    if (existsSync(spawnHelper)) {
+      try {
+        chmodSync(spawnHelper, 0o755);
+        console.log("\u2713 node-pty spawn-helper permissions set");
+      } catch {
+        console.warn("\u26a0\ufe0f  Could not set spawn-helper permissions (non-critical)");
+      }
+    }
+  }
 }
 
-// --- Clear stale Next.js runtime cache after version upgrade ---
+// --- 2. Clear stale Next.js runtime cache after version upgrade ---
 try {
   const webDir = findPackageUp(__dirname, "@composio", "ao-web");
   if (webDir) {
