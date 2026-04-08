@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildDirectTerminalWsUrl, buildTerminalThemes } from "@/components/DirectTerminal";
+import {
+  buildDirectTerminalWsUrl,
+  buildTerminalThemes,
+  getDirectTerminalReconnectDelay,
+} from "@/components/DirectTerminal";
 
 describe("buildDirectTerminalWsUrl", () => {
   it("keeps non-standard port when proxy path override is set", () => {
@@ -145,5 +149,23 @@ describe("buildTerminalThemes", () => {
   it("selection colors differ between dark and light themes", () => {
     const { dark, light } = buildTerminalThemes("agent");
     expect(dark.selectionBackground).not.toBe(light.selectionBackground);
+  });
+});
+
+describe("getDirectTerminalReconnectDelay", () => {
+  it("uses exponential backoff for the first reconnect attempts", () => {
+    expect(getDirectTerminalReconnectDelay(0)).toBe(1000);
+    expect(getDirectTerminalReconnectDelay(1)).toBe(2000);
+    expect(getDirectTerminalReconnectDelay(2)).toBe(4000);
+  });
+
+  it("caps the reconnect delay at 15 seconds", () => {
+    expect(getDirectTerminalReconnectDelay(4)).toBe(15000);
+    expect(getDirectTerminalReconnectDelay(7)).toBe(15000);
+  });
+
+  it("stops reconnecting after eight failed attempts", () => {
+    expect(getDirectTerminalReconnectDelay(8)).toBeNull();
+    expect(getDirectTerminalReconnectDelay(9)).toBeNull();
   });
 });

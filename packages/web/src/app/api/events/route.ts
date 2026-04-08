@@ -26,6 +26,29 @@ export async function GET(request: Request): Promise<Response> {
   let updates: ReturnType<typeof setInterval> | undefined;
   let observerProjectId: string | undefined;
   let observer: ProjectObserver | null = null;
+  let closed = false;
+
+  const clearStreamIntervals = (): void => {
+    if (heartbeat) clearInterval(heartbeat);
+    if (updates) clearInterval(updates);
+    heartbeat = undefined;
+    updates = undefined;
+  };
+
+  const safeEnqueue = (controller: ReadableStreamDefaultController, payload: string): boolean => {
+    if (closed) {
+      return false;
+    }
+
+    try {
+      controller.enqueue(encoder.encode(payload));
+      return true;
+    } catch {
+      closed = true;
+      clearStreamIntervals();
+      return false;
+    }
+  };
 
   const ensureObserver = (config: ServicesConfig): ProjectObserver | null => {
     if (!observerProjectId) {
@@ -93,7 +116,9 @@ export async function GET(request: Request): Promise<Response> {
               lastActivityAt: s.lastActivityAt,
             })),
           };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(initialEvent)}\n\n`));
+          if (!safeEnqueue(controller, `data: ${JSON.stringify(initialEvent)}\n\n`)) {
+            return;
+          }
           if (projectObserver && observerProjectId) {
             projectObserver.recordOperation({
               metric: "sse_snapshot",
@@ -107,22 +132,16 @@ export async function GET(request: Request): Promise<Response> {
           }
         } catch {
           // If services aren't available, send empty snapshot
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "snapshot", correlationId, emittedAt: new Date().toISOString(), sessions: [] })}\n\n`,
-            ),
+          safeEnqueue(
+            controller,
+            `data: ${JSON.stringify({ type: "snapshot", correlationId, emittedAt: new Date().toISOString(), sessions: [] })}\n\n`,
           );
         }
       })();
 
       // Send periodic heartbeat
       heartbeat = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(`: heartbeat\n\n`));
-        } catch {
-          clearInterval(heartbeat);
-          clearInterval(updates);
-        }
+        safeEnqueue(controller, `: heartbeat\n\n`);
       }, 15000);
 
       // Poll for session state changes every 5 seconds
@@ -167,7 +186,9 @@ export async function GET(request: Request): Promise<Response> {
                   lastActivityAt: s.lastActivityAt,
                 })),
               };
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+              if (!safeEnqueue(controller, `data: ${JSON.stringify(event)}\n\n`)) {
+                return;
+              }
               if (projectObserver && observerProjectId) {
                 projectObserver.recordOperation({
                   metric: "sse_snapshot",
@@ -180,9 +201,7 @@ export async function GET(request: Request): Promise<Response> {
                 });
               }
             } catch {
-              // enqueue failure means the stream is closed — clean up both intervals
-              clearInterval(updates);
-              clearInterval(heartbeat);
+              // Observer recording is best-effort; stream delivery was already attempted above.
             }
           } catch {
             // Transient service error — skip this poll, retry on next interval
@@ -192,8 +211,8 @@ export async function GET(request: Request): Promise<Response> {
       }, 5000);
     },
     cancel() {
-      clearInterval(heartbeat);
-      clearInterval(updates);
+      closed = true;
+      clearStreamIntervals();
       void (async () => {
         try {
           const { config } = await getServices();

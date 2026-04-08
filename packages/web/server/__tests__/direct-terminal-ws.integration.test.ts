@@ -342,7 +342,7 @@ describe("WebSocket connection validation", () => {
     const ws = new WebSocket(`ws://localhost:${port}/ws?session=ao-nonexistent-999`);
     const result = await waitForWsClose(ws);
 
-    expect(result.code).toBe(1008);
+    expect(result.code).toBe(4004);
     expect(result.reason).toContain("Session not found");
   });
 
@@ -351,7 +351,7 @@ describe("WebSocket connection validation", () => {
     const ws = new WebSocket(`ws://localhost:${port}/ws?session=definitely-not-real-${Date.now()}`);
     const result = await waitForWsClose(ws);
 
-    expect(result.code).toBe(1008);
+    expect(result.code).toBe(4004);
     expect(result.reason).toContain("Session not found");
   });
 });
@@ -570,7 +570,7 @@ describe("hash-prefixed session resolution", () => {
       const ws = new WebSocket(`ws://localhost:${port}/ws?session=${session1}`);
       const result = await waitForWsClose(ws);
 
-      expect(result.code).toBe(1008);
+      expect(result.code).toBe(4004);
       expect(result.reason).toContain("Session not found");
     } finally {
       try {

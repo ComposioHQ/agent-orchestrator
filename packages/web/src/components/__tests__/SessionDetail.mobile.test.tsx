@@ -224,4 +224,22 @@ describe("SessionDetail mobile navbar", () => {
       background: "var(--color-chip-bg)",
     });
   });
+
+  it("shows a session-ended placeholder instead of mounting the terminal for exited sessions", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-exited",
+          projectId: "my-app",
+          summary: "Exited session",
+          activity: "exited",
+        })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    expect(screen.getByText("Session ended")).toBeInTheDocument();
+    expect(screen.getByText("Terminal unavailable")).toBeInTheDocument();
+    expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
+  });
 });

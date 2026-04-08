@@ -30,6 +30,8 @@ try {
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
 
+const WS_CLOSE_CODE_SESSION_NOT_FOUND = 4004;
+
 interface TerminalSession {
   sessionId: string;
   pty: IPty;
@@ -165,7 +167,7 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
         sessionId,
         reason: "Session not found",
       });
-      ws.close(1008, "Session not found");
+      ws.close(WS_CLOSE_CODE_SESSION_NOT_FOUND, "Session not found");
       return;
     }
 

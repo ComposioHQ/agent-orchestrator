@@ -1031,6 +1031,52 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   --color-text-tertiary: #5c5c66;
 }
 
+.session-detail-terminal-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border-default);
+  background:
+    radial-gradient(circle at top, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 58%),
+    var(--detail-card-bg);
+  box-shadow: var(--detail-card-shadow);
+}
+
+.session-detail-terminal-placeholder__panel {
+  width: min(100%, 32rem);
+  padding: 1.75rem;
+  text-align: center;
+}
+
+.session-detail-terminal-placeholder__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--color-status-error) 25%, var(--color-border-default));
+  color: var(--color-status-error);
+  background: color-mix(in srgb, var(--color-status-error) 10%, transparent);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.session-detail-terminal-placeholder__title {
+  margin-top: 1rem;
+  color: var(--color-text-primary);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.session-detail-terminal-placeholder__copy {
+  margin-top: 0.65rem;
+  color: var(--color-text-secondary);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
 /* ── Session cards — flat, Linear-style ──────────────────────────────── */
 
 .session-card {

@@ -3,7 +3,13 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
-import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
+import {
+  type DashboardSession,
+  type DashboardPR,
+  isPRMergeReady,
+  TERMINAL_STATUSES,
+  TERMINAL_ACTIVITIES,
+} from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import dynamic from "next/dynamic";
@@ -76,6 +82,29 @@ function activityStateClass(activityLabel: string): string {
     return "session-detail-status-pill--error";
   }
   return "session-detail-status-pill--neutral";
+}
+
+function SessionTerminalEndedPlaceholder({
+  session,
+  terminalHeight,
+}: {
+  session: DashboardSession;
+  terminalHeight: string;
+}) {
+  const reason =
+    session.activity === "exited"
+      ? "The agent process has exited, so the live terminal is no longer available."
+      : "This session is in a terminal state, so the live terminal is no longer available.";
+
+  return (
+    <div className="session-detail-terminal-placeholder" style={{ minHeight: terminalHeight }}>
+      <div className="session-detail-terminal-placeholder__panel">
+        <span className="session-detail-terminal-placeholder__eyebrow">Session ended</span>
+        <h2 className="session-detail-terminal-placeholder__title">Terminal unavailable</h2>
+        <p className="session-detail-terminal-placeholder__copy">{reason}</p>
+      </div>
+    </div>
+  );
 }
 
 function SessionTopStrip({
@@ -342,6 +371,9 @@ export function SessionDetail({
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
 
   const terminalHeight = isOrchestrator ? "clamp(560px, 76vh, 920px)" : "clamp(520px, 72vh, 860px)";
+  const showTerminalPlaceholder =
+    TERMINAL_STATUSES.has(session.status) ||
+    (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity));
   const isOpenCodeSession = session.metadata["agent"] === "opencode";
   const opencodeSessionId =
     typeof session.metadata["opencodeSessionId"] === "string" &&
@@ -404,14 +436,21 @@ export function SessionDetail({
                 Live Terminal
               </span>
             </div>
-            <DirectTerminal
-              sessionId={session.id}
-              startFullscreen={startFullscreen}
-              variant={terminalVariant}
-              height={terminalHeight}
-              isOpenCodeSession={isOpenCodeSession}
-              reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-            />
+            {showTerminalPlaceholder ? (
+              <SessionTerminalEndedPlaceholder
+                session={session}
+                terminalHeight={terminalHeight}
+              />
+            ) : (
+              <DirectTerminal
+                sessionId={session.id}
+                startFullscreen={startFullscreen}
+                variant={terminalVariant}
+                height={terminalHeight}
+                isOpenCodeSession={isOpenCodeSession}
+                reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+              />
+            )}
           </section>
 
           {pr ? (

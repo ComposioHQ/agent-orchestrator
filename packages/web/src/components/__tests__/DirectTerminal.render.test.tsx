@@ -59,6 +59,7 @@ function MockWebLinksAddon() {
 
 class MockWebSocket {
   static OPEN = 1;
+  static CLOSED = 3;
   static instances: MockWebSocket[] = [];
   readyState = MockWebSocket.OPEN;
   binaryType = "arraybuffer";
@@ -73,7 +74,9 @@ class MockWebSocket {
   }
 
   send() {}
-  close() {}
+  close() {
+    this.readyState = MockWebSocket.CLOSED;
+  }
 }
 
 vi.mock("xterm", () => ({
@@ -112,6 +115,7 @@ describe("DirectTerminal render", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("renders the shared accent chrome for orchestrator terminals", async () => {

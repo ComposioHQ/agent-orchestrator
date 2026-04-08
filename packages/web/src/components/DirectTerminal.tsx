@@ -12,6 +12,18 @@ import "xterm/css/xterm.css";
 import type { ITheme, Terminal as TerminalType } from "xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 
+const PERMANENT_CLOSE_CODES = new Set([4001, 4004]); // auth failure, session not found
+const MAX_RECONNECT_DELAY = 15_000;
+const MAX_RECONNECT_ATTEMPTS = 8;
+
+export function getDirectTerminalReconnectDelay(attempt: number): number | null {
+  if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+    return null;
+  }
+
+  return Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
+}
+
 interface DirectTerminalProps {
   sessionId: string;
   startFullscreen?: boolean;
@@ -257,9 +269,6 @@ export function DirectTerminal({
     let mounted = true;
     let cleanup: (() => void) | null = null;
     let inputDisposable: { dispose(): void } | null = null;
-
-    const PERMANENT_CLOSE_CODES = new Set([4001, 4004]); // auth failure, session not found
-    const MAX_RECONNECT_DELAY = 15_000;
 
     Promise.all([
       import("xterm").then((mod) => mod.Terminal),
@@ -518,6 +527,9 @@ export function DirectTerminal({
 
           websocket.onclose = (event) => {
             console.log("[DirectTerminal] WebSocket closed:", event.code, event.reason);
+            if (ws.current === websocket) {
+              ws.current = null;
+            }
 
             if (!mounted) return;
 
@@ -531,7 +543,16 @@ export function DirectTerminal({
 
             // Transient failure — schedule reconnect with exponential backoff
             const attempt = reconnectAttemptRef.current;
-            const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
+            const delay = getDirectTerminalReconnectDelay(attempt);
+            if (delay === null) {
+              permanentErrorRef.current = true;
+              setStatus("error");
+              setError(
+                `Unable to reconnect after ${MAX_RECONNECT_ATTEMPTS} attempts. Refresh to try again.`,
+              );
+              return;
+            }
+
             reconnectAttemptRef.current = attempt + 1;
 
             console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
@@ -539,6 +560,7 @@ export function DirectTerminal({
             setError(null);
 
             reconnectTimerRef.current = setTimeout(() => {
+              reconnectTimerRef.current = null;
               void connectWebSocket();
             }, delay);
           };
@@ -557,7 +579,9 @@ export function DirectTerminal({
             clearTimeout(reconnectTimerRef.current);
             reconnectTimerRef.current = null;
           }
-          ws.current?.close();
+          const currentWs = ws.current;
+          ws.current = null;
+          currentWs?.close();
           terminal.dispose();
         };
       })
