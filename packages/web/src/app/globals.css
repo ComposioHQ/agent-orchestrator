@@ -3268,10 +3268,11 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   max-width: 340px;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--color-border-default);
-  border-radius: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 7px;
   background: var(--color-column-bg);
   padding: 4px;
+  overflow: hidden;
 }
 
 .kanban-column[data-level="merge"] {
