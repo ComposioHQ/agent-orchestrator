@@ -1,0 +1,51 @@
+packages/web/src/components/ScrollRevealProvider.tsx
+  22245a10688879f6 1-26
+packages/web/src/components/LandingFeatures.tsx
+  22245a10688879f6 1-55
+packages/web/src/components/LandingStats.tsx
+  22245a10688879f6 1-45
+packages/web/src/components/LandingNav.tsx
+  22245a10688879f6 1-34
+packages/web/src/components/LandingAbout.tsx
+  22245a10688879f6 1-25
+packages/web/src/app/landing/page.tsx
+  22245a10688879f6 1-33
+packages/web/src/components/LandingAgentsBar.tsx
+  22245a10688879f6 1-49
+packages/web/src/components/LandingTestimonials.tsx
+  22245a10688879f6 1-58
+packages/web/src/components/LandingCTA.tsx
+  22245a10688879f6 1-27
+packages/web/src/app/landing/layout.tsx
+  22245a10688879f6 1-28
+packages/web/src/components/LandingHowItWorks.tsx
+  22245a10688879f6 1-156
+packages/web/src/app/globals.css
+  22245a10688879f6 3431-3524
+packages/web/src/components/LandingHero.tsx
+  22245a10688879f6 1-37
+packages/web/src/components/LandingVideo.tsx
+  22245a10688879f6 1-20
+packages/web/src/components/LandingQuickStart.tsx
+  22245a10688879f6 1-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "e144c8f97dab3307d11d22ddb51e5f2fe705df6f",
+  "prompts": {
+    "22245a10688879f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1afca590-66d0-4943-a416-cfee447e7b02",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 726,
+      "total_deletions": 0,
+      "accepted_lines": 726,
+      "overriden_lines": 0
+    }
+  }
+}
