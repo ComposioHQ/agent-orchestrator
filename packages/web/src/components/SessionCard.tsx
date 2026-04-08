@@ -99,6 +99,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   const [sendingQuickReply, setSendingQuickReply] = useState<string | null>(null);
   const [sentQuickReply, setSentQuickReply] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
+  const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickReplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const level = getAttentionLevel(session);
@@ -131,6 +132,15 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
       if (sent) setReplyText("");
     }
   };
+
+  // Auto-resize reply textarea when content changes (including Shift+Enter newlines).
+  // Runs after React commits the new value to the DOM, so scrollHeight is accurate.
+  useEffect(() => {
+    const el = replyTextareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }, [replyText]);
 
   useEffect(() => {
     return () => {
@@ -696,28 +706,14 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
             </button>
           </div>
           <textarea
+            ref={replyTextareaRef}
             className="quick-reply__input"
             placeholder={sendingQuickReply !== null ? "Sending..." : "Type a reply..."}
             aria-label="Type a reply to the agent"
             value={replyText}
-            onChange={(e) => {
-              setReplyText(e.target.value);
-              // Auto-grow: reset height then set to scrollHeight
-              const el = e.target;
-              el.style.height = "auto";
-              el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-            }}
+            onChange={(e) => setReplyText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && e.shiftKey) {
-                // Let the newline insert, then auto-grow on next frame
-                requestAnimationFrame(() => {
-                  const el = e.target as HTMLTextAreaElement;
-                  el.style.height = "auto";
-                  el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-                });
-              } else {
-                void handleReplyKeyDown(e);
-              }
+              void handleReplyKeyDown(e);
             }}
             rows={1}
             disabled={sendingQuickReply !== null}
