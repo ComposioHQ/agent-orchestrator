@@ -710,7 +710,7 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
  * @param workspacePath - Path to the workspace directory
  * @param hookCommand - Command string for the hook (can use variables like $CLAUDE_PROJECT_DIR)
  */
-async function setupHookInWorkspace(workspacePath: string, _hookCommand: string): Promise<void> {
+async function setupHookInWorkspace(workspacePath: string): Promise<void> {
   const claudeDir = join(workspacePath, ".claude");
   const settingsPath = join(claudeDir, "settings.json");
 
@@ -725,11 +725,12 @@ async function setupHookInWorkspace(workspacePath: string, _hookCommand: string)
   // On Unix: write the bash hook script and make it executable.
   let hookCommand: string;
   if (isWindows()) {
-    const hookScriptPath = join(claudeDir, "metadata-updater.js");
+    const hookScriptPath = join(claudeDir, "metadata-updater.cjs");
     await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT_NODE, "utf-8");
     // No chmod — Windows uses file extension for executability
     // Use `node` to invoke the script (Windows won't run .js via shebang)
-    hookCommand = "node .claude/metadata-updater.js";
+    // Use .cjs extension to force CJS mode regardless of workspace package.json "type" field
+    hookCommand = "node .claude/metadata-updater.cjs";
   } else {
     const hookScriptPath = join(claudeDir, "metadata-updater.sh");
     await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
@@ -999,7 +1000,7 @@ function createClaudeCodeAgent(): Agent {
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
       // Relative path so that symlinked .claude/ dirs across worktrees
       // all produce the same settings.json (last writer doesn't clobber).
-      await setupHookInWorkspace(workspacePath, ".claude/metadata-updater.sh");
+      await setupHookInWorkspace(workspacePath);
     },
 
     async postLaunchSetup(session: Session): Promise<void> {

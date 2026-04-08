@@ -45,7 +45,7 @@ const WRAPPER_VERSION = "0.3.0";
  */
 export function buildAgentPath(basePath: string | undefined): string {
   const delimiter = isWindows() ? ";" : ":";
-  const inherited = (basePath ?? DEFAULT_PATH).split(delimiter).filter(Boolean);
+  const inherited = (basePath ?? (isWindows() ? "" : DEFAULT_PATH)).split(delimiter).filter(Boolean);
   const ordered: string[] = [];
   const seen = new Set<string>();
 
@@ -615,5 +615,9 @@ export async function setupPathWrapperWorkspace(workspacePath: string): Promise<
   //    repo-tracked AGENTS.md to avoid polluting worktrees with dirty state.
   const aoAgentsMdPath = join(workspacePath, ".ao", "AGENTS.md");
   await mkdir(join(workspacePath, ".ao"), { recursive: true });
-  await writeFile(aoAgentsMdPath, AO_AGENTS_MD_SECTION.trimStart(), "utf-8");
+  // On Windows, ao-metadata-helper.sh is never created — use a platform-appropriate section
+  const agentsMdContent = isWindows()
+    ? `## Agent Orchestrator (ao) Session\n\nYou are running inside an Agent Orchestrator managed workspace.\nSession metadata is updated automatically via shell wrappers.\n`
+    : AO_AGENTS_MD_SECTION.trimStart();
+  await writeFile(aoAgentsMdPath, agentsMdContent, "utf-8");
 }
