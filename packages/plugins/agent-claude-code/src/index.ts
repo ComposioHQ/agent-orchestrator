@@ -248,6 +248,12 @@ if (!AO_SESSION) {
   process.exit(0);
 }
 
+// Validate AO_SESSION contains no path traversal components
+if (AO_SESSION.includes("/") || AO_SESSION.includes("\\\\") || AO_SESSION.includes("..")) {
+  process.stdout.write(JSON.stringify({ systemMessage: "AO_SESSION contains invalid path characters, skipping metadata update" }) + "\\n");
+  process.exit(0);
+}
+
 const metadataFile = join(AO_DATA_DIR, AO_SESSION);
 
 if (!existsSync(metadataFile)) {
