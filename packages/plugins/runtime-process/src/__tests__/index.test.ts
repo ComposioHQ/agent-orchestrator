@@ -124,25 +124,28 @@ describe("create()", () => {
     const runtime = create();
     await runtime.create(defaultConfig());
 
-    // shell is getShell().cmd (a string like "pwsh", "bash", "/bin/sh") — never the boolean true
-    const spawnArgs = mockSpawn.mock.calls[0][1] as { shell: string; detached: boolean };
-    expect(typeof spawnArgs.shell).toBe("string");
-    expect(spawnArgs.shell.length).toBeGreaterThan(0);
+    // spawn is called as: spawn(shellCmd, shellArgs, options)
+    // shellCmd is the shell binary (a non-empty string), shellArgs is an array
+    // containing the launchCommand, options holds cwd/env/detached/stdio.
+    const [spawnCmd, spawnShellArgs, spawnOpts] = mockSpawn.mock.calls[0] as [
+      string,
+      string[],
+      { cwd: string; env: Record<string, string>; detached: boolean; stdio: unknown },
+    ];
+    expect(typeof spawnCmd).toBe("string");
+    expect(spawnCmd.length).toBeGreaterThan(0);
+    expect(spawnShellArgs).toContain("echo hello");
 
-    // detached is false on Windows, true on other platforms
-    const expectedDetached = process.platform !== "win32";
-    expect(mockSpawn).toHaveBeenCalledWith(
-      "echo hello",
-      expect.objectContaining({
-        cwd: "/tmp/workspace",
-        detached: expectedDetached,
-        stdio: ["pipe", "pipe", "pipe"],
-      }),
-    );
+    // detached mirrors !isWindows() — use the mock's return value, not process.platform
+    const expectedDetached = !mockIsWindows();
+    expect(spawnOpts).toMatchObject({
+      cwd: "/tmp/workspace",
+      detached: expectedDetached,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
 
     // Check the env includes the config environment merged with process.env
-    const callArgs = mockSpawn.mock.calls[0][1] as { env: Record<string, string> };
-    expect(callArgs.env.FOO).toBe("bar");
+    expect(spawnOpts.env.FOO).toBe("bar");
   });
 
   it("returns handle with correct id, runtimeName, and pid in data", async () => {

@@ -60,17 +60,18 @@ export function create(): Runtime {
       };
       processes.set(handleId, entry);
 
-      // NOTE: shell:getShell().cmd is intentional — launchCommand comes from trusted YAML config
-      // and may contain pipes, redirects, or other shell syntax.
-      // On Windows, getShell().cmd resolves to pwsh (or powershell.exe), which supports
-      // $(cat file) substitution unlike cmd.exe (which shell:true would use).
+      // Use explicit shell args instead of spawn's shell: option.
+      // When shell is a string, Node.js internally passes -c which is ambiguous
+      // on PowerShell 5.1 (-c matches both -Command and -ConfigurationName).
+      // getShell().args() returns the correct flag (-Command for pwsh/powershell.exe, /c for cmd).
+      // launchCommand comes from trusted YAML config and may contain pipes and redirects.
+      const shellInfo = getShell();
       let child: ChildProcess;
       try {
-        child = spawn(config.launchCommand, {
+        child = spawn(shellInfo.cmd, shellInfo.args(config.launchCommand), {
           cwd: config.workspacePath,
           env: { ...process.env, ...config.environment },
           stdio: ["pipe", "pipe", "pipe"],
-          shell: getShell().cmd,
           detached: !isWindows(), // Own process group so destroy() can kill child commands (not supported on Windows)
         });
       } catch (err: unknown) {
