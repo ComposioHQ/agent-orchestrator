@@ -271,8 +271,8 @@ exit \$exit_code
  * Build a Node.js wrapper script for a given binary (gh or git).
  *
  * On Windows, bash scripts cannot be executed directly, so we generate:
- *  - <name>.js  — the actual interception logic (Node.js)
- *  - <name>.cmd — a tiny CMD shim: @node "%~dp0<name>.js" %*
+ *  - <name>.cjs — the actual interception logic (Node.js, forced CJS mode)
+ *  - <name>.cmd — a tiny CMD shim: @node "%~dp0<name>.cjs" %*
  *
  * The .js script replicates what the bash wrapper does:
  *  - gh:  intercepts `gh pr create` and `gh pr merge`

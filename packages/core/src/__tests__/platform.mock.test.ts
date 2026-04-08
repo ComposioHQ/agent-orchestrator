@@ -129,16 +129,18 @@ describe("resolveWindowsShell", () => {
 // ---------------------------------------------------------------------------
 
 describe("killProcessTree", () => {
-  it("calls taskkill with /T /PID (no /F) for SIGTERM on Windows", async () => {
+  it("calls taskkill with /T /F /PID for SIGTERM on Windows (always force-kill)", async () => {
     setPlatform("win32");
     resolveExecFile(""); // taskkill succeeds
 
     const mod = await import("../platform.js");
     await mod.killProcessTree(1234, "SIGTERM");
 
+    // On Windows we always pass /F regardless of signal — taskkill without /F sends
+    // WM_CLOSE which is unreliable for headless Node.js console processes.
     expect(mockExecFile).toHaveBeenCalledWith(
       "taskkill",
-      ["/T", "/PID", "1234"],
+      ["/T", "/F", "/PID", "1234"],
       expect.any(Function),
     );
   });

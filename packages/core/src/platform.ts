@@ -82,10 +82,11 @@ export async function killProcessTree(
   // kill AO itself. pid<0 is never valid. Guard both.
   if (pid <= 0) return;
   if (isWindows()) {
-    // taskkill /T kills the process tree; /F forces termination (SIGKILL equivalent).
-    // Without /F, taskkill sends WM_CLOSE allowing the process to shut down gracefully
-    // (SIGTERM equivalent). This preserves the SIGTERM→wait→SIGKILL escalation pattern.
-    const args = signal === "SIGKILL" ? ["/T", "/F", "/PID", String(pid)] : ["/T", "/PID", String(pid)];
+    // Always use /F (force) on Windows. taskkill without /F sends WM_CLOSE, which
+    // only works for GUI windows; headless Node.js console processes may ignore it,
+    // leaving orphaned processes. Callers that do SIGTERM→wait→SIGKILL escalation
+    // are unaffected: the SIGKILL step simply finds the process already dead.
+    const args = ["/T", "/F", "/PID", String(pid)];
     try {
       await execFileAsync("taskkill", args);
     } catch {
