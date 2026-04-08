@@ -34,17 +34,23 @@ if [ ! -w "$NPM_PREFIX" ] 2>/dev/null; then
   export PATH="$USER_NPM_DIR/bin:$PATH"
 
   # Persist to shell profile
-  # Detect or create shell profile for PATH persistence
+  # Detect shell profile based on user's actual $SHELL, then fall back to
+  # checking which rc files exist. This ensures a bash user with a leftover
+  # ~/.zshrc gets PATH written to ~/.bashrc (their active shell), not ~/.zshrc.
   SHELL_RC=""
-  if [ -f "$HOME/.zshrc" ]; then
+  DETECTED_SHELL="$(basename "${SHELL:-}")"
+  if [ "$DETECTED_SHELL" = "zsh" ]; then
+    SHELL_RC="$HOME/.zshrc"
+  elif [ "$DETECTED_SHELL" = "bash" ]; then
+    SHELL_RC="$HOME/.bashrc"
+  elif [ -f "$HOME/.zshrc" ]; then
     SHELL_RC="$HOME/.zshrc"
   elif [ -f "$HOME/.bashrc" ]; then
     SHELL_RC="$HOME/.bashrc"
-  elif [ -n "${SHELL:-}" ] && [ "$(basename "$SHELL")" = "zsh" ]; then
-    SHELL_RC="$HOME/.zshrc"
-    touch "$SHELL_RC"
-  elif [ -n "${SHELL:-}" ] && [ "$(basename "$SHELL")" = "bash" ]; then
-    SHELL_RC="$HOME/.bashrc"
+  fi
+
+  # Create the rc file if it doesn't exist yet (fresh system)
+  if [ -n "$SHELL_RC" ] && [ ! -f "$SHELL_RC" ]; then
     touch "$SHELL_RC"
   fi
 

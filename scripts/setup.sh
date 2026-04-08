@@ -145,6 +145,15 @@ cd packages/ao
 npm link
 cd "$REPO_ROOT"
 
+# Verify ao is reachable in PATH
+if ! command -v ao >/dev/null 2>&1; then
+  echo ""
+  echo "WARNING: 'ao' command is not in your PATH after npm link."
+  echo "  Your npm prefix bin directory may not be in PATH."
+  echo "  Add this to your shell profile:"
+  echo "    export PATH=\"$(npm config get prefix)/bin:\$PATH\""
+fi
+
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
 echo ""
