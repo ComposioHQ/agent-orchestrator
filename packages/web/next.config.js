@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  serverExternalPackages: ["@composio/core"],
   transpilePackages: [
     "@composio/ao-core",
     "@composio/ao-plugin-agent-claude-code",
@@ -23,4 +24,11 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+// Only load bundle analyzer when ANALYZE=true (dev-only dependency)
+let config = nextConfig;
+if (process.env.ANALYZE === "true") {
+  const { default: bundleAnalyzer } = await import("@next/bundle-analyzer");
+  config = bundleAnalyzer({ enabled: true })(nextConfig);
+}
+
+export default config;

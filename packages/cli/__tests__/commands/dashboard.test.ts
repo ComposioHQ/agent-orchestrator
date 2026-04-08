@@ -89,45 +89,83 @@ describe("findRunningDashboardPid", () => {
   });
 });
 
-describe("findProcessWebDir", () => {
-  it("extracts cwd from lsof output", async () => {
-    const webDir = join(tmpDir, "web");
-    mkdirSync(webDir, { recursive: true });
-    writeFileSync(join(webDir, "package.json"), "{}");
+describe("isInstalledUnderNodeModules", () => {
+  it("returns true for a Unix node_modules path segment", async () => {
+    const { isInstalledUnderNodeModules } = await import("../../src/lib/dashboard-rebuild.js");
 
-    // Simulate lsof -p <pid> -Fn output
-    mockExecSilent.mockResolvedValue(
-      `p12345\nfcwd\nn${webDir}\nftxt\nn/usr/bin/node`,
-    );
-
-    const { findProcessWebDir } = await import("../../src/lib/dashboard-rebuild.js");
-
-    const result = await findProcessWebDir("12345");
-    expect(result).toBe(webDir);
+    expect(isInstalledUnderNodeModules("/usr/local/lib/node_modules/@composio/ao-web")).toBe(true);
   });
 
-  it("returns null when cwd has no package.json", async () => {
-    const webDir = join(tmpDir, "web");
-    mkdirSync(webDir, { recursive: true });
-    // No package.json
+  it("returns true for a Windows node_modules path segment", async () => {
+    const { isInstalledUnderNodeModules } = await import("../../src/lib/dashboard-rebuild.js");
 
-    mockExecSilent.mockResolvedValue(
-      `p12345\nfcwd\nn${webDir}\nftxt\nn/usr/bin/node`,
-    );
-
-    const { findProcessWebDir } = await import("../../src/lib/dashboard-rebuild.js");
-
-    const result = await findProcessWebDir("12345");
-    expect(result).toBeNull();
+    expect(isInstalledUnderNodeModules("C:\\Users\\me\\node_modules\\@composio\\ao-web")).toBe(true);
   });
 
-  it("returns null when lsof fails", async () => {
-    mockExecSilent.mockResolvedValue(null);
+  it("returns false for source paths containing node_modules as plain text", async () => {
+    const { isInstalledUnderNodeModules } = await import("../../src/lib/dashboard-rebuild.js");
 
-    const { findProcessWebDir } = await import("../../src/lib/dashboard-rebuild.js");
+    expect(
+      isInstalledUnderNodeModules("/home/user/node_modules_backup/agent-orchestrator/packages/web"),
+    ).toBe(false);
+  });
+});
 
-    const result = await findProcessWebDir("12345");
-    expect(result).toBeNull();
+describe("assertDashboardRebuildSupported", () => {
+  it("passes for a source checkout", async () => {
+    const { assertDashboardRebuildSupported } = await import("../../src/lib/dashboard-rebuild.js");
+
+    expect(() =>
+      assertDashboardRebuildSupported("/home/user/agent-orchestrator/packages/web"),
+    ).not.toThrow();
+  });
+
+  it("throws for an npm-installed package path", async () => {
+    const { assertDashboardRebuildSupported } = await import("../../src/lib/dashboard-rebuild.js");
+
+    expect(() =>
+      assertDashboardRebuildSupported("/usr/local/lib/node_modules/@composio/ao-web"),
+    ).toThrow("Dashboard rebuild is only available from a source checkout");
+  });
+});
+
+describe("rebuildDashboardProductionArtifacts", () => {
+  it("cleans .next and runs pnpm build on success", async () => {
+    const webDir = join(tmpDir, "packages", "web");
+    mkdirSync(webDir, { recursive: true });
+    mkdirSync(join(webDir, ".next"), { recursive: true });
+
+    mockExec.mockResolvedValue({ stdout: "", stderr: "" });
+
+    const { rebuildDashboardProductionArtifacts } = await import("../../src/lib/dashboard-rebuild.js");
+
+    await rebuildDashboardProductionArtifacts(webDir);
+
+    // .next should be cleaned
+    expect(existsSync(join(webDir, ".next"))).toBe(false);
+    // pnpm build should be called from workspace root (../../ relative to webDir)
+    expect(mockExec).toHaveBeenCalledWith("pnpm", ["build"], { cwd: tmpDir });
+  });
+
+  it("throws when pnpm build fails", async () => {
+    const webDir = join(tmpDir, "packages", "web");
+    mkdirSync(webDir, { recursive: true });
+
+    mockExec.mockRejectedValue(new Error("build failed"));
+
+    const { rebuildDashboardProductionArtifacts } = await import("../../src/lib/dashboard-rebuild.js");
+
+    await expect(rebuildDashboardProductionArtifacts(webDir)).rejects.toThrow(
+      "Failed to rebuild dashboard production artifacts",
+    );
+  });
+
+  it("throws when called from an npm-installed path", async () => {
+    const { rebuildDashboardProductionArtifacts } = await import("../../src/lib/dashboard-rebuild.js");
+
+    await expect(
+      rebuildDashboardProductionArtifacts("/usr/local/lib/node_modules/@composio/ao-web"),
+    ).rejects.toThrow("Dashboard rebuild is only available from a source checkout");
   });
 });
 

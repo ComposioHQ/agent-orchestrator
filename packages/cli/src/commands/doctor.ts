@@ -343,7 +343,12 @@ async function sendTestNotifications(
   const targets = new Map<string, NotifierTarget>();
 
   for (const [name, notifierConfig] of configuredNotifiers) {
-    targets.set(notifierConfig.plugin, { label: name, pluginName: notifierConfig.plugin });
+    if (notifierConfig.plugin) {
+      targets.set(notifierConfig.plugin, { label: name, pluginName: notifierConfig.plugin });
+    } else {
+      // External plugin without explicit plugin name - manifest.name not yet resolved
+      warn(`${name}: notifier plugin name not resolved (external plugin may not be loaded yet)`);
+    }
   }
 
   for (const name of activeNotifierNames) {
