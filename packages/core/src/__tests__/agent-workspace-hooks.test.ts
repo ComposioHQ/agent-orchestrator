@@ -262,8 +262,12 @@ describe("buildNodeWrapper", () => {
     expect(gitScript).toContain("path.delimiter");
   });
 
-  it("gh wrapper uses explicit realBinaryPath when provided", () => {
+  it("gh wrapper uses explicit realBinaryPath when provided, with existsSync fallback", () => {
     const script = buildNodeWrapper("gh", "C:\\tools\\gh.exe");
     expect(script).toContain("C:\\\\tools\\\\gh.exe");
+    // fallback must NOT be dead code — fs.existsSync guard ensures findRealGh() runs
+    // when the hardcoded path is missing at runtime
+    expect(script).toContain("fs.existsSync");
+    expect(script).toContain("findRealGh()");
   });
 });

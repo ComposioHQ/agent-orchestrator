@@ -375,7 +375,7 @@ function updateAoMetadata(key, value) {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-const realGh = ${realBinaryPath ? JSON.stringify(realBinaryPath) + " || findRealGh()" : "findRealGh()"};
+const realGh = ${realBinaryPath ? `(fs.existsSync(${JSON.stringify(realBinaryPath)}) ? ${JSON.stringify(realBinaryPath)} : findRealGh())` : "findRealGh()"};
 if (!realGh) {
   process.stderr.write("ao-wrapper: gh not found in PATH\\n");
   process.exit(127);
@@ -484,7 +484,7 @@ function updateAoMetadata(key, value) {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-const realGit = ${realBinaryPath ? JSON.stringify(realBinaryPath) + " || findRealGit()" : "findRealGit()"};
+const realGit = ${realBinaryPath ? `(fs.existsSync(${JSON.stringify(realBinaryPath)}) ? ${JSON.stringify(realBinaryPath)} : findRealGit())` : "findRealGit()"};
 if (!realGit) {
   process.stderr.write("ao-wrapper: git not found in PATH\\n");
   process.exit(127);
