@@ -14,6 +14,7 @@ import { useShowKilledSessions } from "@/hooks/useShowKilledSessions";
 import { useShowDoneSessions } from "@/hooks/useShowDoneSessions";
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "ao:web:sidebar-collapsed";
+const TERMINALS_SECTION_COLLAPSED_STORAGE_KEY = "ao:web:terminals-section-collapsed";
 
 interface TerminalWithAlive extends StandaloneTerminal {
   alive: boolean;
@@ -33,6 +34,11 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
   });
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [newTerminalModalOpen, setNewTerminalModalOpen] = useState(false);
+  const [terminalsSectionCollapsed, setTerminalsSectionCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(TERMINALS_SECTION_COLLAPSED_STORAGE_KEY) === "1";
+  });
+  const pruningTerminalsRef = useRef<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const hasLoadedOnce = useRef(false);
   const keyboardNavRef = useRef(false);
@@ -41,6 +47,61 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
     if (typeof window === "undefined") return;
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      TERMINALS_SECTION_COLLAPSED_STORAGE_KEY,
+      terminalsSectionCollapsed ? "1" : "0",
+    );
+  }, [terminalsSectionCollapsed]);
+
+  // Dedicated fast poll for global terminals so dead tmux sessions vanish
+  // from the sidebar within ~3s (the big sidebar poll runs every 30s).
+  // Dead terminals are auto-removed from the registry (and the UI).
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshTerminals(): Promise<void> {
+      try {
+        const res = await fetch("/api/terminals");
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { terminals?: TerminalWithAlive[] };
+        const list = data.terminals ?? [];
+
+        const toDelete: string[] = [];
+        for (const t of list) {
+          if (!t.alive && !pruningTerminalsRef.current.has(t.id)) {
+            toDelete.push(t.id);
+          }
+        }
+
+        const pruned = toDelete.length ? list.filter((t) => !toDelete.includes(t.id)) : list;
+        if (!cancelled) setTerminals(pruned);
+
+        for (const termId of toDelete) {
+          pruningTerminalsRef.current.add(termId);
+          void fetch(`/api/terminals/${encodeURIComponent(termId)}`, { method: "DELETE" })
+            .catch(() => {
+              // Best-effort; next poll retries.
+            })
+            .finally(() => {
+              pruningTerminalsRef.current.delete(termId);
+            });
+        }
+      } catch {
+        // Ignore; next poll will retry.
+      }
+    }
+
+    const interval = window.setInterval(() => {
+      void refreshTerminals();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
 
   // Close mobile sidebar on navigation, unless triggered by keyboard shortcut
   useEffect(() => {
@@ -299,20 +360,47 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
 
   const TerminalsSidebarSection = () => (
     <div className="flex flex-col border-t border-[var(--color-border-subtle)] px-2 py-3">
-      <div className="mb-2 flex items-center justify-between px-2.5">
-        <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setTerminalsSectionCollapsed((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setTerminalsSectionCollapsed((v) => !v);
+          }
+        }}
+        aria-expanded={!terminalsSectionCollapsed}
+        title={terminalsSectionCollapsed ? "Expand terminals" : "Collapse terminals"}
+        className={cn(
+          "mb-2 flex cursor-pointer select-none items-center justify-between rounded px-2.5 py-1 transition-colors hover:bg-[var(--color-bg-subtle)]",
+        )}
+      >
+        <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
+          <span
+            className={cn(
+              "inline-block text-[9px] transition-transform",
+              terminalsSectionCollapsed ? "" : "rotate-90",
+            )}
+            aria-hidden="true"
+          >
+            ▶
+          </span>
           Terminals
         </span>
         <button
           type="button"
-          onClick={() => setNewTerminalModalOpen(true)}
+          onClick={(e) => {
+            e.stopPropagation();
+            setNewTerminalModalOpen(true);
+          }}
           className="flex h-5 w-5 items-center justify-center rounded border border-dashed border-[var(--color-border-muted)] text-[12px] leading-none text-[var(--color-text-tertiary)] hover:text-[var(--color-accent)]"
           title="New terminal"
         >
           +
         </button>
       </div>
-      {terminals.length > 0 ? (
+      {terminalsSectionCollapsed ? null : terminals.length > 0 ? (
         <div className="terminal-sidebar-list space-y-0.5">
           {terminals.map((terminal) => {
             const isActive = activeTerminalName === terminal.tmuxName;
