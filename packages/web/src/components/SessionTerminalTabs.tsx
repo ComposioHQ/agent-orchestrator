@@ -41,6 +41,8 @@ export function SessionTerminalTabs({
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const lastInitSessionRef = useRef<string | null>(null);
+  const creatingRef = useRef(false);
+  const pruningRef = useRef<Set<string>>(new Set());
 
   const loadSubs = useCallback(async (): Promise<SubSessionJson[] | null> => {
     setError(null);
@@ -52,6 +54,40 @@ export function SessionTerminalTabs({
       }
       const data = (await res.json()) as { subSessions?: SubSessionJson[] };
       const list = data.subSessions ?? [];
+
+      // Auto-prune dead terminal sub-sessions (never primary).
+      // Skip pruning while a create is in flight to avoid a race where a
+      // freshly-created terminal briefly reports !alive.
+      if (!creatingRef.current) {
+        const toDelete: string[] = [];
+        for (const s of list) {
+          if (s.type !== "terminal" || s.alive) continue;
+          if (!pruningRef.current.has(s.id)) {
+            toDelete.push(s.id);
+          }
+        }
+
+        const pruned = toDelete.length
+          ? list.filter((s) => !toDelete.includes(s.id))
+          : list;
+        setSubs(pruned);
+
+        for (const subId of toDelete) {
+          pruningRef.current.add(subId);
+          void fetch(
+            `/api/sessions/${encodeURIComponent(sessionId)}/sub-sessions/${encodeURIComponent(subId)}`,
+            { method: "DELETE" },
+          )
+            .catch(() => {
+              // Best-effort; next poll will retry.
+            })
+            .finally(() => {
+              pruningRef.current.delete(subId);
+            });
+        }
+        return pruned;
+      }
+
       setSubs(list);
       return list;
     } catch (e) {
@@ -64,9 +100,18 @@ export function SessionTerminalTabs({
   // Reset when navigating to another AO session
   useEffect(() => {
     lastInitSessionRef.current = null;
+    pruningRef.current = new Set();
     setSubs(null);
     setActiveId(sessionId);
   }, [sessionId]);
+
+  // Poll every 3s to detect dead terminals and prune them.
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void loadSubs();
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [loadSubs]);
 
   // Initial fetch + apply sessionStorage preference (same pattern as sessionFileState)
   useEffect(() => {
@@ -198,6 +243,7 @@ export function SessionTerminalTabs({
 
   const addTerminal = useCallback(async () => {
     setCreating(true);
+    creatingRef.current = true;
     setError(null);
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/sub-sessions`, {
@@ -216,6 +262,7 @@ export function SessionTerminalTabs({
       setError(e instanceof Error ? e.message : "Failed to create terminal");
     } finally {
       setCreating(false);
+      creatingRef.current = false;
     }
   }, [sessionId, loadSubs]);
 
