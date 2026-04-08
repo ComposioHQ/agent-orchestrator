@@ -113,21 +113,23 @@ describe("runRepoScript", () => {
     expect((spawnCall[1] as string[])[scriptIdx + 1]).toBe("--fix");
   });
 
-  it("uses getShell().args() flags on Windows (no AO_BASH_PATH override)", async () => {
+  it("uses -File mode on Windows so positional args reach the script", async () => {
     mockIsWindows.mockReturnValue(true);
     mockGetShell.mockReturnValue({
       cmd: "pwsh",
-      args: (c: string) => ["-NoLogo", "-NonInteractive", "-Command", c],
+      args: (c: string) => ["-Command", c],
     });
     const child = makeSpawnEventEmitter(0);
     mockSpawn.mockReturnValue(child);
 
-    await runRepoScript("test-script.sh", []);
+    await runRepoScript("test-script.sh", ["--fix"]);
 
     const spawnCall = mockSpawn.mock.calls[0];
     expect(spawnCall[0]).toBe("pwsh");
-    expect(spawnCall[1]).toEqual(
-      expect.arrayContaining(["-NoLogo", "-NonInteractive", "-Command"]),
-    );
+    // Must use -File, not -Command, so --fix is passed as a script arg not dropped
+    expect(spawnCall[1]).not.toContain("-Command");
+    expect(spawnCall[1][0]).toBe("-File");
+    const scriptIdx = (spawnCall[1] as string[]).findIndex((a: string) => a.includes("test-script.sh"));
+    expect((spawnCall[1] as string[])[scriptIdx + 1]).toBe("--fix");
   });
 });

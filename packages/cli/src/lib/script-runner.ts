@@ -29,12 +29,15 @@ export async function runRepoScript(scriptName: string, args: string[]): Promise
   const shell = shellOverride || (isWindows() ? getShell().cmd : "bash");
   const scriptPath = resolveScriptPath(scriptName);
   // Unix: spawn(bash, [scriptPath, ...args]) — file mode so args reach $1, $2, etc.
-  // Windows (no override): use getShell().args() to include required flags (e.g. -Command for pwsh).
+  // Windows (no override): use -File so positional args ($1, $2, …) reach the script.
+  //   -Command folds everything into a single string; extra argv elements after the script
+  //   path are treated as top-level PowerShell args, not script args — silently dropping
+  //   flags like --fix. -File is the correct PowerShell flag for running a script with args.
   // With AO_BASH_PATH override: always use file mode (the override IS a bash-compatible binary).
   const shellArgs =
     shellOverride || !isWindows()
       ? [scriptPath, ...args]
-      : [...getShell().args(scriptPath), ...args];
+      : ["-File", scriptPath, ...args];
 
   return await new Promise<number>((resolveExit, reject) => {
     const child = spawn(shell, shellArgs, {
