@@ -2,11 +2,10 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { isWindows, killProcessTree, loadConfig } from "@composio/ao-core";
+import { findPidByPort, isWindows, killProcessTree, loadConfig } from "@composio/ao-core";
 import { findWebDir, buildDashboardEnv, waitForPortAndOpen } from "../lib/web-dir.js";
 import { forwardSignalsToChild } from "../lib/shell.js";
 import {
-  findRunningDashboardPid,
   isInstalledUnderNodeModules,
   rebuildDashboardProductionArtifacts,
   waitForPortFree,
@@ -35,7 +34,7 @@ export function registerDashboard(program: Command): void {
 
       if (opts.rebuild) {
         // Check if a dashboard is already running on this port.
-        const runningPid = await findRunningDashboardPid(port);
+        const runningPid = await findPidByPort(port);
 
         if (runningPid) {
           // Stop the running server before rebuilding or restarting below.

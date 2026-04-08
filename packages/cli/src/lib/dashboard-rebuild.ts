@@ -31,21 +31,13 @@ export function assertDashboardRebuildSupported(webDir: string): void {
 }
 
 /**
- * Find the PID of a process listening on the given port.
- * Returns null if no process is found.
- */
-export async function findRunningDashboardPid(port: number): Promise<string | null> {
-  return findPidByPort(port);
-}
-
-/**
  * Wait for a port to be free (no process listening).
  * Throws if the port is still busy after the timeout.
  */
 export async function waitForPortFree(port: number, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const pid = await findRunningDashboardPid(port);
+    const pid = await findPidByPort(port);
     if (!pid) return;
     await new Promise((r) => setTimeout(r, 200));
   }

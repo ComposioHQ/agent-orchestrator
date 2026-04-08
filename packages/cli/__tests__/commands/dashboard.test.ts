@@ -76,27 +76,6 @@ describe("cleanNextCache", () => {
   });
 });
 
-describe("findRunningDashboardPid", () => {
-  it("returns PID when a process is listening", async () => {
-    mockFindPidByPort.mockResolvedValue("12345");
-
-    const { findRunningDashboardPid } = await import("../../src/lib/dashboard-rebuild.js");
-
-    const pid = await findRunningDashboardPid(3000);
-    expect(pid).toBe("12345");
-    expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
-  });
-
-  it("returns null when no process is listening", async () => {
-    mockFindPidByPort.mockResolvedValue(null);
-
-    const { findRunningDashboardPid } = await import("../../src/lib/dashboard-rebuild.js");
-
-    const pid = await findRunningDashboardPid(3000);
-    expect(pid).toBeNull();
-  });
-});
-
 describe("isInstalledUnderNodeModules", () => {
   it("returns true for a Unix node_modules path segment", async () => {
     const { isInstalledUnderNodeModules } = await import("../../src/lib/dashboard-rebuild.js");
