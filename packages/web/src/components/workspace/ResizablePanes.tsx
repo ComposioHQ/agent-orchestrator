@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useRef, type ReactNode } from "react";
+import { TerminalToggleIcon } from "@/components/icons/TerminalToggleIcon";
 
 interface PaneConfig {
   id: string;
   label: string;
-  icon: string;
+  icon: ReactNode;
   defaultPercent: number;
   minPercent: number;
 }
@@ -23,7 +24,13 @@ interface ResizablePanesProps {
 const PANE_DEFAULTS: Record<string, PaneConfig> = {
   files: { id: "files", label: "FILES", icon: "📁", defaultPercent: 20, minPercent: 8 },
   preview: { id: "preview", label: "PREVIEW", icon: "📄", defaultPercent: 40, minPercent: 15 },
-  terminal: { id: "terminal", label: "TERMINAL", icon: "▶", defaultPercent: 40, minPercent: 15 },
+  terminal: {
+    id: "terminal",
+    label: "TERMINAL",
+    icon: <TerminalToggleIcon size={18} />,
+    defaultPercent: 40,
+    minPercent: 15,
+  },
 };
 
 function getGridColumns(sizes: number[], collapsed: boolean[]): string {

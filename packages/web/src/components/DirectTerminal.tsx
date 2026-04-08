@@ -228,6 +228,8 @@ export function DirectTerminal({
   const [followOutput, setFollowOutput] = useState(true);
   const followOutputRef = useRef(true);
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Set when xterm mounts; used by Jump to latest (same logic as former touch auto-resume). */
+  const resumeLiveTailRef = useRef<(() => void) | null>(null);
   const programmaticScrollRef = useRef(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [fontSize, setFontSize] = useState(FONT_SIZE_DEFAULT);
@@ -436,8 +438,16 @@ export function DirectTerminal({
         // Resume the live tail. For normal buffer this scrolls the viewport;
         // for alternate buffer (tmux/vim) this sends `q` to exit tmux copy-mode.
         const resumeLiveTail = () => {
+          if (scrollIdleTimerRef.current) {
+            clearTimeout(scrollIdleTimerRef.current);
+            scrollIdleTimerRef.current = null;
+          }
           const t = terminalInstance.current;
-          if (!t) return;
+          if (!t) {
+            followOutputRef.current = true;
+            setFollowOutput(true);
+            return;
+          }
           if (t.buffer.active.type === "normal") {
             const vp = t.element?.querySelector<HTMLElement>(".xterm-viewport");
             if (vp) {
@@ -451,6 +461,7 @@ export function DirectTerminal({
           followOutputRef.current = true;
           setFollowOutput(true);
         };
+        resumeLiveTailRef.current = resumeLiveTail;
 
         // Touch scroll (mobile) — uses modular helper from lib/terminal-touch-scroll
         const removeTouchScroll = attachTouchScroll(terminal, () => ws.current, {
@@ -462,15 +473,6 @@ export function DirectTerminal({
               clearTimeout(scrollIdleTimerRef.current);
               scrollIdleTimerRef.current = null;
             }
-          },
-          onScrollTowardLatest: () => {
-            // User is moving back toward the bottom — arm a short idle timer
-            // so we auto-resume only when they're heading home.
-            if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
-            scrollIdleTimerRef.current = setTimeout(() => {
-              scrollIdleTimerRef.current = null;
-              resumeLiveTail();
-            }, 1000);
           },
         });
 
@@ -707,6 +709,7 @@ export function DirectTerminal({
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
+          resumeLiveTailRef.current = null;
           removeTouchScroll();
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
@@ -1010,26 +1013,7 @@ export function DirectTerminal({
           <button
             type="button"
             onClick={() => {
-              const t = terminalInstance.current;
-              if (t && t.buffer.active.type !== "normal") {
-                // Alt buffer (tmux/vim): exit copy-mode to return to live tail.
-                const sock = ws.current;
-                if (sock?.readyState === WebSocket.OPEN) sock.send("q");
-              } else {
-                const viewport = t?.element?.querySelector(
-                  ".xterm-viewport",
-                ) as HTMLElement | null;
-                if (viewport) {
-                  programmaticScrollRef.current = true;
-                  viewport.scrollTop = viewport.scrollHeight;
-                }
-              }
-              if (scrollIdleTimerRef.current) {
-                clearTimeout(scrollIdleTimerRef.current);
-                scrollIdleTimerRef.current = null;
-              }
-              followOutputRef.current = true;
-              setFollowOutput(true);
+              resumeLiveTailRef.current?.();
             }}
             className="absolute bottom-3 right-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] shadow-md active:scale-95"
             aria-label="Jump to latest"

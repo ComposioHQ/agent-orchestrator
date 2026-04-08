@@ -3,6 +3,7 @@
 import { type DashboardSession } from "@/lib/types";
 import { useRouter } from "next/navigation";
 import { useAggregatedTerminalConnection } from "@/lib/terminal-connection-store";
+import { TerminalToggleIcon } from "@/components/icons/TerminalToggleIcon";
 
 interface CompactTopBarProps {
   session: DashboardSession;
@@ -164,12 +165,19 @@ export function CompactTopBar({ session, collapsed, toggleCollapsed, verticalLay
         {[
           { idx: 0, icon: "📁", label: "Files", shortcut: "⌘⇧F" },
           { idx: 1, icon: "📄", label: "Preview", shortcut: "⌘⇧P" },
-          { idx: 2, icon: "▶", label: "Terminal", shortcut: "⌘⇧Z" },
+          {
+            idx: 2,
+            icon: <TerminalToggleIcon size={16} />,
+            label: "Terminal",
+            shortcut: "⌘⇧Z",
+          },
         ].map(({ idx, icon, label, shortcut }) => {
           const active = !collapsed[idx];
           return (
             <button
               key={idx}
+              type="button"
+              className="compact-top-bar__pane-toggle"
               onClick={() => toggleCollapsed(idx)}
               title={`Toggle ${label} (${shortcut})`}
               style={{
@@ -177,18 +185,14 @@ export function CompactTopBar({ session, collapsed, toggleCollapsed, verticalLay
                 border: "none",
                 borderBottom: active ? "2px solid var(--color-accent)" : "2px solid transparent",
                 cursor: "pointer",
-                fontSize: "14px",
                 padding: "6px 8px 4px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
                 color: active ? "var(--color-text-primary)" : "var(--color-text-tertiary)",
                 opacity: active ? 1 : 0.5,
                 transition: "all 0.15s",
                 marginBottom: "-1px",
               }}
             >
-              {icon}
+              <span className="compact-top-bar__pane-toggle-icon">{icon}</span>
             </button>
           );
         })}
