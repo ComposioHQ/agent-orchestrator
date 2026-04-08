@@ -28,7 +28,7 @@ export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agen
 - If reviewers request changes, the orchestrator will forward their comments — address each one, push fixes, and reply to the comments.
 
 ## Git Workflow
-- Always create a feature branch from the default branch (never commit directly to it).
+- Use the feature branch that AO has already prepared for this session.
 - Use conventional commit messages (feat:, fix:, chore:, etc.).
 - Push your branch and create a PR when the implementation is ready.
 - Keep PRs focused — one issue per PR.
@@ -86,9 +86,7 @@ function buildConfigLayer(config: PromptBuildConfig): string {
   if (issueId) {
     lines.push(`\n## Task`);
     lines.push(`Work on issue: ${issueId}`);
-    lines.push(
-      `Create a branch named so that it auto-links to the issue tracker (e.g. feat/${issueId}).`,
-    );
+    lines.push("AO has already provisioned the issue-linked branch for this session.");
   }
 
   if (issueContext) {

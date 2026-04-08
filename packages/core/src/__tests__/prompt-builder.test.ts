@@ -62,7 +62,8 @@ describe("buildPrompt", () => {
       issueId: "INT-1343",
     });
     expect(result).toContain("Work on issue: INT-1343");
-    expect(result).toContain("feat/INT-1343");
+    expect(result).toContain("AO has already provisioned the issue-linked branch for this session.");
+    expect(result).not.toContain("Create a branch named");
   });
 
   it("includes issue context when provided", () => {
@@ -215,5 +216,7 @@ describe("BASE_AGENT_PROMPT", () => {
     expect(BASE_AGENT_PROMPT).toContain("Git Workflow");
     expect(BASE_AGENT_PROMPT).toContain("PR Best Practices");
     expect(BASE_AGENT_PROMPT).toContain("ao session claim-pr");
+    expect(BASE_AGENT_PROMPT).toContain("AO has already prepared for this session");
+    expect(BASE_AGENT_PROMPT).not.toContain("Always create a feature branch");
   });
 });
