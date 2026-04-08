@@ -29,14 +29,14 @@ export function LandingTestimonials() {
         <div className="text-xs tracking-[0.15em] uppercase text-[var(--landing-muted)] opacity-60 mb-6">
           What engineers say
         </div>
-        <h2 className="[font-family:var(--font-instrument-serif,serif)] font-normal text-[clamp(2.5rem,6vw,4.5rem)] leading-[1.05] tracking-[-1.5px] mb-6">
+        <h2 className="font-sans font-[680] tracking-tight font-normal text-[clamp(2.5rem,6vw,4.5rem)] leading-[1.05] tracking-[-1.5px] mb-6">
           Trusted by <em className="italic text-[var(--landing-muted)]">builders</em>
         </h2>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-12">
         {testimonials.map((t) => (
           <div key={t.initials} className="landing-reveal landing-card rounded-2xl p-8">
-            <p className="text-[0.9375rem] text-[var(--landing-fg)]/80 leading-[1.7] mb-5 italic [font-family:var(--font-instrument-serif,serif)]">
+            <p className="text-[0.9375rem] text-[var(--landing-fg)]/80 leading-[1.7] mb-5 italic font-sans font-[680] tracking-tight">
               &ldquo;{t.quote}&rdquo;
             </p>
             <div className="flex items-center gap-3">

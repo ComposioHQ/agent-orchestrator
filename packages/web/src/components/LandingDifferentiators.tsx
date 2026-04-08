@@ -38,7 +38,7 @@ export function LandingDifferentiators() {
         <div className="text-xs tracking-[0.15em] uppercase text-[var(--landing-muted)] opacity-60 mb-6">
           Why Agent Orchestrator
         </div>
-        <h2 className="[font-family:var(--font-instrument-serif,serif)] font-normal text-[clamp(2rem,5vw,3.5rem)] leading-[1.1] tracking-[-1.5px] mb-6 max-w-[42rem]">
+        <h2 className="font-sans font-[680] tracking-tight font-normal text-[clamp(2rem,5vw,3.5rem)] leading-[1.1] tracking-[-1.5px] mb-6 max-w-[42rem]">
           The only{" "}
           <em className="italic text-[var(--landing-muted)]">open-source, web-based</em>{" "}
           agent orchestrator

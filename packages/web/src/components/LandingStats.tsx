@@ -14,7 +14,7 @@ export function LandingStats() {
             key={stat.label}
             className="landing-card rounded-2xl py-8 px-6 text-center"
           >
-            <div className="[font-family:var(--font-instrument-serif,serif)] text-[clamp(2rem,4vw,3rem)] tracking-tight mb-1">
+            <div className="font-sans font-[680] tracking-tight text-[clamp(2rem,4vw,3rem)] tracking-tight mb-1">
               {stat.number}
             </div>
             <div className="text-xs text-[var(--landing-muted)] opacity-60">

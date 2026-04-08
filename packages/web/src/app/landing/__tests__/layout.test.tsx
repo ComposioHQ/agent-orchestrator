@@ -1,11 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("next/font/google", () => ({
-  Instrument_Serif: () => ({
-    variable: "mock-instrument-serif",
-  }),
-}));
+import { describe, expect, it } from "vitest";
 
 import LandingLayout from "../layout";
 

@@ -5,7 +5,7 @@ export function LandingHowItWorks() {
         <div className="text-xs tracking-[0.15em] uppercase text-[var(--landing-muted)] opacity-60 mb-6">
           Process
         </div>
-        <h2 className="[font-family:var(--font-instrument-serif,serif)] font-normal text-[clamp(2.5rem,6vw,4.5rem)] leading-[1.05] tracking-[-1.5px] mb-6">
+        <h2 className="font-sans font-[680] tracking-tight font-normal text-[clamp(2.5rem,6vw,4.5rem)] leading-[1.05] tracking-[-1.5px] mb-6">
           Three steps to{" "}
           <em className="italic text-[var(--landing-muted)]">orchestration</em>
         </h2>
@@ -16,7 +16,7 @@ export function LandingHowItWorks() {
         <div className="landing-reveal grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
           <div>
             <div className="font-mono text-xs tracking-[0.1em] text-[var(--landing-muted)] opacity-50 mb-4">01</div>
-            <h3 className="[font-family:var(--font-instrument-serif,serif)] text-[clamp(2rem,4vw,3rem)] tracking-tight mb-4">
+            <h3 className="font-sans font-[680] tracking-tight text-[clamp(2rem,4vw,3rem)] tracking-tight mb-4">
               Configure &amp; <em className="italic text-[var(--landing-muted)]">assign</em>
             </h3>
             <p className="text-[var(--landing-muted)] text-[0.9375rem] leading-[1.7] max-w-[28rem]">
@@ -52,7 +52,7 @@ export function LandingHowItWorks() {
         <div className="landing-reveal grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
           <div className="md:order-2">
             <div className="font-mono text-xs tracking-[0.1em] text-[var(--landing-muted)] opacity-50 mb-4">02</div>
-            <h3 className="[font-family:var(--font-instrument-serif,serif)] text-[clamp(2rem,4vw,3rem)] tracking-tight mb-4">
+            <h3 className="font-sans font-[680] tracking-tight text-[clamp(2rem,4vw,3rem)] tracking-tight mb-4">
               Agents <em className="italic text-[var(--landing-muted)]">work</em>
             </h3>
             <p className="text-[var(--landing-muted)] text-[0.9375rem] leading-[1.7] max-w-[28rem]">
@@ -90,7 +90,7 @@ export function LandingHowItWorks() {
         <div className="landing-reveal grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
           <div>
             <div className="font-mono text-xs tracking-[0.1em] text-[var(--landing-muted)] opacity-50 mb-4">03</div>
-            <h3 className="[font-family:var(--font-instrument-serif,serif)] text-[clamp(2rem,4vw,3rem)] tracking-tight mb-4">
+            <h3 className="font-sans font-[680] tracking-tight text-[clamp(2rem,4vw,3rem)] tracking-tight mb-4">
               PRs <em className="italic text-[var(--landing-muted)]">land</em>
             </h3>
             <p className="text-[var(--landing-muted)] text-[0.9375rem] leading-[1.7] max-w-[28rem]">

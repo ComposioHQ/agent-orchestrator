@@ -28,7 +28,7 @@ export function LandingFeatures() {
         <div className="text-xs tracking-[0.15em] uppercase text-[var(--landing-muted)] opacity-60 mb-6">
           Capabilities
         </div>
-        <h2 className="[font-family:var(--font-instrument-serif,serif)] font-normal text-[clamp(2.5rem,6vw,4.5rem)] leading-[1.05] tracking-[-1.5px] mb-6">
+        <h2 className="font-sans font-[680] tracking-tight font-normal text-[clamp(2.5rem,6vw,4.5rem)] leading-[1.05] tracking-[-1.5px] mb-6">
           What we <em className="italic text-[var(--landing-muted)]">orchestrate</em>
         </h2>
       </div>
@@ -41,7 +41,7 @@ export function LandingFeatures() {
             <div className="w-12 h-12 rounded-xl bg-[var(--landing-surface)] flex items-center justify-center mb-6 text-xl">
               {f.icon}
             </div>
-            <h3 className="[font-family:var(--font-instrument-serif,serif)] text-2xl mb-3 tracking-tight">
+            <h3 className="font-sans font-[680] tracking-tight text-2xl mb-3 tracking-tight">
               {f.title}
             </h3>
             <p className="text-[var(--landing-muted)] text-[0.9375rem] leading-[1.7]">

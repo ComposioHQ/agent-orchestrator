@@ -5,7 +5,7 @@ export function LandingAbout() {
         <div className="text-xs tracking-[0.15em] uppercase text-[var(--landing-muted)] opacity-60 mb-6">
           The problem
         </div>
-        <h2 className="[font-family:var(--font-instrument-serif,serif)] font-normal text-[clamp(2rem,5vw,3.5rem)] leading-[1.1] tracking-[-1.5px] mb-8 max-w-[48rem]">
+        <h2 className="font-sans font-[680] tracking-tight font-normal text-[clamp(2rem,5vw,3.5rem)] leading-[1.1] tracking-[-1.5px] mb-8 max-w-[48rem]">
           You&apos;re running AI agents in 10 browser tabs.
           Checking if PRs landed. Re-running failed CI.{" "}
           <span className="text-[var(--landing-muted)]">

@@ -5,7 +5,7 @@ export function LandingNav() {
     <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-8 py-6 max-w-[80rem] mx-auto">
       <a
         href="#"
-        className="text-[1.875rem] tracking-tight text-white no-underline [font-family:var(--font-instrument-serif,serif)]"
+        className="text-[1.875rem] tracking-tight text-white no-underline font-sans font-[680] tracking-tight"
       >
         Agent Orchestrator
       </a>

@@ -1,13 +1,4 @@
 import type { Metadata } from "next";
-import { Instrument_Serif } from "next/font/google";
-
-const instrumentSerif = Instrument_Serif({
-  subsets: ["latin"],
-  variable: "--font-instrument-serif",
-  display: "swap",
-  weight: ["400"],
-  style: ["normal", "italic"],
-});
 
 export const metadata: Metadata = {
   title: "Agent Orchestrator — Run 30 AI Agents in Parallel",
@@ -20,9 +11,5 @@ export default function LandingLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <div className={`landing-page min-h-screen ${instrumentSerif.variable}`}>
-      {children}
-    </div>
-  );
+  return <div className="landing-page min-h-screen">{children}</div>;
 }

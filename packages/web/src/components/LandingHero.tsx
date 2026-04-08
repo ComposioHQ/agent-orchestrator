@@ -9,7 +9,7 @@ export function LandingHero() {
           <span className="w-1.5 h-1.5 rounded-full bg-[rgba(134,239,172,0.7)]" />
           Open Source · MIT Licensed · 5.9k GitHub Stars
         </div>
-        <h1 className="landing-fade-rise font-normal text-[clamp(2.5rem,7vw,5rem)] leading-[1] tracking-[-2px] max-w-[56rem] [font-family:var(--font-instrument-serif,serif)]">
+        <h1 className="landing-fade-rise font-normal text-[clamp(2.5rem,7vw,5rem)] leading-[1] tracking-[-2px] max-w-[56rem] font-sans font-[680] tracking-tight">
           Run 30 AI agents in parallel.
           <br />
           <span className="text-[var(--landing-muted)]">One dashboard.</span>
