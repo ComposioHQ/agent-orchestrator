@@ -1023,7 +1023,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         if (
           existingRaw &&
           existingRaw["issue"] === spawnConfig.issueId &&
-          (existingRaw["agent"] ?? config.defaults.agent) === selection.agentName &&
+          resolveAgentSelection({ role: "worker", project, defaults: config.defaults, persistedAgent: existingRaw["agent"] }).agentName === selection.agentName &&
           !isOrchestratorSessionRecord(existingId, existingRaw, project.sessionPrefix) &&
           !TERMINAL_STATUSES.has(existingStatus as SessionStatus)
         ) {
