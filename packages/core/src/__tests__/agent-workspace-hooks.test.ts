@@ -153,15 +153,15 @@ describe("setupPathWrapperWorkspace (Windows)", () => {
     expect(hasCmdGit).toBe(true);
   });
 
-  it("generates .js wrapper files on Windows", async () => {
+  it("generates .cjs wrapper files on Windows", async () => {
     await setupPathWrapperWorkspace("C:\\workspace");
 
     const renamedFinal = mockRename.mock.calls.map((c: unknown[]) => String(c[1]));
 
-    const hasJsGh = renamedFinal.some((p: string) => p.endsWith("gh.js"));
-    const hasJsGit = renamedFinal.some((p: string) => p.endsWith("git.js"));
-    expect(hasJsGh).toBe(true);
-    expect(hasJsGit).toBe(true);
+    const hasCjsGh = renamedFinal.some((p: string) => p.endsWith("gh.cjs"));
+    const hasCjsGit = renamedFinal.some((p: string) => p.endsWith("git.cjs"));
+    expect(hasCjsGh).toBe(true);
+    expect(hasCjsGit).toBe(true);
   });
 
   it("does NOT generate bash wrappers on Windows", async () => {
@@ -198,7 +198,7 @@ describe("setupPathWrapperWorkspace (Windows)", () => {
       return content.includes("@node") && content.includes("%~dp0");
     });
     expect(cmdWrite).toBeDefined();
-    expect(String(cmdWrite![1])).toMatch(/@node "%~dp0(gh|git)\.js" %\*/);
+    expect(String(cmdWrite![1])).toMatch(/@node "%~dp0(gh|git)\.cjs" %\*/);
   });
 
   it("writes .ao/AGENTS.md on Windows too", async () => {

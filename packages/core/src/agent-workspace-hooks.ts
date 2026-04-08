@@ -33,7 +33,7 @@ function getAoBinDir(): string {
 }
 
 /** Current version of wrapper scripts — bump when scripts change */
-const WRAPPER_VERSION = "0.3.0";
+const WRAPPER_VERSION = "0.4.0";
 
 // =============================================================================
 // PATH Builder
@@ -587,11 +587,12 @@ export async function setupPathWrapperWorkspace(workspacePath: string): Promise<
       for (const name of ["gh", "git"] as const) {
         const wrapperBase = join(getAoBinDir(), name);
         const nodeScript = buildNodeWrapper(name, "");
-        await atomicWriteFile(wrapperBase + ".js", nodeScript, 0o644);
-        // .cmd shim: delegates to node <wrapper>.js forwarding all args
+        // Use .cjs extension to force CJS mode regardless of any parent package.json "type" field
+        await atomicWriteFile(wrapperBase + ".cjs", nodeScript, 0o644);
+        // .cmd shim: delegates to node <wrapper>.cjs forwarding all args
         await atomicWriteFile(
           wrapperBase + ".cmd",
-          `@node "%~dp0${name}.js" %*\r\n`,
+          `@node "%~dp0${name}.cjs" %*\r\n`,
           0o644,
         );
       }
