@@ -51,11 +51,11 @@ export function LandingDifferentiators() {
       <div className="landing-reveal landing-card rounded-2xl overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-white/[0.06]">
+            <tr className="border-b border-[var(--landing-border-subtle)]">
               <th className="text-left px-6 py-4 font-mono text-[0.625rem] tracking-[0.1em] uppercase text-[var(--landing-muted)] opacity-40">
                 Feature
               </th>
-              <th className="text-center px-6 py-4 font-mono text-[0.625rem] tracking-[0.1em] uppercase text-white opacity-80">
+              <th className="text-center px-6 py-4 font-mono text-[0.625rem] tracking-[0.1em] uppercase text-[var(--landing-fg)] opacity-80">
                 AO
               </th>
               <th className="text-center px-6 py-4 font-mono text-[0.625rem] tracking-[0.1em] uppercase text-[var(--landing-muted)] opacity-40">
@@ -67,9 +67,9 @@ export function LandingDifferentiators() {
             {rows.map((row, i) => (
               <tr
                 key={row.feature}
-                className={i < rows.length - 1 ? "border-b border-white/[0.04]" : ""}
+                className={i < rows.length - 1 ? "border-b border-[var(--landing-border-subtle)]" : ""}
               >
-                <td className="px-6 py-3.5 text-[0.8125rem] text-white/80">
+                <td className="px-6 py-3.5 text-[0.8125rem] text-[var(--landing-fg)]/80">
                   {row.feature}
                 </td>
                 <td className="px-6 py-3.5 text-center text-[rgba(134,239,172,0.8)]">

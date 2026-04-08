@@ -38,7 +38,7 @@ export function LandingFeatures() {
             key={f.title}
             className="landing-reveal landing-card rounded-2xl p-10"
           >
-            <div className="w-12 h-12 rounded-xl bg-white/[0.04] flex items-center justify-center mb-6 text-xl">
+            <div className="w-12 h-12 rounded-xl bg-[var(--landing-surface)] flex items-center justify-center mb-6 text-xl">
               {f.icon}
             </div>
             <h3 className="[font-family:var(--font-instrument-serif,serif)] text-2xl mb-3 tracking-tight">

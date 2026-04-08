@@ -28,7 +28,7 @@ export function LandingQuickStart() {
             <p className="text-[var(--landing-muted)] text-[0.8125rem] leading-[1.6] mb-4">
               {s.desc}
             </p>
-            <div className="font-mono text-xs text-white/70 bg-black/30 px-3.5 py-2.5 rounded-lg">
+            <div className="font-mono text-xs text-[var(--landing-fg)]/70 bg-black/30 px-3.5 py-2.5 rounded-lg">
               <span className="text-[var(--landing-muted)] opacity-40">$</span> {s.cmd}
             </div>
           </div>

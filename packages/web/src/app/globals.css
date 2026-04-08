@@ -3431,12 +3431,19 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 /* ── Landing Page ─────────────────────────────────────────────────── */
 .landing-page {
-  --landing-bg: #0e0e10;
-  --landing-fg: hsl(0, 0%, 100%);
-  --landing-muted: hsl(240, 4%, 66%);
+  --landing-bg: #121110;
+  --landing-fg: #f0ece8;
+  --landing-muted: #a8a29e;
+  --landing-muted-dim: #57534e;
+  --landing-accent: #f97316;
+  --landing-border-subtle: rgba(255, 240, 220, 0.07);
+  --landing-border-default: rgba(255, 240, 220, 0.13);
+  --landing-border-strong: rgba(255, 240, 220, 0.24);
+  --landing-surface: #1a1918;
+  --landing-card-bg: #1c1b19;
   background: var(--landing-bg);
   color: var(--landing-fg);
-  font-family: var(--font-sans, 'Inter', -apple-system, sans-serif);
+  font-family: var(--font-sans, -apple-system, 'SF Pro Text', system-ui, sans-serif);
 }
 
 .liquid-glass {
@@ -3467,14 +3474,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .liquid-glass-solid {
-  background: transparent;
-  color: var(--landing-fg);
+  background: var(--landing-accent);
+  color: #121110;
   font-weight: 500;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: none;
 }
 
 .liquid-glass-solid:hover {
-  background: rgba(255, 255, 255, 0.06);
+  opacity: 0.9;
 }
 
 .liquid-glass-solid::before {
@@ -3482,18 +3489,17 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .landing-card {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--landing-card-bg);
+  border: 1px solid var(--landing-border-subtle);
   transition: border-color 0.2s, background 0.2s;
 }
 
 .landing-card:hover {
-  border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--landing-border-default);
 }
 
 .landing-hero-grid {
-  background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-image: radial-gradient(rgba(255, 240, 220, 0.04) 1px, transparent 1px);
   background-size: 24px 24px;
   mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
   -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);

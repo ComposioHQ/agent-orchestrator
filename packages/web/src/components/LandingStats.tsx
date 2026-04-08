@@ -31,7 +31,7 @@ export function LandingStats() {
           className="landing-card inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-[0.8125rem] text-[var(--landing-muted)] no-underline transition-all hover:text-white mb-3"
         >
           <span className="text-[rgba(251,191,36,0.7)] text-sm">★</span>
-          <span className="font-mono text-xs text-white opacity-80">5.9k</span>
+          <span className="font-mono text-xs text-[var(--landing-fg)] opacity-80">5.9k</span>
           <span>stars on GitHub</span>
         </a>
         <br />

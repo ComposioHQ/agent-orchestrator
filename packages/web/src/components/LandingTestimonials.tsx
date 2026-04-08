@@ -36,11 +36,11 @@ export function LandingTestimonials() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-12">
         {testimonials.map((t) => (
           <div key={t.initials} className="landing-reveal landing-card rounded-2xl p-8">
-            <p className="text-[0.9375rem] text-white/80 leading-[1.7] mb-5 italic [font-family:var(--font-instrument-serif,serif)]">
+            <p className="text-[0.9375rem] text-[var(--landing-fg)]/80 leading-[1.7] mb-5 italic [font-family:var(--font-instrument-serif,serif)]">
               &ldquo;{t.quote}&rdquo;
             </p>
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-white/[0.06] flex items-center justify-center text-xs font-semibold text-[var(--landing-muted)]">
+              <div className="w-9 h-9 rounded-full bg-[var(--landing-surface)] flex items-center justify-center text-xs font-semibold text-[var(--landing-muted)]">
                 {t.initials}
               </div>
               <div>

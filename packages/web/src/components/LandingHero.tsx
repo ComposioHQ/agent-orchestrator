@@ -36,10 +36,10 @@ export function LandingHero() {
         {/* Product preview — terminal showing actual ao output */}
         <div className="landing-fade-rise-d2 w-full max-w-[52rem] mt-16">
           <div className="landing-card rounded-2xl overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.06]">
-              <div className="w-2.5 h-2.5 rounded-full bg-white/10" />
-              <div className="w-2.5 h-2.5 rounded-full bg-white/10" />
-              <div className="w-2.5 h-2.5 rounded-full bg-white/10" />
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--landing-border-subtle)]">
+              <div className="w-2.5 h-2.5 rounded-full bg-[rgba(255,240,220,0.08)]" />
+              <div className="w-2.5 h-2.5 rounded-full bg-[rgba(255,240,220,0.08)]" />
+              <div className="w-2.5 h-2.5 rounded-full bg-[rgba(255,240,220,0.08)]" />
               <span className="ml-2 font-mono text-[0.625rem] text-[var(--landing-muted)] opacity-40">
                 agent-orchestrator — my-saas-app
               </span>

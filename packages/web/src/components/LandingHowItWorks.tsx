@@ -25,10 +25,10 @@ export function LandingHowItWorks() {
           </div>
           <div className="landing-card rounded-2xl p-8 min-h-[260px]">
             <div className="bg-black/40 rounded-xl overflow-hidden font-mono text-[0.8125rem]">
-              <div className="flex items-center gap-2 px-4 py-3 bg-white/[0.03]">
-                <div className="w-2.5 h-2.5 rounded-full bg-white/15" />
-                <div className="w-2.5 h-2.5 rounded-full bg-white/15" />
-                <div className="w-2.5 h-2.5 rounded-full bg-white/15" />
+              <div className="flex items-center gap-2 px-4 py-3 bg-[var(--landing-surface)]">
+                <div className="w-2.5 h-2.5 rounded-full bg-[rgba(255,240,220,0.12)]" />
+                <div className="w-2.5 h-2.5 rounded-full bg-[rgba(255,240,220,0.12)]" />
+                <div className="w-2.5 h-2.5 rounded-full bg-[rgba(255,240,220,0.12)]" />
               </div>
               <div className="px-5 py-4 leading-[1.8]">
                 <div><span className="text-[var(--landing-muted)]">$</span> <span className="text-white">ao batch-spawn 42 43 44 45 46</span></div>
@@ -61,10 +61,10 @@ export function LandingHowItWorks() {
           </div>
           <div className="landing-card rounded-2xl p-8 min-h-[260px] md:order-1">
             <div className="rounded-2xl overflow-hidden bg-black/30">
-              <div className="flex items-center gap-2 px-4 py-2.5 bg-white/[0.02] border-b border-white/[0.05]">
-                <div className="w-2.5 h-2.5 rounded-full bg-white/15" />
-                <div className="w-2.5 h-2.5 rounded-full bg-white/15" />
-                <div className="w-2.5 h-2.5 rounded-full bg-white/15" />
+              <div className="flex items-center gap-2 px-4 py-2.5 bg-[var(--landing-card-bg)] border-b border-[var(--landing-border-subtle)]">
+                <div className="w-2.5 h-2.5 rounded-full bg-[rgba(255,240,220,0.12)]" />
+                <div className="w-2.5 h-2.5 rounded-full bg-[rgba(255,240,220,0.12)]" />
+                <div className="w-2.5 h-2.5 rounded-full bg-[rgba(255,240,220,0.12)]" />
                 <span className="text-[0.6875rem] text-[var(--landing-muted)] opacity-50 ml-2">my-saas-app · 5 sessions</span>
               </div>
               <div className="grid grid-cols-4 gap-2 p-3">
@@ -105,9 +105,9 @@ export function LandingHowItWorks() {
                 { branch: "feat/rate-limiting", title: "Add Redis-backed rate limiter" },
                 { branch: "refactor/db-layer", title: "Extract repository pattern from services" },
               ].map((pr) => (
-                <div key={pr.branch} className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-5 py-4 flex items-center justify-between">
+                <div key={pr.branch} className="bg-[var(--landing-surface)] border border-[var(--landing-border-subtle)] rounded-xl px-5 py-4 flex items-center justify-between">
                   <div className="flex flex-col gap-1">
-                    <div className="font-mono text-xs text-white/70">{pr.branch}</div>
+                    <div className="font-mono text-xs text-[var(--landing-fg)]/70">{pr.branch}</div>
                     <div className="text-[0.8125rem] text-[var(--landing-muted)]">{pr.title}</div>
                   </div>
                   <div className="font-mono text-[0.625rem] tracking-[0.05em] px-3 py-1 rounded-full bg-[rgba(134,239,172,0.08)] text-[rgba(134,239,172,0.7)]">
@@ -138,8 +138,8 @@ function DashColumn({ title, cards }: { title: string; cards: DashCardData[] }) 
         {title}
       </div>
       {cards.map((card) => (
-        <div key={card.meta} className="bg-white/[0.03] border border-white/[0.05] rounded-lg p-2.5 mb-1.5 text-[0.6875rem]">
-          <div className="text-white/70 mb-1">{card.title}</div>
+        <div key={card.meta} className="bg-[var(--landing-surface)] border border-[var(--landing-border-subtle)] rounded-lg p-2.5 mb-1.5 text-[0.6875rem]">
+          <div className="text-[var(--landing-fg)]/70 mb-1">{card.title}</div>
           <div className="font-mono text-[0.5625rem] text-[var(--landing-muted)] opacity-50">{card.meta}</div>
           <div className="flex items-center gap-1 mt-1 font-mono text-[0.5625rem] text-[var(--landing-muted)] opacity-60">
             {card.done ? (
