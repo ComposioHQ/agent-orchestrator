@@ -882,22 +882,30 @@ export function DirectTerminal({
       >
         {/* Left side */}
         <div className="flex items-center" style={{ gap: 12, color: chrome.textMuted }}>
-          {/* Permission badge */}
-          <span style={{ color: chrome.permissionColor, fontWeight: 600, fontFamily: '"JetBrains Mono", monospace' }}>
-            <svg
-              className="mr-1 inline-block"
-              width="12" height="12" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2.5"
-            >
-              <path d="M7 17l9.2-9.2M17 17V7H7" />
-            </svg>
-            bypass permissions on
-          </span>
-          <span style={{ color: chrome.divider }}>|</span>
-          <span className="hidden sm:inline">(shift+tab to cycle)</span>
+          {/* Permission badge — Claude Code specific */}
+          {agentName === "Claude Code" ? (
+            <>
+              <span style={{ color: chrome.permissionColor, fontWeight: 600, fontFamily: '"JetBrains Mono", monospace' }}>
+                <svg
+                  className="mr-1 inline-block"
+                  width="12" height="12" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5"
+                >
+                  <path d="M7 17l9.2-9.2M17 17V7H7" />
+                </svg>
+                bypass permissions on
+              </span>
+              <span style={{ color: chrome.divider }}>|</span>
+              <span className="hidden sm:inline">(shift+tab to cycle)</span>
+            </>
+          ) : agentName ? (
+            <span style={{ color: chrome.textMuted, fontFamily: '"JetBrains Mono", monospace' }}>
+              {agentName}
+            </span>
+          ) : null}
           {prNumber ? (
             <>
-              <span className="hidden sm:inline" style={{ color: "#484f58" }}>|</span>
+              <span className="hidden sm:inline" style={{ color: chrome.divider }}>|</span>
               <a
                 href={prUrl}
                 target="_blank"

@@ -148,12 +148,21 @@ describe("DirectTerminal render", () => {
     expect(screen.getByTitle("Fullscreen")).toBeInTheDocument();
   });
 
-  it("renders status bar with permission badge", async () => {
-    render(<DirectTerminal sessionId="test-session" />);
+  it("renders status bar with permission badge for Claude Code", async () => {
+    render(<DirectTerminal sessionId="test-session" agentName="Claude Code" />);
 
     await waitFor(() => expect(screen.getByText("CONNECTED")).toBeInTheDocument());
 
     expect(screen.getByText("bypass permissions on")).toBeInTheDocument();
+  });
+
+  it("renders agent name in status bar for non-Claude agents", async () => {
+    render(<DirectTerminal sessionId="test-session" agentName="Aider" />);
+
+    await waitFor(() => expect(screen.getByText("CONNECTED")).toBeInTheDocument());
+
+    expect(screen.queryByText("bypass permissions on")).toBeNull();
+    expect(screen.getAllByText("Aider").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders PR link in status bar when prNumber is provided", async () => {

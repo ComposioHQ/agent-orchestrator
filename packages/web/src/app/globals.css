@@ -507,11 +507,17 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   }
 }
 
-/* Top bar fullscreen button hover */
+/* Top bar button hover — theme-adaptive */
 .terminal-topbar-btn:hover {
   background: rgba(255, 255, 255, 0.1) !important;
   color: #e6edf3 !important;
   border-color: #484f58 !important;
+}
+
+html.light .terminal-topbar-btn:hover {
+  background: rgba(0, 0, 0, 0.08) !important;
+  color: #1f2328 !important;
+  border-color: #afb8c1 !important;
 }
 
 /* ── Animations ──────────────────────────────────────────────────────── */
