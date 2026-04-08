@@ -48,6 +48,14 @@ function computeProjectHealth(sessions: DashboardSession[]): ProjectHealth {
   return "green";
 }
 
+const TERMINAL_STATUSES = new Set([
+  "merged",
+  "killed",
+  "cleanup",
+  "done",
+  "terminated",
+]);
+
 const healthDotColor: Record<ProjectHealth, string> = {
   red: "var(--color-status-error)",
   yellow: "var(--color-status-attention)",
@@ -328,7 +336,9 @@ function ProjectSidebarInner({
       entry.all.push(s);
       if (!isOrchestratorSession(s)) {
         entry.workers.push(s);
-        totalWorkers++;
+        if (!TERMINAL_STATUSES.has(s.status)) {
+          totalWorkers++;
+        }
       }
       const lvl = getAttentionLevel(s);
       if (lvl === "respond") needsInput++;
