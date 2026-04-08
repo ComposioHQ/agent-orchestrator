@@ -311,8 +311,14 @@ export function create(config?: Record<string, unknown>): Workspace {
       // Symlink shared resources
       if (project.symlinks) {
         for (const symlinkPath of project.symlinks) {
-          // Guard against absolute paths and directory traversal
-          if (symlinkPath.startsWith("/") || symlinkPath.includes("..")) {
+          // Guard against absolute paths (Unix: leading "/", Windows: drive letter "C:\"
+          // or UNC "\\server\share") and directory traversal
+          if (
+            symlinkPath.startsWith("/") ||
+            symlinkPath.includes("..") ||
+            /^[a-zA-Z]:[\\/]/.test(symlinkPath) ||
+            symlinkPath.startsWith("\\\\")
+          ) {
             throw new Error(
               `Invalid symlink path "${symlinkPath}": must be a relative path without ".." segments`,
             );

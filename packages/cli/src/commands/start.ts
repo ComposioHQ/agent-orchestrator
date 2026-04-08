@@ -40,7 +40,7 @@ import {
   type ParsedRepoUrl,
 } from "@composio/ao-core";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import { exec, execSilent, git } from "../lib/shell.js";
+import { exec, execSilent, forwardSignalsToChild, git } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker, stopLifecycleWorker } from "../lib/lifecycle-service.js";
 import {
@@ -1147,23 +1147,7 @@ async function runStartup(
     // so Ctrl+C only reaches AO's process group, not the dashboard's. Forward
     // SIGINT/SIGTERM so the dashboard group is also cleaned up on exit.
     if (!isWindows() && pid) {
-      const forward = (): void => {
-        process.off("SIGINT", forward);
-        process.off("SIGTERM", forward);
-        void killProcessTree(pid, "SIGTERM");
-        // Fallback: if the child ignores SIGTERM and never exits, force-kill
-        // after 5 s so the parent doesn't hang with no signal handlers registered.
-        const fallback = setTimeout(() => {
-          void killProcessTree(pid, "SIGKILL").finally(() => process.exit(1));
-        }, 5000);
-        fallback.unref();
-      };
-      process.once("SIGINT", forward);
-      process.once("SIGTERM", forward);
-      dashboardProcess.once("exit", () => {
-        process.off("SIGINT", forward);
-        process.off("SIGTERM", forward);
-      });
+      forwardSignalsToChild(pid, dashboardProcess);
     }
 
     dashboardProcess.on("exit", (code) => {

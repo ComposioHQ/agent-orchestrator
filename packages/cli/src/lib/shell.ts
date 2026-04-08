@@ -1,5 +1,6 @@
-import { execFile as execFileCb } from "node:child_process";
+import { type ChildProcess, execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
+import { killProcessTree } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFileCb);
 
@@ -51,6 +52,34 @@ export async function getTmuxSessions(): Promise<string[]> {
   const output = await tmux("list-sessions", "-F", "#{session_name}");
   if (!output) return [];
   return output.split("\n").filter(Boolean);
+}
+
+/**
+ * Forward SIGINT/SIGTERM from the parent to a detached child's process group.
+ * Required on Unix when a child is spawned with detached:true — Ctrl+C only
+ * reaches the parent's process group, not the child's.
+ *
+ * Sends SIGTERM immediately, then escalates to SIGKILL after 5 s if the child
+ * has not exited — prevents the parent from hanging indefinitely with no signal
+ * handlers registered. Cleans up automatically when the child exits normally.
+ */
+export function forwardSignalsToChild(pid: number, child: ChildProcess): void {
+  const forward = (): void => {
+    process.off("SIGINT", forward);
+    process.off("SIGTERM", forward);
+    void killProcessTree(pid, "SIGTERM");
+    // If the child ignores SIGTERM, force-kill after 5 s so the parent exits.
+    const fallback = setTimeout(() => {
+      void killProcessTree(pid, "SIGKILL").finally(() => process.exit(1));
+    }, 5000);
+    fallback.unref();
+  };
+  process.once("SIGINT", forward);
+  process.once("SIGTERM", forward);
+  child.once("exit", () => {
+    process.off("SIGINT", forward);
+    process.off("SIGTERM", forward);
+  });
 }
 
 export async function getTmuxActivity(session: string): Promise<number | null> {

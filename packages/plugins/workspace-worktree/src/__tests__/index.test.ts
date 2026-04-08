@@ -842,6 +842,24 @@ describe("workspace.postCreate()", () => {
     );
   });
 
+  it("rejects Windows drive-letter absolute symlink paths (e.g. C:\\path)", async () => {
+    const ws = create();
+    const project = makeProject({ symlinks: ["C:\\Windows\\System32"] });
+
+    await expect(ws.postCreate!(workspaceInfo, project)).rejects.toThrow(
+      'must be a relative path without ".." segments',
+    );
+  });
+
+  it("rejects Windows UNC absolute symlink paths (e.g. \\\\server\\share)", async () => {
+    const ws = create();
+    const project = makeProject({ symlinks: ["\\\\server\\share\\file"] });
+
+    await expect(ws.postCreate!(workspaceInfo, project)).rejects.toThrow(
+      'must be a relative path without ".." segments',
+    );
+  });
+
   it("creates parent directories for nested symlink targets", async () => {
     const ws = create();
     const project = makeProject({ symlinks: ["config/settings"] });

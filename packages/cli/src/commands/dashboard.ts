@@ -4,6 +4,7 @@ import chalk from "chalk";
 import type { Command } from "commander";
 import { isWindows, killProcessTree, loadConfig } from "@composio/ao-core";
 import { findWebDir, buildDashboardEnv, waitForPortAndOpen } from "../lib/web-dir.js";
+import { forwardSignalsToChild } from "../lib/shell.js";
 import {
   findRunningDashboardPid,
   isInstalledUnderNodeModules,
@@ -95,23 +96,7 @@ export function registerDashboard(program: Command): void {
       // Forward SIGINT/SIGTERM so the child group is cleaned up on exit.
       const pid = child.pid;
       if (!isWindows() && pid) {
-        const forward = (): void => {
-          process.off("SIGINT", forward);
-          process.off("SIGTERM", forward);
-          void killProcessTree(pid, "SIGTERM");
-          // Fallback: if the child ignores SIGTERM and never exits, force-kill
-          // after 5 s so the parent doesn't hang with no signal handlers registered.
-          const fallback = setTimeout(() => {
-            void killProcessTree(pid, "SIGKILL").finally(() => process.exit(1));
-          }, 5000);
-          fallback.unref();
-        };
-        process.once("SIGINT", forward);
-        process.once("SIGTERM", forward);
-        child.once("exit", () => {
-          process.off("SIGINT", forward);
-          process.off("SIGTERM", forward);
-        });
+        forwardSignalsToChild(pid, child);
       }
 
       let openAbort: AbortController | undefined;
