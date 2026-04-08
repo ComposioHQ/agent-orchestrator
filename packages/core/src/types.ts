@@ -1328,7 +1328,8 @@ export type PluginSlot =
   | "tracker"
   | "scm"
   | "notifier"
-  | "terminal";
+  | "terminal"
+  | "artifact";
 
 /** Plugin manifest — what every plugin exports */
 export interface PluginManifest {
@@ -1548,4 +1549,138 @@ export class ConfigNotFoundError extends Error {
     super(message ?? "No agent-orchestrator.yaml found. Run `ao start` to create one.");
     this.name = "ConfigNotFoundError";
   }
+}
+
+// =============================================================================
+// ARTIFACT SYSTEM
+// =============================================================================
+
+/** Artifact lifecycle status */
+export type ArtifactStatus =
+  | "draft"
+  | "published"
+  | "verified"
+  | "archived"
+  | "deleted";
+
+/** Artifact category */
+export type ArtifactCategory =
+  | "pr"
+  | "document"
+  | "test-report"
+  | "screenshot"
+  | "log"
+  | "other";
+
+/** A single artifact entry in the manifest */
+export interface ArtifactEntry {
+  /** Auto-generated UUID */
+  id: string;
+  /** Which session produced this artifact */
+  sessionId: string;
+  /** Which issue this relates to (e.g. "INT-42", "#123") */
+  issueId?: string;
+  /** Display name */
+  filename: string;
+  /** Relative path within artifacts/{sessionId}/ */
+  path: string;
+  /** MIME type (e.g. "image/png", "text/markdown") */
+  mimeType: string;
+  /** Artifact category */
+  category: ArtifactCategory;
+  /** Lifecycle status */
+  status: ArtifactStatus;
+  /** File size in bytes (0 for reference artifacts) */
+  size: number;
+  /** ISO 8601 creation timestamp */
+  createdAt: string;
+  /** ISO 8601 last-update timestamp */
+  updatedAt: string;
+  /** Human-readable description */
+  description?: string;
+  /** Searchable tags */
+  tags?: string[];
+  /** True for external references (e.g. PR on GitHub) */
+  isReference?: boolean;
+  /** URL for reference artifacts */
+  referenceUrl?: string;
+  /** Reference type */
+  referenceType?: string;
+  /** ISO 8601 deletion timestamp (tombstone) */
+  deletedAt?: string;
+  /** Session ID that deleted this artifact */
+  deletedBy?: string;
+}
+
+/** The artifact manifest — index of all artifacts */
+export interface ArtifactManifest {
+  schemaVersion: number;
+  updatedAt: string;
+  entries: ArtifactEntry[];
+}
+
+/** Filter criteria for listing artifacts */
+export interface ArtifactFilter {
+  sessionId?: string;
+  issueId?: string;
+  category?: ArtifactCategory;
+  status?: ArtifactStatus;
+  isReference?: boolean;
+  tags?: string[];
+  createdAfter?: string;
+  createdBefore?: string;
+  /** Include tombstoned artifacts (default: false) */
+  includeDeleted?: boolean;
+}
+
+/** A search result from grepping artifact content */
+export interface ArtifactSearchResult {
+  artifact: ArtifactEntry;
+  matches: {
+    line: number;
+    content: string;
+    context?: string;
+  }[];
+}
+
+/** Artifact service interface — implemented by artifact plugins */
+export interface ArtifactService {
+  readonly name: string;
+
+  // Publish
+  publish(
+    sessionId: string,
+    filePath: string,
+    meta: Partial<ArtifactEntry>,
+  ): Promise<ArtifactEntry>;
+  // Query
+  list(filter?: ArtifactFilter): Promise<ArtifactEntry[]>;
+  get(
+    artifactId: string,
+  ): Promise<{ entry: ArtifactEntry; absolutePath: string | null } | null>;
+  readContent(artifactId: string): Promise<string | null>;
+  grep(
+    pattern: string,
+    filter?: ArtifactFilter,
+    options?: { contextLines?: number },
+  ): Promise<ArtifactSearchResult[]>;
+
+  // Lifecycle
+  updateStatus(
+    artifactId: string,
+    status: ArtifactStatus,
+  ): Promise<ArtifactEntry>;
+  update(
+    artifactId: string,
+    updates: { description?: string; tags?: string[]; status?: ArtifactStatus },
+  ): Promise<ArtifactEntry>;
+  delete(
+    artifactId: string,
+    options?: { purge?: boolean; deletedBy?: string },
+  ): Promise<void>;
+
+  // Initialization
+  init(): Promise<void>;
+  isInitialized(): Promise<boolean>;
+  rebuildManifest(): Promise<void>;
 }

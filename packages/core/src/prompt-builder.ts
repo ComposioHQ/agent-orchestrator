@@ -13,6 +13,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ProjectConfig } from "./types.js";
+import { buildArtifactLayer, type ArtifactContext } from "./artifact-prompt.js";
 
 // =============================================================================
 // LAYER 1: BASE AGENT PROMPT
@@ -64,6 +65,9 @@ export interface PromptBuildConfig {
 
   /** Decomposition context — sibling task descriptions (from decomposer) */
   siblings?: string[];
+
+  /** Artifact context — included when artifacts are initialized */
+  artifactContext?: ArtifactContext;
 }
 
 // =============================================================================
@@ -182,6 +186,11 @@ export function buildPrompt(config: PromptBuildConfig): string {
     sections.push(
       `## Parallel Work\nSibling tasks being worked on in parallel:\n${siblingLines.join("\n")}\n\nDo not duplicate work that sibling tasks handle. If you need interfaces/types from siblings, define reasonable stubs.`,
     );
+  }
+
+  // Layer 5: Artifact context
+  if (config.artifactContext) {
+    sections.push(buildArtifactLayer(config.artifactContext));
   }
 
   // Explicit user prompt (appended last, highest priority)

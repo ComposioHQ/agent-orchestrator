@@ -6,11 +6,14 @@
  */
 
 import type { OrchestratorConfig, ProjectConfig } from "./types.js";
+import { buildOrchestratorArtifactSection } from "./artifact-prompt.js";
 
 export interface OrchestratorPromptConfig {
   config: OrchestratorConfig;
   projectId: string;
   project: ProjectConfig;
+  /** Whether artifacts are initialized for this project */
+  artifactsInitialized?: boolean;
 }
 
 /**
@@ -235,6 +238,11 @@ When an agent needs human judgment:
 7. **Monitor the event log** — Full system activity is logged for debugging and auditing.
 
 8. **Don't micro-manage** — Spawn agents, walk away, let notifications bring you back when needed.`);
+
+  // Artifact section (if initialized)
+  if (opts.artifactsInitialized) {
+    sections.push(buildOrchestratorArtifactSection());
+  }
 
   // Project-specific rules (if any)
   if (project.orchestratorRules) {

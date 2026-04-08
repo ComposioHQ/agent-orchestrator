@@ -66,4 +66,39 @@ describe("generateOrchestratorPrompt", () => {
     expect(prompt).toContain("Never claim a PR into `app-orchestrator`");
     expect(prompt).toContain("Delegate implementation, test execution, or PR claiming");
   });
+
+  it("includes artifact section when artifactsInitialized is true", () => {
+    const prompt = generateOrchestratorPrompt({
+      config,
+      projectId: "my-app",
+      project: config.projects["my-app"]!,
+      artifactsInitialized: true,
+    });
+
+    expect(prompt).toContain("## Session Artifacts");
+    expect(prompt).toContain("ao artifact list");
+    expect(prompt).toContain("ao artifact grep");
+    expect(prompt).toContain("ao artifact stats");
+  });
+
+  it("omits artifact section when artifactsInitialized is false", () => {
+    const prompt = generateOrchestratorPrompt({
+      config,
+      projectId: "my-app",
+      project: config.projects["my-app"]!,
+      artifactsInitialized: false,
+    });
+
+    expect(prompt).not.toContain("## Session Artifacts");
+  });
+
+  it("omits artifact section when artifactsInitialized is undefined", () => {
+    const prompt = generateOrchestratorPrompt({
+      config,
+      projectId: "my-app",
+      project: config.projects["my-app"]!,
+    });
+
+    expect(prompt).not.toContain("## Session Artifacts");
+  });
 });
