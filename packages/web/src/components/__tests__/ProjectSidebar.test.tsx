@@ -82,4 +82,82 @@ describe("ProjectSidebar", () => {
     const dash = screen.getByRole("link", { name: "Other Project dashboard" });
     expect(dash.getAttribute("href")).toContain("project=other-project");
   });
+
+  it("counts only non-terminal worker sessions in Portfolio active metric", () => {
+    const sessions = [
+      {
+        id: "s1",
+        name: "active-session",
+        projectId: "project-1",
+        status: "working" as const,
+        agentType: "claude-code" as const,
+        prNumber: null,
+        errorCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        metadata: {},
+      },
+      {
+        id: "s2",
+        name: "spawning-session",
+        projectId: "project-1",
+        status: "spawning" as const,
+        agentType: "claude-code" as const,
+        prNumber: null,
+        errorCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        metadata: {},
+      },
+      {
+        id: "s3",
+        name: "done-session",
+        projectId: "project-1",
+        status: "done" as const,
+        agentType: "claude-code" as const,
+        prNumber: null,
+        errorCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        metadata: {},
+      },
+      {
+        id: "s4",
+        name: "killed-session",
+        projectId: "project-1",
+        status: "killed" as const,
+        agentType: "claude-code" as const,
+        prNumber: null,
+        errorCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        metadata: {},
+      },
+      {
+        id: "s5",
+        name: "merged-session",
+        projectId: "project-1",
+        status: "merged" as const,
+        agentType: "claude-code" as const,
+        prNumber: null,
+        errorCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        metadata: {},
+      },
+    ];
+
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={sessions}
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+      />,
+    );
+
+    // Should show 2 active (working + spawning), excluding done, killed, merged
+    const activeMetric = screen.getByText(/active/).closest("div");
+    expect(activeMetric).toHaveTextContent("2");
+  });
 });
