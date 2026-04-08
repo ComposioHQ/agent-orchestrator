@@ -135,71 +135,68 @@ describe("DirectTerminal chrome", () => {
     const settingsBtn = screen.getByTitle("Terminal settings");
     fireEvent.click(settingsBtn);
 
-    // Panel should show font family, font size, cursor style, cursor blink, theme labels
+    // Panel should show section labels
     expect(screen.getByText("Font Family")).toBeInTheDocument();
     expect(screen.getByText("Font Size")).toBeInTheDocument();
     expect(screen.getByText("Cursor Style")).toBeInTheDocument();
     expect(screen.getByText("Cursor Blink")).toBeInTheDocument();
     expect(screen.getByText("Theme")).toBeInTheDocument();
+    expect(screen.getByText("Terminal Settings")).toBeInTheDocument();
 
-    // Cursor style buttons
-    expect(screen.getByText("bar")).toBeInTheDocument();
-    expect(screen.getByText("block")).toBeInTheDocument();
-    expect(screen.getByText("underline")).toBeInTheDocument();
+    // Cursor style visual buttons (by title)
+    expect(screen.getByTitle("Block")).toBeInTheDocument();
+    expect(screen.getByTitle("Bar")).toBeInTheDocument();
+    expect(screen.getByTitle("Underline")).toBeInTheDocument();
 
     // Theme swatches (one per preset)
     const swatchButtons = screen.getAllByTitle(/GitHub Dark|Dracula|Tokyo Night|One Dark|Catppuccin|Nord/);
     expect(swatchButtons.length).toBe(6);
 
-    // Font family select
-    const select = screen.getByDisplayValue("JetBrains Mono");
-    expect(select).toBeInTheDocument();
+    // Font family pill buttons
+    expect(screen.getByText("JetBrains Mono")).toBeInTheDocument();
+    expect(screen.getByText("Fira Code")).toBeInTheDocument();
 
     // Close the panel
     fireEvent.click(settingsBtn);
     expect(screen.queryByText("Font Family")).not.toBeInTheDocument();
   });
 
-  it("changes font size via slider in settings panel", async () => {
+  it("changes font size via pill buttons in settings panel", async () => {
     render(<DirectTerminal sessionId="test-font-size" />);
 
     await waitFor(() => expect(screen.getByText("CONNECTED")).toBeInTheDocument());
 
     fireEvent.click(screen.getByTitle("Terminal settings"));
 
-    const slider = screen.getByRole("slider");
-    fireEvent.change(slider, { target: { value: "18" } });
+    // Click the "16" font size pill
+    const btn16 = screen.getByRole("button", { name: "16" });
+    fireEvent.click(btn16);
 
-    // Both the slider label and status bar should show 18px
-    const matches = screen.getAllByText(/18px/);
-    expect(matches.length).toBeGreaterThanOrEqual(1);
+    const stored = JSON.parse(window.localStorage.getItem("ao-terminal-settings")!);
+    expect(stored.fontSize).toBe(16);
   });
 
-  it("changes cursor style via buttons in settings panel", async () => {
+  it("changes cursor style via visual buttons in settings panel", async () => {
     render(<DirectTerminal sessionId="test-cursor" />);
 
     await waitFor(() => expect(screen.getByText("CONNECTED")).toBeInTheDocument());
 
     fireEvent.click(screen.getByTitle("Terminal settings"));
 
-    const blockBtn = screen.getByText("block");
-    fireEvent.click(blockBtn);
+    fireEvent.click(screen.getByTitle("Block"));
 
-    // Verify the button got the active style (accent background)
-    // The state is internal but we can verify localStorage
     const stored = JSON.parse(window.localStorage.getItem("ao-terminal-settings")!);
     expect(stored.cursorStyle).toBe("block");
   });
 
-  it("changes font family via select in settings panel", async () => {
+  it("changes font family via pill buttons in settings panel", async () => {
     render(<DirectTerminal sessionId="test-font-family" />);
 
     await waitFor(() => expect(screen.getByText("CONNECTED")).toBeInTheDocument());
 
     fireEvent.click(screen.getByTitle("Terminal settings"));
 
-    const select = screen.getByDisplayValue("JetBrains Mono");
-    fireEvent.change(select, { target: { value: "Menlo, monospace" } });
+    fireEvent.click(screen.getByText("Menlo"));
 
     // Status bar should show Menlo
     expect(screen.getByText(/Menlo · 14px/)).toBeInTheDocument();
@@ -212,9 +209,10 @@ describe("DirectTerminal chrome", () => {
 
     fireEvent.click(screen.getByTitle("Terminal settings"));
 
-    // Find the toggle button (it's inside the Cursor Blink label)
+    // Find the toggle button (it's a sibling of the "Cursor Blink" span inside a div)
     const blinkLabel = screen.getByText("Cursor Blink");
-    const toggleBtn = blinkLabel.closest("label")?.querySelector("button");
+    const container = blinkLabel.closest("div");
+    const toggleBtn = container?.querySelector("button");
     expect(toggleBtn).toBeTruthy();
     fireEvent.click(toggleBtn!);
 
@@ -295,7 +293,6 @@ describe("DirectTerminal chrome", () => {
 
     fireEvent.click(screen.getByTitle("Restart OpenCode session"));
 
-    // Should call the send endpoint
     await waitFor(() => {
       const sendCall = fetchMock.mock.calls.find(
         (call) => typeof call[0] === "string" && call[0].includes("/send"),
@@ -344,7 +341,6 @@ describe("DirectTerminal chrome", () => {
 
     await waitFor(() => expect(screen.getByText("CONNECTED")).toBeInTheDocument());
 
-    // The container should have a light background
     const container = screen.getByText("light-test").closest(".terminal-container");
     expect(container).toBeTruthy();
   });
@@ -352,7 +348,6 @@ describe("DirectTerminal chrome", () => {
   // ── Error and connecting states ─────────────────────────────
 
   it("shows CONNECTING badge initially before WS connects", () => {
-    // Don't auto-connect WebSocket
     class SlowWebSocket {
       static OPEN = 1;
       readyState = 0;
@@ -368,7 +363,6 @@ describe("DirectTerminal chrome", () => {
 
     render(<DirectTerminal sessionId="connecting-test" />);
 
-    // Should show CONNECTING since WS hasn't opened yet
     expect(screen.getByText("CONNECTING")).toBeInTheDocument();
   });
 
