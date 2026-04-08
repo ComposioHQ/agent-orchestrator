@@ -1120,16 +1120,6 @@ async function runStartup(
 
   console.log(chalk.dim(`Config: ${config.configPath}`));
 
-  // Show next step hint (only if no existing orchestrators requiring selection)
-  if (!hasExistingOrchestrators) {
-    const projectIds = Object.keys(config.projects);
-    if (projectIds.length > 0) {
-      console.log(chalk.bold("\nNext step:\n"));
-      console.log(`  Spawn an agent session:`);
-      console.log(chalk.cyan(`     ao spawn <issue-number>\n`));
-    }
-  }
-
   // Auto-open browser once the server is ready.
   // With a single orchestrator (or a newly created one), navigate directly to the session page.
   // With multiple existing orchestrators, open the selection page so the user can choose or
