@@ -65,19 +65,20 @@ afterEach(() => {
 });
 
 describe("runRepoScript", () => {
-  it("uses getShell().cmd as fallback when AO_BASH_PATH not set", async () => {
-    mockGetShell.mockReturnValue({ cmd: "sh", args: (c: string) => ["-c", c] });
+  it("uses bash on Unix when AO_BASH_PATH not set (scripts have #!/bin/bash shebangs)", async () => {
+    mockIsWindows.mockReturnValue(false);
     const child = makeSpawnEventEmitter(0);
     mockSpawn.mockReturnValue(child);
 
     await runRepoScript("test-script.sh", []);
 
     expect(mockSpawn).toHaveBeenCalledWith(
-      "sh",
+      "bash",
       expect.any(Array),
       expect.any(Object),
     );
-    expect(mockGetShell).toHaveBeenCalled();
+    // getShell() must NOT be called on Unix — we always use bash directly
+    expect(mockGetShell).not.toHaveBeenCalled();
   });
 
   it("uses AO_BASH_PATH override when set", async () => {

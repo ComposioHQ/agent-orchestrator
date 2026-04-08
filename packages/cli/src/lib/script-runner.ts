@@ -21,9 +21,14 @@ export function resolveScriptPath(scriptName: string): string {
 
 export async function runRepoScript(scriptName: string, args: string[]): Promise<number> {
   const shellOverride = process.env["AO_BASH_PATH"];
-  const shell = shellOverride || getShell().cmd;
+  // Unix: always use bash — repo scripts have #!/bin/bash shebangs and bash-specific syntax.
+  // Shebangs are only honoured by the kernel when a file is executed directly; when passed as
+  // an argument to another interpreter (e.g. zsh script.sh) the shebang is ignored, so we must
+  // name bash explicitly rather than using the user's $SHELL.
+  // Windows: use getShell() (resolves to pwsh > powershell.exe > cmd.exe).
+  const shell = shellOverride || (isWindows() ? getShell().cmd : "bash");
   const scriptPath = resolveScriptPath(scriptName);
-  // Unix: spawn(shell, [scriptPath, ...args]) uses file mode — args reach $1, $2, etc.
+  // Unix: spawn(bash, [scriptPath, ...args]) — file mode so args reach $1, $2, etc.
   // Windows (no override): use getShell().args() to include required flags (e.g. -Command for pwsh).
   // With AO_BASH_PATH override: always use file mode (the override IS a bash-compatible binary).
   const shellArgs =
