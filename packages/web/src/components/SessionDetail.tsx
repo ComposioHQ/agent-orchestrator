@@ -377,7 +377,7 @@ export function SessionDetail({
         />
       )}
 
-      <div className="dashboard-main mx-auto max-w-[1180px] px-5 py-5 lg:px-8">
+      <div className="dashboard-main mx-auto max-w-full px-5 py-5 lg:px-8">
         <main className="min-w-0">
           {(!isOrchestrator || isMobile) && (
             <SessionTopStrip

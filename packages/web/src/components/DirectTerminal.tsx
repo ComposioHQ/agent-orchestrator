@@ -1,9 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
+import {
+  useTerminalSettings,
+  getThemePreset,
+  TerminalSettingsPanel,
+  THEME_PRESETS,
+} from "./TerminalSettings";
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
@@ -11,6 +17,7 @@ import "xterm/css/xterm.css";
 // Dynamically import xterm types for TypeScript
 import type { ITheme, Terminal as TerminalType } from "xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
+import type { SearchAddon as SearchAddonType } from "@xterm/addon-search";
 
 interface DirectTerminalProps {
   sessionId: string;
@@ -74,37 +81,20 @@ function parseRuntimeTerminalConfig(payload: unknown): TerminalConnectionConfig 
 
 export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; light: ITheme } {
   const agentAccent = {
-    cursor: "#5b7ef8",
-    selDark: "rgba(91, 126, 248, 0.30)",
+    cursor: "#58a6ff",
+    selDark: "rgba(88, 166, 255, 0.3)",
     selLight: "rgba(91, 126, 248, 0.25)",
   };
   const orchAccent = agentAccent;
   const accent = variant === "orchestrator" ? orchAccent : agentAccent;
 
+  // Default dark theme uses the GitHub Dark palette (first preset)
+  const githubDark = THEME_PRESETS[0].dark;
   const dark: ITheme = {
-    background: "#0a0a0f",
-    foreground: "#d4d4d8",
+    ...githubDark,
     cursor: accent.cursor,
-    cursorAccent: "#0a0a0f",
+    cursorAccent: githubDark.background,
     selectionBackground: accent.selDark,
-    selectionInactiveBackground: "rgba(128, 128, 128, 0.2)",
-    // ANSI colors — slightly warmer than pure defaults
-    black: "#1a1a24",
-    red: "#ef4444",
-    green: "#22c55e",
-    yellow: "#f59e0b",
-    blue: "#5b7ef8",
-    magenta: "#a371f7",
-    cyan: "#22d3ee",
-    white: "#d4d4d8",
-    brightBlack: "#50506a",
-    brightRed: "#f87171",
-    brightGreen: "#4ade80",
-    brightYellow: "#fbbf24",
-    brightBlue: "#7b9cfb",
-    brightMagenta: "#c084fc",
-    brightCyan: "#67e8f9",
-    brightWhite: "#eeeef5",
   };
 
   const light: ITheme = {
@@ -160,11 +150,6 @@ export function buildDirectTerminalWsUrl({
  * Direct xterm.js terminal with native WebSocket connection.
  * Implements Extended Device Attributes (XDA) handler to enable
  * tmux clipboard support (OSC 52) without requiring iTerm2 attachment.
- *
- * Based on DeepWiki analysis:
- * - tmux queries for XDA (CSI > q / XTVERSION) to detect terminal type
- * - When tmux sees "XTerm(" in response, it enables TTYC_MS (clipboard)
- * - xterm.js doesn't implement XDA by default, so we register custom handler
  */
 export function DirectTerminal({
   sessionId,
@@ -179,10 +164,12 @@ export function DirectTerminal({
   const searchParams = useSearchParams();
   const { resolvedTheme } = useTheme();
   const terminalThemes = useMemo(() => buildTerminalThemes(variant), [variant]);
+  const [settings, updateSettings] = useTerminalSettings();
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<TerminalType | null>(null);
   const fitAddon = useRef<FitAddonType | null>(null);
+  const searchAddon = useRef<SearchAddonType | null>(null);
   const ws = useRef<WebSocket | null>(null);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -192,6 +179,10 @@ export function DirectTerminal({
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -246,6 +237,31 @@ export function DirectTerminal({
     }
   }
 
+  // Search handlers
+  const handleSearchToggle = useCallback(() => {
+    setShowSearch((prev) => {
+      if (!prev) {
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+      } else {
+        searchAddon.current?.clearDecorations();
+        setSearchQuery("");
+      }
+      return !prev;
+    });
+  }, []);
+
+  const handleSearchNext = useCallback(() => {
+    if (searchQuery && searchAddon.current) {
+      searchAddon.current.findNext(searchQuery);
+    }
+  }, [searchQuery]);
+
+  const handleSearchPrev = useCallback(() => {
+    if (searchQuery && searchAddon.current) {
+      searchAddon.current.findPrevious(searchQuery);
+    }
+  }, [searchQuery]);
+
   useEffect(() => {
     if (!terminalRef.current) return;
 
@@ -265,9 +281,11 @@ export function DirectTerminal({
       import("xterm").then((mod) => mod.Terminal),
       import("@xterm/addon-fit").then((mod) => mod.FitAddon),
       import("@xterm/addon-web-links").then((mod) => mod.WebLinksAddon),
+      import("@xterm/addon-search").then((mod) => mod.SearchAddon),
+      import("@xterm/addon-webgl").then((mod) => mod.WebglAddon).catch(() => null),
       document.fonts.ready,
     ])
-      .then(([Terminal, FitAddon, WebLinksAddon]) => {
+      .then(([Terminal, FitAddon, WebLinksAddon, SearchAddon, WebglAddon]) => {
         if (!mounted || !terminalRef.current) return;
 
         const isDark = resolvedTheme !== "light";
@@ -276,12 +294,11 @@ export function DirectTerminal({
         // Initialize xterm.js Terminal
         const terminal = new Terminal({
           cursorBlink: true,
-          fontSize: 13,
+          fontSize: settings.fontSize,
+          cursorStyle: settings.cursorStyle,
           fontFamily:
             'var(--font-jetbrains-mono), "JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
           theme: activeTheme,
-          // Light mode needs an explicit contrast floor because agent UIs often emit
-          // dim/faint ANSI sequences that become unreadable on a near-white background.
           minimumContrastRatio: isDark ? 1 : 7,
           scrollback: 10000,
           allowProposedApi: true,
@@ -299,30 +316,26 @@ export function DirectTerminal({
         const webLinks = new WebLinksAddon();
         terminal.loadAddon(webLinks);
 
-        // **CRITICAL FIX**: Register XDA (Extended Device Attributes) handler
-        // This makes tmux recognize our terminal and enable clipboard support
+        // Add SearchAddon
+        const search = new SearchAddon();
+        terminal.loadAddon(search);
+        searchAddon.current = search;
+
+        // Register XDA (Extended Device Attributes) handler for tmux clipboard support
         terminal.parser.registerCsiHandler(
-          { prefix: ">", final: "q" }, // CSI > q is XTVERSION / XDA
+          { prefix: ">", final: "q" },
           () => {
-            // Respond with XTerm identification that tmux recognizes
-            // tmux looks for "XTerm(" in the response (see tmux tty-keys.c)
-            // Format: DCS > | XTerm(version) ST
-            // DCS = \x1bP, ST = \x1b\\
             terminal.write("\x1bP>|XTerm(370)\x1b\\");
-            console.log("[DirectTerminal] Sent XDA response for clipboard support");
-            return true; // Handled
+            return true;
           },
         );
 
         // Register OSC 52 handler for clipboard support
-        // tmux sends OSC 52 with base64-encoded text when copying
         terminal.parser.registerOscHandler(52, (data) => {
           const parts = data.split(";");
           if (parts.length < 2) return false;
           const b64 = parts[parts.length - 1];
           try {
-            // Decode base64 → binary string → Uint8Array → UTF-8 text
-            // atob() alone only handles Latin-1; TextDecoder is needed for UTF-8
             const binary = atob(b64);
             const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
             const text = new TextDecoder().decode(bytes);
@@ -337,19 +350,23 @@ export function DirectTerminal({
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
 
+        // Load WebGL addon with canvas fallback
+        if (WebglAddon) {
+          try {
+            terminal.loadAddon(new WebglAddon());
+          } catch {
+            // Canvas fallback — no action needed
+          }
+        }
+
         // Fit terminal to container
         fit.fit();
 
-        // Runtime WS config cache. We do not rely on build-time NEXT_PUBLIC_* here
-        // because `ao start` can choose terminal ports dynamically at runtime.
+        // Runtime WS config cache
         const runtimeConnectionConfig: TerminalConnectionConfig = {};
         let runtimeFetchDone = false;
 
         // ── Preserve selection while terminal receives output ────────
-        // xterm.js clears the selection on every terminal.write(). We
-        // buffer incoming data while a selection is active so the
-        // highlight stays visible for Cmd+C. The buffer is flushed
-        // when the selection is cleared (click, keypress, etc.).
         const writeBuffer: string[] = [];
         let selectionActive = false;
         let safetyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -371,7 +388,6 @@ export function DirectTerminal({
         const selectionDisposable = terminal.onSelectionChange(() => {
           if (terminal.hasSelection()) {
             selectionActive = true;
-            // Safety: flush after 5s to prevent unbounded buffering
             if (!safetyTimer) {
               safetyTimer = setTimeout(() => {
                 selectionActive = false;
@@ -384,19 +400,15 @@ export function DirectTerminal({
           }
         });
 
-        // Intercept Cmd+C (Mac) and Ctrl+Shift+C (Linux/Win) for copy.
-        // Paste (Cmd+V / Ctrl+Shift+V) is handled natively by xterm.js
-        // via its internal textarea — no custom handler needed.
+        // Intercept Cmd+C (Mac) and Ctrl+Shift+C (Linux/Win) for copy
         terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
           if (e.type !== "keydown") return true;
 
-          // Cmd+C / Ctrl+Shift+C — copy selection
           const isCopy =
             (e.metaKey && !e.ctrlKey && !e.altKey && e.code === "KeyC") ||
             (e.ctrlKey && e.shiftKey && e.code === "KeyC");
           if (isCopy && terminal.hasSelection()) {
             navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
-            // Clear selection so the terminal resumes receiving output
             terminal.clearSelection();
             return false;
           }
@@ -404,7 +416,7 @@ export function DirectTerminal({
           return true;
         });
 
-        // Handle window resize (works with whatever ws is current)
+        // Handle window resize
         const handleResize = () => {
           const currentWs = ws.current;
           if (fit && currentWs?.readyState === WebSocket.OPEN) {
@@ -449,7 +461,7 @@ export function DirectTerminal({
                 runtimeConnectionConfig.directTerminalPort = runtimeConfig.directTerminalPort;
               }
             } catch {
-              // Runtime config endpoint is optional (timeout or network failure); fallback to build-time values.
+              // Runtime config endpoint is optional
             } finally {
               clearTimeout(fetchTimeout);
             }
@@ -475,18 +487,15 @@ export function DirectTerminal({
             directTerminalPort: config.directTerminalPort,
           });
 
-          console.log("[DirectTerminal] Connecting to:", wsUrl);
           const websocket = new WebSocket(wsUrl);
           ws.current = websocket;
           websocket.binaryType = "arraybuffer";
 
           websocket.onopen = () => {
-            console.log("[DirectTerminal] WebSocket connected");
             reconnectAttemptRef.current = 0;
             setStatus("connected");
             setError(null);
 
-            // Send initial size
             websocket.send(
               JSON.stringify({
                 type: "resize",
@@ -502,7 +511,6 @@ export function DirectTerminal({
             if (selectionActive) {
               writeBuffer.push(data);
               bufferBytes += data.length;
-              // Flush if buffer exceeds 1 MB to prevent OOM
               if (bufferBytes > MAX_BUFFER_BYTES) {
                 selectionActive = false;
                 flushWriteBuffer();
@@ -517,11 +525,8 @@ export function DirectTerminal({
           };
 
           websocket.onclose = (event) => {
-            console.log("[DirectTerminal] WebSocket closed:", event.code, event.reason);
-
             if (!mounted) return;
 
-            // Permanent errors — don't retry
             if (PERMANENT_CLOSE_CODES.has(event.code)) {
               permanentErrorRef.current = true;
               setStatus("error");
@@ -529,12 +534,10 @@ export function DirectTerminal({
               return;
             }
 
-            // Transient failure — schedule reconnect with exponential backoff
             const attempt = reconnectAttemptRef.current;
             const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
             reconnectAttemptRef.current = attempt + 1;
 
-            console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
             setStatus("connecting");
             setError(null);
 
@@ -546,7 +549,6 @@ export function DirectTerminal({
 
         void connectWebSocket();
 
-        // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
@@ -578,14 +580,32 @@ export function DirectTerminal({
     };
   }, [sessionId, variant]);
 
-  // Live theme switching without terminal recreation
+  // Apply theme preset changes
   useEffect(() => {
     const terminal = terminalInstance.current;
     if (!terminal) return;
     const isDark = resolvedTheme !== "light";
-    terminal.options.theme = isDark ? terminalThemes.dark : terminalThemes.light;
+    if (isDark) {
+      const preset = getThemePreset(settings.themeName);
+      if (preset) {
+        terminal.options.theme = preset.dark;
+      } else {
+        terminal.options.theme = terminalThemes.dark;
+      }
+    } else {
+      terminal.options.theme = terminalThemes.light;
+    }
     terminal.options.minimumContrastRatio = isDark ? 1 : 7;
-  }, [resolvedTheme, terminalThemes]);
+  }, [resolvedTheme, terminalThemes, settings.themeName]);
+
+  // Apply font size and cursor style changes
+  useEffect(() => {
+    const terminal = terminalInstance.current;
+    if (!terminal) return;
+    terminal.options.fontSize = settings.fontSize;
+    terminal.options.cursorStyle = settings.cursorStyle;
+    fitAddon.current?.fit();
+  }, [settings.fontSize, settings.cursorStyle]);
 
   // Re-fit terminal when fullscreen changes
   useEffect(() => {
@@ -608,23 +628,19 @@ export function DirectTerminal({
       if (cancelled) return;
       resizeAttempts++;
 
-      // Wait for the container height to stabilise (CSS transition finished)
       const currentHeight = container.getBoundingClientRect().height;
       const settled = lastHeight >= 0 && Math.abs(currentHeight - lastHeight) < 1;
       lastHeight = currentHeight;
 
       if (!settled && resizeAttempts < maxAttempts) {
-        // Container is still transitioning, try again next frame
         rafId = requestAnimationFrame(resizeTerminal);
         return;
       }
 
-      // Container is at target size, now resize terminal
       terminal.refresh(0, terminal.rows - 1);
       fit.fit();
       terminal.refresh(0, terminal.rows - 1);
 
-      // Send new size to server (use ws.current in case WebSocket reconnected)
       const currentWs = ws.current;
       if (currentWs?.readyState === WebSocket.OPEN) {
         currentWs.send(
@@ -637,10 +653,8 @@ export function DirectTerminal({
       }
     };
 
-    // Start resize polling
     rafId = requestAnimationFrame(resizeTerminal);
 
-    // Also try on transitionend
     const handleTransitionEnd = (e: TransitionEvent) => {
       if (cancelled) return;
       if (e.target === container.parentElement) {
@@ -655,7 +669,6 @@ export function DirectTerminal({
     const parent = container.parentElement;
     parent?.addEventListener("transitionend", handleTransitionEnd);
 
-    // Backup timers in case RAF polling doesn't work
     const timer1 = setTimeout(() => {
       if (cancelled) return;
       resizeAttempts = 0;
@@ -682,39 +695,65 @@ export function DirectTerminal({
 
   const statusDotClass =
     status === "connected"
-      ? "bg-[var(--color-status-ready)]"
+      ? "terminal-dot--connected"
       : status === "error"
         ? "bg-[var(--color-status-error)]"
-        : "bg-[var(--color-status-attention)] animate-[pulse_1.5s_ease-in-out_infinite]";
+        : "terminal-dot--connecting";
 
-  const statusText =
-    status === "connected" ? "Connected" : status === "error" ? (error ?? "Error") : "Connecting…";
+  const statusBadgeText =
+    status === "connected" ? "CONNECTED" : status === "error" ? "ERROR" : "RECONNECTING";
 
-  const statusTextColor =
+  const statusBadgeClass =
     status === "connected"
       ? "text-[var(--color-status-ready)]"
       : status === "error"
         ? "text-[var(--color-status-error)]"
-        : "text-[var(--color-text-tertiary)]";
+        : "text-[var(--color-status-attention)]";
+
+  // Resolve the background color for the container from the active theme
+  const containerBg = useMemo(() => {
+    if (resolvedTheme === "light") return "#fafafa";
+    const preset = getThemePreset(settings.themeName);
+    return preset?.dark.background ?? "#0d1117";
+  }, [resolvedTheme, settings.themeName]);
+
+  // Height of the top bar + status bar for fullscreen calc
+  const chromeHeight = "74px"; // ~37px top + ~37px bottom
 
   return (
     <div
       className={cn(
-        "overflow-hidden border border-[var(--color-border-default)]",
-        resolvedTheme === "light" ? "bg-[#fafafa]" : "bg-[#0a0a0f]",
+        "terminal-container overflow-hidden border border-[#21262d]",
         fullscreen && "fixed inset-0 z-50 rounded-none border-0",
       )}
+      style={{
+        background: containerBg,
+        borderRadius: fullscreen ? 0 : 12,
+        boxShadow: fullscreen
+          ? "none"
+          : "0 8px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)",
+      }}
     >
-      {/* Terminal chrome bar */}
-      <div className="flex items-center gap-2 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
-        <div className={cn("h-2 w-2 shrink-0 rounded-full", statusDotClass)} />
+      {/* ── Top bar chrome ──────────────────────────────────────────── */}
+      <div
+        className="flex items-center gap-2 border-b border-[#21262d] px-3 py-2"
+        style={{
+          background: "rgba(22, 27, 34, 0.8)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+        }}
+      >
+        {/* Connection dot */}
+        <div className={cn("h-2.5 w-2.5 shrink-0 rounded-full", statusDotClass)} />
+        {/* Session name */}
         <span className="font-[var(--font-mono)] text-[11px]" style={{ color: accentColor }}>
           {sessionId}
         </span>
+        {/* Status badge */}
         <span
-          className={cn("text-[10px] font-medium uppercase tracking-[0.06em]", statusTextColor)}
+          className={cn("text-[9px] font-bold uppercase tracking-[0.08em]", statusBadgeClass)}
         >
-          {statusText}
+          {statusBadgeText}
         </span>
         {/* XDA clipboard badge */}
         <span
@@ -722,20 +761,24 @@ export function DirectTerminal({
           style={{
             color: accentColor,
             background: `color-mix(in srgb, ${accentColor} 12%, transparent)`,
+            borderRadius: "3px",
           }}
         >
           XDA
         </span>
-        {isOpenCodeSession ? (
-          <button
-            onClick={handleReload}
-            disabled={reloading || status !== "connected"}
-            title="Restart OpenCode session (/exit then resume mapped session)"
-            aria-label="Restart OpenCode session"
-            className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {reloading ? (
-              <>
+
+        {/* Right side buttons */}
+        <div className="ml-auto flex items-center gap-1">
+          {isOpenCodeSession ? (
+            <button
+              onClick={handleReload}
+              disabled={reloading || status !== "connected"}
+              title="Restart OpenCode session"
+              aria-label="Restart OpenCode session"
+              className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[rgba(255,255,255,0.06)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
+              style={{ borderRadius: "4px" }}
+            >
+              {reloading ? (
                 <svg
                   className="h-3 w-3 animate-spin"
                   fill="none"
@@ -745,10 +788,7 @@ export function DirectTerminal({
                 >
                   <path d="M12 3a9 9 0 109 9" />
                 </svg>
-                restarting
-              </>
-            ) : (
-              <>
+              ) : (
                 <svg
                   className="h-3 w-3"
                   fill="none"
@@ -759,66 +799,172 @@ export function DirectTerminal({
                   <path d="M21 12a9 9 0 11-2.64-6.36" />
                   <path d="M21 3v6h-6" />
                 </svg>
-                restart
-              </>
+              )}
+            </button>
+          ) : null}
+          {reloadError ? (
+            <span
+              className="max-w-[30ch] truncate text-[10px] font-medium text-[var(--color-status-error)]"
+              title={reloadError}
+            >
+              {reloadError}
+            </span>
+          ) : null}
+
+          {/* Search button */}
+          <button
+            onClick={handleSearchToggle}
+            title="Search terminal (Ctrl+F)"
+            aria-label="Search terminal"
+            className={cn(
+              "flex items-center px-2 py-1 text-[var(--color-text-tertiary)] transition-colors hover:bg-[rgba(255,255,255,0.06)] hover:text-[var(--color-text-primary)]",
+              showSearch && "bg-[rgba(255,255,255,0.08)] text-[var(--color-text-primary)]",
             )}
-          </button>
-        ) : null}
-        {reloadError ? (
-          <span
-            className="max-w-[40ch] truncate text-[10px] font-medium text-[var(--color-status-error)]"
-            title={reloadError}
+            style={{ borderRadius: "4px" }}
           >
-            {reloadError}
-          </span>
-        ) : null}
-        <button
-          onClick={() => setFullscreen(!fullscreen)}
-          className={cn(
-            "flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
-            !isOpenCodeSession && "ml-auto",
-          )}
-        >
-          {fullscreen ? (
-            <>
-              <svg
-                className="h-3 w-3"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.35-4.35" />
+            </svg>
+          </button>
+
+          {/* Settings button */}
+          <div className="relative">
+            <button
+              onClick={() => setShowSettings((prev) => !prev)}
+              title="Terminal settings"
+              aria-label="Terminal settings"
+              className={cn(
+                "flex items-center px-2 py-1 text-[var(--color-text-tertiary)] transition-colors hover:bg-[rgba(255,255,255,0.06)] hover:text-[var(--color-text-primary)]",
+                showSettings && "bg-[rgba(255,255,255,0.08)] text-[var(--color-text-primary)]",
+              )}
+              style={{ borderRadius: "4px" }}
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+            {showSettings ? (
+              <TerminalSettingsPanel
+                settings={settings}
+                onUpdate={updateSettings}
+                onClose={() => setShowSettings(false)}
+              />
+            ) : null}
+          </div>
+
+          {/* Fullscreen button */}
+          <button
+            onClick={() => setFullscreen(!fullscreen)}
+            title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+            aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+            className="flex items-center px-2 py-1 text-[var(--color-text-tertiary)] transition-colors hover:bg-[rgba(255,255,255,0.06)] hover:text-[var(--color-text-primary)]"
+            style={{ borderRadius: "4px" }}
+          >
+            {fullscreen ? (
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3" />
               </svg>
-              exit fullscreen
-            </>
-          ) : (
-            <>
-              <svg
-                className="h-3 w-3"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
+            ) : (
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />
               </svg>
-              fullscreen
-            </>
-          )}
-        </button>
+            )}
+          </button>
+        </div>
       </div>
-      {/* Terminal area */}
+
+      {/* ── Search bar ──────────────────────────────────────────────── */}
+      {showSearch ? (
+        <div className="flex items-center gap-2 border-b border-[#21262d] bg-[rgba(22,27,34,0.9)] px-3 py-1.5">
+          <svg className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-tertiary)]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.35-4.35" />
+          </svg>
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              if (e.target.value && searchAddon.current) {
+                searchAddon.current.findNext(e.target.value);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                if (e.shiftKey) handleSearchPrev();
+                else handleSearchNext();
+              }
+              if (e.key === "Escape") handleSearchToggle();
+            }}
+            placeholder="Search..."
+            className="flex-1 border-none bg-transparent font-[var(--font-mono)] text-[12px] text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-tertiary)]"
+          />
+          <button
+            onClick={handleSearchPrev}
+            className="px-1 py-0.5 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
+            title="Previous match"
+          >
+            <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <path d="M18 15l-6-6-6 6" />
+            </svg>
+          </button>
+          <button
+            onClick={handleSearchNext}
+            className="px-1 py-0.5 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
+            title="Next match"
+          >
+            <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+          <button
+            onClick={handleSearchToggle}
+            className="px-1 py-0.5 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
+            title="Close search"
+          >
+            <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      ) : null}
+
+      {/* ── Terminal area ───────────────────────────────────────────── */}
       <div
         ref={terminalRef}
-        className={cn("w-full p-1.5")}
+        className={cn("w-full p-2")}
         style={{
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
-          height: fullscreen ? "calc(100dvh - 37px)" : height,
+          height: fullscreen ? `calc(100dvh - ${chromeHeight})` : height,
         }}
       />
+
+      {/* ── Status bar ──────────────────────────────────────────────── */}
+      <div
+        className="flex items-center justify-between border-t border-[#21262d] px-3 py-1.5"
+        style={{ background: "#161b22" }}
+      >
+        <div className="flex items-center gap-3">
+          <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+            {settings.fontSize}px
+          </span>
+          {error && status === "error" ? (
+            <span className="text-[11px] text-[var(--color-status-error)]">
+              {error}
+            </span>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-[var(--color-text-tertiary)]">
+            WebGL
+          </span>
+        </div>
+      </div>
     </div>
   );
 }

@@ -473,10 +473,10 @@ a:hover {
   background: rgba(255, 255, 255, 0.12);
 }
 .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.28);
 }
 .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
-  background: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.4);
 }
 
 /* Light — same pattern, darker thumb */
@@ -493,6 +493,29 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:hover {
 }
 html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: rgba(0, 0, 0, 0.4);
+}
+
+/* ── Terminal connection dot ─────────────────────────────────────────── */
+
+.terminal-dot--connected {
+  background: var(--color-status-ready);
+  box-shadow: 0 0 6px 1px rgba(63, 185, 80, 0.5);
+  animation: terminal-dot-pulse 2s ease-in-out infinite;
+}
+
+.terminal-dot--connecting {
+  background: var(--color-status-attention);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes terminal-dot-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 6px 1px rgba(63, 185, 80, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 10px 3px rgba(63, 185, 80, 0.7);
+  }
 }
 
 /* ── Animations ──────────────────────────────────────────────────────── */

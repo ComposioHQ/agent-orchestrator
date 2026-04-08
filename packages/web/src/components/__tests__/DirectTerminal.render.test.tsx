@@ -88,6 +88,26 @@ vi.mock("@xterm/addon-web-links", () => ({
   WebLinksAddon: MockWebLinksAddon,
 }));
 
+class MockSearchAddon {
+  findNext() {
+    return false;
+  }
+  findPrevious() {
+    return false;
+  }
+  clearDecorations() {}
+}
+
+vi.mock("@xterm/addon-search", () => ({
+  SearchAddon: MockSearchAddon,
+}));
+
+vi.mock("@xterm/addon-webgl", () => ({
+  WebglAddon: function MockWebglAddon() {
+    throw new Error("WebGL not available in test");
+  },
+}));
+
 describe("DirectTerminal render", () => {
   beforeEach(() => {
     searchParams = new URLSearchParams();
@@ -119,7 +139,7 @@ describe("DirectTerminal render", () => {
 
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/runtime/terminal", expect.any(Object)));
     await waitFor(() =>
-      expect(screen.getByText("Connected")).toBeInTheDocument(),
+      expect(screen.getByText("CONNECTED")).toBeInTheDocument(),
     );
 
     expect(screen.getByText("ao-orchestrator")).toHaveStyle({ color: "var(--color-accent)" });

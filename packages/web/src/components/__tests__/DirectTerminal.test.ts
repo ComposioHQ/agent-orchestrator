@@ -120,9 +120,9 @@ describe("buildTerminalThemes", () => {
     }
   });
 
-  it("dark theme background is #0a0a0f", () => {
+  it("dark theme background is #0d1117 (GitHub Dark)", () => {
     const { dark } = buildTerminalThemes("agent");
-    expect(dark.background).toBe("#0a0a0f");
+    expect(dark.background).toBe("#0d1117");
   });
 
   it("orchestrator variant reuses the shared design-system accent", () => {
