@@ -1,0 +1,33 @@
+packages/web/src/app/landing/page.tsx
+  22245a10688879f6 8,24-27
+packages/web/src/components/LandingAbout.tsx
+  22245a10688879f6 4,6,8-13,15-20
+packages/web/src/components/__tests__/LandingPage.test.tsx
+  22245a10688879f6 29,54-55,63-65,70,72-87
+packages/web/src/components/LandingDifferentiators.tsx
+  22245a10688879f6 1-88
+packages/web/src/app/landing/__tests__/page.test.tsx
+  22245a10688879f6 22
+packages/web/src/components/LandingHero.tsx
+  22245a10688879f6 7-15,17-20,22-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "873b170c701509a02f5a23dc93669854e22e8467",
+  "prompts": {
+    "22245a10688879f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1afca590-66d0-4943-a416-cfee447e7b02",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 206,
+      "total_deletions": 52,
+      "accepted_lines": 206,
+      "overriden_lines": 0
+    }
+  }
+}
