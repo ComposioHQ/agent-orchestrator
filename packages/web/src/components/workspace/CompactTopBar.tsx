@@ -167,7 +167,7 @@ export function CompactTopBar({ session, collapsed, toggleCollapsed, verticalLay
           { idx: 1, icon: "📄", label: "Preview", shortcut: "⌘⇧P" },
           {
             idx: 2,
-            icon: <TerminalToggleIcon size={16} />,
+            icon: <TerminalToggleIcon />,
             label: "Terminal",
             shortcut: "⌘⇧Z",
           },

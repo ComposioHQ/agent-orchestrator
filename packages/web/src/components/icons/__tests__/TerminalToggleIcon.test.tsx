@@ -7,8 +7,8 @@ describe("TerminalToggleIcon", () => {
     const { container } = render(<TerminalToggleIcon />);
     const svg = container.querySelector("svg");
     expect(svg).toBeTruthy();
-    expect(svg?.getAttribute("width")).toBe("16");
-    expect(svg?.getAttribute("height")).toBe("16");
+    expect(svg?.getAttribute("width")).toBe("14");
+    expect(svg?.getAttribute("height")).toBe("14");
   });
 
   it("respects custom size", () => {
