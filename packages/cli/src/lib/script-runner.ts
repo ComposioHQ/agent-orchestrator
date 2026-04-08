@@ -23,7 +23,7 @@ export async function runRepoScript(scriptName: string, args: string[]): Promise
   const shellOverride = process.env["AO_BASH_PATH"];
   const shell = shellOverride ?? getShell().cmd;
   const scriptPath = resolveScriptPath(scriptName);
-  const shellArgs = shellOverride ? [scriptPath, ...args] : [...getShell().args(scriptPath), ...args];
+  const shellArgs = [scriptPath, ...args];
 
   return await new Promise<number>((resolveExit, reject) => {
     const child = spawn(shell, shellArgs, {
