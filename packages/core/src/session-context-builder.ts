@@ -32,7 +32,7 @@ export async function buildPreviousSessionContext(
   defaultBranch = "main",
 ): Promise<string | null> {
   const status = archivedRaw["status"] ?? "unknown";
-  const isDone = status === "done";
+  const isDone = status === "done" || status === "cleanup";
 
   const parts: string[] = [];
   parts.push("## Previous Session Context");
