@@ -156,6 +156,10 @@ describe("DirectTerminal chrome", () => {
     expect(screen.getByText("JetBrains Mono")).toBeInTheDocument();
     expect(screen.getByText("Fira Code")).toBeInTheDocument();
 
+    // Selection Color and Reset
+    expect(screen.getByText("Selection Color")).toBeInTheDocument();
+    expect(screen.getByText("Reset to Defaults")).toBeInTheDocument();
+
     // Close the panel
     fireEvent.click(settingsBtn);
     expect(screen.queryByText("Font Family")).not.toBeInTheDocument();
@@ -168,8 +172,8 @@ describe("DirectTerminal chrome", () => {
 
     fireEvent.click(screen.getByTitle("Terminal settings"));
 
-    // Click the "16" font size pill
-    const btn16 = screen.getByRole("button", { name: "16" });
+    // Click the "16px" font size pill
+    const btn16 = screen.getByRole("button", { name: "16px" });
     fireEvent.click(btn16);
 
     const stored = JSON.parse(window.localStorage.getItem("ao-terminal-settings")!);
@@ -196,10 +200,10 @@ describe("DirectTerminal chrome", () => {
 
     fireEvent.click(screen.getByTitle("Terminal settings"));
 
-    fireEvent.click(screen.getByText("Menlo"));
+    fireEvent.click(screen.getByText("SF Mono"));
 
-    // Status bar should show Menlo
-    expect(screen.getByText(/Menlo · 14px/)).toBeInTheDocument();
+    // Status bar should show SF Mono
+    expect(screen.getByText(/SF Mono · 14px/)).toBeInTheDocument();
   });
 
   it("toggles cursor blink via toggle button", async () => {

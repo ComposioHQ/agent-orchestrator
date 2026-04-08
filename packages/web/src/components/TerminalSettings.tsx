@@ -10,6 +10,7 @@ export interface TerminalSettings {
   fontFamily: string;
   cursorStyle: "block" | "bar" | "underline";
   cursorBlink: boolean;
+  selectionColor: string;
   themeName: string;
 }
 
@@ -17,10 +18,17 @@ export const FONT_FAMILIES = [
   { value: '"JetBrains Mono", monospace', label: "JetBrains Mono" },
   { value: '"Fira Code", monospace', label: "Fira Code" },
   { value: '"Source Code Pro", monospace', label: "Source Code Pro" },
-  { value: 'Menlo, monospace', label: "Menlo" },
-  { value: 'Monaco, monospace', label: "Monaco" },
-  { value: 'Consolas, monospace', label: "Consolas" },
-  { value: 'monospace', label: "monospace" },
+  { value: '"SF Mono", monospace', label: "SF Mono" },
+  { value: '"Cascadia Code", monospace', label: "Cascadia Code" },
+  { value: 'ui-monospace, monospace', label: "System Mono" },
+] as const;
+
+export const SELECTION_COLORS = [
+  { value: "rgba(88,166,255,0.3)", label: "Blue", swatch: "#58a6ff" },
+  { value: "rgba(210,168,255,0.3)", label: "Purple", swatch: "#d2a8ff" },
+  { value: "rgba(63,185,80,0.3)", label: "Green", swatch: "#3fb950" },
+  { value: "rgba(240,136,62,0.3)", label: "Orange", swatch: "#f0883e" },
+  { value: "rgba(255,123,114,0.3)", label: "Red", swatch: "#ff7b72" },
 ] as const;
 
 function isValidFontSize(n: number): boolean {
@@ -44,6 +52,7 @@ const DEFAULT_SETTINGS: TerminalSettings = {
   fontFamily: '"JetBrains Mono", monospace',
   cursorStyle: "bar",
   cursorBlink: true,
+  selectionColor: "rgba(88,166,255,0.3)",
   themeName: "github-dark",
 };
 
@@ -252,6 +261,10 @@ function loadPersistedSettings(): TerminalSettings {
         typeof obj.cursorBlink === "boolean"
           ? obj.cursorBlink
           : DEFAULT_SETTINGS.cursorBlink,
+      selectionColor:
+        typeof obj.selectionColor === "string" && SELECTION_COLORS.some((c) => c.value === obj.selectionColor)
+          ? obj.selectionColor
+          : DEFAULT_SETTINGS.selectionColor,
       themeName:
         typeof obj.themeName === "string" && THEME_PRESETS.some((t) => t.name === obj.themeName)
           ? obj.themeName

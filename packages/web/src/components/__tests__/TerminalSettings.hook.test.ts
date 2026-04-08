@@ -47,9 +47,10 @@ describe("useTerminalSettings", () => {
   it("loads persisted settings from localStorage", () => {
     const saved: TerminalSettings = {
       fontSize: 16,
-      fontFamily: "Menlo, monospace",
+      fontFamily: '"SF Mono", monospace',
       cursorStyle: "block",
       cursorBlink: false,
+      selectionColor: "rgba(210,168,255,0.3)",
       themeName: "dracula",
     };
     mockStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
@@ -57,7 +58,7 @@ describe("useTerminalSettings", () => {
     const { result } = renderHook(() => useTerminalSettings());
     const [settings] = result.current;
     expect(settings.fontSize).toBe(16);
-    expect(settings.fontFamily).toBe("Menlo, monospace");
+    expect(settings.fontFamily).toBe('"SF Mono", monospace');
     expect(settings.cursorStyle).toBe("block");
     expect(settings.cursorBlink).toBe(false);
     expect(settings.themeName).toBe("dracula");

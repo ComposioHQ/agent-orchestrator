@@ -9,6 +9,7 @@ import {
   getThemePreset,
   THEME_PRESETS,
   FONT_FAMILIES,
+  SELECTION_COLORS,
 } from "./TerminalSettings";
 
 // Import xterm CSS (must be imported in client component)
@@ -549,7 +550,12 @@ export function DirectTerminal({
       terminal.options.theme = terminalThemes.light;
     }
     terminal.options.minimumContrastRatio = isDark ? 1 : 7;
-  }, [resolvedTheme, terminalThemes, settings.themeName]);
+    // Apply selection color from settings
+    terminal.options.theme = {
+      ...terminal.options.theme,
+      selectionBackground: settings.selectionColor,
+    };
+  }, [resolvedTheme, terminalThemes, settings.themeName, settings.selectionColor]);
 
   // Apply font/cursor setting changes live
   useEffect(() => {
@@ -874,7 +880,7 @@ export function DirectTerminal({
                 <circle cx="12" cy="12" r="3" />
               </svg>
             </button>
-            {/* Settings panel — matching mockup layout */}
+            {/* Settings panel */}
             {showSettings ? (
               <div
                 ref={settingsPanelRef}
@@ -903,150 +909,141 @@ export function DirectTerminal({
                   Terminal Settings
                 </div>
 
-                {/* Font Family — pill buttons */}
+                {/* Font Family */}
                 <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Font Family</div>
+                  <div className="settings-label" style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Font Family</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {FONT_FAMILIES.map((f) => (
-                      <button
-                        key={f.value}
-                        onClick={() => updateSettings({ fontFamily: f.value })}
-                        style={{
-                          fontSize: 12,
-                          padding: "4px 10px",
-                          borderRadius: 6,
-                          border: `1px solid ${settings.fontFamily === f.value ? chrome.accent : (isLight ? "#d1d9e0" : "#30363d")}`,
-                          background: settings.fontFamily === f.value ? `color-mix(in srgb, ${chrome.accent} 10%, transparent)` : (isLight ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)"),
-                          color: settings.fontFamily === f.value ? chrome.accent : chrome.textMuted,
-                          cursor: "pointer",
-                          fontFamily: f.value,
-                        }}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
+                    {FONT_FAMILIES.map((f) => {
+                      const active = settings.fontFamily === f.value;
+                      return (
+                        <button key={f.value} onClick={() => updateSettings({ fontFamily: f.value })} style={{
+                          fontSize: 12, padding: "4px 10px", borderRadius: 6, cursor: "pointer",
+                          fontFamily: '"JetBrains Mono", monospace',
+                          border: `1px solid ${active ? chrome.accent : (isLight ? "#d1d9e0" : "#30363d")}`,
+                          background: active ? `color-mix(in srgb, ${chrome.accent} 10%, transparent)` : (isLight ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)"),
+                          color: active ? chrome.accent : chrome.textMuted,
+                        }}>{f.label}</button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                {/* Font Size — pill buttons */}
+                {/* Font Size */}
                 <div style={{ marginBottom: 14 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                    <span style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500 }}>Font Size</span>
-                    <span style={{ fontSize: 10, color: isLight ? "#8c959f" : "#484f58" }}>{settings.fontSize}px</span>
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {[12, 13, 14, 15, 16].map((size) => (
-                      <button
-                        key={size}
-                        onClick={() => updateSettings({ fontSize: size })}
-                        style={{
-                          fontSize: 12,
-                          padding: "4px 10px",
-                          borderRadius: 6,
-                          border: `1px solid ${settings.fontSize === size ? chrome.accent : (isLight ? "#d1d9e0" : "#30363d")}`,
-                          background: settings.fontSize === size ? `color-mix(in srgb, ${chrome.accent} 10%, transparent)` : (isLight ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)"),
-                          color: settings.fontSize === size ? chrome.accent : chrome.textMuted,
-                          cursor: "pointer",
+                  <div className="settings-label" style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Font Size</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[12, 13, 14, 15, 16].map((size) => {
+                      const active = settings.fontSize === size;
+                      return (
+                        <button key={size} onClick={() => updateSettings({ fontSize: size })} style={{
+                          fontSize: 12, padding: "4px 10px", borderRadius: 6, cursor: "pointer",
                           fontFamily: '"JetBrains Mono", monospace',
-                        }}
-                      >
-                        {size}
-                      </button>
-                    ))}
+                          border: `1px solid ${active ? chrome.accent : (isLight ? "#d1d9e0" : "#30363d")}`,
+                          background: active ? `color-mix(in srgb, ${chrome.accent} 10%, transparent)` : (isLight ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)"),
+                          color: active ? chrome.accent : chrome.textMuted,
+                        }}>{size}px</button>
+                      );
+                    })}
                   </div>
                 </div>
 
                 {/* Divider */}
                 <div style={{ height: 1, background: isLight ? "#d8dee4" : "#21262d", margin: "14px 0" }} />
 
-                {/* Theme — square swatches */}
+                {/* Theme */}
                 <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Theme</div>
+                  <div className="settings-label" style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Theme</div>
                   <div style={{ display: "flex", gap: 6 }}>
                     {THEME_PRESETS.map((preset) => (
-                      <button
-                        key={preset.name}
-                        onClick={() => updateSettings({ themeName: preset.name })}
-                        title={preset.label}
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: 8,
-                          background: preset.swatch,
-                          border: settings.themeName === preset.name ? `2px solid ${chrome.accent}` : "2px solid transparent",
-                          cursor: "pointer",
-                          padding: 0,
-                          transition: "transform 0.15s ease",
-                        }}
-                      />
+                      <button key={preset.name} onClick={() => updateSettings({ themeName: preset.name })} title={preset.label} style={{
+                        width: 28, height: 28, borderRadius: 8, background: preset.swatch, cursor: "pointer", padding: 0,
+                        border: settings.themeName === preset.name ? `2px solid ${chrome.accent}` : "2px solid transparent",
+                      }} />
                     ))}
                   </div>
                 </div>
 
-                {/* Cursor Style — visual previews */}
+                {/* Cursor Style — icons with text labels */}
                 <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Cursor Style</div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {(["block", "bar", "underline"] as const).map((style) => (
-                      <button
-                        key={style}
-                        onClick={() => updateSettings({ cursorStyle: style })}
-                        title={style.charAt(0).toUpperCase() + style.slice(1)}
-                        style={{
-                          width: 36,
-                          height: 28,
-                          borderRadius: 6,
-                          border: `1px solid ${settings.cursorStyle === style ? chrome.accent : (isLight ? "#d1d9e0" : "#30363d")}`,
-                          background: settings.cursorStyle === style ? `color-mix(in srgb, ${chrome.accent} 10%, transparent)` : (isLight ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)"),
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                      >
-                        {style === "block" ? (
-                          <div style={{ width: 10, height: 16, background: chrome.accent, borderRadius: 1 }} />
-                        ) : style === "bar" ? (
-                          <div style={{ width: 2, height: 16, background: chrome.accent, borderRadius: 1 }} />
-                        ) : (
-                          <div style={{ width: 10, height: 2, background: chrome.accent, borderRadius: 1, alignSelf: "flex-end", marginBottom: 4 }} />
-                        )}
-                      </button>
-                    ))}
+                  <div className="settings-label" style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Cursor Style</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {(["block", "bar", "underline"] as const).map((style) => {
+                      const active = settings.cursorStyle === style;
+                      const label = style.charAt(0).toUpperCase() + style.slice(1);
+                      return (
+                        <button key={style} onClick={() => updateSettings({ cursorStyle: style })} title={label} style={{
+                          display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 6, cursor: "pointer",
+                          fontSize: 12, fontFamily: '"JetBrains Mono", monospace',
+                          border: `1px solid ${active ? chrome.accent : (isLight ? "#d1d9e0" : "#30363d")}`,
+                          background: active ? `color-mix(in srgb, ${chrome.accent} 10%, transparent)` : (isLight ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)"),
+                          color: active ? chrome.accent : chrome.textMuted,
+                        }}>
+                          {style === "block" ? (
+                            <div style={{ width: 8, height: 14, background: active ? chrome.accent : chrome.textMuted, borderRadius: 1 }} />
+                          ) : style === "bar" ? (
+                            <div style={{ width: 2, height: 14, background: active ? chrome.accent : chrome.textMuted, borderRadius: 1 }} />
+                          ) : (
+                            <div style={{ width: 8, height: 2, background: active ? chrome.accent : chrome.textMuted, borderRadius: 1 }} />
+                          )}
+                          {label}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                {/* Cursor Blink toggle */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500 }}>Cursor Blink</span>
+                {/* Cursor Blink */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                  <span style={{ fontSize: 12, color: chrome.textMuted }}>Cursor Blink</span>
                   <button
                     onClick={() => updateSettings({ cursorBlink: !settings.cursorBlink })}
                     style={{
-                      width: 36,
-                      height: 20,
-                      borderRadius: 10,
-                      background: settings.cursorBlink ? chrome.accent : (isLight ? "#d1d9e0" : chrome.btnBg),
-                      border: `1px solid ${settings.cursorBlink ? chrome.accent : (isLight ? "#d1d9e0" : chrome.barBorder)}`,
-                      position: "relative",
-                      cursor: "pointer",
-                      padding: 0,
-                      transition: "background 0.15s ease",
+                      width: 40, height: 22, borderRadius: 11, position: "relative", cursor: "pointer", padding: 0,
+                      background: settings.cursorBlink ? chrome.accent : (isLight ? "#d1d9e0" : "#484f58"),
+                      border: "none", transition: "background 0.15s ease",
                     }}
                   >
                     <div style={{
-                      width: 14,
-                      height: 14,
-                      borderRadius: "50%",
-                      background: "#fff",
-                      position: "absolute",
-                      top: 2,
-                      left: settings.cursorBlink ? 19 : 2,
-                      transition: "left 0.15s ease",
+                      width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 3,
+                      left: settings.cursorBlink ? 21 : 3, transition: "left 0.15s ease",
                       boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
                     }} />
                   </button>
                 </div>
+
+                {/* Selection Color */}
+                <div style={{ marginBottom: 14 }}>
+                  <div className="settings-label" style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Selection Color</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {SELECTION_COLORS.map((color) => (
+                      <button key={color.value} onClick={() => updateSettings({ selectionColor: color.value })} title={color.label} style={{
+                        width: 28, height: 28, borderRadius: 8, background: color.swatch, cursor: "pointer", padding: 0,
+                        border: settings.selectionColor === color.value ? `2px solid ${chrome.accent}` : "2px solid transparent",
+                        opacity: settings.selectionColor === color.value ? 1 : 0.7,
+                      }} />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Reset to Defaults */}
+                <button
+                  onClick={() => updateSettings({
+                    fontSize: 14,
+                    fontFamily: '"JetBrains Mono", monospace',
+                    cursorStyle: "bar",
+                    cursorBlink: true,
+                    selectionColor: "rgba(88,166,255,0.3)",
+                    themeName: "github-dark",
+                  })}
+                  style={{
+                    width: "100%", padding: "6px 0", borderRadius: 6, cursor: "pointer",
+                    fontSize: 12, fontWeight: 500, color: chrome.textMuted,
+                    background: isLight ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${isLight ? "#d1d9e0" : "#30363d"}`,
+                  }}
+                >
+                  Reset to Defaults
+                </button>
               </div>
             ) : null}
           </div>
