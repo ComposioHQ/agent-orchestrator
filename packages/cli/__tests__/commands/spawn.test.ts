@@ -77,7 +77,7 @@ let configPath: string;
 let cwdSpy: ReturnType<typeof vi.spyOn> | undefined;
 
 import { Command } from "commander";
-import { registerSpawn } from "../../src/commands/spawn.js";
+import { registerBatchSpawn, registerSpawn } from "../../src/commands/spawn.js";
 
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -115,6 +115,7 @@ beforeEach(() => {
   program = new Command();
   program.exitOverride();
   registerSpawn(program);
+  registerBatchSpawn(program);
   consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(process, "exit").mockImplementation((code) => {
@@ -850,5 +851,179 @@ describe("spawn pre-flight checks", () => {
       .join("\n");
     expect(errors).toContain("not installed");
     expect(errors).not.toContain("not authenticated");
+  });
+});
+
+describe("batch-spawn command", () => {
+  it("creates sessions, skips duplicates, and opens requested sessions", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-existing",
+        projectId: "my-app",
+        status: "working",
+        issueId: "INT-2",
+        lastActivityAt: new Date(),
+      },
+    ]);
+
+    mockSessionManager.spawn
+      .mockResolvedValueOnce({
+        id: "app-1",
+        projectId: "my-app",
+        status: "spawning",
+        activity: null,
+        branch: null,
+        issueId: "INT-1",
+        pr: null,
+        workspacePath: "/tmp/wt-1",
+        runtimeHandle: { id: "container-1", runtimeName: "docker", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } satisfies Session)
+      .mockResolvedValueOnce({
+        id: "app-2",
+        projectId: "my-app",
+        status: "spawning",
+        activity: null,
+        branch: null,
+        issueId: "INT-3",
+        pr: null,
+        workspacePath: "/tmp/wt-3",
+        runtimeHandle: { id: "container-3", runtimeName: "docker", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } satisfies Session);
+
+    mockSessionManager.getAttachInfo
+      .mockResolvedValueOnce({
+        type: "docker",
+        target: "container-1",
+        command: "docker exec -it container-1 tmux attach -t tmux-1",
+        program: "docker",
+        args: ["exec", "-it", "container-1", "tmux", "attach", "-t", "tmux-1"],
+        requiresPty: true,
+      })
+      .mockResolvedValueOnce({
+        type: "docker",
+        target: "container-3",
+        command: "docker exec -it container-3 tmux attach -t tmux-3",
+        program: "docker",
+        args: ["exec", "-it", "container-3", "tmux", "attach", "-t", "tmux-3"],
+        requiresPty: true,
+      });
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "batch-spawn",
+      "INT-1",
+      "INT-1",
+      "INT-2",
+      "INT-3",
+      "--open",
+      "--runtime",
+      "docker",
+      "--runtime-image",
+      "ghcr.io/composio/ao:test",
+    ]);
+
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: expect.any(String) }),
+      "my-app",
+    );
+    expect(mockSessionManager.spawn).toHaveBeenCalledTimes(2);
+    expect(mockSessionManager.spawn).toHaveBeenNthCalledWith(1, {
+      projectId: "my-app",
+      issueId: "INT-1",
+      runtime: "docker",
+      runtimeConfig: { image: "ghcr.io/composio/ao:test" },
+    });
+    expect(mockSessionManager.spawn).toHaveBeenNthCalledWith(2, {
+      projectId: "my-app",
+      issueId: "INT-3",
+      runtime: "docker",
+      runtimeConfig: { image: "ghcr.io/composio/ao:test" },
+    });
+    expect(mockExec).toHaveBeenCalledWith("open-iterm-tab", [
+      "--title",
+      "container-1",
+      "--command",
+      "docker exec -it container-1 tmux attach -t tmux-1",
+    ]);
+    expect(mockExec).toHaveBeenCalledWith("open-iterm-tab", [
+      "--title",
+      "container-3",
+      "--command",
+      "docker exec -it container-3 tmux attach -t tmux-3",
+    ]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Skip INT-1 — duplicate in this batch");
+    expect(output).toContain("Skip INT-2 — already has session app-existing");
+    expect(output).toContain("Created 2 sessions:");
+    expect(output).toContain("Skipped 2 issues:");
+  });
+
+  it("records failures and continues through the batch", async () => {
+    mockSessionManager.list.mockResolvedValue([]);
+    mockSessionManager.spawn
+      .mockRejectedValueOnce(new Error("workspace creation failed"))
+      .mockResolvedValueOnce({
+        id: "app-2",
+        projectId: "my-app",
+        status: "spawning",
+        activity: null,
+        branch: null,
+        issueId: "INT-2",
+        pr: null,
+        workspacePath: "/tmp/wt-2",
+        runtimeHandle: { id: "hash-app-2", runtimeName: "tmux", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } satisfies Session);
+
+    await program.parseAsync(["node", "test", "batch-spawn", "INT-1", "INT-2"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledTimes(2);
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Failed 1 issues:");
+    expect(output).toContain("INT-1: workspace creation failed");
+    expect(output).toContain("Created 1 sessions:");
+  });
+
+  it("fails cleanly when project auto-detection cannot choose a project", async () => {
+    (mockConfigRef.current as Record<string, unknown>).projects = {
+      frontend: {
+        name: "Frontend",
+        repo: "org/frontend",
+        path: join(tmpDir, "frontend"),
+        defaultBranch: "main",
+        sessionPrefix: "fe",
+      },
+      backend: {
+        name: "Backend",
+        repo: "org/backend",
+        path: join(tmpDir, "backend"),
+        defaultBranch: "main",
+        sessionPrefix: "be",
+      },
+    };
+
+    await expect(
+      program.parseAsync(["node", "test", "batch-spawn", "INT-1"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Multiple projects configured");
   });
 });

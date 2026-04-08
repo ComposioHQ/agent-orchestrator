@@ -334,6 +334,39 @@ describe("session ls", () => {
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(output).toContain("https://github.com/org/repo/pull/42");
   });
+
+  it("uses last activity directly for non-tmux runtimes", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-1",
+        projectId: "my-app",
+        status: "working",
+        activity: null,
+        branch: "feat/docker",
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: { id: "container-1", runtimeName: "docker", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(Date.now() - 30_000),
+        metadata: {},
+      } satisfies Session,
+    ]);
+
+    await program.parseAsync(["node", "test", "session", "ls"]);
+
+    expect(mockTmux).not.toHaveBeenCalledWith(
+      "display-message",
+      "-t",
+      "container-1",
+      "-p",
+      "#{session_activity}",
+    );
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("app-1");
+    expect(output).toContain("feat/docker");
+  });
 });
 
 describe("session kill", () => {
@@ -414,6 +447,72 @@ describe("session attach", () => {
     await expect(
       program.parseAsync(["node", "test", "session", "attach", "unknown-1"]),
     ).rejects.toThrow("process.exit(1)");
+  });
+
+  it("fails when a non-tmux runtime has no attach command", async () => {
+    mockSessionManager.get.mockResolvedValue({
+      id: "app-1",
+      projectId: "my-app",
+      status: "working",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: null,
+      runtimeHandle: { id: "container-1", runtimeName: "docker", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    } satisfies Session);
+    mockSessionManager.getAttachInfo.mockResolvedValue(null);
+
+    await expect(
+      program.parseAsync(["node", "test", "session", "attach", "app-1"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("does not expose an attach command");
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+});
+
+describe("session restore", () => {
+  it("shows the runtime-aware attach command after restoring", async () => {
+    mockSessionManager.restore.mockResolvedValue({
+      id: "app-1",
+      projectId: "my-app",
+      status: "working",
+      activity: null,
+      branch: "feat/restore",
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/restore-worktree",
+      runtimeHandle: { id: "container-1", runtimeName: "docker", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    } satisfies Session);
+    mockSessionManager.getAttachInfo.mockResolvedValue({
+      type: "docker",
+      target: "container-1",
+      program: "docker",
+      args: ["exec", "-it", "container-1", "tmux", "attach", "-t", "tmux-1"],
+      command: "docker exec -it container-1 tmux attach -t tmux-1",
+      requiresPty: true,
+    });
+
+    await program.parseAsync(["node", "test", "session", "restore", "app-1"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Session app-1 restored.");
+    expect(output).toContain("/tmp/restore-worktree");
+    expect(output).toContain("feat/restore");
+    expect(output).toContain("docker exec -it container-1 tmux attach -t tmux-1");
   });
 });
 
