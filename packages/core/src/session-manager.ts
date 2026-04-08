@@ -1065,7 +1065,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     let branch: string;
     if (spawnConfig.branch) {
       branch = spawnConfig.branch;
-    } else if (attemptNativeResume && archived?.raw["branch"]) {
+    } else if (archived?.raw["branch"]) {
+      // Reuse the archived session's branch for both native resume and context-inject.
+      // This preserves commits and ensures git log in context builder finds them.
       branch = archived.raw["branch"];
     } else if (spawnConfig.issueId && plugins.tracker && resolvedIssue) {
       const fromIssue = resolvedIssue.branchName;

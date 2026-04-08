@@ -1520,9 +1520,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           respawned: false,
         };
 
-        // Auto-respawn if session had an issueId and project allows it
-        const respawnStrategy = project.workerRespawnStrategy ?? "resume";
-        if (raw["issue"] && respawnStrategy !== "fresh") {
+        // Auto-respawn if session had an issueId.
+        // workerRespawnStrategy controls *how* spawn() launches (resume vs fresh),
+        // not *whether* to respawn — spawn() handles the strategy internally.
+        if (raw["issue"]) {
           // Pre-check: skip respawn if another session for the same issue already exists
           // (e.g. a PR-managed session like pr_open). This avoids a spawn() dedup error
           // after we've already archived the dead session.
@@ -1586,7 +1587,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 correlationId,
                 projectId,
                 sessionId,
-                data: { issueId: raw["issue"], strategy: respawnStrategy },
+                data: { issueId: raw["issue"], strategy: project.workerRespawnStrategy ?? "resume" },
                 level: "info",
               });
             } catch (err) {

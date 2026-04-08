@@ -219,8 +219,9 @@ describe("recoverDeadSessions", () => {
     expect(results[0].respawnError).toBe("workspace conflict");
   });
 
-  it("does not respawn when workerRespawnStrategy is fresh", async () => {
-    // Set respawn strategy to "fresh" — which skips auto-respawn
+  it("respawns dead sessions even when workerRespawnStrategy is fresh", async () => {
+    // "fresh" controls *how* spawn() launches (skip archive lookup), not *whether* to respawn.
+    // spawn() handles the strategy internally.
     (config.projects["my-app"] as ProjectConfig).workerRespawnStrategy = "fresh";
 
     writeMetadata(env.sessionsDir, "app-fresh", {
@@ -241,8 +242,10 @@ describe("recoverDeadSessions", () => {
 
     expect(results).toHaveLength(1);
     expect(results[0].archived).toBe(true);
-    expect(results[0].respawned).toBe(false);
-    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+    expect(results[0].respawned).toBe(true);
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ issueId: "GH-789" }),
+    );
   });
 
   it("treats missing runtimeHandle as dead", async () => {
