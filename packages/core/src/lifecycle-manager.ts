@@ -199,6 +199,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
+  let lastPollStartedAt = 0; // timestamp of last poll start (sleep/wake burst guard)
   let allCompleteEmitted = false; // guard against repeated all_complete
 
   /**
@@ -1281,6 +1282,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const startedAt = Date.now();
     // Re-entrancy guard: skip if previous poll is still running
     if (polling) return;
+    // Sleep/wake burst guard: after system sleep, setInterval fires all
+    // queued callbacks at once. Skip polls that arrive too soon after the
+    // last one to avoid a burst of GitHub API calls that trips rate limits.
+    const MIN_POLL_GAP_MS = 10_000; // 10 seconds
+    if (startedAt - lastPollStartedAt < MIN_POLL_GAP_MS) return;
+    lastPollStartedAt = startedAt;
     polling = true;
 
     try {

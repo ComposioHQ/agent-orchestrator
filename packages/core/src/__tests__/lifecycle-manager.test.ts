@@ -1672,3 +1672,45 @@ describe("rate limiting optimizations", () => {
     expect(getPendingMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("sleep/wake burst guard", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("skips polls that arrive within 10 seconds of the previous one", async () => {
+    const sessions = [makeSession({ id: "s-1", status: "working" })];
+    vi.mocked(mockSessionManager.list).mockResolvedValue(sessions);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    // Use a 5-second interval — shorter than the 10s burst guard minimum
+    lm.start(5_000);
+
+    // First poll runs immediately
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(mockSessionManager.list)).toHaveBeenCalledTimes(1);
+
+    // Advance 5s — second interval fires but should be skipped (< 10s gap)
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(vi.mocked(mockSessionManager.list)).toHaveBeenCalledTimes(1);
+
+    // Advance another 5s (10s total) — third interval fires and should execute
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(vi.mocked(mockSessionManager.list)).toHaveBeenCalledTimes(2);
+
+    // Advance 5s — fourth interval fires but should be skipped (< 10s gap)
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(vi.mocked(mockSessionManager.list)).toHaveBeenCalledTimes(2);
+
+    lm.stop();
+  });
+});
