@@ -525,6 +525,9 @@ function createGitHubSCM(): SCM {
           project.repo,
           "--head",
           session.branch,
+          // Default gh list is open-only; include merged/closed so lifecycle can still resolve PR URL after merge.
+          "--state",
+          "all",
           "--json",
           "number,url,title,headRefName,baseRefName,isDraft",
           "--limit",

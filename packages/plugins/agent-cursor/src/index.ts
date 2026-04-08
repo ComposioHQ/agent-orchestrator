@@ -1,4 +1,13 @@
 import {
+  DEFAULT_ACTIVE_WINDOW_MS,
+  DEFAULT_READY_THRESHOLD_MS,
+  PREFERRED_GH_PATH,
+  buildAgentPath,
+  checkActivityLogState,
+  getActivityFallbackState,
+  readLastActivityEntry,
+  recordTerminalActivity,
+  setupPathWrapperWorkspace,
   shellEscape,
   type Agent,
   type AgentSessionInfo,
@@ -9,6 +18,7 @@ import {
   type ProjectConfig,
   type RuntimeHandle,
   type Session,
+  type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
@@ -65,6 +75,11 @@ function createCursorAgent(): Agent {
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
       }
+
+      // Prepend ~/.ao/bin so gh/git wrappers intercept commands and update session metadata (PR URL, branch, merge).
+      env["PATH"] = buildAgentPath(process.env["PATH"]);
+      env["GH_PATH"] = PREFERRED_GH_PATH;
+
       return env;
     },
 
@@ -76,17 +91,32 @@ function createCursorAgent(): Agent {
 
     async getActivityState(
       session: Session,
-      _readyThresholdMs?: number,
+      readyThresholdMs?: number,
     ): Promise<ActivityDetection | null> {
-      // Check if process is running first
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      // Process is running - return ready state
-      // Without native session files, we can't determine fine-grained activity
-      return { state: "ready", timestamp: new Date() };
+      if (!session.workspacePath) return null;
+
+      const activityResult = await readLastActivityEntry(session.workspacePath);
+      const activityState = checkActivityLogState(activityResult);
+      if (activityState) return activityState;
+
+      const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
+      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+      const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
+      if (fallback) return fallback;
+
+      return null;
+    },
+
+    async recordActivity(session: Session, terminalOutput: string): Promise<void> {
+      if (!session.workspacePath) return;
+      await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
+        this.detectActivity(output),
+      );
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
@@ -143,6 +173,15 @@ function createCursorAgent(): Agent {
     async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
       // Cursor doesn't have JSONL session files for introspection yet
       return null;
+    },
+
+    async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+      await setupPathWrapperWorkspace(workspacePath);
+    },
+
+    async postLaunchSetup(session: Session): Promise<void> {
+      if (!session.workspacePath) return;
+      await setupPathWrapperWorkspace(session.workspacePath);
     },
   };
 }

@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import * as aoCore from "@composio/ao-core";
 import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
@@ -77,6 +80,10 @@ function mockTmuxWithProcess(processName: string, found = true) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 // =========================================================================
@@ -170,6 +177,12 @@ describe("getEnvironment", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
   });
+
+  it("prepends ~/.ao/bin to PATH and sets GH_PATH for metadata wrappers", () => {
+    const env = agent.getEnvironment(makeLaunchConfig());
+    expect(env["PATH"]).toContain(join(homedir(), ".ao", "bin"));
+    expect(env["GH_PATH"]).toBe(aoCore.PREFERRED_GH_PATH);
+  });
 });
 
 // =========================================================================
@@ -251,5 +264,79 @@ describe("getSessionInfo", () => {
   it("always returns null (not implemented)", async () => {
     expect(await agent.getSessionInfo(makeSession())).toBeNull();
     expect(await agent.getSessionInfo(makeSession({ workspacePath: "/some/path" }))).toBeNull();
+  });
+});
+
+// =========================================================================
+// PATH wrappers & PR metadata (gh/git interception)
+// =========================================================================
+describe("setupWorkspaceHooks & postLaunchSetup", () => {
+  it("calls setupPathWrapperWorkspace with worktree path", async () => {
+    const spy = vi.spyOn(aoCore, "setupPathWrapperWorkspace").mockResolvedValue(undefined);
+    const agent = create();
+    await agent.setupWorkspaceHooks!("/workspace/foo", { dataDir: "/data" });
+    expect(spy).toHaveBeenCalledWith("/workspace/foo");
+  });
+
+  it("postLaunchSetup skips when workspacePath is missing", async () => {
+    const spy = vi.spyOn(aoCore, "setupPathWrapperWorkspace").mockResolvedValue(undefined);
+    const agent = create();
+    await agent.postLaunchSetup!(makeSession({ workspacePath: null }));
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("postLaunchSetup installs wrappers in session worktree", async () => {
+    const spy = vi.spyOn(aoCore, "setupPathWrapperWorkspace").mockResolvedValue(undefined);
+    const agent = create();
+    await agent.postLaunchSetup!(makeSession({ workspacePath: "/workspace/wt" }));
+    expect(spy).toHaveBeenCalledWith("/workspace/wt");
+  });
+});
+
+describe("recordActivity", () => {
+  it("delegates to recordTerminalActivity", async () => {
+    const spy = vi.spyOn(aoCore, "recordTerminalActivity").mockResolvedValue(undefined);
+    const agent = create();
+    await agent.recordActivity!(makeSession({ workspacePath: "/workspace/wt" }), "hello\n");
+    expect(spy).toHaveBeenCalledWith("/workspace/wt", "hello\n", expect.any(Function));
+  });
+
+  it("no-ops without workspacePath", async () => {
+    const spy = vi.spyOn(aoCore, "recordTerminalActivity").mockResolvedValue(undefined);
+    const agent = create();
+    await agent.recordActivity!(makeSession({ workspacePath: null }), "x");
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("getActivityState — AO activity JSONL", () => {
+  it("returns null when process running but no activity data and no fallback", async () => {
+    mockTmuxWithProcess("agent");
+    vi.spyOn(aoCore, "readLastActivityEntry").mockResolvedValue(null);
+    vi.spyOn(aoCore, "checkActivityLogState").mockReturnValue(null);
+    vi.spyOn(aoCore, "getActivityFallbackState").mockReturnValue(null);
+
+    const agent = create();
+    const result = await agent.getActivityState(
+      makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/w" }),
+    );
+    expect(result).toBeNull();
+  });
+
+  it("returns waiting_input from checkActivityLogState when present", async () => {
+    mockTmuxWithProcess("agent");
+    const ts = new Date("2026-01-01T00:00:00Z");
+    vi.spyOn(aoCore, "readLastActivityEntry").mockResolvedValue({} as never);
+    vi.spyOn(aoCore, "checkActivityLogState").mockReturnValue({
+      state: "waiting_input",
+      timestamp: ts,
+    });
+    vi.spyOn(aoCore, "getActivityFallbackState").mockReturnValue(null);
+
+    const agent = create();
+    const result = await agent.getActivityState(
+      makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/w" }),
+    );
+    expect(result).toEqual({ state: "waiting_input", timestamp: ts });
   });
 });
