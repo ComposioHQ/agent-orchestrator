@@ -55,6 +55,18 @@ describe("generateOrchestratorPrompt", () => {
     expect(prompt).toContain("ao send --no-wait");
   });
 
+  it("mandates ao spawn for creating worker sessions", () => {
+    const prompt = generateOrchestratorPrompt({
+      config,
+      projectId: "my-app",
+      project: config.projects["my-app"]!,
+    });
+
+    expect(prompt).toContain("Always use `ao spawn`");
+    expect(prompt).toContain("ao batch-spawn");
+    expect(prompt).toContain("never start agents directly");
+  });
+
   it("pushes implementation and PR claiming into worker sessions", () => {
     const prompt = generateOrchestratorPrompt({
       config,
