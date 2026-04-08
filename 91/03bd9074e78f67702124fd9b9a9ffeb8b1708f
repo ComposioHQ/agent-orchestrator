@@ -1,0 +1,23 @@
+packages/web/src/app/globals.css
+  38000bf70f0190d1 36,185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "9103bd9074e78f67702124fd9b9a9ffeb8b1708f",
+  "prompts": {
+    "38000bf70f0190d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e4ec426-8b38-466c-a8e9-00dc2e907aec",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
