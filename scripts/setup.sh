@@ -166,7 +166,7 @@ echo ""
 # Only exec a new shell in interactive terminals; non-interactive callers
 # (CI, parent scripts) should not be replaced with a login shell.
 
-if [ "${NEEDS_SHELL_RELOAD:-}" = true ] && [ "$INTERACTIVE" = true ]; then
+if [ "${NEEDS_SHELL_RELOAD:-}" = true ] && [ "$INTERACTIVE" = true ] && [ -n "${SHELL_RC:-}" ]; then
   echo "Restarting shell to pick up new PATH..."
   exec "$SHELL" -l
 elif [ "${NEEDS_SHELL_RELOAD:-}" = true ]; then
