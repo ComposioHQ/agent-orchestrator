@@ -359,7 +359,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
   );
 
   const TerminalsSidebarSection = () => (
-    <div className="flex flex-col border-t border-[var(--color-border-subtle)] px-2 py-3">
+    <div className="flex flex-col border-t border-[var(--color-border-subtle)]">
       <div
         role="button"
         tabIndex={0}
@@ -373,7 +373,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
         aria-expanded={!terminalsSectionCollapsed}
         title={terminalsSectionCollapsed ? "Expand terminals" : "Collapse terminals"}
         className={cn(
-          "mb-2 flex cursor-pointer select-none items-center justify-between rounded px-2.5 py-1 transition-colors hover:bg-[var(--color-bg-subtle)]",
+          "flex w-full cursor-pointer select-none items-center justify-between px-4 py-3 transition-colors hover:bg-[var(--color-bg-subtle)]",
         )}
       >
         <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
@@ -401,7 +401,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
         </button>
       </div>
       {terminalsSectionCollapsed ? null : terminals.length > 0 ? (
-        <div className="terminal-sidebar-list space-y-0.5">
+        <div className="terminal-sidebar-list space-y-0.5 px-2 pb-3">
           {terminals.map((terminal) => {
             const isActive = activeTerminalName === terminal.tmuxName;
             const aliveIndicator = terminal.alive ? "●" : "○";
@@ -448,7 +448,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
           })}
         </div>
       ) : (
-        <div className="px-2.5 py-2 text-[10px] text-[var(--color-text-tertiary)]">
+        <div className="px-4 pb-3 text-[10px] text-[var(--color-text-tertiary)]">
           No terminals
         </div>
       )}
