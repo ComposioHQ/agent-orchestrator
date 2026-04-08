@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { THEME_PRESETS, getThemePreset } from "@/components/TerminalSettings";
+import { THEME_PRESETS, FONT_FAMILIES, getThemePreset } from "@/components/TerminalSettings";
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const ANSI_KEYS = [
@@ -44,5 +44,23 @@ describe("getThemePreset", () => {
 
   it("returns undefined for an invalid name", () => {
     expect(getThemePreset("nonexistent")).toBeUndefined();
+  });
+});
+
+describe("FONT_FAMILIES", () => {
+  it("has at least 5 font family options", () => {
+    expect(FONT_FAMILIES.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("each font family has a value and label", () => {
+    for (const font of FONT_FAMILIES) {
+      expect(font.value).toBeTruthy();
+      expect(font.label).toBeTruthy();
+      expect(font.value).toContain("monospace");
+    }
+  });
+
+  it("JetBrains Mono is the first option", () => {
+    expect(FONT_FAMILIES[0].label).toBe("JetBrains Mono");
   });
 });

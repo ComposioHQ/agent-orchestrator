@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DirectTerminal } from "../DirectTerminal";
 
@@ -176,5 +176,39 @@ describe("DirectTerminal render", () => {
     await waitFor(() => expect(screen.getByText("CONNECTED")).toBeInTheDocument());
 
     expect(screen.getByTitle("Exit fullscreen")).toBeInTheDocument();
+  });
+
+  it("opens settings panel with all controls when gear button is clicked", async () => {
+    render(<DirectTerminal sessionId="test-session" />);
+
+    await waitFor(() => expect(screen.getByText("CONNECTED")).toBeInTheDocument());
+
+    // Click settings gear
+    fireEvent.click(screen.getByTitle("Terminal settings"));
+
+    // Panel should show all setting sections
+    await waitFor(() => expect(screen.getByText("Font Family")).toBeInTheDocument());
+    expect(screen.getByText("Font Size")).toBeInTheDocument();
+    expect(screen.getByText("Cursor Style")).toBeInTheDocument();
+    expect(screen.getByText("Cursor Blink")).toBeInTheDocument();
+    expect(screen.getByText("Theme")).toBeInTheDocument();
+
+    // Should have cursor style buttons
+    expect(screen.getByText("bar")).toBeInTheDocument();
+    expect(screen.getByText("block")).toBeInTheDocument();
+    expect(screen.getByText("underline")).toBeInTheDocument();
+
+    // Should have theme swatches
+    expect(screen.getByTitle("GitHub Dark")).toBeInTheDocument();
+    expect(screen.getByTitle("Dracula")).toBeInTheDocument();
+    expect(screen.getByTitle("Nord")).toBeInTheDocument();
+  });
+
+  it("renders OpenCode reload button when isOpenCodeSession is true", async () => {
+    render(<DirectTerminal sessionId="test-oc" isOpenCodeSession />);
+
+    await waitFor(() => expect(screen.getByText("CONNECTED")).toBeInTheDocument());
+
+    expect(screen.getByTitle("Restart OpenCode session")).toBeInTheDocument();
   });
 });
