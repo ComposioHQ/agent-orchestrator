@@ -40,10 +40,14 @@ import {
 } from "./types.js";
 import { updateMetadata, listMetadata, readMetadataRaw, deleteMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
-import { escapeRegex } from "./session-manager.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveNotifierTarget } from "./notifier-resolution.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+
+/** Escape special regex characters in a string. */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -1465,12 +1469,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const sessionPrefix = project.sessionPrefix;
         if (sessionPrefix && new RegExp(`^${escapeRegex(sessionPrefix)}-orchestrator-\\d+$`).test(sessionId)) continue;
 
-        // Resolve agent plugin for isProcessRunning
+        // Resolve agent plugin for optional isProcessRunning fallback
         const agentName = raw["agent"] ?? config.defaults.agent;
         const agent = registry.get<Agent>("agent", agentName);
-        if (!agent) continue;
 
-        // Check if runtime is alive first
+        // Check if runtime is alive first; only fall back to agent when available
         let processAlive = false;
         const runtimeHandleStr = raw["runtimeHandle"];
         if (runtimeHandleStr) {
@@ -1481,8 +1484,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             if (runtime) {
               processAlive = await runtime.isAlive(handle).catch(() => false);
             }
-            if (!processAlive) {
-              // Double-check with agent's isProcessRunning
+            if (!processAlive && agent) {
+              // Optional fallback when the agent plugin is available
               processAlive = await agent.isProcessRunning(handle).catch(() => false);
             }
           } catch {

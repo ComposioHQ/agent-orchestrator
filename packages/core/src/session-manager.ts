@@ -172,7 +172,7 @@ async function discoverOpenCodeSessionIdByTitle(
 }
 
 /** Escape regex metacharacters in a string. */
-export function escapeRegex(str: string): string {
+function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
@@ -578,8 +578,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
   /** Statuses eligible for resume via getRestoreCommand(). */
   const SPAWN_RESUMABLE_STATUSES = new Set(["killed", "errored", "terminated"]);
-  /** Statuses eligible for context injection (includes "done"). */
-  const SPAWN_CONTEXT_STATUSES = new Set(["killed", "errored", "terminated", "done"]);
+  /** Statuses eligible for context injection (includes "done" and "cleanup"). */
+  const SPAWN_CONTEXT_STATUSES = new Set(["killed", "errored", "terminated", "done", "cleanup"]);
 
   /**
    * Find the most recent archived session for a given issue and agent.
@@ -1201,14 +1201,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           if (restoreCmd) {
             launchCommand = restoreCmd;
             resumedFromSession = archived.sessionId;
-            console.log(
-              `[session-manager] Resuming conversation from archived session ${archived.sessionId} for issue ${spawnConfig.issueId}`,
-            );
           }
-        } catch (err) {
-          console.warn(
-            `[session-manager] Failed to build restore command from archived session ${archived.sessionId}: ${err}`,
-          );
+        } catch {
+          // Ignore restore-command failures — fall back to context injection below.
         }
       }
 
