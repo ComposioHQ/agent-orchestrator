@@ -80,13 +80,22 @@ function renderNode(node: AdfNode, listDepth = 0, listMarker = "- "): string {
     case "text": {
       let text = node.text ?? "";
       const marks = node.marks ?? [];
+      let linkHref: string | undefined;
       for (const mark of marks) {
         if (mark.type === "strong") text = `**${text}**`;
         else if (mark.type === "em") text = `*${text}*`;
         else if (mark.type === "code") text = `\`${text}\``;
         else if (mark.type === "strike") text = `~~${text}~~`;
+        else if (mark.type === "link") linkHref = (mark as unknown as { attrs?: { href?: string } }).attrs?.href;
       }
+      if (linkHref) text = `[${text}](${linkHref})`;
       return text;
+    }
+
+    // Jira inline cards — pasted URLs rendered as smart links
+    case "inlineCard": {
+      const url = node.attrs?.url as string | undefined;
+      return url ?? "";
     }
 
     case "codeBlock": {

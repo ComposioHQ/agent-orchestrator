@@ -24,6 +24,14 @@
     "latestVersion": "0.2.0"
   },
   {
+    "id": "agent-copilot",
+    "package": "@composio/ao-plugin-agent-copilot",
+    "slot": "agent",
+    "description": "Agent plugin: GitHub Copilot CLI",
+    "source": "registry",
+    "latestVersion": "0.1.0"
+  },
+  {
     "id": "notifier-openclaw",
     "package": "@composio/ao-plugin-notifier-openclaw",
     "slot": "notifier",
