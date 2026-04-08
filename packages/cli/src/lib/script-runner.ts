@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getShell, isWindows } from "@composio/ao-core";
+import { isWindows } from "@composio/ao-core";
 
 const DEFAULT_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../");
 
@@ -25,13 +25,9 @@ export async function runRepoScript(scriptName: string, args: string[]): Promise
   // Shebangs are only honoured by the kernel when a file is executed directly; when passed as
   // an argument to another interpreter (e.g. zsh script.sh) the shebang is ignored, so we must
   // name bash explicitly rather than using the user's $SHELL.
-  // Windows: use getShell() (resolves to pwsh > powershell.exe > cmd.exe).
-  const shellInfo = isWindows() ? getShell() : null;
-
-  // On Windows without AO_BASH_PATH, cmd.exe is the last-resort fallback — but it cannot
-  // run bash scripts regardless of the flag used. Fail fast with a clear message so the user
-  // knows to set AO_BASH_PATH rather than seeing a cryptic "-File is not recognised" error.
-  if (!shellOverride && shellInfo && /cmd(\.exe)?$/i.test(shellInfo.cmd)) {
+  // Windows: no native shell (pwsh, powershell.exe, cmd.exe) can run bash scripts —
+  // shebangs are ignored and bash-specific syntax fails. AO_BASH_PATH is required.
+  if (!shellOverride && isWindows()) {
     throw new Error(
       "Cannot run repo scripts on Windows without bash. " +
         "Set AO_BASH_PATH to a bash executable " +
@@ -39,21 +35,11 @@ export async function runRepoScript(scriptName: string, args: string[]): Promise
     );
   }
 
-  const shell = shellOverride || shellInfo?.cmd || "bash";
+  const shell = shellOverride ?? "bash";
   const scriptPath = resolveScriptPath(scriptName);
-  // Unix: spawn(bash, [scriptPath, ...args]) — file mode so args reach $1, $2, etc.
-  // Windows (no override): use -File so positional args ($1, $2, …) reach the script.
-  //   -Command folds everything into a single string; extra argv elements after the script
-  //   path are treated as top-level PowerShell args, not script args — silently dropping
-  //   flags like --fix. -File is the correct PowerShell flag for running a script with args.
-  // With AO_BASH_PATH override: always use file mode (the override IS a bash-compatible binary).
-  const shellArgs =
-    shellOverride || !isWindows()
-      ? [scriptPath, ...args]
-      : ["-File", scriptPath, ...args];
 
   return await new Promise<number>((resolveExit, reject) => {
-    const child = spawn(shell, shellArgs, {
+    const child = spawn(shell, [scriptPath, ...args], {
       cwd: resolveRepoRoot(),
       env: process.env,
       stdio: "inherit",

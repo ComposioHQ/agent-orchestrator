@@ -23,7 +23,6 @@ vi.mock("node:url", () => ({
 }));
 
 vi.mock("@composio/ao-core", () => ({
-  getShell: vi.fn(() => ({ cmd: "sh", args: (c: string) => ["-c", c] })),
   isWindows: vi.fn(() => false),
 }));
 
@@ -31,7 +30,6 @@ import * as childProcess from "node:child_process";
 import * as core from "@composio/ao-core";
 import { runRepoScript } from "../../src/lib/script-runner.js";
 
-const mockGetShell = core.getShell as ReturnType<typeof vi.fn>;
 const mockIsWindows = core.isWindows as ReturnType<typeof vi.fn>;
 const mockSpawn = childProcess.spawn as ReturnType<typeof vi.fn>;
 
@@ -72,73 +70,36 @@ describe("runRepoScript", () => {
 
     await runRepoScript("test-script.sh", []);
 
-    expect(mockSpawn).toHaveBeenCalledWith(
-      "bash",
-      expect.any(Array),
-      expect.any(Object),
-    );
-    // getShell() must NOT be called on Unix — we always use bash directly
-    expect(mockGetShell).not.toHaveBeenCalled();
+    expect(mockSpawn).toHaveBeenCalledWith("bash", expect.any(Array), expect.any(Object));
   });
 
-  it("uses AO_BASH_PATH override when set", async () => {
+  it("uses AO_BASH_PATH override when set on Unix", async () => {
     process.env["AO_BASH_PATH"] = "/custom/bash";
     const child = makeSpawnEventEmitter(0);
     mockSpawn.mockReturnValue(child);
 
     await runRepoScript("test-script.sh", []);
 
-    expect(mockSpawn).toHaveBeenCalledWith(
-      "/custom/bash",
-      expect.any(Array),
-      expect.any(Object),
-    );
+    expect(mockSpawn).toHaveBeenCalledWith("/custom/bash", expect.any(Array), expect.any(Object));
   });
 
-  it("passes extra args to script in file mode on Unix (not dropped by -c)", async () => {
+  it("passes extra args to script directly (not via -c)", async () => {
     mockIsWindows.mockReturnValue(false);
-    mockGetShell.mockReturnValue({ cmd: "bash", args: (c: string) => ["-c", c] });
     const child = makeSpawnEventEmitter(0);
     mockSpawn.mockReturnValue(child);
 
     await runRepoScript("test-script.sh", ["--fix", "--verbose"]);
 
     const spawnCall = mockSpawn.mock.calls[0];
-    // File mode: [scriptPath, ...args] — extra args must NOT be preceded by -c
     expect(spawnCall[1]).not.toContain("-c");
     expect(spawnCall[1]).toContain("--fix");
     expect(spawnCall[1]).toContain("--verbose");
-    // args must follow scriptPath directly, not as shell $0/$1
     const scriptIdx = (spawnCall[1] as string[]).findIndex((a: string) => a.includes("test-script.sh"));
     expect((spawnCall[1] as string[])[scriptIdx + 1]).toBe("--fix");
   });
 
-  it("uses -File mode on Windows so positional args reach the script", async () => {
+  it("throws a clear error on Windows with pwsh when AO_BASH_PATH is not set", async () => {
     mockIsWindows.mockReturnValue(true);
-    mockGetShell.mockReturnValue({
-      cmd: "pwsh",
-      args: (c: string) => ["-Command", c],
-    });
-    const child = makeSpawnEventEmitter(0);
-    mockSpawn.mockReturnValue(child);
-
-    await runRepoScript("test-script.sh", ["--fix"]);
-
-    const spawnCall = mockSpawn.mock.calls[0];
-    expect(spawnCall[0]).toBe("pwsh");
-    // Must use -File, not -Command, so --fix is passed as a script arg not dropped
-    expect(spawnCall[1]).not.toContain("-Command");
-    expect(spawnCall[1][0]).toBe("-File");
-    const scriptIdx = (spawnCall[1] as string[]).findIndex((a: string) => a.includes("test-script.sh"));
-    expect((spawnCall[1] as string[])[scriptIdx + 1]).toBe("--fix");
-  });
-
-  it("throws a clear error on Windows when getShell() falls back to cmd.exe", async () => {
-    mockIsWindows.mockReturnValue(true);
-    mockGetShell.mockReturnValue({
-      cmd: "C:\\Windows\\System32\\cmd.exe",
-      args: (c: string) => ["/c", c],
-    });
 
     await expect(runRepoScript("test-script.sh", [])).rejects.toThrow(
       /Cannot run repo scripts on Windows without bash.*AO_BASH_PATH/,
@@ -146,18 +107,27 @@ describe("runRepoScript", () => {
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 
-  it("does not throw for cmd.exe when AO_BASH_PATH override is set", async () => {
-    process.env["AO_BASH_PATH"] = "/custom/bash";
+  it("throws a clear error on Windows with cmd.exe when AO_BASH_PATH is not set", async () => {
     mockIsWindows.mockReturnValue(true);
-    mockGetShell.mockReturnValue({
-      cmd: "C:\\Windows\\System32\\cmd.exe",
-      args: (c: string) => ["/c", c],
-    });
+
+    await expect(runRepoScript("test-script.sh", [])).rejects.toThrow(
+      /Cannot run repo scripts on Windows without bash.*AO_BASH_PATH/,
+    );
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("uses AO_BASH_PATH override on Windows and does not throw", async () => {
+    process.env["AO_BASH_PATH"] = "C:\\Program Files\\Git\\bin\\bash.exe";
+    mockIsWindows.mockReturnValue(true);
     const child = makeSpawnEventEmitter(0);
     mockSpawn.mockReturnValue(child);
 
-    await runRepoScript("test-script.sh", []);
+    await runRepoScript("test-script.sh", ["--fix"]);
 
-    expect(mockSpawn).toHaveBeenCalledWith("/custom/bash", expect.any(Array), expect.any(Object));
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "C:\\Program Files\\Git\\bin\\bash.exe",
+      expect.any(Array),
+      expect.any(Object),
+    );
   });
 });
