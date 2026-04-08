@@ -181,6 +181,7 @@ export function DirectTerminal({
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsPos, setSettingsPos] = useState<{ top: number; right: number } | null>(null);
   const [reconnectCount, setReconnectCount] = useState(0);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
@@ -196,6 +197,19 @@ export function DirectTerminal({
     const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
     router.replace(newUrl, { scroll: false });
   }, [fullscreen, pathname, router, searchParams]);
+
+  // Compute settings panel position when it opens
+  useEffect(() => {
+    if (showSettings && settingsButtonRef.current) {
+      const rect = settingsButtonRef.current.getBoundingClientRect();
+      setSettingsPos({
+        top: rect.bottom + 4,
+        right: window.innerWidth - rect.right,
+      });
+    } else {
+      setSettingsPos(null);
+    }
+  }, [showSettings]);
 
   // Close settings panel on click outside or scroll
   useEffect(() => {
@@ -280,10 +294,11 @@ export function DirectTerminal({
       .then(([Terminal, FitAddon, WebLinksAddon, WebglAddon]) => {
         if (!mounted || !terminalRef.current) return;
 
-        const isDark = resolvedTheme !== "light";
         const preset = getThemePreset(settings.themeName);
-        const baseTheme = isDark ? (preset?.dark ?? terminalThemes.dark) : terminalThemes.light;
-        const activeTheme = { ...baseTheme, selectionBackground: settings.selectionColor };
+        const activeTheme = {
+          ...(preset?.dark ?? terminalThemes.dark),
+          selectionBackground: settings.selectionColor,
+        };
 
         const terminal = new Terminal({
           cursorBlink: settings.cursorBlink,
@@ -291,7 +306,7 @@ export function DirectTerminal({
           cursorStyle: settings.cursorStyle,
           fontFamily: settings.fontFamily,
           theme: activeTheme,
-          minimumContrastRatio: isDark ? 1 : 7,
+          minimumContrastRatio: 1,
           scrollback: 10000,
           allowProposedApi: true,
           fastScrollModifier: "alt",
@@ -539,20 +554,15 @@ export function DirectTerminal({
     };
   }, [sessionId, variant]);
 
-  // Apply theme preset — respects page light/dark mode
+  // Apply theme preset — selected theme always applies to terminal canvas
   useEffect(() => {
     const terminal = terminalInstance.current;
     if (!terminal) return;
-    const isDark = resolvedTheme !== "light";
-    if (isDark) {
-      const preset = getThemePreset(settings.themeName);
-      const baseTheme = preset ? preset.dark : terminalThemes.dark;
-      terminal.options.theme = { ...baseTheme, selectionBackground: settings.selectionColor };
-    } else {
-      terminal.options.theme = { ...terminalThemes.light, selectionBackground: settings.selectionColor };
-    }
-    terminal.options.minimumContrastRatio = isDark ? 1 : 7;
-  }, [resolvedTheme, terminalThemes, settings.themeName, settings.selectionColor]);
+    const preset = getThemePreset(settings.themeName);
+    const baseTheme = preset ? preset.dark : terminalThemes.dark;
+    terminal.options.theme = { ...baseTheme, selectionBackground: settings.selectionColor };
+    terminal.options.minimumContrastRatio = 1;
+  }, [terminalThemes, settings.themeName, settings.selectionColor]);
 
   // Apply font/cursor setting changes live
   useEffect(() => {
@@ -647,10 +657,9 @@ export function DirectTerminal({
   const isLight = resolvedTheme === "light";
 
   const containerBg = useMemo(() => {
-    if (isLight) return "#fafafa";
     const preset = getThemePreset(settings.themeName);
     return preset?.dark.background ?? "#0d1117";
-  }, [isLight, settings.themeName]);
+  }, [settings.themeName]);
 
   // Chrome colors — adapt to light/dark
   const chrome = isLight
@@ -877,14 +886,14 @@ export function DirectTerminal({
                 <circle cx="12" cy="12" r="3" />
               </svg>
             </button>
-            {/* Settings panel — anchored below the gear button */}
-            {showSettings && settingsButtonRef.current ? (
+            {/* Settings panel — fixed position computed via effect */}
+            {showSettings && settingsPos ? (
               <div
                 ref={settingsPanelRef}
                 style={{
                   position: "fixed",
-                  top: settingsButtonRef.current.getBoundingClientRect().bottom + 4,
-                  right: window.innerWidth - settingsButtonRef.current.getBoundingClientRect().right,
+                  top: settingsPos.top,
+                  right: settingsPos.right,
                   width: 300,
                   background: isLight ? chrome.panelBg : "#161b22",
                   border: `1px solid ${isLight ? chrome.barBorder : "#30363d"}`,
