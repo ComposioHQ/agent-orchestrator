@@ -70,6 +70,8 @@ export {
   formatLineage,
   formatSiblings,
   propagateStatus,
+  stripThinkingTags,
+  createLLMClient,
   DEFAULT_DECOMPOSER_CONFIG,
 } from "./decomposer.js";
 export type {
@@ -78,6 +80,7 @@ export type {
   TaskStatus,
   DecompositionPlan,
   DecomposerConfig,
+  DecomposerProvider,
 } from "./decomposer.js";
 
 // Orchestrator prompt — generates orchestrator context for `ao start`
