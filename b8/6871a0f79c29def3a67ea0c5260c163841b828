@@ -1,0 +1,41 @@
+packages/web/src/components/LandingHowItWorks.tsx
+  22245a10688879f6 26,62,100
+packages/web/src/components/LandingAgentsBar.tsx
+  22245a10688879f6 33
+packages/web/src/components/LandingVideo.tsx
+  22245a10688879f6 9
+packages/web/src/components/LandingCTA.tsx
+  22245a10688879f6 11
+packages/web/src/app/globals.css
+  22245a10688879f6 3470-3471,3473,3477,3484-3499
+packages/web/src/components/LandingQuickStart.tsx
+  22245a10688879f6 21
+packages/web/src/components/LandingFeatures.tsx
+  22245a10688879f6 39
+packages/web/src/components/LandingTestimonials.tsx
+  22245a10688879f6 38
+packages/web/src/components/LandingStats.tsx
+  22245a10688879f6 15,31,38
+packages/web/src/components/LandingHero.tsx
+  22245a10688879f6 19,32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "b86871a0f79c29def3a67ea0c5260c163841b828",
+  "prompts": {
+    "22245a10688879f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1afca590-66d0-4943-a416-cfee447e7b02",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 36,
+      "total_deletions": 17,
+      "accepted_lines": 36,
+      "overriden_lines": 0
+    }
+  }
+}
