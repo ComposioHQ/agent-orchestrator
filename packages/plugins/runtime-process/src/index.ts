@@ -192,10 +192,11 @@ export function create(): Runtime {
         }
 
         // Give it 5 seconds, then SIGKILL
+        let killTimer: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([
-          exitSettled,
+          exitSettled.then(() => { clearTimeout(killTimer); }),
           new Promise<void>((resolve) => {
-            setTimeout(() => {
+            killTimer = setTimeout(() => {
               if (child.exitCode === null && child.signalCode === null) {
                 if (pid) {
                   if (isWindows()) {
