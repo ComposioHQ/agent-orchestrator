@@ -1,0 +1,23 @@
+DESIGN.md
+  22245a10688879f6 22,29-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "d9198519d5351543cd4175871f7baa256d4b0b3d",
+  "prompts": {
+    "22245a10688879f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1afca590-66d0-4943-a416-cfee447e7b02",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 1,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
