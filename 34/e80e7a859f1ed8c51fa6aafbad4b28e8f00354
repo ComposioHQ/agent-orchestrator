@@ -1,0 +1,25 @@
+packages/web/src/app/landing/layout.tsx
+  22245a10688879f6 14
+packages/web/src/app/landing/__tests__/layout.test.tsx
+  22245a10688879f6 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "34e80e7a859f1ed8c51fa6aafbad4b28e8f00354",
+  "prompts": {
+    "22245a10688879f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1afca590-66d0-4943-a416-cfee447e7b02",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 21,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
