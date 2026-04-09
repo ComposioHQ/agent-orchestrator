@@ -8,7 +8,7 @@ describe("Terminal", () => {
       "fetch",
       vi.fn(async () => ({
         ok: true,
-        json: async () => ({ url: "http://localhost:14800/session/demo" }),
+        json: async () => ({ url: "http://localhost:14800/session/demo?token=abc" }),
       })),
     );
   });
@@ -24,12 +24,13 @@ describe("Terminal", () => {
     await waitFor(() =>
       expect(screen.getByTitle("Terminal: ao-77")).toHaveAttribute(
         "src",
-        "http://localhost:14800/session/demo",
+        "http://localhost:14800/session/demo?token=abc",
       ),
     );
 
     expect(fetch).toHaveBeenCalledWith(
-      `${window.location.protocol}//${window.location.hostname}:14800/terminal?session=ao-77`,
+      "/api/sessions/ao-77/terminal",
+      { cache: "no-store" },
     );
 
     fireEvent.click(screen.getByRole("button", { name: "fullscreen" }));

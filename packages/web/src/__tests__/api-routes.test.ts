@@ -12,6 +12,15 @@ import {
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
 
+const { mockIssueTerminalAccess } = vi.hoisted(() => ({
+  mockIssueTerminalAccess: vi.fn((id: string) => ({
+    sessionId: id,
+    projectId: "my-app",
+    token: `token-${id}`,
+    expiresAt: "2026-04-09T00:00:00.000Z",
+  })),
+}));
+
 // ── Mock Data ─────────────────────────────────────────────────────────
 // Provides test sessions covering the key states the dashboard needs.
 
@@ -192,6 +201,20 @@ vi.mock("@/lib/services", () => ({
   getSCM: vi.fn(() => mockSCM),
 }));
 
+vi.mock("@/lib/server/terminal-auth", () => ({
+  TerminalAuthError: class TerminalAuthError extends Error {
+    constructor(
+      message: string,
+      public statusCode: number,
+      public code: string,
+      public retryAfterSeconds?: number,
+    ) {
+      super(message);
+    }
+  },
+  issueTerminalAccess: mockIssueTerminalAccess,
+}));
+
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
@@ -206,6 +229,7 @@ import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
 import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
 import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
+import { GET as sessionTerminalGET } from "@/app/api/sessions/[id]/terminal/route";
 import { GET as verifyGET, POST as verifyPOST } from "@/app/api/verify/route";
 import { GET as patchesGET } from "@/app/api/sessions/patches/route";
 
@@ -455,6 +479,20 @@ describe("API Routes", () => {
     it("sets Cache-Control: no-store header", async () => {
       const res = await runtimeTerminalGET();
       expect(res.headers.get("Cache-Control")).toBe("no-store");
+    });
+  });
+
+  describe("GET /api/sessions/[id]/terminal", () => {
+    it("returns a signed terminal grant", async () => {
+      const req = makeRequest("http://localhost:3000/api/sessions/backend-3/terminal");
+      const res = await sessionTerminalGET(req, { params: Promise.resolve({ id: "backend-3" }) });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(mockIssueTerminalAccess).toHaveBeenCalledWith("backend-3");
+      expect(data.token).toBe("token-backend-3");
+      expect(data.url).toContain("http://localhost:14800/terminal");
+      expect(data.url).toContain("session=backend-3");
+      expect(data.url).toContain("token=token-backend-3");
     });
   });
 

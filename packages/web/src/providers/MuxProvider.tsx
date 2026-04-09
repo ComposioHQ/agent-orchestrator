@@ -33,6 +33,18 @@ interface RuntimeTerminalConfig {
   proxyWsPath?: unknown;
 }
 
+interface TerminalGrantResponse {
+  token?: unknown;
+  expiresAt?: unknown;
+}
+
+interface TerminalGrantCacheEntry {
+  token: string;
+  expiresAtMs: number;
+}
+
+const TERMINAL_GRANT_SKEW_MS = 5_000;
+
 function normalizePortValue(value: unknown): string | undefined {
   if (typeof value !== "string" && typeof value !== "number") return undefined;
   const parsed = Number.parseInt(String(value), 10);
@@ -72,6 +84,8 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const subscribersRef = useRef(new Map<string, Set<(data: string) => void>>());
   const openedTerminalsRef = useRef(new Set<string>());
+  const terminalGrantCacheRef = useRef(new Map<string, TerminalGrantCacheEntry>());
+  const terminalGrantInflightRef = useRef(new Map<string, Promise<string>>());
   const [status, setStatus] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">(
     "connecting",
   );
@@ -80,6 +94,80 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runtimeConfigRef = useRef<{ directTerminalPort?: string; proxyWsPath?: string }>({});
   const isDestroyedRef = useRef(false);
+
+  const fetchTerminalGrant = useCallback(async (id: string, forceRefresh = false): Promise<string> => {
+    const cached = terminalGrantCacheRef.current.get(id);
+    const now = Date.now();
+    if (!forceRefresh && cached && cached.expiresAtMs - now > TERMINAL_GRANT_SKEW_MS) {
+      return cached.token;
+    }
+
+    if (!forceRefresh) {
+      const inflight = terminalGrantInflightRef.current.get(id);
+      if (inflight) {
+        return inflight;
+      }
+    }
+
+    const request = (async () => {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/terminal`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to authorize terminal: HTTP ${res.status}`);
+      }
+
+      const data = (await res.json()) as TerminalGrantResponse;
+      if (typeof data.token !== "string" || typeof data.expiresAt !== "string") {
+        throw new Error("Terminal authorization response was invalid");
+      }
+
+      const expiresAtMs = Date.parse(data.expiresAt);
+      if (Number.isNaN(expiresAtMs)) {
+        throw new Error("Terminal authorization expiry was invalid");
+      }
+
+      terminalGrantCacheRef.current.set(id, { token: data.token, expiresAtMs });
+      return data.token;
+    })();
+
+    terminalGrantInflightRef.current.set(id, request);
+
+    try {
+      return await request;
+    } finally {
+      if (terminalGrantInflightRef.current.get(id) === request) {
+        terminalGrantInflightRef.current.delete(id);
+      }
+    }
+  }, []);
+
+  const sendTerminalOpen = useCallback(async (id: string, forceRefresh = false) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      const token = await fetchTerminalGrant(id, forceRefresh);
+      if (wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      const openMsg: ClientMessage = {
+        ch: "terminal",
+        id,
+        type: "open",
+        token,
+      };
+      ws.send(JSON.stringify(openMsg));
+    } catch (err) {
+      console.error(
+        `[MuxProvider] Failed to authorize terminal ${id}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }, [fetchTerminalGrant]);
 
   const connect = useCallback(() => {
     if (wsRef.current) {
@@ -106,12 +194,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
 
         // Re-open previously opened terminals
         for (const terminalId of openedTerminalsRef.current) {
-          const openMsg: ClientMessage = {
-            ch: "terminal",
-            id: terminalId,
-            type: "open",
-          };
-          ws.send(JSON.stringify(openMsg));
+          void sendTerminalOpen(terminalId);
         }
 
         // Always subscribe to sessions
@@ -185,7 +268,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
       console.error("[MuxProvider] Failed to create WebSocket:", err);
       setStatus("disconnected");
     }
-  }, []);
+  }, [sendTerminalOpen]);
 
   // Fetch runtime config then connect. This ensures buildMuxWsUrl() has the
   // server-configured port/path before the WebSocket is opened.
@@ -235,12 +318,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
 
       // Request open if not already open
       if (!openedTerminalsRef.current.has(id) && wsRef.current?.readyState === WebSocket.OPEN) {
-        const openMsg: ClientMessage = {
-          ch: "terminal",
-          id,
-          type: "open",
-        };
-        wsRef.current.send(JSON.stringify(openMsg));
+        void sendTerminalOpen(id);
       }
 
       // Return unsubscribe function
@@ -272,14 +350,9 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const openTerminal = useCallback((id: string) => {
     openedTerminalsRef.current.add(id);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      const msg: ClientMessage = {
-        ch: "terminal",
-        id,
-        type: "open",
-      };
-      wsRef.current.send(JSON.stringify(msg));
+      void sendTerminalOpen(id);
     }
-  }, []);
+  }, [sendTerminalOpen]);
 
   const closeTerminal = useCallback((id: string) => {
     openedTerminalsRef.current.delete(id);

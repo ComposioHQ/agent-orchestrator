@@ -76,6 +76,30 @@ function wrapper({ children }: { children: React.ReactNode }) {
   return <MuxProvider>{children}</MuxProvider>;
 }
 
+function makeFetchMock() {
+  return vi.fn(async (input: string) => {
+    if (input === "/api/runtime/terminal") {
+      return {
+        ok: true,
+        json: async () => ({ proxyWsPath: "/ao-terminal-ws" }),
+      };
+    }
+
+    if (input.startsWith("/api/sessions/") && input.endsWith("/terminal")) {
+      const sessionId = decodeURIComponent(input.split("/")[3] ?? "");
+      return {
+        ok: true,
+        json: async () => ({
+          token: `token-for-${sessionId}`,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+      };
+    }
+
+    throw new Error(`Unexpected fetch: ${input}`);
+  });
+}
+
 /**
  * Flush the MuxProvider's async init (fetch → connect).
  * Two promise ticks: one for `await fetch(...)`, one for `await res.json()`.
@@ -95,13 +119,7 @@ async function flushInit() {
 beforeEach(() => {
   MockWebSocket.instances = [];
   vi.stubGlobal("WebSocket", MockWebSocket);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ proxyWsPath: "/ao-terminal-ws" }),
-    })),
-  );
+  vi.stubGlobal("fetch", makeFetchMock());
 });
 
 afterEach(() => {
@@ -270,6 +288,7 @@ describe("MuxProvider connection lifecycle", () => {
       expect(result.current.status).toBe("connected");
 
       act(() => result.current.openTerminal("session-abc"));
+      await flushInit();
       // Confirm open message sent on ws1
       expect(ws1.sentMessages.some((m) => {
         const p = JSON.parse(m) as Record<string, unknown>;
@@ -284,6 +303,7 @@ describe("MuxProvider connection lifecycle", () => {
       expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(2);
       const ws2 = MockWebSocket.instances[MockWebSocket.instances.length - 1];
       act(() => ws2.simulateOpen());
+      await flushInit();
 
       // session-abc should be re-opened on ws2
       expect(ws2.sentMessages.some((m) => {
@@ -353,6 +373,7 @@ describe("MuxProvider message handling", () => {
 
       const ws2 = MockWebSocket.instances[MockWebSocket.instances.length - 1];
       act(() => ws2.simulateOpen());
+      await flushInit();
 
       expect(ws2.sentMessages.some((m) => {
         const p = JSON.parse(m) as Record<string, unknown>;
@@ -475,9 +496,15 @@ describe("MuxProvider terminal operations", () => {
   it("openTerminal sends open message when connected", async () => {
     const { result, ws } = await setupConnected();
     act(() => result.current.openTerminal("session-abc"));
+    await flushInit();
     expect(ws.sentMessages.some((m) => {
       const p = JSON.parse(m) as Record<string, unknown>;
-      return p.ch === "terminal" && p.type === "open" && p.id === "session-abc";
+      return (
+        p.ch === "terminal" &&
+        p.type === "open" &&
+        p.id === "session-abc" &&
+        p.token === "token-for-session-abc"
+      );
     })).toBe(true);
   });
 
@@ -503,9 +530,15 @@ describe("MuxProvider terminal operations", () => {
   it("subscribeTerminal sends open for untracked terminal", async () => {
     const { result, ws } = await setupConnected();
     act(() => { result.current.subscribeTerminal("session-new", () => {}); });
+    await flushInit();
     expect(ws.sentMessages.some((m) => {
       const p = JSON.parse(m) as Record<string, unknown>;
-      return p.ch === "terminal" && p.type === "open" && p.id === "session-new";
+      return (
+        p.ch === "terminal" &&
+        p.type === "open" &&
+        p.id === "session-new" &&
+        p.token === "token-for-session-new"
+      );
     })).toBe(true);
   });
 
@@ -532,7 +565,22 @@ describe("buildMuxWsUrl", () => {
   it("uses directTerminalPort from runtime config when on a custom port", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({ ok: true, json: async () => ({ directTerminalPort: 14802 }) })),
+      vi.fn(async (input: string) => {
+        if (input === "/api/runtime/terminal") {
+          return { ok: true, json: async () => ({ directTerminalPort: 14802 }) };
+        }
+        if (input.startsWith("/api/sessions/") && input.endsWith("/terminal")) {
+          const sessionId = decodeURIComponent(input.split("/")[3] ?? "");
+          return {
+            ok: true,
+            json: async () => ({
+              token: `token-for-${sessionId}`,
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            }),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${input}`);
+      }),
     );
     Object.defineProperty(window, "location", {
       writable: true,
@@ -548,7 +596,25 @@ describe("buildMuxWsUrl", () => {
   });
 
   it("uses path-based URL when port is empty (reverse proxy)", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (input === "/api/runtime/terminal") {
+          return { ok: false };
+        }
+        if (input.startsWith("/api/sessions/") && input.endsWith("/terminal")) {
+          const sessionId = decodeURIComponent(input.split("/")[3] ?? "");
+          return {
+            ok: true,
+            json: async () => ({
+              token: `token-for-${sessionId}`,
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            }),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${input}`);
+      }),
+    );
     Object.defineProperty(window, "location", {
       writable: true,
       value: { protocol: "http:", host: "localhost", hostname: "localhost", port: "" },
@@ -556,5 +622,53 @@ describe("buildMuxWsUrl", () => {
     renderHook(() => useMux(), { wrapper });
     await flushInit();
     expect(MockWebSocket.instances[0].url).toMatch(/\/ao-terminal-mux$/);
+  });
+
+  it("refreshes terminal grants after they expire", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/runtime/terminal") {
+        return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
+      }
+      if (input.startsWith("/api/sessions/") && input.endsWith("/terminal")) {
+        const sessionId = decodeURIComponent(input.split("/")[3] ?? "");
+        return {
+          ok: true,
+          json: async () => ({
+            token: `token-${sessionId}-${fetchMock.mock.calls.length}`,
+            expiresAt: new Date(Date.now() + 1_000).toISOString(),
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const { result } = renderHook(() => useMux(), { wrapper });
+      await flushInit();
+      const ws1 = MockWebSocket.instances[0];
+      act(() => ws1.simulateOpen());
+      act(() => result.current.openTerminal("session-expiring"));
+      await flushInit();
+
+      act(() => vi.advanceTimersByTime(2_000));
+      act(() => ws1.simulateClose());
+      act(() => vi.advanceTimersByTime(1_100));
+      await flushInit();
+
+      const ws2 = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+      act(() => ws2.simulateOpen());
+      await flushInit();
+
+      const openMessages = ws2.sentMessages
+        .map((m) => JSON.parse(m) as Record<string, unknown>)
+        .filter((m) => m.ch === "terminal" && m.type === "open" && m.id === "session-expiring");
+
+      expect(openMessages).toHaveLength(1);
+      expect(openMessages[0]?.["token"]).toBe("token-session-expiring-3");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

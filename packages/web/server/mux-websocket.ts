@@ -11,6 +11,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { homedir, userInfo } from "node:os";
 import { spawn } from "node:child_process";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { verifyTerminalAccess } from "./terminal-auth.js";
 
 // These types mirror src/lib/mux-protocol.ts exactly.
 // tsconfig.server.json constrains rootDir to "server/", so we cannot import
@@ -20,7 +21,7 @@ import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js
 type ClientMessage =
   | { ch: "terminal"; id: string; type: "data"; data: string }
   | { ch: "terminal"; id: string; type: "resize"; cols: number; rows: number }
-  | { ch: "terminal"; id: string; type: "open" }
+  | { ch: "terminal"; id: string; type: "open"; token: string }
   | { ch: "terminal"; id: string; type: "close" }
   | { ch: "system"; type: "ping" }
   | { ch: "subscribe"; topics: ("sessions")[] };
@@ -473,7 +474,7 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
     /**
      * Handle incoming messages
      */
-    ws.on("message", (data) => {
+    ws.on("message", async (data) => {
 
       try {
         const msg = JSON.parse(data.toString("utf8")) as ClientMessage;
@@ -488,6 +489,8 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
 
           try {
             if (type === "open") {
+              verifyTerminalAccess(id, msg.token);
+
               // Validate session exists
               terminalManager.open(id);
 
