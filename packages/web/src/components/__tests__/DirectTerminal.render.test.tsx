@@ -251,7 +251,8 @@ describe("initial fit timing", () => {
     // Wait for the RAF to be scheduled (the component called requestAnimationFrame)
     await waitFor(() => expect(capturedRafCb).toBeDefined());
 
-    // Spy set up after capture so we can verify the captured callback calls fit.fit()
+    // Spy set up after capture to verify the RAF callback calls fit.fit() before
+    // notifying the server — both happen inside the same RAF so dimensions are correct
     const fitSpy = vi.spyOn(MockFitAddon.prototype, "fit");
     capturedRafCb!(performance.now());
     expect(fitSpy).toHaveBeenCalled();

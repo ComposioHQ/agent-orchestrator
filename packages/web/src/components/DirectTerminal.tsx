@@ -265,8 +265,12 @@ export function DirectTerminal({
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
 
-        // Fit terminal to container — defer so DOM has settled
-        const initialFitRafId = requestAnimationFrame(() => fit.fit());
+        // Fit terminal to container — defer so DOM has settled, then send
+        // the real dimensions to the server (cols/rows are 0 until fit runs)
+        const initialFitRafId = requestAnimationFrame(() => {
+          fit.fit();
+          resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+        });
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
@@ -357,9 +361,6 @@ export function DirectTerminal({
         inputDisposable = terminal.onData((data) => {
           writeTerminal(sessionId, data);
         });
-
-        // Send initial size
-        resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
