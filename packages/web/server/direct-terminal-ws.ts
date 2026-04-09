@@ -173,17 +173,59 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
 
     // Enable mouse mode for scrollback support
     const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionId, "mouse", "on"]);
+    let mouseStderr = "";
+    if (mouseProc.stderr) {
+      mouseProc.stderr.on("data", (chunk) => {
+        try {
+          mouseStderr += String(chunk);
+        } catch {
+          // ignore conversion errors
+        }
+      });
+    }
     mouseProc.on("error", (err) => {
       console.error(`[DirectTerminal] Failed to set mouse mode for ${tmuxSessionId}:`, err.message);
+    });
+    mouseProc.on("close", (code, signal) => {
+      if (code !== null && code !== 0) {
+        const stderrOutput = mouseStderr.trim();
+        console.error(
+          `[DirectTerminal] tmux mouse mode exited with code ${code}` +
+            (signal ? `, signal ${signal}` : "") +
+            ` for ${tmuxSessionId}` +
+            (stderrOutput ? `; stderr: ${stderrOutput}` : ""),
+        );
+      }
     });
 
     // Hide the green status bar for cleaner appearance
     const statusProc = spawn(TMUX, ["set-option", "-t", tmuxSessionId, "status", "off"]);
+    let statusStderr = "";
+    if (statusProc.stderr) {
+      statusProc.stderr.on("data", (chunk) => {
+        try {
+          statusStderr += String(chunk);
+        } catch {
+          // ignore conversion errors
+        }
+      });
+    }
     statusProc.on("error", (err) => {
       console.error(
         `[DirectTerminal] Failed to hide status bar for ${tmuxSessionId}:`,
         err.message,
       );
+    });
+    statusProc.on("close", (code, signal) => {
+      if (code !== null && code !== 0) {
+        const stderrOutput = statusStderr.trim();
+        console.error(
+          `[DirectTerminal] tmux status hide exited with code ${code}` +
+            (signal ? `, signal ${signal}` : "") +
+            ` for ${tmuxSessionId}` +
+            (stderrOutput ? `; stderr: ${stderrOutput}` : ""),
+        );
+      }
     });
 
     // Build complete environment - node-pty requires proper env setup

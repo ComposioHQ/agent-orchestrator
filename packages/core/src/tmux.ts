@@ -110,6 +110,13 @@ export async function newSession(opts: NewSessionOptions): Promise<void> {
 
   await tmux(...args);
 
+  // Set scrollback history limit for all new sessions globally.
+  // Use -g (global) flag so this applies to all sessions created going forward.
+  // This is particularly important for web terminal sessions where xterm.js
+  // scrollback is disabled (scrollback: 0) to fix the cursor moving
+  // with viewport issue (#738). Users rely on tmux's scrollback buffer.
+  await tmux("set-option", "-g", "history-limit", "10000");
+
   // Send the initial command if provided
   if (opts.command) {
     await sendKeys(opts.name, opts.command);

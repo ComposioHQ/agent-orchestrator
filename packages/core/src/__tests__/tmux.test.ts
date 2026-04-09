@@ -160,18 +160,21 @@ describe("newSession", () => {
   });
 
   it("sends initial command after creation", async () => {
-    // Calls: new-session, send-keys Escape, send-keys text, send-keys Enter
-    mockTmuxSequence([{ stdout: "" }, { stdout: "" }, { stdout: "" }, { stdout: "" }]);
+    // Calls: new-session, set-option -g history-limit, send-keys Escape, send-keys text, send-keys Enter
+    mockTmuxSequence([{ stdout: "" }, { stdout: "" }, { stdout: "" }, { stdout: "" }, { stdout: "" }]);
 
     await newSession({ name: "test-4", cwd: "/tmp", command: "echo hello" });
 
-    expect(mockExecFile).toHaveBeenCalledTimes(4);
+    expect(mockExecFile).toHaveBeenCalledTimes(5);
     // Call 0: new-session
-    // Call 1: send-keys Escape (clear partial input)
-    const escapeArgs = mockExecFile.mock.calls[1][1] as string[];
+    // Call 1: set-option -g history-limit
+    const historyLimitArgs = mockExecFile.mock.calls[1][1] as string[];
+    expect(historyLimitArgs).toEqual(["set-option", "-g", "history-limit", "10000"]);
+    // Call 2: send-keys Escape (clear partial input)
+    const escapeArgs = mockExecFile.mock.calls[2][1] as string[];
     expect(escapeArgs).toEqual(["send-keys", "-t", "test-4", "Escape"]);
-    // Call 2: send-keys text
-    const textArgs = mockExecFile.mock.calls[2][1] as string[];
+    // Call 3: send-keys text
+    const textArgs = mockExecFile.mock.calls[3][1] as string[];
     expect(textArgs).toContain("send-keys");
     expect(textArgs).toContain("echo hello");
   });
