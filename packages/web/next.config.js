@@ -1,8 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ["@composio/core"],
+  serverExternalPackages: ["@composio/core", "@composio/ao-core"],
   transpilePackages: [
-    "@composio/ao-core",
     "@composio/ao-plugin-agent-claude-code",
     "@composio/ao-plugin-agent-opencode",
     "@composio/ao-plugin-runtime-tmux",
