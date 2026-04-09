@@ -1481,11 +1481,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           reactionTrackers.delete(trackerKey);
         }
       }
-      for (const sessionId of lastReviewBacklogCheckAt.keys()) {
-        if (!currentSessionIds.has(sessionId)) {
-          lastReviewBacklogCheckAt.delete(sessionId);
-        }
-      }
       for (const watchedId of watcherCleanups.keys()) {
         if (!currentSessionIds.has(watchedId)) {
           try {
