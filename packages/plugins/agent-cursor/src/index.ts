@@ -16,6 +16,7 @@ import {
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
+  type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
@@ -122,6 +123,8 @@ function createCursorAgent(): Agent {
 
       const permissionMode = normalizeAgentPermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
+        // Cursor uses --auto-approve for automatic approval, equivalent to Aider's --yes
+        // and Claude Code's --dangerously-bypass-approvals-and-sandbox/--ask-for-approval
         parts.push("--auto-approve");
       }
 
@@ -305,7 +308,7 @@ function createCursorAgent(): Agent {
     },
 
     // Cursor doesn't support session resume — return null so caller falls back to getLaunchCommand
-    async getRestoreCommand(): Promise<string | null> {
+    async getRestoreCommand(_session: Session, _project: ProjectConfig): Promise<string | null> {
       return null;
     },
 
