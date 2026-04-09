@@ -664,7 +664,6 @@ describe("useSessionEvents", () => {
     });
   });
 
-<<<<<<< HEAD
   describe("sseAttentionLevels", () => {
     it("starts with empty attention levels when no initial levels provided", () => {
       const sessions = makeSessions(2);

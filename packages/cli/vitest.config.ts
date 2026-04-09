@@ -20,6 +20,14 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: "@composio/ao-core/scm-webhook-utils",
+        replacement: resolve(__dirname, "../core/src/scm-webhook-utils.ts"),
+      },
+      {
+        find: "@composio/ao-core/types",
+        replacement: resolve(__dirname, "../core/src/types.ts"),
+      },
+      {
         find: "@composio/ao-core",
         replacement: resolve(__dirname, "../core/src/index.ts"),
       },

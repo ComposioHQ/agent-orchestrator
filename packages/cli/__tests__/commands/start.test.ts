@@ -113,9 +113,8 @@ vi.mock("../../src/lib/web-dir.js", () => ({
 }));
 
 vi.mock("../../src/lib/dashboard-rebuild.js", () => ({
-  cleanNextCache: vi.fn(),
   findRunningDashboardPid: vi.fn().mockResolvedValue(null),
-  findProcessWebDir: vi.fn().mockResolvedValue(null),
+  rebuildDashboardProductionArtifacts: vi.fn().mockResolvedValue(undefined),
   waitForPortFree: vi.fn(),
 }));
 
@@ -854,12 +853,12 @@ describe("start command — orchestrator session strategy display", () => {
     await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
 
     const output = getLoggedOutput();
-    expect(output).toContain("tmux attach -t tmux-session-1");
+    expect(output).toContain("ao session attach app-orchestrator");
     expect(output).not.toContain("reused existing session");
   });
 
   it.each(["delete", "ignore", "delete-new", "ignore-new", "kill-previous"] as const)(
-    "uses attach messaging when strategy is %s",
+    "uses ao session attach when strategy is %s and --no-dashboard",
     async (orchestratorSessionStrategy) => {
       mockConfigRef.current = makeConfig({
         "my-app": makeProject({ orchestratorSessionStrategy }),
@@ -878,7 +877,7 @@ describe("start command — orchestrator session strategy display", () => {
       await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
 
       const output = getLoggedOutput();
-      expect(output).toContain("tmux attach -t tmux-session-1");
+      expect(output).toContain("ao session attach app-orchestrator");
       expect(output).not.toContain("reused existing session");
     },
   );
@@ -901,8 +900,8 @@ describe("start command — orchestrator session strategy display", () => {
 
     const output = getLoggedOutput();
     // When --no-dashboard is used, auto-selects the most recent orchestrator
-    // and shows the tmux attach command (not the dashboard selection message)
-    expect(output).toContain("tmux attach -t tmux-session-existing");
+    // and shows ao session attach (not the dashboard selection message)
+    expect(output).toContain("ao session attach app-orchestrator");
     expect(output).not.toContain("existing sessions found — select one in the dashboard");
 
     // Should NOT spawn a new orchestrator when existing ones exist
@@ -912,9 +911,10 @@ describe("start command — orchestrator session strategy display", () => {
   it("navigates directly to session page when one existing orchestrator found with dashboard enabled", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 
-    // Mock findWebDir
-    const { findWebDir } = await import("../../src/lib/web-dir.js");
-    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    // Mock findWebDir and port availability for dashboard-enabled test
+    const webDir = await import("../../src/lib/web-dir.js");
+    vi.mocked(webDir.findWebDir).mockReturnValue(tmpDir);
+    vi.mocked(webDir.isPortAvailable).mockResolvedValue(true);
     writeFileSync(join(tmpDir, "package.json"), "{}");
 
     const fakeDashboard = {
@@ -938,8 +938,9 @@ describe("start command — orchestrator session strategy display", () => {
     await program.parseAsync(["node", "test", "start"]);
 
     const output = getLoggedOutput();
-    // With one orchestrator, goes directly to the session page — shows tmux attach, no selection message
-    expect(output).toContain("tmux attach -t tmux-session-existing");
+    // With one orchestrator and dashboard enabled, shows the session URL instead of tmux attach
+    expect(output).toContain("http://localhost:3000/sessions/app-orchestrator");
+    expect(output).not.toContain("tmux attach");
     expect(output).not.toContain("multiple sessions found");
     expect(output).not.toContain("select one in the dashboard");
 

@@ -77,8 +77,6 @@ function resolveNextBin() {
 // Start Next.js production server
 const port = process.env["PORT"] || "3000";
 spawnProcess("next", resolveNextBin(), ["start", "-p", port]);
-// Start terminal WebSocket server (auto-restart on crash)
-spawnProcess("terminal", "node", [resolve(__dirname, "terminal-websocket.js")], { restart: true });
 // Start direct terminal WebSocket server (auto-restart on crash)
 spawnProcess("direct-terminal", "node", [resolve(__dirname, "direct-terminal-ws.js")], { restart: true });
 // Graceful shutdown — send SIGTERM to children and wait for them to exit

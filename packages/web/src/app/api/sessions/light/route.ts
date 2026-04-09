@@ -44,7 +44,7 @@ export async function GET(request: Request) {
       {
         sessions: dashboardSessions,
         orchestrators,
-        globalPause: resolveGlobalPause(allSessions),
+        globalPause: resolveGlobalPause(allSessions, config.projects),
       },
       { status: 200 },
       correlationId,

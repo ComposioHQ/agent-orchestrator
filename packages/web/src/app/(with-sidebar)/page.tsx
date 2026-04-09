@@ -52,7 +52,7 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
     const { config, registry, sessionManager } = await getServices();
     const allSessions = await sessionManager.list();
 
-    pageData.globalPause = resolveGlobalPause(allSessions);
+    pageData.globalPause = resolveGlobalPause(allSessions, config.projects);
 
     const visibleSessions = filterProjectSessions(allSessions, projectFilter, config.projects);
 

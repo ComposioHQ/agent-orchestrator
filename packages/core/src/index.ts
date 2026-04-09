@@ -194,3 +194,11 @@ export type {
   DetectedProjectInfo,
   GenerateConfigOptions,
 } from "./config-generator.js";
+
+// Global pause constants
+export {
+  GLOBAL_PAUSE_UNTIL_KEY,
+  GLOBAL_PAUSE_REASON_KEY,
+  GLOBAL_PAUSE_SOURCE_KEY,
+  parsePauseUntil,
+} from "./global-pause.js";

@@ -17,6 +17,8 @@ export type {
   PRState,
 } from "@composio/ao-core/types";
 
+export type { GlobalPauseState } from "./global-pause";
+
 import {
   ACTIVITY_STATE,
   SESSION_STATUS,

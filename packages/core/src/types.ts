@@ -1073,19 +1073,33 @@ export interface OrchestratorConfig {
 }
 
 /**
+ * Structured location of an external plugin config.
+ * Used to update config with manifest.name after loading (avoids parsing dotted strings).
+ */
+export type ExternalPluginLocation =
+  | { kind: "project"; projectId: string; configType: "tracker" | "scm" }
+  | { kind: "notifier"; notifierId: string };
+
+/**
  * Reference to an external plugin config (from inline tracker/scm/notifier configs).
  * Used for manifest.name validation during plugin loading.
  */
 export interface ExternalPluginEntryRef {
   /** Where this config came from (for error messages) */
   source: string;
+  /** Structured location for updating config (avoids parsing source string) */
+  location: ExternalPluginLocation;
   /** The slot this plugin fills */
   slot: "tracker" | "scm" | "notifier";
   /** npm package name (if specified) */
   package?: string;
   /** Local path (if specified) */
   path?: string;
-  /** Expected plugin name (manifest.name), if specified */
+  /**
+   * Expected plugin name (manifest.name).
+   * Only set when user explicitly specified `plugin` field.
+   * When undefined, any manifest.name is accepted and config is updated with it.
+   */
   expectedPluginName?: string;
 }
 

@@ -1,21 +1,21 @@
 "use client";
 
 import { useEffect } from "react";
-import type { SSEAttentionMap } from "@/hooks/useSessionEvents";
+import { type DashboardSession, type SessionAttentionLevel, getAttentionLevel } from "@/lib/types";
 
 /**
- * Determine overall health from SSE attention levels.
+ * Determine overall health from sessions.
  * - "green"  — all sessions working/done/pending, nothing needs attention
  * - "yellow" — some sessions need review or response
  * - "red"    — critical: sessions stuck, errored, or needing immediate action
  */
-function computeHealthFromLevels(levels: SSEAttentionMap): "green" | "yellow" | "red" {
-  const entries = Object.values(levels);
-  if (entries.length === 0) return "green";
+function computeHealth(sessions: DashboardSession[]): "green" | "yellow" | "red" {
+  if (sessions.length === 0) return "green";
 
   let hasYellow = false;
 
-  for (const level of entries) {
+  for (const session of sessions) {
+    const level: SessionAttentionLevel = getAttentionLevel(session);
     if (level === "respond") return "red";
     if (level === "review" || level === "merge") hasYellow = true;
   }
@@ -38,35 +38,20 @@ function generateFaviconSvg(initial: string, color: string): string {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
-/** Count sessions that need human attention (respond, review, merge). */
-export function countNeedingAttention(levels: SSEAttentionMap): number {
-  let count = 0;
-  for (const level of Object.values(levels)) {
-    if (level === "respond" || level === "review" || level === "merge") {
-      count++;
-    }
-  }
-  return count;
-}
-
 interface DynamicFaviconProps {
-  /** Server-computed attention levels from SSE snapshots. */
-  sseAttentionLevels: SSEAttentionMap;
+  sessions: DashboardSession[];
   projectName?: string;
 }
 
 /**
  * Client component that dynamically updates the browser favicon
- * based on system health (session attention levels from SSE).
- *
- * Uses server-computed attention levels from SSE snapshots for real-time
- * updates, rather than recomputing from the full sessions array.
+ * based on system health (session attention levels).
  */
-export function DynamicFavicon({ sseAttentionLevels, projectName = "A" }: DynamicFaviconProps) {
+export function DynamicFavicon({ sessions, projectName = "A" }: DynamicFaviconProps) {
   const initial = projectName.charAt(0).toUpperCase();
 
   useEffect(() => {
-    const health = computeHealthFromLevels(sseAttentionLevels);
+    const health = computeHealth(sessions);
     const color = HEALTH_COLORS[health];
     const href = generateFaviconSvg(initial, color);
 
@@ -79,7 +64,7 @@ export function DynamicFavicon({ sseAttentionLevels, projectName = "A" }: Dynami
     }
     link.type = "image/svg+xml";
     link.href = href;
-  }, [sseAttentionLevels, initial]);
+  }, [sessions, initial]);
 
   return null;
 }

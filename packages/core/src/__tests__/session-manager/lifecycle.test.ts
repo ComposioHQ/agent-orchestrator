@@ -22,7 +22,7 @@ import type {
   Tracker,
   SCM,
 } from "../../types.js";
-import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "./test-utils.js";
+import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
 import { installMockOpencode, installMockOpencodeWithNotFoundDelete } from "./opencode-helpers.js";
 
 let ctx: TestContext;
