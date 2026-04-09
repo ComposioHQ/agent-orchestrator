@@ -56,12 +56,17 @@ if (existsSync(spawnHelper)) {
 
 // Step 2: Verify the prebuilt binary actually works with this Node.js version.
 // If it doesn't (ABI mismatch from nvm/fnm/volta version switching), rebuild.
+// We exercise pty.spawn() — not just require() — because the posix_spawnp
+// failure only surfaces when the helper binary is actually executed.
 try {
-  execSync("node -e \"require('node-pty')\"", {
-    cwd: resolve(nodePtyDir, ".."),
-    stdio: "ignore",
-    timeout: 10000,
-  });
+  execSync(
+    "node -e \"var p=require('node-pty');var t=p.spawn('/bin/sh',['-c','exit 0'],{});t.kill();\"",
+    {
+      cwd: resolve(nodePtyDir, ".."),
+      stdio: "ignore",
+      timeout: 10000,
+    },
+  );
 } catch {
   console.log("\u26a0\ufe0f  node-pty prebuilt binary incompatible with Node.js " + process.version + ", rebuilding...");
   try {
