@@ -266,6 +266,20 @@ describe("getEnvironment", () => {
   });
 });
 
+describe("getRuntimeHints", () => {
+  const agent = create();
+
+  it("requests Claude home state and API-key passthrough for Docker runtimes", () => {
+    expect(agent.getRuntimeHints?.(makeLaunchConfig())).toEqual({
+      docker: {
+        homeMounts: [{ path: ".claude", kind: "dir" }],
+        envDefaults: { CLAUDE_CONFIG_DIR: ".claude" },
+        envFromHost: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
+      },
+    });
+  });
+});
+
 // =========================================================================
 // isProcessRunning
 // =========================================================================

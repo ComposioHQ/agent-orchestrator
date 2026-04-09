@@ -50,6 +50,8 @@ describe("writeMetadata + readMetadata", () => {
       summary: "Implementing feature X",
       project: "my-app",
       createdAt: "2025-01-01T00:00:00.000Z",
+      runtime: "docker",
+      runtimeConfig: '{"image":"ghcr.io/example/ao:latest","limits":{"memory":"4g"}}',
       runtimeHandle: '{"id":"tmux-1","runtimeName":"tmux"}',
     });
 
@@ -61,6 +63,10 @@ describe("writeMetadata + readMetadata", () => {
     expect(meta!.summary).toBe("Implementing feature X");
     expect(meta!.project).toBe("my-app");
     expect(meta!.createdAt).toBe("2025-01-01T00:00:00.000Z");
+    expect(meta!.runtime).toBe("docker");
+    expect(meta!.runtimeConfig).toBe(
+      '{"image":"ghcr.io/example/ao:latest","limits":{"memory":"4g"}}',
+    );
     expect(meta!.runtimeHandle).toBe('{"id":"tmux-1","runtimeName":"tmux"}');
   });
 

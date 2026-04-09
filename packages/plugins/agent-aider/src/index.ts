@@ -27,7 +27,6 @@ import { join } from "node:path";
 import { constants } from "node:fs";
 
 const execFileAsync = promisify(execFile);
-
 // =============================================================================
 // Aider Activity Detection Helpers
 // =============================================================================
@@ -226,6 +225,32 @@ function createAiderAgent(): Agent {
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
+        if (handle.runtimeName === "docker" && handle.id) {
+          const containerName =
+            typeof handle.data["containerName"] === "string"
+              ? handle.data["containerName"]
+              : handle.id;
+          const tmuxSessionName =
+            typeof handle.data["tmuxSessionName"] === "string"
+              ? handle.data["tmuxSessionName"]
+              : handle.id;
+          const { stdout } = await execFileAsync(
+            "docker",
+            [
+              "exec",
+              containerName,
+              "tmux",
+              "display-message",
+              "-p",
+              "-t",
+              tmuxSessionName,
+              "#{pane_current_command}",
+            ],
+            { timeout: 30_000 },
+          );
+          return stdout.trim() === "aider";
+        }
+
         if (handle.runtimeName === "tmux" && handle.id) {
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",

@@ -6,6 +6,7 @@ import type {
   OrchestratorConfig,
   PluginRegistry,
   SessionManager,
+  Runtime,
   Agent,
   ActivityState,
   SessionStatus,
@@ -153,6 +154,77 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
+  it("prefers the persisted session runtime over the current project default", async () => {
+    const tmuxRuntime: Runtime = {
+      ...plugins.runtime,
+      name: "tmux",
+      isAlive: vi.fn().mockResolvedValue(true),
+    };
+    const dockerRuntime: Runtime = {
+      ...plugins.runtime,
+      name: "docker",
+      isAlive: vi.fn().mockResolvedValue(true),
+    };
+    const registryWithMultipleRuntimes: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") {
+          if (name === "docker") return dockerRuntime;
+          if (name === "tmux") return tmuxRuntime;
+        }
+        if (slot === "agent") return plugins.agent;
+        return null;
+      }),
+    };
+    const configWithTmuxDefault: OrchestratorConfig = {
+      ...config,
+      defaults: {
+        ...config.defaults,
+        runtime: "tmux",
+      },
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          runtime: "tmux",
+        },
+      },
+    };
+    const session = makeSession({
+      status: "working",
+      runtimeHandle: { id: "ctr-1", runtimeName: "docker", data: {} },
+      metadata: {
+        runtime: "tmux",
+        runtimeHandle: JSON.stringify({ id: "ctr-1", runtimeName: "docker", data: {} }),
+      },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(env.sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtime: "tmux",
+      runtimeHandle: JSON.stringify({ id: "ctr-1", runtimeName: "docker", data: {} }),
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithTmuxDefault,
+      registry: registryWithMultipleRuntimes,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(dockerRuntime.isAlive).toHaveBeenCalledWith({
+      id: "ctr-1",
+      runtimeName: "docker",
+      data: {},
+    });
+    expect(tmuxRuntime.isAlive).not.toHaveBeenCalled();
+  });
+
   it("detects killed state when getActivityState returns exited", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "exited" });
 
@@ -162,6 +234,17 @@ describe("check (single session)", () => {
 
     await lm.check("app-1");
     expect(lm.getStates().get("app-1")).toBe("killed");
+  });
+
+  it("keeps freshly spawned sessions in spawning when getActivityState transiently reports exited", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "exited" });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "spawning", createdAt: new Date() }),
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("spawning");
   });
 
   it("detects killed via terminal fallback when getActivityState returns null", async () => {
@@ -175,6 +258,19 @@ describe("check (single session)", () => {
 
     await lm.check("app-1");
     expect(lm.getStates().get("app-1")).toBe("killed");
+  });
+
+  it("keeps freshly spawned sessions in spawning when fallback process detection is briefly false", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
+    vi.mocked(plugins.agent.detectActivity).mockReturnValue("idle");
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "spawning", createdAt: new Date() }),
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("spawning");
   });
 
   it("stays working when agent is idle but process is still running (fallback path)", async () => {

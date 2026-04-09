@@ -45,6 +45,19 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
   # See: https://github.com/cli/cli/blob/trunk/docs/install_linux.md
   ```
 
+- **Docker** (for docker runtime) - Optional, but recommended for server or CI isolation
+
+  ```bash
+  docker --version
+  docker info
+
+  # macOS
+  # Install Docker Desktop: https://docs.docker.com/desktop/setup/install/mac-install/
+
+  # Linux
+  # Install Docker Engine or rootless Docker: https://docs.docker.com/engine/install/
+  ```
+
 ### Optional
 
 - **Linear API Key** - If using Linear for issue tracking
@@ -185,6 +198,84 @@ projects:
 ### Full Configuration Schema
 
 See [agent-orchestrator.yaml.example](./agent-orchestrator.yaml.example) for a fully commented example with all options.
+
+### Docker Runtime Configuration
+
+Use Docker when you want stronger session isolation, reproducible images, or resource limits on shared servers. AO still defaults to `tmux` locally.
+
+```yaml
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/my-app
+    defaultBranch: main
+    runtime: docker
+    runtimeConfig:
+      image: ghcr.io/composio/ao:latest
+      limits:
+        cpus: 2
+        memory: 4g
+      readOnlyRoot: true
+      capDrop: [ALL]
+      network: bridge
+      tmpfs: [/tmp]
+```
+
+Supported Docker runtime keys in this branch:
+
+- `image`: container image to run
+- `shell`: shell used to bootstrap the keepalive process and launch command
+- `user`: explicit container user; defaults to host `uid:gid` when available
+- `limits.cpus`, `limits.memory`, `limits.gpus`: resource controls passed to `docker run`
+- `readOnlyRoot`: sets `--read-only`
+- `capDrop`: repeated `--cap-drop`
+- `network`: sets `--network`
+- `tmpfs`: repeated `--tmpfs`
+
+You can also persist runtime selection from the CLI:
+
+```bash
+ao runtime show
+ao runtime set docker my-app --image ghcr.io/composio/ao:latest --memory 4g --cpus 2 --read-only
+ao runtime clear my-app
+```
+
+Notes on `ao runtime`:
+
+- `ao runtime set <name>` updates `defaults.runtime`.
+- `ao runtime set <name> <project>` writes a project override.
+- Docker config flags are project-only because `runtimeConfig` lives under each project.
+- `ao runtime clear <project>` removes both the project `runtime` and its `runtimeConfig`, so the project falls back to the default runtime.
+
+Notes:
+
+- Your image must include `/bin/sh` (or the configured `shell`), `tmux`, `git`, and the agent CLI you want AO to launch.
+- Any credentials your agent CLI needs must be available inside the container, typically through environment variables.
+- AO bind-mounts the workspace into the container at the same absolute path from the host.
+- When present on the host, AO also mounts `~/.codex`, `~/.gitconfig`, `~/.git-credentials`, and `~/.config/gh` into `/home/ao` so Codex/Git/GitHub auth can work in-container without baking secrets into the image.
+- CLI attach, `ao open`, and the web dashboard terminal attach to Docker sessions with `docker exec ... tmux attach`.
+- Prefer rootless Docker on Linux hosts.
+- Use pinned image tags for reproducibility.
+- Keep `tmpfs: [/tmp]` when using `readOnlyRoot`; many shells and agent CLIs still expect a writable `/tmp`.
+- A fresh Codex worktree path may still prompt for trust the first time it opens inside the container.
+- `readOnlyRoot` only affects the container root filesystem. The bind-mounted workspace remains writable unless you mount it read-only yourself.
+- `ao doctor` now checks Docker availability, daemon access, configured image presence, Linux rootless hints, and GPU-runtime hints when `runtime: docker` is enabled.
+
+Minimal image pattern:
+
+```dockerfile
+FROM node:20-bookworm
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git tmux \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install the agent CLI used by this project.
+# RUN npm install -g @openai/codex
+# RUN npm install -g @anthropic-ai/claude-code
+
+WORKDIR /workspace
+```
 
 ### Plugin Slots
 
@@ -505,8 +596,11 @@ lsof -ti:3000 | xargs kill
 **Solution:**
 
 ```bash
-# AO stores runtime data under ~/.agent-orchestrator/
+# AO stores session metadata under ~/.agent-orchestrator/
 ls -la ~/.agent-orchestrator
+
+# Worktree-backed sessions use managed worktrees under ~/.worktrees/
+ls -la ~/.worktrees
 
 # Create the base directory if missing
 mkdir -p ~/.agent-orchestrator
@@ -817,8 +911,9 @@ ao session ls --json | jq -r '.[] | select(.status == "merged") | .id' | xargs -
 
 Yes! Each orchestrator instance should have:
 
-- Different dashboard port (`port`) — e.g., 3000 for project A, 3001 for project B
-- Different config location or project paths
+- A different config file or config directory, so AO gets a different hash namespace
+- Different dashboard port (`port`) - e.g., 3000 for project A, 3001 for project B
+- Different project paths or config contents as needed
 
 AO derives runtime directories from the config location, so separate config locations already produce separate hash-scoped runtime paths under `~/.agent-orchestrator/`. Terminal WebSocket ports are auto-detected by default, so you typically only need to set `port:` differently. If you need explicit control, you can also set `terminalPort:` and `directTerminalPort:` per config.
 

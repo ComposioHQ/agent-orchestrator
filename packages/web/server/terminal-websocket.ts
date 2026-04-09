@@ -1,5 +1,5 @@
 /**
- * Terminal server that manages ttyd instances for tmux sessions.
+ * Terminal server that manages ttyd instances for runtime attach commands.
  *
  * Runs alongside Next.js. Spawns a ttyd process per session on demand,
  * each on a unique port. The dashboard embeds ttyd via iframe.
@@ -15,8 +15,9 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request } from "node:http";
-import { createCorrelationId } from "@composio/ao-core";
-import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { createCorrelationId, type AttachInfo } from "@composio/ao-core";
+import { findTmux, validateSessionId } from "./tmux-utils.js";
+import { buildAttachSpawnSpec, resolveAttachInfo } from "./attach-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
 
 /** Cached full path to tmux binary */
@@ -150,12 +151,12 @@ function waitForTtyd(port: number, sessionId: string, timeoutMs = 3000): Promise
 }
 
 /**
- * Spawn or reuse a ttyd instance for a tmux session.
+ * Spawn or reuse a ttyd instance for a runtime attach command.
  *
  * @param sessionId - User-facing session ID (used for base-path and URL)
- * @param tmuxSessionName - Actual tmux session name (may be hash-prefixed)
+ * @param attachInfo - Runtime-provided attach info
  */
-function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstance {
+function getOrSpawnTtyd(sessionId: string, attachInfo: AttachInfo): TtydInstance {
   const existing = instances.get(sessionId);
   if (existing) {
     metrics.totalReused += 1;
@@ -182,24 +183,29 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
     port = nextPort++;
   }
 
-  console.log(`[Terminal] Spawning ttyd for ${tmuxSessionName} on port ${port}`);
+  const spawnSpec = buildAttachSpawnSpec(attachInfo);
+  if (!spawnSpec) {
+    throw new Error(`Session ${sessionId} does not expose an attach command`);
+  }
+
+  console.log(
+    `[Terminal] Spawning ttyd for ${attachInfo.type}:${attachInfo.target} on port ${port}`,
+  );
   metrics.totalSpawns += 1;
   metrics.lastSpawnAt = new Date().toISOString();
 
-  // Enable mouse mode for scrollback support
-  const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "mouse", "on"]);
-  mouseProc.on("error", (err) => {
-    console.error(`[Terminal] Failed to set mouse mode for ${tmuxSessionName}:`, err.message);
-  });
+  if (attachInfo.type === "tmux") {
+    const mouseProc = spawn(TMUX, ["set-option", "-t", attachInfo.target, "mouse", "on"]);
+    mouseProc.on("error", (err) => {
+      console.error(`[Terminal] Failed to set mouse mode for ${attachInfo.target}:`, err.message);
+    });
 
-  // Hide the green status bar for cleaner appearance
-  const statusProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "status", "off"]);
-  statusProc.on("error", (err) => {
-    console.error(`[Terminal] Failed to hide status bar for ${tmuxSessionName}:`, err.message);
-  });
+    const statusProc = spawn(TMUX, ["set-option", "-t", attachInfo.target, "status", "off"]);
+    statusProc.on("error", (err) => {
+      console.error(`[Terminal] Failed to hide status bar for ${attachInfo.target}:`, err.message);
+    });
+  }
 
-  // Use user-facing sessionId for base-path (matches URL the dashboard uses)
-  // Use tmuxSessionName for tmux attach (may be hash-prefixed)
   const proc = spawn(
     "ttyd",
     [
@@ -208,10 +214,8 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
       String(port),
       "--base-path",
       `/${sessionId}`,
-      TMUX,
-      "attach-session",
-      "-t",
-      tmuxSessionName,
+      spawnSpec.program,
+      ...spawnSpec.args,
     ],
     {
       stdio: ["ignore", "pipe", "pipe"],
@@ -347,10 +351,8 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // Resolve tmux session name: try exact match first, then suffix match
-    // (hash-prefixed sessions like "8474d6f29887-ao-15" are accessed by user-facing ID "ao-15")
-    const tmuxSessionId = resolveTmuxSession(sessionId, TMUX);
-    if (!tmuxSessionId) {
+    const attachInfo = await resolveAttachInfo(sessionId).catch(() => null);
+    if (!attachInfo) {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Session not found" }));
       recordWebsocketMetric({
@@ -364,7 +366,7 @@ const server = createServer(async (req, res) => {
 
     // Spawn ttyd and wait for it to be ready (catch port exhaustion and startup failures)
     try {
-      const instance = getOrSpawnTtyd(sessionId, tmuxSessionId);
+      const instance = getOrSpawnTtyd(sessionId, attachInfo);
       await waitForTtyd(instance.port, sessionId);
 
       // Use the request host to construct the terminal URL (supports remote access)

@@ -40,6 +40,20 @@ import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { resolveRuntimeName as resolveStoredRuntimeName } from "./runtime-selection.js";
+
+function resolveRuntimeNameForSession(
+  session: Session,
+  project: _ProjectConfig,
+  defaults: OrchestratorConfig["defaults"],
+): string {
+  return (
+    session.runtimeHandle?.runtimeName ??
+    resolveStoredRuntimeName(project, defaults.runtime, { raw: session.metadata })
+  );
+}
+
+const SPAWNING_KILL_GRACE_MS = 60_000;
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -349,6 +363,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return idleMs > stuckThresholdMs;
   }
 
+  function isWithinSpawnGrace(session: Session): boolean {
+    const persistedStatus = session.metadata?.["status"] as SessionStatus | undefined;
+    const effectiveStatus = persistedStatus ?? session.status;
+    if (effectiveStatus !== SESSION_STATUS.SPAWNING) {
+      return false;
+    }
+
+    const startedAt = session.restoredAt ?? session.createdAt;
+    return Date.now() - startedAt.getTime() < SPAWNING_KILL_GRACE_MS;
+  }
+
   /** Determine current status for a session by polling plugins. */
   async function determineStatus(session: Session): Promise<SessionStatus> {
     const project = config.projects[session.projectId];
@@ -362,13 +387,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const withinSpawnGrace = isWithinSpawnGrace(session);
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
 
     // 1. Check if runtime is alive
     if (session.runtimeHandle) {
-      const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
+      const runtimeName = resolveRuntimeNameForSession(session, project, config.defaults);
+      const runtime = registry.get<Runtime>("runtime", runtimeName);
       if (runtime) {
         const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
         if (!alive) return "killed";
@@ -401,7 +428,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
         if (activityState) {
           if (activityState.state === "waiting_input") return "needs_input";
-          if (activityState.state === "exited") return "killed";
+          if (activityState.state === "exited") return withinSpawnGrace ? "spawning" : "killed";
 
           if (
             (activityState.state === "idle" || activityState.state === "blocked") &&
@@ -414,17 +441,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           // proceed to PR checks below
         } else {
           // getActivityState returned null — fall back to terminal output parsing
-          const runtime = registry.get<Runtime>(
-            "runtime",
-            project.runtime ?? config.defaults.runtime,
-          );
+          const runtimeName = resolveRuntimeNameForSession(session, project, config.defaults);
+          const runtime = registry.get<Runtime>("runtime", runtimeName);
           const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
           if (terminalOutput) {
             const activity = agent.detectActivity(terminalOutput);
             if (activity === "waiting_input") return "needs_input";
 
             const processAlive = await agent.isProcessRunning(session.runtimeHandle);
-            if (!processAlive) return "killed";
+            if (!processAlive) return withinSpawnGrace ? "spawning" : "killed";
           }
         }
       } catch {

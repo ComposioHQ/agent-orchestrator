@@ -23,7 +23,7 @@ Spawn parallel AI coding agents, each in its own git worktree. Agents autonomous
 
 Agent Orchestrator manages fleets of AI coding agents working in parallel on your codebase. Each agent gets its own git worktree, its own branch, and its own PR. When CI fails, the agent fixes it. When reviewers leave comments, the agent addresses them. You only get pulled in when human judgment is needed.
 
-**Agent-agnostic** (Claude Code, Codex, Aider) · **Runtime-agnostic** (tmux, Docker) · **Tracker-agnostic** (GitHub, Linear)
+**Agent-agnostic** (Claude Code, Codex, OpenCode, Aider) · **Runtime-agnostic** (tmux, Docker) · **Tracker-agnostic** (GitHub, Linear)
 
 <div align="center">
 
@@ -64,6 +64,7 @@ To install from source (for contributors):
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
 ```
+
 </details>
 
 ### Start
@@ -138,14 +139,102 @@ CI fails → agent gets the logs and fixes it. Reviewer requests changes → age
 
 See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference, or run `ao config-help` for the complete schema.
 
+### Using Docker runtime
+
+Docker is opt-in. The local default stays `tmux`, but you can switch a project or a single startup to Docker when you want isolation, reproducible images, or server/CI-friendly sessions without changing the local default.
+
+```yaml
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/my-app
+    defaultBranch: main
+    runtime: docker
+    runtimeConfig:
+      image: ghcr.io/composio/ao:latest
+      limits:
+        cpus: 2
+        memory: 4g
+      readOnlyRoot: true
+      capDrop: [ALL]
+      tmpfs: [/tmp]
+```
+
+You can also override runtime per command:
+
+```bash
+ao start --runtime docker --runtime-image ghcr.io/composio/ao:latest
+ao spawn 123 --runtime docker --runtime-image ghcr.io/composio/ao:latest
+ao spawn 123 --runtime docker --runtime-memory 4g --runtime-cpus 2 --runtime-read-only
+```
+
+Or persist runtime selection in config:
+
+```bash
+ao runtime show
+ao runtime set docker my-app --image ghcr.io/composio/ao:latest --memory 4g --cpus 2 --read-only
+ao runtime clear my-app
+```
+
+`ao runtime set <name>` without a project updates `defaults.runtime`. For Docker, the project form is usually the right choice because `runtimeConfig.image` is stored per project.
+
+#### What the Docker runtime actually does
+
+- Starts one long-lived container per AO session
+- Starts `tmux` inside the container so attach, send, and output stay interactive
+- Mounts the worktree at the same absolute path as the host
+- Mounts the worktree's shared Git metadata when the repo uses `.git` indirection or worktrees
+- Returns runtime-aware attach info so `ao session attach`, `ao open`, and the web terminal all use `docker exec ... tmux attach`
+
+This branch also keeps the runtime itself generic: agent plugins provide Docker-specific home mounts and env defaults through runtime hints, instead of hardcoding agent behavior directly into the Docker runtime.
+
+Your Docker image must include the basics AO expects to drive an interactive agent session:
+
+- `/bin/sh` (or the shell you set in `runtimeConfig.shell`)
+- `tmux`
+- `git`
+- The agent CLI you plan to run inside the container (`claude`, `codex`, `aider`, etc.)
+- Any auth material that CLI expects inside the container
+
+AO bind-mounts the project workspace into the container at the same absolute host path. That keeps agent tooling and terminal attach behavior consistent, but it also means Docker must be able to access that host path.
+
+When present on the host, AO also mounts common developer config into `/home/ao` inside the container:
+
+- `~/.gitconfig`
+- `~/.git-credentials`
+- `~/.config/gh`
+
+That covers Git/GitHub basics. Agent-specific state is requested by the agent plugin itself.
+
+#### Verified built-in agents
+
+These were live-validated on this branch with real AO Docker sessions:
+
+- `claude-code`: mounts `~/.claude`, sets `CLAUDE_CONFIG_DIR`, and reuses a Linux-style Claude config/auth home in the container. The first Docker-backed Claude session may require a one-time in-container Claude sign-in; later containers reuse the mounted config home.
+- `codex`: mounts `~/.codex`, sets `CODEX_HOME`, and can reuse host Codex state. A fresh worktree path may still show Codex's normal trust prompt the first time it opens.
+- `opencode`: mounts OpenCode config/auth state, sets `OPENCODE_CONFIG_DIR`, and passes common provider API keys through from the host when present.
+
+Other agents can still use the Docker runtime as long as the image includes the agent CLI and its auth model is available in-container, but the three agents above are the ones explicitly exercised end-to-end here.
+
+CLI attach, `ao open`, and the web dashboard terminal are runtime-aware. For Docker sessions they attach with `docker exec ... tmux attach`, not host tmux.
+
+Recommended for servers:
+
+- Prefer rootless Docker on Linux
+- Use a pinned image instead of `latest` for reproducibility
+- Add `readOnlyRoot`, `capDrop`, and explicit CPU/memory limits for multi-tenant hosts
+- Keep `tmpfs: [/tmp]` when using `readOnlyRoot`; many agent CLIs and shells still expect a writable `/tmp`
+- Use `ao doctor` after changing Docker runtime config; it now checks Docker daemon access and warns about missing image/rootless/GPU setup
+- See [`packages/plugins/runtime-docker/README.md`](packages/plugins/runtime-docker/README.md) for the plugin-level Docker details and minimal image pattern
+
 ## Plugin Architecture
 
 Seven plugin slots. Lifecycle stays in core.
 
 | Slot      | Default     | Alternatives             |
 | --------- | ----------- | ------------------------ |
-| Runtime   | tmux        | process                  |
-| Agent     | claude-code | codex, aider, opencode   |
+| Runtime   | tmux        | docker, process          |
+| Agent     | claude-code | codex, opencode, aider   |
 | Workspace | worktree    | clone                    |
 | Tracker   | github      | linear, gitlab           |
 | SCM       | github      | gitlab                   |

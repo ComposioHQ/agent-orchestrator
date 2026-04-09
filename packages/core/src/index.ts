@@ -94,6 +94,7 @@ export {
   readLastJsonlEntry,
   resolveProjectIdForSessionId,
 } from "./utils.js";
+export { isPlainObject, mergeRuntimeConfig } from "./runtime-selection.js";
 export {
   getWebhookHeader,
   parseWebhookJsonObject,

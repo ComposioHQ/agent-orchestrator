@@ -13,6 +13,9 @@ import { isPortAvailable } from "./web-dir.js";
 import { exec } from "./shell.js";
 import { isInstalledUnderNodeModules } from "./dashboard-rebuild.js";
 
+type RuntimeConfig = Record<string, unknown>;
+type KnownRuntimes = Iterable<string> | undefined;
+
 /**
  * Check that the dashboard port is free.
  * Throws if the port is already in use.
@@ -97,6 +100,69 @@ async function checkTmux(): Promise<void> {
   throw new Error(`tmux is not installed. Install it: ${hint}`);
 }
 
+async function checkDocker(runtimeConfig?: RuntimeConfig): Promise<void> {
+  try {
+    await exec("docker", ["--version"]);
+  } catch {
+    throw new Error("Docker is not installed. Install it: https://docs.docker.com/get-docker/");
+  }
+
+  try {
+    await exec("docker", ["info"]);
+  } catch {
+    throw new Error(
+      "Docker is installed but the daemon is unavailable. Start Docker Desktop or the Docker service.",
+    );
+  }
+
+  const image = runtimeConfig?.["image"];
+  if (typeof image !== "string" || image.trim().length === 0) {
+    throw new Error(
+      "Docker runtime requires an image. Set project.runtimeConfig.image or pass --runtime-image / --runtime-config with an image override.",
+    );
+  }
+
+  const readOnlyRoot = runtimeConfig?.["readOnlyRoot"] === true;
+  const tmpfs = Array.isArray(runtimeConfig?.["tmpfs"])
+    ? runtimeConfig?.["tmpfs"].filter((value): value is string => typeof value === "string")
+    : [];
+  const hasTmpfsTmp = tmpfs.some((mount) => mount.split(":")[0]?.trim() === "/tmp");
+  if (readOnlyRoot && !hasTmpfsTmp) {
+    throw new Error(
+      "Docker runtime with readOnlyRoot=true also needs tmpfs to include /tmp. Add project.runtimeConfig.tmpfs: ['/tmp'] or pass --runtime-tmpfs /tmp.",
+    );
+  }
+}
+
+async function checkRuntime(
+  runtime: string,
+  runtimeConfig?: RuntimeConfig,
+  knownRuntimes?: KnownRuntimes,
+): Promise<void> {
+  if (runtime === "tmux") {
+    await checkTmux();
+    return;
+  }
+  if (runtime === "docker") {
+    await checkDocker(runtimeConfig);
+    return;
+  }
+  if (runtime === "process") {
+    return;
+  }
+
+  if (knownRuntimes) {
+    const known = new Set([...knownRuntimes].filter(Boolean));
+    if (known.has(runtime)) {
+      return;
+    }
+  }
+
+  throw new Error(
+    `Unknown runtime "${runtime}". Configure a supported runtime plugin (tmux, docker, process) or check for typos in your config/flags.`,
+  );
+}
+
 /**
  * Check that the GitHub CLI is installed and authenticated.
  * Distinguishes between "not installed" and "not authenticated"
@@ -119,6 +185,8 @@ async function checkGhAuth(): Promise<void> {
 export const preflight = {
   checkPort,
   checkBuilt,
+  checkRuntime,
   checkTmux,
+  checkDocker,
   checkGhAuth,
 };

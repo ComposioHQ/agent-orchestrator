@@ -176,6 +176,9 @@ export function create(): Runtime {
         type: "tmux",
         target: handle.id,
         command: `tmux attach -t ${handle.id}`,
+        program: "tmux",
+        args: ["attach", "-t", handle.id],
+        requiresPty: true,
       };
     },
   };

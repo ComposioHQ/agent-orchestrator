@@ -100,6 +100,10 @@ function makeTmuxHandle(id = "test-session"): RuntimeHandle {
   return { id, runtimeName: "tmux", data: {} };
 }
 
+function makeDockerHandle(id = "test-container"): RuntimeHandle {
+  return { id, runtimeName: "docker", data: {} };
+}
+
 function makeProcessHandle(pid?: number | string): RuntimeHandle {
   return { id: "proc-1", runtimeName: "process", data: pid !== undefined ? { pid } : {} };
 }
@@ -125,6 +129,19 @@ function mockTmuxWithProcess(processName: string, found = true) {
     }
     if (cmd === "ps") {
       const line = found ? `  789 ttys003  ${processName}` : "  789 ttys003  bash";
+      return Promise.resolve({
+        stdout: `  PID TT       ARGS\n${line}\n`,
+        stderr: "",
+      });
+    }
+    return Promise.reject(new Error(`Unexpected: ${cmd} ${args.join(" ")}`));
+  });
+}
+
+function mockDockerWithProcess(processName: string, found = true) {
+  mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
+    if (cmd === "docker" && args[0] === "exec") {
+      const line = found ? `  321 ?  ${processName}` : "  321 ?  bash";
       return Promise.resolve({
         stdout: `  PID TT       ARGS\n${line}\n`,
         stderr: "",
@@ -439,6 +456,20 @@ describe("getEnvironment", () => {
   });
 });
 
+describe("getRuntimeHints", () => {
+  const agent = create();
+
+  it("requests the Codex home directory for Docker runtimes", () => {
+    expect(agent.getRuntimeHints?.(makeLaunchConfig())).toEqual({
+      docker: {
+        homeMounts: [{ path: ".codex", kind: "dir" }],
+        envDefaults: { CODEX_HOME: ".codex" },
+        envFromHost: ["OPENAI_API_KEY"],
+      },
+    });
+  });
+});
+
 // =========================================================================
 // isProcessRunning
 // =========================================================================
@@ -458,6 +489,26 @@ describe("isProcessRunning", () => {
   it("returns false when tmux list-panes returns empty", async () => {
     mockExecFileAsync.mockResolvedValue({ stdout: "", stderr: "" });
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+  });
+
+  it("returns true for docker handle when codex runs via shell wrapper", async () => {
+    mockDockerWithProcess("bash /usr/local/bin/codex -c check_for_update_on_startup=false");
+    expect(await agent.isProcessRunning(makeDockerHandle())).toBe(true);
+  });
+
+  it("returns true for docker handle when codex is wrapped in a quoted bash -lc command", async () => {
+    mockDockerWithProcess("bash -lc 'codex -c check_for_update_on_startup=false'");
+    expect(await agent.isProcessRunning(makeDockerHandle())).toBe(true);
+  });
+
+  it("returns true for docker handle when codex runs via node script entrypoint", async () => {
+    mockDockerWithProcess("node /usr/local/lib/node_modules/@openai/codex/bin/codex.js exec fix it");
+    expect(await agent.isProcessRunning(makeDockerHandle())).toBe(true);
+  });
+
+  it("returns false for docker handle when codex is not running in the container", async () => {
+    mockDockerWithProcess("bash /usr/local/bin/codex", false);
+    expect(await agent.isProcessRunning(makeDockerHandle())).toBe(false);
   });
 
   it("returns true for process handle with alive PID", async () => {
@@ -651,6 +702,16 @@ describe("getActivityState", () => {
     mockTmuxWithProcess("codex");
     mockReaddir.mockRejectedValue(new Error("ENOENT"));
     const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect(await agent.getActivityState(session)).toBeNull();
+  });
+
+  it("returns null for live docker-backed sessions when no session file is available yet", async () => {
+    mockDockerWithProcess("bash /usr/local/bin/codex -c check_for_update_on_startup=false");
+    mockReaddir.mockRejectedValue(new Error("ENOENT"));
+    const session = makeSession({
+      runtimeHandle: makeDockerHandle(),
+      workspacePath: "/workspace/test",
+    });
     expect(await agent.getActivityState(session)).toBeNull();
   });
 

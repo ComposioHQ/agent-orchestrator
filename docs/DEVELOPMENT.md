@@ -68,6 +68,7 @@ Activity states (orthogonal to lifecycle): `active`, `ready`, `idle`, `waiting_i
 | `packages/core/src/prompt-builder.ts`    | 3-layer prompt assembly (base + config + rules) |
 | `packages/core/src/config.ts`            | Config loading and Zod validation               |
 | `packages/core/src/plugin-registry.ts`   | Plugin discovery, loading, resolution           |
+| `packages/core/src/runtime-selection.ts` | Shared runtime/runtimeConfig resolution helpers |
 | `packages/core/src/agent-selection.ts`   | Resolves worker vs orchestrator agent roles     |
 | `packages/core/src/observability.ts`     | Correlation IDs, structured logging, metrics    |
 | `packages/core/src/paths.ts`             | Hash-based path and session name generation     |

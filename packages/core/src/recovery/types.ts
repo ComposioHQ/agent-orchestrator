@@ -51,6 +51,9 @@ export interface RecoveryAssessment {
   /** Whether the runtime (tmux/docker) is alive */
   runtimeAlive: boolean;
 
+  /** Resolved runtime plugin name for this session */
+  runtimeName: string;
+
   /** Runtime handle if available */
   runtimeHandle: RuntimeHandle | null;
 

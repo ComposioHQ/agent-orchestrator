@@ -92,8 +92,10 @@ async function gatherSessionInfo(
   }
 
   // Get last activity time from tmux
-  const tmuxTarget = session.runtimeHandle?.id ?? session.id;
-  const activityTs = await getTmuxActivity(tmuxTarget);
+  const activityTs =
+    session.runtimeHandle?.runtimeName === "tmux"
+      ? await getTmuxActivity(session.runtimeHandle?.id ?? session.id)
+      : session.lastActivityAt.getTime();
   const lastActivity = activityTs ? formatAge(activityTs) : "-";
 
   // Get agent's auto-generated summary via introspection

@@ -64,6 +64,7 @@ function makeAssessment(overrides: Partial<RecoveryAssessment> = {}): RecoveryAs
     action: "recover",
     reason: "Session is running normally",
     runtimeAlive: true,
+    runtimeName: "tmux",
     runtimeHandle: { id: "rt-1", runtimeName: "tmux", data: {} },
     workspaceExists: true,
     workspacePath: "/tmp/worktree",
@@ -267,6 +268,82 @@ describe("cleanupSession", () => {
       }
       rmSync(rootDir, { recursive: true, force: true });
     }
+  });
+
+  it("uses the assessed runtime instead of the current project default", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "project=app\nstatus=working\nworktree=/tmp/worktree\n",
+      "utf-8",
+    );
+
+    const dockerRuntime: Runtime = {
+      name: "docker",
+      create: vi.fn(),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn(),
+      getOutput: vi.fn(),
+      isAlive: vi.fn(),
+    };
+    const tmuxRuntime: Runtime = {
+      name: "tmux",
+      create: vi.fn(),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn(),
+      getOutput: vi.fn(),
+      isAlive: vi.fn(),
+    };
+    const workspace: Workspace = {
+      name: "worktree",
+      create: vi.fn(),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      list: vi.fn(),
+      exists: vi.fn(),
+    };
+    const registry: PluginRegistry = {
+      register: vi.fn(),
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") {
+          if (name === "docker") return dockerRuntime;
+          if (name === "tmux") return tmuxRuntime;
+        }
+        if (slot === "workspace") return workspace;
+        return null;
+      }),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn().mockResolvedValue(undefined),
+      loadFromConfig: vi.fn().mockResolvedValue(undefined),
+    };
+    const assessment = makeAssessment({
+      action: "cleanup",
+      classification: "dead",
+      runtimeAlive: true,
+      runtimeName: "docker",
+      runtimeHandle: { id: "ctr-1", runtimeName: "docker", data: {} },
+      workspaceExists: false,
+      rawMetadata: {
+        ...makeAssessment().rawMetadata,
+        runtime: "tmux",
+      },
+    });
+    const context = makeContext(rootDir);
+
+    const result = await cleanupSession(assessment, config, registry, context);
+    expect(result.success).toBe(true);
+    expect(dockerRuntime.destroy).toHaveBeenCalledWith({
+      id: "ctr-1",
+      runtimeName: "docker",
+      data: {},
+    });
+    expect(tmuxRuntime.destroy).not.toHaveBeenCalled();
   });
 
   it("continues cleanup and calls deleteMetadata even when workspace.destroy throws", async () => {

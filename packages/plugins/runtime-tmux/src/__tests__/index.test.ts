@@ -575,6 +575,9 @@ describe("runtime.getAttachInfo()", () => {
       type: "tmux",
       target: "attach-test",
       command: "tmux attach -t attach-test",
+      program: "tmux",
+      args: ["attach", "-t", "attach-test"],
+      requiresPty: true,
     });
   });
 });

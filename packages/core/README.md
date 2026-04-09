@@ -35,6 +35,7 @@ Handles session lifecycle:
 - `spawn(config)` — create new session (workspace + runtime + agent)
 - `list(projectId?)` — list all sessions
 - `get(sessionId)` — get session details
+- `getAttachInfo(sessionId)` — resolve structured attach metadata for CLI/web terminal flows
 - `kill(sessionId)` — terminate session
 - `cleanup(projectId?)` — kill completed/merged sessions
 - `send(sessionId, message)` — send message to agent
@@ -52,6 +53,8 @@ Handles session lifecycle:
 9. Run `Agent.postLaunchSetup()` (optional)
 10. Write metadata file
 11. Return Session object
+
+The session manager also persists the effective `runtime` and merged `runtimeConfig` so restore, recovery, lifecycle checks, and terminal attach paths stay aligned with the runtime actually used when the session was created.
 
 **Note:** If issue validation fails (not found, auth error), spawn fails before creating any resources (no workspace, no runtime, no session ID). This prevents spawning sessions with broken issue references.
 
@@ -92,7 +95,7 @@ Loads plugins and provides access to them:
 
 **Built-in plugins** (loaded by default):
 
-- runtime-tmux, runtime-process
+- runtime-tmux, runtime-process, runtime-docker
 - agent-claude-code, agent-codex, agent-aider, agent-opencode
 - workspace-worktree, workspace-clone
 - tracker-github, tracker-linear, tracker-gitlab

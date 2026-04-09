@@ -14,6 +14,8 @@ while [ $# -gt 0 ]; do
 Usage: ao doctor [--fix]
 
 Checks install, PATH, binaries, service health, stale temp files, and runtime sanity.
+When runtime: docker is configured, also validates Docker daemon access, image config,
+Linux rootless mode, and basic GPU/runtime hints.
 
 Options:
   --fix    Apply safe fixes for missing launcher links, missing support dirs, and stale temp files
@@ -57,8 +59,11 @@ fixed() {
 
 expand_home() {
   case "$1" in
-    ~/*)
-      printf '%s/%s' "$DEFAULT_CONFIG_HOME" "${1#~/}"
+    "~")
+      printf '%s' "$DEFAULT_CONFIG_HOME"
+      ;;
+    "~/"*)
+      printf '%s/%s' "$DEFAULT_CONFIG_HOME" "${1#\~/}"
       ;;
     *)
       printf '%s' "$1"
@@ -107,6 +112,37 @@ read_config_value() {
   raw="${raw%%[[:space:]]#*}"
   value="$(printf '%s' "$raw" | tr -d '"' | xargs 2>/dev/null || true)"
   printf '%s' "$value"
+}
+
+warn_legacy_path_overrides() {
+  local config_path="$1"
+  local legacy_data_dir legacy_worktree_dir
+  legacy_data_dir="$(read_config_value dataDir "$config_path")"
+  legacy_worktree_dir="$(read_config_value worktreeDir "$config_path")"
+
+  if [ -n "$legacy_data_dir" ] || [ -n "$legacy_worktree_dir" ]; then
+    warn "top-level dataDir/worktreeDir are legacy and ignored. AO now stores session metadata under ~/.agent-orchestrator/<hash>-<project>/sessions and creates worktrees under ~/.worktrees/<project>/<session>"
+  fi
+}
+
+config_uses_docker_runtime() {
+  local file="$1"
+  grep -Eq '^[[:space:]]*runtime:[[:space:]]*docker([[:space:]#]|$)' "$file"
+}
+
+find_docker_image_config() {
+  local file="$1"
+  local raw
+  local value
+  raw="$(grep -E '^[[:space:]]*image:' "$file" | head -n 1 | cut -d: -f2- || true)"
+  raw="${raw%%[[:space:]]#*}"
+  value="$(printf '%s' "$raw" | tr -d '"' | tr -d "'" | xargs 2>/dev/null || true)"
+  printf '%s' "$value"
+}
+
+config_requests_docker_gpu() {
+  local file="$1"
+  grep -Eq '^[[:space:]]*gpus:[[:space:]]*' "$file"
 }
 
 ensure_dir() {
@@ -228,6 +264,66 @@ check_tmux() {
   warn "tmux is installed but failed a basic server health check. Fix: restart tmux or reinstall it"
 }
 
+check_docker() {
+  local config_path docker_image security_options runtimes
+
+  config_path="$(find_config || true)"
+  if [ -z "$config_path" ] || ! config_uses_docker_runtime "$config_path"; then
+    pass "docker runtime checks skipped because no runtime: docker is configured"
+    return
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    fail "docker is not installed but runtime: docker is configured. Fix: install Docker from https://docs.docker.com/get-docker/"
+    return
+  fi
+
+  if docker --version >/dev/null 2>&1; then
+    pass "docker CLI is installed"
+  else
+    fail "docker is installed but docker --version failed. Fix: reinstall Docker"
+    return
+  fi
+
+  if docker info >/dev/null 2>&1; then
+    pass "docker daemon is reachable"
+  else
+    fail "docker is installed but the daemon is unavailable. Fix: start Docker Desktop or the Docker service"
+    return
+  fi
+
+  docker_image="$(find_docker_image_config "$config_path")"
+  if [ -z "$docker_image" ]; then
+    fail "runtime: docker is configured but no runtimeConfig.image was found. Fix: add runtimeConfig.image to agent-orchestrator.yaml"
+    return
+  fi
+  pass "docker runtime image is configured as $docker_image"
+
+  if docker image inspect "$docker_image" >/dev/null 2>&1 || docker manifest inspect "$docker_image" >/dev/null 2>&1; then
+    pass "docker image $docker_image is available or reachable"
+  else
+    warn "could not verify docker image $docker_image locally or via docker manifest inspect. Fix: docker pull $docker_image"
+  fi
+
+  if [ "$(uname -s)" = "Linux" ]; then
+    security_options="$(docker info --format '{{json .SecurityOptions}}' 2>/dev/null || true)"
+    if printf '%s' "$security_options" | grep -qi 'rootless'; then
+      pass "docker appears to be running in rootless mode"
+    else
+      warn "docker runtime is configured on Linux without an obvious rootless marker. Fix: prefer rootless Docker for server deployments"
+    fi
+  fi
+
+  if config_requests_docker_gpu "$config_path"; then
+    runtimes="$(docker info --format '{{json .Runtimes}}' 2>/dev/null || true)"
+    if printf '%s' "$runtimes" | grep -qi 'nvidia'; then
+      pass "docker advertises an nvidia runtime for GPU sessions"
+    else
+      warn "GPU support is configured but docker does not advertise an nvidia runtime. Fix: install NVIDIA Container Toolkit or remove gpus from runtimeConfig"
+    fi
+  fi
+}
+
 check_gh() {
   if ! command -v gh >/dev/null 2>&1; then
     warn "GitHub CLI is not installed. Fix: install gh from https://cli.github.com/"
@@ -274,7 +370,7 @@ check_runtime_sanity() {
 }
 
 check_config_dirs() {
-  local config_path data_dir worktree_dir
+  local config_path metadata_root worktree_root
   config_path="$(find_config || true)"
   if [ -z "$config_path" ]; then
     warn "No agent-orchestrator config was found. Fix: run ao init --auto in a target repo"
@@ -282,21 +378,13 @@ check_config_dirs() {
   fi
 
   pass "config found at $config_path"
-  data_dir="$(read_config_value dataDir "$config_path")"
-  worktree_dir="$(read_config_value worktreeDir "$config_path")"
+  warn_legacy_path_overrides "$config_path"
 
-  if [ -z "$data_dir" ]; then
-    data_dir="$DEFAULT_CONFIG_HOME/.agent-orchestrator"
-  fi
-  if [ -z "$worktree_dir" ]; then
-    worktree_dir="$DEFAULT_CONFIG_HOME/.worktrees"
-  fi
+  metadata_root="$(expand_home "~/.agent-orchestrator")"
+  worktree_root="$(expand_home "~/.worktrees")"
 
-  data_dir="$(expand_home "$data_dir")"
-  worktree_dir="$(expand_home "$worktree_dir")"
-
-  ensure_dir "$data_dir" "metadata directory" "mkdir -p $data_dir"
-  ensure_dir "$worktree_dir" "worktree directory" "mkdir -p $worktree_dir"
+  ensure_dir "$metadata_root" "metadata root" "mkdir -p $metadata_root"
+  ensure_dir "$worktree_root" "worktree root" "mkdir -p $worktree_root"
 }
 
 check_stale_temp_files() {
@@ -333,6 +421,7 @@ check_git
 check_pnpm
 check_launcher
 check_tmux
+check_docker
 check_gh
 check_config_dirs
 check_stale_temp_files

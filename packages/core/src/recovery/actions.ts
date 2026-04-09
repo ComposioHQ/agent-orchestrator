@@ -113,9 +113,8 @@ export async function cleanupSession(
 
   try {
     const project = config.projects[projectId];
-    const runtimeName = project.runtime ?? config.defaults.runtime;
     const workspaceName = project.workspace ?? config.defaults.workspace;
-    const runtime = registry.get<Runtime>("runtime", runtimeName);
+    const runtime = registry.get<Runtime>("runtime", assessment.runtimeName);
     const workspace = registry.get<Workspace>("workspace", workspaceName);
 
     if (runtimeAlive && assessment.runtimeHandle && runtime) {

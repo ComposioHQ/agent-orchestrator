@@ -20,7 +20,7 @@ readyThresholdMs: 300000      # Ms before "ready" becomes "idle" (default: 5 min
 # These apply to all projects unless overridden per-project.
 
 defaults:
-  runtime: tmux               # tmux | process
+  runtime: tmux               # tmux | docker | process
   agent: claude-code          # claude-code | aider | codex | opencode
   workspace: worktree         # worktree | clone
   notifiers:
@@ -57,6 +57,14 @@ projects:
 
     # ── Per-project plugin overrides (optional) ───────────────────
     runtime: tmux             # Override default runtime
+    runtimeConfig:            # Common for docker runtime
+      image: ghcr.io/composio/ao:latest
+      limits:
+        cpus: 2
+        memory: 4g
+      readOnlyRoot: true
+      capDrop: [ALL]
+      tmpfs: [/tmp]
     agent: claude-code        # Override default agent
     workspace: worktree       # Override default workspace
 

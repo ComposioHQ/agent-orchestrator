@@ -25,6 +25,9 @@ const {
   mockSpawn,
   mockEnsureLifecycleWorker,
   mockStopLifecycleWorker,
+  mockCheckTmux,
+  mockCheckDocker,
+  mockCheckRuntime,
 } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockExecSilent: vi.fn(),
@@ -34,6 +37,7 @@ const {
     kill: vi.fn(),
     cleanup: vi.fn(),
     get: vi.fn(),
+    getAttachInfo: vi.fn(),
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
     send: vi.fn(),
@@ -43,6 +47,9 @@ const {
   mockSpawn: vi.fn(),
   mockEnsureLifecycleWorker: vi.fn(),
   mockStopLifecycleWorker: vi.fn(),
+  mockCheckTmux: vi.fn().mockResolvedValue(undefined),
+  mockCheckDocker: vi.fn().mockResolvedValue(undefined),
+  mockCheckRuntime: vi.fn().mockResolvedValue(undefined),
 }));
 
 const { mockDetectOpenClawInstallation } = vi.hoisted(() => ({
@@ -97,6 +104,12 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
+  getPluginRegistry: async () => ({
+    list: (slot: string) =>
+      slot === "runtime"
+        ? [{ name: "tmux" }, { name: "docker" }, { name: "process" }]
+        : [],
+  }),
 }));
 
 vi.mock("../../src/lib/lifecycle-service.js", () => ({
@@ -122,7 +135,9 @@ vi.mock("../../src/lib/preflight.js", () => ({
   preflight: {
     checkPort: vi.fn(),
     checkBuilt: vi.fn(),
-    checkTmux: vi.fn().mockResolvedValue(undefined),
+    checkTmux: mockCheckTmux,
+    checkDocker: mockCheckDocker,
+    checkRuntime: mockCheckRuntime,
   },
 }));
 
@@ -141,7 +156,13 @@ vi.mock("../../src/lib/caller-context.js", () => ({
 
 vi.mock("../../src/lib/detect-env.js", () => ({
   detectEnvironment: vi.fn().mockResolvedValue({
-    git: { isRepo: true, remoteUrl: null, ownerRepo: null, currentBranch: "main", defaultBranch: "main" },
+    git: {
+      isRepo: true,
+      remoteUrl: null,
+      ownerRepo: null,
+      currentBranch: "main",
+      defaultBranch: "main",
+    },
     tools: { hasTmux: true, hasGh: false, ghAuthed: false },
     apiKeys: { hasLinear: false, hasSlack: false },
   }),
@@ -218,6 +239,8 @@ beforeEach(() => {
   mockSessionManager.list.mockReset();
   mockSessionManager.list.mockResolvedValue([]);
   mockSessionManager.get.mockReset();
+  mockSessionManager.getAttachInfo.mockReset();
+  mockSessionManager.getAttachInfo.mockResolvedValue(null);
   mockSessionManager.spawnOrchestrator.mockReset();
   mockSessionManager.kill.mockReset();
   mockExec.mockReset();
@@ -250,6 +273,12 @@ beforeEach(() => {
     gatewayUrl: "http://127.0.0.1:18789",
     probe: { reachable: false, error: "not running" },
   });
+  mockCheckTmux.mockReset();
+  mockCheckTmux.mockResolvedValue(undefined);
+  mockCheckDocker.mockReset();
+  mockCheckDocker.mockResolvedValue(undefined);
+  mockCheckRuntime.mockReset();
+  mockCheckRuntime.mockResolvedValue(undefined);
   mockSpawn.mockClear();
   mockProcessCwd.mockReset();
 });
@@ -377,9 +406,9 @@ describe("start command — project resolution", () => {
       backend: makeProject({ name: "Backend" }),
     });
 
-    await expect(
-      program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
-    ).rejects.toThrow("process.exit(1)");
+    await expect(program.parseAsync(["node", "test", "start", "--no-dashboard"])).rejects.toThrow(
+      "process.exit(1)",
+    );
 
     const errors = vi
       .mocked(console.error)
@@ -391,9 +420,9 @@ describe("start command — project resolution", () => {
   it("errors when no projects configured", async () => {
     mockConfigRef.current = makeConfig({});
 
-    await expect(
-      program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
-    ).rejects.toThrow("process.exit(1)");
+    await expect(program.parseAsync(["node", "test", "start", "--no-dashboard"])).rejects.toThrow(
+      "process.exit(1)",
+    );
 
     const errors = vi
       .mocked(console.error)
@@ -709,9 +738,9 @@ describe("start command — non-interactive install safety", () => {
       return null;
     });
 
-    await expect(
-      program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
-    ).rejects.toThrow("process.exit(1)");
+    await expect(program.parseAsync(["node", "test", "start", "--no-dashboard"])).rejects.toThrow(
+      "process.exit(1)",
+    );
 
     expect(hasPrivilegedInstallAttempt()).toBe(false);
     expect(mockExec.mock.calls.some((call) => String(call[0]) === "tmux")).toBe(false);
@@ -790,6 +819,25 @@ describe("start command — browser open waits for port", () => {
     expect(mockEnsureLifecycleWorker).not.toHaveBeenCalled();
   });
 
+  it("skips docker preflight when orchestrator startup is disabled", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "start",
+      "--no-dashboard",
+      "--no-orchestrator",
+      "--runtime",
+      "docker",
+      "--runtime-image",
+      "ghcr.io/composio/ao:test",
+    ]);
+
+    expect(mockCheckDocker).not.toHaveBeenCalled();
+    expect(mockCheckRuntime).not.toHaveBeenCalled();
+  });
+
   it("skips browser open but still starts lifecycle with --no-dashboard alone", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 
@@ -803,6 +851,62 @@ describe("start command — browser open waits for port", () => {
       expect.objectContaining({ configPath: expect.any(String) }),
       "my-app",
     );
+  });
+
+  it("passes docker runtime override flags to spawnOrchestrator()", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    mockSessionManager.get.mockResolvedValue(null);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator",
+      runtimeHandle: { id: "container-123", runtimeName: "docker", data: {} },
+    });
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "start",
+      "--no-dashboard",
+      "--runtime",
+      "docker",
+      "--runtime-image",
+      "ghcr.io/composio/ao:test",
+      "--runtime-cpus",
+      "2",
+      "--runtime-memory",
+      "4g",
+      "--runtime-gpus",
+      "all",
+      "--runtime-read-only",
+      "--runtime-network",
+      "bridge",
+      "--runtime-cap-drop",
+      "ALL",
+      "--runtime-tmpfs",
+      "/tmp",
+    ]);
+
+    expect(mockCheckDocker).toHaveBeenCalledWith({
+      image: "ghcr.io/composio/ao:test",
+      limits: { cpus: "2", memory: "4g", gpus: "all" },
+      readOnlyRoot: true,
+      network: "bridge",
+      capDrop: ["ALL"],
+      tmpfs: ["/tmp"],
+    });
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith({
+      projectId: "my-app",
+      systemPrompt: expect.any(String),
+      runtime: "docker",
+      runtimeConfig: {
+        image: "ghcr.io/composio/ao:test",
+        limits: { cpus: "2", memory: "4g", gpus: "all" },
+        readOnlyRoot: true,
+        network: "bridge",
+        capDrop: ["ALL"],
+        tmpfs: ["/tmp"],
+      },
+    });
   });
 });
 

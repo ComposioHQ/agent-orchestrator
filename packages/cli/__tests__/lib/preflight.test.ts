@@ -148,6 +148,59 @@ describe("preflight.checkTmux", () => {
   });
 });
 
+describe("preflight.checkDocker", () => {
+  it("passes when docker is installed, daemon is running, and image is configured", async () => {
+    mockExec
+      .mockResolvedValueOnce({ stdout: "Docker version 27.0.0", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "Server: Docker Engine", stderr: "" });
+
+    await expect(
+      preflight.checkDocker({ image: "ghcr.io/composio/ao:test" }),
+    ).resolves.toBeUndefined();
+
+    expect(mockExec).toHaveBeenCalledWith("docker", ["--version"]);
+    expect(mockExec).toHaveBeenCalledWith("docker", ["info"]);
+  });
+
+  it("throws with override guidance when no docker image is configured", async () => {
+    mockExec
+      .mockResolvedValueOnce({ stdout: "Docker version 27.0.0", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "Server: Docker Engine", stderr: "" });
+
+    await expect(preflight.checkDocker()).rejects.toThrow("--runtime-image");
+  });
+
+  it("rejects readOnlyRoot without a /tmp tmpfs", async () => {
+    mockExec
+      .mockResolvedValueOnce({ stdout: "Docker version 27.0.0", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "Server: Docker Engine", stderr: "" });
+
+    await expect(
+      preflight.checkDocker({
+        image: "ghcr.io/composio/ao:test",
+        readOnlyRoot: true,
+      }),
+    ).rejects.toThrow("tmpfs");
+  });
+});
+
+describe("preflight.checkRuntime", () => {
+  it("passes through process runtime without extra checks", async () => {
+    await expect(preflight.checkRuntime("process")).resolves.toBeUndefined();
+    expect(mockExec).not.toHaveBeenCalled();
+  });
+
+  it("throws for unknown runtime names", async () => {
+    await expect(preflight.checkRuntime("dokcer")).rejects.toThrow(
+      'Unknown runtime "dokcer"',
+    );
+  });
+
+  it("allows custom runtime plugins when explicitly registered", async () => {
+    await expect(preflight.checkRuntime("kubernetes", undefined, ["tmux", "docker", "kubernetes"])).resolves.toBeUndefined();
+  });
+});
+
 describe("preflight.checkGhAuth", () => {
   it("passes when gh is installed and authenticated", async () => {
     mockExec.mockResolvedValue({ stdout: "ok", stderr: "" });

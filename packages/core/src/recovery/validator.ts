@@ -6,11 +6,10 @@ import {
   type Runtime,
   type Agent,
   type Workspace,
-  type RuntimeHandle,
   type SessionStatus,
   type ActivityState,
 } from "../types.js";
-import { safeJsonParse, validateStatus } from "../utils/validation.js";
+import { validateStatus } from "../utils/validation.js";
 import type { ScannedSession } from "./scanner.js";
 import {
   DEFAULT_RECOVERY_CONFIG,
@@ -20,6 +19,10 @@ import {
   type RecoveryConfig,
 } from "./types.js";
 import { resolveAgentSelection, resolveSessionRole } from "../agent-selection.js";
+import {
+  parseStoredRuntimeHandle,
+  resolveRuntimeName as resolveStoredRuntimeName,
+} from "../runtime-selection.js";
 
 export async function validateSession(
   scanned: ScannedSession,
@@ -29,7 +32,10 @@ export async function validateSession(
 ): Promise<RecoveryAssessment> {
   const { sessionId, projectId, project, rawMetadata } = scanned;
 
-  const runtimeName = project.runtime ?? config.defaults.runtime;
+  const runtimeHandle = parseStoredRuntimeHandle(rawMetadata);
+  const runtimeName = resolveStoredRuntimeName(project, config.defaults.runtime, {
+    raw: rawMetadata,
+  });
   const agentName = resolveAgentSelection({
     role: resolveSessionRole(sessionId, rawMetadata, project.sessionPrefix),
     project,
@@ -43,8 +49,6 @@ export async function validateSession(
   const workspace = registry.get<Workspace>("workspace", workspaceName);
 
   const workspacePath = rawMetadata["worktree"] || null;
-  const runtimeHandleStr = rawMetadata["runtimeHandle"];
-  const runtimeHandle = runtimeHandleStr ? safeJsonParse<RuntimeHandle>(runtimeHandleStr) : null;
   const metadataStatus = validateStatus(rawMetadata["status"]);
   const recoveryConfig: RecoveryConfig = {
     ...DEFAULT_RECOVERY_CONFIG,
@@ -102,6 +106,7 @@ export async function validateSession(
     action,
     reason: getReason(classification, runtimeAlive, workspaceExists, agentProcessRunning),
     runtimeAlive,
+    runtimeName,
     runtimeHandle,
     workspaceExists,
     workspacePath,

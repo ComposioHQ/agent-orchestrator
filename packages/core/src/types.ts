@@ -228,6 +228,10 @@ export interface SessionSpawnConfig {
   issueId?: string;
   branch?: string;
   prompt?: string;
+  /** Override the runtime plugin for this session (e.g. "docker", "tmux") */
+  runtime?: string;
+  /** Runtime-specific config merged on top of the project's runtimeConfig */
+  runtimeConfig?: Record<string, unknown>;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
   /** Override the OpenCode subagent for this session (e.g. "sisyphus", "oracle") */
@@ -242,6 +246,10 @@ export interface SessionSpawnConfig {
 export interface OrchestratorSpawnConfig {
   projectId: string;
   systemPrompt?: string;
+  /** Override the runtime plugin for this orchestrator session */
+  runtime?: string;
+  /** Runtime-specific config merged on top of the project's runtimeConfig */
+  runtimeConfig?: Record<string, unknown>;
 }
 
 // =============================================================================
@@ -277,11 +285,52 @@ export interface Runtime {
   getAttachInfo?(handle: RuntimeHandle): Promise<AttachInfo>;
 }
 
+export interface AgentDockerHomeMount {
+  /**
+   * Host path to mount for Docker runtimes.
+   * Relative paths are resolved against the current user's home directory.
+   */
+  path: string;
+  /**
+   * Whether the mounted path is expected to be a file or directory.
+   * When provided, Docker runtimes may create the host path if it does not exist yet.
+   */
+  kind?: "file" | "dir";
+  /**
+   * Container destination for the mount.
+   * Relative paths are resolved against the container HOME directory.
+   * Defaults to the same relative path as `path`.
+   */
+  target?: string;
+  /** Mount the path read-only when possible. */
+  readOnly?: boolean;
+}
+
+export interface AgentDockerRuntimeHints {
+  /** Files or directories the agent expects under its container HOME. */
+  homeMounts?: AgentDockerHomeMount[];
+  /** Host environment variables to copy into Docker sessions when present. */
+  envFromHost?: string[];
+  /**
+   * Container environment defaults for Docker sessions.
+   * Relative values are resolved against the container HOME directory.
+   * Existing environment variables take precedence over these defaults.
+   */
+  envDefaults?: Record<string, string>;
+}
+
+export interface AgentRuntimeHints {
+  /** Runtime hints consumed by the Docker runtime plugin. */
+  docker?: AgentDockerRuntimeHints;
+}
+
 export interface RuntimeCreateConfig {
   sessionId: SessionId;
   workspacePath: string;
   launchCommand: string;
   environment: Record<string, string>;
+  runtimeConfig?: Record<string, unknown>;
+  agentRuntimeHints?: AgentRuntimeHints;
 }
 
 /** Opaque handle returned by runtime.create() */
@@ -307,6 +356,12 @@ export interface AttachInfo {
   target: string;
   /** Optional: command to run to attach */
   command?: string;
+  /** Structured program to exec for attach, preferred over parsing command */
+  program?: string;
+  /** Structured args to exec for attach */
+  args?: string[];
+  /** Whether the attach command expects a TTY/PTY */
+  requiresPty?: boolean;
 }
 
 // =============================================================================
@@ -337,6 +392,9 @@ export interface Agent {
 
   /** Get environment variables for the agent process */
   getEnvironment(config: AgentLaunchConfig): Record<string, string>;
+
+  /** Optional runtime-specific hints (for example, Docker home mounts). */
+  getRuntimeHints?(config: AgentLaunchConfig): AgentRuntimeHints | null;
 
   /**
    * Detect what the agent is currently doing from terminal output.
@@ -1139,6 +1197,9 @@ export interface ProjectConfig {
   /** Override default runtime */
   runtime?: string;
 
+  /** Runtime-specific configuration (e.g. docker image, limits) */
+  runtimeConfig?: Record<string, unknown>;
+
   /** Override default agent */
   agent?: string;
 
@@ -1381,6 +1442,8 @@ export interface SessionMetadata {
   project?: string;
   agent?: string; // Agent plugin name (e.g. "codex", "claude-code") — persisted for lifecycle
   createdAt?: string;
+  runtime?: string;
+  runtimeConfig?: string;
   runtimeHandle?: string;
   restoredAt?: string;
   role?: string; // "orchestrator" for orchestrator sessions
@@ -1402,6 +1465,7 @@ export interface SessionManager {
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
+  getAttachInfo(sessionId: SessionId): Promise<AttachInfo | null>;
   kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void>;
   cleanup(
     projectId?: string,

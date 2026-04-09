@@ -187,6 +187,7 @@ const ProjectConfigSchema = z.object({
     .regex(/^[a-zA-Z0-9_-]+$/, "sessionPrefix must match [a-zA-Z0-9_-]+")
     .optional(),
   runtime: z.string().optional(),
+  runtimeConfig: z.record(z.string(), z.unknown()).optional(),
   agent: z.string().optional(),
   workspace: z.string().optional(),
   tracker: TrackerConfigSchema.optional(),

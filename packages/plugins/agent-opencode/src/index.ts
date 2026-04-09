@@ -13,6 +13,7 @@ import {
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
+  type AgentRuntimeHints,
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
@@ -23,6 +24,9 @@ import {
   type OpenCodeAgentConfig,
 } from "@composio/ao-core";
 import { execFile, execFileSync } from "node:child_process";
+import { readFile, readdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -31,7 +35,12 @@ interface OpenCodeSessionListEntry {
   id: string;
   title?: string;
   updated?: string | number;
+  directory?: string;
+  createdAt?: number;
 }
+
+const OPENCODE_PROCESS_RE =
+  /(?:^|\/)(?:opencode|\.opencode)(?:\s|$)|(?:^|\/)node(?:\s|$).*(?:^|\s)(?:\/\S*\/opencode|\/\S*\/\.opencode)(?:\s|$)/;
 
 function parseUpdatedTimestamp(updated: string | number | undefined): Date | null {
   if (typeof updated === "number") {
@@ -72,81 +81,168 @@ function parseSessionList(raw: string): OpenCodeSessionListEntry[] {
   });
 }
 
+function extractSessionIdFromArgs(args: string): string | null {
+  const match = args.match(/(?:^|\s)--session\s+(['"]?)(ses_[A-Za-z0-9_-]+)\1(?:\s|$)/);
+  return match?.[2] ?? null;
+}
+
+async function findOpenCodeSessionIdFromRuntime(
+  handle: RuntimeHandle | null,
+): Promise<string | null> {
+  if (!handle) return null;
+
+  try {
+    if (handle.runtimeName === "docker" && handle.id) {
+      const containerName =
+        typeof handle.data["containerName"] === "string" ? handle.data["containerName"] : handle.id;
+      const { stdout } = await execFileAsync(
+        "docker",
+        ["exec", containerName, "ps", "-eo", "args"],
+        { timeout: 30_000 },
+      );
+      for (const line of stdout.split("\n").map((entry) => entry.trim()).filter(Boolean)) {
+        if (!OPENCODE_PROCESS_RE.test(line)) continue;
+        const sessionId = extractSessionIdFromArgs(line);
+        if (sessionId) return sessionId;
+      }
+      return null;
+    }
+
+    if (handle.runtimeName === "tmux" && handle.id) {
+      const { stdout: ttyOut } = await execFileAsync(
+        "tmux",
+        ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
+        { timeout: 30_000 },
+      );
+      const ttys = ttyOut
+        .trim()
+        .split("\n")
+        .map((entry) => entry.trim().replace(/^\/dev\//, ""))
+        .filter(Boolean);
+      if (ttys.length === 0) return null;
+
+      const ttySet = new Set(ttys);
+      const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
+        timeout: 30_000,
+      });
+      for (const line of psOut.split("\n")) {
+        const cols = line.trimStart().split(/\s+/);
+        if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
+        const args = cols.slice(2).join(" ");
+        if (!OPENCODE_PROCESS_RE.test(args)) continue;
+        const sessionId = extractSessionIdFromArgs(args);
+        if (sessionId) return sessionId;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 /**
  * Parse JSON stream lines from `opencode run --format json` output.
  * Each line is a JSON object. We look for objects containing a session_id field.
  * The step_start event typically contains the session_id.
  */
-function buildSessionIdCaptureScript(): string {
-  const script = `
-let buffer = '';
-let captured = null;
-process.stdin.on('data', chunk => {
-  buffer += chunk;
-  const lines = buffer.split('\\n');
-  buffer = lines.pop() || '';
-  for (const line of lines) {
-    if (captured) continue;
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const obj = JSON.parse(trimmed);
-      const sid = (typeof obj.session_id === 'string' && obj.session_id) || (typeof obj.sessionID === 'string' && obj.sessionID);
-      if (sid && /^ses_[A-Za-z0-9_-]+$/.test(sid)) {
-        captured = sid;
-      }
-    } catch {}
+function scoreStorageCandidate(session: Session, candidate: OpenCodeSessionListEntry): number {
+  let score = 0;
+  if (candidate.title === `AO:${session.id}`) {
+    score += 1_000_000;
   }
-}).on('end', () => {
-  if (buffer.trim()) {
-    try {
-      const obj = JSON.parse(buffer.trim());
-      const sid = (typeof obj.session_id === 'string' && obj.session_id) || (typeof obj.sessionID === 'string' && obj.sessionID);
-      if (sid && /^ses_[A-Za-z0-9_-]+$/.test(sid)) {
-        captured = sid;
-      }
-    } catch {}
+  if (session.workspacePath && candidate.directory === session.workspacePath) {
+    score += 100_000;
   }
-  if (captured) {
-    process.stdout.write(captured);
-    process.exit(0);
+  if (candidate.createdAt) {
+    const delta = Math.abs(candidate.createdAt - session.createdAt.getTime());
+    score += Math.max(0, 60_000 - Math.min(delta, 60_000));
   }
-  process.exit(1);
-});
-  `.trim();
-  return script.replace(/\n/g, " ").replace(/\s+/g, " ");
+  return score;
 }
 
-function buildSessionLookupScript(): string {
-  const script = `
-let input = '';
-process.stdin.on('data', c => input += c).on('end', () => {
-  const title = process.argv[1];
-  let rows;
-  try { rows = JSON.parse(input); } catch { process.exit(1); }
-  if (!Array.isArray(rows)) process.exit(1);
-  const isValidId = id => /^ses_[A-Za-z0-9_-]+$/.test(id);
-  const timestamp = value => {
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (typeof value === 'string') {
-      const parsed = Date.parse(value);
-      return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+async function loadStorageSessions(): Promise<OpenCodeSessionListEntry[]> {
+  const root = join(homedir(), ".local", "share", "opencode", "storage", "session");
+  const sessions: OpenCodeSessionListEntry[] = [];
+
+  let groups;
+  try {
+    groups = await readdir(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  for (const group of groups) {
+    if (!group.isDirectory()) continue;
+
+    let files;
+    try {
+      files = await readdir(join(root, group.name), { withFileTypes: true });
+    } catch {
+      continue;
     }
-    return Number.NEGATIVE_INFINITY;
-  };
-  const matches = rows
-    .filter(r => r && r.title === title && typeof r.id === 'string' && isValidId(r.id))
-    .sort((a, b) => {
-      const ta = timestamp(a.updated);
-      const tb = timestamp(b.updated);
-      if (ta === tb) return 0;
-      return tb - ta;
+
+    for (const file of files) {
+      if (!file.isFile() || !file.name.endsWith(".json")) continue;
+      const fullPath = join(root, group.name, file.name);
+
+      try {
+        const parsed = JSON.parse(await readFile(fullPath, "utf-8")) as Record<string, unknown>;
+        const id = asValidOpenCodeSessionId(parsed["id"]);
+        if (!id) continue;
+        const title = typeof parsed["title"] === "string" ? parsed["title"] : undefined;
+        const directory =
+          typeof parsed["directory"] === "string" ? parsed["directory"] : undefined;
+        const time =
+          parsed["time"] && typeof parsed["time"] === "object"
+            ? (parsed["time"] as Record<string, unknown>)
+            : undefined;
+        const createdAt =
+          typeof time?.["created"] === "number" && Number.isFinite(time["created"])
+            ? time["created"]
+            : undefined;
+        const updated =
+          typeof time?.["updated"] === "number" && Number.isFinite(time["updated"])
+            ? time["updated"]
+            : undefined;
+        sessions.push({ id, title, directory, createdAt, updated });
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return sessions;
+}
+
+async function findOpenCodeSessionFromStorage(
+  session: Session,
+  preferredSessionId?: string,
+): Promise<OpenCodeSessionListEntry | null> {
+  const sessions = await loadStorageSessions();
+  if (sessions.length === 0) return null;
+
+  if (preferredSessionId) {
+    const byId = sessions.find((candidate) => candidate.id === preferredSessionId);
+    if (byId) return byId;
+  }
+
+  const candidates = sessions
+    .filter((candidate) => {
+      if (candidate.title === `AO:${session.id}`) return true;
+      return Boolean(session.workspacePath && candidate.directory === session.workspacePath);
+    })
+    .sort((left, right) => {
+      const leftScore = scoreStorageCandidate(session, left);
+      const rightScore = scoreStorageCandidate(session, right);
+      if (leftScore !== rightScore) return rightScore - leftScore;
+      const leftUpdated = parseUpdatedTimestamp(left.updated)?.getTime() ?? Number.NEGATIVE_INFINITY;
+      const rightUpdated =
+        parseUpdatedTimestamp(right.updated)?.getTime() ?? Number.NEGATIVE_INFINITY;
+      return rightUpdated - leftUpdated;
     });
-  if (matches.length === 0) process.exit(1);
-  process.stdout.write(matches[0].id);
-});
-  `.trim();
-  return script.replace(/\n/g, " ").replace(/\s+/g, " ");
+
+  return candidates[0] ?? null;
 }
 
 // =============================================================================
@@ -160,6 +256,10 @@ process.stdin.on('data', c => input += c).on('end', () => {
 async function findOpenCodeSession(
   session: Session,
 ): Promise<OpenCodeSessionListEntry | null> {
+  const runtimeSessionId = await findOpenCodeSessionIdFromRuntime(session.runtimeHandle);
+  const mappedSessionId = asValidOpenCodeSessionId(session.metadata?.opencodeSessionId);
+  const preferredSessionId = mappedSessionId ?? runtimeSessionId ?? undefined;
+
   try {
     const { stdout } = await execFileAsync(
       "opencode",
@@ -170,15 +270,25 @@ async function findOpenCodeSession(
     const sessions = parseSessionList(stdout);
 
     // Prefer exact ID match from metadata
-    if (session.metadata?.opencodeSessionId) {
-      const match = sessions.find((s) => s.id === session.metadata.opencodeSessionId);
+    if (preferredSessionId) {
+      const match = sessions.find((s) => s.id === preferredSessionId);
       if (match) return match;
     }
 
     // Fallback: title match — pick the most recently updated session
     // to avoid binding to a stale session when titles collide.
     const titleMatches = sessions.filter((s) => s.title === `AO:${session.id}`);
-    if (titleMatches.length === 0) return null;
+    if (titleMatches.length === 0) {
+      return (
+        (await findOpenCodeSessionFromStorage(session, preferredSessionId)) ??
+        (runtimeSessionId
+          ? {
+              id: runtimeSessionId,
+              title: `AO:${session.id}`,
+            }
+          : null)
+      );
+    }
     if (titleMatches.length === 1) return titleMatches[0]!;
     return titleMatches.reduce((best, s) => {
       const bestTs = parseUpdatedTimestamp(best.updated)?.getTime() ?? 0;
@@ -186,7 +296,15 @@ async function findOpenCodeSession(
       return sTs > bestTs ? s : best;
     });
   } catch {
-    return null;
+    return (
+      (await findOpenCodeSessionFromStorage(session, preferredSessionId)) ??
+      (runtimeSessionId
+        ? {
+            id: runtimeSessionId,
+            title: `AO:${session.id}`,
+          }
+        : null)
+    );
   }
 }
 
@@ -248,26 +366,11 @@ function createOpenCodeAgent(): Agent {
       }
 
       if (!existingSessionId) {
-        const runOptions = [
-          "--format",
-          "json",
-          "--title",
-          shellEscape(`AO:${config.sessionId}`),
-          ...sharedOptions,
-        ];
-        const captureScript = buildSessionIdCaptureScript();
-        const fallbackScript = buildSessionLookupScript();
-        const runCommand = ["opencode", "run", ...runOptions, "--command", "true"].join(" ");
-        const resumeOptions = [...(promptValue ? ["--prompt", promptValue] : []), ...sharedOptions];
-        const resumeOptionsSuffix = resumeOptions.length > 0 ? ` ${resumeOptions.join(" ")}` : "";
-        const missingSessionError = shellEscape(
-          `failed to discover OpenCode session ID for AO:${config.sessionId}`,
-        );
-        return [
-          `SES_ID=$(${runCommand} | node -e ${shellEscape(captureScript)})`,
-          `if [ -z "$SES_ID" ]; then SES_ID=$(opencode session list --format json | node -e ${shellEscape(fallbackScript)} ${shellEscape(`AO:${config.sessionId}`)}); fi`,
-          `[ -n "$SES_ID" ] && exec opencode --session "$SES_ID"${resumeOptionsSuffix}; echo ${missingSessionError} >&2; exit 1`,
-        ].join("; ");
+        if (promptValue) {
+          options.push("--prompt", promptValue);
+        }
+        options.push(...sharedOptions);
+        return ["opencode", ...options].join(" ");
       }
 
       if (promptValue) {
@@ -292,6 +395,32 @@ function createOpenCodeAgent(): Agent {
       env["GH_PATH"] = PREFERRED_GH_PATH;
 
       return env;
+    },
+
+    getRuntimeHints(): AgentRuntimeHints {
+      return {
+        docker: {
+          homeMounts: [
+            { path: ".opencode", kind: "dir" },
+            { path: ".config/opencode", kind: "dir" },
+            { path: ".local/share/opencode/auth.json", kind: "file" },
+          ],
+          envDefaults: { OPENCODE_CONFIG_DIR: ".config/opencode" },
+          envFromHost: [
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+            "ZAI_API_KEY",
+            "ZAI_CODING_PLAN_API_KEY",
+            "KIMI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "GROK_API_KEY",
+            "GITHUB_TOKEN",
+            "COPILOT_API_KEY",
+          ],
+        },
+      };
     },
 
     detectActivity(terminalOutput: string): ActivityState {
@@ -368,6 +497,22 @@ function createOpenCodeAgent(): Agent {
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
+        if (handle.runtimeName === "docker" && handle.id) {
+          const containerName =
+            typeof handle.data["containerName"] === "string"
+              ? handle.data["containerName"]
+              : handle.id;
+          const { stdout } = await execFileAsync(
+            "docker",
+            ["exec", containerName, "ps", "-eo", "args"],
+            { timeout: 30_000 },
+          );
+          return stdout
+            .split("\n")
+            .map((line) => line.trim())
+            .some((line) => OPENCODE_PROCESS_RE.test(line));
+        }
+
         if (handle.runtimeName === "tmux" && handle.id) {
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
@@ -385,12 +530,11 @@ function createOpenCodeAgent(): Agent {
             timeout: 30_000,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          const processRe = /(?:^|\/)opencode(?:\s|$)/;
           for (const line of psOut.split("\n")) {
             const cols = line.trimStart().split(/\s+/);
             if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
             const args = cols.slice(2).join(" ");
-            if (processRe.test(args)) {
+            if (OPENCODE_PROCESS_RE.test(args)) {
               return true;
             }
           }

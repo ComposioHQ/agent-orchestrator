@@ -58,6 +58,36 @@ interface NotifierTarget {
   pluginName: string;
 }
 
+function resolveProjectRuntime(config: OrchestratorConfig, projectId: string): string | undefined {
+  const project = config.projects[projectId];
+  return project?.runtime ?? config.defaults.runtime;
+}
+
+function resolveProjectAgent(
+  config: OrchestratorConfig,
+  projectId: string,
+  role: "orchestrator" | "worker",
+): string | undefined {
+  const project = config.projects[projectId];
+  if (!project) return undefined;
+
+  if (role === "orchestrator") {
+    return (
+      project.orchestrator?.agent ??
+      project.agent ??
+      config.defaults.orchestrator?.agent ??
+      config.defaults.agent
+    );
+  }
+
+  return (
+    project.worker?.agent ??
+    project.agent ??
+    config.defaults.worker?.agent ??
+    config.defaults.agent
+  );
+}
+
 async function loadPluginRegistry(config: OrchestratorConfig): Promise<PluginRegistry> {
   const registry = createPluginRegistry();
   await registry.loadFromConfig(config, importPluginModuleFromSource);
@@ -329,6 +359,40 @@ async function checkNotifierConnectivity(
   }
 }
 
+function checkDockerAgentWarnings(config: OrchestratorConfig): void {
+  console.log("");
+  console.log("Docker agent portability:");
+
+  let warned = false;
+  for (const projectId of Object.keys(config.projects)) {
+    const runtime = resolveProjectRuntime(config, projectId);
+    if (runtime !== "docker") continue;
+
+    const roles: Array<"orchestrator" | "worker"> = ["orchestrator", "worker"];
+    for (const role of roles) {
+      const agent = resolveProjectAgent(config, projectId, role);
+      if (agent !== "claude-code") continue;
+      if (
+        process.env["ANTHROPIC_API_KEY"] ||
+        process.env["ANTHROPIC_AUTH_TOKEN"] ||
+        process.env["CLAUDE_CODE_OAUTH_TOKEN"]
+      ) {
+        continue;
+      }
+
+      warn(
+        `projects.${projectId} (${role}) uses Claude Code with docker, but no portable Claude auth is configured. ` +
+          "Claude host login may not carry into containers; prefer ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or a prior Docker-side Claude login persisted in the mounted ~/.claude Docker config home.",
+      );
+      warned = true;
+    }
+  }
+
+  if (!warned) {
+    pass("No known Docker agent portability warnings detected");
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Test-notify (Gap 3)
 // ---------------------------------------------------------------------------
@@ -428,6 +492,7 @@ export function registerDoctor(program: Command): void {
         try {
           config = loadConfig(configPath);
           registry = await checkPluginResolution(config, fail);
+          checkDockerAgentWarnings(config);
           await checkNotifierConnectivity(config, fail);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

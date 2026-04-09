@@ -1704,6 +1704,7 @@ describe("spawn", () => {
       // Verify the file was actually written
       const callArgs = vi.mocked(mockAgent.getLaunchCommand).mock.calls[0][0];
       const promptFile = callArgs.systemPromptFile!;
+      expect(promptFile).toContain("/sessions/");
       expect(existsSync(promptFile)).toBe(true);
       const { readFileSync } = await import("node:fs");
       expect(readFileSync(promptFile, "utf-8")).toBe("You are the orchestrator.");

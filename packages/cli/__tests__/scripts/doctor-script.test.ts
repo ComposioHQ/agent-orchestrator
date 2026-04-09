@@ -78,6 +78,46 @@ function createHealthyPath(binDir: string): void {
   createFakeBinary(binDir, "ao", 'printf "/fake/ao\\n" >/dev/null\nexit 0');
 }
 
+function createHealthyDocker(
+  binDir: string,
+  options?: { rootless?: boolean; gpu?: boolean },
+): void {
+  const rootless = options?.rootless ?? true;
+  const gpu = options?.gpu ?? false;
+  createFakeBinary(
+    binDir,
+    "docker",
+    [
+      'if [ "$1" = "--version" ]; then',
+      '  printf "Docker version 27.0.0\\n"',
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "info" ] && [ $# -eq 1 ]; then',
+      '  printf "Server: Docker Engine\\n"',
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "info" ] && [ "$2" = "--format" ]; then',
+      '  if printf "%s" "$3" | grep -q "SecurityOptions"; then',
+      rootless ? "    printf '[\"name=rootless\"]\\n'" : "    printf '[\"name=seccomp\"]\\n'",
+      "    exit 0",
+      "  fi",
+      '  if printf "%s" "$3" | grep -q "Runtimes"; then',
+      gpu ? '    printf \'{"runc":{},"nvidia":{}}\\n\'' : "    printf '{\"runc\":{}}\\n'",
+      "    exit 0",
+      "  fi",
+      "fi",
+      'if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then',
+      "  exit 1",
+      "fi",
+      'if [ "$1" = "manifest" ] && [ "$2" = "inspect" ]; then',
+      '  printf "{}\\n"',
+      "  exit 0",
+      "fi",
+      "exit 0",
+    ].join("\n"),
+  );
+}
+
 describe("scripts/ao-doctor.sh", () => {
   it("reports a healthy install as PASS", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-script-"));
@@ -85,21 +125,17 @@ describe("scripts/ao-doctor.sh", () => {
     const binDir = join(tempRoot, "bin");
     mkdirSync(binDir, { recursive: true });
     createHealthyPath(binDir);
+    mkdirSync(join(tempRoot, ".agent-orchestrator"), { recursive: true });
+    mkdirSync(join(tempRoot, ".worktrees"), { recursive: true });
 
     const configPath = join(tempRoot, "agent-orchestrator.yaml");
-    const dataDir = join(tempRoot, "data");
-    const worktreeDir = join(tempRoot, "worktrees");
-    mkdirSync(dataDir, { recursive: true });
-    mkdirSync(worktreeDir, { recursive: true });
-    writeFileSync(
-      configPath,
-      [`dataDir: ${dataDir}`, `worktreeDir: ${worktreeDir}`, "projects: {}"].join("\n"),
-    );
+    writeFileSync(configPath, "projects: {}\n");
 
     const result = spawnSync("bash", [scriptPath], {
       env: {
         ...process.env,
         PATH: `${binDir}:/bin:/usr/bin`,
+        HOME: tempRoot,
         AO_REPO_ROOT: fakeRepo,
         AO_CONFIG_PATH: configPath,
       },
@@ -129,6 +165,8 @@ describe("scripts/ao-doctor.sh", () => {
     );
 
     const configPath = join(tempRoot, "agent-orchestrator.yaml");
+    const metadataRoot = join(tempRoot, ".agent-orchestrator");
+    const worktreeRoot = join(tempRoot, ".worktrees");
     const dataDir = join(tempRoot, "data");
     const worktreeDir = join(tempRoot, "worktrees");
     const commentedDataDir = `${dataDir} # session metadata`;
@@ -151,6 +189,7 @@ describe("scripts/ao-doctor.sh", () => {
       env: {
         ...process.env,
         PATH: `${binDir}:/bin:/usr/bin`,
+        HOME: tempRoot,
         AO_REPO_ROOT: fakeRepo,
         AO_CONFIG_PATH: configPath,
         AO_DOCTOR_TMP_ROOT: tmpRoot,
@@ -160,8 +199,8 @@ describe("scripts/ao-doctor.sh", () => {
 
     const npmCommands = readFileSync(npmLog, "utf8");
     const staleStillExists = existsSync(staleFile);
-    const dataDirExists = existsSync(dataDir);
-    const worktreeDirExists = existsSync(worktreeDir);
+    const metadataRootExists = existsSync(metadataRoot);
+    const worktreeRootExists = existsSync(worktreeRoot);
     const commentedDataDirExists = existsSync(commentedDataDir);
     const commentedWorktreeDirExists = existsSync(commentedWorktreeDir);
     rmSync(tempRoot, { recursive: true, force: true });
@@ -171,10 +210,110 @@ describe("scripts/ao-doctor.sh", () => {
     expect(npmCommands).toContain("link");
     expect(result.stdout).toContain("launcher");
     expect(result.stdout).toContain("stale temp files");
+    expect(result.stdout).toContain("legacy and ignored");
     expect(staleStillExists).toBe(false);
-    expect(dataDirExists).toBe(true);
-    expect(worktreeDirExists).toBe(true);
+    expect(metadataRootExists).toBe(true);
+    expect(worktreeRootExists).toBe(true);
     expect(commentedDataDirExists).toBe(false);
     expect(commentedWorktreeDirExists).toBe(false);
+  });
+
+  it("validates docker runtime config when runtime: docker is enabled", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-docker-"));
+    const fakeRepo = createHealthyRepo(tempRoot);
+    const binDir = join(tempRoot, "bin");
+    mkdirSync(binDir, { recursive: true });
+    createHealthyPath(binDir);
+    createHealthyDocker(binDir, { rootless: true, gpu: true });
+
+    const configPath = join(tempRoot, "agent-orchestrator.yaml");
+    mkdirSync(join(tempRoot, ".agent-orchestrator"), { recursive: true });
+    mkdirSync(join(tempRoot, ".worktrees"), { recursive: true });
+    writeFileSync(
+      configPath,
+      [
+        "projects:",
+        "  app:",
+        "    repo: org/repo",
+        "    path: ~/repo",
+        "    defaultBranch: main",
+        "    runtime: docker",
+        "    runtimeConfig:",
+        "      image: ghcr.io/composio/ao:test",
+        "      gpus: all",
+      ].join("\n"),
+    );
+
+    const result = spawnSync("bash", [scriptPath], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH || ""}`,
+        HOME: tempRoot,
+        AO_REPO_ROOT: fakeRepo,
+        AO_CONFIG_PATH: configPath,
+      },
+      encoding: "utf8",
+    });
+
+    rmSync(tempRoot, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("docker CLI is installed");
+    expect(result.stdout).toContain("docker daemon is reachable");
+    expect(result.stdout).toContain(
+      "docker runtime image is configured as ghcr.io/composio/ao:test",
+    );
+    expect(result.stdout).toContain(
+      "docker image ghcr.io/composio/ao:test is available or reachable",
+    );
+    if (process.platform === "linux") {
+      expect(result.stdout).toContain("docker appears to be running in rootless mode");
+    }
+    expect(result.stdout).toContain("docker advertises an nvidia runtime for GPU sessions");
+  });
+
+  it("fails when docker runtime is configured without an image", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-docker-missing-image-"));
+    const fakeRepo = createHealthyRepo(tempRoot);
+    const binDir = join(tempRoot, "bin");
+    mkdirSync(binDir, { recursive: true });
+    createHealthyPath(binDir);
+    createHealthyDocker(binDir, { rootless: true });
+
+    const configPath = join(tempRoot, "agent-orchestrator.yaml");
+    mkdirSync(join(tempRoot, ".agent-orchestrator"), { recursive: true });
+    mkdirSync(join(tempRoot, ".worktrees"), { recursive: true });
+    writeFileSync(
+      configPath,
+      [
+        "projects:",
+        "  app:",
+        "    repo: org/repo",
+        "    path: ~/repo",
+        "    defaultBranch: main",
+        "    runtime: docker",
+        "    runtimeConfig:",
+        "      limits:",
+        "        memory: 4g",
+      ].join("\n"),
+    );
+
+    const result = spawnSync("bash", [scriptPath], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH || ""}`,
+        HOME: tempRoot,
+        AO_REPO_ROOT: fakeRepo,
+        AO_CONFIG_PATH: configPath,
+      },
+      encoding: "utf8",
+    });
+
+    rmSync(tempRoot, { recursive: true, force: true });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "runtime: docker is configured but no runtimeConfig.image was found",
+    );
   });
 });

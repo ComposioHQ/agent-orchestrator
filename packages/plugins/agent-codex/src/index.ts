@@ -14,6 +14,7 @@ import {
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
+  type AgentRuntimeHints,
   type ActivityState,
   type ActivityDetection,
   type CostEstimate,
@@ -32,7 +33,6 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-
 // =============================================================================
 // Plugin Manifest
 // =============================================================================
@@ -48,7 +48,6 @@ export const manifest = {
 // =============================================================================
 // Workspace Setup (delegates to shared PATH-wrapper hooks from @composio/ao-core)
 // =============================================================================
-
 // =============================================================================
 // Codex Session JSONL Parsing (for getSessionInfo)
 // =============================================================================
@@ -124,10 +123,7 @@ async function collectJsonlFiles(dir: string, depth = 0): Promise<string[]> {
  * entry matching the given workspace path. Reads only the first 4 KB
  * to avoid loading large rollout files into memory.
  */
-async function sessionFileMatchesCwd(
-  filePath: string,
-  workspacePath: string,
-): Promise<boolean> {
+async function sessionFileMatchesCwd(filePath: string, workspacePath: string): Promise<boolean> {
   try {
     // Read only the first 4 KB — session_meta is always in the first few lines.
     // Avoids loading large rollout files (100 MB+) into memory.
@@ -326,6 +322,92 @@ const SESSION_FILE_CACHE_TTL_MS = 30_000;
  *  Keyed by workspace path, stores the resolved file path and an expiry timestamp. */
 const sessionFileCache = new Map<string, { path: string | null; expiry: number }>();
 
+const CODEX_SCRIPT_NAMES = new Set(["codex.js", "codex.mjs", "codex.cjs"]);
+const PROCESS_WRAPPER_NAMES = new Set(["bash", "sh", "zsh", "dash", "node", "nodejs", "env"]);
+
+function normalizeProcessToken(token: string): string {
+  const trimmed = token.trim();
+  if (
+    (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+    (trimmed.startsWith("\"") && trimmed.endsWith("\""))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function isCodexExecutableToken(token: string): boolean {
+  return basename(normalizeProcessToken(token)) === "codex";
+}
+
+function isCodexScriptToken(token: string): boolean {
+  return CODEX_SCRIPT_NAMES.has(basename(normalizeProcessToken(token)));
+}
+
+function processArgsContainCodex(args: string): boolean {
+  if (/(?:^|[\s'"]|\/)codex(?:\.(?:c|m)?js)?(?=$|[\s'"])/.test(args)) {
+    return true;
+  }
+
+  const tokens = args
+    .trim()
+    .split(/\s+/)
+    .map(normalizeProcessToken)
+    .filter(Boolean);
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!token) continue;
+
+    if (isCodexExecutableToken(token)) {
+      return true;
+    }
+
+    if (!PROCESS_WRAPPER_NAMES.has(basename(token))) continue;
+
+    let candidateIndex = index + 1;
+    while (candidateIndex < tokens.length) {
+      const candidate = tokens[candidateIndex];
+      if (!candidate) break;
+      if (candidate === "--") {
+        candidateIndex += 1;
+        continue;
+      }
+      if (candidate.startsWith("-")) {
+        candidateIndex += 1;
+        continue;
+      }
+      if (basename(token) === "env" && /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(candidate)) {
+        candidateIndex += 1;
+        continue;
+      }
+
+      if (isCodexExecutableToken(candidate) || isCodexScriptToken(candidate)) {
+        return true;
+      }
+      break;
+    }
+  }
+
+  return false;
+}
+
+function processListHasCodex(psOut: string, ttySet?: Set<string>): boolean {
+  for (const line of psOut.split("\n")) {
+    const match = line.match(/^\s*(\d+)\s+(\S+)\s+(.*)$/);
+    if (!match) continue;
+
+    const tty = match[2];
+    const args = match[3] ?? "";
+    if (ttySet && (!tty || !ttySet.has(tty))) continue;
+    if (processArgsContainCodex(args)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /** Find session file with caching to avoid double scans per refresh cycle */
 async function findCodexSessionFileCached(workspacePath: string): Promise<string | null> {
   const cached = sessionFileCache.get(workspacePath);
@@ -333,7 +415,10 @@ async function findCodexSessionFileCached(workspacePath: string): Promise<string
     return cached.path;
   }
   const result = await findCodexSessionFile(workspacePath);
-  sessionFileCache.set(workspacePath, { path: result, expiry: Date.now() + SESSION_FILE_CACHE_TTL_MS });
+  sessionFileCache.set(workspacePath, {
+    path: result,
+    expiry: Date.now() + SESSION_FILE_CACHE_TTL_MS,
+  });
   return result;
 }
 
@@ -391,6 +476,16 @@ function createCodexAgent(): Agent {
       return env;
     },
 
+    getRuntimeHints(): AgentRuntimeHints {
+      return {
+        docker: {
+          homeMounts: [{ path: ".codex", kind: "dir" }],
+          envDefaults: { CODEX_HOME: ".codex" },
+          envFromHost: ["OPENAI_API_KEY"],
+        },
+      };
+    },
+
     detectActivity(terminalOutput: string): ActivityState {
       if (!terminalOutput.trim()) return "idle";
 
@@ -410,7 +505,10 @@ function createCodexAgent(): Agent {
       return "active";
     },
 
-    async getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null> {
+    async getActivityState(
+      session: Session,
+      readyThresholdMs?: number,
+    ): Promise<ActivityDetection | null> {
       const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
 
       // Check if process is running first
@@ -500,6 +598,19 @@ function createCodexAgent(): Agent {
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
+        if (handle.runtimeName === "docker" && handle.id) {
+          const containerName =
+            typeof handle.data["containerName"] === "string"
+              ? handle.data["containerName"]
+              : handle.id;
+          const { stdout: psOut } = await execFileAsync(
+            "docker",
+            ["exec", containerName, "ps", "-eo", "pid,tty,args"],
+            { timeout: 30_000 },
+          );
+          return processListHasCodex(psOut);
+        }
+
         if (handle.runtimeName === "tmux" && handle.id) {
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
@@ -517,16 +628,7 @@ function createCodexAgent(): Agent {
             timeout: 30_000,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          const processRe = /(?:^|\/)codex(?:\s|$)/;
-          for (const line of psOut.split("\n")) {
-            const cols = line.trimStart().split(/\s+/);
-            if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
-            const args = cols.slice(2).join(" ");
-            if (processRe.test(args)) {
-              return true;
-            }
-          }
-          return false;
+          return processListHasCodex(psOut, ttySet);
         }
 
         const rawPid = handle.data["pid"];

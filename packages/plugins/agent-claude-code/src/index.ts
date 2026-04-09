@@ -7,6 +7,7 @@ import {
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
+  type AgentRuntimeHints,
   type ActivityDetection,
   type ActivityState,
   type CostEstimate,
@@ -24,7 +25,6 @@ import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-
 // =============================================================================
 // Metadata Updater Hook Script
 // =============================================================================
@@ -307,8 +307,7 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
   // Skip potentially truncated first line only when we started mid-file.
   // If offset === 0 we read from the start so the first line is complete.
   const firstNewline = content.indexOf("\n");
-  const safeContent =
-    offset > 0 && firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
+  const safeContent = offset > 0 && firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
   const lines: JsonlLine[] = [];
   for (const line of safeContent.split("\n")) {
     const trimmed = line.trim();
@@ -326,9 +325,7 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
 }
 
 /** Extract auto-generated summary from JSONL (last "summary" type entry) */
-function extractSummary(
-  lines: JsonlLine[],
-): { summary: string; isFallback: boolean } | null {
+function extractSummary(lines: JsonlLine[]): { summary: string; isFallback: boolean } | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (line?.type === "summary" && line.summary) {
@@ -701,11 +698,55 @@ function createClaudeCodeAgent(): Agent {
       return env;
     },
 
+    getRuntimeHints(): AgentRuntimeHints {
+      return {
+        docker: {
+          // Claude's devcontainer/docs model is a Linux-side config home, not
+          // host macOS login-state transfer. We mount ~/.claude read-write and
+          // point CLAUDE_CONFIG_DIR there so Docker sessions can persist their
+          // own auth/config state without depending on the host keychain.
+          homeMounts: [{ path: ".claude", kind: "dir" }],
+          envDefaults: { CLAUDE_CONFIG_DIR: ".claude" },
+          envFromHost: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
+        },
+      };
+    },
+
     detectActivity(terminalOutput: string): ActivityState {
       return classifyTerminalOutput(terminalOutput);
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
+      if (handle.runtimeName === "docker" && handle.id) {
+        try {
+          const containerName =
+            typeof handle.data["containerName"] === "string"
+              ? handle.data["containerName"]
+              : handle.id;
+          const tmuxSessionName =
+            typeof handle.data["tmuxSessionName"] === "string"
+              ? handle.data["tmuxSessionName"]
+              : handle.id;
+          const { stdout } = await execFileAsync(
+            "docker",
+            [
+              "exec",
+              containerName,
+              "tmux",
+              "display-message",
+              "-p",
+              "-t",
+              tmuxSessionName,
+              "#{pane_current_command}",
+            ],
+            { timeout: 30_000 },
+          );
+          return stdout.trim() === "claude";
+        } catch {
+          return false;
+        }
+      }
+
       const pid = await findClaudeProcess(handle);
       return pid !== null;
     },

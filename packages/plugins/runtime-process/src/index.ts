@@ -275,6 +275,7 @@ export function create(): Runtime {
       return {
         type: "process",
         target: String(entry.process.pid),
+        requiresPty: false,
       };
     },
   };

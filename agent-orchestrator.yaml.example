@@ -1,9 +1,9 @@
 # Agent Orchestrator Configuration
 # Copy to agent-orchestrator.yaml and customize.
 
-# Runtime data directories are auto-derived from this config location under:
-#   ~/.agent-orchestrator/{hash}-{projectId}/
-# You usually do not need to configure paths manually.
+# AO derives session metadata paths from this config location automatically.
+# Worktree-based sessions also get managed Git worktrees under ~/.worktrees/.
+# You usually do not need to configure dataDir/worktreeDir manually.
 
 # Web dashboard port
 port: 3000
@@ -15,8 +15,8 @@ port: 3000
 
 # Default plugins (these are the defaults — you can omit this section)
 defaults:
-  runtime: tmux           # tmux | process
-  agent: claude-code      # claude-code | codex | aider | opencode
+  runtime: tmux           # tmux | process | docker | other runtime plugin
+  agent: claude-code      # claude-code | codex | aider | opencode | other agent plugin
   # orchestrator:
   #   agent: claude-code
   # worker:
@@ -45,6 +45,23 @@ projects:
     path: ~/my-app
     defaultBranch: main
     sessionPrefix: app
+    # Runtime helpers:
+    # ao runtime show my-app
+    # ao runtime set docker my-app --image ghcr.io/composio/ao:latest --memory 4g --cpus 2 --read-only
+    # ao runtime clear my-app
+    # runtime: docker
+    # runtimeConfig:
+    #   image: ghcr.io/composio/ao:latest
+    #   shell: /bin/sh
+    #   user: "1000:1000" # optional; defaults to host uid:gid when available
+    #   limits:
+    #     cpus: 2
+    #     memory: 4g
+    #     gpus: all
+    #   readOnlyRoot: true
+    #   capDrop: [ALL]
+    #   network: bridge
+    #   tmpfs: [/tmp] # recommended when using readOnlyRoot
 
     # Issue tracker (defaults to github issues)
     # tracker:
