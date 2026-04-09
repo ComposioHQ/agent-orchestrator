@@ -112,7 +112,7 @@ export function registerDashboard(program: Command): void {
           const stderr = stderrChunks.join("");
           if (looksLikeStaleBuild(stderr)) {
             const recoveryCommand = isInstalledUnderNodeModules(webDir)
-              ? "npm install -g @composio/ao@latest"
+              ? "npm install -g @aoagents/ao@latest"
               : "ao dashboard --rebuild";
             console.error(
               chalk.yellow(

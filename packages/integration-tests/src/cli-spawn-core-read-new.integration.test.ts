@@ -25,7 +25,7 @@ import {
   generateConfigHash,
   getSessionsDir,
   generateTmuxName,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { isTmuxAvailable, killSessionsByPrefix, killSession } from "./helpers/tmux.js";
 
 const tmuxOk = await isTmuxAvailable();

@@ -61,19 +61,19 @@ jobs:
         run: tmux start-server
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r --filter '!@composio/ao-web' build
+      - run: pnpm -r --filter '!@aoagents/ao-web' build
 
       - name: Core tests with coverage
         if: needs.detect-changes.outputs.core == 'true'
-        run: pnpm --filter @composio/ao-core exec vitest run --coverage
+        run: pnpm --filter @aoagents/ao-core exec vitest run --coverage
 
       - name: CLI tests with coverage
         if: needs.detect-changes.outputs.cli == 'true'
-        run: pnpm --filter @composio/ao-cli exec vitest run --coverage
+        run: pnpm --filter @aoagents/ao-cli exec vitest run --coverage
 
       - name: Web tests with coverage
         if: needs.detect-changes.outputs.web == 'true'
-        run: pnpm --filter @composio/ao-web exec vitest run --coverage
+        run: pnpm --filter @aoagents/ao-web exec vitest run --coverage
 
       - name: Prepare and merge lcov reports
         run: |

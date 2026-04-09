@@ -13,7 +13,7 @@ import {
   type RuntimeMetrics,
   type AttachInfo,
   shellEscape,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 
 const execFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = 5_000;

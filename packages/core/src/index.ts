@@ -1,5 +1,5 @@
 /**
- * @composio/ao-core
+ * @aoagents/ao-core
  *
  * Core library for the Agent Orchestrator.
  * Exports all types, config loader, and service implementations.

@@ -6,7 +6,7 @@ import {
   type OrchestratorConfig,
   type PluginRegistry,
   loadConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { importPluginModuleFromSource } from "../lib/plugin-store.js";
 
 /**
@@ -56,7 +56,7 @@ async function getTracker(
 
   // getSessionManager internally creates the registry; we need the registry
   // directly, so we replicate the same pattern from create-session-manager.
-  const { createPluginRegistry } = await import("@composio/ao-core");
+  const { createPluginRegistry } = await import("@aoagents/ao-core");
   const registry = createPluginRegistry();
   await registry.loadFromConfig(config, importPluginModuleFromSource);
 

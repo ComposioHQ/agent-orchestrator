@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as childProcess from "node:child_process";
 import * as fs from "node:fs";
-import type { RuntimeHandle } from "@composio/ao-core";
+import type { RuntimeHandle } from "@aoagents/ao-core";
 
 // Mock node:child_process with custom promisify support
 vi.mock("node:child_process", () => {

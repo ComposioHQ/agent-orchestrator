@@ -10,7 +10,7 @@ pnpm build                              # Build all packages
 pnpm dev                                # Web dashboard dev server (Next.js + 2 WS servers)
 pnpm typecheck                          # Type check all packages
 pnpm test                               # All tests (excludes web)
-pnpm --filter @composio/ao-web test     # Web tests
+pnpm --filter @aoagents/ao-web test     # Web tests
 pnpm lint                               # ESLint check
 pnpm lint:fix                           # ESLint fix
 pnpm format                             # Prettier format

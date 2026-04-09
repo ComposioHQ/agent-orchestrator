@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { cn } from "@/lib/cn";
 import type { ProjectInfo } from "@/lib/project-name";
 import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@/lib/types";
-import { isOrchestratorSession } from "@composio/ao-core/types";
+import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { getSessionTitle } from "@/lib/format";
 
 interface ProjectSidebarProps {

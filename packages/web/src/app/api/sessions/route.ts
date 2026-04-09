@@ -1,4 +1,4 @@
-import { ACTIVITY_STATE, isOrchestratorSession } from "@composio/ao-core";
+import { ACTIVITY_STATE, isOrchestratorSession } from "@aoagents/ao-core";
 import { getServices, getSCM } from "@/lib/services";
 import {
   sessionToDashboard,

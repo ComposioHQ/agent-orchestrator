@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-core";
+import type { Session, RuntimeHandle, AgentLaunchConfig } from "@aoagents/ao-core";
 
 // Mock fs/promises for getSessionInfo tests (readFile for .aider.chat.history.md)
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -25,7 +25,7 @@ const {
   mockReadFileSync: vi.fn(() => ""),
 }));
 
-vi.mock("@composio/ao-core", async (importOriginal) => {
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
