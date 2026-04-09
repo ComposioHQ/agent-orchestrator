@@ -144,10 +144,10 @@ describe("getLaunchCommand", () => {
     expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("agent");
   });
 
-  it("includes --force --trust --approve-mcps when permissions=permissionless", () => {
+  it("includes --force --sandbox disabled --approve-mcps when permissions=permissionless", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "permissionless" }));
     expect(cmd).toContain("--force");
-    expect(cmd).toContain("--trust");
+    expect(cmd).toContain("--sandbox disabled");
     expect(cmd).toContain("--approve-mcps");
   });
 
@@ -178,7 +178,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "permissionless", model: "sonnet", prompt: "Go" }),
     );
-    expect(cmd).toBe("agent --force --trust --approve-mcps --model 'sonnet' 'Go'");
+    expect(cmd).toBe("agent --force --sandbox disabled --approve-mcps --model 'sonnet' 'Go'");
   });
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {

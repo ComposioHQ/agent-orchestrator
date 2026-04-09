@@ -123,9 +123,11 @@ function createCursorAgent(): Agent {
 
       const permissionMode = normalizeAgentPermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
-        // Cursor uses --force (or --yolo alias) for automatic approval, equivalent to Aider's --yes
-        // Also add --trust to trust workspace and --approve-mcps for MCP servers
-        parts.push("--force", "--trust", "--approve-mcps");
+        // Cursor uses --force (or --yolo alias) for automatic approval
+        // --sandbox disabled: Skip workspace trust prompts entirely
+        // --approve-mcps: Auto-approve MCP servers
+        // Note: --trust only works in headless mode (with --print), so we use --sandbox disabled instead
+        parts.push("--force", "--sandbox", "disabled", "--approve-mcps");
       }
 
       if (config.model) {
