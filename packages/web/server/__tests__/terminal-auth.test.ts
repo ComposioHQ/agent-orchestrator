@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getSessionsDir, writeMetadata } from "@composio/ao-core";
+import { getSessionsDir, updateMetadata, writeMetadata } from "@composio/ao-core";
 import {
   TerminalAuthError,
   issueTerminalAccess,
@@ -111,6 +111,81 @@ describe("terminal-auth", () => {
   it("rejects missing sessions", () => {
     expect(() => issueTerminalAccess("ao-404")).toThrowError(
       expect.objectContaining({ code: "session_not_found" }),
+    );
+  });
+
+  it("rate limits repeated terminal grant issuance", () => {
+    for (let i = 0; i < 20; i += 1) {
+      issueTerminalAccess("ao-1");
+    }
+
+    expect(() => issueTerminalAccess("ao-1")).toThrowError(
+      expect.objectContaining({ code: "rate_limited", statusCode: 429 }),
+    );
+  });
+
+  it("rate limits repeated token verification", () => {
+    const grant = issueTerminalAccess("ao-1");
+    for (let i = 0; i < 40; i += 1) {
+      verifyTerminalAccess("ao-1", grant.token);
+    }
+
+    expect(() => verifyTerminalAccess("ao-1", grant.token)).toThrowError(
+      expect.objectContaining({ code: "rate_limited", statusCode: 429 }),
+    );
+  });
+
+  it("rejects invalid session ids", () => {
+    expect(() => issueTerminalAccess("../bad")).toThrowError(
+      expect.objectContaining({ code: "invalid_session", statusCode: 400 }),
+    );
+  });
+
+  it("rejects missing token fragments", () => {
+    expect(() => verifyTerminalAccess("ao-1", "missing-signature")).toThrowError(
+      expect.objectContaining({ code: "auth_required", statusCode: 401 }),
+    );
+  });
+
+  it("rejects invalid token payload json", () => {
+    const badPayload = Buffer.from("{not-json", "utf-8").toString("base64url");
+    const grant = issueTerminalAccess("ao-1");
+    const signature = grant.token.split(".")[1];
+    expect(signature).toBeDefined();
+    expect(() => verifyTerminalAccess("ao-1", `${badPayload}.${signature}`)).toThrowError(
+      expect.objectContaining({ code: "token_invalid", statusCode: 401 }),
+    );
+  });
+
+  it("rejects expired tokens", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-04-09T00:00:00.000Z"));
+      const grant = issueTerminalAccess("ao-1");
+      vi.setSystemTime(new Date("2026-04-09T00:02:00.000Z"));
+      expect(() => verifyTerminalAccess("ao-1", grant.token)).toThrowError(
+        expect.objectContaining({ code: "token_expired", statusCode: 401 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects tokens with mismatched owner metadata", () => {
+    const grant = issueTerminalAccess("ao-1");
+    updateMetadata(sessionsDir, "ao-1", { ownerId: "another-owner" });
+
+    expect(() => verifyTerminalAccess("ao-1", grant.token)).toThrowError(
+      expect.objectContaining({ code: "ownership_denied", statusCode: 403 }),
+    );
+  });
+
+  it("wraps config load failures as config_unavailable", () => {
+    process.env["AO_CONFIG_PATH"] = join(rootDir, "missing.yaml");
+    resetTerminalAuthStateForTests();
+
+    expect(() => issueTerminalAccess("ao-1")).toThrowError(
+      expect.objectContaining({ code: "config_unavailable", statusCode: 503 }),
     );
   });
 });

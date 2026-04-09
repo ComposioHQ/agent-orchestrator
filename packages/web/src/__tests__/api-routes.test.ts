@@ -232,6 +232,7 @@ import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
 import { GET as sessionTerminalGET } from "@/app/api/sessions/[id]/terminal/route";
 import { GET as verifyGET, POST as verifyPOST } from "@/app/api/verify/route";
 import { GET as patchesGET } from "@/app/api/sessions/patches/route";
+import { TerminalAuthError } from "@/lib/server/terminal-auth";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -493,6 +494,55 @@ describe("API Routes", () => {
       expect(data.url).toContain("http://localhost:14800/terminal");
       expect(data.url).toContain("session=backend-3");
       expect(data.url).toContain("token=token-backend-3");
+    });
+
+    it("uses forwarded protocol and host when present", async () => {
+      const req = makeRequest("http://localhost:3000/api/sessions/backend-3/terminal", {
+        headers: {
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "ao.example.com",
+        },
+      });
+      const res = await sessionTerminalGET(req, { params: Promise.resolve({ id: "backend-3" }) });
+      const data = await res.json();
+      expect(data.url).toContain("https://ao.example.com:14800/terminal");
+    });
+
+    it("falls back to request protocol when x-forwarded-proto is not http(s)", async () => {
+      const req = makeRequest("http://localhost:3000/api/sessions/backend-3/terminal", {
+        headers: {
+          "x-forwarded-proto": "ws",
+          host: "localhost:3000",
+        },
+      });
+      const res = await sessionTerminalGET(req, { params: Promise.resolve({ id: "backend-3" }) });
+      const data = await res.json();
+      expect(data.url).toContain("http://localhost:14800/terminal");
+    });
+
+    it("returns auth errors with retry-after when terminal auth is rate limited", async () => {
+      mockIssueTerminalAccess.mockImplementationOnce(() => {
+        throw new TerminalAuthError("Too many attempts", 429, "rate_limited", 12);
+      });
+
+      const req = makeRequest("http://localhost:3000/api/sessions/backend-3/terminal");
+      const res = await sessionTerminalGET(req, { params: Promise.resolve({ id: "backend-3" }) });
+      const data = await res.json();
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("12");
+      expect(data.code).toBe("rate_limited");
+    });
+
+    it("returns 500 for unexpected terminal auth failures", async () => {
+      mockIssueTerminalAccess.mockImplementationOnce(() => {
+        throw new Error("boom");
+      });
+
+      const req = makeRequest("http://localhost:3000/api/sessions/backend-3/terminal");
+      const res = await sessionTerminalGET(req, { params: Promise.resolve({ id: "backend-3" }) });
+      const data = await res.json();
+      expect(res.status).toBe(500);
+      expect(data.error).toBe("boom");
     });
   });
 
