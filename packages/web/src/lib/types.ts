@@ -261,6 +261,15 @@ export function getAttentionLevel(session: DashboardSession): AttentionLevel {
     }
   }
 
+  // ── Pending: idle/ready sessions are not actively being worked on ──
+  if (
+    session.status === SESSION_STATUS.IDLE ||
+    session.activity === ACTIVITY_STATE.READY ||
+    session.activity === ACTIVITY_STATE.IDLE
+  ) {
+    return "pending";
+  }
+
   // ── Working: agents doing their thing ─────────────────────────────
   return "working";
 }

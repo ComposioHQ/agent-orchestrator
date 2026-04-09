@@ -12,6 +12,7 @@
 
 import { randomUUID } from "node:crypto";
 import {
+  ACTIVITY_STATE,
   SESSION_STATUS,
   PR_STATE,
   CI_STATUS,
@@ -20,6 +21,7 @@ import {
   type SessionManager,
   type SessionId,
   type SessionStatus,
+  type ActivityState,
   type EventType,
   type OrchestratorEvent,
   type OrchestratorConfig,
@@ -369,7 +371,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     // Track activity state across steps so stuck detection can run after PR checks
+    // and the dashboard can distinguish actively-working sessions from agents
+    // that have already returned to the prompt.
     let detectedIdleTimestamp: Date | null = null;
+    let detectedActivityState: ActivityState | null = null;
 
     // 1. Check if runtime is alive
     if (session.runtimeHandle) {
@@ -405,6 +410,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         // Try JSONL-based activity detection first (reads agent's session files directly)
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
         if (activityState) {
+          detectedActivityState = activityState.state;
           if (activityState.state === "waiting_input") return "needs_input";
           if (activityState.state === "exited") return "killed";
 
@@ -426,6 +432,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
           if (terminalOutput) {
             const activity = agent.detectActivity(terminalOutput);
+            detectedActivityState = activity;
             if (activity === "waiting_input") return "needs_input";
 
             const processAlive = await agent.isProcessRunning(session.runtimeHandle);
@@ -552,6 +559,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // still check stuck threshold. This handles agents that finish without creating a PR.
     if (detectedIdleTimestamp && isIdleBeyondThreshold(session, detectedIdleTimestamp)) {
       return "stuck";
+    }
+
+    // 5b. Non-PR sessions that are back at the prompt should not remain in the
+    // generic "working" bucket forever. Mark them idle so downstream surfaces
+    // can classify them as waiting rather than actively progressing.
+    if (
+      !session.pr &&
+      (detectedActivityState === ACTIVITY_STATE.READY ||
+        detectedActivityState === ACTIVITY_STATE.IDLE)
+    ) {
+      return SESSION_STATUS.IDLE;
     }
 
     // 6. Default: if agent is active, it's working
