@@ -95,6 +95,10 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const runtimeConfigRef = useRef<{ directTerminalPort?: string; proxyWsPath?: string }>({});
   const isDestroyedRef = useRef(false);
 
+  const isTerminalDesired = useCallback((id: string): boolean => {
+    return openedTerminalsRef.current.has(id) || (subscribersRef.current.get(id)?.size ?? 0) > 0;
+  }, []);
+
   const fetchTerminalGrant = useCallback(async (id: string, forceRefresh = false): Promise<string> => {
     const cached = terminalGrantCacheRef.current.get(id);
     const now = Date.now();
@@ -150,7 +154,11 @@ export function MuxProvider({ children }: { children: ReactNode }) {
 
     try {
       const token = await fetchTerminalGrant(id, forceRefresh);
-      if (wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) {
+      if (
+        wsRef.current !== ws ||
+        ws.readyState !== WebSocket.OPEN ||
+        !isTerminalDesired(id)
+      ) {
         return;
       }
 
@@ -167,7 +175,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
         err instanceof Error ? err.message : err,
       );
     }
-  }, [fetchTerminalGrant]);
+  }, [fetchTerminalGrant, isTerminalDesired]);
 
   const connect = useCallback(() => {
     if (wsRef.current) {
@@ -219,8 +227,18 @@ export function MuxProvider({ children }: { children: ReactNode }) {
                 }
               }
             } else if (msg.type === "opened") {
-              // Terminal opened successfully
-              openedTerminalsRef.current.add(msg.id);
+              // Ignore stale open acks that arrive after the terminal was closed
+              // client-side while auth/open was still in flight.
+              if (isTerminalDesired(msg.id)) {
+                openedTerminalsRef.current.add(msg.id);
+              } else if (ws.readyState === WebSocket.OPEN) {
+                const closeMsg: ClientMessage = {
+                  ch: "terminal",
+                  id: msg.id,
+                  type: "close",
+                };
+                ws.send(JSON.stringify(closeMsg));
+              }
             } else if (msg.type === "exited") {
               // PTY exited and could not be re-attached — remove so it isn't
               // re-opened on reconnect, and surface a terminal-level error chunk
@@ -268,7 +286,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
       console.error("[MuxProvider] Failed to create WebSocket:", err);
       setStatus("disconnected");
     }
-  }, [sendTerminalOpen]);
+  }, [isTerminalDesired, sendTerminalOpen]);
 
   // Fetch runtime config then connect. This ensures buildMuxWsUrl() has the
   // server-configured port/path before the WebSocket is opened.

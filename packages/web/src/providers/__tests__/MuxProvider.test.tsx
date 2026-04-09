@@ -368,11 +368,13 @@ describe("MuxProvider message handling", () => {
   it("tracks opened terminals on 'opened' message", async () => {
     vi.useFakeTimers();
     try {
-      renderHook(() => useMux(), { wrapper });
+      const { result } = renderHook(() => useMux(), { wrapper });
       await flushInit();
 
       const ws1 = MockWebSocket.instances[0];
       act(() => ws1.simulateOpen());
+      act(() => result.current.openTerminal("s1"));
+      await flushInit();
 
       act(() => ws1.simulateMessage({ ch: "terminal", id: "s1", type: "opened" }));
 
@@ -392,6 +394,21 @@ describe("MuxProvider message handling", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("sends close for stale opened acknowledgements", async () => {
+    const { result, ws } = await setupConnected();
+
+    act(() => result.current.openTerminal("stale-open"));
+    act(() => result.current.closeTerminal("stale-open"));
+    await flushInit();
+
+    act(() => ws.simulateMessage({ ch: "terminal", id: "stale-open", type: "opened" }));
+
+    expect(ws.sentMessages.some((m) => {
+      const payload = JSON.parse(m) as Record<string, unknown>;
+      return payload.ch === "terminal" && payload.type === "close" && payload.id === "stale-open";
+    })).toBe(true);
   });
 
   it("dispatches exit notice to subscribers on 'exited' message", async () => {
@@ -646,6 +663,39 @@ describe("MuxProvider terminal operations", () => {
     await flushInit();
 
     expect(ws.sentMessages.some((m) => m.includes("late-token"))).toBe(false);
+  });
+
+  it("does not send terminal open when the terminal closes before auth resolves", async () => {
+    const deferred = createDeferred<{ ok: true; json: () => Promise<{ token: string; expiresAt: string }> }>();
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/runtime/terminal") {
+        return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
+      }
+      if (input === "/api/sessions/session-close-race/terminal") {
+        return deferred.promise;
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result, ws } = await setupConnected();
+    act(() => result.current.openTerminal("session-close-race"));
+    act(() => result.current.closeTerminal("session-close-race"));
+
+    deferred.resolve({
+      ok: true,
+      json: async () => ({
+        token: "close-race-token",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    });
+    await flushInit();
+
+    expect(ws.sentMessages.some((m) => m.includes("close-race-token"))).toBe(false);
+    expect(ws.sentMessages.some((m) => {
+      const payload = JSON.parse(m) as Record<string, unknown>;
+      return payload.ch === "terminal" && payload.type === "close" && payload.id === "session-close-race";
+    })).toBe(true);
   });
 
   it("does not send terminal open if the websocket is not open", async () => {
