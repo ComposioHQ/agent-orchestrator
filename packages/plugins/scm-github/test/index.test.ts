@@ -772,6 +772,7 @@ describe("scm-github plugin", () => {
         isResolved: boolean;
         id: string;
         author: string | null;
+        authorType?: string;
         body: string;
         path: string | null;
         line: number | null;
@@ -790,7 +791,9 @@ describe("scm-github plugin", () => {
                     nodes: [
                       {
                         id: t.id,
-                        author: t.author ? { login: t.author } : null,
+                        author: t.author
+                          ? { __typename: t.authorType ?? "User", login: t.author }
+                          : null,
                         body: t.body,
                         path: t.path,
                         line: t.line,
@@ -845,6 +848,7 @@ describe("scm-github plugin", () => {
             isResolved: false,
             id: "C1",
             author: "alice",
+            authorType: "User",
             body: "Fix this",
             path: "a.ts",
             line: 1,
@@ -854,7 +858,8 @@ describe("scm-github plugin", () => {
           {
             isResolved: false,
             id: "C2",
-            author: "cursor[bot]",
+            author: "cursor",
+            authorType: "Bot",
             body: "Bot says",
             path: "a.ts",
             line: 2,
@@ -864,10 +869,88 @@ describe("scm-github plugin", () => {
           {
             isResolved: false,
             id: "C3",
-            author: "codecov[bot]",
+            author: "codecov",
+            authorType: "Bot",
             body: "Coverage",
             path: "a.ts",
             line: 3,
+            url: "u",
+            createdAt: "2025-01-01T00:00:00Z",
+          },
+        ]),
+      );
+
+      const comments = await scm.getPendingComments(pr);
+      expect(comments).toHaveLength(1);
+      expect(comments[0].author).toBe("alice");
+    });
+
+    it("filters out GitHub App bots by __typename even without [bot] suffix", async () => {
+      mockGh(
+        makeGraphQLThreads([
+          {
+            isResolved: false,
+            id: "C1",
+            author: "alice",
+            authorType: "User",
+            body: "Human review",
+            path: "a.ts",
+            line: 1,
+            url: "u",
+            createdAt: "2025-01-01T00:00:00Z",
+          },
+          {
+            isResolved: false,
+            id: "C2",
+            author: "cursor",
+            authorType: "Bot",
+            body: "Bugbot found issue",
+            path: "a.ts",
+            line: 2,
+            url: "u",
+            createdAt: "2025-01-01T00:00:00Z",
+          },
+          {
+            isResolved: false,
+            id: "C3",
+            author: "some-new-bot",
+            authorType: "Bot",
+            body: "New bot review",
+            path: "a.ts",
+            line: 3,
+            url: "u",
+            createdAt: "2025-01-01T00:00:00Z",
+          },
+        ]),
+      );
+
+      const comments = await scm.getPendingComments(pr);
+      expect(comments).toHaveLength(1);
+      expect(comments[0]).toMatchObject({ id: "C1", author: "alice" });
+    });
+
+    it("filters non-App bots via BOT_AUTHORS even with __typename User", async () => {
+      mockGh(
+        makeGraphQLThreads([
+          {
+            isResolved: false,
+            id: "C1",
+            author: "alice",
+            authorType: "User",
+            body: "Human review",
+            path: "a.ts",
+            line: 1,
+            url: "u",
+            createdAt: "2025-01-01T00:00:00Z",
+          },
+          {
+            isResolved: false,
+            id: "C2",
+            author: "snyk-bot",
+            authorType: "User",
+            body: "Snyk found vulnerability",
+            path: "a.ts",
+            line: 2,
             url: "u",
             createdAt: "2025-01-01T00:00:00Z",
           },
