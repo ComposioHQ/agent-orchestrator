@@ -284,15 +284,21 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       const message = data.toString("utf8");
 
       // Handle resize messages (sent by xterm.js FitAddon)
-      if (message.startsWith("{")) {
+      // Heuristic: If it looks like a JSON control message, parse it.
+      // We strictly filter messages starting with { and ending with } to prevent
+      // accidental leakage of terminal control JSON into the pty input.
+      if (message.startsWith("{") && message.endsWith("}") && message.length > 10) {
         try {
           const parsed = JSON.parse(message) as { type?: string; cols?: number; rows?: number };
-          if (parsed.type === "resize" && parsed.cols && parsed.rows) {
-            pty.resize(parsed.cols, parsed.rows);
+          if (parsed && typeof parsed === "object" && parsed.type === "resize") {
+            if (typeof parsed.cols === "number" && typeof parsed.rows === "number") {
+              pty.resize(parsed.cols, parsed.rows);
+            }
+            // Always consume JSON control messages to prevent typing them into the shell
             return;
           }
         } catch {
-          // Not JSON, treat as terminal input
+          // Not valid JSON or parse error, fall through to write as raw input
         }
       }
 
