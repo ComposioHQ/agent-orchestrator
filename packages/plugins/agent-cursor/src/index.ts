@@ -52,7 +52,9 @@ export const manifest = {
  */
 export function toCursorProjectPath(workspacePath: string): string {
   const normalized = workspacePath.replace(/\\/g, "/");
-  return normalized.replace(/:/g, "").replace(/[/.]/g, "-");
+  // Strip leading slash from Unix paths (drive letter paths keep the letter)
+  const stripped = normalized.replace(/^\//, "");
+  return stripped.replace(/:/g, "").replace(/[/.]/g, "-");
 }
 
 /**

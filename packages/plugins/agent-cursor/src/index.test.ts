@@ -1,5 +1,25 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import type { AgentLaunchConfig, ProjectConfig } from "@composio/ao-core";
 import { manifest, create, detect, toCursorProjectPath } from "./index.js";
+
+function makeProjectConfig(overrides: Partial<ProjectConfig> = {}): ProjectConfig {
+  return {
+    name: "test-project",
+    repo: "owner/repo",
+    path: "/test/path",
+    defaultBranch: "main",
+    sessionPrefix: "test",
+    ...overrides,
+  };
+}
+
+function makeLaunchConfig(overrides: Partial<AgentLaunchConfig> = {}): AgentLaunchConfig {
+  return {
+    sessionId: "test-session",
+    projectConfig: makeProjectConfig(),
+    ...overrides,
+  };
+}
 
 describe("Cursor Agent Plugin", () => {
   describe("manifest", () => {
@@ -22,32 +42,25 @@ describe("Cursor Agent Plugin", () => {
 
     it("should return a launch command with --agent flag", () => {
       const agent = create();
-      const command = agent.getLaunchCommand({
-        sessionId: "test-session",
-        workspacePath: "/test/path",
-      });
+      const command = agent.getLaunchCommand(makeLaunchConfig());
       expect(command).toContain("cursor");
       expect(command).toContain("--agent");
     });
 
     it("should include model in launch command when specified", () => {
       const agent = create();
-      const command = agent.getLaunchCommand({
-        sessionId: "test-session",
-        workspacePath: "/test/path",
-        model: "claude-3-5-sonnet",
-      });
+      const command = agent.getLaunchCommand(
+        makeLaunchConfig({ model: "claude-3-5-sonnet" }),
+      );
       expect(command).toContain("--model");
       expect(command).toContain("claude-3-5-sonnet");
     });
 
     it("should include skip permissions flag when permissionless mode", () => {
       const agent = create();
-      const command = agent.getLaunchCommand({
-        sessionId: "test-session",
-        workspacePath: "/test/path",
-        permissions: "permissionless",
-      });
+      const command = agent.getLaunchCommand(
+        makeLaunchConfig({ permissions: "permissionless" }),
+      );
       expect(command).toContain("--dangerously-skip-permissions");
     });
   });
@@ -93,20 +106,15 @@ describe("Cursor Agent Plugin", () => {
   describe("getEnvironment()", () => {
     it("should set AO_SESSION_ID", () => {
       const agent = create();
-      const env = agent.getEnvironment({
-        sessionId: "test-123",
-        workspacePath: "/test",
-      });
+      const env = agent.getEnvironment(makeLaunchConfig({ sessionId: "test-123" }));
       expect(env["AO_SESSION_ID"]).toBe("test-123");
     });
 
     it("should set AO_ISSUE_ID when issueId is provided", () => {
       const agent = create();
-      const env = agent.getEnvironment({
-        sessionId: "test-123",
-        workspacePath: "/test",
-        issueId: "issue-456",
-      });
+      const env = agent.getEnvironment(
+        makeLaunchConfig({ sessionId: "test-123", issueId: "issue-456" }),
+      );
       expect(env["AO_ISSUE_ID"]).toBe("issue-456");
     });
   });
