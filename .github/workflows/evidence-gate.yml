@@ -1,0 +1,210 @@
+name: Evidence Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited, reopened]
+
+# Do not cancel in-progress runs: a second event (e.g. push + bot PR-body edit)
+# would cancel the first job; GitHub surfaces that as a failed check on the same SHA.
+concurrency:
+  group: evidence-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  pull-requests: read
+
+jobs:
+  evidence-gate:
+    name: Evidence Gate
+    runs-on: ubuntu-latest
+    # Skip entirely when PR is merged or closed — a merged PR stops receiving
+    # pull_request events so a stale failed check run cannot be overwritten.
+    # Evidence gate is a pre-merge gate; post-merge it has no function.
+    if: github.event.pull_request.merged == false && github.event.action != 'closed'
+    steps:
+      - uses: actions/checkout@v4.1.1
+
+      - name: Write PR body to temp file
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr_body.txt"
+          echo "Body fetched: ${#PR_BODY} chars"
+          if [ ${#PR_BODY} -eq 0 ]; then
+            echo "PR body is empty — treating as no evidence bundle"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+        id: write_body
+
+      - name: Check for evidence bundle in PR body
+        id: check
+        run: |
+          if [ "${{ steps.write_body.outputs.skip }}" = "true" ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          BODY=$(cat "$RUNNER_TEMP/pr_body.txt")
+          STRIPPED_BODY=$(printf '%s' "$BODY" | python3 -c 'import re, sys; sys.stdout.write(re.sub(r"<!--.*?-->", "", sys.stdin.read(), flags=re.S))')
+
+          if printf '%s' "$STRIPPED_BODY" | grep -qi '^[[:space:]]*## evidence'; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Warn when no Evidence section found
+        if: steps.check.outputs.found == 'false'
+        run: |
+          echo "WARNING: No ## Evidence section found in PR body."
+          echo ""
+          echo "Consider adding an Evidence section to your PR body:"
+          echo ""
+          echo "  ## Evidence"
+          echo "  **Claim class**: unit | integration | feat | fix | refactor | docs | chore"
+          echo "  **Verdict**: PASS | INSUFFICIENT"
+          echo ""
+          echo "  Describe what was tested and how."
+          exit 1
+
+      - name: Extract and normalize claim class
+        id: claim
+        if: steps.check.outputs.found == 'true'
+        run: |
+          BODY=$(cat "$RUNNER_TEMP/pr_body.txt")
+          STRIPPED_BODY=$(printf '%s' "$BODY" | python3 -c 'import re, sys; sys.stdout.write(re.sub(r"<!--.*?-->", "", sys.stdin.read(), flags=re.S))')
+
+          # Extract claim class — normalize to lowercase short form.
+          # Supports: **Claim class**: value  (colon inside bold, space after colon)
+          # and list-bullet format "- **Claim class**: ...".
+          CLAIM=$(printf '%s' "$STRIPPED_BODY" \
+            | grep -i '\*\*Claim class' | grep -v '^- ' | head -1 \
+            | tr -d '*' \
+            | sed 's/.*Claim class: *//I' \
+            | sed 's/(.*//' \
+            | tr '[:upper:]' '[:lower:]' \
+            | tr ' ' '-' | tr -d '\t' \
+            | sed 's/^[ \t-]*//;s/[ \t-]*$//')
+
+          # Fallback: list-bullet format
+          if [ -z "$CLAIM" ]; then
+            CLAIM=$(printf '%s' "$STRIPPED_BODY" \
+              | grep -i '^-.*\*\*Claim class' | head -1 \
+              | tr -d '*' \
+              | sed 's/.*Claim class: *//I' \
+              | sed 's/(.*//' \
+              | tr '[:upper:]' '[:lower:]' \
+              | tr ' ' '-' | tr -d '\t' \
+              | sed 's/^[ \t-]*//;s/[ \t-]*$//')
+          fi
+
+          # Normalize long forms to canonical short forms
+          case "$CLAIM" in
+            unit-test-coverage|unit-test) CLAIM="unit" ;;
+            integration-test) CLAIM="integration" ;;
+            bug-fix) CLAIM="fix" ;;
+            feature) CLAIM="feat" ;;
+          esac
+
+          echo "Claim class: $CLAIM"
+          echo "claim=$CLAIM" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce strong artifact evidence for integration claims
+        if: steps.check.outputs.found == 'true'
+        env:
+          CLAIM: ${{ steps.claim.outputs.claim }}
+        run: |
+          BODY=$(cat "$RUNNER_TEMP/pr_body.txt")
+          STRIPPED_BODY=$(printf '%s' "$BODY" | python3 -c 'import re, sys; sys.stdout.write(re.sub(r"<!--.*?-->", "", sys.stdin.read(), flags=re.S))')
+
+          # integration + pipeline-e2e claims require rich artifacts; unit/fix/feat/docs/chore can use terminal evidence only.
+          if [ "$CLAIM" = "integration" ] || [ "$CLAIM" = "pipeline-e2e" ]; then
+            # Strip HTML comments before scanning for Evidence section.
+            EVIDENCE=$(printf '%s\n' "$STRIPPED_BODY" | awk '
+              tolower($0) ~ /^[[:space:]]*##[[:space:]]+evidence([[:space:]]|$)/ { in_section=1; next }
+              in_section && /^[[:space:]]*##[[:space:]]/ { exit }
+              in_section { print }
+            ')
+
+            # Warn on fabricated/placeholder evidence
+            if printf '%s' "$EVIDENCE" | grep -qiE '\bsimulated\b'; then
+              echo "WARNING: Evidence contains 'simulated' — fabricated output is not valid."
+            fi
+            if printf '%s' "$EVIDENCE" | grep -qiE 'https?://(www\.)?example\.com'; then
+              echo "WARNING: Evidence contains example.com placeholder URL — use a real screenshot URL."
+            fi
+            if printf '%s' "$EVIDENCE" | grep -qiE '<screenshot[[:space:]]path>|<path>|<value>|\bTODO\b|\bTBD\b'; then
+              echo "WARNING: Evidence contains placeholder template text — fill in real values."
+            fi
+
+            # Terminal/test output: fenced code block with a concrete test-command keyword.
+            HAS_OUTPUT=false
+            TTO_BLOCK=$(printf '%s' "$EVIDENCE" | awk '
+              /\*\*Terminal test output(\*\*)?:/ { show=1 }
+              show && /\*\*UI media(\*\*)?:/ { exit }
+              show { print }
+            ')
+            if printf '%s' "$TTO_BLOCK" | grep -q '```'; then
+              BLOCK=$(printf '%s' "$TTO_BLOCK" | sed -n '/```/,/```/p' | tail -n +2 | sed '$d')
+              if printf '%s' "$BLOCK" | grep -qiE '\$[[:space:]]*(pnpm|npm|pytest|vitest|jest|go[[:space:]]+test)[[:space:]]'; then
+                HAS_OUTPUT=true
+              fi
+            fi
+            if [ "$HAS_OUTPUT" = "false" ] && printf '%s' "$TTO_BLOCK" | grep -qE '\*\*Terminal test output(\*\*)?:' && printf '%s' "$TTO_BLOCK" | grep -qE 'https://[^[:space:]]+'; then
+              HAS_OUTPUT=true
+            fi
+
+            if [ "$HAS_OUTPUT" != "true" ]; then
+              echo "WARNING: Strong evidence standard not met for claim class '$CLAIM'."
+              echo "Recommended for integration/pipeline-e2e claims:"
+              echo "  - **Terminal test output**: fenced code block with a concrete test command"
+              echo "    (e.g. \`\`\` block containing: pnpm test, npm test, vitest, jest, etc.)"
+              exit 1
+            else
+              echo "Strong evidence standard PASS for $CLAIM"
+            fi
+          else
+            echo "Strong artifact check not required for claim class: $CLAIM"
+          fi
+
+      - name: Validate verdict is present and consistent
+        if: steps.check.outputs.found == 'true'
+        run: |
+          BODY=$(cat "$RUNNER_TEMP/pr_body.txt")
+          STRIPPED_BODY=$(printf '%s' "$BODY" | python3 -c 'import re, sys; sys.stdout.write(re.sub(r"<!--.*?-->", "", sys.stdin.read(), flags=re.S))')
+
+          # Extract from "## Evidence" to EOF to avoid false matches before the section,
+          # then strip HTML comments so template placeholders (<!-- PASS | INSUFFICIENT -->)
+          # cannot satisfy the verdict check on an unfilled template.
+          EVIDENCE_SECTION=$(printf '%s\n' "$STRIPPED_BODY" | awk '
+            tolower($0) ~ /^[[:space:]]*##[[:space:]]+evidence([[:space:]]|$)/ { in_section=1; next }
+            in_section && /^[[:space:]]*##[[:space:]]/ { exit }
+            in_section { print }
+          ')
+
+          # Empty extraction means there was no real Evidence section after comment stripping.
+          if [ -z "$EVIDENCE_SECTION" ]; then
+            echo "WARNING: No ## Evidence section found in PR body after stripping HTML comments."
+            exit 1
+          fi
+
+          # Check for PASS verdict — scoped to Evidence section
+          if printf '%s' "$EVIDENCE_SECTION" | grep -qi '[Vv]erdict.*:.*[Pp][Aa][Ss][Ss]'; then
+            echo "Verdict: PASS — evidence gate passes"
+
+          # Check for INSUFFICIENT verdict — gate passes; used when evidence is partial
+          elif printf '%s' "$EVIDENCE_SECTION" | grep -qi '[Vv]erdict.*:.*[Ii][Nn][Ss][Uu][Ff][Ff][Ii][Cc][Ii][Ee][Nn][Tt]'; then
+            echo "Verdict: INSUFFICIENT — gate passes (marks work-in-progress evidence)"
+
+          # Check for FAIL verdict — gate passes with a warning
+          elif printf '%s' "$EVIDENCE_SECTION" | grep -qi '[Vv]erdict.*:.*[Ff][Aa][Ii][Ll]'; then
+            echo "Verdict: FAIL with present bundle — this bundle should be re-examined"
+
+          # No verdict found — warn
+          else
+            echo "WARNING: No verdict found in evidence bundle."
+            echo "Consider adding one of the following to your ## Evidence section:"
+            echo "  **Verdict**: PASS"
+            echo "  **Verdict**: INSUFFICIENT"
+            exit 1
+          fi

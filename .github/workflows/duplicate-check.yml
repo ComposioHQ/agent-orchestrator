@@ -1,0 +1,55 @@
+name: Duplicate Code Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  duplicate-check:
+    name: Duplicate Code Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run jscpd and capture output
+        id: jscpd
+        # Always run (don't stop on non-zero exit) so we can write the summary first.
+        # The exit code is preserved in steps.jscpd.outputs.exit_code and re-applied after.
+        run: |
+          set +e
+          OUTPUT=$(pnpm check:duplicates 2>&1)
+          EXIT_CODE=$?
+          set -e
+
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+          # Write job summary so clone details surface on the PR checks page
+          {
+            if [ $EXIT_CODE -ne 0 ]; then
+              echo "## ❌ Duplicate Code Check — threshold exceeded"
+            else
+              echo "## ✅ Duplicate Code Check — within threshold"
+            fi
+            echo ""
+            echo '```'
+            echo "$OUTPUT"
+            echo '```'
+            echo ""
+            echo "_Threshold: 3% of lines. Clones shown above even when passing._"
+            echo "_To suppress a false positive, add the files to \`.jscpd.json\` ignore list._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Re-apply the original exit code so the step fails when threshold is crossed
+          exit $EXIT_CODE

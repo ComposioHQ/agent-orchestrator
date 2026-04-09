@@ -32,7 +32,7 @@ function getAoBinDir(): string {
 }
 
 /** Current version of wrapper scripts — bump when scripts change */
-const WRAPPER_VERSION = "0.2.0";
+const WRAPPER_VERSION = "0.3.0";
 
 // =============================================================================
 // PATH Builder
@@ -135,10 +135,11 @@ update_ao_metadata() {
 
 /**
  * gh wrapper — intercepts `gh pr create` and `gh pr merge` to auto-update
- * session metadata. All other commands pass through transparently.
+ * session metadata, and runs the churn guard before PR creation.
+ * All other commands pass through transparently.
  */
 export const GH_WRAPPER = `#!/usr/bin/env bash
-# ao gh wrapper — auto-updates session metadata on PR operations
+# ao gh wrapper — churn guard + session metadata on PR operations
 
 # Find real gh by removing our wrapper directory from PATH
 ao_bin_dir="\$(cd "\$(dirname "\$0")" && pwd)"
@@ -167,10 +168,151 @@ fi
 # Source the metadata helper
 source "\$ao_bin_dir/ao-metadata-helper.sh" 2>/dev/null || true
 
+# ---------------------------------------------------------------------------
+# Churn guard — warn when open PRs already touch same files (non-blocking).
+# Fail-open: any error (no python3, no git, API timeout) allows the PR.
+# Override: include "Supersedes #N" in --body to suppress the warning.
+# ---------------------------------------------------------------------------
+churn_guard() {
+  command -v python3 &>/dev/null || return 0
+
+  # Extract --body / -b value from the already-parsed arg list
+  local body="" next_is_body=false
+  for arg in "\$@"; do
+    if \$next_is_body; then
+      body="\$arg"
+      next_is_body=false
+      continue
+    fi
+    case "\$arg" in
+      --body|-b) next_is_body=true ;;
+      --body=*)  body="\${arg#--body=}" ;;
+    esac
+  done
+
+  # Check for "Supersedes #N" override
+  if printf '%s' "\$body" | python3 -c "
+import sys, re
+sys.exit(0 if re.search(r'supersedes\s*#\s*[0-9]+', sys.stdin.read(), re.IGNORECASE) else 1)
+" 2>/dev/null; then
+    return 0
+  fi
+
+  # Resolve repo from --repo / -R flag, then fall back to git remote
+  local repo="" next_is_repo=false
+  for arg in "\$@"; do
+    if \$next_is_repo; then
+      repo="\$arg"
+      next_is_repo=false
+      continue
+    fi
+    case "\$arg" in
+      --repo|-R) next_is_repo=true ;;
+      --repo=*)  repo="\${arg#--repo=}" ;;
+    esac
+  done
+  if [[ -z "\$repo" ]]; then
+    repo="\$(git remote get-url origin 2>/dev/null | python3 -c "
+import sys, re
+m = re.search(r'github\\.com[/:]([^/]+/[\\w.-]+?)(?:\\.git)?\$', sys.stdin.read().strip())
+print(m.group(1) if m else '')
+" 2>/dev/null)"
+  fi
+  [[ -z "\$repo" ]] && return 0
+
+  # Files changed in this branch vs origin/main
+  local changed_files
+  changed_files="\$(git diff --name-only origin/main...HEAD 2>/dev/null)" || return 0
+  [[ -z "\$changed_files" ]] && return 0
+
+  # Check open PRs for file overlap (50s global deadline — fail open on timeout)
+  local overlap
+  overlap="\$(python3 - "\$repo" "\$changed_files" <<'PYEOF'
+import sys, subprocess, json, time, re
+
+repo = sys.argv[1]
+my_files = set(sys.argv[2].strip().split('\\n'))
+deadline = time.monotonic() + 50
+
+try:
+    br = subprocess.run(["git", "branch", "--show-current"],
+                        capture_output=True, text=True, timeout=5)
+    my_branch = br.stdout.strip() if br.returncode == 0 else ""
+
+    rr = subprocess.run(["git", "remote", "get-url", "origin"],
+                        capture_output=True, text=True, timeout=5)
+    m = re.search(r'github\\.com[/:]([^/]+)/', rr.stdout.strip()) if rr.returncode == 0 else None
+    my_owner = m.group(1) if m else ""
+
+    timeout = max(5, int(deadline - time.monotonic() - 10))
+    pr_list = subprocess.run(
+        ["gh", "api", f"repos/{repo}/pulls", "--paginate",
+         "--jq", "[.[] | {number:.number, title:.title, branch:.head.ref, owner:(.head.repo.owner.login // \"\")}]"],
+        capture_output=True, text=True, timeout=timeout)
+    if pr_list.returncode != 0:
+        print("OK"); sys.exit(0)
+
+    prs = []
+    for line in pr_list.stdout.strip().split('\\n'):
+        if line.strip():
+            try: prs.extend(json.loads(line.strip()))
+            except: pass
+
+    overlapping = []
+    for pr in prs:
+        if pr.get("branch") == my_branch and (not my_owner or pr.get("owner") == my_owner):
+            continue
+        if time.monotonic() > deadline:
+            break
+        remaining = max(5, int(deadline - time.monotonic()))
+        fr = subprocess.run(
+            ["gh", "api", f"repos/{repo}/pulls/{pr['number']}/files",
+             "--paginate", "--jq", ".[].filename"],
+            capture_output=True, text=True, timeout=remaining)
+        if fr.returncode != 0:
+            continue
+        common = my_files & set(f for f in fr.stdout.strip().split('\\n') if f)
+        if common:
+            files_str = ", ".join(list(common)[:3])
+            if len(common) > 3: files_str += f" (+{len(common)-3} more)"
+            overlapping.append(f"  PR #{pr['number']}: {pr['title']} — overlapping: {files_str}")
+
+    if overlapping:
+        print("OVERLAP")
+        for line in overlapping:
+            print(line)
+    else:
+        print("OK")
+except Exception:
+    print("OK")
+PYEOF
+  )" || return 0
+
+  if printf '%s' "\$overlap" | grep -q "^OVERLAP"; then
+    echo "" >&2
+    echo "============================================" >&2
+    echo "WARNING: File overlap with existing open PRs" >&2
+    echo "" >&2
+    echo "Your branch changes files already modified by open PRs:" >&2
+    printf '%s\\n' "\$overlap" | tail -n +2 >&2
+    echo "" >&2
+    echo "  1. Check if the existing PR already covers your fix" >&2
+    echo "  2. If yes: consider commenting on that PR instead" >&2
+    echo "  3. If no: coordinate with the existing PR author" >&2
+    echo "  4. Add 'Supersedes #<N>' to --body to suppress this warning." >&2
+    echo "============================================" >&2
+  fi
+
+  return 0
+}
+
 # Only capture output for commands we need to parse (pr/create, pr/merge).
 # All other commands pass through transparently without stream merging.
 case "\$1/\$2" in
-  pr/create|pr/merge)
+  pr/create)
+    # Run churn guard before creating — warns on file overlap but does not block
+    churn_guard "\$@"
+
     tmpout="\$(mktemp)"
     trap 'rm -f "\$tmpout"' EXIT
 
@@ -179,18 +321,24 @@ case "\$1/\$2" in
 
     if [[ \$exit_code -eq 0 ]]; then
       output="\$(cat "\$tmpout")"
-      case "\$1/\$2" in
-        pr/create)
-          pr_url="\$(echo "\$output" | grep -Eo 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' | head -1)"
-          if [[ -n "\$pr_url" ]]; then
-            update_ao_metadata pr "\$pr_url"
-            update_ao_metadata status pr_open
-          fi
-          ;;
-        pr/merge)
-          update_ao_metadata status merged
-          ;;
-      esac
+      pr_url="\$(echo "\$output" | grep -Eo 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' | head -1)"
+      if [[ -n "\$pr_url" ]]; then
+        update_ao_metadata pr "\$pr_url"
+        update_ao_metadata status pr_open
+      fi
+    fi
+
+    exit \$exit_code
+    ;;
+  pr/merge)
+    tmpout="\$(mktemp)"
+    trap 'rm -f "\$tmpout"' EXIT
+
+    "\$real_gh" "\$@" 2>&1 | tee "\$tmpout"
+    exit_code=\${PIPESTATUS[0]}
+
+    if [[ \$exit_code -eq 0 ]]; then
+      update_ao_metadata status merged
     fi
 
     exit \$exit_code

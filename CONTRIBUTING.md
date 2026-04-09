@@ -254,10 +254,25 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full reference. The short
    chore: update vitest to v2
    ```
 
-5. **Push and open a PR**. In the PR description:
-   - What changed and why
-   - How to test it
-   - Link to the issue it closes (e.g., `Closes #123`)
+5. **Push and open a PR**. The PR template includes an **Evidence** section — fill it in:
+
+   ```markdown
+   ## Evidence
+
+   **Claim class**: unit | integration | feat | fix | refactor | docs | chore
+
+   **Terminal test output**:
+   ```
+   $ pnpm test
+   # ... test output ...
+   ```
+
+   **Verdict**: PASS | INSUFFICIENT
+   ```
+
+   The `evidence-gate` CI check enforces this. PRs without a `## Evidence` section or
+   without a `**Verdict**` line will fail the check. For `integration` and `pipeline-e2e`
+   claim classes, a fenced code block showing test command output is also required.
 
 6. **Address review comments** — update the branch and push. Reply to comments when done.
 
@@ -276,6 +291,39 @@ All PRs must pass:
 - `pnpm test` — all tests green
 - `pnpm lint` — no lint errors
 - Secret scanning — no leaked credentials
+- `evidence-gate` — PR body must include a `## Evidence` section with a `**Verdict**`
+
+### Churn Guard (optional local hook)
+
+The churn-guard hook prevents creating duplicate PRs that modify the same files as an existing open PR. To install it locally (requires Claude Code):
+
+```bash
+mkdir -p .claude/hooks
+cp scripts/hooks/churn-guard.sh .claude/hooks/churn-guard.sh
+```
+
+Then add the following to `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/churn-guard.sh",
+            "timeout": 60000
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The hook intercepts `gh pr create` commands and checks for file overlap with open PRs. To bypass, add `Supersedes #<N>` to the PR body.
 
 ---
 
