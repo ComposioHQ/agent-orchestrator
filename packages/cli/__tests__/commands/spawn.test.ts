@@ -319,8 +319,7 @@ describe("spawn command", () => {
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(output).toContain("http://localhost:3000/sessions/app-7");
-    expect(output).not.toContain("tmux attach");
-    expect(output).not.toContain("8474d6f29887-app-7");
+    expect(output).toContain("tmux attach -t 8474d6f29887-app-7");
   });
 
   it("opens docker sessions with runtime attach info when --open is used", async () => {
