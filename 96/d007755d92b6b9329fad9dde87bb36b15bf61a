@@ -1,0 +1,23 @@
+packages/web/src/components/__tests__/DirectTerminal.render.test.tsx
+  bc69e3a1c72d4ecb 197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "96d007755d92b6b9329fad9dde87bb36b15bf61a",
+  "prompts": {
+    "bc69e3a1c72d4ecb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "703ec9ad-0326-4aa1-b70d-bffc910ad8ce",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 3,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
