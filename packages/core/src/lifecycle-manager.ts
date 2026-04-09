@@ -42,7 +42,6 @@ import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveNotifierTarget } from "./notifier-resolution.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
-import { triggerRebaseForSiblings } from "./rebase-coordinator.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -1193,50 +1192,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
-  async function maybeRebaseSiblings(
-    session: Session,
-    oldStatus: SessionStatus,
-    newStatus: SessionStatus,
-  ): Promise<void> {
-    if (newStatus !== "merged" || oldStatus === "merged") return;
-    if (!session.workspacePath) return;
-
-    const project = config.projects[session.projectId];
-    if (!project) return;
-
-    try {
-      const allSessions = await sessionManager.list(session.projectId);
-      const siblings = allSessions.filter(
-        (s) =>
-          s.id !== session.id &&
-          !TERMINAL_STATUSES.has(s.status) &&
-          s.workspacePath !== null &&
-          s.branch !== null,
-      );
-
-      if (siblings.length === 0) return;
-
-      const results = await triggerRebaseForSiblings(
-        session,
-        siblings,
-        project.defaultBranch ?? "main",
-        (siblingId, message) => sessionManager.send(siblingId, message),
-      );
-
-      for (const r of results) {
-        const level = r.outcome === "error" ? "warn" : "info";
-        console[level](
-          `[lifecycle-manager] rebase ${r.outcome} sibling=${r.sessionId} merged=${session.id}: ${r.message.slice(0, 120)}`,
-        );
-      }
-    } catch (err) {
-      console.warn(
-        `[lifecycle-manager] maybeRebaseSiblings ${session.id}:`,
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-  }
-
   async function maybeWriteSystemEvent(
     session: Session,
     oldStatus: SessionStatus,
@@ -1384,7 +1339,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchMergeConflicts(session, newStatus),
-      maybeRebaseSiblings(session, oldStatus, newStatus),
       maybeWriteSystemEvent(session, oldStatus, newStatus),
     ]);
   }

@@ -20,6 +20,7 @@ import {
   type Session,
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
+} from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { stat, access, readFile } from "node:fs/promises";
@@ -28,9 +29,7 @@ import { constants } from "node:fs";
 
 const execFileAsync = promisify(execFile);
 
-// =============================================================================
 // Aider Activity Detection Helpers
-// =============================================================================
 
 /**
  * Check if Aider has made recent commits (within last 60 seconds).
@@ -62,9 +61,7 @@ async function getChatHistoryMtime(workspacePath: string): Promise<Date | null> 
   }
 }
 
-// =============================================================================
 // Session Info Helpers
-// =============================================================================
 
 /**
  * Extract a summary from Aider's chat history file.
@@ -91,9 +88,7 @@ async function extractAiderSummary(workspacePath: string): Promise<string | null
   return null;
 }
 
-// =============================================================================
 // Plugin Manifest
-// =============================================================================
 
 export const manifest = {
   name: "aider",
@@ -103,9 +98,7 @@ export const manifest = {
   displayName: "Aider",
 };
 
-// =============================================================================
 // Agent Implementation
-// =============================================================================
 
 function createAiderAgent(): Agent {
   return {
@@ -324,16 +317,10 @@ function createAiderAgent(): Agent {
     getProgrammaticCommand(baseCommand: string): string {
       return baseCommand;
     },
-
-    createInjector(_child: ChildProcess): MessageInjector | null {
-      return null;
-    },
   };
 }
 
-// =============================================================================
 // Plugin Export
-// =============================================================================
 
 export function create(): Agent {
   return createAiderAgent();

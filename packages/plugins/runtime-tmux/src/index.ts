@@ -27,6 +27,7 @@ import {
   AGENT_EVENTS_FILE,
   type SessionCommsFiles,
 } from "@aoagents/ao-plugin-runtime-file";
+} from "@aoagents/ao-plugin-runtime-file";
 
 const execFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = 5_000;
@@ -68,27 +69,11 @@ async function setupCommsForSession(
 ): Promise<SessionCommsFiles> {
   const files = resolveCommsFiles(sessionsDir, sessionId);
   createCommsFiles(files);
-
-  if (agentName === "claude-code") {
-    try {
-      await installCommsHooks(workspacePath);
-    } catch (err) {
-      console.warn(
-        `[runtime-tmux] Failed to install comms hooks:`,
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-  }
-
   try {
-    await installAoEmit(workspacePath);
+    await setupComms(workspacePath, { hooks: agentName === "claude-code" });
   } catch (err) {
-    console.warn(
-      `[runtime-tmux] Failed to install ao-emit script:`,
-      err instanceof Error ? err.message : String(err),
-    );
+    console.warn(`[runtime-tmux] comms setup failed:`, err instanceof Error ? err.message : String(err));
   }
-
   return files;
 }
 

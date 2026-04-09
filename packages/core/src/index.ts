@@ -57,9 +57,6 @@ export type { SessionManagerDeps } from "./session-manager.js";
 export { createLifecycleManager } from "./lifecycle-manager.js";
 export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 
-// Rebase coordinator — cross-session file conflict detection + auto-rebase
-export { readWorkingFiles, triggerRebaseForSiblings } from "./rebase-coordinator.js";
-export type { RebaseResult } from "./rebase-coordinator.js";
 
 // Prompt builder — layered prompt composition
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";

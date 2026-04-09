@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { installCommsHooks } from "../index.js";
+import { setupComms } from "../index.js";
 
-describe("installCommsHooks", () => {
+describe("setupComms (claude-code)", () => {
   let workspaceDir: string;
 
   beforeEach(() => {
@@ -16,19 +16,20 @@ describe("installCommsHooks", () => {
   });
 
   it("creates .claude/ directory if missing", async () => {
-    await installCommsHooks(workspaceDir);
+    await setupComms(workspaceDir, { hooks: true });
     expect(existsSync(join(workspaceDir, ".claude"))).toBe(true);
   });
 
   it("writes all hook scripts", async () => {
-    await installCommsHooks(workspaceDir);
+    await setupComms(workspaceDir, { hooks: true });
     expect(existsSync(join(workspaceDir, ".claude", "ao-inbox-reader.sh"))).toBe(true);
     expect(existsSync(join(workspaceDir, ".claude", "ao-stop-check.sh"))).toBe(true);
     expect(existsSync(join(workspaceDir, ".claude", "ao-file-tracker.sh"))).toBe(true);
+    expect(existsSync(join(workspaceDir, ".claude", "ao-inbox-watcher.sh"))).toBe(true);
   });
 
   it("makes hook scripts executable", async () => {
-    await installCommsHooks(workspaceDir);
+    await setupComms(workspaceDir, { hooks: true });
     const scriptPath = join(workspaceDir, ".claude", "ao-inbox-reader.sh");
     const mode = statSync(scriptPath).mode;
     // Check owner execute bit (0o100)
@@ -36,7 +37,7 @@ describe("installCommsHooks", () => {
   });
 
   it("creates settings.json with all three hook events", async () => {
-    await installCommsHooks(workspaceDir);
+    await setupComms(workspaceDir, { hooks: true });
     const settingsPath = join(workspaceDir, ".claude", "settings.json");
     expect(existsSync(settingsPath)).toBe(true);
 
@@ -49,16 +50,23 @@ describe("installCommsHooks", () => {
   });
 
   it("settings.json contains correct command paths", async () => {
-    await installCommsHooks(workspaceDir);
+    await setupComms(workspaceDir, { hooks: true });
     const settings = JSON.parse(
       readFileSync(join(workspaceDir, ".claude", "settings.json"), "utf-8"),
     ) as Record<string, unknown>;
     const hooks = settings["hooks"] as Record<string, Array<Record<string, unknown>>>;
 
-    const postToolUseCommands = hooks["PostToolUse"].flatMap((e) =>
-      ((e["hooks"] ?? []) as Array<Record<string, unknown>>).map((h) => h["command"]),
+    const postToolUseHooks = hooks["PostToolUse"].flatMap((e) =>
+      (e["hooks"] ?? []) as Array<Record<string, unknown>>,
     );
+    const postToolUseCommands = postToolUseHooks.map((h) => h["command"]);
     expect(postToolUseCommands).toContain(".claude/ao-inbox-reader.sh");
+    expect(postToolUseCommands).toContain(".claude/ao-inbox-watcher.sh");
+
+    // Watcher must be registered as async + asyncRewake
+    const watcherHook = postToolUseHooks.find((h) => h["command"] === ".claude/ao-inbox-watcher.sh");
+    expect(watcherHook?.["async"]).toBe(true);
+    expect(watcherHook?.["asyncRewake"]).toBe(true);
 
     const stopCommands = hooks["Stop"].flatMap((e) =>
       ((e["hooks"] ?? []) as Array<Record<string, unknown>>).map((h) => h["command"]),
@@ -72,8 +80,8 @@ describe("installCommsHooks", () => {
   });
 
   it("is idempotent — does not duplicate hooks on repeated calls", async () => {
-    await installCommsHooks(workspaceDir);
-    await installCommsHooks(workspaceDir);
+    await setupComms(workspaceDir, { hooks: true });
+    await setupComms(workspaceDir, { hooks: true });
 
     const settings = JSON.parse(
       readFileSync(join(workspaceDir, ".claude", "settings.json"), "utf-8"),
@@ -110,7 +118,7 @@ describe("installCommsHooks", () => {
       "utf-8",
     );
 
-    await installCommsHooks(workspaceDir);
+    await setupComms(workspaceDir, { hooks: true });
 
     const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
     const postToolUse = (settings["hooks"] as Record<string, unknown[]>)["PostToolUse"] as Array<Record<string, unknown>>;
@@ -130,7 +138,7 @@ describe("installCommsHooks", () => {
     writeFileSync(join(claudeDir, "settings.json"), "{ not valid json }", "utf-8");
 
     // Should not throw — rewrites with fresh config
-    await expect(installCommsHooks(workspaceDir)).resolves.toBeUndefined();
+    await expect(setupComms(workspaceDir, { hooks: true })).resolves.toBeUndefined();
 
     const settings = JSON.parse(
       readFileSync(join(claudeDir, "settings.json"), "utf-8"),

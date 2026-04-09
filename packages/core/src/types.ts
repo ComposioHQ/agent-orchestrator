@@ -1,5 +1,4 @@
 import type { ObservabilityLevel } from "./observability.js";
-import type { ChildProcess } from "node:child_process";
 
 /**
  * Agent Orchestrator — Core Type Definitions
@@ -313,9 +312,7 @@ export interface RuntimeCreateConfig {
   launchCommand: string;
   environment: Record<string, string>;
   /**
-   * Optional: the agent plugin instance. When provided, the runtime can call
-   * agent.getProgrammaticCommand() and agent.createInjector() to use the
-   * agent's own protocol for message injection instead of hardcoded fallbacks.
+   * Optional: the agent plugin instance, passed through for runtime use.
    */
   agent?: Agent;
 }
@@ -430,40 +427,8 @@ export interface Agent {
    */
   recordActivity?(session: Session, terminalOutput: string): Promise<void>;
 
-  /**
-   * Optional: Transform the launch command for programmatic (subprocess) mode.
-   * Called by runtimes that spawn agents as subprocesses (e.g. runtime-file).
-   * The agent plugin knows its own flags — not the runtime.
-   *
-   * Examples:
-   * - Claude Code: adds `-p --input-format stream-json --output-format stream-json --verbose`
-   * - Codex: swaps `codex --full-auto` → `codex app-server`
-   * - OpenCode/Aider: returns command unchanged
-   */
   getProgrammaticCommand?(baseCommand: string): string;
 
-  /**
-   * Optional: Create a message injector for this agent's subprocess.
-   * Called after the subprocess is spawned. Return null for inbox-only agents.
-   * The injector's initialize() is called once at startup; send() on each message.
-   */
-  createInjector?(child: ChildProcess): MessageInjector | null;
-}
-
-/**
- * Protocol-specific message injector for a subprocess agent.
- * Returned by Agent.createInjector(). Each agent plugin implements its own protocol:
- * - Claude Code: NdjsonInjector (writes stream-json NDJSON to stdin)
- * - Codex: JsonRpcInjector (JSON-RPC turn/start via app-server sidecar)
- * - Others: null (inbox-only, no active injection)
- */
-export interface MessageInjector {
-  /** One-time initialization (handshake, session setup). Called after spawn. */
-  initialize(): Promise<void>;
-  /** Inject a message into the running agent process. */
-  send(message: string): Promise<void>;
-  /** Clean up resources (called on session destroy). */
-  close(): Promise<void>;
 }
 
 export interface AgentLaunchConfig {

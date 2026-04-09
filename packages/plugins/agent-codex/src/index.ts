@@ -23,6 +23,7 @@ import {
   type Session,
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
+} from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { readdir, stat, lstat, open } from "node:fs/promises";
@@ -33,9 +34,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-// =============================================================================
 // Plugin Manifest
-// =============================================================================
 
 export const manifest = {
   name: "codex",
@@ -45,13 +44,9 @@ export const manifest = {
   displayName: "OpenAI Codex",
 };
 
-// =============================================================================
 // Workspace Setup (delegates to shared PATH-wrapper hooks from @aoagents/ao-core)
-// =============================================================================
 
-// =============================================================================
 // Codex Session JSONL Parsing (for getSessionInfo)
-// =============================================================================
 
 /** Codex session directory: ~/.codex/sessions/ */
 const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
@@ -243,9 +238,7 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
   }
 }
 
-// =============================================================================
 // Binary Resolution
-// =============================================================================
 
 /**
  * Resolve the Codex CLI binary path.
@@ -284,9 +277,7 @@ export async function resolveCodexBinary(): Promise<string> {
   return "codex";
 }
 
-// =============================================================================
 // Agent Implementation
-// =============================================================================
 
 /** Append approval-policy flags to a command parts array */
 function appendApprovalFlags(parts: string[], permissions: string | undefined): void {
@@ -652,70 +643,10 @@ function createCodexAgent(): Agent {
       return `${shellEscape(binary)} app-server`;
     },
 
-    createInjector(child: ChildProcess): MessageInjector | null {
-      const stdin = child.stdin;
-      const stdout = child.stdout;
-      if (!stdin || !stdout) return null;
-
-      let requestId = 0;
-      let threadId: string | null = null;
-      const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
-
-      const readline = createInterface({ input: stdout, crlfDelay: Infinity });
-      readline.on("line", (line: string) => {
-        if (!line.trim()) return;
-        try {
-          const msg = JSON.parse(line) as Record<string, unknown>;
-          const id = msg["id"] as number | undefined;
-          if (id !== undefined && pending.has(id)) {
-            const { resolve, reject } = pending.get(id)!;
-            pending.delete(id);
-            if (msg["error"]) reject(new Error(String((msg["error"] as Record<string, unknown>)["message"] ?? "JSON-RPC error")));
-            else resolve(msg["result"]);
-          }
-        } catch { /* non-JSON line */ }
-      });
-
-      function sendRpc(method: string, params: unknown): Promise<unknown> {
-        return new Promise((resolve, reject) => {
-          requestId += 1;
-          const capturedId = requestId;
-          pending.set(capturedId, { resolve, reject });
-          const req = JSON.stringify({ jsonrpc: "2.0", id: capturedId, method, params }) + "\n";
-          stdin!.write(req, (err) => { if (err) { pending.delete(capturedId); reject(err); } });
-        });
-      }
-
-      return {
-        async initialize() {
-          try {
-            await sendRpc("initialize", { clientInfo: { name: "ao", version: "1" }, capabilities: {} });
-            stdin!.write(JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }) + "\n");
-            const result = await sendRpc("thread/start", {}) as Record<string, unknown>;
-            threadId = (result["threadId"] ?? result["id"]) as string;
-          } catch (err) {
-            // Clean up readline on init failure to prevent resource leak.
-            readline.close();
-            pending.clear();
-            throw err;
-          }
-        },
-        async send(message: string) {
-          if (!threadId) throw new Error("Codex injector not initialized");
-          await sendRpc("turn/start", { threadId, input: [{ type: "text", text: message }] });
-        },
-        async close() {
-          readline.close();
-          pending.clear();
-        },
-      };
-    },
   };
 }
 
-// =============================================================================
 // Plugin Export
-// =============================================================================
 
 export function create(): Agent {
   return createCodexAgent();

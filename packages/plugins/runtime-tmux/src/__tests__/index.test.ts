@@ -36,8 +36,7 @@ const {
   mockAppendInboxMessage,
   mockAppendMessage,
   mockGenerateDedupKey,
-  mockInstallCommsHooks,
-  mockInstallAoEmit,
+  mockSetupComms,
   mockReadEpoch,
   mockReadNewMessages,
   mockWatchDirectory,
@@ -53,8 +52,7 @@ const {
   mockAppendInboxMessage: vi.fn(),
   mockAppendMessage: vi.fn(),
   mockGenerateDedupKey: vi.fn(() => "test-dedup-1"),
-  mockInstallCommsHooks: vi.fn(async () => {}),
-  mockInstallAoEmit: vi.fn(async () => {}),
+  mockSetupComms: vi.fn(async () => {}),
   mockReadEpoch: vi.fn(() => 1),
   mockReadNewMessages: vi.fn(() => ({ messages: [], newCursor: 0 })),
   mockWatchDirectory: vi.fn(() => ({ close: vi.fn() })),
@@ -66,8 +64,7 @@ vi.mock("@composio/ao-plugin-runtime-file", () => ({
   appendInboxMessage: mockAppendInboxMessage,
   appendMessage: mockAppendMessage,
   generateDedupKey: mockGenerateDedupKey,
-  installCommsHooks: mockInstallCommsHooks,
-  installAoEmit: mockInstallAoEmit,
+  setupComms: mockSetupComms,
   readEpoch: mockReadEpoch,
   readNewMessages: mockReadNewMessages,
   watchDirectory: mockWatchDirectory,
@@ -440,8 +437,7 @@ describe("runtime.create() comms setup", () => {
 
     expect(mockResolveCommsFiles).toHaveBeenCalledWith("/tmp/sessions", "comms-test");
     expect(mockCreateCommsFiles).toHaveBeenCalled();
-    expect(mockInstallCommsHooks).toHaveBeenCalledWith("/tmp/ws");
-    expect(mockInstallAoEmit).toHaveBeenCalledWith("/tmp/ws");
+    expect(mockSetupComms).toHaveBeenCalledWith("/tmp/ws", { hooks: true });
   });
 
   it("skips claude hooks for non-claude agents but still installs ao-emit", async () => {
@@ -456,8 +452,7 @@ describe("runtime.create() comms setup", () => {
       environment: { AO_DATA_DIR: "/tmp/sessions", AO_AGENT_NAME: "aider" },
     });
 
-    expect(mockInstallCommsHooks).not.toHaveBeenCalled();
-    expect(mockInstallAoEmit).toHaveBeenCalledWith("/tmp/ws");
+    expect(mockSetupComms).toHaveBeenCalledWith("/tmp/ws", { hooks: false });
   });
 
   it("propagates AO_INBOX_PATH and AO_AGENT_EVENTS_PATH into tmux env", async () => {

@@ -22,6 +22,7 @@ import {
   type WorkspaceHooksConfig,
   type OpenCodeAgentConfig,
 } from "@aoagents/ao-core";
+} from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { stat } from "node:fs/promises";
@@ -150,9 +151,7 @@ process.stdin.on('data', c => input += c).on('end', () => {
   return script.replace(/\n/g, " ").replace(/\s+/g, " ");
 }
 
-// =============================================================================
 // Session List Helpers
-// =============================================================================
 
 /**
  * Query OpenCode's session list and find the matching session for this AO session.
@@ -191,9 +190,7 @@ async function findOpenCodeSession(
   }
 }
 
-// =============================================================================
 // Plugin Manifest
-// =============================================================================
 
 export const manifest = {
   name: "opencode",
@@ -203,9 +200,7 @@ export const manifest = {
   displayName: "OpenCode",
 };
 
-// =============================================================================
 // Agent Implementation
-// =============================================================================
 
 function createOpenCodeAgent(): Agent {
   return {
@@ -475,15 +470,10 @@ function createOpenCodeAgent(): Agent {
       return baseCommand;
     },
 
-    createInjector(_child: ChildProcess): MessageInjector | null {
-      return null;
-    },
   };
 }
 
-// =============================================================================
 // Plugin Export
-// =============================================================================
 
 export function create(): Agent {
   return createOpenCodeAgent();

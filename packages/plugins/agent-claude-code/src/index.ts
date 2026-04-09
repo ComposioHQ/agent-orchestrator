@@ -16,6 +16,7 @@ import {
   type Session,
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
+} from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -25,9 +26,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-// =============================================================================
 // Metadata Updater Hook Script
-// =============================================================================
 
 /** Hook script content that updates session metadata on git/gh commands.
  *  Exported for integration testing. */
@@ -114,9 +113,7 @@ update_metadata_key() {
   mv "$temp_file" "$metadata_file"
 }
 
-# ============================================================================
 # Command Detection and Parsing
-# ============================================================================
 
 # Strip leading directory-change prefixes so that commands like
 #   cd ~/.worktrees/project && gh pr create ...
@@ -184,9 +181,7 @@ echo '{}'
 exit 0
 `;
 
-// =============================================================================
 // Plugin Manifest
-// =============================================================================
 
 export const manifest = {
   name: "claude-code",
@@ -196,9 +191,7 @@ export const manifest = {
   displayName: "Claude Code",
 };
 
-// =============================================================================
 // JSONL Helpers
-// =============================================================================
 
 /**
  * Convert a workspace path to Claude's project directory path.
@@ -401,9 +394,7 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
   return { inputTokens, outputTokens, estimatedCostUsd: totalCost };
 }
 
-// =============================================================================
 // Process Detection
-// =============================================================================
 
 /**
  * TTL cache for `ps -eo pid,tty,args` output. Without this, listing N sessions
@@ -516,9 +507,7 @@ async function findClaudeProcess(handle: RuntimeHandle): Promise<number | null> 
   }
 }
 
-// =============================================================================
 // Terminal Output Patterns for detectActivity
-// =============================================================================
 
 /** Classify Claude Code's activity state from terminal output (pure, sync). */
 function classifyTerminalOutput(terminalOutput: string): ActivityState {
@@ -548,9 +537,7 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
   return "active";
 }
 
-// =============================================================================
 // Hook Setup Helper
-// =============================================================================
 
 /**
  * Shared helper to setup PostToolUse hooks in a workspace.
@@ -639,9 +626,7 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
   await writeFile(settingsPath, JSON.stringify(existingSettings, null, 2) + "\n", "utf-8");
 }
 
-// =============================================================================
 // Agent Implementation
-// =============================================================================
 
 function createClaudeCodeAgent(): Agent {
   return {
@@ -844,56 +829,10 @@ function createClaudeCodeAgent(): Agent {
       return baseCommand.replace(/((?:^|\s)(?:[^\s]*\/)?)claude(\s|$)/, "$1claude -p --input-format stream-json --output-format stream-json --verbose$2");
     },
 
-    createInjector(child: ChildProcess): MessageInjector | null {
-      let sessionId = "default";
-      let partial = "";
-      child.stdout?.on("data", (data: Buffer) => {
-        const text = partial + data.toString("utf-8");
-        const lines = text.split("\n");
-        partial = lines.pop() ?? "";
-        for (const line of lines) {
-          if (line.trim().startsWith("{")) {
-            try {
-              const parsed = JSON.parse(line) as Record<string, unknown>;
-              if (parsed.type === "system" && parsed.subtype === "init" && typeof parsed.session_id === "string") {
-                sessionId = parsed.session_id;
-              }
-            } catch { /* not JSON */ }
-          }
-        }
-      });
-      return {
-        async initialize() {},
-        async send(message: string) {
-          const stdin = child.stdin;
-          if (!stdin?.writable) return;
-          const ndjson = JSON.stringify({
-            type: "user",
-            message: { role: "user", content: message },
-            parent_tool_use_id: null,
-            session_id: sessionId,
-          });
-          await new Promise<void>((resolve, reject) => {
-            let done = false;
-            const finish = (err?: Error | null) => {
-              if (done) return;
-              done = true;
-              stdin.removeListener("error", finish);
-              if (err) reject(err); else resolve();
-            };
-            stdin.once("error", finish);
-            stdin.write(ndjson + "\n", (err) => finish(err ?? null));
-          });
-        },
-        async close() {},
-      };
-    },
   };
 }
 
-// =============================================================================
 // Plugin Export
-// =============================================================================
 
 export function create(): Agent {
   return createClaudeCodeAgent();

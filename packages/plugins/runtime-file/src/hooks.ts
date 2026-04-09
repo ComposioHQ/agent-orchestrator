@@ -174,6 +174,39 @@ echo "{\\"ts\\":$(date +%s000),\\"file\\":\\"$FILE\\"}" >> "$WORKING_FILES"
 exit 0
 `;
 
+export const INBOX_WATCHER_SCRIPT = `#!/usr/bin/env bash
+set -euo pipefail
+F="\${AO_INBOX_PATH:-}"
+[[ -z "$F" || ! -f "$F" ]] && exit 0
+command -v flock &>/dev/null || exit 0
+exec 9>"\${F}.watcher-lock"; flock -n 9 || exit 0
+
+new() {
+  c=\$(grep -Eo '^[0-9]+' "\${F}.hook-cursor" 2>/dev/null || echo 0)
+  s=\$(wc -c <"\$F" 2>/dev/null | tr -d ' ' || echo 0)
+  (( s > c ))
+}
+wake() { .claude/ao-inbox-reader.sh; exit 2; }
+
+new && wake
+D=\$(( \$(date +%s) + 55 ))
+if command -v inotifywait &>/dev/null; then
+  while (( \$(date +%s) < D )); do
+    r=\$(( D - \$(date +%s) )); (( r > 0 )) || break
+    inotifywait -q -t "\$r" -e close_write,modify "\$F" 2>/dev/null || true
+    new && wake
+  done
+elif command -v fswatch &>/dev/null; then
+  while (( \$(date +%s) < D )); do
+    r=\$(( D - \$(date +%s) )); (( r > 0 )) || break
+    timeout "\$r" fswatch -1 --event Updated "\$F" 2>/dev/null || true
+    new && wake
+  done
+else
+  while (( \$(date +%s) < D )); do sleep 1; new && wake; done
+fi
+`;
+
 export function getHookSettings(): Record<string, unknown> {
   return {
     hooks: {
@@ -184,6 +217,17 @@ export function getHookSettings(): Record<string, unknown> {
               type: "command",
               command: ".claude/ao-inbox-reader.sh",
               timeout: 5000,
+            },
+          ],
+        },
+        {
+          hooks: [
+            {
+              type: "command",
+              command: ".claude/ao-inbox-watcher.sh",
+              timeout: 60000,
+              async: true,
+              asyncRewake: true,
             },
           ],
         },
