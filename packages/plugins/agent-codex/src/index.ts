@@ -150,10 +150,13 @@ async function sessionFileMatchesCwd(
           typeof parsed === "object" &&
           parsed !== null &&
           !Array.isArray(parsed) &&
-          (parsed as CodexJsonlLine).type === "session_meta" &&
-          (parsed as CodexJsonlLine).cwd === workspacePath
+          (parsed as CodexJsonlLine).type === "session_meta"
         ) {
-          return true;
+          const obj = parsed as CodexJsonlLine & { payload?: { cwd?: string } };
+          // Codex CLI v0.111+ nests metadata inside `payload`; older versions put
+          // cwd at the top level. Check both to stay compatible across versions.
+          const cwd = obj.cwd ?? obj.payload?.cwd;
+          if (cwd === workspacePath) return true;
         }
       } catch {
         // Skip malformed lines
