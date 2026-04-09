@@ -8,19 +8,23 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export async function glab(args: string[], hostname?: string): Promise<string> {
-  if (hostname && args[0] === "api") {
-    args = [args[0], "--hostname", hostname, ...args.slice(1)];
-  }
+  const commandArgs =
+    hostname && args[0] === "api" ? [args[0], "--hostname", hostname, ...args.slice(1)] : args;
+
   try {
-    const { stdout } = await execFileAsync("glab", args, {
+    const { stdout } = await execFileAsync("glab", commandArgs, {
+      env: hostname ? { ...process.env, GL_HOST: hostname } : process.env,
       maxBuffer: 10 * 1024 * 1024,
       timeout: 30_000,
     });
     return stdout.trim();
   } catch (err) {
-    throw new Error(`glab ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
+    throw new Error(
+      `glab ${commandArgs.slice(0, 3).join(" ")} failed: ${(err as Error).message}`,
+      {
       cause: err,
-    });
+      },
+    );
   }
 }
 
