@@ -72,9 +72,10 @@ export function PRStatus({ pr }: PRStatusProps) {
 
 interface PRTableRowProps {
   pr: DashboardPR;
+  muted?: boolean;
 }
 
-export function PRTableRow({ pr }: PRTableRowProps) {
+export function PRTableRow({ pr, muted = false }: PRTableRowProps) {
   const sizeLabel = getSizeLabel(pr.additions, pr.deletions);
   const rateLimited = isPRRateLimited(pr);
   const unenriched = isPRUnenriched(pr);
@@ -103,7 +104,7 @@ export function PRTableRow({ pr }: PRTableRowProps) {
   const shimmer = <span className="inline-block h-3 w-12 animate-pulse rounded bg-[var(--color-bg-subtle)]" />;
 
   return (
-    <tr className="border-b border-[var(--color-border-muted)] hover:bg-[rgba(88,166,255,0.03)]">
+    <tr className={`border-b border-[var(--color-border-subtle)] transition-colors hover:bg-[var(--color-bg-subtle)]${muted ? " opacity-60 hover:opacity-100" : ""}`}>
       <td className="px-3 py-2.5 text-sm">
         <a href={pr.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
           #{pr.number}

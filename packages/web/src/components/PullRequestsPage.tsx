@@ -57,14 +57,18 @@ export function PullRequestsPage({
         : null,
     [orchestratorLinks, projectId],
   );
-  const openPRs = useMemo(() => {
+  const [prFilter, setPrFilter] = useState<"all" | "open" | "merged" | "closed">("all");
+
+  const allPRs = useMemo(() => {
     return sessions
-      .filter(
-        (session): session is DashboardSession & { pr: DashboardPR } => session.pr?.state === "open",
-      )
+      .filter((session): session is DashboardSession & { pr: DashboardPR } => !!session.pr)
       .map((session) => session.pr)
-      .sort((a, b) => a.number - b.number);
+      .sort((a, b) => b.number - a.number);
   }, [sessions]);
+
+  const openPRs = useMemo(() => allPRs.filter((pr) => pr.state === "open"), [allPRs]);
+  const mergedPRs = useMemo(() => allPRs.filter((pr) => pr.state === "merged"), [allPRs]);
+  const closedPRs = useMemo(() => allPRs.filter((pr) => pr.state === "closed"), [allPRs]);
   const dashboardHref = getProjectScopedHref("/", projectId);
   const prsHref = getProjectScopedHref("/prs", projectId);
   const orchestratorHref = currentProjectOrchestrator
@@ -141,48 +145,116 @@ export function PullRequestsPage({
         </section>
 
         <section className="mx-auto max-w-[900px]">
-          <h2 className="mb-3 px-1 text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-text-tertiary)]">
-            Pull Requests
-          </h2>
-          {openPRs.length === 0 ? (
-            <div className="border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-4 py-6 text-[12px] text-[var(--color-text-secondary)]">
-              No open pull requests right now.
-            </div>
-          ) : isMobile ? (
+          {/* Filter tabs */}
+          <div className="mb-4 flex items-center gap-1.5">
+            {(
+              [
+                { value: "all", label: "All", count: allPRs.length },
+                { value: "open", label: "Open", count: openPRs.length },
+                { value: "merged", label: "Merged", count: mergedPRs.length },
+                { value: "closed", label: "Closed", count: closedPRs.length },
+              ] as const
+            ).map(({ value, label, count }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setPrFilter(value)}
+                className={[
+                  "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                  prFilter === value
+                    ? "border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)]"
+                    : "border-transparent bg-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]",
+                ].join(" ")}
+              >
+                {label}
+                <span className="rounded-full bg-[var(--color-chip-bg)] px-1.5 py-px text-[9.5px] font-mono text-[var(--color-text-muted)]">
+                  {count}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {isMobile ? (
             <div className="mobile-pr-list">
-              {openPRs.map((pr) => (
+              {(prFilter === "all" ? allPRs : prFilter === "open" ? openPRs : prFilter === "merged" ? mergedPRs : closedPRs).map((pr) => (
                 <PRCard key={`${pr.owner}/${pr.repo}-${pr.number}`} pr={pr} />
               ))}
             </div>
           ) : (
-            <div className="overflow-hidden border border-[var(--color-border-default)]">
+            <div className="overflow-hidden rounded-[7px] border border-[var(--color-border-subtle)]">
               <table className="w-full border-collapse">
                 <thead>
-                  <tr className="border-b border-[var(--color-border-muted)]">
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  <tr className="border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)]">
+                    <th className="px-3 py-2 text-left text-[10.5px] font-mono font-500 uppercase tracking-[0.05em] text-[var(--color-text-muted)]">
                       PR
                     </th>
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                    <th className="px-3 py-2 text-left text-[10.5px] font-mono font-500 uppercase tracking-[0.05em] text-[var(--color-text-muted)]">
                       Title
                     </th>
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                    <th className="px-3 py-2 text-left text-[10.5px] font-mono font-500 uppercase tracking-[0.05em] text-[var(--color-text-muted)]">
                       Size
                     </th>
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                    <th className="px-3 py-2 text-left text-[10.5px] font-mono font-500 uppercase tracking-[0.05em] text-[var(--color-text-muted)]">
                       CI
                     </th>
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                    <th className="px-3 py-2 text-left text-[10.5px] font-mono font-500 uppercase tracking-[0.05em] text-[var(--color-text-muted)]">
                       Review
                     </th>
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                      Unresolved
+                    <th className="px-3 py-2 text-left text-[10.5px] font-mono font-500 uppercase tracking-[0.05em] text-[var(--color-text-muted)]">
+                      Threads
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {openPRs.map((pr) => (
-                    <PRTableRow key={`${pr.owner}/${pr.repo}-${pr.number}`} pr={pr} />
-                  ))}
+                  {(prFilter === "all" || prFilter === "open") && openPRs.length > 0 && (
+                    <>
+                      {prFilter === "all" && (
+                        <tr>
+                          <td colSpan={6} className="border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] px-3 py-1.5 text-[9.5px] font-mono font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+                            Open
+                          </td>
+                        </tr>
+                      )}
+                      {openPRs.map((pr) => (
+                        <PRTableRow key={`${pr.owner}/${pr.repo}-${pr.number}`} pr={pr} />
+                      ))}
+                    </>
+                  )}
+                  {(prFilter === "all" || prFilter === "merged") && mergedPRs.length > 0 && (
+                    <>
+                      {prFilter === "all" && (
+                        <tr>
+                          <td colSpan={6} className="border-b border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] px-3 py-1.5 text-[9.5px] font-mono font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+                            Merged
+                          </td>
+                        </tr>
+                      )}
+                      {mergedPRs.map((pr) => (
+                        <PRTableRow key={`${pr.owner}/${pr.repo}-${pr.number}`} pr={pr} muted />
+                      ))}
+                    </>
+                  )}
+                  {(prFilter === "all" || prFilter === "closed") && closedPRs.length > 0 && (
+                    <>
+                      {prFilter === "all" && (
+                        <tr>
+                          <td colSpan={6} className="border-b border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] px-3 py-1.5 text-[9.5px] font-mono font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+                            Closed
+                          </td>
+                        </tr>
+                      )}
+                      {closedPRs.map((pr) => (
+                        <PRTableRow key={`${pr.owner}/${pr.repo}-${pr.number}`} pr={pr} muted />
+                      ))}
+                    </>
+                  )}
+                  {allPRs.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-6 text-[12px] text-[var(--color-text-secondary)]">
+                        No pull requests yet.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

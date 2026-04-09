@@ -3,7 +3,12 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
-import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
+import {
+  type DashboardSession,
+  type DashboardPR,
+  TERMINAL_STATUSES,
+  isPRMergeReady,
+} from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import dynamic from "next/dynamic";
@@ -93,7 +98,6 @@ function SessionTopStrip({
   crumbHref,
   crumbLabel,
   rightSlot,
-  onMessage,
   onKill,
 }: {
   headline: string;
@@ -106,7 +110,6 @@ function SessionTopStrip({
   crumbHref: string;
   crumbLabel: string;
   rightSlot?: ReactNode;
-  onMessage?: () => void;
   onKill?: () => void;
 }) {
   return (
@@ -131,7 +134,7 @@ function SessionTopStrip({
         <span className="session-detail-crumb-sep">/</span>
         <span className="session-detail-crumb-id">{crumbId}</span>
         {isOrchestrator ? (
-          <span className="session-page-header__mode">orchestrator</span>
+          <span className="session-detail-mode-badge">orchestrator</span>
         ) : null}
       </div>
 
@@ -162,7 +165,7 @@ function SessionTopStrip({
                   href={buildGitHubBranchUrl(pr)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="session-detail-link-pill session-detail-link-pill--link session-detail-link-pill--branch hover:no-underline"
+                  className="session-detail-link-pill session-detail-link-pill--branch session-detail-link-pill--branch-link hover:no-underline"
                 >
                   {branch}
                 </a>
@@ -177,7 +180,7 @@ function SessionTopStrip({
                 href={pr.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="session-detail-link-pill session-detail-link-pill--link session-detail-link-pill--accent hover:no-underline"
+                className="session-detail-link-pill session-detail-link-pill--pr hover:no-underline"
               >
                 PR #{pr.number}
               </a>
@@ -198,18 +201,6 @@ function SessionTopStrip({
           </div>
         ) : (
           <div className="session-detail-identity__actions">
-            {onMessage ? (
-              <button
-                type="button"
-                className="session-detail-action-btn"
-                onClick={onMessage}
-              >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-                Message
-              </button>
-            ) : null}
             {onKill ? (
               <button
                 type="button"
@@ -379,6 +370,7 @@ export function SessionDetail({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
   const pr = session.pr;
+  const terminalEnded = TERMINAL_STATUSES.has(session.status);
   const activity = (session.activity && activityMeta[session.activity]) ?? {
     label: session.activity ?? "unknown",
     color: "var(--color-text-muted)",
@@ -404,6 +396,10 @@ export function SessionDetail({
   const prsHref = session.projectId ? `/prs?project=${encodeURIComponent(session.projectId)}` : "/prs";
   const crumbHref = dashboardHref;
   const crumbLabel = "Dashboard";
+  const headerProjectLabel =
+    projects.find((project) => project.id === session.projectId)?.name ?? session.projectId;
+  const showHeaderProjectLabel =
+    headerProjectLabel.trim().toLowerCase() !== "agent orchestrator";
   const orchestratorHref = useMemo(() => {
     if (isOrchestrator) return `/sessions/${encodeURIComponent(session.id)}`;
     if (!projectOrchestratorId) return null;
@@ -444,13 +440,14 @@ export function SessionDetail({
             </button>
           ) : null}
           <div className="dashboard-app-header__brand">
-            <span className="dashboard-app-header__live-dot" aria-hidden="true" />
             <span>Agent Orchestrator</span>
           </div>
-          <span className="dashboard-app-header__sep" aria-hidden="true" />
-          <span className="dashboard-app-header__project">
-            {projects.find((project) => project.id === session.projectId)?.name ?? session.projectId}
-          </span>
+          {showHeaderProjectLabel ? (
+            <>
+              <span className="dashboard-app-header__sep" aria-hidden="true" />
+              <span className="dashboard-app-header__project">{headerProjectLabel}</span>
+            </>
+          ) : null}
           <div className="dashboard-app-header__spacer" />
           <div className="dashboard-app-header__actions">
             {orchestratorHref ? (
@@ -507,7 +504,6 @@ export function SessionDetail({
                       isOrchestrator={isOrchestrator}
                       crumbHref={crumbHref}
                       crumbLabel={crumbLabel}
-                      onMessage={isOrchestrator ? undefined : () => {}}
                       onKill={isOrchestrator ? undefined : () => {}}
                     />
                   )}
@@ -535,7 +531,7 @@ export function SessionDetail({
                     </div>
                     {!showTerminal ? (
                       <div className="session-detail-terminal-placeholder" style={{ height: terminalHeight }} />
-                    ) : session.activity === "exited" ? (
+                    ) : terminalEnded ? (
                       <div className="terminal-exited-placeholder" style={{ height: terminalHeight }}>
                         <span className="terminal-exited-placeholder__text">
                           Terminal session has ended
@@ -577,7 +573,6 @@ export function SessionDetail({
               isOrchestrator={isOrchestrator}
               crumbHref={crumbHref}
               crumbLabel={crumbLabel}
-              onMessage={isOrchestrator ? undefined : () => {}}
               onKill={isOrchestrator ? undefined : () => {}}
             />
           )}
@@ -601,7 +596,7 @@ export function SessionDetail({
             </div>
             {!showTerminal ? (
               <div className="session-detail-terminal-placeholder" style={{ height: terminalHeight }} />
-            ) : session.activity === "exited" ? (
+            ) : terminalEnded ? (
               <div className="terminal-exited-placeholder" style={{ height: terminalHeight }}>
                 <span className="terminal-exited-placeholder__text">
                   Terminal session has ended
@@ -800,7 +795,7 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
 
       {/* Row 3: Collapsible unresolved comments */}
       {pr.unresolvedComments.length > 0 && (
-        <details className="session-detail-comments-strip" open>
+        <details className="session-detail-comments-strip">
           <summary>
             <div className="session-detail-comments-strip__toggle">
               <svg
@@ -818,10 +813,10 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
             </div>
           </summary>
           <div className="session-detail-comments-strip__body">
-            {pr.unresolvedComments.map((c) => {
+            {pr.unresolvedComments.map((c, index) => {
               const { title, description } = cleanBugbotComment(c.body);
               return (
-                <details key={c.url} className="session-detail-comment" open>
+                <details key={c.url} className="session-detail-comment" open={index === 0}>
                   <summary>
                     <div className="session-detail-comment__row">
                       <svg

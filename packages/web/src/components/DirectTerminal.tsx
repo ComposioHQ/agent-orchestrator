@@ -407,22 +407,17 @@ export function DirectTerminal({
           return true;
         });
 
-        // Handle window resize (works with whatever ws is current)
-        const handleResize = () => {
+        // Keep the terminal sized to its container instead of the window.
+        const resizeObserver = new ResizeObserver(() => {
+          fit.fit();
           const currentWs = ws.current;
-          if (fit && currentWs?.readyState === WebSocket.OPEN) {
-            fit.fit();
+          if (currentWs?.readyState === WebSocket.OPEN) {
             currentWs.send(
-              JSON.stringify({
-                type: "resize",
-                cols: terminal.cols,
-                rows: terminal.rows,
-              }),
+              JSON.stringify({ type: "resize", cols: terminal.cols, rows: terminal.rows }),
             );
           }
-        };
-
-        window.addEventListener("resize", handleResize);
+        });
+        resizeObserver.observe(terminalRef.current);
 
         // Terminal input → current WebSocket
         inputDisposable = terminal.onData((data) => {
@@ -560,7 +555,7 @@ export function DirectTerminal({
         cleanup = () => {
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
-          window.removeEventListener("resize", handleResize);
+          resizeObserver.disconnect();
           inputDisposable?.dispose();
           inputDisposable = null;
           if (reconnectTimerRef.current) {
@@ -691,7 +686,7 @@ export function DirectTerminal({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-[6px] border border-[var(--color-border-default)]",
+        "min-w-0 overflow-hidden rounded-[6px] border border-[var(--color-border-default)]",
         "bg-[#0a0908]",
         fullscreen && "fixed inset-0 z-50 rounded-none border-0",
       )}
@@ -767,11 +762,10 @@ export function DirectTerminal({
       {/* Terminal area */}
       <div
         ref={terminalRef}
-        className={cn("w-full p-1.5")}
+        className={cn("min-w-0 w-full")}
         style={{
           overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
+          display: "block",
           height: fullscreen ? "calc(100dvh - 35px)" : height,
         }}
       />

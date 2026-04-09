@@ -97,6 +97,7 @@ export function useSessionEvents(
   initialSessions: DashboardSession[],
   project?: string,
   initialAttentionLevels?: SSEAttentionMap,
+  disabled = false,
 ): State {
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
@@ -126,6 +127,7 @@ export function useSessionEvents(
   }, [initialSessions]);
 
   useEffect(() => {
+    if (disabled) return;
     // Reset so the new project gets an immediate first refresh on its first SSE snapshot
     lastRefreshAtRef.current = 0;
 
@@ -277,7 +279,7 @@ export function useSessionEvents(
       clearDisconnectedTimer();
       es.close();
     };
-  }, [project]);
+  }, [project, disabled]);
 
   return state;
 }

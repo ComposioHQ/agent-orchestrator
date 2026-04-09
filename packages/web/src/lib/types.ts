@@ -192,6 +192,18 @@ export function isPRMergeReady(pr: DashboardPR): boolean {
 
 /** Determines which attention zone a session belongs to */
 export function getAttentionLevel(session: DashboardSession): AttentionLevel {
+  const overriddenAttentionLevel = session.metadata["attentionLevel"];
+  if (
+    overriddenAttentionLevel === "merge" ||
+    overriddenAttentionLevel === "respond" ||
+    overriddenAttentionLevel === "review" ||
+    overriddenAttentionLevel === "pending" ||
+    overriddenAttentionLevel === "working" ||
+    overriddenAttentionLevel === "done"
+  ) {
+    return overriddenAttentionLevel;
+  }
+
   // ── Done: terminal states ─────────────────────────────────────────
   if (
     session.status === "merged" ||

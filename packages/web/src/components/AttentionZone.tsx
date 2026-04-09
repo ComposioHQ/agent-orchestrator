@@ -32,38 +32,31 @@ const zoneConfig: Record<
   AttentionLevel,
   {
     label: string;
-    caption: string;
     emptyMessage: string;
   }
 > = {
   merge: {
     label: "Ready",
-    caption: "Cleared to land",
     emptyMessage: "Nothing cleared to land yet.",
   },
   respond: {
     label: "Respond",
-    caption: "Human judgment needed",
     emptyMessage: "No agents need your input.",
   },
   review: {
     label: "Review",
-    caption: "Code waiting on eyes",
     emptyMessage: "No code waiting for review.",
   },
   pending: {
     label: "Pending",
-    caption: "Blocked on system state",
     emptyMessage: "Nothing blocked.",
   },
   working: {
     label: "Working",
-    caption: "Agents are actively moving",
     emptyMessage: "No agents running.",
   },
   done: {
     label: "Done",
-    caption: "Completed or exited",
     emptyMessage: "No completed sessions.",
   },
 };
@@ -176,12 +169,11 @@ function AttentionZoneView({
           <span className="kanban-column__title">{config.label}</span>
           <span className="kanban-column__count">{sessions.length}</span>
         </div>
-        <p className="kanban-column__caption">{config.caption}</p>
       </div>
 
       <div className="kanban-column-body">
         {sessions.length > 0 ? (
-          <div className="flex flex-col gap-2">
+          <div className="kanban-column__stack">
             {sessions.map((session) => (
               <SessionCard
                 key={session.id}
@@ -193,11 +185,7 @@ function AttentionZoneView({
               />
             ))}
           </div>
-        ) : (
-          <div className="kanban-column__empty">
-            <span className="kanban-column__empty-label">{config.emptyMessage}</span>
-          </div>
-        )}
+        ) : null}
       </div>
     </div>
   );

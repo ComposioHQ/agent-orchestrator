@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
 import type { ProjectInfo } from "@/lib/project-name";
 import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@/lib/types";
@@ -56,12 +56,11 @@ function ProjectSidebarInner({
   activeProjectId,
   activeSessionId,
   collapsed = false,
-  onToggleCollapsed,
+  onToggleCollapsed: _onToggleCollapsed,
   mobileOpen = false,
   onMobileClose,
 }: ProjectSidebarProps) {
   const router = useRouter();
-  const pathname = usePathname();
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
     () => new Set(activeProjectId && activeProjectId !== "all" ? [activeProjectId] : []),
@@ -111,43 +110,16 @@ function ProjectSidebarInner({
     });
   };
 
-  const CollapseChevron = ({ expanded }: { expanded: boolean }) => (
-    <svg
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      viewBox="0 0 24 24"
-      className="h-3.5 w-3.5"
-    >
-      {expanded ? <path d="M15 18l-6-6 6-6" /> : <path d="m9 18 6-6-6-6" />}
-    </svg>
-  );
-
   if (collapsed) {
     return (
       <>
         {mobileOpen && <div className="sidebar-mobile-backdrop" onClick={onMobileClose} />}
         <aside
           className={cn(
-            "project-sidebar project-sidebar--collapsed flex h-full w-[40px] flex-col items-center pt-[10px]",
+            "project-sidebar project-sidebar--collapsed flex h-full flex-col",
             mobileOpen && "project-sidebar--mobile-open",
           )}
-        >
-          <div className="project-sidebar__toggle-wrap project-sidebar__toggle-wrap--collapsed">
-            <button
-              type="button"
-              onClick={() => {
-                onToggleCollapsed?.();
-                onMobileClose?.();
-              }}
-              className="project-sidebar__collapsed-toggle"
-              aria-label="Expand sidebar"
-            >
-              <CollapseChevron expanded={false} />
-            </button>
-          </div>
-        </aside>
+        />
       </>
     );
   }
@@ -157,7 +129,7 @@ function ProjectSidebarInner({
       {mobileOpen && <div className="sidebar-mobile-backdrop" onClick={onMobileClose} />}
       <aside
         className={cn(
-          "project-sidebar flex h-full w-[224px] flex-col",
+          "project-sidebar flex h-full flex-col",
           mobileOpen && "project-sidebar--mobile-open",
         )}
       >
@@ -188,7 +160,7 @@ function ProjectSidebarInner({
                   type="button"
                   onClick={() => {
                     toggleExpand(project.id);
-                    navigate(`${pathname}?project=${encodeURIComponent(project.id)}`);
+                    navigate(`/?project=${encodeURIComponent(project.id)}`);
                   }}
                   className={cn(
                     "project-sidebar__proj-toggle",
@@ -236,7 +208,7 @@ function ProjectSidebarInner({
                             type="button"
                             onClick={() =>
                               navigate(
-                                `${pathname}?project=${encodeURIComponent(project.id)}&session=${encodeURIComponent(session.id)}`,
+                                `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`,
                               )
                             }
                             className={cn(
@@ -271,8 +243,8 @@ function ProjectSidebarInner({
           })}
         </div>
         <div className="project-sidebar__footer">
-          <ThemeToggle className="project-sidebar__footer-btn" />
-          <span className="project-sidebar__footer-label">Theme</span>
+          <ThemeToggle className="project-sidebar__theme-toggle" />
+          <span className="project-sidebar__theme-label">Theme</span>
         </div>
       </aside>
     </>

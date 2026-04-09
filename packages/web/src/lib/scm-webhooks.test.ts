@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProjectConfig, SCMWebhookEvent, Session } from "@composio/ao-core";
+import type { ProjectConfig, SCMWebhookEvent, Session } from "@composio/ao-core/types";
 import { eventMatchesProject, findAffectedSessions } from "./scm-webhooks";
 
 const project: ProjectConfig = {

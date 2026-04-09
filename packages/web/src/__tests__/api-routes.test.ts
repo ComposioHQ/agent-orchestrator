@@ -8,7 +8,7 @@ import {
   type OrchestratorConfig,
   type PluginRegistry,
   type SCM,
-} from "@composio/ao-core";
+} from "@composio/ao-core/types";
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
 

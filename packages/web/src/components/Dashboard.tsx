@@ -12,7 +12,6 @@ import {
   isPRMergeReady,
 } from "@/lib/types";
 import { AttentionZone } from "./AttentionZone";
-import { SessionCard } from "./SessionCard";
 import { DynamicFavicon, countNeedingAttention } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
@@ -79,6 +78,60 @@ function mergeOrchestrators(
   return [...merged.values()];
 }
 
+function DoneCard({
+  session,
+  onRestore,
+}: {
+  session: DashboardSession;
+  onRestore: (id: string) => void;
+}) {
+  const title =
+    (!session.summaryIsFallback && session.summary) ||
+    session.issueTitle ||
+    session.summary ||
+    session.id;
+  const isMerged = session.pr?.state === "merged";
+  const isTerminated = session.status === "killed" || session.status === "terminated";
+  const badgeLabel = isMerged ? "merged" : isTerminated ? "terminated" : "done";
+  const badgeClass = `done-card__badge ${isTerminated ? "done-card__badge--terminated" : "done-card__badge--merged"}`;
+
+  return (
+    <div className="done-card">
+      <p className="done-card__title">{title}</p>
+      <div className="done-card__meta">
+        <span className={badgeClass}>{badgeLabel}</span>
+        {session.pr ? (
+          <a
+            href={session.pr.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="done-card__pr"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <svg width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+              <circle cx="18" cy="18" r="3" />
+              <circle cx="6" cy="6" r="3" />
+              <path d="M6 9v3a6 6 0 0 0 6 6h3" />
+            </svg>
+            #{session.pr.number}
+          </a>
+        ) : null}
+        <span className="done-card__age">{formatRelativeTimeCompact(session.lastActivityAt)}</span>
+        <button
+          type="button"
+          className="done-card__restore"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRestore(session.id);
+          }}
+        >
+          Restore
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function DashboardInner({
   initialSessions,
   projectId,
@@ -98,6 +151,7 @@ function DashboardInner({
     initialSessions,
     projectId,
     initialAttentionLevels,
+    false,
   );
   const searchParams = useSearchParams();
   const activeSessionId = searchParams.get("session") ?? undefined;
@@ -514,12 +568,18 @@ function DashboardInner({
   };
 
   const hasAnySessions = KANBAN_LEVELS.some((level) => grouped[level].length > 0);
-  const showEmptyState = !allProjectsView && !hasAnySessions && grouped.done.length === 0;
+  const showEmptyState = !allProjectsView && !hasAnySessions;
 
   const anyRateLimited = useMemo(
     () => sessions.some((session) => session.pr && isPRRateLimited(session.pr)),
     [sessions],
   );
+  const normalizedProjectName = projectName?.trim().toLowerCase();
+  const headerProjectLabel =
+    normalizedProjectName === "agent orchestrator"
+      ? (projectId ?? projectName ?? (allProjectsView ? "All projects" : "Dashboard"))
+      : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
+  const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
   if (!isMobile) {
     return (
@@ -549,13 +609,15 @@ function DashboardInner({
               </button>
             ) : null}
             <div className="dashboard-app-header__brand">
-              <span className="dashboard-app-header__live-dot" aria-hidden="true" />
+              <span className="dashboard-app-header__brand-dot" aria-hidden="true" />
               <span>Agent Orchestrator</span>
             </div>
-            <span className="dashboard-app-header__sep" aria-hidden="true" />
-            <span className="dashboard-app-header__project">
-              {projectName ?? (allProjectsView ? "All projects" : "Dashboard")}
-            </span>
+            {showHeaderProjectLabel ? (
+              <>
+                <span className="dashboard-app-header__sep" aria-hidden="true" />
+                <span className="dashboard-app-header__project">{headerProjectLabel}</span>
+              </>
+            ) : null}
             <div className="dashboard-app-header__spacer" />
             <div className="dashboard-app-header__actions">
               {!allProjectsView && orchestratorHref ? (
@@ -670,6 +732,8 @@ function DashboardInner({
                   </div>
                 )}
 
+                {showEmptyState ? <EmptyState orchestratorHref={orchestratorHref} /> : null}
+
                 {!allProjectsView && grouped.done.length > 0 && (
                   <div className="done-bar mt-6">
                     <button
@@ -688,28 +752,18 @@ function DashboardInner({
                       >
                         <path d="m9 18 6-6-6-6" />
                       </svg>
-                      <span>Done / Terminated</span>
+                      <span className="done-bar__label">Done / Terminated</span>
                       <span className="done-bar__count">{grouped.done.length}</span>
-                      <span className="done-bar__rule" aria-hidden="true" />
                     </button>
                     {doneExpanded && (
                       <div className="done-bar__cards">
                         {grouped.done.map((session) => (
-                          <SessionCard
-                            key={session.id}
-                            session={session}
-                            onSend={handleSend}
-                            onKill={handleKill}
-                            onMerge={handleMerge}
-                            onRestore={handleRestore}
-                          />
+                          <DoneCard key={session.id} session={session} onRestore={handleRestore} />
                         ))}
                       </div>
                     )}
                   </div>
                 )}
-
-                {showEmptyState ? <EmptyState orchestratorHref={orchestratorHref} /> : null}
               </div>
             </main>
           </div>
@@ -901,6 +955,10 @@ function DashboardInner({
               </div>
             )}
 
+            {!allProjectsView && !hasAnySessions && (
+              <EmptyState orchestratorHref={orchestratorHref} />
+            )}
+
             {!allProjectsView && grouped.done.length > 0 && (
               <div className="done-bar mt-6">
                 <button
@@ -919,29 +977,17 @@ function DashboardInner({
                   >
                     <path d="m9 18 6-6-6-6" />
                   </svg>
-                  <span>Done / Terminated</span>
+                  <span className="done-bar__label">Done / Terminated</span>
                   <span className="done-bar__count">{grouped.done.length}</span>
-                  <span className="done-bar__rule" aria-hidden="true" />
                 </button>
                 {doneExpanded && (
                   <div className="done-bar__cards">
                     {grouped.done.map((session) => (
-                      <SessionCard
-                        key={session.id}
-                        session={session}
-                        onSend={handleSend}
-                        onKill={handleKill}
-                        onMerge={handleMerge}
-                        onRestore={handleRestore}
-                      />
+                      <DoneCard key={session.id} session={session} onRestore={handleRestore} />
                     ))}
                   </div>
                 )}
               </div>
-            )}
-
-            {!allProjectsView && !hasAnySessions && grouped.done.length === 0 && (
-              <EmptyState orchestratorHref={orchestratorHref} />
             )}
           </div>
         </div>

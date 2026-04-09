@@ -12,15 +12,19 @@ import "server-only";
  * bundle them correctly.
  */
 
+import { loadConfig } from "@composio/ao-core/config";
 import {
-  loadConfig,
-  createPluginRegistry,
-  createSessionManager,
-  createLifecycleManager,
   decompose,
   getLeaves,
   getSiblings,
   formatPlanTree,
+  DEFAULT_DECOMPOSER_CONFIG,
+  type DecomposerConfig,
+} from "@composio/ao-core/decomposer";
+import { createLifecycleManager } from "@composio/ao-core/lifecycle-manager";
+import { createPluginRegistry } from "@composio/ao-core/plugin-registry";
+import { createSessionManager } from "@composio/ao-core/session-manager";
+import {
   type OrchestratorConfig,
   type PluginRegistry,
   type OpenCodeSessionManager,
@@ -30,11 +34,9 @@ import {
   type Tracker,
   type Issue,
   type Session,
-  type DecomposerConfig,
-  DEFAULT_DECOMPOSER_CONFIG,
   isOrchestratorSession,
   TERMINAL_STATUSES,
-} from "@composio/ao-core";
+} from "@composio/ao-core/types";
 
 // Static plugin imports — webpack needs these to be string literals
 import pluginRuntimeTmux from "@composio/ao-plugin-runtime-tmux";

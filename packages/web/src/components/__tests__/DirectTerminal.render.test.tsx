@@ -76,6 +76,12 @@ class MockWebSocket {
   close() {}
 }
 
+class MockResizeObserver {
+  observe() {}
+  disconnect() {}
+  unobserve() {}
+}
+
 vi.mock("xterm", () => ({
   Terminal: MockTerminal,
 }));
@@ -98,6 +104,7 @@ describe("DirectTerminal render", () => {
       value: { ready: Promise.resolve() },
     });
     vi.stubGlobal("WebSocket", MockWebSocket);
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({

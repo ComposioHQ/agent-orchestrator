@@ -9,7 +9,7 @@ import {
   type SCMWebhookEvent,
   type SCMWebhookRequest,
   type Session,
-} from "@composio/ao-core";
+} from "@composio/ao-core/types";
 
 export interface WebhookProjectMatch {
   projectId: string;

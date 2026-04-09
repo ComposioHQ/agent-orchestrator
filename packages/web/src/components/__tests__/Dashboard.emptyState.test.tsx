@@ -28,7 +28,7 @@ describe("Dashboard empty state", () => {
     render(<Dashboard initialSessions={[]} />);
     expect(screen.getByText(/Ready to orchestrate/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/Start a session to spawn parallel agents across your codebase/i),
+      screen.getByText(/Open the main orchestrator to start a session and fan out parallel agents across your codebase/i),
     ).toBeInTheDocument();
   });
 
@@ -57,5 +57,34 @@ describe("Dashboard empty state", () => {
       />,
     );
     expect(queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
+  });
+
+  it("shows empty state when only done sessions exist", () => {
+    render(
+      <Dashboard
+        initialSessions={[
+          {
+            id: "s-done",
+            projectId: "proj",
+            status: "killed",
+            activity: "exited",
+            branch: "feat/done",
+            issueId: null,
+            issueUrl: null,
+            issueLabel: null,
+            issueTitle: null,
+            summary: "Finished",
+            summaryIsFallback: false,
+            createdAt: new Date().toISOString(),
+            lastActivityAt: new Date().toISOString(),
+            pr: null,
+            metadata: {},
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText(/Ready to orchestrate/i)).toBeInTheDocument();
+    expect(screen.getByText("Done / Terminated")).toBeInTheDocument();
   });
 });

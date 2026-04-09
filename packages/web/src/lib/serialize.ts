@@ -17,7 +17,7 @@ import {
   type ProjectConfig,
   type OrchestratorConfig,
   type PluginRegistry,
-} from "@composio/ao-core";
+} from "@composio/ao-core/types";
 import type {
   DashboardSession,
   DashboardPR,
