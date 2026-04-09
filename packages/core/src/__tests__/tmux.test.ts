@@ -258,6 +258,76 @@ describe("sendKeys", () => {
     expect(loadArgs[0]).toBe("load-buffer");
     expect(loadArgs[1]).toBe("-b"); // named buffer
   });
+
+  it("retries Enter for >1KB messages when output unchanged", async () => {
+    const largeText = "x".repeat(1500); // >1KB
+    // Calls: send-keys Escape, load-buffer, paste-buffer,
+    //        capture-pane (before 1), send-keys Enter, capture-pane (after 1), sleep,
+    //        capture-pane (before 2), send-keys Enter, capture-pane (after 2), sleep,
+    //        capture-pane (before 3), send-keys Enter, capture-pane (after 3)
+    mockTmuxSequence([
+      { stdout: "" }, // send-keys Escape
+      { stdout: "" }, // load-buffer
+      { stdout: "" }, // paste-buffer
+      // First attempt - output unchanged
+      { stdout: "same output\n" }, // capture-pane before
+      { stdout: "" }, // send-keys Enter
+      { stdout: "same output\n" }, // capture-pane after - unchanged, retry
+      // Second attempt - output unchanged
+      { stdout: "same output\n" }, // capture-pane before
+      { stdout: "" }, // send-keys Enter
+      { stdout: "same output\n" }, // capture-pane after - unchanged, retry
+      // Third attempt - output changed
+      { stdout: "same output\n" }, // capture-pane before
+      { stdout: "" }, // send-keys Enter
+      { stdout: "different output\n" }, // capture-pane after - changed, done
+    ]);
+
+    await sendKeys("app-1", largeText);
+
+    // Verify capture-pane was called for retry detection
+    const captureCalls = mockExecFile.mock.calls.filter(
+      (call) => (call[1] as string[])[0] === "capture-pane",
+    );
+    // 3 attempts × (before + after) = 6 capture-pane calls
+    expect(captureCalls.length).toBe(6);
+
+    // Verify Enter was sent 3 times (all 3 attempts)
+    const enterCalls = mockExecFile.mock.calls.filter(
+      (call) =>
+        (call[1] as string[])[0] === "send-keys" &&
+        (call[1] as string[]).includes("Enter"),
+    );
+    expect(enterCalls.length).toBe(3);
+  });
+
+  it("does not retry Enter when output changes on first attempt", async () => {
+    const largeText = "x".repeat(1500); // >1KB
+    mockTmuxSequence([
+      { stdout: "" }, // send-keys Escape
+      { stdout: "" }, // load-buffer
+      { stdout: "" }, // paste-buffer
+      { stdout: "before output\n" }, // capture-pane before
+      { stdout: "" }, // send-keys Enter
+      { stdout: "after output - changed!\n" }, // capture-pane after - changed, done
+    ]);
+
+    await sendKeys("app-1", largeText);
+
+    // Only 1 capture-pane call pair (before + after = 2)
+    const captureCalls = mockExecFile.mock.calls.filter(
+      (call) => (call[1] as string[])[0] === "capture-pane",
+    );
+    expect(captureCalls.length).toBe(2);
+
+    // Only 1 Enter sent
+    const enterCalls = mockExecFile.mock.calls.filter(
+      (call) =>
+        (call[1] as string[])[0] === "send-keys" &&
+        (call[1] as string[]).includes("Enter"),
+    );
+    expect(enterCalls.length).toBe(1);
+  });
 });
 
 describe("capturePane", () => {
