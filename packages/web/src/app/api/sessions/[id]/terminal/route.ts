@@ -1,15 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { issueTerminalAccess, TerminalAuthError } from "@/lib/server/terminal-auth";
+import { normalizePort } from "@/lib/terminal-config";
 
 export const dynamic = "force-dynamic";
-
-function normalizePort(input: string | undefined, fallback: number): string {
-  const parsed = Number.parseInt(input ?? "", 10);
-  if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) {
-    return String(parsed);
-  }
-  return String(fallback);
-}
 
 function getRequestProtocol(request: NextRequest): string {
   const forwarded = request.headers.get("x-forwarded-proto");
