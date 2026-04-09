@@ -39,6 +39,166 @@ export interface JsonRpcError {
   data?: unknown;
 }
 
+// =============================================================================
+// Custom Error Classes
+// =============================================================================
+
+/** Base error class for all CodexAppServerClient errors */
+export class CodexClientError extends Error {
+  code: string;
+  readonly retryable: boolean;
+
+  constructor(message: string, code: string, retryable: boolean = false, cause?: unknown) {
+    super(message, cause !== undefined ? { cause } : undefined);
+    this.name = "CodexClientError";
+    this.code = code;
+    this.retryable = retryable;
+    // Set the prototype explicitly for instanceof checks
+    Object.setPrototypeOf(this, CodexClientError.prototype);
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code,
+      retryable: this.retryable,
+      cause: this.cause,
+    };
+  }
+}
+
+/** Error thrown when the client is in an invalid state */
+export class ClientStateError extends CodexClientError {
+  constructor(message: string, cause?: unknown) {
+    super(message, "INVALID_STATE", false, cause);
+    this.name = "ClientStateError";
+    Object.setPrototypeOf(this, ClientStateError.prototype);
+  }
+}
+
+/** Error thrown when the client is closed */
+export class ClientClosedError extends ClientStateError {
+  constructor() {
+    super("Client is closed and cannot accept new requests");
+    this.code = "CLIENT_CLOSED";
+    this.name = "ClientClosedError";
+    Object.setPrototypeOf(this, ClientClosedError.prototype);
+  }
+}
+
+/** Error thrown when the client is not initialized */
+export class ClientNotInitializedError extends ClientStateError {
+  constructor() {
+    super("Client not initialized — call connect() first");
+    this.code = "NOT_INITIALIZED";
+    this.name = "ClientNotInitializedError";
+    Object.setPrototypeOf(this, ClientNotInitializedError.prototype);
+  }
+}
+
+/** Error thrown when connection is already in progress */
+export class ClientConnectingError extends ClientStateError {
+  constructor() {
+    super("Client is already connecting");
+    this.code = "ALREADY_CONNECTING";
+    this.name = "ClientConnectingError";
+    Object.setPrototypeOf(this, ClientConnectingError.prototype);
+  }
+}
+
+/** Error thrown when a request times out */
+export class RequestTimeoutError extends CodexClientError {
+  readonly method: string;
+  readonly timeoutMs: number;
+
+  constructor(method: string, timeoutMs: number) {
+    super(`Request ${method} timed out after ${timeoutMs}ms`, "REQUEST_TIMEOUT", true);
+    this.method = method;
+    this.timeoutMs = timeoutMs;
+    this.name = "RequestTimeoutError";
+    Object.setPrototypeOf(this, RequestTimeoutError.prototype);
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      method: this.method,
+      timeoutMs: this.timeoutMs,
+    };
+  }
+}
+
+/** Error thrown when the server responds with a JSON-RPC error */
+export class JsonRpcServerError extends CodexClientError {
+  readonly jsonRpcCode: number;
+  readonly jsonRpcData?: unknown;
+
+  constructor(jsonRpcError: JsonRpcError) {
+    super(
+      `JSON-RPC error ${jsonRpcError.code}: ${jsonRpcError.message}`,
+      "JSON_RPC_ERROR",
+      isRetryableJsonRpcError(jsonRpcError.code),
+      jsonRpcError.data,
+    );
+    this.jsonRpcCode = jsonRpcError.code;
+    this.jsonRpcData = jsonRpcError.data;
+    this.name = "JsonRpcServerError";
+    Object.setPrototypeOf(this, JsonRpcServerError.prototype);
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      jsonRpcCode: this.jsonRpcCode,
+      jsonRpcData: this.jsonRpcData,
+    };
+  }
+}
+
+/** Error thrown when the process fails to spawn or exits unexpectedly */
+export class ProcessError extends CodexClientError {
+  readonly exitCode: number | null;
+  readonly signal: string | null;
+
+  constructor(message: string, exitCode: number | null = null, signal: string | null = null, cause?: unknown) {
+    super(message, "PROCESS_ERROR", false, cause);
+    this.exitCode = exitCode;
+    this.signal = signal;
+    this.name = "ProcessError";
+    Object.setPrototypeOf(this, ProcessError.prototype);
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      exitCode: this.exitCode,
+      signal: this.signal,
+    };
+  }
+}
+
+/** Error thrown when stdin is not writable */
+export class StdioError extends CodexClientError {
+  constructor(message: string) {
+    super(message, "STDIO_ERROR", false);
+    this.name = "StdioError";
+    Object.setPrototypeOf(this, StdioError.prototype);
+  }
+}
+
+/** Determine if a JSON-RPC error code indicates a retryable error */
+function isRetryableJsonRpcError(code: number): boolean {
+  // JSON-RPC spec error codes:
+  // -32700: Parse error (not retryable)
+  // -32600: Invalid Request (not retryable)
+  // -32601: Method not found (not retryable)
+  // -32602: Invalid params (not retryable)
+  // -32603: Internal error (retryable - server-side issue)
+  // -32099 to -32000: Server error (retryable)
+  return code === -32603 || (code >= -32099 && code <= -32000);
+}
+
 /** JSON-RPC notification from server (no id) */
 export interface JsonRpcNotification {
   method: string;
@@ -169,9 +329,9 @@ export class CodexAppServerClient extends EventEmitter {
    * Must be called before any other method.
    */
   async connect(): Promise<void> {
-    if (this.closed) throw new Error("Client is closed");
-    if (this.initialized) throw new Error("Client is already connected");
-    if (this.connecting) throw new Error("Client is already connecting");
+    if (this.closed) throw new ClientClosedError();
+    if (this.initialized) throw new ClientStateError("Client is already connected");
+    if (this.connecting) throw new ClientConnectingError();
 
     this.connecting = true;
 
@@ -183,7 +343,7 @@ export class CodexAppServerClient extends EventEmitter {
       });
 
       if (!this.process.stdout || !this.process.stdin) {
-        throw new Error("Failed to open stdio pipes for codex app-server");
+        throw new StdioError("Failed to open stdio pipes for codex app-server");
       }
 
       // Drain stderr to prevent the child process from blocking when
@@ -211,6 +371,15 @@ export class CodexAppServerClient extends EventEmitter {
       // transient handshake failure. The guard on line 172 ensures
       // this.closed is always false when we reach this point.
       this.closed = false;
+      // Wrap non-CodexClientError errors
+      if (!(err instanceof CodexClientError)) {
+        throw new ProcessError(
+          `Failed to connect to codex app-server: ${err instanceof Error ? err.message : String(err)}`,
+          null,
+          null,
+          err,
+        );
+      }
       throw err;
     }
 
@@ -227,9 +396,10 @@ export class CodexAppServerClient extends EventEmitter {
     this.initialized = false;
 
     // Reject all pending requests
+    const closedError = new ClientClosedError();
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
-      pending.reject(new Error("Client closed"));
+      pending.reject(closedError);
       this.pending.delete(id);
     }
 
@@ -333,11 +503,11 @@ export class CodexAppServerClient extends EventEmitter {
   /** Send a JSON-RPC request and wait for the response */
   async sendRequest(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     if (!this.initialized && method !== "initialize") {
-      throw new Error("Client not initialized — call connect() first");
+      throw new ClientNotInitializedError();
     }
-    if (this.closed) throw new Error("Client is closed");
+    if (this.closed) throw new ClientClosedError();
     if (!this.process?.stdin?.writable) {
-      throw new Error("stdin not writable — process may have exited");
+      throw new StdioError("stdin not writable — process may have exited");
     }
 
     const id = randomUUID();
@@ -346,7 +516,7 @@ export class CodexAppServerClient extends EventEmitter {
     return new Promise<Record<string, unknown>>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Request ${method} timed out after ${this.requestTimeout}ms`));
+        reject(new RequestTimeoutError(method, this.requestTimeout));
       }, this.requestTimeout);
 
       this.pending.set(id, { resolve, reject, timer });
@@ -419,9 +589,7 @@ export class CodexAppServerClient extends EventEmitter {
         clearTimeout(pending.timer);
 
         if ("error" in msg && msg.error) {
-          pending.reject(
-            new Error(`JSON-RPC error ${msg.error.code}: ${msg.error.message}`),
-          );
+          pending.reject(new JsonRpcServerError(msg.error));
         } else {
           pending.resolve((msg as JsonRpcResponse).result ?? {});
         }
@@ -472,10 +640,14 @@ export class CodexAppServerClient extends EventEmitter {
     }
 
     // Reject all pending requests
-    const exitMsg = `codex app-server exited (code=${code}, signal=${signal})`;
+    const processError = new ProcessError(
+      `codex app-server exited (code=${code}, signal=${signal})`,
+      code,
+      signal,
+    );
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
-      pending.reject(new Error(exitMsg));
+      pending.reject(processError);
       this.pending.delete(id);
     }
 
@@ -493,12 +665,18 @@ export class CodexAppServerClient extends EventEmitter {
 
     // Reject all pending requests before emitting "error" — emit("error")
     // with no listeners throws synchronously, which would skip cleanup.
+    const processError = new ProcessError(
+      `Process error: ${err.message}`,
+      null,
+      null,
+      err,
+    );
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
-      pending.reject(err);
+      pending.reject(processError);
       this.pending.delete(id);
     }
 
-    this.emit("error", err);
+    this.emit("error", processError);
   }
 }

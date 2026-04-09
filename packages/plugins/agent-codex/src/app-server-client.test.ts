@@ -12,7 +12,19 @@ vi.mock("node:child_process", () => ({
   spawn: mockSpawn,
 }));
 
-import { CodexAppServerClient, type ApprovalDecision } from "./app-server-client.js";
+import {
+  CodexAppServerClient,
+  type ApprovalDecision,
+  CodexClientError,
+  ClientClosedError,
+  ClientNotInitializedError,
+  ClientConnectingError,
+  ClientStateError,
+  RequestTimeoutError,
+  JsonRpcServerError,
+  ProcessError,
+  StdioError,
+} from "./app-server-client.js";
 
 // ---------------------------------------------------------------------------
 // Helpers: fake child process
@@ -159,14 +171,14 @@ describe("CodexAppServerClient", () => {
       const client = new CodexAppServerClient({ requestTimeout: 500 });
       await connectClient(client, proc);
 
-      await expect(client.connect()).rejects.toThrow("already connected");
+      await expect(client.connect()).rejects.toThrow(ClientStateError);
       await closeClient(client, proc);
     });
 
     it("throws if client is closed", async () => {
       const client = new CodexAppServerClient();
       await client.close();
-      await expect(client.connect()).rejects.toThrow("closed");
+      await expect(client.connect()).rejects.toThrow(ClientClosedError);
     });
 
     it("forwards cwd and env to spawn", async () => {
@@ -247,7 +259,7 @@ describe("CodexAppServerClient", () => {
 
       await closeClient(client, proc);
 
-      await expect(requestPromise).rejects.toThrow("closed");
+      await expect(requestPromise).rejects.toThrow(ClientClosedError);
     });
   });
 
@@ -297,18 +309,27 @@ describe("CodexAppServerClient", () => {
         error: { code: -32600, message: "Invalid params" },
       }));
 
-      await expect(promise).rejects.toThrow("Invalid params");
+      const error = await promise.catch((e) => e);
+      expect(error).toBeInstanceOf(JsonRpcServerError);
+      expect(error.jsonRpcCode).toBe(-32600);
+      expect(error.message).toContain("Invalid params");
+      expect(error.code).toBe("JSON_RPC_ERROR");
     });
 
     it("times out if no response received", async () => {
       // requestTimeout is 500ms
       const promise = client.sendRequest("thread/start", {});
-      await expect(promise).rejects.toThrow("timed out");
+      const error = await promise.catch((e) => e);
+      expect(error).toBeInstanceOf(RequestTimeoutError);
+      expect(error.method).toBe("thread/start");
+      expect(error.timeoutMs).toBe(500);
+      expect(error.code).toBe("REQUEST_TIMEOUT");
+      expect(error.retryable).toBe(true);
     }, 2000);
 
     it("throws if client is not initialized", async () => {
       const uninitClient = new CodexAppServerClient();
-      await expect(uninitClient.sendRequest("thread/list", {})).rejects.toThrow("not initialized");
+      await expect(uninitClient.sendRequest("thread/list", {})).rejects.toThrow(ClientNotInitializedError);
     });
 
     it("throws after client is closed", async () => {
@@ -702,7 +723,12 @@ describe("CodexAppServerClient", () => {
       // Process exits unexpectedly
       proc.simulateExit(1, null);
 
-      await expect(requestPromise).rejects.toThrow("exited");
+      const error = await requestPromise.catch((e) => e);
+      expect(error).toBeInstanceOf(ProcessError);
+      expect(error.exitCode).toBe(1);
+      expect(error.signal).toBeNull();
+      expect(error.message).toContain("exited");
+      expect(error.code).toBe("PROCESS_ERROR");
       expect(client.isConnected).toBe(false);
     });
 
@@ -739,11 +765,18 @@ describe("CodexAppServerClient", () => {
       await new Promise((r) => setTimeout(r, 10));
 
       // Process emits error
-      proc.emit("error", new Error("spawn ENOENT"));
+      const originalError = new Error("spawn ENOENT");
+      proc.emit("error", originalError);
 
-      await expect(requestPromise).rejects.toThrow("spawn ENOENT");
+      const requestError = await requestPromise.catch((e) => e);
+      expect(requestError).toBeInstanceOf(ProcessError);
+      expect(requestError.message).toContain("spawn ENOENT");
+      expect(requestError.cause).toBe(originalError);
+      expect(requestError.code).toBe("PROCESS_ERROR");
+
       expect(errors).toHaveLength(1);
-      expect(errors[0]!.message).toBe("spawn ENOENT");
+      expect(errors[0]!).toBeInstanceOf(ProcessError);
+      expect(errors[0]!.message).toContain("spawn ENOENT");
       expect(client.isConnected).toBe(false);
     });
 
@@ -766,7 +799,9 @@ describe("CodexAppServerClient", () => {
         // Expected: uncaught error event from EventEmitter
       }
 
-      await expect(requestPromise).rejects.toThrow("spawn ENOENT");
+      const error = await requestPromise.catch((e) => e);
+      expect(error).toBeInstanceOf(ProcessError);
+      expect(error.message).toContain("spawn ENOENT");
     });
 
     it("handles malformed JSON lines gracefully", async () => {
@@ -944,7 +979,7 @@ describe("CodexAppServerClient", () => {
       const connectPromise = client.connect();
 
       // Second connect() should throw immediately
-      await expect(client.connect()).rejects.toThrow("already connecting");
+      await expect(client.connect()).rejects.toThrow(ClientConnectingError);
 
       // Complete the handshake to clean up
       await new Promise((r) => setTimeout(r, 10));
@@ -1062,6 +1097,217 @@ describe("CodexAppServerClient", () => {
 
       expect(client.isConnected).toBe(false);
       expect(errors).toHaveLength(1);
+    });
+  });
+
+  // =========================================================================
+  // Custom Error Classes
+  // =========================================================================
+  describe("custom error classes", () => {
+    describe("CodexClientError", () => {
+      it("creates error with code and retryable flag", () => {
+        const err = new CodexClientError("Test message", "TEST_CODE", true);
+        expect(err.message).toBe("Test message");
+        expect(err.code).toBe("TEST_CODE");
+        expect(err.retryable).toBe(true);
+        expect(err.name).toBe("CodexClientError");
+      });
+
+      it("serializes to JSON", () => {
+        const err = new CodexClientError("Test", "TEST", false, { original: "data" });
+        const json = err.toJSON();
+        expect(json).toEqual({
+          name: "CodexClientError",
+          message: "Test",
+          code: "TEST",
+          retryable: false,
+          cause: { original: "data" },
+        });
+      });
+
+      it("is correctly identified with instanceof", () => {
+        const err = new CodexClientError("Test", "TEST", true);
+        expect(err instanceof Error).toBe(true);
+        expect(err instanceof CodexClientError).toBe(true);
+      });
+    });
+
+    describe("ClientClosedError", () => {
+      it("has correct code and is not retryable", () => {
+        const err = new ClientClosedError();
+        expect(err.code).toBe("CLIENT_CLOSED");
+        expect(err.retryable).toBe(false);
+        expect(err.message).toBe("Client is closed and cannot accept new requests");
+      });
+
+      it("is instance of CodexClientError", () => {
+        const err = new ClientClosedError();
+        expect(err instanceof CodexClientError).toBe(true);
+      });
+    });
+
+    describe("ClientNotInitializedError", () => {
+      it("has correct code and is not retryable", () => {
+        const err = new ClientNotInitializedError();
+        expect(err.code).toBe("NOT_INITIALIZED");
+        expect(err.retryable).toBe(false);
+        expect(err.message).toBe("Client not initialized — call connect() first");
+      });
+
+      it("is instance of CodexClientError", () => {
+        const err = new ClientNotInitializedError();
+        expect(err instanceof CodexClientError).toBe(true);
+      });
+    });
+
+    describe("ClientConnectingError", () => {
+      it("has correct code and is not retryable", () => {
+        const err = new ClientConnectingError();
+        expect(err.code).toBe("ALREADY_CONNECTING");
+        expect(err.retryable).toBe(false);
+        expect(err.message).toBe("Client is already connecting");
+      });
+
+      it("is instance of CodexClientError", () => {
+        const err = new ClientConnectingError();
+        expect(err instanceof CodexClientError).toBe(true);
+      });
+    });
+
+    describe("RequestTimeoutError", () => {
+      it("has correct code and is retryable", () => {
+        const err = new RequestTimeoutError("thread/start", 5000);
+        expect(err.code).toBe("REQUEST_TIMEOUT");
+        expect(err.retryable).toBe(true);
+        expect(err.method).toBe("thread/start");
+        expect(err.timeoutMs).toBe(5000);
+      });
+
+      it("includes method and timeout in message", () => {
+        const err = new RequestTimeoutError("model/list", 10000);
+        expect(err.message).toBe("Request model/list timed out after 10000ms");
+      });
+
+      it("serializes to JSON with method and timeout", () => {
+        const err = new RequestTimeoutError("thread/start", 5000);
+        const json = err.toJSON();
+        expect(json).toMatchObject({
+          name: "RequestTimeoutError",
+          code: "REQUEST_TIMEOUT",
+          retryable: true,
+          method: "thread/start",
+          timeoutMs: 5000,
+        });
+      });
+
+      it("is instance of CodexClientError", () => {
+        const err = new RequestTimeoutError("test", 100);
+        expect(err instanceof CodexClientError).toBe(true);
+      });
+    });
+
+    describe("JsonRpcServerError", () => {
+      it("has correct code and determines retryability", () => {
+        const serverError = { code: -32600, message: "Invalid Request" };
+        const err = new JsonRpcServerError(serverError);
+        expect(err.code).toBe("JSON_RPC_ERROR");
+        expect(err.jsonRpcCode).toBe(-32600);
+        expect(err.message).toContain("Invalid Request");
+        // Parse errors (-32700) and invalid requests (-32600) are not retryable
+        expect(err.retryable).toBe(false);
+      });
+
+      it("marks server error range as retryable", () => {
+        const serverError = { code: -32001, message: "Internal server error" };
+        const err = new JsonRpcServerError(serverError);
+        expect(err.retryable).toBe(true);
+      });
+
+      it("includes error data when provided", () => {
+        const serverError = {
+          code: -32001,
+          message: "Server error",
+          data: { details: "Connection failed" },
+        };
+        const err = new JsonRpcServerError(serverError);
+        expect(err.jsonRpcData).toEqual({ details: "Connection failed" });
+        expect(err.cause).toEqual({ details: "Connection failed" });
+      });
+
+      it("serializes to JSON with JSON-RPC code and data", () => {
+        const serverError = {
+          code: -32001,
+          message: "Server error",
+          data: { retry: true },
+        };
+        const err = new JsonRpcServerError(serverError);
+        const json = err.toJSON();
+        expect(json).toMatchObject({
+          name: "JsonRpcServerError",
+          code: "JSON_RPC_ERROR",
+          jsonRpcCode: -32001,
+          jsonRpcData: { retry: true },
+        });
+      });
+
+      it("is instance of CodexClientError", () => {
+        const serverError = { code: -32600, message: "Error" };
+        const err = new JsonRpcServerError(serverError);
+        expect(err instanceof CodexClientError).toBe(true);
+      });
+    });
+
+    describe("ProcessError", () => {
+      it("has correct code and is not retryable", () => {
+        const err = new ProcessError("Process crashed", 1, "SIGTERM");
+        expect(err.code).toBe("PROCESS_ERROR");
+        expect(err.retryable).toBe(false);
+        expect(err.exitCode).toBe(1);
+        expect(err.signal).toBe("SIGTERM");
+      });
+
+      it("handles null exit code and signal", () => {
+        const err = new ProcessError("Process error", null, null);
+        expect(err.exitCode).toBeNull();
+        expect(err.signal).toBeNull();
+      });
+
+      it("supports cause chain", () => {
+        const original = new Error("spawn ENOENT");
+        const err = new ProcessError("Failed to start", null, null, original);
+        expect(err.cause).toBe(original);
+      });
+
+      it("serializes to JSON with exit code and signal", () => {
+        const original = new Error("cause");
+        const err = new ProcessError("Process error", 1, "SIGKILL", original);
+        const json = err.toJSON();
+        expect(json).toMatchObject({
+          name: "ProcessError",
+          code: "PROCESS_ERROR",
+          exitCode: 1,
+          signal: "SIGKILL",
+        });
+      });
+
+      it("is instance of CodexClientError", () => {
+        const err = new ProcessError("Test", 0, null);
+        expect(err instanceof CodexClientError).toBe(true);
+      });
+    });
+
+    describe("StdioError", () => {
+      it("has correct code and is not retryable", () => {
+        const err = new StdioError("stdin not writable");
+        expect(err.code).toBe("STDIO_ERROR");
+        expect(err.retryable).toBe(false);
+        expect(err.message).toBe("stdin not writable");
+      });
+
+      it("is instance of CodexClientError", () => {
+        const err = new StdioError("Test");
+        expect(err instanceof CodexClientError).toBe(true);
+      });
     });
   });
 });
