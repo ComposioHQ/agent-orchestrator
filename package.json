@@ -35,5 +35,10 @@
     "husky": "^9.1.7",
     "prettier": "^3.8.1",
     "typescript-eslint": "^8.55.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "axios": ">=1.15.0"
+    }
   }
 }
