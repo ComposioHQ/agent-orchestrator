@@ -322,11 +322,6 @@ describe("detectActivity", () => {
     expect(agent.detectActivity("Press Enter to continue")).toBe("waiting_input");
   });
 
-  it("returns blocked for error messages", () => {
-    expect(agent.detectActivity("error: failed to connect")).toBe("blocked");
-    expect(agent.detectActivity("failed: timeout exceeded")).toBe("blocked");
-  });
-
   it("returns active for non-empty terminal output", () => {
     expect(agent.detectActivity("cursor is processing files\n")).toBe("active");
   });

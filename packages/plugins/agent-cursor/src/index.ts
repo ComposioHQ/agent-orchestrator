@@ -178,9 +178,12 @@ function createCursorAgent(): Agent {
       if (/proceed\?/i.test(tail)) return "waiting_input";
       if (/Press Enter to continue/i.test(tail)) return "waiting_input";
 
-      // Check for error indicators
-      if (/error:/i.test(tail)) return "blocked";
-      if (/failed:/i.test(tail)) return "blocked";
+      // Note: "blocked" detection removed — compiler errors, test failures, and linter
+      // messages are extremely common in normal tool output. Unlike Claude Code (which
+      // has native JSONL with rich "error" types), terminal-based detection can't
+      // distinguish between actionable agent errors and normal tool output.
+      // If Cursor CLI provides native JSONL in the future, blocked detection can be
+      // added to getActivityState() based on JSONL entry types.
 
       return "active";
     },
