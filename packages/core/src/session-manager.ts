@@ -14,7 +14,7 @@
 import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
-import { homedir, userInfo } from "node:os";
+import { homedir } from "node:os";
 import { promisify } from "node:util";
 import {
   isIssueNotFoundError,
@@ -63,6 +63,7 @@ import {
 } from "./paths.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
+import { resolveOwnerIdentity } from "./owner-identity.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse } from "./utils/validation.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
@@ -217,22 +218,8 @@ const SEND_BOOTSTRAP_READY_TIMEOUT_MS = 20_000;
 const SEND_BOOTSTRAP_STABLE_POLLS = 2;
 
 function resolveSessionOwner(): { ownerId: string; ownerSource: string } {
-  const terminalActorId = process.env["AO_TERMINAL_ACTOR_ID"]?.trim();
-  if (terminalActorId) {
-    return { ownerId: terminalActorId, ownerSource: "env:AO_TERMINAL_ACTOR_ID" };
-  }
-
-  const envOwnerId = process.env["AO_SESSION_OWNER_ID"]?.trim();
-  if (envOwnerId) {
-    return { ownerId: envOwnerId, ownerSource: "env:AO_SESSION_OWNER_ID" };
-  }
-
-  const envUser = process.env["USER"]?.trim();
-  if (envUser) {
-    return { ownerId: envUser, ownerSource: "env:USER" };
-  }
-
-  return { ownerId: userInfo().username, ownerSource: "os:userInfo" };
+  const owner = resolveOwnerIdentity();
+  return { ownerId: owner.id, ownerSource: owner.source };
 }
 
 function sleep(ms: number): Promise<void> {

@@ -1,7 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { IncomingHttpHeaders } from "node:http";
-import { userInfo } from "node:os";
 import { join } from "node:path";
 import {
   createCorrelationId,
@@ -10,6 +9,7 @@ import {
   getSessionsDir,
   loadConfig,
   readMetadataRaw,
+  resolveOwnerIdentity,
   resolveProjectIdForSessionId,
   updateMetadata,
   type OrchestratorConfig,
@@ -204,22 +204,8 @@ function getAuthContext(): { config: OrchestratorConfig; observer: ProjectObserv
 }
 
 function resolveFallbackActor(): { actorId: string; actorSource: string } {
-  const forwarded = process.env["AO_TERMINAL_ACTOR_ID"]?.trim();
-  if (forwarded) {
-    return { actorId: forwarded, actorSource: "env:AO_TERMINAL_ACTOR_ID" };
-  }
-
-  const sessionOwner = process.env["AO_SESSION_OWNER_ID"]?.trim();
-  if (sessionOwner) {
-    return { actorId: sessionOwner, actorSource: "env:AO_SESSION_OWNER_ID" };
-  }
-
-  const envUser = process.env["USER"]?.trim();
-  if (envUser) {
-    return { actorId: envUser, actorSource: "env:USER" };
-  }
-
-  return { actorId: userInfo().username, actorSource: "os:userInfo" };
+  const actor = resolveOwnerIdentity();
+  return { actorId: actor.id, actorSource: actor.source };
 }
 
 function shouldTrustProxyHeaders(): boolean {
