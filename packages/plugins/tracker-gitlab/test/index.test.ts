@@ -55,10 +55,13 @@ const sampleIssue = {
 
 describe("tracker-gitlab plugin", () => {
   let tracker: ReturnType<typeof create>;
+  const originalGlabHost = process.env.GLAB_HOST;
 
   beforeEach(() => {
     vi.clearAllMocks();
     tracker = create();
+    if (originalGlabHost === undefined) delete process.env.GLAB_HOST;
+    else process.env.GLAB_HOST = originalGlabHost;
   });
 
   // ---- manifest ----------------------------------------------------------
@@ -74,6 +77,11 @@ describe("tracker-gitlab plugin", () => {
   describe("create()", () => {
     it("returns a Tracker with correct name", () => {
       expect(tracker.name).toBe("gitlab");
+    });
+
+    it("stores bare hostname in GLAB_HOST when protocol is provided", () => {
+      create({ host: "https://gitlab.internal.corp" });
+      expect(process.env.GLAB_HOST).toBe("gitlab.internal.corp");
     });
   });
 

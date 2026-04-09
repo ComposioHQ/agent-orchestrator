@@ -64,9 +64,11 @@ describe("preflight.checkBuilt", () => {
     // /node_modules/@composio/ao-core         — hit
     // /node_modules/@composio/ao-core/dist/index.js — exists
     // /web/.next/BUILD_ID, /web/dist-server/start-all.js,
-    // /web/.next/server/webpack-runtime.js and vendor-chunks — exist
+    // /web/.next build manifests, and /web/.next/server/webpack-runtime.js — exist
     mockExistsSync
       .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
@@ -111,7 +113,7 @@ describe("preflight.checkBuilt", () => {
     );
   });
 
-  it("throws when vendor chunks are missing from the dashboard build", async () => {
+  it("throws when app build manifest is missing from the dashboard build", async () => {
     mockExistsSync
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
@@ -155,10 +157,7 @@ describe("preflight.checkTmux", () => {
 
   it("throws with install instructions when tmux is missing", async () => {
     mockExec.mockRejectedValue(new Error("ENOENT"));
-    const err = await preflight.checkTmux().catch((e: Error) => e);
-    expect(err).toBeInstanceOf(Error);
-    expect(err.message).toContain("tmux is not installed");
-    expect(err.message).toContain("Install it:");
+    await expect(preflight.checkTmux()).rejects.toThrow("tmux is not installed. Install it: brew install tmux");
     expect(mockExec).toHaveBeenCalledTimes(1);
     expect(mockExec).toHaveBeenCalledWith("tmux", ["-V"]);
   });

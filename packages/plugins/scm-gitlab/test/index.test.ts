@@ -96,12 +96,15 @@ function makeWebhookRequest(overrides: Partial<SCMWebhookRequest> = {}): SCMWebh
 describe("scm-gitlab plugin", () => {
   let scm: ReturnType<typeof create>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
+  const originalGlabHost = process.env.GLAB_HOST;
 
   beforeEach(() => {
     vi.clearAllMocks();
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     scm = create();
     delete process.env["GITLAB_WEBHOOK_SECRET"];
+    if (originalGlabHost === undefined) delete process.env.GLAB_HOST;
+    else process.env.GLAB_HOST = originalGlabHost;
   });
 
   afterEach(() => {
@@ -128,6 +131,11 @@ describe("scm-gitlab plugin", () => {
     it("accepts host config for self-hosted GitLab", () => {
       const selfHosted = create({ host: "gitlab.internal.corp" });
       expect(selfHosted.name).toBe("gitlab");
+    });
+
+    it("stores bare hostname in GLAB_HOST when protocol is provided", () => {
+      create({ host: "https://gitlab.internal.corp" });
+      expect(process.env.GLAB_HOST).toBe("gitlab.internal.corp");
     });
   });
 
@@ -597,6 +605,15 @@ describe("scm-gitlab plugin", () => {
       const firstCallArgs = glabMock.mock.calls[0][1] as string[];
       expect(firstCallArgs[0]).toBe("api");
       expect(firstCallArgs[1]).toBe("--hostname");
+      expect(firstCallArgs[2]).toBe("gitlab.corp.com");
+    });
+
+    it("strips protocol before passing --hostname to glab api", async () => {
+      const selfHosted = create({ host: "https://gitlab.corp.com" });
+      mockGlab([{ id: 100 }]);
+      mockGlab([]);
+      await selfHosted.getCIChecks(pr);
+      const firstCallArgs = glabMock.mock.calls[0][1] as string[];
       expect(firstCallArgs[2]).toBe("gitlab.corp.com");
     });
 

@@ -7,9 +7,13 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+export function normalizeGitLabHostname(host: string): string {
+  return host.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+}
+
 export async function glab(args: string[], hostname?: string): Promise<string> {
   if (hostname && args[0] === "api") {
-    args = [args[0], "--hostname", hostname, ...args.slice(1)];
+    args = [args[0], "--hostname", normalizeGitLabHostname(hostname), ...args.slice(1)];
   }
   try {
     const { stdout } = await execFileAsync("glab", args, {

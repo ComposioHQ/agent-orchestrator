@@ -14,7 +14,13 @@ import type {
   ProjectConfig,
 } from "@aoagents/ao-core";
 
-import { glab, parseJSON, extractHost, stripHost } from "@aoagents/ao-plugin-scm-gitlab/glab-utils";
+import {
+  glab,
+  normalizeGitLabHostname,
+  parseJSON,
+  extractHost,
+  stripHost,
+} from "@composio/ao-plugin-scm-gitlab/glab-utils";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,8 +68,7 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
 
   // For self-hosted GitLab, set GLAB_HOST env var so all glab commands work
   if (hostname) {
-    const fullHost = hostname.startsWith("http") ? hostname : `http://${hostname}`;
-    process.env.GLAB_HOST = fullHost;
+    process.env.GLAB_HOST = normalizeGitLabHostname(hostname);
   }
   const defaultHost = hostname ?? "gitlab.com";
 

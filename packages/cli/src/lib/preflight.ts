@@ -51,13 +51,17 @@ async function checkBuilt(webDir: string): Promise<void> {
 
   const webBuildId = resolve(webDir, ".next", "BUILD_ID");
   const startAllEntry = resolve(webDir, "dist-server", "start-all.js");
+  const buildManifestEntry = resolve(webDir, ".next", "build-manifest.json");
+  const appBuildManifestEntry = resolve(webDir, ".next", "app-build-manifest.json");
+  const appPathsManifestEntry = resolve(webDir, ".next", "server", "app-paths-manifest.json");
   const webpackRuntimeEntry = resolve(webDir, ".next", "server", "webpack-runtime.js");
-  const vendorChunksDir = resolve(webDir, ".next", "server", "vendor-chunks");
   if (
     !existsSync(webBuildId) ||
     !existsSync(startAllEntry) ||
-    !existsSync(webpackRuntimeEntry) ||
-    !existsSync(vendorChunksDir)
+    !existsSync(buildManifestEntry) ||
+    !existsSync(appBuildManifestEntry) ||
+    !existsSync(appPathsManifestEntry) ||
+    !existsSync(webpackRuntimeEntry)
   ) {
     throw new Error(`Dashboard production artifacts are missing or incomplete. ${buildHint}`);
   }
