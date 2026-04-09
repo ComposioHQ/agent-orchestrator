@@ -9,8 +9,9 @@ import {
   type PluginRegistry,
   type SCM,
 } from "@composio/ao-core";
-import * as serialize from "@/lib/serialize";
-import { getSCM } from "@/lib/services";
+import * as serialize from "../lib/serialize";
+import { getSCM } from "../lib/services";
+import { TerminalAuthError } from "../lib/server/terminal-auth";
 
 const { issueTerminalAccessMock } = vi.hoisted(() => ({
   issueTerminalAccessMock: vi.fn((input: { sessionId: string }) => ({
@@ -103,7 +104,11 @@ const multiProjectSessions: Session[] = [
 
 // ── Mock Services ─────────────────────────────────────────────────────
 
-const mockSessionManager: SessionManager = {
+type MockSessionManager = SessionManager & {
+  remap: ReturnType<typeof vi.fn>;
+};
+
+const mockSessionManager = {
   list: vi.fn(async () => testSessions),
   get: vi.fn(async (id: string) => testSessions.find((s) => s.id === id) ?? null),
   spawn: vi.fn(async (config) =>
@@ -138,7 +143,7 @@ const mockSessionManager: SessionManager = {
     }
     return { ...session, status: "spawning" as const, activity: "active" as const };
   }),
-};
+} as unknown as MockSessionManager;
 
 const mockSCM: SCM = {
   name: "github",
@@ -223,20 +228,23 @@ vi.mock("@/lib/server/terminal-auth", () => ({
 
 // ── Import routes after mocking ───────────────────────────────────────
 
-import { GET as sessionsGET } from "@/app/api/sessions/route";
-import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
-import { POST as spawnPOST } from "@/app/api/spawn/route";
-import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
-import { POST as messagePOST } from "@/app/api/sessions/[id]/message/route";
-import { POST as killPOST } from "@/app/api/sessions/[id]/kill/route";
-import { POST as restorePOST } from "@/app/api/sessions/[id]/restore/route";
-import { POST as remapPOST } from "@/app/api/sessions/[id]/remap/route";
-import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
-import { GET as eventsGET } from "@/app/api/events/route";
-import { GET as observabilityGET } from "@/app/api/observability/route";
-import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
-import { POST as terminalAccessPOST } from "@/app/api/sessions/[id]/terminal/route";
-import { GET as verifyGET, POST as verifyPOST } from "@/app/api/verify/route";
+import { GET as sessionsGET } from "../app/api/sessions/route";
+import {
+  POST as orchestratorsPOST,
+  GET as orchestratorsGET,
+} from "../app/api/orchestrators/route";
+import { POST as spawnPOST } from "../app/api/spawn/route";
+import { POST as sendPOST } from "../app/api/sessions/[id]/send/route";
+import { POST as messagePOST } from "../app/api/sessions/[id]/message/route";
+import { POST as killPOST } from "../app/api/sessions/[id]/kill/route";
+import { POST as restorePOST } from "../app/api/sessions/[id]/restore/route";
+import { POST as remapPOST } from "../app/api/sessions/[id]/remap/route";
+import { POST as mergePOST } from "../app/api/prs/[id]/merge/route";
+import { GET as eventsGET } from "../app/api/events/route";
+import { GET as observabilityGET } from "../app/api/observability/route";
+import { GET as runtimeTerminalGET } from "../app/api/runtime/terminal/route";
+import { POST as terminalAccessPOST } from "../app/api/sessions/[id]/terminal/route";
+import { GET as verifyGET, POST as verifyPOST } from "../app/api/verify/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -378,7 +386,7 @@ describe("API Routes", () => {
       const enrichSpy = vi
         .spyOn(serialize, "enrichSessionPR")
         .mockImplementation(
-          () => new Promise<void>((resolve) => { setTimeout(resolve, 1_000); }),
+          () => new Promise<boolean>((resolve) => { setTimeout(() => resolve(true), 1_000); }),
         );
 
       const responsePromise = sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
@@ -517,6 +525,75 @@ describe("API Routes", () => {
       expect(res.status).toBe(503);
       const data = await res.json();
       expect(data.error).toBe("Terminal authorization unavailable");
+    });
+
+    it("builds terminal URL correctly for IPv6 host headers", async () => {
+      const req = makeRequest("/api/sessions/backend-3/terminal", {
+        method: "POST",
+        headers: { host: "[::1]:3000" },
+      });
+      const res = await terminalAccessPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.terminalUrl).toBe("http://[::1]:14800/terminal/backend-3/");
+    });
+
+    it("falls back to default terminal settings when env values are invalid", async () => {
+      const savedTerminalPort = process.env.TERMINAL_PORT;
+      const savedDirectTerminalPort = process.env.DIRECT_TERMINAL_PORT;
+      const savedTerminalWsPath = process.env.TERMINAL_WS_PATH;
+      const savedPublicTerminalWsPath = process.env.NEXT_PUBLIC_TERMINAL_WS_PATH;
+      process.env.TERMINAL_PORT = "99999";
+      process.env.DIRECT_TERMINAL_PORT = "not-a-number";
+      process.env.TERMINAL_WS_PATH = "invalid-path";
+      process.env.NEXT_PUBLIC_TERMINAL_WS_PATH = "also-invalid";
+
+      try {
+        const req = makeRequest("/api/sessions/backend-3/terminal", { method: "POST" });
+        const res = await terminalAccessPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.terminalPort).toBe("14800");
+        expect(data.directTerminalPort).toBe("14801");
+        expect(data.proxyWsPath).toBeNull();
+      } finally {
+        if (savedTerminalPort === undefined) {
+          Reflect.deleteProperty(process.env, "TERMINAL_PORT");
+        } else {
+          process.env.TERMINAL_PORT = savedTerminalPort;
+        }
+        if (savedDirectTerminalPort === undefined) {
+          Reflect.deleteProperty(process.env, "DIRECT_TERMINAL_PORT");
+        } else {
+          process.env.DIRECT_TERMINAL_PORT = savedDirectTerminalPort;
+        }
+        if (savedTerminalWsPath === undefined) {
+          Reflect.deleteProperty(process.env, "TERMINAL_WS_PATH");
+        } else {
+          process.env.TERMINAL_WS_PATH = savedTerminalWsPath;
+        }
+        if (savedPublicTerminalWsPath === undefined) {
+          Reflect.deleteProperty(process.env, "NEXT_PUBLIC_TERMINAL_WS_PATH");
+        } else {
+          process.env.NEXT_PUBLIC_TERMINAL_WS_PATH = savedPublicTerminalWsPath;
+        }
+      }
+    });
+
+    it("propagates terminal auth errors and sets Retry-After", async () => {
+      issueTerminalAccessMock.mockImplementationOnce(() => {
+        throw new TerminalAuthError("Too many requests", 429, "rate_limited", 7);
+      });
+
+      const req = makeRequest("/api/sessions/backend-3/terminal", { method: "POST" });
+      const res = await terminalAccessPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("7");
+      const data = await res.json();
+      expect(data.error).toBe("Too many requests");
     });
   });
 

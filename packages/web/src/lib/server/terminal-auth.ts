@@ -4,4 +4,4 @@ export {
   resetTerminalAuthStateForTests,
   verifyTerminalAccess,
   verifyTerminalAccessNoRateLimit,
-} from "../../../server/terminal-auth.js";
+} from "../../../server/terminal-auth";

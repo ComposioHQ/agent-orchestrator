@@ -23,14 +23,53 @@ function getRequestProtocol(request: NextRequest): string {
 }
 
 function getClientIp(request: NextRequest): string | undefined {
-  return request.ip;
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  if (forwardedFor) {
+    const firstIp = forwardedFor.split(",")[0]?.trim();
+    if (firstIp) {
+      return firstIp;
+    }
+  }
+
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  if (realIp) {
+    return realIp;
+  }
+
+  return undefined;
 }
 
 function buildTerminalUrl(request: NextRequest, terminalPort: string, sessionId: string): string {
   const protocol = getRequestProtocol(request);
   const hostHeader = request.headers.get("host") ?? request.nextUrl.host;
-  const hostname = hostHeader.split(":")[0];
+  const hostname = extractHostname(hostHeader);
   return `${protocol}://${hostname}:${terminalPort}/terminal/${encodeURIComponent(sessionId)}/`;
+}
+
+function extractHostname(hostHeader: string): string {
+  const trimmed = hostHeader.trim();
+  if (!trimmed) {
+    return "localhost";
+  }
+
+  // Bracketed IPv6 host: keep the literal as-is (including brackets).
+  if (trimmed.startsWith("[")) {
+    const end = trimmed.indexOf("]");
+    if (end > 0) {
+      return trimmed.slice(0, end + 1);
+    }
+    return trimmed;
+  }
+
+  // host:port for IPv4/domain.
+  const firstColon = trimmed.indexOf(":");
+  const lastColon = trimmed.lastIndexOf(":");
+  if (firstColon !== -1 && firstColon === lastColon) {
+    return trimmed.slice(0, firstColon);
+  }
+
+  // Unbracketed IPv6 or already-host-only value.
+  return trimmed;
 }
 
 export async function POST(
