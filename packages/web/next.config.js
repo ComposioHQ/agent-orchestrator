@@ -11,6 +11,18 @@ const nextConfig = {
     "@aoagents/ao-plugin-tracker-linear",
     "@aoagents/ao-plugin-workspace-worktree",
   ],
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      // @composio/core is an optional peer dep of tracker-linear (the Composio SDK,
+      // not our internal @aoagents/ao-core). It's dynamically imported with a try/catch
+      // at runtime, but webpack still tries to resolve it at build time since
+      // tracker-linear is in transpilePackages. Mark it as external so webpack
+      // skips resolution entirely.
+      config.externals = config.externals || [];
+      config.externals.push("@composio/core");
+    }
+    return config;
+  },
   async headers() {
     return [
       {
