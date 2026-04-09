@@ -558,12 +558,11 @@ export function create(): Runtime {
       const entry = sessions.get(handle.id);
       if (!entry) {
         const inboxPath = typeof handle.data["inboxPath"] === "string" ? handle.data["inboxPath"] : null;
-        const sessionId = typeof handle.data["agentName"] === "string" ? handle.id : handle.id;
         const epoch = typeof handle.data["epoch"] === "number" ? handle.data["epoch"] as number : 0;
         if (!inboxPath) {
           throw new Error(`No session found for ${handle.id} and no inboxPath in handle data`);
         }
-        appendInboxMessage(inboxPath, sessionId, epoch, "instruction" as InboxMessageType, message, generateDedupKey());
+        appendInboxMessage(inboxPath, handle.id, epoch, "instruction" as InboxMessageType, message, generateDedupKey());
         return;
       }
 
