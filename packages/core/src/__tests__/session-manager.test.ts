@@ -415,4 +415,55 @@ describe("send with OpenCode session tracking", () => {
     // Should still succeed even if session is not in list (falls back to other delivery checks)
     await sm.send("app-4", "test message");
   });
+
+  describe("session owner resolution", () => {
+    it("uses AO_SESSION_OWNER_ID when available", async () => {
+      const originalEnvOwnerId = process.env.AO_SESSION_OWNER_ID;
+      process.env.AO_SESSION_OWNER_ID = "test-owner-1";
+
+      // Create a session first
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/ws",
+        branch: "main",
+        status: "working",
+        project: "my-app",
+        agent: "opencode",
+        runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      });
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const session = await sm.get("app-1");
+      expect(session?.ownerId).toBe("test-owner-1");
+      expect(session?.ownerSource).toBe("env:AO_SESSION_OWNER_ID");
+
+      process.env.AO_SESSION_OWNER_ID = originalEnvOwnerId;
+    });
+
+    it("uses USER env variable when AO_SESSION_OWNER_ID not set", async () => {
+      const originalEnvOwnerId = process.env.AO_SESSION_OWNER_ID;
+      const originalEnvUser = process.env.USER;
+      delete process.env.AO_SESSION_OWNER_ID;
+      process.env.USER = "test-user-2";
+
+      // Create a session first
+      writeMetadata(sessionsDir, "app-2", {
+        worktree: "/tmp/ws",
+        branch: "main",
+        status: "working",
+        project: "my-app",
+        agent: "opencode",
+        runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+      });
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const session = await sm.get("app-2");
+      expect(session?.ownerId).toBe("test-user-2");
+      expect(session?.ownerSource).toBe("env:USER");
+
+      process.env.AO_SESSION_OWNER_ID = originalEnvOwnerId;
+      process.env.USER = originalEnvUser;
+    });
+  });
 });
