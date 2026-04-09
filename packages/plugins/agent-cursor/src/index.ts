@@ -52,14 +52,25 @@ async function hasRecentCommits(workspacePath: string): Promise<boolean> {
 /**
  * Get modification time of Cursor session file if it exists.
  * Cursor may create a .cursor directory with session data.
+ *
+ * Checks .cursor/chat.md file mtime (which tracks actual Cursor writes),
+ * falling back to directory mtime only if the file doesn't exist.
  */
 async function getCursorSessionMtime(workspacePath: string): Promise<Date | null> {
   try {
-    // Check for .cursor directory and session files
     const cursorDir = join(workspacePath, ".cursor");
-    await access(cursorDir, constants.R_OK);
-    const stats = await stat(cursorDir);
-    return stats.mtime;
+    const chatFile = join(cursorDir, "chat.md");
+
+    // First try to stat the chat file (preferred - tracks actual writes)
+    try {
+      const stats = await stat(chatFile);
+      return stats.mtime;
+    } catch {
+      // Fall back to directory mtime if chat file doesn't exist
+      await access(cursorDir, constants.R_OK);
+      const stats = await stat(cursorDir);
+      return stats.mtime;
+    }
   } catch {
     return null;
   }
@@ -137,9 +148,10 @@ function createCursorAgent(): Agent {
       // Note: Cursor agent doesn't have --system or --prompt flags
       // System prompts would need to be passed differently (TBD)
       // Prompt is passed as positional argument at the end
+      // Use -- separator to prevent prompts starting with - from being parsed as flags
 
       if (config.prompt) {
-        parts.push(shellEscape(config.prompt));
+        parts.push("--", shellEscape(config.prompt));
       }
 
       return parts.join(" ");
@@ -260,7 +272,7 @@ function createCursorAgent(): Agent {
             timeout: 30_000,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          // Match "agent" binary (Cursor's CLI is called "agent")
+          // Match "agent" binary (Cursor's CLI command name)
           // Use word boundary to avoid matching "agent-orchestrator" etc.
           const processRe = /(?:^|\/)\bagent\b(?:\s|$)/;
           for (const line of psOut.split("\n")) {
@@ -334,8 +346,12 @@ export function create(): Agent {
 
 export function detect(): boolean {
   try {
-    execFileSync("agent", ["--version"], { stdio: "ignore" });
-    return true;
+    // Check for Cursor-specific output to avoid false positives with generic "agent" commands
+    const result = execFileSync("agent", ["--version"], { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
+    // Cursor's agent binary should include "cursor" or "agent" in version output
+    // If version output is empty or doesn't match expected pattern, return false
+    const output = result.toString().toLowerCase();
+    return output.includes("cursor") || output.includes("agent");
   } catch {
     return false;
   }
