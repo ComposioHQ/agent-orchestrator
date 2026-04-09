@@ -13,6 +13,7 @@
       "@composio/ao-plugin-agent-claude-code",
       "@composio/ao-plugin-agent-codex",
       "@composio/ao-plugin-agent-aider",
+      "@composio/ao-plugin-agent-cursor",
       "@composio/ao-plugin-agent-opencode",
       "@composio/ao-plugin-workspace-worktree",
       "@composio/ao-plugin-workspace-clone",
