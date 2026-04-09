@@ -54,6 +54,7 @@ import {
   reserveSessionId,
 } from "./metadata.js";
 import { buildPrompt } from "./prompt-builder.js";
+import { syncSessionToGnap } from "./gnap.js";
 import {
   getSessionsDir,
   getWorktreesDir,
@@ -1247,6 +1248,25 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     if (session.metadata["promptDelivered"]) {
       updateMetadata(sessionsDir, sessionId, session.metadata);
+    }
+
+    // Sync to GNAP persistent state layer (non-fatal — never block spawn)
+    if (project.gnap?.enabled) {
+      try {
+        syncSessionToGnap({
+          projectPath: project.path,
+          gnapDir: project.gnap.dir,
+          sessionId,
+          agentName: selection.agentName,
+          issueId: spawnConfig.issueId,
+          issueTitle: resolvedIssue?.title,
+          issueDescription: resolvedIssue?.description,
+          status: "spawning",
+          branch,
+        });
+      } catch {
+        // GNAP sync is best-effort — never block spawn
+      }
     }
 
     return session;
