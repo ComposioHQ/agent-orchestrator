@@ -15,6 +15,7 @@ import { getSessionTitle } from "@/lib/format";
 import { CICheckList } from "./CIBadge";
 import { ActivityDot } from "./ActivityDot";
 import { getSizeLabel } from "./PRStatus";
+import { useToast } from "./Toast";
 
 interface SessionCardProps {
   session: DashboardSession;
@@ -99,6 +100,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   const [sendingQuickReply, setSendingQuickReply] = useState<string | null>(null);
   const [sentQuickReply, setSentQuickReply] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
+  const { showToast } = useToast();
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickReplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const level = getAttentionLevel(session);
@@ -563,7 +565,12 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        void handleAction(alert.key, alert.actionMessage ?? "");
+                        if (alert.toastMessage) {
+                          showToast(alert.toastMessage, "info");
+                          window.open(alert.url, "_blank", "noopener,noreferrer");
+                        } else {
+                          void handleAction(alert.key, alert.actionMessage ?? "");
+                        }
                       }}
                       disabled={sendingAction === alert.key}
                       className={cn(
@@ -736,6 +743,7 @@ interface Alert {
   notified?: boolean;
   actionLabel?: string;
   actionMessage?: string;
+  toastMessage?: string;
   actionClassName?: string;
 }
 
@@ -818,8 +826,8 @@ function getAlerts(session: DashboardSession): Alert[] {
       className: "",
       color: "var(--color-alert-review)",
       url: pr.url,
-      actionLabel: "ask to post",
-      actionMessage: `Post ${pr.url} on slack asking for a review.`,
+      actionLabel: "add reviewer",
+      toastMessage: "No reviewer assigned — add one on GitHub",
       actionClassName: "bg-[var(--color-alert-review-bg)] text-white hover:brightness-110",
     });
   }

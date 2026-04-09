@@ -1,6 +1,10 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SessionCard } from "../SessionCard";
+
+vi.mock("@/components/Toast", () => ({
+  useToast: () => ({ showToast: vi.fn() }),
+}));
 import { makePR, makeSession } from "../../__tests__/helpers";
 
 describe("SessionCard diff coverage", () => {
