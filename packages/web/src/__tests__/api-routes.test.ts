@@ -595,6 +595,99 @@ describe("API Routes", () => {
       const data = await res.json();
       expect(data.error).toBe("Too many requests");
     });
+
+    it("uses forwarded protocol for terminal URL and secure cookie", async () => {
+      const req = makeRequest("/api/sessions/backend-3/terminal", {
+        method: "POST",
+        headers: {
+          host: "example.com",
+          "x-forwarded-proto": "https",
+        },
+      });
+
+      const res = await terminalAccessPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.terminalUrl).toBe("https://example.com:14800/terminal/backend-3/");
+      expect(res.cookies.get("ao_terminal_backend-3")?.secure).toBe(true);
+    });
+
+    it("passes first x-forwarded-for IP to terminal auth", async () => {
+      const req = makeRequest("/api/sessions/backend-3/terminal", {
+        method: "POST",
+        headers: {
+          "x-forwarded-for": "203.0.113.9, 10.0.0.5",
+          "x-real-ip": "198.51.100.8",
+        },
+      });
+
+      const res = await terminalAccessPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+      expect(res.status).toBe(200);
+
+      expect(issueTerminalAccessMock).toHaveBeenCalledWith({
+        sessionId: "backend-3",
+        headers: req.headers,
+        remoteAddress: "203.0.113.9",
+      });
+    });
+
+    it("falls back to x-real-ip when x-forwarded-for is absent", async () => {
+      const req = makeRequest("/api/sessions/backend-3/terminal", {
+        method: "POST",
+        headers: {
+          "x-real-ip": "198.51.100.77",
+        },
+      });
+
+      const res = await terminalAccessPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+      expect(res.status).toBe(200);
+
+      expect(issueTerminalAccessMock).toHaveBeenCalledWith({
+        sessionId: "backend-3",
+        headers: req.headers,
+        remoteAddress: "198.51.100.77",
+      });
+    });
+
+    it("accepts valid env values for ports and proxy path", async () => {
+      const savedTerminalPort = process.env.TERMINAL_PORT;
+      const savedDirectTerminalPort = process.env.DIRECT_TERMINAL_PORT;
+      const savedTerminalWsPath = process.env.TERMINAL_WS_PATH;
+
+      process.env.TERMINAL_PORT = "16000";
+      process.env.DIRECT_TERMINAL_PORT = "16001";
+      process.env.TERMINAL_WS_PATH = "/ao-terminal-ws";
+
+      try {
+        const req = makeRequest("/api/sessions/backend-3/terminal", { method: "POST" });
+        const res = await terminalAccessPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.terminalPort).toBe("16000");
+        expect(data.directTerminalPort).toBe("16001");
+        expect(data.proxyWsPath).toBe("/ao-terminal-ws");
+      } finally {
+        if (savedTerminalPort === undefined) {
+          Reflect.deleteProperty(process.env, "TERMINAL_PORT");
+        } else {
+          process.env.TERMINAL_PORT = savedTerminalPort;
+        }
+
+        if (savedDirectTerminalPort === undefined) {
+          Reflect.deleteProperty(process.env, "DIRECT_TERMINAL_PORT");
+        } else {
+          process.env.DIRECT_TERMINAL_PORT = savedDirectTerminalPort;
+        }
+
+        if (savedTerminalWsPath === undefined) {
+          Reflect.deleteProperty(process.env, "TERMINAL_WS_PATH");
+        } else {
+          process.env.TERMINAL_WS_PATH = savedTerminalWsPath;
+        }
+      }
+    });
   });
 
   // ── POST /api/spawn ────────────────────────────────────────────────

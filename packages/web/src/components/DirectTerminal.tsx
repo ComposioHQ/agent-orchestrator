@@ -48,6 +48,16 @@ interface TerminalConnectionConfig {
   proxyWsPath?: string;
 }
 
+class TerminalAuthFetchError extends Error {
+  status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "TerminalAuthFetchError";
+    this.status = status;
+  }
+}
+
 type TerminalVariant = "agent" | "orchestrator";
 
 function normalizePortValue(value: unknown): string | undefined {
@@ -273,6 +283,13 @@ export function DirectTerminal({
       );
     };
 
+    const isPermanentAuthFetchError = (err: unknown): boolean => {
+      if (err instanceof TerminalAuthFetchError) {
+        return err.status === 400 || err.status === 401 || err.status === 403 || err.status === 404;
+      }
+      return false;
+    };
+
     Promise.all([
       import("xterm").then((mod) => mod.Terminal),
       import("@xterm/addon-fit").then((mod) => mod.FitAddon),
@@ -457,7 +474,10 @@ export function DirectTerminal({
                 signal: controller.signal,
               });
               if (!response.ok) {
-                throw new Error(`Failed to authorize terminal: HTTP ${response.status}`);
+                throw new TerminalAuthFetchError(
+                  `Failed to authorize terminal: HTTP ${response.status}`,
+                  response.status,
+                );
               }
               const runtimeConfig = parseRuntimeTerminalConfig(await response.json());
               runtimeConnectionConfig.proxyWsPath = runtimeConfig.proxyWsPath;
@@ -477,9 +497,29 @@ export function DirectTerminal({
           try {
             config = await resolveConnectionConfig();
           } catch (err) {
-            permanentErrorRef.current = true;
-            setStatus("error");
-            setError(err instanceof Error ? err.message : "Failed to authorize terminal");
+            const message = err instanceof Error ? err.message : "Failed to authorize terminal";
+            if (isPermanentAuthFetchError(err)) {
+              permanentErrorRef.current = true;
+              setStatus("error");
+              setError(message);
+              return;
+            }
+
+            invalidateRuntimeConnectionConfig();
+            if (authRetryAttempts >= MAX_AUTH_RETRY_ATTEMPTS) {
+              permanentErrorRef.current = true;
+              setStatus("error");
+              setError(`${message}. Please refresh and try again.`);
+              return;
+            }
+
+            authRetryAttempts += 1;
+            const delay = Math.min(1000 * Math.pow(2, authRetryAttempts - 1), 4000);
+            setStatus("connecting");
+            setError(message);
+            reconnectTimerRef.current = setTimeout(() => {
+              void connectWebSocket();
+            }, delay);
             return;
           }
           if (!mounted) return;

@@ -231,6 +231,35 @@ describe("spawn", () => {
     expect(meta!.ownerSource).toBeTruthy();
   });
 
+  it("prefers AO_TERMINAL_ACTOR_ID for owner metadata when both owner env vars are set", async () => {
+    const originalTerminalActor = process.env.AO_TERMINAL_ACTOR_ID;
+    const originalSessionOwner = process.env.AO_SESSION_OWNER_ID;
+    process.env.AO_TERMINAL_ACTOR_ID = "terminal-actor-owner";
+    process.env.AO_SESSION_OWNER_ID = "session-owner-fallback";
+
+    try {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      await sm.spawn({ projectId: "my-app" });
+
+      const meta = readMetadata(sessionsDir, "app-1");
+      expect(meta).not.toBeNull();
+      expect(meta!.ownerId).toBe("terminal-actor-owner");
+      expect(meta!.ownerSource).toBe("env:AO_TERMINAL_ACTOR_ID");
+    } finally {
+      if (originalTerminalActor === undefined) {
+        Reflect.deleteProperty(process.env, "AO_TERMINAL_ACTOR_ID");
+      } else {
+        process.env.AO_TERMINAL_ACTOR_ID = originalTerminalActor;
+      }
+
+      if (originalSessionOwner === undefined) {
+        Reflect.deleteProperty(process.env, "AO_SESSION_OWNER_ID");
+      } else {
+        process.env.AO_SESSION_OWNER_ID = originalSessionOwner;
+      }
+    }
+  });
+
   it("reuses OpenCode session mapping by issue when available", async () => {
     const opencodeAgent: Agent = {
       ...mockAgent,

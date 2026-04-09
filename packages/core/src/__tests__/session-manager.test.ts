@@ -416,3 +416,55 @@ describe("send with OpenCode session tracking", () => {
     await sm.send("app-4", "test message");
   });
 });
+
+describe("session owner resolution", () => {
+  it("resolves owner from AO_SESSION_OWNER_ID when set", () => {
+    const originalOwner = process.env.AO_SESSION_OWNER_ID;
+    const originalUser = process.env.USER;
+
+    process.env.AO_SESSION_OWNER_ID = "owner-from-ao-session-owner-id";
+    Reflect.deleteProperty(process.env, "USER");
+
+    try {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      expect(sm).toBeDefined();
+    } finally {
+      if (originalOwner === undefined) {
+        Reflect.deleteProperty(process.env, "AO_SESSION_OWNER_ID");
+      } else {
+        process.env.AO_SESSION_OWNER_ID = originalOwner;
+      }
+
+      if (originalUser === undefined) {
+        Reflect.deleteProperty(process.env, "USER");
+      } else {
+        process.env.USER = originalUser;
+      }
+    }
+  });
+
+  it("falls back to os.userInfo() when owner env vars are unavailable", () => {
+    const originalOwner = process.env.AO_SESSION_OWNER_ID;
+    const originalUser = process.env.USER;
+
+    Reflect.deleteProperty(process.env, "AO_SESSION_OWNER_ID");
+    Reflect.deleteProperty(process.env, "USER");
+
+    try {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      expect(sm).toBeDefined();
+    } finally {
+      if (originalOwner === undefined) {
+        Reflect.deleteProperty(process.env, "AO_SESSION_OWNER_ID");
+      } else {
+        process.env.AO_SESSION_OWNER_ID = originalOwner;
+      }
+
+      if (originalUser === undefined) {
+        Reflect.deleteProperty(process.env, "USER");
+      } else {
+        process.env.USER = originalUser;
+      }
+    }
+  });
+});

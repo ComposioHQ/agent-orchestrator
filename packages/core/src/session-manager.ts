@@ -217,6 +217,11 @@ const SEND_BOOTSTRAP_READY_TIMEOUT_MS = 20_000;
 const SEND_BOOTSTRAP_STABLE_POLLS = 2;
 
 function resolveSessionOwner(): { ownerId: string; ownerSource: string } {
+  const terminalActorId = process.env["AO_TERMINAL_ACTOR_ID"]?.trim();
+  if (terminalActorId) {
+    return { ownerId: terminalActorId, ownerSource: "env:AO_TERMINAL_ACTOR_ID" };
+  }
+
   const envOwnerId = process.env["AO_SESSION_OWNER_ID"]?.trim();
   if (envOwnerId) {
     return { ownerId: envOwnerId, ownerSource: "env:AO_SESSION_OWNER_ID" };
