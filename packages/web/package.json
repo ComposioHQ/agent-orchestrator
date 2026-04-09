@@ -20,7 +20,7 @@
     "build": "next build && tsc -p tsconfig.server.json",
     "start": "next start",
     "start:all": "node dist-server/start-all.js",
-    "dev:optimized": "next build && tsc -p tsconfig.server.json && node dist-server/start-all.js",
+    "dev:optimized": "rm -rf .next && next build && tsc -p tsconfig.server.json && node dist-server/start-all.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
