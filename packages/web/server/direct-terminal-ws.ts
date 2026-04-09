@@ -21,14 +21,24 @@ export interface DirectTerminalServer {
 export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalServer {
   const TMUX = tmuxPath ?? findTmux();
 
-  // muxWss is assigned before the server starts accepting connections,
-  // so the health handler closure safely captures it.
   let muxWss: WebSocketServer | null = null;
+
+  const metrics = {
+    totalConnections: 0,
+    totalDisconnects: 0,
+    totalErrors: 0,
+  };
 
   const server = createServer((req, res) => {
     if (req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", clients: muxWss?.clients.size ?? 0 }));
+      res.end(
+        JSON.stringify({
+          status: "ok",
+          clients: muxWss?.clients.size ?? 0,
+          metrics,
+        }),
+      );
       return;
     }
 
@@ -37,6 +47,18 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
   });
 
   muxWss = createMuxWebSocket(TMUX);
+
+  if (muxWss) {
+    muxWss.on("connection", (ws) => {
+      metrics.totalConnections++;
+      ws.on("close", () => {
+        metrics.totalDisconnects++;
+      });
+      ws.on("error", () => {
+        metrics.totalErrors++;
+      });
+    });
+  }
 
   // Manual upgrade routing — ws library doesn't support multiple WebSocketServer
   // instances with different `path` options on the same HTTP server.
