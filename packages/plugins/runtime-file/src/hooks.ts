@@ -138,7 +138,6 @@ echo "You have unread messages ($unread_bytes bytes) in your inbox at $INBOX_FIL
 exit 2
 `;
 
-export const PROMPT_INBOX_CHECK_SCRIPT = INBOX_READER_SCRIPT;
 
 export const FILE_TRACKER_SCRIPT = `#!/usr/bin/env bash
 set -euo pipefail

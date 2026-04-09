@@ -27,7 +27,6 @@ import {
   getHookSettings,
   INBOX_READER_SCRIPT,
   STOP_INBOX_CHECK_SCRIPT,
-  PROMPT_INBOX_CHECK_SCRIPT,
   FILE_TRACKER_SCRIPT,
 } from "./hooks.js";
 import { installAoEmit } from "./ao-emit.js";
@@ -790,16 +789,15 @@ export default {
 
 export {
   resolveCommsFiles, createCommsFiles, appendInboxMessage, appendMessage,
-  readNewMessages, readAllMessages, readEpoch, writeEpoch,
-  generateDedupKey, touchFile, getHeartbeatTime, watchDirectory,
-  resetCursors,
+  readNewMessages, readEpoch, writeEpoch,
+  generateDedupKey, watchDirectory, resetCursors,
 } from "./file-transport.js";
 
 export type { SessionCommsFiles, FileWatcher } from "./file-transport.js";
 
 export * from "./message-types.js";
 export {
-  getHookSettings, INBOX_READER_SCRIPT, STOP_INBOX_CHECK_SCRIPT, PROMPT_INBOX_CHECK_SCRIPT, FILE_TRACKER_SCRIPT,
+  getHookSettings, INBOX_READER_SCRIPT, STOP_INBOX_CHECK_SCRIPT, FILE_TRACKER_SCRIPT,
 } from "./hooks.js";
 
 export { AO_EMIT_SCRIPT, installAoEmit } from "./ao-emit.js";

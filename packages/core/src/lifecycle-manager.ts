@@ -1490,19 +1490,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                   }
 
                   case "status":
-                    // Informational heartbeat — log at debug level.
-                    console.log(
-                      `[lifecycle-manager] watchEvents status from ${session.id}:`,
-                      typeof event["message"] === "string" ? event["message"] : "(no message)",
-                    );
-                    break;
-
                   case "ack":
-                    // Agent acknowledged a message — no orchestrator action needed.
-                    console.log(
-                      `[lifecycle-manager] watchEvents ack from ${session.id}:`,
-                      typeof event["message"] === "string" ? event["message"] : "(no message)",
-                    );
                     break;
 
                   default:
