@@ -6,7 +6,7 @@
  * - Alternate buffer (tmux, vim, etc.): enters tmux copy-mode and sends arrow keys.
  *
  * Usage:
- *   const cleanup = attachTouchScroll(terminal, websocket);
+ *   const cleanup = attachTouchScroll(terminal, (data) => writeTerminal(id, data));
  *   // later: cleanup();
  */
 
@@ -48,11 +48,12 @@ const DEFAULT_CONFIG: Required<Omit<TouchScrollConfig, "onScrollAway" | "onScrol
 
 /**
  * Attach touch scroll handlers to an xterm terminal.
+ * `sendData` writes raw terminal input (used for tmux copy-mode in alternate buffer).
  * Returns a cleanup function to remove the listeners.
  */
 export function attachTouchScroll(
   terminal: Terminal,
-  getWebSocket: () => WebSocket | null,
+  sendData: (data: string) => void,
   config: TouchScrollConfig = {},
 ): () => void {
   const opts = { ...DEFAULT_CONFIG, ...config };
@@ -134,19 +135,16 @@ export function attachTouchScroll(
       terminal.scrollLines(boostedDelta);
     } else {
       // Alternate buffer — use tmux copy-mode with arrow keys
-      const ws = getWebSocket();
-      if (ws?.readyState === WebSocket.OPEN) {
-        // Enter copy mode once per gesture
-        if (!enteredCopyMode) {
-          enteredCopyMode = true;
-          ws.send(opts.tmuxPrefix + "[");
-        }
-        // Invert: swipe up → scroll down (older), swipe down → scroll up (newer)
-        const arrowKey = lineDelta > 0 ? "\x1b[A" : "\x1b[B";
-        const count = Math.abs(boostedDelta);
-        for (let i = 0; i < count; i++) {
-          ws.send(arrowKey);
-        }
+      // Enter copy mode once per gesture
+      if (!enteredCopyMode) {
+        enteredCopyMode = true;
+        sendData(opts.tmuxPrefix + "[");
+      }
+      // Invert: swipe up → scroll down (older), swipe down → scroll up (newer)
+      const arrowKey = lineDelta > 0 ? "\x1b[A" : "\x1b[B";
+      const count = Math.abs(boostedDelta);
+      for (let i = 0; i < count; i++) {
+        sendData(arrowKey);
       }
     }
   };

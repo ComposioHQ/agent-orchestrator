@@ -329,7 +329,7 @@ export function DirectTerminalGB({
           cursorBlink: true,
           fontSize: getStoredFontSize(),
           fontFamily:
-            'var(--font-jetbrains-mono), "JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
+            '"JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
           theme: activeTheme,
           // Light mode needs an explicit contrast floor because agent UIs often emit
           // dim/faint ANSI sequences that become unreadable on a near-white background.
@@ -430,7 +430,7 @@ export function DirectTerminalGB({
         resumeLiveTailRef.current = resumeLiveTail;
 
         // Touch scroll (mobile) — uses modular helper from lib/terminal-touch-scroll
-        const removeTouchScroll = attachTouchScroll(terminal, () => null, {
+        const removeTouchScroll = attachTouchScroll(terminal, (data) => writeTerminal(sessionId, data), {
           onScrollAway: () => {
             followOutputRef.current = false;
             setFollowOutput(false);

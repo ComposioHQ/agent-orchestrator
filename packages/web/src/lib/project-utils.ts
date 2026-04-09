@@ -45,7 +45,7 @@ export function filterWorkerSessions<T extends SessionLike>(
         s,
         projects[s.projectId]?.sessionPrefix ?? s.projectId,
         allSessionPrefixes,
-      ),
+      ) && !s.metadata?.["parent"],
   );
   return filterProjectSessions(workers, projectFilter, projects);
 }
