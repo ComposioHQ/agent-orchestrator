@@ -600,6 +600,15 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
             >
               {session.issueLabel || session.issueUrl}
             </a>
+          ) : session.userPrompt ? (
+            <span
+              className="min-w-0 truncate text-[11px] text-[var(--color-text-tertiary)]"
+              title={session.userPrompt}
+            >
+              {session.userPrompt.length > 60
+                ? session.userPrompt.slice(0, 60) + "…"
+                : session.userPrompt}
+            </span>
           ) : (
             <span className="min-w-0 truncate text-[11px] text-[var(--color-text-tertiary)]">
               {session.activity ?? session.status}

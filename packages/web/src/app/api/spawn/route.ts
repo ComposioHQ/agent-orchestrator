@@ -1,5 +1,5 @@
 import { type NextRequest } from "next/server";
-import { validateIdentifier, validateConfiguredProject } from "@/lib/validation";
+import { validateIdentifier, validateString, validateConfiguredProject } from "@/lib/validation";
 import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
@@ -22,6 +22,13 @@ export async function POST(request: NextRequest) {
     const issueErr = validateIdentifier(body.issueId, "issueId");
     if (issueErr) {
       return jsonWithCorrelation({ error: issueErr }, { status: 400 }, correlationId);
+    }
+  }
+
+  if (body.prompt !== undefined && body.prompt !== null) {
+    const promptErr = validateString(body.prompt, "prompt", 4096);
+    if (promptErr) {
+      return jsonWithCorrelation({ error: promptErr }, { status: 400 }, correlationId);
     }
   }
 
@@ -48,6 +55,7 @@ export async function POST(request: NextRequest) {
     const session = await sessionManager.spawn({
       projectId,
       issueId: (body.issueId as string) ?? undefined,
+      prompt: (body.prompt as string) ?? undefined,
     });
 
     recordApiObservation({

@@ -1164,6 +1164,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusedOpenCodeSessionId,
+        userPrompt: spawnConfig.prompt,
       });
 
       if (plugins.agent.postLaunchSetup) {

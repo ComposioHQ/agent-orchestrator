@@ -65,6 +65,7 @@ export interface DashboardSession {
   issueUrl: string | null; // Full issue URL
   issueLabel: string | null; // Human-readable label (e.g., "INT-1327", "#42")
   issueTitle: string | null; // Full issue title (e.g., "Add user authentication flow")
+  userPrompt: string | null; // Prompt used when spawning without an issue
   summary: string | null;
   /** True when the summary is a low-quality fallback (e.g. truncated spawn prompt) */
   summaryIsFallback: boolean;

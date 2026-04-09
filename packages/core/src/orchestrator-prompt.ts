@@ -60,6 +60,9 @@ ao spawn INT-1234
 ao spawn --claim-pr 123
 ao batch-spawn INT-1 INT-2 INT-3
 
+# Spawn a session without a tracker issue (prompt-driven)
+ao spawn --prompt "Refactor the auth module to use JWT"
+
 # List sessions
 ao session ls -p ${projectId}
 
@@ -82,7 +85,7 @@ ao open ${projectId}
 | Command | Description |
 |---------|-------------|
 | \`ao status\` | Show all sessions with PR/CI/review status |
-| \`ao spawn [issue] [--claim-pr <pr>]\` | Spawn a worker session (project auto-detected), optionally attached to an existing PR |
+| \`ao spawn [issue] [--prompt <text>] [--claim-pr <pr>]\` | Spawn a worker session; use issue ID or --prompt for freeform tasks |
 | \`ao batch-spawn <issues...>\` | Spawn multiple sessions in parallel (project auto-detected) |
 | \`ao session ls [-p project]\` | List all sessions (optionally filter by project) |
 | \`ao session claim-pr <pr> [session]\` | Attach an existing PR to a worker session |
@@ -101,10 +104,15 @@ ao open ${projectId}
 
 When you spawn a session:
 1. A git worktree is created from \`${project.defaultBranch}\`
-2. A feature branch is created (e.g., \`feat/INT-1234\`)
+2. A feature branch is created (e.g., \`feat/INT-1234\` for issues, \`session/<id>\` for prompt-driven)
 3. A tmux session is started (e.g., \`${project.sessionPrefix}-1\`)
-4. The agent is launched with context about the issue
+4. The agent is launched with context about the issue or prompt
 5. Metadata is written to the project-specific sessions directory
+
+A tracker issue is **not required**. Use \`--prompt\` to spawn freeform sessions:
+\`\`\`bash
+ao spawn --prompt "Add rate limiting to the /api/upload endpoint"
+\`\`\`
 
 ### Monitoring Progress
 
