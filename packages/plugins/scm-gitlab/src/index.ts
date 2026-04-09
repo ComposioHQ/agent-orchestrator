@@ -583,10 +583,10 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
       }
     },
 
-    async getCISummary(pr: PRInfo): Promise<CIStatus> {
-      let checks: CICheck[];
+    async getCISummary(pr: PRInfo, checks?: CICheck[]): Promise<CIStatus> {
+      let ciChecks: CICheck[];
       try {
-        checks = await this.getCIChecks(pr);
+        ciChecks = checks ?? await this.getCIChecks(pr);
       } catch (err) {
         console.warn(
           `getCISummary: CI check fetch failed for MR !${pr.number}: ${(err as Error).message}`,
@@ -601,15 +601,15 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
         }
         return "failing";
       }
-      if (checks.length === 0) return "none";
+      if (ciChecks.length === 0) return "none";
 
-      const hasFailing = checks.some((c) => c.status === "failed");
+      const hasFailing = ciChecks.some((c) => c.status === "failed");
       if (hasFailing) return "failing";
 
-      const hasPending = checks.some((c) => c.status === "pending" || c.status === "running");
+      const hasPending = ciChecks.some((c) => c.status === "pending" || c.status === "running");
       if (hasPending) return "pending";
 
-      const hasPassing = checks.some((c) => c.status === "passed");
+      const hasPassing = ciChecks.some((c) => c.status === "passed");
       if (!hasPassing) return "none";
 
       return "passing";
