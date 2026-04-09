@@ -1,0 +1,420 @@
+packages/plugins/notifier-webhook/src/index.test.ts
+  d6ea8f0dfb168d83 2
+packages/plugins/runtime-tmux/package.json
+  d6ea8f0dfb168d83 2,38
+packages/plugins/runtime-process/src/index.ts
+  d6ea8f0dfb168d83 9
+packages/plugins/workspace-worktree/src/index.ts
+  d6ea8f0dfb168d83 12
+CONTRIBUTING.md
+  d6ea8f0dfb168d83 39,45-46,55,68,101,112,123,158,181-182
+.changeset/config.json
+  d6ea8f0dfb168d83 8-28,34
+packages/integration-tests/src/terminal-web.integration.test.ts
+  d6ea8f0dfb168d83 8
+packages/web/src/components/__tests__/DirectTerminal.test.ts
+  d6ea8f0dfb168d83 2
+scripts/ao-update.sh
+  d6ea8f0dfb168d83 109-111,113-115
+packages/plugins/scm-gitlab/test/index.test.ts
+  d6ea8f0dfb168d83 16
+docs/PLUGIN_SPEC.md
+  d6ea8f0dfb168d83 50,57,79
+packages/cli/__tests__/commands/setup.test.ts
+  d6ea8f0dfb168d83 28
+packages/plugins/runtime-tmux/src/__tests__/index.test.ts
+  d6ea8f0dfb168d83 4
+packages/plugins/agent-claude-code/src/index.test.ts
+  d6ea8f0dfb168d83 2
+packages/plugins/notifier-composio/package.json
+  d6ea8f0dfb168d83 2,37
+packages/plugins/scm-gitlab/package.json
+  d6ea8f0dfb168d83 2,41
+SETUP.md
+  d6ea8f0dfb168d83 63,75,78,85,388
+packages/plugins/agent-codex/src/index.test.ts
+  d6ea8f0dfb168d83 2,66
+packages/core/src/__tests__/plugin-registry.test.ts
+  d6ea8f0dfb168d83 155-157,178-179,206,231,255,274,283,311,337-338,356,370,427
+packages/plugins/notifier-webhook/src/index.ts
+  d6ea8f0dfb168d83 7,12
+packages/web/src/components/Dashboard.tsx
+  d6ea8f0dfb168d83 17,144,155
+packages/core/src/index.ts
+  d6ea8f0dfb168d83 2
+packages/cli/src/commands/send.ts
+  d6ea8f0dfb168d83 11
+packages/plugins/terminal-web/src/index.test.ts
+  d6ea8f0dfb168d83 2
+packages/plugins/workspace-clone/package.json
+  d6ea8f0dfb168d83 2,38
+packages/plugins/agent-codex/package.json
+  d6ea8f0dfb168d83 2,37
+packages/web/src/lib/activity-icons.ts
+  d6ea8f0dfb168d83 1
+packages/integration-tests/src/config-metadata-service.integration.test.ts
+  d6ea8f0dfb168d83 24
+packages/plugins/notifier-discord/src/index.ts
+  d6ea8f0dfb168d83 10-11
+packages/integration-tests/src/terminal-iterm2.integration.test.ts
+  d6ea8f0dfb168d83 22
+packages/web/src/providers/MuxProvider.tsx
+  d6ea8f0dfb168d83 1-323
+packages/plugins/agent-aider/src/index.ts
+  d6ea8f0dfb168d83 22
+packages/cli/__tests__/lib/preflight.test.ts
+  d6ea8f0dfb168d83 63-65,79-80,118-119,128-129
+packages/plugins/terminal-iterm2/src/index.test.ts
+  d6ea8f0dfb168d83 2
+packages/plugins/tracker-gitlab/src/index.ts
+  d6ea8f0dfb168d83 15,17
+packages/integration-tests/src/agent-codex-launch-env.integration.test.ts
+  d6ea8f0dfb168d83 2-3
+packages/web/src/components/PullRequestsPage.tsx
+  d6ea8f0dfb168d83 13,40,48-53
+packages/plugins/notifier-slack/src/index.test.ts
+  d6ea8f0dfb168d83 2
+packages/web/src/app/layout.tsx
+  d6ea8f0dfb168d83 5,51
+.cursor/BUGBOT.md
+  d6ea8f0dfb168d83 20
+packages/integration-tests/src/notifier-slack.integration.test.ts
+  d6ea8f0dfb168d83 8-9
+packages/integration-tests/src/cli-spawn-core-read-new.integration.test.ts
+  d6ea8f0dfb168d83 28
+packages/plugins/agent-claude-code/src/index.ts
+  d6ea8f0dfb168d83 18,273
+packages/plugins/terminal-web/src/index.ts
+  d6ea8f0dfb168d83 1
+packages/plugins/agent-opencode/src/index.ts
+  d6ea8f0dfb168d83 24
+packages/ao/bin/postinstall.js
+  d6ea8f0dfb168d83 3
+packages/cli/src/assets/plugin-registry.json
+  d6ea8f0dfb168d83 4,12,20,28,37,45,53
+packages/cli/src/commands/session.ts
+  d6ea8f0dfb168d83 4-5,305-306
+packages/cli/__tests__/commands/send.test.ts
+  d6ea8f0dfb168d83 50
+packages/cli/src/commands/verify.ts
+  d6ea8f0dfb168d83 9,59
+packages/cli/src/commands/doctor.ts
+  d6ea8f0dfb168d83 14
+docs/DEVELOPMENT.md
+  d6ea8f0dfb168d83 161,188,226,260,271,321,324,347,434
+packages/plugins/terminal-web/package.json
+  d6ea8f0dfb168d83 2,37
+packages/web/server/__tests__/server-compatibility.test.ts
+  d6ea8f0dfb168d83 28-29
+packages/core/src/session-manager.ts
+  d6ea8f0dfb168d83 765-770
+docs/opencode-workflows-spec.md
+  d6ea8f0dfb168d83 30,101-104
+AGENTS.md
+  d6ea8f0dfb168d83 13
+packages/cli/src/commands/open.ts
+  d6ea8f0dfb168d83 3,5-6,64,70,72
+packages/cli/src/commands/spawn.ts
+  d6ea8f0dfb168d83 15-16,123-125,127,129,145
+README.md
+  d6ea8f0dfb168d83 4,14,53
+packages/cli/src/lib/format.ts
+  d6ea8f0dfb168d83 2
+packages/integration-tests/src/prompt-delivery.integration.test.ts
+  d6ea8f0dfb168d83 22-23
+packages/cli/package.json
+  d6ea8f0dfb168d83 2,36-56
+packages/plugins/tracker-linear/test/index.test.ts
+  d6ea8f0dfb168d83 15
+packages/plugins/workspace-clone/src/__tests__/index.test.ts
+  d6ea8f0dfb168d83 4
+packages/web/src/app/providers.test.tsx
+  d6ea8f0dfb168d83 1-27
+packages/web/src/app/sessions/[id]/page.tsx
+  d6ea8f0dfb168d83 5
+packages/web/server/__tests__/mux-websocket.test.ts
+  d6ea8f0dfb168d83 1-257
+.github/workflows/release.yml
+  d6ea8f0dfb168d83 29
+packages/cli/src/commands/dashboard.ts
+  d6ea8f0dfb168d83 5,14,26,110
+.github/workflows/ci.yml
+  d6ea8f0dfb168d83 39,41,43,56,74,76
+packages/integration-tests/src/notifier-webhook.integration.test.ts
+  d6ea8f0dfb168d83 8-9
+packages/plugins/tracker-linear/src/index.ts
+  d6ea8f0dfb168d83 20
+packages/web/src/lib/types.ts
+  d6ea8f0dfb168d83 5,18,33
+packages/plugins/scm-github/package.json
+  d6ea8f0dfb168d83 2,38
+packages/plugins/notifier-desktop/src/index.ts
+  d6ea8f0dfb168d83 10,20
+packages/web/src/app/api/sessions/patches/route.ts
+  d6ea8f0dfb168d83 1-42
+packages/core/src/lifecycle-manager.ts
+  d6ea8f0dfb168d83 358-363
+packages/integration-tests/src/agent-claude-code.integration.test.ts
+  d6ea8f0dfb168d83 26,28
+packages/core/package.json
+  d6ea8f0dfb168d83 2
+packages/plugins/workspace-worktree/src/__tests__/index.test.ts
+  d6ea8f0dfb168d83 2
+packages/web/src/lib/mux-protocol.ts
+  d6ea8f0dfb168d83 1-28
+packages/cli/src/commands/review-check.ts
+  d6ea8f0dfb168d83 4
+packages/cli/vitest.config.ts
+  d6ea8f0dfb168d83 23,27,31,35,39,43,47,51
+packages/integration-tests/src/runtime-process.integration.test.ts
+  d6ea8f0dfb168d83 2-3
+packages/plugins/tracker-linear/test/composio-transport.test.ts
+  d6ea8f0dfb168d83 20
+packages/plugins/agent-claude-code/package.json
+  d6ea8f0dfb168d83 2,37
+packages/integration-tests/src/tracker-linear.integration.test.ts
+  d6ea8f0dfb168d83 22,24
+packages/cli/__tests__/commands/open.test.ts
+  d6ea8f0dfb168d83 23,170
+packages/plugins/notifier-desktop/package.json
+  d6ea8f0dfb168d83 2,37
+packages/cli/__tests__/commands/spawn.test.ts
+  d6ea8f0dfb168d83 5,35-41,43,46,48,117-120,289,311-313,440-441,443
+packages/web/src/components/ProjectSidebar.tsx
+  d6ea8f0dfb168d83 8
+packages/ao/package.json
+  d6ea8f0dfb168d83 2,29
+packages/plugins/notifier-composio/src/index.test.ts
+  d6ea8f0dfb168d83 2
+packages/plugins/workspace-clone/src/index.ts
+  d6ea8f0dfb168d83 12
+packages/plugins/terminal-iterm2/package.json
+  d6ea8f0dfb168d83 2,37
+DASHBOARD_FIXES_SUMMARY.md
+  d6ea8f0dfb168d83 188
+packages/cli/__tests__/commands/dashboard.test.ts
+  d6ea8f0dfb168d83 96,127,167
+packages/cli/src/commands/lifecycle-worker.ts
+  d6ea8f0dfb168d83 3
+packages/cli/src/lib/plugin-marketplace.ts
+  d6ea8f0dfb168d83 6,128
+packages/core/src/__tests__/plugin-integration.test.ts
+  d6ea8f0dfb168d83 40-41
+packages/integration-tests/src/agent-opencode.integration.test.ts
+  d6ea8f0dfb168d83 19,21
+packages/cli/src/lib/constants.ts
+  d6ea8f0dfb168d83 1-2
+packages/integration-tests/src/metadata-lifecycle.integration.test.ts
+  d6ea8f0dfb168d83 5,22
+packages/integration-tests/src/notifier-composio.integration.test.ts
+  d6ea8f0dfb168d83 8-9
+packages/plugins/scm-github/test/index.test.ts
+  d6ea8f0dfb168d83 18
+packages/cli/__tests__/commands/doctor.test.ts
+  d6ea8f0dfb168d83 30
+packages/cli/src/commands/status.ts
+  d6ea8f0dfb168d83 15
+packages/cli/src/lib/dashboard-rebuild.ts
+  d6ea8f0dfb168d83 27
+packages/plugins/notifier-desktop/src/index.test.ts
+  d6ea8f0dfb168d83 2
+packages/plugins/notifier-openclaw/src/index.test.ts
+  d6ea8f0dfb168d83 5
+packages/plugins/tracker-github/test/index.test.ts
+  d6ea8f0dfb168d83 16
+packages/plugins/scm-gitlab/src/index.ts
+  d6ea8f0dfb168d83 27,33
+packages/plugins/tracker-gitlab/package.json
+  d6ea8f0dfb168d83 2,37-38
+packages/core/src/agent-selection.ts
+  d6ea8f0dfb168d83 25,27-29
+packages/cli/src/lib/detect-agent.ts
+  d6ea8f0dfb168d83 7,18-21
+packages/plugins/scm-github/src/index.ts
+  d6ea8f0dfb168d83 31,40
+packages/core/vitest.config.ts
+  d6ea8f0dfb168d83 13,17
+packages/plugins/terminal-iterm2/src/index.ts
+  d6ea8f0dfb168d83 8,18
+packages/web/next.config.js
+  d6ea8f0dfb168d83 3,5-12
+packages/web/package.json
+  d6ea8f0dfb168d83 2,15,30-37
+packages/web/src/lib/__tests__/types.test.ts
+  d6ea8f0dfb168d83 19
+packages/cli/__tests__/commands/status.test.ts
+  d6ea8f0dfb168d83 17,75,77,952
+packages/plugins/notifier-discord/src/index.test.ts
+  d6ea8f0dfb168d83 2
+packages/plugins/workspace-worktree/package.json
+  d6ea8f0dfb168d83 2,38
+packages/cli/__tests__/scripts/update-script.test.ts
+  d6ea8f0dfb168d83 74-75
+packages/web/server/mux-websocket.ts
+  d6ea8f0dfb168d83 2-3,5-7,10-12,15-43,47-49,51-72,74-84,87,89-97,99-114,116-119,121-127,129-132,135-137,139-175,177-184,187-190,192-193,195,197-207,209-218,220-221,223-229,231-233,235-263,266-268,270-274,276-297,300-321,323-325,327-353,356-363,366-372,374,376-382,384,386-396,399-415,418-436,439-466,468-580,582-594,596-600,603-605
+packages/cli/src/commands/start.ts
+  d6ea8f0dfb168d83 37,69,1105-1116,1437
+packages/web/src/lib/project-utils.ts
+  d6ea8f0dfb168d83 1
+scripts/try-pr.sh
+  d6ea8f0dfb168d83 58-60,66
+packages/web/src/hooks/__tests__/useSessionEvents.mux.test.ts
+  d6ea8f0dfb168d83 1-38
+packages/cli/src/lib/plugins.ts
+  d6ea8f0dfb168d83 1-6
+packages/plugins/agent-claude-code/src/__tests__/activity-detection.test.ts
+  d6ea8f0dfb168d83 6
+packages/plugins/tracker-github/package.json
+  d6ea8f0dfb168d83 2,37
+packages/cli/src/lib/session-utils.ts
+  d6ea8f0dfb168d83 1,7-14
+packages/integration-tests/src/workspace-clone.integration.test.ts
+  d6ea8f0dfb168d83 8-9
+packages/plugins/tracker-linear/package.json
+  d6ea8f0dfb168d83 2,37
+.github/workflows/coverage.yml
+  d6ea8f0dfb168d83 64,68,72,76
+.github/workflows/integration-tests.yml
+  d6ea8f0dfb168d83 51,62
+packages/integration-tests/package.json
+  d6ea8f0dfb168d83 2,13-22,25-31
+packages/web/src/hooks/useMux.ts
+  d6ea8f0dfb168d83 1
+packages/ao/bin/ao.js
+  d6ea8f0dfb168d83 2
+packages/core/src/plugin-registry.ts
+  d6ea8f0dfb168d83 6,35-36,38-41,43-44,46-48,50-51,53-58,60-61,68,79,107,121-124,467
+packages/plugins/tracker-github/src/index.ts
+  d6ea8f0dfb168d83 17
+packages/web/src/app/providers.tsx
+  d6ea8f0dfb168d83 1-12
+packages/cli/src/lib/plugin-scaffold.ts
+  d6ea8f0dfb168d83 3,83,125
+packages/cli/src/commands/setup.ts
+  d6ea8f0dfb168d83 17
+scripts/ao-doctor.sh
+  d6ea8f0dfb168d83 253,259
+packages/cli/__tests__/commands/start.test.ts
+  d6ea8f0dfb168d83 13,77,79,856,861,880,903-904,914-917,941-943
+packages/plugins/agent-aider/package.json
+  d6ea8f0dfb168d83 2,37
+packages/plugins/notifier-openclaw/package.json
+  d6ea8f0dfb168d83 2,37
+packages/plugins/runtime-process/src/__tests__/index.test.ts
+  d6ea8f0dfb168d83 3
+packages/plugins/notifier-slack/package.json
+  d6ea8f0dfb168d83 2,37
+packages/plugins/scm-github/src/graphql-batch.ts
+  d6ea8f0dfb168d83 18
+artifacts/architecture-design.md
+  d6ea8f0dfb168d83 672,683,697
+packages/cli/__tests__/commands/review-check.test.ts
+  d6ea8f0dfb168d83 13,58,60
+packages/cli/src/commands/plugin.ts
+  d6ea8f0dfb168d83 11
+packages/integration-tests/src/workspace-worktree.integration.test.ts
+  d6ea8f0dfb168d83 8-9
+packages/plugins/agent-opencode/package.json
+  d6ea8f0dfb168d83 2,37
+packages/plugins/notifier-openclaw/src/index.ts
+  d6ea8f0dfb168d83 12-13
+packages/plugins/notifier-slack/src/index.ts
+  d6ea8f0dfb168d83 10
+packages/plugins/runtime-process/package.json
+  d6ea8f0dfb168d83 2,38
+packages/integration-tests/src/notifier-openclaw.integration.test.ts
+  d6ea8f0dfb168d83 7-8
+packages/cli/src/lib/preflight.ts
+  d6ea8f0dfb168d83 31,37,40,47,56
+packages/plugins/notifier-composio/src/index.ts
+  d6ea8f0dfb168d83 8
+packages/plugins/tracker-gitlab/test/index.test.ts
+  d6ea8f0dfb168d83 16
+packages/cli/__tests__/commands/session.test.ts
+  d6ea8f0dfb168d83 22,90,92
+packages/cli/src/lib/create-session-manager.ts
+  d6ea8f0dfb168d83 18
+CLAUDE.md
+  d6ea8f0dfb168d83 65,69-70,162,216,225,234,298,346
+packages/plugins/agent-aider/src/index.test.ts
+  d6ea8f0dfb168d83 2,21
+packages/cli/__tests__/lib/plugins.test.ts
+  d6ea8f0dfb168d83 8
+packages/cli/src/lib/web-dir.ts
+  d6ea8f0dfb168d83 2,180,187,203-204
+packages/core/README.md
+  d6ea8f0dfb168d83 1,128,144,161,191,194,197,212,215
+packages/integration-tests/src/notifier-desktop.integration.test.ts
+  d6ea8f0dfb168d83 8,26
+packages/plugins/notifier-webhook/package.json
+  d6ea8f0dfb168d83 2,37
+packages/integration-tests/src/helpers/session-factory.ts
+  d6ea8f0dfb168d83 5
+packages/plugins/agent-opencode/src/index.test.ts
+  d6ea8f0dfb168d83 2,13
+packages/plugins/agent-codex/src/index.ts
+  d6ea8f0dfb168d83 25,49
+packages/plugins/notifier-discord/package.json
+  d6ea8f0dfb168d83 2,37
+changelog/hash-based-architecture-migration.md
+  d6ea8f0dfb168d83 206
+packages/cli/src/lib/lifecycle-service.ts
+  d6ea8f0dfb168d83 12
+packages/cli/__tests__/lib/session-utils.test.ts
+  d6ea8f0dfb168d83 5,9,33-47
+packages/integration-tests/src/helpers/event-factory.ts
+  d6ea8f0dfb168d83 8
+packages/plugins/runtime-tmux/src/index.ts
+  d6ea8f0dfb168d83 16
+packages/web/server/terminal-observability.ts
+  d6ea8f0dfb168d83 7
+packages/web/src/__tests__/services.test.ts
+  d6ea8f0dfb168d83 42,60-66
+packages/web/src/providers/__tests__/MuxProvider.test.tsx
+  d6ea8f0dfb168d83 1-560
+packages/integration-tests/src/agent-codex.integration.test.ts
+  d6ea8f0dfb168d83 17,19
+packages/cli/__tests__/commands/plugin.test.ts
+  d6ea8f0dfb168d83 7,27,51,224
+packages/integration-tests/src/agent-aider.integration.test.ts
+  d6ea8f0dfb168d83 17,19
+package.json
+  d6ea8f0dfb168d83 14,20-21
+packages/integration-tests/src/runtime-tmux.integration.test.ts
+  d6ea8f0dfb168d83 2-3
+packages/core/src/recovery/validator.ts
+  d6ea8f0dfb168d83 34-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "b481c345f4be28776f4c71e2a8900f3a2978a59b",
+  "prompts": {
+    "49ba7754de4e19fb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d6d10-7f7d-7ee1-a823-b903735264e8",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 197,
+      "total_deletions": 0,
+      "accepted_lines": 197,
+      "overriden_lines": 0
+    },
+    "d6ea8f0dfb168d83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d7409-f2cf-79a3-a029-fd7fb3f0d469",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2510,
+      "total_deletions": 1082,
+      "accepted_lines": 2510,
+      "overriden_lines": 0
+    }
+  }
+}
