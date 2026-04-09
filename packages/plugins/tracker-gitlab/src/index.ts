@@ -30,6 +30,12 @@ interface GitLabIssueData {
   assignees: Array<{ username: string }>;
 }
 
+const GITLAB_ISSUE_URL_RE = /\/-\/(?:issues|work_items)\/(\d+)/;
+
+function extractIssueIdFromUrl(url: string): string | undefined {
+  return url.match(GITLAB_ISSUE_URL_RE)?.[1];
+}
+
 function toIssue(data: GitLabIssueData): Issue {
   return {
     id: String(data.iid),
@@ -77,8 +83,8 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
     },
 
     issueLabel(url: string, _project: ProjectConfig): string {
-      const match = url.match(/\/-\/issues\/(\d+)/);
-      if (match) return `#${match[1]}`;
+      const issueId = extractIssueIdFromUrl(url);
+      if (issueId) return `#${issueId}`;
       const parts = url.split("/");
       const lastPart = parts[parts.length - 1];
       return lastPart ? `#${lastPart}` : url;
@@ -193,12 +199,12 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
 
       const url = await glab(args, hostname);
 
-      const match = url.match(/\/-\/issues\/(\d+)/);
-      if (!match?.[1]) {
+      const issueId = extractIssueIdFromUrl(url);
+      if (!issueId) {
         throw new Error(`Failed to parse issue URL from glab output: ${url}`);
       }
 
-      return this.getIssue(match[1], project);
+      return this.getIssue(issueId, project);
     },
   };
 }

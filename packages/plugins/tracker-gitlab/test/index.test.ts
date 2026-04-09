@@ -123,6 +123,19 @@ describe("tracker-gitlab plugin", () => {
       await expect(tracker.getIssue("999", project)).rejects.toThrow("issue not found");
     });
 
+    it("uses GL_HOST for self-hosted GitLab commands", async () => {
+      tracker = create({ host: "gitlab.local:8080" });
+      mockGlab(sampleIssue);
+      await tracker.getIssue("123", project);
+      expect(glabMock).toHaveBeenCalledWith(
+        "glab",
+        ["issue", "view", "123", "--repo", "acme/repo", "-F", "json"],
+        expect.objectContaining({
+          env: expect.objectContaining({ GL_HOST: "gitlab.local:8080" }),
+        }),
+      );
+    });
+
     it("throws on malformed JSON response", async () => {
       glabMock.mockResolvedValueOnce({ stdout: "not json{" });
       await expect(tracker.getIssue("123", project)).rejects.toThrow();
@@ -199,6 +212,12 @@ describe("tracker-gitlab plugin", () => {
     it("extracts issue number from GitLab URL", () => {
       expect(
         tracker.issueLabel!("https://gitlab.com/acme/repo/-/issues/42", project),
+      ).toBe("#42");
+    });
+
+    it("extracts issue number from GitLab work item URL", () => {
+      expect(
+        tracker.issueLabel!("https://gitlab.local/acme/repo/-/work_items/42", project),
       ).toBe("#42");
     });
 
@@ -422,6 +441,25 @@ describe("tracker-gitlab plugin", () => {
         expect.arrayContaining(["issue", "create", "--label", "bug", "--assignee", "alice"]),
         expect.any(Object),
       );
+    });
+
+    it("accepts work item URLs from glab issue create", async () => {
+      mockGlabRaw("https://gitlab.local/acme/repo/-/work_items/1001\n");
+      mockGlab({
+        iid: 1001,
+        title: "Local issue",
+        description: "Created on self-hosted GitLab",
+        web_url: "https://gitlab.local/acme/repo/-/work_items/1001",
+        state: "opened",
+        labels: [],
+        assignees: [],
+      });
+
+      const issue = await tracker.createIssue!(
+        { title: "Local issue", description: "Created on self-hosted GitLab" },
+        project,
+      );
+      expect(issue).toMatchObject({ id: "1001", title: "Local issue", state: "open" });
     });
 
     it("throws when URL cannot be parsed from glab output", async () => {
