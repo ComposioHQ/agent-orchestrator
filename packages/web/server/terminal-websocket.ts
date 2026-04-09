@@ -15,6 +15,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request } from "node:http";
+import { createServer as createTcpServer } from "node:net";
 import { createCorrelationId } from "@composio/ao-core";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
@@ -51,6 +52,12 @@ let nextPort = 7800; // Start ttyd instances from port 7800
 const MAX_PORT = 7900; // Prevent unbounded port allocation
 
 const { config: observabilityConfig, observer } = createObserverContext("terminal-websocket");
+
+/** 
+ * Mutex to ensure port allocation and ttyd spawning is atomic.
+ * Prevents race conditions where concurrent requests might allocate the same port.
+ */
+let portAllocationLock: Promise<any> = Promise.resolve();
 
 function recordWebsocketMetric(input: {
   metric: "websocket_connect" | "websocket_disconnect" | "websocket_error";
@@ -150,12 +157,26 @@ function waitForTtyd(port: number, sessionId: string, timeoutMs = 3000): Promise
 }
 
 /**
+ * Check if a port is available by attempting to listen on it.
+ */
+async function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createTcpServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port);
+  });
+}
+
+/**
  * Spawn or reuse a ttyd instance for a tmux session.
  *
  * @param sessionId - User-facing session ID (used for base-path and URL)
  * @param tmuxSessionName - Actual tmux session name (may be hash-prefixed)
  */
-function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstance {
+async function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): Promise<TtydInstance> {
   const existing = instances.get(sessionId);
   if (existing) {
     metrics.totalReused += 1;
@@ -168,41 +189,65 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
     return existing;
   }
 
-  // Allocate port: reuse from pool if available, otherwise increment
-  let port: number;
-  if (availablePorts.size > 0) {
-    // Reuse a recycled port
-    port = availablePorts.values().next().value as number;
-    availablePorts.delete(port);
-  } else {
-    // Allocate new port
-    if (nextPort >= MAX_PORT) {
-      throw new Error(`Port exhaustion: reached maximum of ${MAX_PORT - 7800} terminal instances`);
+  // Use a promise-based mutex to ensure atomic port allocation and spawn.
+  // We capture the previous lock and ensure we wait for it to settle (even if it failed)
+  // before starting this allocation cycle.
+  const previousLock = portAllocationLock;
+  const allocationTask = (async () => {
+    // Wait for previous allocation to finish (ignore its error to avoid breaking the chain)
+    await previousLock.catch(() => {});
+
+    // Re-check existence inside lock to prevent double-spawning on concurrent requests for same session
+    const lockedExisting = instances.get(sessionId);
+    if (lockedExisting) return lockedExisting;
+
+    // Allocate port: prefer pools, but ALWAYS check availability
+    let port: number = -1;
+
+    // 1. Try recycled ports first
+    while (availablePorts.size > 0) {
+      const p = availablePorts.values().next().value as number;
+      availablePorts.delete(p);
+      if (await isPortFree(p)) {
+        port = p;
+        break;
+      }
     }
-    port = nextPort++;
-  }
 
-  console.log(`[Terminal] Spawning ttyd for ${tmuxSessionName} on port ${port}`);
-  metrics.totalSpawns += 1;
-  metrics.lastSpawnAt = new Date().toISOString();
+    // 2. Scan for new port if no valid recycled ports found
+    if (port === -1) {
+      for (let p = nextPort; p < MAX_PORT; p++) {
+        if (await isPortFree(p)) {
+          port = p;
+          nextPort = p + 1;
+          break;
+        }
+      }
+    }
 
-  // Enable mouse mode for scrollback support
-  const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "mouse", "on"]);
-  mouseProc.on("error", (err) => {
-    console.error(`[Terminal] Failed to set mouse mode for ${tmuxSessionName}:`, err.message);
-  });
+    if (port === -1) {
+      throw new Error(`Port exhaustion: could not find a free port in range ${nextPort}-${MAX_PORT}`);
+    }
 
-  // Hide the green status bar for cleaner appearance
-  const statusProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "status", "off"]);
-  statusProc.on("error", (err) => {
-    console.error(`[Terminal] Failed to hide status bar for ${tmuxSessionName}:`, err.message);
-  });
+    console.log(`[Terminal] Spawning ttyd for ${tmuxSessionName} on port ${port}`);
+    metrics.totalSpawns += 1;
+    metrics.lastSpawnAt = new Date().toISOString();
 
-  // Use user-facing sessionId for base-path (matches URL the dashboard uses)
-  // Use tmuxSessionName for tmux attach (may be hash-prefixed)
-  const proc = spawn(
-    "ttyd",
-    [
+    // Enable mouse mode for scrollback support
+    const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "mouse", "on"]);
+    mouseProc.on("error", (err) => {
+      console.error(`[Terminal] Failed to set mouse mode for ${tmuxSessionName}:`, err.message);
+    });
+
+    // Hide the green status bar for cleaner appearance
+    const statusProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "status", "off"]);
+    statusProc.on("error", (err) => {
+      console.error(`[Terminal] Failed to hide status bar for ${tmuxSessionName}:`, err.message);
+    });
+
+    // Use user-facing sessionId for base-path (matches URL the dashboard uses)
+    // Use tmuxSessionName for tmux attach (may be hash-prefixed)
+    const proc = spawn("ttyd", [
       "--writable",
       "--port",
       String(port),
@@ -212,80 +257,82 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
       "attach-session",
       "-t",
       tmuxSessionName,
-    ],
-    {
+    ], {
       stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+    });
 
-  proc.stdout?.on("data", (data: Buffer) => {
-    console.log(`[Terminal] ttyd ${sessionId}: ${data.toString().trim()}`);
-  });
+    const newInstance: TtydInstance = { sessionId, port, process: proc };
 
-  proc.stderr?.on("data", (data: Buffer) => {
-    console.log(`[Terminal] ttyd ${sessionId}: ${data.toString().trim()}`);
-  });
+    // Set up listeners BEFORE returning, while still inside the lock
+    proc.stdout?.on("data", (data: Buffer) => {
+      console.log(`[Terminal] ttyd ${sessionId}: ${data.toString().trim()}`);
+    });
 
-  // Use once() for cleanup handlers to prevent race condition when both exit and error fire
-  proc.once("exit", (code) => {
-    console.log(`[Terminal] ttyd ${sessionId} exited with code ${code}`);
-    // Only delete if this is still the current instance (prevents race with error handler)
-    const current = instances.get(sessionId);
-    if (current?.process === proc) {
-      instances.delete(sessionId);
-      metrics.activeInstances = instances.size;
-      // Only recycle port on clean exit (code 0), not on errors
-      // Failed ttyd processes may leave ports in TIME_WAIT state
-      if (code === 0) {
-        availablePorts.add(port);
+    proc.stderr?.on("data", (data: Buffer) => {
+      console.log(`[Terminal] ttyd ${sessionId}: ${data.toString().trim()}`);
+    });
+
+    // Use once() for cleanup handlers to prevent race condition when both exit and error fire
+    proc.once("exit", (code) => {
+      console.log(`[Terminal] ttyd ${sessionId} exited with code ${code}`);
+      const current = instances.get(sessionId);
+      if (current?.process === proc) {
+        instances.delete(sessionId);
+        metrics.activeInstances = instances.size;
+        if (code === 0) {
+          availablePorts.add(port);
+        }
       }
-    }
-    recordWebsocketMetric({
-      metric: "websocket_disconnect",
-      outcome: code === 0 ? "success" : "failure",
-      sessionId,
-      reason: `ttyd_exit:${code}`,
-      data: { port },
+      recordWebsocketMetric({
+        metric: "websocket_disconnect",
+        outcome: code === 0 ? "success" : "failure",
+        sessionId,
+        reason: `ttyd_exit:${code}`,
+        data: { port },
+      });
     });
-  });
 
-  proc.once("error", (err) => {
-    console.error(`[Terminal] ttyd ${sessionId} error:`, err.message);
-    // Only delete if this is still the current instance (prevents race with exit handler)
-    const current = instances.get(sessionId);
-    if (current?.process === proc) {
-      instances.delete(sessionId);
-      metrics.activeInstances = instances.size;
-      // Don't recycle port on error - may still be in use or TIME_WAIT
-    }
-    metrics.totalErrors += 1;
-    metrics.lastErrorAt = new Date().toISOString();
-    metrics.lastErrorReason = err.message;
-    recordWebsocketMetric({
-      metric: "websocket_error",
-      outcome: "failure",
-      sessionId,
-      reason: err.message,
-      data: { port },
+    proc.once("error", (err) => {
+      console.error(`[Terminal] ttyd ${sessionId} error:`, err.message);
+      const current = instances.get(sessionId);
+      if (current?.process === proc) {
+        instances.delete(sessionId);
+        metrics.activeInstances = instances.size;
+      }
+      metrics.totalErrors += 1;
+      metrics.lastErrorAt = new Date().toISOString();
+      metrics.lastErrorReason = err.message;
+      recordWebsocketMetric({
+        metric: "websocket_error",
+        outcome: "failure",
+        sessionId,
+        reason: err.message,
+        data: { port },
+      });
+      try {
+        proc.kill();
+      } catch {
+        // Ignore kill errors if process already dead
+      }
     });
-    // Kill any running process
-    try {
-      proc.kill();
-    } catch {
-      // Ignore kill errors if process already dead
-    }
-  });
 
-  const instance: TtydInstance = { sessionId, port, process: proc };
-  instances.set(sessionId, instance);
-  metrics.activeInstances = instances.size;
-  recordWebsocketMetric({
-    metric: "websocket_connect",
-    outcome: "success",
-    sessionId,
-    data: { reused: false, port },
-  });
-  return instance;
+    instances.set(sessionId, newInstance);
+    metrics.activeInstances = instances.size;
+    recordWebsocketMetric({
+      metric: "websocket_connect",
+      outcome: "success",
+      sessionId,
+      data: { reused: false, port },
+    });
+
+    return newInstance;
+  })();
+
+  // Update the lock pointer to this latest task so next callers queue behind it
+  portAllocationLock = allocationTask;
+
+  // Await and return the result for the current caller
+  return await allocationTask;
 }
 
 // Simple HTTP API for the dashboard to request terminal URLs
@@ -364,7 +411,7 @@ const server = createServer(async (req, res) => {
 
     // Spawn ttyd and wait for it to be ready (catch port exhaustion and startup failures)
     try {
-      const instance = getOrSpawnTtyd(sessionId, tmuxSessionId);
+      const instance = await getOrSpawnTtyd(sessionId, tmuxSessionId);
       await waitForTtyd(instance.port, sessionId);
 
       // Use the request host to construct the terminal URL (supports remote access)
