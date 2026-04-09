@@ -171,19 +171,44 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
 
     console.log(`[DirectTerminal] New connection for session: ${tmuxSessionId}`);
 
-    // Enable mouse mode for scrollback support
-    const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionId, "mouse", "on"]);
+    // Disable tmux mouse mode so tmux doesn't capture scroll events; this prevents cursor
+    // from jumping while user scrolls. Scrollback is handled by browser terminal client.
+    const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionId, "mouse", "off"]);
+    let mouseStderr = "";
+    mouseProc.stderr?.on("data", (data) => {
+      mouseStderr += data.toString();
+    });
     mouseProc.on("error", (err) => {
-      console.error(`[DirectTerminal] Failed to set mouse mode for ${tmuxSessionId}:`, err.message);
+      console.error(`[DirectTerminal] Failed to disable mouse mode for ${tmuxSessionId}:`, err.message);
+    });
+    mouseProc.on("close", (code) => {
+      if (code !== 0) {
+        console.error(
+          `[DirectTerminal] Failed to disable mouse mode for ${tmuxSessionId}: tmux exited with code ${code}`,
+          mouseStderr ? `stderr: ${mouseStderr}` : "",
+        );
+      }
     });
 
     // Hide the green status bar for cleaner appearance
     const statusProc = spawn(TMUX, ["set-option", "-t", tmuxSessionId, "status", "off"]);
+    let statusStderr = "";
+    statusProc.stderr?.on("data", (data) => {
+      statusStderr += data.toString();
+    });
     statusProc.on("error", (err) => {
       console.error(
         `[DirectTerminal] Failed to hide status bar for ${tmuxSessionId}:`,
         err.message,
       );
+    });
+    statusProc.on("close", (code) => {
+      if (code !== 0) {
+        console.error(
+          `[DirectTerminal] Failed to hide status bar for ${tmuxSessionId}: tmux exited with code ${code}`,
+          statusStderr ? `stderr: ${statusStderr}` : "",
+        );
+      }
     });
 
     // Build complete environment - node-pty requires proper env setup

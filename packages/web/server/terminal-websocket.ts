@@ -186,16 +186,41 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
   metrics.totalSpawns += 1;
   metrics.lastSpawnAt = new Date().toISOString();
 
-  // Enable mouse mode for scrollback support
-  const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "mouse", "on"]);
+  // Disable tmux mouse mode so tmux doesn't capture scroll events; this prevents cursor
+  // from jumping while user scrolls. Scrollback is handled by browser terminal client.
+  const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "mouse", "off"]);
+  let mouseStderr = "";
+  mouseProc.stderr?.on("data", (data) => {
+    mouseStderr += data.toString();
+  });
   mouseProc.on("error", (err) => {
-    console.error(`[Terminal] Failed to set mouse mode for ${tmuxSessionName}:`, err.message);
+    console.error(`[Terminal] Failed to disable mouse mode for ${tmuxSessionName}:`, err.message);
+  });
+  mouseProc.on("close", (code) => {
+    if (code !== 0) {
+      console.error(
+        `[Terminal] Failed to disable mouse mode for ${tmuxSessionName}: tmux exited with code ${code}`,
+        mouseStderr ? `stderr: ${mouseStderr}` : "",
+      );
+    }
   });
 
   // Hide the green status bar for cleaner appearance
   const statusProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "status", "off"]);
+  let statusStderr = "";
+  statusProc.stderr?.on("data", (data) => {
+    statusStderr += data.toString();
+  });
   statusProc.on("error", (err) => {
     console.error(`[Terminal] Failed to hide status bar for ${tmuxSessionName}:`, err.message);
+  });
+  statusProc.on("close", (code) => {
+    if (code !== 0) {
+      console.error(
+        `[Terminal] Failed to hide status bar for ${tmuxSessionName}: tmux exited with code ${code}`,
+        statusStderr ? `stderr: ${statusStderr}` : "",
+      );
+    }
   });
 
   // Use user-facing sessionId for base-path (matches URL the dashboard uses)
