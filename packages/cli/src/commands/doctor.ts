@@ -327,22 +327,16 @@ async function sendTestNotifications(
   fail: (msg: string) => void,
 ): Promise<void> {
   const activeNotifierNames = config.defaults?.notifiers ?? [];
-  const configuredNotifiers = Object.entries(config.notifiers ?? {});
   const targets = new Map<string, ReturnType<typeof resolveNotifierTarget>>();
 
-  for (const [name, notifierConfig] of configuredNotifiers) {
-    if (notifierConfig.plugin) {
-      targets.set(notifierConfig.plugin, { reference: name, pluginName: notifierConfig.plugin });
-    } else {
-      // External plugin without explicit plugin name - manifest.name not yet resolved
-      warn(`${name}: notifier plugin name not resolved (external plugin may not be loaded yet)`);
-    }
+  for (const name of Object.keys(config.notifiers ?? {})) {
+    targets.set(name, resolveNotifierTarget(config, name));
   }
 
   for (const name of activeNotifierNames) {
     const target = resolveNotifierTarget(config, name);
-    if (!targets.has(target.pluginName)) {
-      targets.set(target.pluginName, target);
+    if (!targets.has(target.reference)) {
+      targets.set(target.reference, target);
     }
   }
 
@@ -354,7 +348,9 @@ async function sendTestNotifications(
   console.log(`\nSending test notification to ${targets.size} notifier(s)...\n`);
 
   for (const target of targets.values()) {
-    const notifier = registry.get<Notifier>("notifier", target.pluginName);
+    const notifier =
+      registry.get<Notifier>("notifier", target.reference) ??
+      registry.get<Notifier>("notifier", target.pluginName);
     if (!notifier) {
       warn(`${target.reference}: plugin "${target.pluginName}" not loaded (may not be installed)`);
       continue;

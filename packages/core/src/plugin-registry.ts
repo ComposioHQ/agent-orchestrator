@@ -23,6 +23,11 @@ import type {
 /** Map from "slot:name" → plugin instance */
 type PluginMap = Map<string, { manifest: PluginManifest; instance: unknown }>;
 
+interface NotifierRegistration {
+  registrationName: string;
+  config?: Record<string, unknown>;
+}
+
 const LOCAL_PLUGIN_ENTRY_CANDIDATES = ["dist/index.js", "index.js"] as const;
 
 function makeKey(slot: PluginSlot, name: string): string {
@@ -92,6 +97,46 @@ function extractPluginConfig(
   }
 
   return undefined;
+}
+
+function collectNotifierRegistrations(
+  pluginName: string,
+  config: OrchestratorConfig,
+): NotifierRegistration[] {
+  const registrations: NotifierRegistration[] = [];
+  const seen = new Set<string>();
+  const notifierEntries = Object.entries(config.notifiers ?? {});
+
+  const addRegistration = (registrationName: string, rawConfig: Record<string, unknown>): void => {
+    if (seen.has(registrationName)) return;
+    seen.add(registrationName);
+    registrations.push({
+      registrationName,
+      config: prepareConfig("notifier", pluginName, registrationName, rawConfig, config.configPath),
+    });
+  };
+
+  const exactMatch = config.notifiers?.[pluginName];
+  if (exactMatch && typeof exactMatch === "object") {
+    const configuredPlugin = exactMatch["plugin"];
+    const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
+    if (!hasExplicitPlugin || configuredPlugin === pluginName) {
+      addRegistration(pluginName, exactMatch);
+    }
+  }
+
+  for (const [notifierId, notifierConfig] of notifierEntries) {
+    if (!notifierConfig || typeof notifierConfig !== "object") continue;
+    const configuredPlugin = (notifierConfig as Record<string, unknown>)["plugin"];
+    const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
+    const matches = hasExplicitPlugin ? configuredPlugin === pluginName : notifierId === pluginName;
+
+    if (matches) {
+      addRegistration(notifierId, notifierConfig);
+    }
+  }
+
+  return registrations;
 }
 
 /**
@@ -364,12 +409,39 @@ function resolvePluginSpecifier(
 export function createPluginRegistry(): PluginRegistry {
   const plugins: PluginMap = new Map();
 
+  function registerInstance(
+    slot: PluginSlot,
+    name: string,
+    manifest: PluginManifest,
+    instance: unknown,
+  ): void {
+    plugins.set(makeKey(slot, name), { manifest, instance });
+  }
+
+  function registerNotifier(plugin: PluginModule, config: OrchestratorConfig): void {
+    const { manifest } = plugin;
+    const registrations = collectNotifierRegistrations(manifest.name, config);
+
+    if (registrations.length === 0) {
+      registerInstance(manifest.slot, manifest.name, manifest, plugin.create(undefined));
+      return;
+    }
+
+    for (const [index, registration] of registrations.entries()) {
+      const instance = plugin.create(registration.config);
+      registerInstance(manifest.slot, registration.registrationName, manifest, instance);
+
+      if (index === 0 && registration.registrationName !== manifest.name) {
+        registerInstance(manifest.slot, manifest.name, manifest, instance);
+      }
+    }
+  }
+
   return {
     register(plugin: PluginModule, config?: Record<string, unknown>): void {
       const { manifest } = plugin;
-      const key = makeKey(manifest.slot, manifest.name);
       const instance = plugin.create(config);
-      plugins.set(key, { manifest, instance });
+      registerInstance(manifest.slot, manifest.name, manifest, instance);
     },
 
     get<T>(slot: PluginSlot, name: string): T | null {
@@ -378,13 +450,13 @@ export function createPluginRegistry(): PluginRegistry {
     },
 
     list(slot: PluginSlot): PluginManifest[] {
-      const result: PluginManifest[] = [];
+      const result = new Map<string, PluginManifest>();
       for (const [key, entry] of plugins) {
-        if (key.startsWith(`${slot}:`)) {
-          result.push(entry.manifest);
+        if (key.startsWith(`${slot}:`) && !result.has(entry.manifest.name)) {
+          result.set(entry.manifest.name, entry.manifest);
         }
       }
-      return result;
+      return [...result.values()];
     },
 
     async loadBuiltins(
@@ -403,10 +475,14 @@ export function createPluginRegistry(): PluginRegistry {
 
         if (mod) {
           try {
-            const pluginConfig = orchestratorConfig
-              ? extractPluginConfig(builtin.slot, builtin.name, orchestratorConfig)
-              : undefined;
-            this.register(mod, pluginConfig);
+            if (orchestratorConfig && mod.manifest.slot === "notifier") {
+              registerNotifier(mod, orchestratorConfig);
+            } else {
+              const pluginConfig = orchestratorConfig
+                ? extractPluginConfig(builtin.slot, builtin.name, orchestratorConfig)
+                : undefined;
+              this.register(mod, pluginConfig);
+            }
           } catch (error) {
             process.stderr.write(
               `[plugin-registry] Failed to load built-in plugin "${builtin.name}": ${error}\n`,
@@ -464,8 +540,12 @@ export function createPluginRegistry(): PluginRegistry {
           // Extract plugin config AFTER updating configs with manifest.name.
           // This ensures extractPluginConfig can find the config by manifest.name
           // (e.g., manifest "ms-teams" after config was updated from temp "teams").
-          const pluginConfig = extractPluginConfig(mod.manifest.slot, mod.manifest.name, config, true);
-          this.register(mod, pluginConfig);
+          if (mod.manifest.slot === "notifier") {
+            registerNotifier(mod, config);
+          } else {
+            const pluginConfig = extractPluginConfig(mod.manifest.slot, mod.manifest.name, config, true);
+            this.register(mod, pluginConfig);
+          }
         } catch (error) {
           process.stderr.write(`[plugin-registry] Failed to load plugin "${specifier}": ${error}\n`);
         }

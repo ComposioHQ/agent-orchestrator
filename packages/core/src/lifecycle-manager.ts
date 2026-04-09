@@ -1176,7 +1176,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     for (const name of notifierNames) {
       const target = resolveNotifierTarget(config, name);
-      const notifier = registry.get<Notifier>("notifier", target.pluginName);
+      const notifier =
+        registry.get<Notifier>("notifier", target.reference) ??
+        registry.get<Notifier>("notifier", target.pluginName);
       if (notifier) {
         try {
           await notifier.notify(eventWithPriority);

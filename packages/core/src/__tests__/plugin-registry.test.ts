@@ -238,6 +238,84 @@ describe("loadBuiltins", () => {
     });
   });
 
+  it("registers alias-specific notifier instances for the same plugin", async () => {
+    const registry = createPluginRegistry();
+    const fakeSlackNotifier = makePlugin("notifier", "slack");
+    const config = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      notifiers: {
+        alerts: {
+          plugin: "slack",
+          webhookUrl: "https://hooks.slack.com/services/alerts",
+          channel: "#alerts",
+        },
+        ops: {
+          plugin: "slack",
+          webhookUrl: "https://hooks.slack.com/services/ops",
+          channel: "#ops",
+        },
+      },
+    });
+
+    await registry.loadBuiltins(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-slack") return fakeSlackNotifier;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(fakeSlackNotifier.create).toHaveBeenCalledTimes(2);
+    expect(registry.get<{ _config: Record<string, unknown> }>("notifier", "alerts")?._config).toEqual({
+      webhookUrl: "https://hooks.slack.com/services/alerts",
+      channel: "#alerts",
+      configPath: "/test/config.yaml",
+    });
+    expect(registry.get<{ _config: Record<string, unknown> }>("notifier", "ops")?._config).toEqual({
+      webhookUrl: "https://hooks.slack.com/services/ops",
+      channel: "#ops",
+      configPath: "/test/config.yaml",
+    });
+    expect(registry.get("notifier", "slack")).not.toBeNull();
+    expect(registry.list("notifier")).toContainEqual(
+      expect.objectContaining({ name: "slack", slot: "notifier" }),
+    );
+    expect(registry.list("notifier")).toHaveLength(1);
+  });
+
+  it("prefers the notifier id matching the plugin name for direct plugin lookups", async () => {
+    const registry = createPluginRegistry();
+    const fakeSlackNotifier = makePlugin("notifier", "slack");
+    const config = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      notifiers: {
+        slack: {
+          plugin: "slack",
+          webhookUrl: "https://hooks.slack.com/services/default",
+          channel: "#general",
+        },
+        alerts: {
+          plugin: "slack",
+          webhookUrl: "https://hooks.slack.com/services/alerts",
+          channel: "#alerts",
+        },
+      },
+    });
+
+    await registry.loadBuiltins(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-slack") return fakeSlackNotifier;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(registry.get<{ _config: Record<string, unknown> }>("notifier", "slack")?._config).toEqual({
+      webhookUrl: "https://hooks.slack.com/services/default",
+      channel: "#general",
+      configPath: "/test/config.yaml",
+    });
+    expect(registry.get<{ _config: Record<string, unknown> }>("notifier", "alerts")?._config).toEqual({
+      webhookUrl: "https://hooks.slack.com/services/alerts",
+      channel: "#alerts",
+      configPath: "/test/config.yaml",
+    });
+  });
+
   it("passes notifier config from config.notifiers when loading builtins", async () => {
     const registry = createPluginRegistry();
     const fakeOpenClaw = makePlugin("notifier", "openclaw");
@@ -753,6 +831,68 @@ describe("External plugin manifest validation", () => {
     });
 
     // Plugin should be registered
+    expect(registry.get("notifier", "ms-teams")).not.toBeNull();
+  });
+
+  it("registers external notifier aliases separately after manifest name resolution", async () => {
+    const registry = createPluginRegistry();
+
+    const mockPlugin = {
+      manifest: { name: "ms-teams", slot: "notifier" as const, version: "1.0.0", description: "Teams notifier" },
+      create: vi.fn((pluginConfig?: Record<string, unknown>) => ({
+        name: "ms-teams",
+        _config: pluginConfig,
+      })),
+    };
+
+    const importFn = vi.fn(async () => mockPlugin);
+
+    const config = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      plugins: [
+        { name: "teams", source: "npm", package: "@acme/ao-plugin-notifier-teams", enabled: true },
+      ],
+      projects: {},
+      notifiers: {
+        alerts: {
+          plugin: "teams",
+          package: "@acme/ao-plugin-notifier-teams",
+          webhookUrl: "https://teams.example/alerts",
+        },
+        ops: {
+          plugin: "teams",
+          package: "@acme/ao-plugin-notifier-teams",
+          webhookUrl: "https://teams.example/ops",
+        },
+      },
+      _externalPluginEntries: [
+        {
+          source: "notifiers.alerts",
+          location: { kind: "notifier", notifierId: "alerts" },
+          slot: "notifier",
+          package: "@acme/ao-plugin-notifier-teams",
+        },
+        {
+          source: "notifiers.ops",
+          location: { kind: "notifier", notifierId: "ops" },
+          slot: "notifier",
+          package: "@acme/ao-plugin-notifier-teams",
+        },
+      ],
+    });
+
+    await registry.loadFromConfig(config, importFn);
+
+    expect(config.notifiers?.alerts?.plugin).toBe("ms-teams");
+    expect(config.notifiers?.ops?.plugin).toBe("ms-teams");
+    expect(registry.get<{ _config: Record<string, unknown> }>("notifier", "alerts")?._config).toEqual({
+      webhookUrl: "https://teams.example/alerts",
+      configPath: "/test/config.yaml",
+    });
+    expect(registry.get<{ _config: Record<string, unknown> }>("notifier", "ops")?._config).toEqual({
+      webhookUrl: "https://teams.example/ops",
+      configPath: "/test/config.yaml",
+    });
     expect(registry.get("notifier", "ms-teams")).not.toBeNull();
   });
 
