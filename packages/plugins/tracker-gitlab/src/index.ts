@@ -59,6 +59,15 @@ function parseIssueIdentifierFromUrl(url: string): string | null {
 
 function createGitLabTracker(config?: Record<string, unknown>): Tracker {
   const hostname = typeof config?.host === "string" ? config.host : undefined;
+
+  // For self-hosted GitLab, set GLAB_HOST env var so all glab commands work
+  // This is the proper way to configure glab for self-hosted instances
+  if (hostname) {
+    const fullHost = hostname.startsWith("http") ? hostname : `http://${hostname}`;
+    process.env.GLAB_HOST = fullHost;
+    console.log(`[gitlab-tracker] Set GLAB_HOST=${fullHost}`);
+    console.log(`[gitlab-tracker] Using configured hostname: ${hostname}`);
+  }
   const defaultHost = hostname ?? "gitlab.com";
 
   return {
@@ -169,7 +178,15 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
 
       if (update.labels && update.labels.length > 0) {
         await glab(
-          ["issue", "update", identifier, "--repo", project.repo, "--label", update.labels.join(",")],
+          [
+            "issue",
+            "update",
+            identifier,
+            "--repo",
+            project.repo,
+            "--label",
+            update.labels.join(","),
+          ],
           hostname,
         );
       }

@@ -379,6 +379,16 @@ async function fetchDiscussions(
 function createGitLabSCM(config?: Record<string, unknown>): SCM {
   const configHostname = typeof config?.host === "string" ? config.host : undefined;
 
+  // For self-hosted GitLab, set GLAB_HOST env var so all glab commands work
+  if (configHostname) {
+    const fullHost = configHostname.startsWith("http")
+      ? configHostname
+      : `http://${configHostname}`;
+    process.env.GLAB_HOST = fullHost;
+    console.log(`[gitlab-scm] Set GLAB_HOST=${fullHost}`);
+    console.log(`[gitlab-scm] Using configured hostname: ${configHostname}`);
+  }
+
   function resolveHostname(pr?: PRInfo): string | undefined {
     return configHostname ?? (pr ? extractHostFromOwner(pr.owner) : undefined);
   }
