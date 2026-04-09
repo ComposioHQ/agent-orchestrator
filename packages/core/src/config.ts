@@ -1,5 +1,5 @@
 /**
- * Configuration loader — reads agent-orchestrator.yaml and validates with Zod.
+ * Configuration loader - reads agent-orchestrator.yaml and validates with Zod.
  *
  * Minimal config that just works:
  *   projects:
