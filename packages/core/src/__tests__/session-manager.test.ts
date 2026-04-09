@@ -281,3 +281,138 @@ describe("deleteSession retry loop", () => {
     expect(deleteCallCount).toBe(1);
   });
 });
+
+describe("send with OpenCode session tracking", () => {
+  it("tracks OpenCode session updatedAt for delivery confirmation", async () => {
+    const { execFile } = await import("node:child_process");
+
+    // Setup: Create a session with opencode agent and session ID
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      opencodeSessionId: "ses_test_123",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    let sessionListCallCount = 0;
+    vi.mocked(execFile).mockImplementation(((file: string, args: string[], options: any, callback?: any) => {
+      const cb = typeof options === "function" ? options : callback;
+      if (!cb) return null as any;
+
+      const argsArray = Array.isArray(args) ? args : [];
+      if (argsArray[1] === "list") {
+        sessionListCallCount++;
+        cb(null, JSON.stringify([{ id: "ses_test_123", title: "AO:app-1", updatedAt: 1234567890 }]), "");
+      } else {
+        cb(null, "", "");
+      }
+      return null as any;
+    }) as any);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.send("app-1", "test message");
+
+    // Verify session list was called at least twice (baseline + confirmation check)
+    expect(sessionListCallCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("creates default handle when session has no runtime handle", async () => {
+    // Setup: Create a session with opencode agent but NO runtime handle
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      opencodeSessionId: "ses_test_456",
+      // No runtimeHandle
+    });
+
+    const { execFile } = await import("node:child_process");
+    vi.mocked(execFile).mockImplementation(((file: string, args: string[], options: any, callback?: any) => {
+      const cb = typeof options === "function" ? options : callback;
+      if (!cb) return null as any;
+
+      const argsArray = Array.isArray(args) ? args : [];
+      if (argsArray[1] === "list") {
+        cb(null, JSON.stringify([{ id: "ses_test_456", title: "AO:app-2", updatedAt: 1234567890 }]), "");
+      } else {
+        cb(null, "", "");
+      }
+      return null as any;
+    }) as any);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    // This should succeed by creating a default handle with the session ID
+    await sm.send("app-2", "test message");
+  });
+
+  it("normalizes session with default handle when runtimeHandle is missing", async () => {
+    // Setup: Create a session with opencode agent but NO runtime handle
+    writeMetadata(sessionsDir, "app-3", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "idle", // Non-running status to trigger restore path
+      project: "my-app",
+      agent: "opencode",
+      opencodeSessionId: "ses_test_789",
+      // No runtimeHandle
+    });
+
+    const { execFile } = await import("node:child_process");
+    vi.mocked(execFile).mockImplementation(((file: string, args: string[], options: any, callback?: any) => {
+      const cb = typeof options === "function" ? options : callback;
+      if (!cb) return null as any;
+
+      const argsArray = Array.isArray(args) ? args : [];
+      if (argsArray[1] === "list") {
+        cb(null, JSON.stringify([{ id: "ses_test_789", title: "AO:app-3", updatedAt: 1234567890 }]), "");
+      } else {
+        cb(null, "", "");
+      }
+      return null as any;
+    }) as any);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // When sending to a session without a runtime handle, the prepareSession
+    // function should create a default handle with the session ID
+    // This tests the prepareSession logic that normalizes the session
+    await sm.send("app-3", "test message");
+  });
+
+  it("handles OpenCode session not found in session list", async () => {
+    // Setup: Create a session with opencode agent but the session isn't in the list
+    writeMetadata(sessionsDir, "app-4", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      opencodeSessionId: "ses_missing",
+      runtimeHandle: JSON.stringify(makeHandle("rt-4")),
+    });
+
+    const { execFile } = await import("node:child_process");
+    vi.mocked(execFile).mockImplementation(((file: string, args: string[], options: any, callback?: any) => {
+      const cb = typeof options === "function" ? options : callback;
+      if (!cb) return null as any;
+
+      const argsArray = Array.isArray(args) ? args : [];
+      if (argsArray[1] === "list") {
+        // Return empty list - session not found
+        cb(null, "[]", "");
+      } else {
+        cb(null, "", "");
+      }
+      return null as any;
+    }) as any);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    // Should still succeed even if session is not in list (falls back to other delivery checks)
+    await sm.send("app-4", "test message");
+  });
+});
