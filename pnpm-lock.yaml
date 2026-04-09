@@ -80,6 +80,9 @@ importers:
       '@aoagents/ao-plugin-notifier-webhook':
         specifier: workspace:*
         version: link:../plugins/notifier-webhook
+      '@aoagents/ao-plugin-runtime-file':
+        specifier: workspace:*
+        version: link:../plugins/runtime-file
       '@aoagents/ao-plugin-runtime-process':
         specifier: workspace:*
         version: link:../plugins/runtime-process
@@ -418,7 +421,7 @@ importers:
 
   packages/plugins/runtime-file:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -453,7 +456,7 @@ importers:
       '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
-      '@composio/ao-plugin-runtime-file':
+      '@aoagents/ao-plugin-runtime-file':
         specifier: workspace:*
         version: link:../runtime-file
     devDependencies:
