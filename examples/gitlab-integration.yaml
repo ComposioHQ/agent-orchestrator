@@ -1,0 +1,48 @@
+# GitLab integration with merge requests and GitLab Issues
+# Requires `glab` CLI authenticated (run `glab auth login`)
+
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+defaults:
+  runtime: tmux
+  agent: claude-code
+  workspace: worktree
+  notifiers: [desktop]
+
+projects:
+  my-app:
+    repo: my-group/my-app
+    path: ~/my-app
+    defaultBranch: main
+
+    # GitLab SCM for merge requests and CI pipelines
+    scm:
+      plugin: gitlab
+
+    # GitLab Issues as the issue tracker
+    tracker:
+      plugin: gitlab
+
+    # Webhook acceleration for faster event processing (optional)
+    # scm:
+    #   plugin: gitlab
+    #   webhook:
+    #     path: /api/webhooks/gitlab
+    #     secretEnvVar: GITLAB_WEBHOOK_SECRET
+
+    agentRules: |
+      Always run tests before pushing.
+      Use conventional commits (feat:, fix:, chore:).
+
+  # Self-hosted GitLab example
+  # internal-app:
+  #   repo: gitlab.company.com/team/internal-app
+  #   path: ~/internal-app
+  #   defaultBranch: main
+  #   scm:
+  #     plugin: gitlab
+  #     host: gitlab.company.com
+  #   tracker:
+  #     plugin: gitlab
+  #     host: gitlab.company.com

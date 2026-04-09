@@ -76,6 +76,18 @@ Use this if:
 - You need agent-specific configuration
 - You're evaluating different AI coding assistants
 
+### [gitlab-integration.yaml](./gitlab-integration.yaml)
+
+**GitLab with merge requests and GitLab Issues**
+
+Uses GitLab as both the SCM (merge requests, CI) and issue tracker. Includes a commented-out self-hosted GitLab example.
+
+Use this if:
+
+- Your project is hosted on GitLab (SaaS or self-hosted)
+- You want to use GitLab Issues for task tracking
+- You want agents to create merge requests instead of pull requests
+
 ## Configuration Tips
 
 1. **Start simple** - Use `simple-github.yaml` as a starting point
@@ -97,6 +109,10 @@ export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 
 # GitHub (usually set by gh CLI)
 # export GITHUB_TOKEN="ghp_..."
+
+# GitLab (usually set by glab CLI via `glab auth login`)
+# export GITLAB_TOKEN="glpat-..."
+# export GITLAB_WEBHOOK_SECRET="your-webhook-secret"
 ```
 
 Add these to your shell profile (`~/.zshrc` or `~/.bashrc`) to persist them.
