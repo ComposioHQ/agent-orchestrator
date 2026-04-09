@@ -332,7 +332,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
         }
       };
     },
-    [],
+    [sendTerminalOpen],
   );
 
   const writeTerminal = useCallback((id: string, data: string) => {
