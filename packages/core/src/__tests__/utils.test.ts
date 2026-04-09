@@ -2,7 +2,16 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isRetryableHttpStatus, normalizeRetryConfig, readLastJsonlEntry } from "../utils.js";
+import type { OrchestratorConfig } from "../types.js";
+import {
+  isRetryableHttpStatus,
+  normalizeRetryConfig,
+  readLastJsonlEntry,
+  shellEscape,
+  escapeAppleScript,
+  validateUrl,
+  resolveProjectIdForSessionId,
+} from "../utils.js";
 import { parsePrFromUrl } from "../utils/pr.js";
 
 describe("readLastJsonlEntry", () => {
@@ -137,5 +146,154 @@ describe("parsePrFromUrl", () => {
 
   it("returns null when the URL has no PR number", () => {
     expect(parsePrFromUrl("https://example.com/foo/bar/pull/not-a-number")).toBeNull();
+  });
+});
+
+describe("shellEscape", () => {
+  it("wraps simple strings in single quotes", () => {
+    expect(shellEscape("hello")).toBe("'hello'");
+    expect(shellEscape("hello world")).toBe("'hello world'");
+  });
+
+  it("escapes embedded single quotes", () => {
+    expect(shellEscape("it's")).toBe("'it'\\''s'");
+    expect(shellEscape("don't")).toBe("'don'\\''t'");
+  });
+
+  it("handles multiple single quotes", () => {
+    expect(shellEscape("it's a 'test'")).toBe("'it'\\''s a '\\''test'\\'''");
+  });
+
+  it("handles empty string", () => {
+    expect(shellEscape("")).toBe("''");
+  });
+
+  it("handles strings with special characters", () => {
+    expect(shellEscape("hello$world")).toBe("'hello$world'");
+    expect(shellEscape("cmd;ls")).toBe("'cmd;ls'");
+    expect(shellEscape('echo "test"')).toBe("'echo \"test\"'");
+  });
+});
+
+describe("escapeAppleScript", () => {
+  it("escapes backslashes", () => {
+    expect(escapeAppleScript("C:\\Users\\test")).toBe("C:\\\\Users\\\\test");
+    expect(escapeAppleScript("path\\to\\file")).toBe("path\\\\to\\\\file");
+  });
+
+  it("escapes double quotes", () => {
+    expect(escapeAppleScript('say "hello"')).toBe('say \\"hello\\"');
+    expect(escapeAppleScript('"quoted"')).toBe('\\"quoted\\"');
+  });
+
+  it("escapes both backslashes and double quotes", () => {
+    expect(escapeAppleScript('C:\\Users\\test "name"')).toBe(
+      'C:\\\\Users\\\\test \\"name\\"',
+    );
+  });
+
+  it("handles strings with no special characters", () => {
+    expect(escapeAppleScript("hello world")).toBe("hello world");
+    expect(escapeAppleScript("test")).toBe("test");
+  });
+
+  it("handles empty string", () => {
+    expect(escapeAppleScript("")).toBe("");
+  });
+});
+
+describe("validateUrl", () => {
+  it("accepts https URLs", () => {
+    expect(() => validateUrl("https://example.com", "TestPlugin")).not.toThrow();
+    expect(() => validateUrl("https://api.example.com/v1", "API")).not.toThrow();
+  });
+
+  it("accepts http URLs", () => {
+    expect(() => validateUrl("http://localhost:8080", "Local")).not.toThrow();
+    expect(() => validateUrl("http://example.com", "Test")).not.toThrow();
+  });
+
+  it("rejects non-http URLs", () => {
+    expect(() => validateUrl("ftp://example.com", "Test")).toThrow(
+      "[Test] Invalid url: must be http(s), got \"ftp://example.com\"",
+    );
+    expect(() => validateUrl("file:///path/to/file", "Test")).toThrow(
+      "[Test] Invalid url: must be http(s), got \"file:///path/to/file\"",
+    );
+  });
+
+  it("rejects URLs without protocol", () => {
+    expect(() => validateUrl("example.com", "Test")).toThrow(
+      "[Test] Invalid url: must be http(s), got \"example.com\"",
+    );
+    expect(() => validateUrl("//example.com", "Test")).toThrow(
+      "[Test] Invalid url: must be http(s), got \"//example.com\"",
+    );
+  });
+
+  it("includes plugin label in error message", () => {
+    expect(() => validateUrl("invalid", "MyPlugin")).toThrow(
+      "[MyPlugin] Invalid url: must be http(s), got \"invalid\"",
+    );
+  });
+});
+
+describe("resolveProjectIdForSessionId", () => {
+  it("returns project ID when session ID matches prefix", () => {
+    const config = {
+      projects: {
+        proj1: { sessionPrefix: "foo" },
+        proj2: { sessionPrefix: "bar" },
+      },
+    } as unknown as OrchestratorConfig;
+    expect(resolveProjectIdForSessionId(config, "foo")).toBe("proj1");
+    expect(resolveProjectIdForSessionId(config, "bar")).toBe("proj2");
+  });
+
+  it("returns project ID when session ID starts with prefix and hyphen", () => {
+    const config = {
+      projects: {
+        proj1: { sessionPrefix: "foo" },
+        proj2: { sessionPrefix: "bar" },
+      },
+    } as unknown as OrchestratorConfig;
+    expect(resolveProjectIdForSessionId(config, "foo-123")).toBe("proj1");
+    expect(resolveProjectIdForSessionId(config, "bar-456")).toBe("proj2");
+  });
+
+  it("returns undefined when no prefix matches", () => {
+    const config = {
+      projects: {
+        proj1: { sessionPrefix: "foo" },
+        proj2: { sessionPrefix: "bar" },
+      },
+    } as unknown as OrchestratorConfig;
+    expect(resolveProjectIdForSessionId(config, "baz")).toBeUndefined();
+    expect(resolveProjectIdForSessionId(config, "baz-123")).toBeUndefined();
+  });
+
+  it("handles session ID that is prefix without hyphen as direct match", () => {
+    const config = {
+      projects: {
+        proj1: { sessionPrefix: "test" },
+      },
+    } as unknown as OrchestratorConfig;
+    expect(resolveProjectIdForSessionId(config, "test")).toBe("proj1");
+  });
+
+  it("returns undefined when projects config is empty", () => {
+    const config = { projects: {} } as unknown as OrchestratorConfig;
+    expect(resolveProjectIdForSessionId(config, "test-123")).toBeUndefined();
+  });
+
+  it("handles case where session ID starts with prefix but no hyphen", () => {
+    const config = {
+      projects: {
+        proj1: { sessionPrefix: "foo" },
+      },
+    } as unknown as OrchestratorConfig;
+    // "foobar" starts with "foo" but doesn't have hyphen, should NOT match
+    expect(resolveProjectIdForSessionId(config, "foobar")).toBeUndefined();
+    expect(resolveProjectIdForSessionId(config, "foo-xyz")).toBe("proj1");
   });
 });
