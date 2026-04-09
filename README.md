@@ -45,7 +45,7 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 
 ## Quick Start
 
-> **Prerequisites:** [Node.js 20+](https://nodejs.org), [Git 2.25+](https://git-scm.com), [tmux](https://github.com/tmux/tmux/wiki/Installing), [`gh` CLI](https://cli.github.com). Install tmux via `brew install tmux` (macOS) or `sudo apt install tmux` (Linux).
+> **Prerequisites:** [Node.js 20+](https://nodejs.org), [Git 2.25+](https://git-scm.com), [tmux](https://github.com/tmux/tmux/wiki/Installing), [`gh` CLI](https://cli.github.com). Install tmux via `brew install tmux` (macOS) or your package manager (Linux).
 
 ### Install
 
@@ -54,9 +54,23 @@ npm install -g @composio/ao
 ```
 
 <details>
-<summary>Permission denied? Install from source?</summary>
+<summary>Permission denied? Try npx? Install from source?</summary>
 
-If `npm install -g` fails with EACCES, prefix with `sudo` or [fix your npm permissions](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally).
+If `npm install -g` fails with EACCES, fix your npm prefix:
+
+```bash
+mkdir -p ~/.npm-global
+npm config set prefix '~/.npm-global'
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+npm install -g @composio/ao
+```
+
+Or skip the global install entirely and run via `npx`:
+
+```bash
+npx @composio/ao start
+```
 
 To install from source (for contributors):
 

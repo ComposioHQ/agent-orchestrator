@@ -27,10 +27,10 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
   brew install tmux
 
   # Install on Ubuntu/Debian
-  sudo apt install tmux
+  apt install tmux
 
   # Install on Fedora/RHEL
-  sudo dnf install tmux
+  dnf install tmux
   ```
 
 - **GitHub CLI** (for GitHub integration) - Required for PR creation, issue management
@@ -68,21 +68,18 @@ ao --version
 
 This installs the `ao` CLI globally along with all default plugins and the web dashboard.
 
-**Permission denied (EACCES)?** This is common on macOS. Three options:
+**Permission denied (EACCES)?** This is common on macOS. Two options:
 
 ```bash
-# Option 1: Use sudo
-sudo npm install -g @composio/ao
+# Option 1: Fix npm permissions permanently (recommended)
+mkdir -p ~/.npm-global
+npm config set prefix '~/.npm-global'
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+npm install -g @composio/ao
 
 # Option 2: Use npx (no global install needed)
 npx @composio/ao start
-
-# Option 3: Fix npm permissions permanently (recommended)
-mkdir -p ~/.npm-global
-npm config set prefix '~/.npm-global'
-echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc
-source ~/.zshrc
-npm install -g @composio/ao
 ```
 
 ### Build from Source (for contributors)
@@ -101,7 +98,7 @@ bash scripts/setup.sh
 ao --version
 ```
 
-The setup script handles pnpm installation, dependency resolution, building all packages, and linking the `ao` command globally (with automatic permission handling on macOS).
+The setup script handles pnpm installation, dependency resolution, building all packages, and linking the `ao` command globally. If the npm prefix is not user-writable, it automatically configures a user-local prefix (`~/.npm-global`) — no sudo required.
 
 ## First-Time Setup
 
@@ -439,10 +436,10 @@ cp examples/simple-github.yaml agent-orchestrator.yaml
 brew install tmux
 
 # Ubuntu/Debian
-sudo apt install tmux
+apt install tmux
 
 # Fedora/RHEL
-sudo dnf install tmux
+dnf install tmux
 ```
 
 ### "gh auth failed"

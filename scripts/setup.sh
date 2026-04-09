@@ -136,31 +136,22 @@ pnpm build
 
 echo ""
 echo "Linking CLI globally..."
+
+# Ensure npm global prefix is user-writable (shared logic — single source of truth)
+# shellcheck source=./ensure-npm-prefix.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ensure-npm-prefix.sh"
+
 cd packages/ao
-if npm link 2>/dev/null; then
-  :
-elif [ "$INTERACTIVE" = true ]; then
-  echo "  Permission denied. Retrying with sudo..."
-  sudo npm link
-else
-  echo "ERROR: Permission denied. Run manually: cd packages/ao && sudo npm link"
-  exit 1
-fi
+npm link
 cd "$REPO_ROOT"
 
-# ─── Verify ao is in PATH ────────────────────────────────────────────────────
-
-echo ""
-if command -v ao &> /dev/null; then
-  echo "[ok] 'ao' command is available in PATH"
-else
-  NPM_BIN="$(npm bin -g 2>/dev/null || npm config get prefix)/bin"
-  echo "WARNING: 'ao' is not in your PATH."
-  echo "  Add this to your shell profile (~/.zshrc or ~/.bashrc):"
+# Verify ao is reachable in PATH
+if ! command -v ao >/dev/null 2>&1; then
   echo ""
-  echo "    export PATH=\"$NPM_BIN:\$PATH\""
-  echo ""
-  echo "  Then restart your terminal or run: source ~/.zshrc"
+  echo "WARNING: 'ao' command is not in your PATH after npm link."
+  echo "  Your npm prefix bin directory may not be in PATH."
+  echo "  Add this to your shell profile:"
+  echo "    export PATH=\"$(npm config get prefix)/bin:\$PATH\""
 fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
@@ -179,3 +170,14 @@ echo "  Want to add more projects later?"
 echo ""
 echo "    ao start ~/path/to/another-repo"
 echo ""
+
+# ─── Reload shell if npm prefix was reconfigured ────────────────────────────
+# Only exec a new shell in interactive terminals; non-interactive callers
+# (CI, parent scripts) should not be replaced with a login shell.
+
+if [ "${NEEDS_SHELL_RELOAD:-}" = true ] && [ "$INTERACTIVE" = true ] && [ -n "${SHELL_RC:-}" ]; then
+  echo "Restarting shell to pick up new PATH..."
+  exec "$SHELL" -l
+elif [ "${NEEDS_SHELL_RELOAD:-}" = true ]; then
+  echo "NOTE: Restart your terminal or run: source ${SHELL_RC:-~/.zshrc}"
+fi
