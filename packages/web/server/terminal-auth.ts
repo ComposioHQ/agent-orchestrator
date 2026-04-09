@@ -9,7 +9,15 @@ import {
   readMetadataRaw,
   resolveProjectIdForSessionId,
 } from "@composio/ao-core";
-import { validateSessionId } from "./tmux-utils.js";
+
+// Keep this in sync with server/tmux-utils.ts. terminal-auth is also imported
+// through Next.js route bundling, where depending on the Node-targeted server
+// module graph directly is awkward.
+const VALID_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
+
+function validateSessionId(sessionId: string): boolean {
+  return VALID_SESSION_ID.test(sessionId);
+}
 
 interface TerminalSessionRecord {
   sessionId: string;

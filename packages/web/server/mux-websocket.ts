@@ -474,7 +474,7 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
     /**
      * Handle incoming messages
      */
-    ws.on("message", async (data) => {
+    ws.on("message", (data) => {
 
       try {
         const msg = JSON.parse(data.toString("utf8")) as ClientMessage;
