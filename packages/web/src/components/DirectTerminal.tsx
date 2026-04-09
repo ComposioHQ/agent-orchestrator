@@ -84,14 +84,12 @@ function parseRuntimeTerminalConfig(payload: unknown): TerminalConnectionConfig 
   };
 }
 
-export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; light: ITheme } {
-  const agentAccent = {
+export function buildTerminalThemes(_variant: TerminalVariant): { dark: ITheme; light: ITheme } {
+  const accent = {
     cursor: "#58a6ff",
     selDark: "rgba(88, 166, 255, 0.3)",
     selLight: "rgba(91, 126, 248, 0.25)",
   };
-  const orchAccent = agentAccent;
-  const accent = variant === "orchestrator" ? orchAccent : agentAccent;
 
   const githubDark = getThemePreset("github-dark")?.dark ?? THEME_PRESETS[0].dark;
   const dark: ITheme = {
@@ -917,7 +915,7 @@ export function DirectTerminal({
 
                 {/* Font Family */}
                 <div style={{ marginBottom: 14 }}>
-                  <div className="settings-label" style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Font Family</div>
+                  <div style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Font Family</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                     {FONT_FAMILIES.map((f) => {
                       const active = settings.fontFamily === f.value;
@@ -936,7 +934,7 @@ export function DirectTerminal({
 
                 {/* Font Size */}
                 <div style={{ marginBottom: 14 }}>
-                  <div className="settings-label" style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Font Size</div>
+                  <div style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Font Size</div>
                   <div style={{ display: "flex", gap: 6 }}>
                     {[12, 13, 14, 15, 16].map((size) => {
                       const active = settings.fontSize === size;
@@ -959,7 +957,7 @@ export function DirectTerminal({
                 {/* Theme — only active in dark mode */}
                 <div style={{ marginBottom: 14, opacity: isLight ? 0.5 : 1 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                    <span className="settings-label" style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500 }}>Theme</span>
+                    <span style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500 }}>Theme</span>
                     {isLight ? <span style={{ fontSize: 10, color: chrome.textMuted, fontStyle: "italic" }}>(dark mode only)</span> : null}
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
@@ -981,7 +979,7 @@ export function DirectTerminal({
 
                 {/* Cursor Style — icons with text labels */}
                 <div style={{ marginBottom: 14 }}>
-                  <div className="settings-label" style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Cursor Style</div>
+                  <div style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Cursor Style</div>
                   <div style={{ display: "flex", gap: 6 }}>
                     {(["block", "bar", "underline"] as const).map((style) => {
                       const active = settings.cursorStyle === style;
@@ -1029,7 +1027,7 @@ export function DirectTerminal({
 
                 {/* Selection Color */}
                 <div style={{ marginBottom: 14 }}>
-                  <div className="settings-label" style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Selection Color</div>
+                  <div style={{ fontSize: 11, color: chrome.textMuted, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 500, marginBottom: 6 }}>Selection Color</div>
                   <div style={{ display: "flex", gap: 6 }}>
                     {SELECTION_COLORS.map((color) => (
                       <button key={color.value} onClick={() => updateSettings({ selectionColor: color.value })} title={color.label} style={{
