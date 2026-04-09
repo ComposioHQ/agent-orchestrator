@@ -418,7 +418,7 @@ export function SessionDetail({
             <div className="mb-3 flex items-center gap-2">
               <div
                 className="h-3 w-0.5"
-                style={{ background: isOrchestrator ? accentColor : activity.color, opacity: 0.75 }}
+                style={{ background: isOrchestrator ? "var(--color-accent)" : activity.color, opacity: 0.75 }}
               />
               <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--color-text-tertiary)]">
                 Live Terminal
