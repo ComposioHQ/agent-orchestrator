@@ -116,7 +116,7 @@ describe("plugin manifest & exports", () => {
     expect(manifest).toEqual({
       name: "cursor",
       slot: "agent",
-      description: "Agent plugin: Cursor CLI",
+      description: "Agent plugin: Cursor Agent CLI",
       version: "0.1.0",
       displayName: "Cursor",
     });
@@ -125,7 +125,7 @@ describe("plugin manifest & exports", () => {
   it("create() returns agent with correct name and processName", () => {
     const agent = create();
     expect(agent.name).toBe("cursor");
-    expect(agent.processName).toBe("cursor");
+    expect(agent.processName).toBe("agent");
   });
 
   it("default export is a valid PluginModule", () => {
@@ -141,24 +141,26 @@ describe("getLaunchCommand", () => {
   const agent = create();
 
   it("generates base command", () => {
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("cursor");
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("agent");
   });
 
-  it("includes --auto-approve when permissions=permissionless", () => {
+  it("includes --force --trust --approve-mcps when permissions=permissionless", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "permissionless" }));
-    expect(cmd).toContain("--auto-approve");
+    expect(cmd).toContain("--force");
+    expect(cmd).toContain("--trust");
+    expect(cmd).toContain("--approve-mcps");
   });
 
   it("treats legacy permissions=skip as permissionless", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip" as unknown as AgentLaunchConfig["permissions"] }),
     );
-    expect(cmd).toContain("--auto-approve");
+    expect(cmd).toContain("--force");
   });
 
-  it("maps permissions=auto-edit to no-prompt mode on Cursor", () => {
+  it("maps permissions=auto-edit to force mode on Cursor", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "auto-edit" }));
-    expect(cmd).toContain("--auto-approve");
+    expect(cmd).toContain("--force");
   });
 
   it("includes --model with shell-escaped value", () => {
@@ -166,28 +168,28 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'gpt-4o'");
   });
 
-  it("includes --prompt with shell-escaped prompt", () => {
+  it("includes prompt as positional argument (not --prompt flag)", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Fix the tests" }));
-    expect(cmd).toContain("--prompt 'Fix the tests'");
+    expect(cmd).toContain("'Fix the tests'");
+    expect(cmd).not.toContain("--prompt");
   });
 
   it("combines all options", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "permissionless", model: "sonnet", prompt: "Go" }),
     );
-    expect(cmd).toBe("cursor --auto-approve --model 'sonnet' --prompt 'Go'");
+    expect(cmd).toBe("agent --force --trust --approve-mcps --model 'sonnet' 'Go'");
   });
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "it's broken" }));
-    expect(cmd).toContain("--prompt 'it'\\''s broken'");
+    expect(cmd).toContain("'it'\\''s broken'");
   });
 
   it("omits optional flags when not provided", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
-    expect(cmd).not.toContain("--auto-approve");
+    expect(cmd).not.toContain("--force");
     expect(cmd).not.toContain("--model");
-    expect(cmd).not.toContain("--prompt");
   });
 });
 
@@ -220,18 +222,18 @@ describe("getEnvironment", () => {
 describe("isProcessRunning", () => {
   const agent = create();
 
-  it("returns true when cursor found on tmux pane TTY", async () => {
-    mockTmuxWithProcess("cursor");
+  it("returns true when agent found on tmux pane TTY", async () => {
+    mockTmuxWithProcess("agent");
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
 
-  it("returns true when .cursor (dot-prefixed) found on tmux pane TTY", async () => {
-    mockTmuxWithProcess(".cursor");
+  it("returns true when /path/to/agent found on tmux pane TTY", async () => {
+    mockTmuxWithProcess("/usr/local/bin/agent");
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
 
-  it("returns false when cursor not on tmux pane TTY", async () => {
-    mockTmuxWithProcess("cursor", false);
+  it("returns false when agent not on tmux pane TTY", async () => {
+    mockTmuxWithProcess("agent", false);
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
   });
 
@@ -269,14 +271,14 @@ describe("isProcessRunning", () => {
     killSpy.mockRestore();
   });
 
-  it("finds cursor on any pane in multi-pane session", async () => {
+  it("finds agent on any pane in multi-pane session", async () => {
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") {
         return Promise.resolve({ stdout: "/dev/ttys001\n/dev/ttys002\n", stderr: "" });
       }
       if (cmd === "ps") {
         return Promise.resolve({
-          stdout: "  PID TT ARGS\n  100 ttys001  bash\n  200 ttys002  cursor --auto-approve\n",
+          stdout: "  PID TT ARGS\n  100 ttys001  bash\n  200 ttys002  agent --force\n",
           stderr: "",
         });
       }
@@ -305,9 +307,9 @@ describe("detectActivity", () => {
     expect(agent.detectActivity("some output\n$ ")).toBe("idle");
   });
 
-  it("returns idle for cursor-specific prompts", () => {
-    expect(agent.detectActivity("Processing...\ncursor> ")).toBe("idle");
-    expect(agent.detectActivity("Ready.\n[cursor] ")).toBe("idle");
+  it("returns idle for agent-specific prompts", () => {
+    expect(agent.detectActivity("Processing...\nagent> ")).toBe("idle");
+    expect(agent.detectActivity("Ready.\n[agent] ")).toBe("idle");
   });
 
   it("returns waiting_input for Y/N confirmation", () => {
@@ -323,7 +325,7 @@ describe("detectActivity", () => {
   });
 
   it("returns active for non-empty terminal output", () => {
-    expect(agent.detectActivity("cursor is processing files\n")).toBe("active");
+    expect(agent.detectActivity("agent is processing files\n")).toBe("active");
   });
 });
 
@@ -443,10 +445,10 @@ describe("recordActivity", () => {
   });
 
   it("delegates to recordTerminalActivity", async () => {
-    await agent.recordActivity!(makeSession(), "cursor is processing files");
+    await agent.recordActivity!(makeSession(), "agent is processing files");
     expect(mockRecordTerminalActivity).toHaveBeenCalledWith(
       "/workspace/test",
-      "cursor is processing files",
+      "agent is processing files",
       expect.any(Function),
     );
   });
@@ -459,13 +461,13 @@ describe("getActivityState with activity JSONL", () => {
   const agent = create();
 
   it("returns exited when process is not running", async () => {
-    mockTmuxWithProcess("cursor", false);
+    mockTmuxWithProcess("agent", false);
     const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("exited");
   });
 
   it("returns waiting_input from activity JSONL", async () => {
-    mockTmuxWithProcess("cursor");
+    mockTmuxWithProcess("agent");
     mockReadLastActivityEntry.mockResolvedValueOnce({
       entry: { ts: new Date().toISOString(), state: "waiting_input", source: "terminal" },
       modifiedAt: new Date(),
@@ -476,7 +478,7 @@ describe("getActivityState with activity JSONL", () => {
   });
 
   it("returns blocked from activity JSONL", async () => {
-    mockTmuxWithProcess("cursor");
+    mockTmuxWithProcess("agent");
     mockReadLastActivityEntry.mockResolvedValueOnce({
       entry: { ts: new Date().toISOString(), state: "blocked", source: "terminal" },
       modifiedAt: new Date(),
@@ -487,7 +489,7 @@ describe("getActivityState with activity JSONL", () => {
   });
 
   it("returns active from JSONL entry fallback when native signal fails (fresh entry)", async () => {
-    mockTmuxWithProcess("cursor");
+    mockTmuxWithProcess("agent");
     mockReadLastActivityEntry.mockResolvedValueOnce({
       entry: { ts: new Date().toISOString(), state: "active", source: "terminal" },
       modifiedAt: new Date(),
@@ -498,7 +500,7 @@ describe("getActivityState with activity JSONL", () => {
   });
 
   it("returns idle from JSONL entry fallback when native signal fails (old entry with age decay)", async () => {
-    mockTmuxWithProcess("cursor");
+    mockTmuxWithProcess("agent");
     const oldDate = new Date(Date.now() - 10 * 60 * 1000); // 10 minutes ago
     mockReadLastActivityEntry.mockResolvedValueOnce({
       entry: { ts: oldDate.toISOString(), state: "active", source: "terminal" },
@@ -510,7 +512,7 @@ describe("getActivityState with activity JSONL", () => {
   });
 
   it("returns null when both native signal and JSONL are unavailable", async () => {
-    mockTmuxWithProcess("cursor");
+    mockTmuxWithProcess("agent");
     mockReadLastActivityEntry.mockResolvedValueOnce(null);
 
     const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));

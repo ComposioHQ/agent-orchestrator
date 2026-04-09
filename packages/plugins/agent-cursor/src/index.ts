@@ -104,7 +104,7 @@ async function extractCursorSummary(workspacePath: string): Promise<string | nul
 export const manifest = {
   name: "cursor",
   slot: "agent" as const,
-  description: "Agent plugin: Cursor CLI",
+  description: "Agent plugin: Cursor Agent CLI",
   version: "0.1.0",
   displayName: "Cursor",
 };
@@ -116,30 +116,28 @@ export const manifest = {
 function createCursorAgent(): Agent {
   return {
     name: "cursor",
-    processName: "cursor",
+    processName: "agent",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
-      const parts: string[] = ["cursor"];
+      const parts: string[] = ["agent"];
 
       const permissionMode = normalizeAgentPermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
-        // Cursor uses --auto-approve for automatic approval, equivalent to Aider's --yes
-        // and Claude Code's --dangerously-bypass-approvals-and-sandbox/--ask-for-approval
-        parts.push("--auto-approve");
+        // Cursor uses --force (or --yolo alias) for automatic approval, equivalent to Aider's --yes
+        // Also add --trust to trust workspace and --approve-mcps for MCP servers
+        parts.push("--force", "--trust", "--approve-mcps");
       }
 
       if (config.model) {
         parts.push("--model", shellEscape(config.model));
       }
 
-      if (config.systemPromptFile) {
-        parts.push("--system", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
-      } else if (config.systemPrompt) {
-        parts.push("--system", shellEscape(config.systemPrompt));
-      }
+      // Note: Cursor agent doesn't have --system or --prompt flags
+      // System prompts would need to be passed differently (TBD)
+      // Prompt is passed as positional argument at the end
 
       if (config.prompt) {
-        parts.push("--prompt", shellEscape(config.prompt));
+        parts.push(shellEscape(config.prompt));
       }
 
       return parts.join(" ");
@@ -166,11 +164,11 @@ function createCursorAgent(): Agent {
       const lines = terminalOutput.trim().split("\n");
       const lastLine = lines[lines.length - 1]?.trim() ?? "";
 
-      // Cursor's input prompt — agent is idle, waiting for user command
+      // Cursor agent's input prompt — agent is idle, waiting for user command
       if (/^[>$#]\s*$/.test(lastLine)) return "idle";
-      // Cursor-specific prompt patterns
-      if (/^cursor>\s*$/.test(lastLine)) return "idle";
-      if (/^\[cursor\]\s*$/.test(lastLine)) return "idle";
+      // Cursor agent-specific prompt patterns
+      if (/^agent>\s*$/.test(lastLine)) return "idle";
+      if (/^\[agent\]\s*$/.test(lastLine)) return "idle";
 
       // Check the last few lines for permission/confirmation prompts
       const tail = lines.slice(-5).join("\n");
@@ -260,8 +258,9 @@ function createCursorAgent(): Agent {
             timeout: 30_000,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          // Match both "cursor" and ".cursor" (some installations use dot prefix)
-          const processRe = /(?:^|\/)\.?cursor(?:\s|$)/;
+          // Match "agent" binary (Cursor's CLI is called "agent")
+          // Use word boundary to avoid matching "agent-orchestrator" etc.
+          const processRe = /(?:^|\/)\bagent\b(?:\s|$)/;
           for (const line of psOut.split("\n")) {
             const cols = line.trimStart().split(/\s+/);
             if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
@@ -333,7 +332,7 @@ export function create(): Agent {
 
 export function detect(): boolean {
   try {
-    execFileSync("cursor", ["--version"], { stdio: "ignore" });
+    execFileSync("agent", ["--version"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
