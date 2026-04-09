@@ -34,9 +34,13 @@ const {
   mockResolveCommsFiles,
   mockCreateCommsFiles,
   mockAppendInboxMessage,
+  mockAppendMessage,
   mockGenerateDedupKey,
   mockInstallCommsHooks,
   mockInstallAoEmit,
+  mockReadEpoch,
+  mockReadNewMessages,
+  mockWatchDirectory,
 } = vi.hoisted(() => ({
   mockResolveCommsFiles: vi.fn((sessionsDir: string, sessionId: string) => ({
     dir: `${sessionsDir}/${sessionId}/comms`,
@@ -47,18 +51,27 @@ const {
   })),
   mockCreateCommsFiles: vi.fn(),
   mockAppendInboxMessage: vi.fn(),
+  mockAppendMessage: vi.fn(),
   mockGenerateDedupKey: vi.fn(() => "test-dedup-1"),
   mockInstallCommsHooks: vi.fn(async () => {}),
   mockInstallAoEmit: vi.fn(async () => {}),
+  mockReadEpoch: vi.fn(() => 1),
+  mockReadNewMessages: vi.fn(() => ({ messages: [], newCursor: 0 })),
+  mockWatchDirectory: vi.fn(() => ({ close: vi.fn() })),
 }));
 
 vi.mock("@composio/ao-plugin-runtime-file", () => ({
   resolveCommsFiles: mockResolveCommsFiles,
   createCommsFiles: mockCreateCommsFiles,
   appendInboxMessage: mockAppendInboxMessage,
+  appendMessage: mockAppendMessage,
   generateDedupKey: mockGenerateDedupKey,
   installCommsHooks: mockInstallCommsHooks,
   installAoEmit: mockInstallAoEmit,
+  readEpoch: mockReadEpoch,
+  readNewMessages: mockReadNewMessages,
+  watchDirectory: mockWatchDirectory,
+  AGENT_EVENTS_FILE: "agent-events",
 }));
 
 // Get reference to the promisify-custom mock — this is what the plugin actually calls
@@ -356,7 +369,7 @@ describe("runtime.sendMessage()", () => {
     expect(mockAppendInboxMessage).toHaveBeenCalledWith(
       "/tmp/sessions/msg-test/comms/inbox",
       "msg-test",
-      0,
+      1,
       "instruction",
       "hello world",
       "test-dedup-1",
@@ -374,7 +387,7 @@ describe("runtime.sendMessage()", () => {
     expect(mockAppendInboxMessage).toHaveBeenCalledWith(
       "/tmp/sessions/msg-long/comms/inbox",
       "msg-long",
-      0,
+      1,
       "instruction",
       longText,
       "test-dedup-1",
@@ -391,7 +404,7 @@ describe("runtime.sendMessage()", () => {
     expect(mockAppendInboxMessage).toHaveBeenCalledWith(
       "/tmp/sessions/msg-multi/comms/inbox",
       "msg-multi",
-      0,
+      1,
       "instruction",
       "line1\nline2\nline3",
       "test-dedup-1",

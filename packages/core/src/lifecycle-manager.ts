@@ -16,6 +16,7 @@ import {
   PR_STATE,
   CI_STATUS,
   TERMINAL_STATUSES,
+  isOrchestratorSession,
   type LifecycleManager,
   type SessionManager,
   type SessionId,
@@ -1236,7 +1237,46 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
-  /** Poll a single session and handle state transitions. */
+  async function maybeWriteSystemEvent(
+    session: Session,
+    oldStatus: SessionStatus,
+    newStatus: SessionStatus,
+  ): Promise<void> {
+    if (oldStatus === newStatus) return;
+    if (!session.runtimeHandle) return;
+
+    const systemEventType = ((): string | null => {
+      switch (newStatus) {
+        case "ci_failed": return "ci_failure";
+        case "review_pending": return "review_pending";
+        case "changes_requested": return "review_pending";
+        case "approved": return "review_approved";
+        case "mergeable": return "merge_ready";
+        default: return null;
+      }
+    })();
+
+    if (!systemEventType) return;
+
+    const project = config.projects[session.projectId];
+    if (!project) return;
+
+    const runtimeName = project.runtime ?? config.defaults.runtime;
+    const runtime = registry.get<Runtime>("runtime", runtimeName);
+    if (!runtime?.writeSystemEvent) return;
+
+    try {
+      await runtime.writeSystemEvent(
+        session.runtimeHandle,
+        systemEventType,
+        `${session.id}: ${oldStatus} → ${newStatus}`,
+        { oldStatus, newStatus },
+      );
+    } catch {
+      // best effort
+    }
+  }
+
   async function checkSession(session: Session): Promise<void> {
     // Use tracked state if available; otherwise use the persisted metadata status
     // (not session.status, which list() may have already overwritten for dead runtimes).
@@ -1345,6 +1385,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchMergeConflicts(session, newStatus),
       maybeRebaseSiblings(session, oldStatus, newStatus),
+      maybeWriteSystemEvent(session, oldStatus, newStatus),
     ]);
   }
 
@@ -1415,21 +1456,38 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                     }
                     break;
 
-                  case "escalation":
-                    // Agent explicitly requests human attention.
+                  case "escalation": {
+                    const escalationMessage =
+                      typeof event["message"] === "string"
+                        ? event["message"]
+                        : `${session.id}: agent escalation via file event`;
+                    sessionManager.list(session.projectId).then((allSessions) => {
+                      const orchestrator = allSessions.find(
+                        (s) =>
+                          s.id !== session.id &&
+                          isOrchestratorSession(
+                            s,
+                            config.projects[session.projectId]?.sessionPrefix,
+                          ),
+                      );
+                      if (orchestrator) {
+                        return sessionManager.send(
+                          orchestrator.id,
+                          `[${session.id} escalation]: ${escalationMessage}`,
+                        );
+                      }
+                    }).catch(() => {});
                     notifyHuman(
                       createEvent("reaction.escalated", {
                         sessionId: session.id,
                         projectId: session.projectId,
-                        message:
-                          typeof event["message"] === "string"
-                            ? event["message"]
-                            : `${session.id}: agent escalation via file event`,
+                        message: escalationMessage,
                         data: event["data"] as Record<string, unknown> | undefined,
                       }),
                       "urgent",
                     ).catch(() => {});
                     break;
+                  }
 
                   case "status":
                     // Informational heartbeat — log at debug level.

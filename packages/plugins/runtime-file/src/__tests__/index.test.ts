@@ -37,10 +37,21 @@ vi.mock("node:util", async (importOriginal) => {
   };
 });
 
+const { mockWatch, mockReadFileSync } = vi.hoisted(() => {
+  const mockWatch = vi.fn((_path: string, _opts: unknown, _cb: unknown) => ({
+    close: vi.fn(),
+    on: vi.fn(),
+  }));
+  const mockReadFileSync = vi.fn((_path: string, _enc: string) => "");
+  return { mockWatch, mockReadFileSync };
+});
+
 vi.mock("node:fs", () => ({
   mkdirSync: vi.fn(),
   createWriteStream: vi.fn(() => ({ write: vi.fn(), end: vi.fn() })),
   existsSync: vi.fn(() => true),
+  watch: mockWatch,
+  readFileSync: mockReadFileSync,
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -753,5 +764,140 @@ describe("destroy()", () => {
     const runtime = create();
     await expect(runtime.destroy(makeHandle("nonexistent"))).resolves.toBeUndefined();
     expect(removeCommsFiles).not.toHaveBeenCalled();
+  });
+});
+
+describe("inbox sidecar", () => {
+  beforeEach(() => {
+    mockWatch.mockReset();
+    mockWatch.mockImplementation((_path: string, _opts: unknown, _cb: unknown) => ({
+      close: vi.fn(),
+      on: vi.fn(),
+    }));
+    mockReadFileSync.mockReset();
+    mockReadFileSync.mockReturnValue("");
+    delete process.env["AO_DISABLE_INBOX_SIDECAR"];
+  });
+
+  it("starts fs.watch on inbox after create()", async () => {
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child);
+
+    const runtime = create();
+    await runtime.create(defaultConfig());
+
+    expect(mockWatch).toHaveBeenCalledWith(
+      expect.stringContaining("inbox"),
+      expect.objectContaining({ persistent: false }),
+      expect.any(Function),
+    );
+  });
+
+  it("does NOT start fs.watch when AO_DISABLE_INBOX_SIDECAR=1", async () => {
+    process.env["AO_DISABLE_INBOX_SIDECAR"] = "1";
+
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child);
+
+    const runtime = create();
+    await runtime.create(defaultConfig());
+
+    expect(mockWatch).not.toHaveBeenCalled();
+  });
+
+  it("drain: writes pending inbox entries with id > lastDeliveredId to stdin", async () => {
+    let watchCb: (() => void) | null = null;
+    mockWatch.mockImplementation((_path: string, _opts: unknown, _cb: unknown) => {
+      watchCb = _cb as () => void;
+      return { close: vi.fn(), on: vi.fn() };
+    });
+
+    // Inbox has two messages; first will be skipped (id=1, same as lastDeliveredId after send)
+    const inboxLines = [
+      JSON.stringify({ v: 1, id: 1, epoch: 1, ts: "", source: "orchestrator", type: "message", message: "first", dedup: "a" }),
+      JSON.stringify({ v: 1, id: 2, epoch: 1, ts: "", source: "orchestrator", type: "message", message: "second", dedup: "b" }),
+    ].join("\n") + "\n";
+    mockReadFileSync.mockReturnValue(inboxLines);
+
+    // appendInboxMessage returns id=1 for the sendMessage call
+    (appendInboxMessage as ReturnType<typeof vi.fn>).mockReturnValue({ id: 1, message: "first" });
+
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child);
+
+    const runtime = create();
+    const handle = await runtime.create(defaultConfig());
+
+    // Send first message — bumps lastDeliveredId to 1
+    await runtime.sendMessage(handle, "first");
+
+    // Trigger the sidecar watcher (simulates fs.watch firing for a new write)
+    expect(watchCb).not.toBeNull();
+    watchCb!();
+
+    // Wait for the async delivery chain to settle
+    await new Promise((r) => setTimeout(r, 20));
+
+    // stdin.write should have been called for "second" (id=2 > lastDeliveredId=1)
+    const writeCalls = (child.stdin.write as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => c[0] as string);
+    const deliveredMessages = writeCalls.filter((s) => s.includes("second"));
+    expect(deliveredMessages.length).toBeGreaterThan(0);
+  });
+
+  it("drain: skips entries already delivered (id <= lastDeliveredId)", async () => {
+    let watchCb: (() => void) | null = null;
+    mockWatch.mockImplementation((_path: string, _opts: unknown, _cb: unknown) => {
+      watchCb = _cb as () => void;
+      return { close: vi.fn(), on: vi.fn() };
+    });
+
+    // Only message id=1 exists, already delivered by sendMessage
+    const inboxLines =
+      JSON.stringify({ v: 1, id: 1, epoch: 1, ts: "", source: "orchestrator", type: "message", message: "already-seen", dedup: "a" }) + "\n";
+    mockReadFileSync.mockReturnValue(inboxLines);
+    (appendInboxMessage as ReturnType<typeof vi.fn>).mockReturnValue({ id: 1, message: "already-seen" });
+
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child);
+
+    const runtime = create();
+    const handle = await runtime.create(defaultConfig());
+
+    await runtime.sendMessage(handle, "already-seen");
+
+    const writesBeforeWatch = (child.stdin.write as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    watchCb!();
+    await new Promise((r) => setTimeout(r, 20));
+
+    // No extra writes — message was already delivered
+    const writesAfterWatch = (child.stdin.write as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(writesAfterWatch).toBe(writesBeforeWatch);
+  });
+
+  it("watcher is closed on destroy()", async () => {
+    const mockClose = vi.fn();
+    mockWatch.mockImplementation((_path: string, _opts: unknown, _cb: unknown) => ({
+      close: mockClose,
+      on: vi.fn(),
+    }));
+
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child);
+
+    const runtime = create();
+    const handle = await runtime.create(defaultConfig());
+
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const destroyPromise = runtime.destroy(handle);
+
+    await new Promise((r) => setTimeout(r, 10));
+    child.exitCode = 0;
+    child.emit("exit", 0, null);
+    await destroyPromise;
+
+    expect(mockClose).toHaveBeenCalled();
+    killSpy.mockRestore();
   });
 });

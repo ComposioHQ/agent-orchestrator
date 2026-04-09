@@ -146,3 +146,50 @@ export async function installAoEmit(workspacePath: string): Promise<void> {
   await writeFile(scriptPath, AO_EMIT_SCRIPT, "utf-8");
   await chmod(scriptPath, 0o755);
 }
+
+export const LOG_FORMATTER_SCRIPT = `#!/usr/bin/env python3
+import sys, json
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        d = json.loads(line)
+        t = d.get("type", "")
+        if t == "assistant":
+            for c in d.get("message", {}).get("content", []):
+                ct = c.get("type", "")
+                if ct == "text":
+                    print(c["text"], flush=True)
+                elif ct == "tool_use":
+                    name = c.get("name", "?")
+                    inp = c.get("input", {})
+                    desc = inp.get("description", inp.get("command", json.dumps(inp)[:120]))
+                    print(f"\\033[36m> {name}\\033[0m  {desc}", flush=True)
+                elif ct == "thinking":
+                    text = c.get("thinking", "")[:200]
+                    print(f"\\033[2m(thinking) {text}...\\033[0m", flush=True)
+        elif t == "user":
+            for c in d.get("message", {}).get("content", []):
+                if c.get("type") == "tool_result":
+                    content = str(c.get("content", ""))
+                    if content and content != "[]":
+                        for out_line in content.split("\\n")[:20]:
+                            print(f"  {out_line}", flush=True)
+        elif t == "result":
+            result = d.get("result", "")[:200]
+            print(f"\\033[33m[done] {result}\\033[0m", flush=True)
+    except (json.JSONDecodeError, KeyError):
+        print(line[:200], flush=True)
+`;
+
+export async function installLogFormatter(workspacePath: string): Promise<string> {
+  const aoDir = join(workspacePath, ".ao");
+  await mkdir(aoDir, { recursive: true });
+
+  const scriptPath = join(aoDir, "ao-log-formatter");
+  await writeFile(scriptPath, LOG_FORMATTER_SCRIPT, "utf-8");
+  await chmod(scriptPath, 0o755);
+  return scriptPath;
+}

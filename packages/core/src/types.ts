@@ -298,6 +298,13 @@ export interface Runtime {
     handle: RuntimeHandle,
     callback: (events: unknown[]) => void,
   ): () => void;
+
+  writeSystemEvent?(
+    handle: RuntimeHandle,
+    type: string,
+    message: string,
+    data?: Record<string, unknown>,
+  ): Promise<void>;
 }
 
 export interface RuntimeCreateConfig {

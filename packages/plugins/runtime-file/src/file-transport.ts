@@ -412,13 +412,66 @@ export function watchDirectory(
   dirPath: string,
   handler: (filename: string | null) => void,
 ): FileWatcher {
-  const watcher: FSWatcher = watch(dirPath, { persistent: false }, (_event, filename) => {
-    handler(filename?.toString() ?? null);
-  });
+  let nativeWatcher: FSWatcher | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let closed = false;
+
+  try {
+    let eventFired = false;
+    nativeWatcher = watch(dirPath, { persistent: false }, (_event, filename) => {
+      eventFired = true;
+      handler(filename?.toString() ?? null);
+    });
+
+    nativeWatcher.on("error", () => {
+      if (closed) return;
+      try { nativeWatcher?.close(); } catch { /* best effort */ }
+      nativeWatcher = null;
+      startPolling();
+    });
+
+    setTimeout(() => {
+      if (!eventFired && !closed && nativeWatcher) {
+        try {
+          const testFile = join(dirPath, `.watch-test-${process.pid}`);
+          writeFileSync(testFile, "t", "utf-8");
+          rmSync(testFile, { force: true });
+        } catch { /* ignore */ }
+
+        setTimeout(() => {
+          if (!eventFired && !closed) {
+            try { nativeWatcher?.close(); } catch { /* best effort */ }
+            nativeWatcher = null;
+            startPolling();
+          }
+        }, 500);
+      }
+    }, 1000);
+  } catch {
+    startPolling();
+  }
+
+  function startPolling(): void {
+    if (closed || pollTimer) return;
+    let lastMtime = 0;
+    try { lastMtime = statSync(dirPath).mtimeMs; } catch { /* ignore */ }
+
+    pollTimer = setInterval(() => {
+      try {
+        const mtime = statSync(dirPath).mtimeMs;
+        if (mtime > lastMtime) {
+          lastMtime = mtime;
+          handler(null);
+        }
+      } catch { /* ignore */ }
+    }, 2000);
+  }
 
   return {
     close() {
-      watcher.close();
+      closed = true;
+      try { nativeWatcher?.close(); } catch { /* best effort */ }
+      if (pollTimer) clearInterval(pollTimer);
     },
   };
 }

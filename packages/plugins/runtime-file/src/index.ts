@@ -10,6 +10,7 @@ import {
   removeCommsFiles,
   resetCursors,
   appendInboxMessage,
+  appendMessage,
   readEpoch,
   writeEpoch,
   generateDedupKey,
@@ -29,7 +30,7 @@ import {
   PROMPT_INBOX_CHECK_SCRIPT,
   FILE_TRACKER_SCRIPT,
 } from "./hooks.js";
-import { installAoEmit } from "./ao-emit.js";
+import { installAoEmit, installLogFormatter } from "./ao-emit.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -225,7 +226,11 @@ async function createCompanionTmux(
   sessionName: string,
   workspacePath: string,
   logPath: string,
+  formatterPath: string | null,
 ): Promise<void> {
+  const viewCmd = formatterPath
+    ? `tail -f ${shellEscape(logPath)} | ${shellEscape(formatterPath)}`
+    : `tail -f ${shellEscape(logPath)}`;
   try {
     await execFileAsync(
       "tmux",
@@ -233,12 +238,11 @@ async function createCompanionTmux(
         "new-session", "-d",
         "-s", sessionName,
         "-c", workspacePath,
-        `tail -f ${shellEscape(logPath)}`,
+        viewCmd,
       ],
       { timeout: TMUX_CMD_TIMEOUT_MS },
     );
   } catch {
-    // Non-fatal: terminal viewing unavailable but communication works.
     console.warn(`[runtime-file] Failed to create companion tmux session "${sessionName}"`);
   }
 }
@@ -358,6 +362,8 @@ export function create(): Runtime {
             ...config.environment,
             AO_INBOX_PATH: files.inbox,
             AO_AGENT_EVENTS_PATH: files.agentEvents,
+            AO_AGENT_EPOCH: String(epoch),
+            PATH: `${join(config.workspacePath, ".ao")}:${process.env.PATH ?? ""}`,
           },
           stdio: ["pipe", "pipe", "pipe"],
           shell: true,
@@ -423,11 +429,29 @@ export function create(): Runtime {
       child.stdout?.on("data", appendStdout);
       child.stderr?.on("data", appendStderr);
 
-      child.once("exit", () => {
+      child.once("exit", (code, signal) => {
         appendStdout(Buffer.from("\n"));
         appendStderr(Buffer.from("\n"));
-        entry.outputBuffer.push(`[process exited with code ${child.exitCode}]`);
-        logStream.write(`[process exited with code ${child.exitCode}]\n`);
+        const exitMsg = signal
+          ? `[agent exited from signal ${signal}]`
+          : `[agent exited with code ${code}]`;
+        entry.outputBuffer.push(exitMsg);
+        logStream.write(exitMsg + "\n");
+
+        try {
+          appendMessage(
+            entry.files.agentEvents,
+            entry.sessionId,
+            entry.epoch,
+            "agent",
+            "completion",
+            `Process terminated (${signal || `code ${code}`})`,
+            { exitCode: code, signal, method: "process_exit_event" },
+          );
+        } catch {
+          // best effort
+        }
+
         logStream.end();
       });
 
@@ -459,8 +483,14 @@ export function create(): Runtime {
         }
       }
 
-      // Companion tmux session for terminal viewing (ALL agents).
-      await createCompanionTmux(handleId, config.workspacePath, logPath);
+      // Install log formatter and create companion tmux session for terminal viewing.
+      let formatterPath: string | null = null;
+      try {
+        formatterPath = await installLogFormatter(config.workspacePath);
+      } catch {
+        // Non-fatal — companion tmux will show raw NDJSON
+      }
+      await createCompanionTmux(handleId, config.workspacePath, logPath, formatterPath);
 
       return {
         id: handleId,
@@ -527,7 +557,14 @@ export function create(): Runtime {
     async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
       const entry = sessions.get(handle.id);
       if (!entry) {
-        throw new Error(`No session found for ${handle.id}`);
+        const inboxPath = typeof handle.data["inboxPath"] === "string" ? handle.data["inboxPath"] : null;
+        const sessionId = typeof handle.data["agentName"] === "string" ? handle.id : handle.id;
+        const epoch = typeof handle.data["epoch"] === "number" ? handle.data["epoch"] as number : 0;
+        if (!inboxPath) {
+          throw new Error(`No session found for ${handle.id} and no inboxPath in handle data`);
+        }
+        appendInboxMessage(inboxPath, sessionId, epoch, "instruction" as InboxMessageType, message, generateDedupKey());
+        return;
       }
 
       // Always write to inbox first (durable record). Capture the assigned id
@@ -624,9 +661,20 @@ export function create(): Runtime {
 
     async isAlive(handle: RuntimeHandle): Promise<boolean> {
       const entry = sessions.get(handle.id);
-      if (!entry) return false;
-      if (!entry.process) return false;
-      return entry.process.exitCode === null && entry.process.signalCode === null;
+      if (entry) {
+        if (!entry.process) return false;
+        return entry.process.exitCode === null && entry.process.signalCode === null;
+      }
+      // No in-memory entry (e.g. `ao send` runs in a separate process).
+      // Fall back to PID signal-0 check using the handle data.
+      const pid = typeof handle.data?.["pid"] === "number" ? handle.data["pid"] as number : null;
+      if (!pid) return false;
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
     },
 
     async getMetrics(handle: RuntimeHandle): Promise<RuntimeMetrics> {
@@ -717,6 +765,29 @@ export function create(): Runtime {
           // best effort
         }
       };
+    },
+
+    async writeSystemEvent(
+      handle: RuntimeHandle,
+      type: string,
+      message: string,
+      data?: Record<string, unknown>,
+    ): Promise<void> {
+      const entry = sessions.get(handle.id);
+      if (!entry) return;
+      try {
+        appendMessage(
+          entry.files.systemEvents,
+          entry.sessionId,
+          entry.epoch,
+          "system",
+          type,
+          message,
+          data,
+        );
+      } catch {
+        // best effort
+      }
     },
   };
 }

@@ -4,7 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   type PluginModule,
   type Runtime,
@@ -18,8 +18,13 @@ import {
   resolveCommsFiles,
   createCommsFiles,
   appendInboxMessage,
+  appendMessage,
   generateDedupKey,
   setupComms,
+  readNewMessages,
+  readEpoch,
+  watchDirectory,
+  AGENT_EVENTS_FILE,
   type SessionCommsFiles,
 } from "@aoagents/ao-plugin-runtime-file";
 
@@ -113,6 +118,8 @@ export function create(): Runtime {
       if (files) {
         tmuxEnv["AO_INBOX_PATH"] = files.inbox;
         tmuxEnv["AO_AGENT_EVENTS_PATH"] = files.agentEvents;
+        tmuxEnv["AO_AGENT_EPOCH"] = String(readEpoch(sessionsDir, config.sessionId));
+        tmuxEnv["PATH"] = `${join(config.workspacePath, ".ao")}:${env["PATH"] ?? process.env.PATH ?? ""}`;
       }
 
       const envArgs: string[] = [];
@@ -175,7 +182,8 @@ export function create(): Runtime {
       }
 
       const files = resolveCommsFiles(sessionsDir, sessionId);
-      appendInboxMessage(files.inbox, sessionId, 0, "instruction", message, generateDedupKey());
+      const epoch = readEpoch(sessionsDir, sessionId);
+      appendInboxMessage(files.inbox, sessionId, epoch, "instruction", message, generateDedupKey());
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {
@@ -208,6 +216,62 @@ export function create(): Runtime {
         target: handle.id,
         command: `tmux attach -t ${handle.id}`,
       };
+    },
+
+    watchEvents(handle: RuntimeHandle, callback: (events: unknown[]) => void): () => void {
+      const agentEventsPath = handle.data["agentEventsPath"] as string | undefined;
+      if (!agentEventsPath) return () => {};
+
+      const dir = dirname(agentEventsPath);
+      let watcher: ReturnType<typeof watchDirectory> | null = null;
+
+      try {
+        watcher = watchDirectory(dir, (filename) => {
+          if (filename !== null && filename !== AGENT_EVENTS_FILE) return;
+          let messages: unknown[];
+          try {
+            const result = readNewMessages(agentEventsPath);
+            messages = result.messages;
+          } catch {
+            return;
+          }
+          if (messages.length === 0) return;
+          try {
+            callback(messages);
+          } catch {
+            // best effort
+          }
+        });
+      } catch {
+        return () => {};
+      }
+
+      return () => {
+        try {
+          watcher?.close();
+        } catch {
+          // best effort
+        }
+      };
+    },
+
+    async writeSystemEvent(
+      handle: RuntimeHandle,
+      type: string,
+      message: string,
+      data?: Record<string, unknown>,
+    ): Promise<void> {
+      const sessionsDir = handle.data["sessionsDir"] as string | undefined;
+      const sessionId = handle.data["sessionId"] as string | undefined;
+      if (!sessionsDir || !sessionId) return;
+
+      const files = resolveCommsFiles(sessionsDir, sessionId);
+      const epoch = readEpoch(sessionsDir, sessionId);
+      try {
+        appendMessage(files.systemEvents, sessionId, epoch, "system", type, message, data);
+      } catch {
+        // best effort
+      }
     },
   };
 }
