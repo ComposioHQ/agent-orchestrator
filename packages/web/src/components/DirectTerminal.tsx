@@ -266,7 +266,7 @@ export function DirectTerminal({
         terminalInstance.current = terminal;
 
         // Fit terminal to container — defer so DOM has settled
-        requestAnimationFrame(() => fit.fit());
+        const initialFitRafId = requestAnimationFrame(() => fit.fit());
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
@@ -363,6 +363,7 @@ export function DirectTerminal({
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
+          cancelAnimationFrame(initialFitRafId);
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
           resizeObserver.disconnect();
