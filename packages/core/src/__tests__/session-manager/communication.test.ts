@@ -86,6 +86,92 @@ describe("send", () => {
     );
   });
 
+  it("waits for restored session health probes to recover before sending", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      issue: "TEST-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => {
+      if (handle.id === "rt-restored" && vi.mocked(mockRuntime.isAlive).mock.calls.length === 1) {
+        throw new Error("runtime probe failed");
+      }
+      return true;
+    });
+    vi.mocked(mockAgent.isProcessRunning).mockImplementation(async (handle) => {
+      if (
+        handle.id === "rt-restored" &&
+        vi.mocked(mockAgent.isProcessRunning).mock.calls.length === 1
+      ) {
+        throw new Error("process probe failed");
+      }
+      return true;
+    });
+    vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
+    vi.mocked(mockRuntime.getOutput)
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("restored prompt")
+      .mockResolvedValueOnce("before send")
+      .mockResolvedValueOnce("after send");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.send("app-1", "Please resume");
+
+    expect(mockRuntime.create).toHaveBeenCalled();
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-restored"),
+      "Please resume",
+    );
+  });
+
+  it("throws when a restored session never becomes ready", async () => {
+    vi.useFakeTimers();
+    try {
+      const wsPath = join(tmpDir, "ws-app-timeout");
+      mkdirSync(wsPath, { recursive: true });
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: wsPath,
+        branch: "feat/TEST-1",
+        status: "working",
+        project: "my-app",
+        issue: "TEST-1",
+        runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+      });
+
+      vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => {
+        if (handle.id === "rt-old") return false;
+        throw new Error("runtime probe failed");
+      });
+      vi.mocked(mockAgent.isProcessRunning).mockImplementation(async (handle) => {
+        if (handle.id === "rt-old") return false;
+        throw new Error("process probe failed");
+      });
+      vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
+      vi.mocked(mockRuntime.getOutput).mockResolvedValue("");
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const sendPromise = sm.send("app-1", "This should not be delivered");
+      const sendAssertion = expect(sendPromise).rejects.toThrow(
+        "Timed out waiting for restored session app-1 to become ready",
+      );
+
+      await vi.advanceTimersByTimeAsync(6_000);
+
+      await sendAssertion;
+      expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("waits for spawning sessions to become interactive before considering restore", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",

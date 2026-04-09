@@ -370,7 +370,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (session.runtimeHandle) {
       const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
       if (runtime) {
-        const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
+        const alive = await runtime.isAlive(session.runtimeHandle).catch(() => false);
         if (!alive) return "killed";
       }
     }
