@@ -365,6 +365,34 @@ describe("session ls", () => {
     ]);
   });
 
+  it("marks metadata-based orchestrators correctly in JSON output", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-control"),
+      "branch=control\nstatus=working\nrole=orchestrator\n",
+    );
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls", "--json"]);
+
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toEqual([
+      {
+        id: "app-control",
+        projectId: "my-app",
+        projectName: "My App",
+        role: "orchestrator",
+        branch: "control",
+        status: "working",
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        lastActivityAt: null,
+      },
+    ]);
+  });
+
   it("returns an empty JSON array when there are no active sessions", async () => {
     mockTmux.mockResolvedValue(null);
 
