@@ -7,7 +7,7 @@ import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
 import { FileTree } from "@/components/workspace/FileTree";
 import { FilePreview } from "@/components/workspace/FilePreview";
 import { DiffViewer } from "@/components/workspace/DiffViewer";
-import { DirectTerminal } from "@/components/DirectTerminal";
+import { DirectTerminalGB as DirectTerminal } from "@/components/DirectTerminalGB";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 
 export default function WorkspacePage() {
