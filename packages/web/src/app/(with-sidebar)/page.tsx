@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
-import { Dashboard } from "@/components/Dashboard";
+import { DashboardGB as Dashboard } from "@/components/DashboardGB";
 import type { DashboardSession } from "@/lib/types";
 import { getServices, getSCM } from "@/lib/services";
 import {

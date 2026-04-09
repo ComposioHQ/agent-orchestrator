@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { DirectTerminal } from "@/components/DirectTerminal";
+import { DirectTerminalGB as DirectTerminal } from "@/components/DirectTerminalGB";
 import { useSidebarContext } from "@/components/workspace/SidebarContext";
 
 export default function StandaloneTerminalPage() {
