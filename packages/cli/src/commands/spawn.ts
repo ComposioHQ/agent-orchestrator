@@ -9,6 +9,7 @@ import {
   getSiblings,
   formatPlanTree,
   TERMINAL_STATUSES,
+  buildPrompt,
   type OrchestratorConfig,
   type DecomposerConfig,
   DEFAULT_DECOMPOSER_CONFIG,
@@ -170,6 +171,7 @@ export function registerSpawn(program: Command): void {
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option("--decompose", "Decompose issue into subtasks before spawning")
     .option("--max-depth <n>", "Max decomposition depth (default: 3)")
+    .option("--preview-prompt", "Print the composed agent prompt without spawning a session")
     .action(
       async (
         first: string | undefined,
@@ -181,6 +183,7 @@ export function registerSpawn(program: Command): void {
           assignOnGithub?: boolean;
           decompose?: boolean;
           maxDepth?: string;
+          previewPrompt?: boolean;
         },
       ) => {
         // Catch old two-arg usage: ao spawn <project> <issue>
@@ -221,6 +224,19 @@ export function registerSpawn(program: Command): void {
         if (!opts.claimPr && opts.assignOnGithub) {
           console.error(chalk.red("--assign-on-github requires --claim-pr on `ao spawn`."));
           process.exit(1);
+        }
+
+        if (opts.previewPrompt) {
+          const project = config.projects[projectId];
+          const prompt = buildPrompt({
+            project,
+            projectId,
+            issueId,
+          });
+          console.log(chalk.bold("Agent Prompt Preview") + chalk.dim(` (project: ${projectId}${issueId ? `, issue: ${issueId}` : ""})\n`));
+          console.log(prompt);
+          console.log(chalk.dim("\nNote: tracker issue context is not fetched in preview mode."));
+          return;
         }
 
         const claimOptions: SpawnClaimOptions = {
