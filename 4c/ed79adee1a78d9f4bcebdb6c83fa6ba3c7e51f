@@ -1,0 +1,139 @@
+packages/web/src/lib/scm-webhooks.test.ts
+  69c135fedaf68720 2
+packages/web/src/app/api/sessions/[id]/kill/route.ts
+  69c135fedaf68720 4
+packages/web/src/app/design-system/design-system.css
+  69c135fedaf68720 1-2185
+packages/web/src/lib/orchestrator-utils.ts
+  69c135fedaf68720 1-5
+packages/web/src/components/SessionCard.tsx
+  69c135fedaf68720 171-174,419-427,438-449,478,497,499,505,507,511-515,522,532-535,544-556,561,578-587,592,643-648,650-657,659,670,681,692-705,709-712,720,734,742,778-790,794,834,850-851,854,868,875-881,884,897,911
+packages/web/src/lib/serialize.ts
+  69c135fedaf68720 20
+packages/web/src/lib/services.ts
+  69c135fedaf68720 15,21-27,39
+packages/web/src/app/api/sessions/[id]/message/route.ts
+  69c135fedaf68720 4
+packages/web/src/lib/__tests__/serialize.test.ts
+  69c135fedaf68720 15
+packages/web/src/app/orchestrators/page.tsx
+  69c135fedaf68720 5
+packages/web/src/app/api/events/route.ts
+  69c135fedaf68720 9
+packages/web/src/__tests__/api-routes.test.ts
+  69c135fedaf68720 11
+packages/web/src/app/dev/session-detail/page.tsx
+  69c135fedaf68720 1-188
+packages/web/src/components/__tests__/DirectTerminal.render.test.tsx
+  69c135fedaf68720 79-84,107
+packages/web/src/app/design-system/page.tsx
+  69c135fedaf68720 1-10
+packages/web/src/components/Skeleton.tsx
+  69c135fedaf68720 84
+packages/web/src/components/ProjectSidebar.tsx
+  69c135fedaf68720 4,59,119,122,132,163,211,246-247
+packages/web/src/components/__tests__/ProjectSidebar.test.tsx
+  69c135fedaf68720 7,11,29,95-111,142-173,202,212
+packages/web/src/components/DesignSystemShowcase.tsx
+  69c135fedaf68720 1-1120
+packages/web/src/lib/scm-webhooks.ts
+  69c135fedaf68720 12
+packages/web/src/app/api/sessions/[id]/send/route.ts
+  69c135fedaf68720 4
+packages/web/src/components/__tests__/Dashboard.emptyState.test.tsx
+  69c135fedaf68720 31,61-88
+packages/core/src/__tests__/lifecycle-manager.test.ts
+  69c135fedaf68720 54,59-61,63-72,75-76,114-157
+packages/web/src/components/ThemeToggle.tsx
+  69c135fedaf68720 8,11,41
+packages/web/src/app/api/issues/route.ts
+  69c135fedaf68720 4
+packages/web/vitest.config.ts
+  69c135fedaf68720 20-45,47
+packages/web/src/components/DirectTerminal.tsx
+  69c135fedaf68720 410-412,414,416,419-420,558,689,765,768
+packages/web/src/lib/project-name.ts
+  69c135fedaf68720 4
+packages/web/src/hooks/useSessionEvents.ts
+  69c135fedaf68720 100,130,282
+packages/web/src/components/AttentionZone.tsx
+  69c135fedaf68720 176,188
+packages/web/src/components/PRStatus.tsx
+  38000bf70f0190d1 75,78,107
+packages/web/src/lib/observability.ts
+  69c135fedaf68720 3-4,10
+packages/web/src/app/globals.css
+  49ba7754de4e19fb 259-260,270,300,545,547,560,571,575,585,593,876,909,913-915,921,927,984-985,992,1018,1041,1059-1061,1063,1068-1072,1079,1082-1085,1719-1720,1722-1728,1756-1758,1761-1764,1767-1770,1773-1779,1782-1785,1926-1927,1957,1971,1975,1979,2002,2020-2076,2078,2082,2101-2138,2144-2159,2162-2182,2186,2189,2198-2199,2216-2217,2222-2225,2231-2235,2239-2241,2251-2256,2258-2259,2261-2263,2267-2268,2296-2297,2300-2309,2324-2330,2333-2343,2350,2356,2375-2383,2386-2390,2393-2400,2403-2406,2409-2413,2416-2417,2421,2423-2428,2430,2434-2435,2452,2456,2464,2474,2477-2481,2483,2486-2503,2506,2512,2514-2515,2517,2519-2520,2529-2530,2535,2539-2540,2543,2545,2547-2548,2550,2557,2559,2562-2563,2567,2717,2734,2760,2870,2912,2920,2953,2958,2976,2981,2983,2988,2990,2992,2996,3002,3100-3102,3113-3116,3205,3243-3245,3275,3304,3320,3324,3327,3335,3338,3344-3347,3350,3358-3359,3369-3370,3422,3432-3434,3440,3444-3445,3460-3463,3466,3471,3477,3483-3486,3489,3519-3527,3530-3532,3548,3550,3661,3665
+  38000bf70f0190d1 3513,3529,3537-3538,3557,3559,3562,3564-3591,3594-3655
+packages/web/src/components/SessionDetail.tsx
+  69c135fedaf68720 6-11,137,168,183,373,399-402,445-450,534,599,798,816,819
+packages/web/src/app/api/sessions/route.ts
+  69c135fedaf68720 1
+packages/web/src/components/Dashboard.tsx
+  49ba7754de4e19fb 154,577-582,612,615-620,755,980
+  38000bf70f0190d1 81-134,735-736,761,958-961,986
+packages/web/src/components/PullRequestsPage.tsx
+  38000bf70f0190d1 60-62,64,66,68-71,148-177,179,184,187-188,191,194,197,200,203-204,209-257
+packages/web/src/app/api/sessions/[id]/restore/route.ts
+  69c135fedaf68720 9
+packages/core/package.json
+  69c135fedaf68720 14-49,61-64
+packages/web/src/app/api/sessions/[id]/remap/route.ts
+  69c135fedaf68720 4
+packages/web/src/app/api/verify/route.ts
+  69c135fedaf68720 4
+packages/web/src/lib/session-project.ts
+  69c135fedaf68720 1
+packages/web/src/lib/types.ts
+  69c135fedaf68720 195-206
+packages/web/src/app/api/orchestrators/route.ts
+  69c135fedaf68720 2-3
+packages/core/src/lifecycle-manager.ts
+  69c135fedaf68720 368-372,375,383-389,393,427-435,437-439
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "4ced79adee1a78d9f4bcebdb6c83fa6ba3c7e51f",
+  "prompts": {
+    "38000bf70f0190d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e4ec426-8b38-466c-a8e9-00dc2e907aec",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 295,
+      "total_deletions": 91,
+      "accepted_lines": 279,
+      "overriden_lines": 0
+    },
+    "49ba7754de4e19fb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d6d10-7f7d-7ee1-a823-b903735264e8",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2784,
+      "total_deletions": 2646,
+      "accepted_lines": 500,
+      "overriden_lines": 0
+    },
+    "69c135fedaf68720": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d7408-740d-76d2-9c1d-1c1b480ea01f",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 3988,
+      "total_deletions": 223,
+      "accepted_lines": 3988,
+      "overriden_lines": 0
+    }
+  }
+}
