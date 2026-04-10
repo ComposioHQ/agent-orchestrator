@@ -179,7 +179,7 @@ function createCursorAgent(): Agent {
       // Use -- separator to prevent prompts starting with - from being parsed as flags
 
       // Use shell command substitution for systemPromptFile to avoid tmux truncation
-      // when inlining 2000+ char prompts (same pattern as Claude Code, Aider, OpenCode)
+      // when inlining 2000+ char prompts (same pattern as OpenCode)
       if (config.systemPromptFile) {
         try {
           // Security check: reject symlinks to prevent path traversal attacks
@@ -187,15 +187,16 @@ function createCursorAgent(): Agent {
           if (lstats.isSymbolicLink()) {
             // Skip symlinked system prompt files, fall through to inline handling
           } else {
-            // Build command with shell substitution: "$(cat 'file')\n\nprompt"
-            // Double quotes allow $(cat) expansion; inner path is single-quoted for safety
-            const catCmd = `$(cat ${shellEscape(config.systemPromptFile)})`;
+            // Build command with shell substitution using printf %s for safe prompt embedding.
+            // shellEscape wraps prompt in single quotes (prevents shell expansion),
+            // printf %s outputs it literally. Matches OpenCode pattern exactly.
             if (config.prompt) {
-              // Combine system prompt file content with user prompt using shell string
-              // The double quotes preserve newlines in the output
-              parts.push("--", `"${catCmd}\n\n${config.prompt.replace(/"/g, '\\"')}"`);
+              parts.push(
+                "--",
+                `"$(cat ${shellEscape(config.systemPromptFile)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt)})"`,
+              );
             } else {
-              parts.push("--", `"${catCmd}"`);
+              parts.push("--", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
             }
             return parts.join(" ");
           }

@@ -210,13 +210,17 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("--model");
   });
 
-  it("uses shell substitution for systemPromptFile with prompt", () => {
-    // Uses $(cat ...) shell substitution to avoid tmux truncation for large files
+  it("uses shell substitution for systemPromptFile with prompt (printf %s for safety)", () => {
+    // Uses $(cat ...; printf; printf %s ...) pattern to avoid shell injection
+    // This matches OpenCode's pattern exactly - prompt is shellEscaped (single quotes)
+    // and wrapped in printf %s to prevent shell expansion
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPromptFile: "/path/to/system.txt", prompt: "Do the task" }),
     );
-    expect(cmd).toContain("$(cat '/path/to/system.txt')");
-    expect(cmd).toContain("Do the task");
+    expect(cmd).toContain("$(cat '/path/to/system.txt'");
+    // Must use printf %s with shellEscaped prompt for security
+    expect(cmd).toContain("printf %s 'Do the task'");
+    expect(cmd).toContain("printf '\\n\\n'");
     // Should use double quotes to allow shell expansion
     expect(cmd).toMatch(/--\s+".*\$\(cat/);
   });
@@ -237,14 +241,17 @@ describe("getLaunchCommand", () => {
         prompt: "Task",
       }),
     );
-    // Should use file via $(cat), not inline prompt
-    expect(cmd).toContain("$(cat '/path/to/file.txt')");
+    // Should use file via $(cat) with printf %s for prompt, not inline prompt
+    expect(cmd).toContain("$(cat '/path/to/file.txt'");
+    expect(cmd).toContain("printf %s 'Task'");
     expect(cmd).not.toContain("Inline prompt");
   });
 
   it("uses shell substitution for systemPromptFile without prompt", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPromptFile: "/path/sys.txt" }));
+    // Without prompt, just $(cat) is used (no printf %s needed)
     expect(cmd).toContain("$(cat '/path/sys.txt')");
+    expect(cmd).not.toContain("printf %s");
     expect(cmd).toMatch(/--\s+".*\$\(cat/);
   });
 
