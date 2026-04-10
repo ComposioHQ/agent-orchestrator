@@ -1,0 +1,36 @@
+packages/web/src/app/globals.css
+  5f5bb08219ff6dc3 70-71,210-211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "e71081a283d1f77dd9b380654765ada9e3572770",
+  "prompts": {
+    "02103e08b023cf16": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d740a-8277-7562-bf3e-53d60ebc7eef",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "5f5bb08219ff6dc3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d769a-0eea-71a1-8051-bccde6d46e3d",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 4,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
