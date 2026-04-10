@@ -24,7 +24,7 @@ import {
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { stat, access, readFile, lstat } from "node:fs/promises";
-import { readFileSync, lstatSync, constants } from "node:fs";
+import { lstatSync, constants } from "node:fs";
 import { join, resolve } from "node:path";
 
 const execFileAsync = promisify(execFile);
@@ -177,27 +177,38 @@ function createCursorAgent(): Agent {
       // Cursor agent doesn't have a dedicated --system flag, so we prepend
       // system prompt content to the main prompt positional argument
       // Use -- separator to prevent prompts starting with - from being parsed as flags
-      let promptText = "";
 
-      // Read system prompt from file or inline config
+      // Use shell command substitution for systemPromptFile to avoid tmux truncation
+      // when inlining 2000+ char prompts (same pattern as Claude Code, Aider, OpenCode)
       if (config.systemPromptFile) {
         try {
           // Security check: reject symlinks to prevent path traversal attacks
           const lstats = lstatSync(config.systemPromptFile);
           if (lstats.isSymbolicLink()) {
-            // Skip symlinked system prompt files
+            // Skip symlinked system prompt files, fall through to inline handling
           } else {
-            const systemContent = readFileSync(config.systemPromptFile, "utf-8");
-            promptText = systemContent.trim();
+            // Build command with shell substitution: "$(cat 'file')\n\nprompt"
+            // Double quotes allow $(cat) expansion; inner path is single-quoted for safety
+            const catCmd = `$(cat ${shellEscape(config.systemPromptFile)})`;
+            if (config.prompt) {
+              // Combine system prompt file content with user prompt using shell string
+              // The double quotes preserve newlines in the output
+              parts.push("--", `"${catCmd}\n\n${config.prompt.replace(/"/g, '\\"')}"`);
+            } else {
+              parts.push("--", `"${catCmd}"`);
+            }
+            return parts.join(" ");
           }
         } catch {
-          // File doesn't exist or can't be read - continue without system prompt
+          // File doesn't exist or can't be read - fall through to inline handling
         }
-      } else if (config.systemPrompt) {
-        promptText = config.systemPrompt.trim();
       }
 
-      // Append user prompt if provided
+      // Inline handling for systemPrompt or prompt without systemPromptFile
+      let promptText = "";
+      if (config.systemPrompt) {
+        promptText = config.systemPrompt.trim();
+      }
       if (config.prompt) {
         promptText = promptText ? promptText + "\n\n" + config.prompt : config.prompt;
       }

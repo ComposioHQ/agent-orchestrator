@@ -13,9 +13,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-// Mock fs (sync) for getLaunchCommand systemPromptFile tests
-const { mockReadFileSync, mockLstatSync } = vi.hoisted(() => ({
-  mockReadFileSync: vi.fn(),
+// Mock fs (sync) for getLaunchCommand systemPromptFile symlink checks
+const { mockLstatSync } = vi.hoisted(() => ({
   mockLstatSync: vi.fn().mockReturnValue({ isSymbolicLink: () => false }),
 }));
 
@@ -23,7 +22,6 @@ vi.mock("node:fs", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
-    readFileSync: mockReadFileSync,
     lstatSync: mockLstatSync,
   };
 });
@@ -212,14 +210,15 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("--model");
   });
 
-  it("reads systemPromptFile and prepends content to prompt", () => {
-    mockReadFileSync.mockReturnValueOnce("You are a helpful assistant.");
+  it("uses shell substitution for systemPromptFile with prompt", () => {
+    // Uses $(cat ...) shell substitution to avoid tmux truncation for large files
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPromptFile: "/path/to/system.txt", prompt: "Do the task" }),
     );
-    expect(mockReadFileSync).toHaveBeenCalledWith("/path/to/system.txt", "utf-8");
-    expect(cmd).toContain("You are a helpful assistant.");
+    expect(cmd).toContain("$(cat '/path/to/system.txt')");
     expect(cmd).toContain("Do the task");
+    // Should use double quotes to allow shell expansion
+    expect(cmd).toMatch(/--\s+".*\$\(cat/);
   });
 
   it("prepends inline systemPrompt to prompt when systemPromptFile not provided", () => {
@@ -230,8 +229,7 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("Do the task");
   });
 
-  it("prefers systemPromptFile over systemPrompt", () => {
-    mockReadFileSync.mockReturnValueOnce("File content wins");
+  it("prefers systemPromptFile over systemPrompt (shell substitution)", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({
         systemPromptFile: "/path/to/file.txt",
@@ -239,35 +237,37 @@ describe("getLaunchCommand", () => {
         prompt: "Task",
       }),
     );
-    expect(cmd).toContain("File content wins");
+    // Should use file via $(cat), not inline prompt
+    expect(cmd).toContain("$(cat '/path/to/file.txt')");
     expect(cmd).not.toContain("Inline prompt");
   });
 
-  it("works with systemPromptFile but no prompt", () => {
-    mockReadFileSync.mockReturnValueOnce("System instructions only");
+  it("uses shell substitution for systemPromptFile without prompt", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPromptFile: "/path/sys.txt" }));
-    expect(cmd).toContain("System instructions only");
+    expect(cmd).toContain("$(cat '/path/sys.txt')");
+    expect(cmd).toMatch(/--\s+".*\$\(cat/);
   });
 
-  it("continues without system prompt if file read fails", () => {
-    mockReadFileSync.mockImplementationOnce(() => {
+  it("falls back to inline handling if lstat fails", () => {
+    mockLstatSync.mockImplementationOnce(() => {
       throw new Error("ENOENT");
     });
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPromptFile: "/nonexistent.txt", prompt: "Do the task" }),
     );
+    // Falls back to just the prompt when file doesn't exist
     expect(cmd).toBe("agent -- 'Do the task'");
   });
 
   it("rejects symlinked systemPromptFile for security", () => {
     mockLstatSync.mockReturnValueOnce({ isSymbolicLink: () => true });
-    mockReadFileSync.mockReturnValueOnce("Should not be read");
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPromptFile: "/path/to/symlink.txt", prompt: "Do the task" }),
     );
     // Should skip the symlinked file and only include the prompt
     expect(cmd).toBe("agent -- 'Do the task'");
-    expect(mockReadFileSync).not.toHaveBeenCalled();
+    // Should not use $(cat) for symlinked file
+    expect(cmd).not.toContain("$(cat");
   });
 });
 
