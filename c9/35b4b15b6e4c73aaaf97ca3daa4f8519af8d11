@@ -1,0 +1,36 @@
+packages/web/src/components/SessionCard.tsx
+  99ccd82cdaf2d85d 494
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "c935b4b15b6e4c73aaaf97ca3daa4f8519af8d11",
+  "prompts": {
+    "02103e08b023cf16": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d740a-8277-7562-bf3e-53d60ebc7eef",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "99ccd82cdaf2d85d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d76de-0dcf-7eb1-8625-885049a713a8",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 3,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
