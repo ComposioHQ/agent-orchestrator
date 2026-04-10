@@ -1,0 +1,23 @@
+package.json
+  0e259e61822c83e1 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "69511618922c9fbd9218f3ba38cdb11f9302fb40",
+  "prompts": {
+    "0e259e61822c83e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d760a-43f7-7d51-92a9-71217a3d3d1a",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
