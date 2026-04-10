@@ -52,10 +52,14 @@ export async function POST(request: NextRequest) {
       return jsonWithCorrelation({ error: projectErr }, { status: 404 }, correlationId);
     }
 
+    // Strip newlines from prompt to prevent metadata injection (key=value format uses \n as delimiter)
+    const rawPrompt = (body.prompt as string) ?? undefined;
+    const prompt = rawPrompt ? rawPrompt.replace(/[\r\n]/g, " ").trim() : undefined;
+
     const session = await sessionManager.spawn({
       projectId,
       issueId: (body.issueId as string) ?? undefined,
-      prompt: (body.prompt as string) ?? undefined,
+      prompt: prompt || undefined,
     });
 
     recordApiObservation({
