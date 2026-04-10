@@ -1,0 +1,23 @@
+eslint.config.js
+  dc45a10de629b4c4 87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "b712dbf3a07e58a68f5169828abeebf41243495e",
+  "prompts": {
+    "dc45a10de629b4c4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b6cdf02-014d-45ee-aad1-5cdb4de3406d",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
