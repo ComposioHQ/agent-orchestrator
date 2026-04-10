@@ -1499,9 +1499,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
         if (processAlive) continue;
 
-        // Session is dead — archive directly (which copies to archive dir then deletes active).
-        // We archive first so if the process crashes mid-way, the session stays active with its
-        // original status and recovery retries on next boot.
+        // Session is dead — mark as terminated then archive.
+        // The status update is required so findArchivedSessionForIssue() matches the
+        // archived session (it filters by SPAWN_RESUMABLE_STATUSES which includes "terminated").
+        // If the process crashes between update and archive, the session stays active as
+        // "terminated" (a terminal status) and won't be re-processed on next boot.
         observer.recordOperation({
           metric: "lifecycle_poll",
           operation: "lifecycle.dead_session_detected",
@@ -1513,6 +1515,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           level: "warn",
         });
 
+        updateMetadata(sessionsDir, sessionId, { status: "terminated" });
         deleteMetadata(sessionsDir, sessionId, /* archive */ true);
 
         const result: RecoveredSession = {
