@@ -1,5 +1,5 @@
 /**
- * Web directory locator — finds the @composio/ao-web package.
+ * Web directory locator — finds the @aoagents/ao-web package.
  * Shared utility to avoid duplication between dashboard.ts and start.ts.
  */
 
@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import { existsSync } from "node:fs";
+import { formatCommandError } from "./cli-errors.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -53,6 +54,32 @@ export async function findFreePort(start: number, maxScan = MAX_PORT_SCAN): Prom
 }
 
 /**
+ * Open a URL in the user's browser without throwing back into the caller.
+ */
+export function openUrl(url: string): void {
+  const [cmd, args]: [string, string[]] =
+    process.platform === "win32"
+      ? ["cmd.exe", ["/c", "start", "", url]]
+      : [process.platform === "linux" ? "xdg-open" : "open", [url]];
+  const browser = spawn(cmd, args, { stdio: "ignore" });
+  browser.on("error", (err) => {
+    console.warn(
+      formatCommandError(err, {
+        cmd,
+        args,
+        action: `open ${url} in a browser`,
+        installHints:
+          process.platform === "linux"
+            ? ["Install xdg-utils so `xdg-open` is available on PATH."]
+            : process.platform === "win32"
+              ? []
+              : [],
+      }).message,
+    );
+  });
+}
+
+/**
  * Poll until a port is accepting connections, then open a URL in the browser.
  * Respects an AbortSignal so the caller can cancel if the dashboard process
  * exits early. Gives up silently after timeoutMs (default 30s).
@@ -67,14 +94,7 @@ export async function waitForPortAndOpen(
   while (!signal.aborted && Date.now() - start < timeoutMs) {
     const free = await isPortAvailable(port);
     if (!free) {
-      // Windows: `start` is a cmd.exe builtin (no start.exe), so must run via shell.
-      // The empty "" arg is the window title required by `start` before the URL.
-      const [cmd, args]: [string, string[]] =
-        process.platform === "win32"
-          ? ["cmd.exe", ["/c", "start", "", url]]
-          : [process.platform === "linux" ? "xdg-open" : "open", [url]];
-      const browser = spawn(cmd, args, { stdio: "ignore" });
-      browser.on("error", () => {});
+      openUrl(url);
       return;
     }
     await new Promise((r) => setTimeout(r, 300));
@@ -157,14 +177,14 @@ export async function buildDashboardEnv(
 }
 
 /**
- * Locate the @composio/ao-web package directory.
+ * Locate the @aoagents/ao-web package directory.
  * Uses createRequire for ESM-compatible require.resolve, with fallback
  * to sibling package paths that work from both src/ and dist/.
  */
 export function findWebDir(): string {
   // Try to resolve from node_modules first (installed as workspace dep)
   try {
-    const pkgJson = require.resolve("@composio/ao-web/package.json");
+    const pkgJson = require.resolve("@aoagents/ao-web/package.json");
     return resolve(pkgJson, "..");
   } catch {
     // Fallback: sibling package in monorepo (works both from src/ and dist/)
@@ -180,8 +200,8 @@ export function findWebDir(): string {
       }
     }
     throw new Error(
-      "Could not find @composio/ao-web package.\n" +
-      "  If installed via npm:    npm install -g @composio/ao\n" +
+      "Could not find @aoagents/ao-web package.\n" +
+      "  If installed via npm:    npm install -g @aoagents/ao\n" +
       "  If cloned from source:   pnpm install && pnpm build",
     );
   }

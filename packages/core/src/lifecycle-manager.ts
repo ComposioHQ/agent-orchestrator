@@ -15,6 +15,7 @@ import {
   SESSION_STATUS,
   PR_STATE,
   CI_STATUS,
+  TERMINAL_STATUSES,
   type LifecycleManager,
   type SessionManager,
   type SessionId,
@@ -32,10 +33,13 @@ import {
   type Session,
   type EventPriority,
   type ProjectConfig as _ProjectConfig,
+  type PREnrichmentData,
+  type CICheck,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
+import { resolveNotifierTarget } from "./notifier-resolution.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
@@ -198,6 +202,143 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
 
+  /**
+   * Cache for PR enrichment data within a single poll cycle.
+   * Cleared at the start of each pollAll() call.
+   * Key format: "${owner}/${repo}#${number}"
+   */
+  const prEnrichmentCache = new Map<string, PREnrichmentData>();
+
+  /**
+   * Per-session timestamp of last review backlog API check.
+   * Used to throttle getPendingComments/getAutomatedComments to at most once per 2 minutes.
+   * In-memory only — resets on restart (acceptable since it's a rate-limit hint, not state).
+   */
+  const lastReviewBacklogCheckAt = new Map<SessionId, number>();
+
+  /** Throttle interval for review backlog API calls (2 minutes). */
+  const REVIEW_BACKLOG_THROTTLE_MS = 2 * 60 * 1000;
+
+  /**
+   * Populate the PR enrichment cache using batch GraphQL queries.
+   * This is called once per poll cycle to fetch data for all PRs efficiently.
+   */
+  async function populatePREnrichmentCache(sessions: Session[]): Promise<void> {
+    // Clear previous cache
+    prEnrichmentCache.clear();
+
+    // Collect all unique PRs
+    const prs = sessions
+      .map((s) => s.pr)
+      .filter((pr): pr is NonNullable<typeof pr> => pr !== null);
+
+    // Deduplicate by key
+    const uniquePRs = Array.from(
+      new Map(prs.map((pr) => [`${pr.owner}/${pr.repo}#${pr.number}`, pr])).values(),
+    );
+
+    if (uniquePRs.length === 0) return;
+
+    // Group by SCM plugin and batch fetch for each group
+    const prsByPlugin = new Map<string, typeof uniquePRs>();
+    for (const pr of uniquePRs) {
+      // Find the project for this PR
+      const project = Object.values(config.projects).find((p) => {
+        const [owner, repo] = p.repo.split("/");
+        return owner === pr.owner && repo === pr.repo;
+      });
+      if (!project?.scm?.plugin) continue;
+
+      const pluginKey = project.scm.plugin;
+      if (!prsByPlugin.has(pluginKey)) {
+        prsByPlugin.set(pluginKey, []);
+      }
+      const pluginPRs = prsByPlugin.get(pluginKey);
+      if (pluginPRs) {
+        pluginPRs.push(pr);
+      }
+    }
+
+    // Fetch enrichment data for each plugin's PRs
+    for (const [pluginKey, pluginPRs] of prsByPlugin) {
+      const scm = registry.get<SCM>("scm", pluginKey);
+      if (!scm?.enrichSessionsPRBatch) continue;
+
+      const batchStartTime = Date.now();
+      try {
+        const enrichmentData = await scm.enrichSessionsPRBatch(
+          pluginPRs,
+          {
+            recordSuccess(_data) {
+              const batchDuration = Date.now() - batchStartTime;
+              observer?.recordOperation({
+                metric: "graphql_batch",
+                operation: "batch_enrichment",
+                correlationId: createCorrelationId("graphql-batch"),
+                outcome: "success",
+                projectId: scopedProjectId,
+                durationMs: batchDuration,
+                data: {
+                  plugin: pluginKey,
+                  prCount: pluginPRs.length,
+                  prKeys: pluginPRs.map((pr) => `${pr.owner}/${pr.repo}#${pr.number}`),
+                },
+                level: "info",
+              });
+            },
+            recordFailure(data) {
+              const batchDuration = Date.now() - batchStartTime;
+              observer?.recordOperation({
+                metric: "graphql_batch",
+                operation: "batch_enrichment",
+                correlationId: createCorrelationId("graphql-batch"),
+                outcome: "failure",
+                reason: data.error,
+                level: "warn",
+                data: {
+                  plugin: pluginKey,
+                  prCount: pluginPRs.length,
+                  error: data.error,
+                  durationMs: batchDuration,
+                },
+              });
+            },
+            log(level, message) {
+              // Log to stderr for observability
+              process.stderr.write(
+                JSON.stringify({
+                  source: "ao-graphql-batch",
+                  level,
+                  message,
+                  plugin: pluginKey,
+                  timestamp: new Date().toISOString(),
+                }) + "\n"
+              );
+            },
+          },
+        );
+
+        // Merge into cache
+        for (const [key, data] of enrichmentData) {
+          prEnrichmentCache.set(key, data);
+        }
+      } catch (err) {
+        // Batch fetch failed - individual calls will still work
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const batchCorrelationId = createCorrelationId("batch-enrichment");
+        observer?.recordOperation?.({
+          metric: "lifecycle_poll",
+          operation: "batch_enrichment",
+          correlationId: batchCorrelationId,
+          outcome: "failure",
+          reason: errorMsg,
+          level: "warn",
+          data: { plugin: pluginKey, prCount: pluginPRs.length },
+        });
+      }
+    }
+  }
+
   /** Check if idle time exceeds the agent-stuck threshold. */
   function isIdleBeyondThreshold(session: Session, idleTimestamp: Date): boolean {
     const stuckReaction = getReactionConfigForSession(session, "agent-stuck");
@@ -215,13 +356,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (!project) return session.status;
 
     const agentName = resolveAgentSelection({
-      role: resolveSessionRole(session.id, session.metadata),
+      role: resolveSessionRole(
+        session.id,
+        session.metadata,
+        project.sessionPrefix,
+        Object.values(config.projects).map((p) => p.sessionPrefix),
+      ),
       project,
       defaults: config.defaults,
       persistedAgent: session.metadata["agent"],
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
@@ -238,6 +384,25 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // 2. Check agent activity — prefer JSONL-based detection (runtime-agnostic)
     if (agent && session.runtimeHandle) {
       try {
+        // If the agent implements recordActivity, capture terminal output and record
+        // BEFORE calling getActivityState so the JSONL has fresh data to read.
+        if (agent.recordActivity && session.workspacePath) {
+          try {
+            const runtime = registry.get<Runtime>(
+              "runtime",
+              project.runtime ?? config.defaults.runtime,
+            );
+            const terminalOutput = runtime
+              ? await runtime.getOutput(session.runtimeHandle, 10)
+              : "";
+            if (terminalOutput) {
+              await agent.recordActivity(session, terminalOutput);
+            }
+          } catch {
+            // Non-fatal — activity recording is best-effort
+          }
+        }
+
         // Try JSONL-based activity detection first (reads agent's session files directly)
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
         if (activityState) {
@@ -311,6 +476,43 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // 4. Check PR state if PR exists
     if (session.pr && scm) {
       try {
+        // Try to use cached enrichment data from batch GraphQL query
+        const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+        const cachedData = prEnrichmentCache.get(prKey);
+
+        if (cachedData) {
+          // Use cached enrichment data - avoids individual API calls
+          if (cachedData.state === PR_STATE.MERGED) return "merged";
+          if (cachedData.state === PR_STATE.CLOSED) return "killed";
+
+          // Check CI
+          if (cachedData.ciStatus === CI_STATUS.FAILING) return "ci_failed";
+
+          // Check reviews
+          if (cachedData.reviewDecision === "changes_requested")
+            return "changes_requested";
+          if (cachedData.reviewDecision === "approved" || cachedData.reviewDecision === "none") {
+            // Check merge readiness — treat "none" (no reviewers required)
+            // as "approved" so CI-green PRs reach "mergeable" status
+            // and fire the merge.ready event / approved-and-green reaction.
+            if (cachedData.mergeable) return "mergeable";
+            if (cachedData.reviewDecision === "approved") return "approved";
+          }
+          if (cachedData.reviewDecision === "pending") return "review_pending";
+
+          // 4b. Post-PR stuck detection: agent has a PR open but is idle beyond
+          // threshold. This catches the case where step 2's stuck check was
+          // bypassed (getActivityState returned null) or the idle timestamp
+          // wasn't available during step 2 but the session has been at pr_open
+          // for a long time. Without this, sessions get stuck at "pr_open" forever.
+          if (detectedIdleTimestamp && isIdleBeyondThreshold(session, detectedIdleTimestamp)) {
+            return "stuck";
+          }
+
+          return "pr_open";
+        }
+
+        // Fall back to individual API calls if no cached data
         const prState = await scm.getPRState(session.pr);
         if (prState === PR_STATE.MERGED) return "merged";
         if (prState === PR_STATE.CLOSED) return "killed";
@@ -324,7 +526,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (reviewDecision === "changes_requested") return "changes_requested";
         if (reviewDecision === "approved" || reviewDecision === "none") {
           // Check merge readiness — treat "none" (no reviewers required)
-          // the same as "approved" so CI-green PRs reach "mergeable" status
+          // as "approved" so CI-green PRs reach "mergeable" status
           // and fire the merge.ready event / approved-and-green reaction.
           const mergeReady = await scm.getMergeability(session.pr);
           if (mergeReady.mergeable) return "mergeable";
@@ -508,7 +710,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return reactionConfig ? (reactionConfig as ReactionConfig) : null;
   }
 
-  function updateSessionMetadata(session: Session, updates: Partial<Record<string, string>>): void {
+  function updateSessionMetadata(
+    session: Session,
+    updates: Partial<Record<string, string>>,
+  ): void {
     const project = config.projects[session.projectId];
     if (!project) return;
 
@@ -541,15 +746,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
 
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
     const humanReactionKey = "changes-requested";
     const automatedReactionKey = "bugbot-comments";
 
-    if (newStatus === "merged" || newStatus === "killed") {
+    if (TERMINAL_STATUSES.has(newStatus)) {
       clearReactionTracker(session.id, humanReactionKey);
       clearReactionTracker(session.id, automatedReactionKey);
+      lastReviewBacklogCheckAt.delete(session.id);
       updateSessionMetadata(session, {
         lastPendingReviewFingerprint: "",
         lastPendingReviewDispatchHash: "",
@@ -560,6 +766,27 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
       return;
     }
+
+    // Throttle review backlog API calls to at most once per 2 minutes.
+    // Comments don't change faster than this in practice, and the SCM calls
+    // (getPendingComments + getAutomatedComments) consume API quota on every poll.
+    //
+    // Exception: bypass throttle when a transition reaction just fired for a
+    // review reaction key. The transitionReaction branch records
+    // lastPendingReviewDispatchHash, which requires the current fingerprint from
+    // the API. If we throttle here, that metadata never gets written and the
+    // next unthrottled poll sees a "new" fingerprint, clears the reaction tracker,
+    // and fires a duplicate dispatch.
+    const hasRelevantTransition =
+      transitionReaction?.key === humanReactionKey ||
+      transitionReaction?.key === automatedReactionKey;
+    if (!hasRelevantTransition) {
+      const lastCheckAt = lastReviewBacklogCheckAt.get(session.id) ?? 0;
+      if (Date.now() - lastCheckAt < REVIEW_BACKLOG_THROTTLE_MS) {
+        return;
+      }
+    }
+    lastReviewBacklogCheckAt.set(session.id, Date.now());
 
     const [pendingResult, automatedResult] = await Promise.allSettled([
       scm.getPendingComments(session.pr),
@@ -641,9 +868,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // --- Automated (bot) review comments ---
     if (automatedComments !== null) {
-      const automatedFingerprint = makeFingerprint(automatedComments.map((comment) => comment.id));
+      const automatedFingerprint = makeFingerprint(
+        automatedComments.map((comment) => comment.id),
+      );
       const lastAutomatedFingerprint = session.metadata["lastAutomatedReviewFingerprint"] ?? "";
-      const lastAutomatedDispatchHash = session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
+      const lastAutomatedDispatchHash =
+        session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
 
       if (automatedFingerprint !== lastAutomatedFingerprint) {
         clearReactionTracker(session.id, automatedReactionKey);
@@ -683,13 +913,272 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /**
+   * Format CI check failures into a human-readable message for the agent.
+   * Includes check names, statuses, and links for debugging.
+   */
+  function formatCIFailureMessage(failedChecks: CICheck[]): string {
+    const lines = [
+      "CI checks are failing on your PR. Here are the failed checks:",
+      "",
+    ];
+    for (const check of failedChecks) {
+      const status = check.conclusion ?? check.status;
+      const link = check.url ? ` — ${check.url}` : "";
+      lines.push(`- **${check.name}**: ${status}${link}`);
+    }
+    lines.push(
+      "",
+      "Investigate the failures, fix the issues, and push again.",
+    );
+    return lines.join("\n");
+  }
+
+  /**
+   * Dispatch CI failure details to the agent session when new or changed
+   * failures are detected. Follows the same fingerprinting/deduplication
+   * pattern as maybeDispatchReviewBacklog().
+   */
+  async function maybeDispatchCIFailureDetails(
+    session: Session,
+    _oldStatus: SessionStatus,
+    newStatus: SessionStatus,
+    transitionReaction?: { key: string; result: ReactionResult | null },
+  ): Promise<void> {
+    const project = config.projects[session.projectId];
+    if (!project || !session.pr) return;
+
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    if (!scm) return;
+
+    const ciReactionKey = "ci-failed";
+
+    // Clear tracking when PR is closed/merged
+    if (newStatus === "merged" || newStatus === "killed") {
+      clearReactionTracker(session.id, ciReactionKey);
+      updateSessionMetadata(session, {
+        lastCIFailureFingerprint: "",
+        lastCIFailureDispatchHash: "",
+        lastCIFailureDispatchAt: "",
+      });
+      return;
+    }
+
+    // Only dispatch CI details when in ci_failed state
+    if (newStatus !== "ci_failed") {
+      // CI is no longer failing — clear tracking so next failure is dispatched fresh
+      const lastFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
+      if (lastFingerprint) {
+        clearReactionTracker(session.id, ciReactionKey);
+        updateSessionMetadata(session, {
+          lastCIFailureFingerprint: "",
+          lastCIFailureDispatchHash: "",
+          lastCIFailureDispatchAt: "",
+        });
+      }
+      return;
+    }
+
+    // Fetch individual CI checks for failure details.
+    // Use batch enrichment data when available to avoid an extra REST call;
+    // fall back to getCIChecks() when the batch didn't run this cycle.
+    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+    const cachedEnrichment = prEnrichmentCache.get(prKey);
+
+    let checks: CICheck[];
+    if (cachedEnrichment?.ciChecks !== undefined) {
+      checks = cachedEnrichment.ciChecks;
+    } else {
+      try {
+        checks = await scm.getCIChecks(session.pr);
+      } catch {
+        // Failed to fetch checks — skip this cycle
+        return;
+      }
+    }
+
+    const failedChecks = checks.filter(
+      (c) => c.status === "failed" || c.conclusion?.toUpperCase() === "FAILURE",
+    );
+    if (failedChecks.length === 0) return;
+
+    const ciFingerprint = makeFingerprint(
+      failedChecks.map((c) => `${c.name}:${c.status}:${c.conclusion ?? ""}`),
+    );
+    const lastCIFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
+    const lastCIDispatchHash = session.metadata["lastCIFailureDispatchHash"] ?? "";
+
+    // Reset reaction tracker when failure set changes
+    if (ciFingerprint !== lastCIFingerprint && transitionReaction?.key !== ciReactionKey) {
+      clearReactionTracker(session.id, ciReactionKey);
+    }
+    if (ciFingerprint !== lastCIFingerprint) {
+      updateSessionMetadata(session, {
+        lastCIFailureFingerprint: ciFingerprint,
+      });
+    }
+
+    // If transition already sent a ci-failed reaction with the static message,
+    // skip this cycle but do NOT record dispatch hash — the next poll will send
+    // the detailed CI failure info with check names and URLs.
+    if (
+      transitionReaction?.key === ciReactionKey &&
+      transitionReaction.result?.success
+    ) {
+      return;
+    }
+
+    // Skip if we already dispatched this exact failure set
+    if (ciFingerprint === lastCIDispatchHash) return;
+
+    // Dispatch CI failure details directly via sessionManager.send() rather than
+    // executeReaction() to avoid consuming the ci-failed reaction's retry budget.
+    // The transition reaction owns escalation; this is a follow-up info delivery.
+    const reactionConfig = getReactionConfigForSession(session, ciReactionKey);
+    if (
+      reactionConfig &&
+      reactionConfig.action &&
+      (reactionConfig.auto !== false || reactionConfig.action === "notify")
+    ) {
+      const detailedMessage = formatCIFailureMessage(failedChecks);
+
+      try {
+        if (reactionConfig.action === "send-to-agent") {
+          await sessionManager.send(session.id, detailedMessage);
+        } else {
+          // For "notify" action, send to human notifiers instead
+          const event = createEvent("ci.failing", {
+            sessionId: session.id,
+            projectId: session.projectId,
+            message: detailedMessage,
+            data: { failedChecks: failedChecks.map((c) => c.name) },
+          });
+          await notifyHuman(event, reactionConfig.priority ?? "warning");
+        }
+
+        updateSessionMetadata(session, {
+          lastCIFailureDispatchHash: ciFingerprint,
+          lastCIFailureDispatchAt: new Date().toISOString(),
+        });
+      } catch {
+        // Send failed — will retry on next poll cycle
+      }
+    }
+  }
+
+  /**
+   * Dispatch merge conflict notifications to the agent session.
+   * Conflicts are detected from the PR enrichment cache or getMergeability()
+   * and dispatched independently of the session status (conflicts can coexist
+   * with ci_failed, changes_requested, etc.).
+   */
+  async function maybeDispatchMergeConflicts(
+    session: Session,
+    newStatus: SessionStatus,
+  ): Promise<void> {
+    const project = config.projects[session.projectId];
+    if (!project || !session.pr) return;
+
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    if (!scm) return;
+
+    const conflictReactionKey = "merge-conflicts";
+
+    // Clear tracking when PR is closed/merged
+    if (newStatus === "merged" || newStatus === "killed") {
+      clearReactionTracker(session.id, conflictReactionKey);
+      updateSessionMetadata(session, {
+        lastMergeConflictDispatched: "",
+      });
+      return;
+    }
+
+    // Only check for conflicts on open PRs
+    if (
+      newStatus !== "pr_open" &&
+      newStatus !== "ci_failed" &&
+      newStatus !== "review_pending" &&
+      newStatus !== "changes_requested" &&
+      newStatus !== "approved" &&
+      newStatus !== "mergeable"
+    ) {
+      return;
+    }
+
+    // Check for conflicts using cached enrichment data or fallback to individual call.
+    // When batch enrichment ran (cachedData is present), use its hasConflicts value
+    // to avoid 3 redundant REST calls from getMergeability() — the batch already
+    // fetched the mergeable/mergeStateStatus fields via GraphQL.
+    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+    const cachedData = prEnrichmentCache.get(prKey);
+
+    let hasConflicts: boolean;
+    if (cachedData) {
+      // Batch ran — trust its data (undefined means CONFLICTING wasn't set → no conflicts)
+      hasConflicts = cachedData.hasConflicts ?? false;
+    } else {
+      // Batch didn't run this cycle — fall back to individual API call
+      try {
+        const mergeReadiness = await scm.getMergeability(session.pr);
+        hasConflicts = !mergeReadiness.noConflicts;
+      } catch {
+        return;
+      }
+    }
+
+    const lastDispatched = session.metadata["lastMergeConflictDispatched"] ?? "";
+
+    if (hasConflicts) {
+      // Already dispatched for current conflict state — skip
+      if (lastDispatched === "true") return;
+
+      const reactionConfig = getReactionConfigForSession(session, conflictReactionKey);
+      if (
+        reactionConfig &&
+        reactionConfig.action &&
+        (reactionConfig.auto !== false || reactionConfig.action === "notify")
+      ) {
+        try {
+          if (reactionConfig.action === "send-to-agent") {
+            const message =
+              reactionConfig.message ??
+              "Your branch has merge conflicts. Rebase on the default branch and resolve them.";
+            await sessionManager.send(session.id, message);
+          } else {
+            const event = createEvent("merge.conflicts", {
+              sessionId: session.id,
+              projectId: session.projectId,
+              message: `${session.id}: PR has merge conflicts`,
+            });
+            await notifyHuman(event, reactionConfig.priority ?? "warning");
+          }
+
+          updateSessionMetadata(session, {
+            lastMergeConflictDispatched: "true",
+          });
+        } catch {
+          // Send failed — will retry on next poll cycle
+        }
+      }
+    } else if (lastDispatched === "true") {
+      // Conflicts resolved — clear so we can re-dispatch if they recur
+      clearReactionTracker(session.id, conflictReactionKey);
+      updateSessionMetadata(session, {
+        lastMergeConflictDispatched: "",
+      });
+    }
+  }
+
   /** Send a notification to all configured notifiers. */
   async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<void> {
     const eventWithPriority = { ...event, priority };
     const notifierNames = config.notificationRouting[priority] ?? config.defaults.notifiers;
 
     for (const name of notifierNames) {
-      const notifier = registry.get<Notifier>("notifier", name);
+      const target = resolveNotifierTarget(config, name);
+      const notifier =
+        registry.get<Notifier>("notifier", target.reference) ??
+        registry.get<Notifier>("notifier", target.pluginName);
       if (notifier) {
         try {
           await notifier.notify(eventWithPriority);
@@ -728,7 +1217,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
 
       // Reset allCompleteEmitted when any session becomes active again
-      if (newStatus !== "merged" && newStatus !== "killed") {
+      if (!TERMINAL_STATUSES.has(newStatus)) {
         allCompleteEmitted = false;
       }
 
@@ -788,7 +1277,27 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       states.set(session.id, newStatus);
     }
 
-    await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
+    // Pin first quality summary for title stability
+    if (
+      session.agentInfo?.summary &&
+      !session.agentInfo.summaryIsFallback &&
+      !session.metadata["pinnedSummary"]
+    ) {
+      const trimmed = session.agentInfo.summary.replace(/[\n\r]/g, " ").trim();
+      if (trimmed.length >= 5) {
+        try {
+          updateSessionMetadata(session, { pinnedSummary: trimmed });
+        } catch {
+          // Non-critical: title just won't be pinned this cycle
+        }
+      }
+    }
+
+    await Promise.allSettled([
+      maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
+      maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
+      maybeDispatchMergeConflicts(session, newStatus),
+    ]);
   }
 
   /** Run one polling cycle across all sessions. */
@@ -806,16 +1315,20 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
       // process that transition even though the new status is terminal)
       const sessionsToCheck = sessions.filter((s) => {
-        if (s.status !== "merged" && s.status !== "killed") return true;
+        if (!TERMINAL_STATUSES.has(s.status)) return true;
         const tracked = states.get(s.id);
         return tracked !== undefined && tracked !== s.status;
       });
 
+      // Populate PR enrichment cache using batch GraphQL queries
+      // This reduces API calls from N×3 to 1 per poll cycle
+      await populatePREnrichmentCache(sessionsToCheck);
+
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
 
-      // Prune stale entries from states and reactionTrackers for sessions
-      // that no longer appear in the session list (e.g., after kill/cleanup)
+      // Prune stale entries from states, reactionTrackers, and lastReviewBacklogCheckAt
+      // for sessions that no longer appear in the session list (e.g., after kill/cleanup)
       const currentSessionIds = new Set(sessions.map((s) => s.id));
       for (const trackedId of states.keys()) {
         if (!currentSessionIds.has(trackedId)) {
@@ -828,9 +1341,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           reactionTrackers.delete(trackerKey);
         }
       }
+      for (const sessionId of lastReviewBacklogCheckAt.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          lastReviewBacklogCheckAt.delete(sessionId);
+        }
+      }
 
       // Check if all sessions are complete (trigger reaction only once)
-      const activeSessions = sessions.filter((s) => s.status !== "merged" && s.status !== "killed");
+      const activeSessions = sessions.filter((s) => !TERMINAL_STATUSES.has(s.status));
       if (sessions.length > 0 && activeSessions.length === 0 && !allCompleteEmitted) {
         allCompleteEmitted = true;
 

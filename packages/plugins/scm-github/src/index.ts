@@ -26,13 +26,18 @@ import {
   type ReviewComment,
   type AutomatedComment,
   type MergeReadiness,
-} from "@composio/ao-core";
+  type PREnrichmentData,
+  type BatchObserver,
+} from "@aoagents/ao-core";
+import {
+  enrichSessionsPRBatch as enrichSessionsPRBatchImpl,
+} from "./graphql-batch.js";
 import {
   getWebhookHeader,
   parseWebhookBranchRef,
   parseWebhookJsonObject,
   parseWebhookTimestamp,
-} from "@composio/ao-core/scm-webhook-utils";
+} from "@aoagents/ao-core/scm-webhook-utils";
 
 const execFileAsync = promisify(execFile);
 
@@ -1018,6 +1023,23 @@ function createGitHubSCM(): SCM {
         noConflicts,
         blockers,
       };
+    },
+
+    /**
+     * Batch fetch PR data for multiple PRs using GraphQL.
+     * This is an optimization for the orchestrator polling loop.
+     *
+     * Instead of making 3 separate API calls for each PR (getPRState,
+     * getCISummary, getReviewDecision), we fetch all data for all PRs
+     * in one GraphQL query using aliases.
+     *
+     * This reduces API calls from N×3 to 1 (or a few if batching needed).
+     */
+    async enrichSessionsPRBatch(
+      prs: PRInfo[],
+      observer?: BatchObserver,
+    ): Promise<Map<string, PREnrichmentData>> {
+      return enrichSessionsPRBatchImpl(prs, observer);
     },
   };
 }

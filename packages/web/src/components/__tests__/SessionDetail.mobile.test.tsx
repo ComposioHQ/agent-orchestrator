@@ -40,6 +40,7 @@ describe("SessionDetail mobile navbar", () => {
       projectId: "my-app",
       metadata: { role: "orchestrator" },
       summary: "Orchestrator session title",
+      branch: null,
     });
 
     render(
@@ -123,7 +124,7 @@ describe("SessionDetail mobile navbar", () => {
       />,
     );
 
-    expect(screen.getByText("Compact mobile header")).toBeInTheDocument();
+    expect(screen.getByText("Compact header polish")).toBeInTheDocument();
     expect(screen.getByText("feat/compact-header")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "PR #77" })).toHaveClass(
       "session-detail-link-pill--link",
@@ -131,6 +132,24 @@ describe("SessionDetail mobile navbar", () => {
     expect(screen.getByRole("link", { name: "feat/compact-header" })).toHaveClass(
       "session-detail-link-pill--link",
     );
+  });
+
+  it("prefers issue title over changing summary text", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-stable-title",
+          projectId: "my-app",
+          issueTitle: "Fix stable session titles",
+          summary: "Responding to latest review comment",
+          branch: "fix/stable-session-titles",
+        })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    expect(screen.getByText("Fix stable session titles")).toBeInTheDocument();
+    expect(screen.queryByText("Responding to latest review comment")).not.toBeInTheDocument();
   });
 
   it("preserves CI and unresolved review comment detail on mobile session pages", () => {
@@ -179,5 +198,30 @@ describe("SessionDetail mobile navbar", () => {
     expect(screen.getByText("build")).toBeInTheDocument();
     expect(screen.getByText("lint")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask Agent to Fix" })).toBeInTheDocument();
+  });
+
+  it("shows the merged badge styling for merged PR sessions", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-merged",
+          projectId: "my-app",
+          summary: "Merged session",
+          pr: makePR({
+            number: 89,
+            state: "merged",
+            title: "Preserve merged badge styling",
+          }),
+        })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    const mergedBadge = screen.getByText("Merged");
+    expect(mergedBadge).toBeInTheDocument();
+    expect(mergedBadge).toHaveStyle({
+      color: "var(--color-text-secondary)",
+      background: "var(--color-chip-bg)",
+    });
   });
 });

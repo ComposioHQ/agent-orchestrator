@@ -4,8 +4,9 @@
  * No hardcoded binary paths — relies entirely on each plugin's detect() export.
  */
 
-import type { PluginModule } from "@composio/ao-core";
+import type { PluginModule } from "@aoagents/ao-core";
 import { isHumanCaller } from "./caller-context.js";
+import { promptSelect } from "./prompts.js";
 
 export interface DetectedAgent {
   name: string;
@@ -14,10 +15,11 @@ export interface DetectedAgent {
 
 /** Known agent plugins — package name mapping. */
 const AGENT_PLUGINS: Array<{ name: string; pkg: string }> = [
-  { name: "claude-code", pkg: "@composio/ao-plugin-agent-claude-code" },
-  { name: "aider", pkg: "@composio/ao-plugin-agent-aider" },
-  { name: "codex", pkg: "@composio/ao-plugin-agent-codex" },
-  { name: "opencode", pkg: "@composio/ao-plugin-agent-opencode" },
+  { name: "claude-code", pkg: "@aoagents/ao-plugin-agent-claude-code" },
+  { name: "aider", pkg: "@aoagents/ao-plugin-agent-aider" },
+  { name: "codex", pkg: "@aoagents/ao-plugin-agent-codex" },
+  { name: "cursor", pkg: "@aoagents/ao-plugin-agent-cursor" },
+  { name: "opencode", pkg: "@aoagents/ao-plugin-agent-opencode" },
 ];
 
 /**
@@ -71,27 +73,12 @@ export async function detectAgentRuntime(preDetected?: DetectedAgent[]): Promise
     return available.find((a) => a.name === "claude-code")?.name ?? available[0].name;
   }
 
-  // Interactive: prompt human to pick using node:readline (no external deps)
-  const { createInterface } = await import("node:readline/promises");
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-
-  try {
-    console.log("\n  Multiple agent runtimes detected:\n");
-    available.forEach((a, i) => {
-      console.log(`  ${i + 1}. ${a.displayName} (${a.name})`);
-    });
-    console.log();
-
-    const answer = await rl.question(`  Choose default agent [1-${available.length}]: `);
-
-    const idx = parseInt(answer.trim(), 10) - 1;
-    if (idx >= 0 && idx < available.length) {
-      return available[idx].name;
-    }
-
-    // Invalid input — default to first
-    return available[0].name;
-  } finally {
-    rl.close();
-  }
+  return await promptSelect(
+    "Choose default agent runtime:",
+    available.map((agent) => ({
+      value: agent.name,
+      label: agent.displayName,
+      hint: agent.name,
+    }))
+  );
 }

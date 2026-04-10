@@ -1,5 +1,12 @@
 # @composio/ao-cli
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [5315e4e]
+  - @composio/ao-web@0.2.2
+
 ## 0.2.1
 
 ### Patch Changes

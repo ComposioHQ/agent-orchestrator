@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig, ProjectConfig } from "@composio/ao-core";
+import type { Session, RuntimeHandle, AgentLaunchConfig, ProjectConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks

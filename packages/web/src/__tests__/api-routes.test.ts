@@ -3,13 +3,12 @@ import { NextRequest } from "next/server";
 import {
   SessionNotFoundError,
   SessionNotRestorableError,
-  SessionNotFoundError,
   type Session,
   type SessionManager,
   type OrchestratorConfig,
   type PluginRegistry,
   type SCM,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
 
@@ -189,13 +188,14 @@ vi.mock("@/lib/services", () => ({
     registry: mockRegistry,
     sessionManager: mockSessionManager,
   })),
+  getVerifyIssues: vi.fn(async () => []),
   getSCM: vi.fn(() => mockSCM),
 }));
 
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
-import { POST as orchestratorsPOST } from "@/app/api/orchestrators/route";
+import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
 import { POST as messagePOST } from "@/app/api/sessions/[id]/message/route";
@@ -205,6 +205,9 @@ import { POST as remapPOST } from "@/app/api/sessions/[id]/remap/route";
 import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
 import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
+import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
+import { GET as verifyGET, POST as verifyPOST } from "@/app/api/verify/route";
+import { GET as patchesGET } from "@/app/api/sessions/patches/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -316,79 +319,142 @@ describe("API Routes", () => {
       expect(mockSessionManager.list).toHaveBeenCalledWith("docs-app");
     });
 
-    it("keeps global pause sourced from all projects even for project-scoped requests", async () => {
-      const pausedUntil = new Date(Date.now() + 60_000).toISOString();
-      const pausedSessions = [
+    it("enriches all PRs concurrently, not sequentially", async () => {
+      vi.useFakeTimers();
+
+      const sessionsWithPRs = Array.from({ length: 6 }, (_, i) =>
         makeSession({
-          id: "docs-orchestrator",
-          projectId: "docs-app",
-          metadata: {
-            role: "orchestrator",
-            globalPauseUntil: pausedUntil,
-            globalPauseReason: "Rate limit hit",
-            globalPauseSource: "docs-orchestrator",
+          id: `worker-${i}`,
+          status: "pr_open",
+          activity: "idle",
+          pr: {
+            number: 100 + i,
+            url: `https://github.com/acme/my-app/pull/${100 + i}`,
+            title: `PR ${i}`,
+            owner: "acme",
+            repo: "my-app",
+            branch: `feat/pr-${i}`,
+            baseBranch: "main",
+            isDraft: false,
           },
         }),
-        makeSession({ id: "docs-1", projectId: "docs-app", status: "working", activity: "active" }),
-        makeSession({
-          id: "backend-3",
-          projectId: "my-app",
-          status: "working",
-          activity: "active",
-        }),
-      ];
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockImplementation(
-        async (projectId?: string) =>
-          projectId
-            ? pausedSessions.filter((session) => session.projectId === projectId)
-            : pausedSessions,
       );
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue(sessionsWithPRs);
 
-      const res = await sessionsGET(
-        makeRequest("http://localhost:3000/api/sessions?project=my-app"),
-      );
+      const metadataSpy = vi
+        .spyOn(serialize, "enrichSessionsMetadata")
+        .mockResolvedValue(undefined);
+
+      const enrichSpy = vi
+        .spyOn(serialize, "enrichSessionPR")
+        .mockImplementation(
+          () => new Promise<void>((resolve) => { setTimeout(resolve, 1_000); }),
+        );
+
+      const responsePromise = sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
+
+      // Flush microtasks so the handler reaches the PR enrichment loop
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Sequential would only have 1 call pending; parallel fires all 6 immediately
+      expect(enrichSpy.mock.calls.length).toBe(6);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      const res = await responsePromise;
       expect(res.status).toBe(200);
-      const data = await res.json();
 
-      expect(data.globalPause).toMatchObject({
-        pausedUntil,
-        reason: "Rate limit hit",
-        sourceSessionId: "docs-orchestrator",
+      metadataSpy.mockRestore();
+      enrichSpy.mockRestore();
+      vi.useRealTimers();
+    });
+  });
+
+  describe("GET /api/runtime/terminal", () => {
+    function withEnv(overrides: Record<string, string | undefined>, fn: () => Promise<void>) {
+      const saved: Record<string, string | undefined> = {};
+      for (const key of Object.keys(overrides)) {
+        saved[key] = process.env[key];
+        if (overrides[key] === undefined) {
+          Reflect.deleteProperty(process.env, key);
+        } else {
+          process.env[key] = overrides[key];
+        }
+      }
+      return fn().finally(() => {
+        for (const key of Object.keys(saved)) {
+          if (saved[key] === undefined) {
+            Reflect.deleteProperty(process.env, key);
+          } else {
+            process.env[key] = saved[key];
+          }
+        }
       });
-      expect(mockSessionManager.list).toHaveBeenNthCalledWith(1, "my-app");
-      expect(mockSessionManager.list).toHaveBeenNthCalledWith(2);
+    }
+
+    it("returns runtime direct terminal port from server env", async () => {
+      await withEnv({ DIRECT_TERMINAL_PORT: "14803", TERMINAL_PORT: "14802" }, async () => {
+        const res = await runtimeTerminalGET();
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.directTerminalPort).toBe("14803");
+        expect(data.terminalPort).toBe("14802");
+      });
     });
 
-    it("finds active global pause even when a metadata-role orchestrator appears first", async () => {
-      const pausedUntil = new Date(Date.now() + 60_000).toISOString();
-      const sessions = [
-        makeSession({
-          id: "control-session",
-          projectId: "docs-app",
-          metadata: { role: "orchestrator" },
-        }),
-        makeSession({
-          id: "docs-orchestrator",
-          projectId: "docs-app",
-          metadata: {
-            role: "orchestrator",
-            globalPauseUntil: pausedUntil,
-            globalPauseReason: "Rate limit hit",
-            globalPauseSource: "docs-orchestrator",
-          },
-        }),
-      ];
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce(sessions);
-
-      const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
-      expect(res.status).toBe(200);
-      const data = await res.json();
-
-      expect(data.globalPause).toMatchObject({
-        pausedUntil,
-        reason: "Rate limit hit",
-        sourceSessionId: "docs-orchestrator",
+    it("falls back to default ports when env vars are absent", async () => {
+      await withEnv({ DIRECT_TERMINAL_PORT: undefined, TERMINAL_PORT: undefined }, async () => {
+        const res = await runtimeTerminalGET();
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.directTerminalPort).toBe("14801");
+        expect(data.terminalPort).toBe("14800");
       });
+    });
+
+    it("falls back to default ports for non-numeric env values", async () => {
+      await withEnv({ DIRECT_TERMINAL_PORT: "abc", TERMINAL_PORT: "not-a-port" }, async () => {
+        const res = await runtimeTerminalGET();
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.directTerminalPort).toBe("14801");
+        expect(data.terminalPort).toBe("14800");
+      });
+    });
+
+    it("falls back to default ports for out-of-range port values", async () => {
+      await withEnv({ DIRECT_TERMINAL_PORT: "99999", TERMINAL_PORT: "0" }, async () => {
+        const res = await runtimeTerminalGET();
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.directTerminalPort).toBe("14801");
+        expect(data.terminalPort).toBe("14800");
+      });
+    });
+
+    it("returns null proxyWsPath when TERMINAL_WS_PATH is absent", async () => {
+      await withEnv(
+        { TERMINAL_WS_PATH: undefined, NEXT_PUBLIC_TERMINAL_WS_PATH: undefined },
+        async () => {
+          const res = await runtimeTerminalGET();
+          expect(res.status).toBe(200);
+          const data = await res.json();
+          expect(data.proxyWsPath).toBeNull();
+        },
+      );
+    });
+
+    it("rejects proxyWsPath that does not start with /", async () => {
+      await withEnv({ TERMINAL_WS_PATH: "no-leading-slash" }, async () => {
+        const res = await runtimeTerminalGET();
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.proxyWsPath).toBeNull();
+      });
+    });
+
+    it("sets Cache-Control: no-store header", async () => {
+      const res = await runtimeTerminalGET();
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
     });
   });
 
@@ -420,6 +486,20 @@ describe("API Routes", () => {
       expect(res.status).toBe(400);
       const data = await res.json();
       expect(data.error).toMatch(/projectId/);
+    });
+
+    it("returns 404 when projectId does not exist in config", async () => {
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "mono-orchestrator" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await spawnPOST(req);
+
+      expect(res.status).toBe(404);
+      const data = await res.json();
+      expect(data.error).toBe("Unknown project: mono-orchestrator");
+      expect(mockSessionManager.spawn).not.toHaveBeenCalled();
     });
 
     it("returns 400 with invalid JSON", async () => {
@@ -527,6 +607,52 @@ describe("API Routes", () => {
       });
 
       const res = await orchestratorsPOST(req);
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toBe("boom");
+    });
+  });
+
+  describe("GET /api/orchestrators", () => {
+    it("returns orchestrators for a project", async () => {
+      const orchestrator = makeSession({
+        id: "my-app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+      });
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([orchestrator]);
+
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.orchestrators).toHaveLength(1);
+      expect(data.orchestrators[0].id).toBe("my-app-orchestrator");
+      expect(data.projectName).toBe("My App");
+    });
+
+    it("returns 400 when project parameter is missing", async () => {
+      const res = await orchestratorsGET(makeRequest("http://localhost:3000/api/orchestrators"));
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/Missing project query parameter/);
+    });
+
+    it("returns 404 for unknown project", async () => {
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=unknown-app"),
+      );
+      expect(res.status).toBe(404);
+      const data = await res.json();
+      expect(data.error).toMatch(/Unknown project/);
+    });
+
+    it("returns 500 when list fails", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("boom"));
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
+      );
       expect(res.status).toBe(500);
       const data = await res.json();
       expect(data.error).toBe("boom");
@@ -832,6 +958,70 @@ describe("API Routes", () => {
       expect(data).toHaveProperty("generatedAt");
       expect(data).toHaveProperty("overallStatus");
       expect(data).toHaveProperty("projects");
+    });
+  });
+
+  describe("GET /api/verify", () => {
+    it("returns verify issues", async () => {
+      const res = await verifyGET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(Array.isArray(data.issues)).toBe(true);
+    });
+  });
+
+  describe("POST /api/verify", () => {
+    it("returns 400 for invalid JSON body", async () => {
+      const req = makeRequest("/api/verify", {
+        method: "POST",
+        body: "not json",
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await verifyPOST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/Invalid JSON body/);
+    });
+  });
+  // ── GET /api/sessions/patches ──────────────────────────────────────────
+
+  describe("GET /api/sessions/patches", () => {
+    it("returns patches array with lightweight fields", async () => {
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(Array.isArray(data.sessions)).toBe(true);
+      expect(data.sessions.length).toBe(testSessions.length);
+    });
+
+    it("each patch contains id, status, activity, attentionLevel, lastActivityAt", async () => {
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      const data = await res.json();
+      for (const patch of data.sessions) {
+        expect(patch).toHaveProperty("id");
+        expect(patch).toHaveProperty("status");
+        expect(patch).toHaveProperty("activity");
+        expect(patch).toHaveProperty("attentionLevel");
+        expect(patch).toHaveProperty("lastActivityAt");
+      }
+    });
+
+    it("filters by project query param", async () => {
+      const res = await patchesGET(
+        makeRequest("http://localhost:3000/api/sessions/patches?project=my-app"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(Array.isArray(data.sessions)).toBe(true);
+    });
+
+    it("returns 500 when getServices throws", async () => {
+      const { getServices } = await import("@/lib/services");
+      vi.mocked(getServices).mockRejectedValueOnce(new Error("db down"));
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toBe("db down");
     });
   });
 });

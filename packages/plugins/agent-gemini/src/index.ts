@@ -10,7 +10,7 @@ import {
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { execFile } from "node:child_process";
 import { writeFile, mkdir, readFile, readdir, rename } from "node:fs/promises";
 import { homedir } from "node:os";

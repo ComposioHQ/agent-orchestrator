@@ -1,11 +1,30 @@
 import { spawn } from "node:child_process";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig, SessionNotRestorableError, WorkspaceMissingError } from "@composio/ao-core";
+import {
+  isOrchestratorSession,
+  loadConfig,
+  SessionNotRestorableError,
+  WorkspaceMissingError,
+} from "@aoagents/ao-core";
+import { DEFAULT_PORT } from "../lib/constants.js";
 import { git, getTmuxActivity, tmux } from "../lib/shell.js";
 import { formatAge } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { isOrchestratorSessionName } from "../lib/session-utils.js";
+
+interface SessionListEntry {
+  id: string;
+  projectId: string;
+  projectName: string;
+  role: "worker" | "orchestrator";
+  branch: string | null;
+  status: string | null;
+  issueId: string | null;
+  pr: string | null;
+  workspacePath: string | null;
+  lastActivityAt: string | null;
+}
 
 export function registerSession(program: Command): void {
   const session = program
@@ -16,7 +35,8 @@ export function registerSession(program: Command): void {
     .command("ls")
     .description("List all sessions")
     .option("-p, --project <id>", "Filter by project ID")
-    .action(async (opts: { project?: string }) => {
+    .option("--json", "Output as JSON")
+    .action(async (opts: { project?: string; json?: boolean }) => {
       const config = loadConfig();
       if (opts.project && !config.projects[opts.project]) {
         console.error(chalk.red(`Unknown project: ${opts.project}`));
@@ -36,43 +56,95 @@ export function registerSession(program: Command): void {
 
       // Iterate over all configured projects (not just ones with sessions)
       const projectIds = opts.project ? [opts.project] : Object.keys(config.projects);
+      const allSessionPrefixes = Object.entries(config.projects).map(
+        ([id, project]) => project.sessionPrefix ?? id,
+      );
+      const jsonOutput: SessionListEntry[] = [];
 
       for (const projectId of projectIds) {
         const project = config.projects[projectId];
         if (!project) continue;
-        console.log(chalk.bold(`\n${project.name || projectId}:`));
+        if (!opts.json) {
+          console.log(chalk.bold(`\n${project.name || projectId}:`));
+        }
 
         const projectSessions = (byProject.get(projectId) ?? []).sort((a, b) =>
           a.id.localeCompare(b.id),
         );
 
         if (projectSessions.length === 0) {
-          console.log(chalk.dim("  (no active sessions)"));
+          if (!opts.json) {
+            console.log(chalk.dim("  (no active sessions)"));
+          }
           continue;
         }
 
-        for (const s of projectSessions) {
-          // Get live branch from worktree if available
-          let branchStr = s.branch || "";
-          if (s.workspacePath) {
-            const liveBranch = await git(["branch", "--show-current"], s.workspacePath);
-            if (liveBranch) branchStr = liveBranch;
+        // Pre-fetch all branches and activities in parallel
+        const branches = await Promise.all(
+          projectSessions.map(async (s) => {
+            if (s.workspacePath) {
+              return git(["branch", "--show-current"], s.workspacePath).catch(() => null);
+            }
+            return null;
+          }),
+        );
+
+        const activities = await Promise.all(
+          projectSessions.map((s) => {
+            const tmuxTarget = s.runtimeHandle?.id ?? s.id;
+            return getTmuxActivity(tmuxTarget).catch(() => null);
+          }),
+        );
+
+        for (let i = 0; i < projectSessions.length; i++) {
+          const s = projectSessions[i];
+          const liveBranch = branches[i];
+          const activityTs = activities[i];
+
+          // Priority: live branch from workspace > metadata branch > empty string
+          const branchStr = (s.workspacePath && liveBranch) ? liveBranch : (s.branch || "");
+          const prUrl = s.metadata["pr"] ?? null;
+
+          if (opts.json) {
+            const role = isOrchestratorSession(
+              s,
+              project.sessionPrefix ?? projectId,
+              allSessionPrefixes,
+            )
+              ? "orchestrator"
+              : "worker";
+
+            jsonOutput.push({
+              id: s.id,
+              projectId,
+              projectName: project.name || projectId,
+              role,
+              branch: branchStr || null,
+              status: s.status,
+              issueId: s.issueId,
+              pr: prUrl,
+              workspacePath: s.workspacePath,
+              lastActivityAt: activityTs ? new Date(activityTs).toISOString() : null,
+            });
+
+            continue;
           }
 
-          // Get tmux activity age
-          const tmuxTarget = s.runtimeHandle?.id ?? s.id;
-          const activityTs = await getTmuxActivity(tmuxTarget);
           const age = activityTs ? formatAge(activityTs) : "-";
-
           const parts = [chalk.green(s.id), chalk.dim(`(${age})`)];
           if (branchStr) parts.push(chalk.cyan(branchStr));
           if (s.status) parts.push(chalk.dim(`[${s.status}]`));
-          const prUrl = s.metadata["pr"];
           if (prUrl) parts.push(chalk.blue(prUrl));
 
           console.log(`  ${parts.join("  ")}`);
         }
       }
+
+      if (opts.json) {
+        console.log(JSON.stringify(jsonOutput, null, 2));
+        return;
+      }
+
       console.log();
     });
 
@@ -112,23 +184,19 @@ export function registerSession(program: Command): void {
     .command("kill")
     .description("Kill a session and remove its worktree")
     .argument("<session>", "Session name to kill")
-    .option("--keep-session", "Keep mapped OpenCode session after kill")
     .option("--purge-session", "Delete mapped OpenCode session during kill")
-    .action(
-      async (sessionName: string, opts: { keepSession?: boolean; purgeSession?: boolean }) => {
-        const config = loadConfig();
-        const sm = await getSessionManager(config);
+    .action(async (sessionName: string, opts: { purgeSession?: boolean }) => {
+      const config = loadConfig();
+      const sm = await getSessionManager(config);
 
-        try {
-          const purgeOpenCode = opts.purgeSession === true ? true : opts.keepSession !== true;
-          await sm.kill(sessionName, { purgeOpenCode });
-          console.log(chalk.green(`\nSession ${sessionName} killed.`));
-        } catch (err) {
-          console.error(chalk.red(`Failed to kill session ${sessionName}: ${err}`));
-          process.exit(1);
-        }
-      },
-    );
+      try {
+        await sm.kill(sessionName, { purgeOpenCode: opts.purgeSession === true });
+        console.log(chalk.green(`\nSession ${sessionName} killed.`));
+      } catch (err) {
+        console.error(chalk.red(`Failed to kill session ${sessionName}: ${err}`));
+        process.exit(1);
+      }
+    });
 
   session
     .command("cleanup")
@@ -292,8 +360,8 @@ export function registerSession(program: Command): void {
         if (restored.branch) {
           console.log(chalk.dim(`  Branch:   ${restored.branch}`));
         }
-        const tmuxTarget = restored.runtimeHandle?.id ?? sessionName;
-        console.log(chalk.dim(`  Attach:   tmux attach -t ${tmuxTarget}`));
+        const port = config.port ?? DEFAULT_PORT;
+        console.log(chalk.dim(`  View:     http://localhost:${port}/sessions/${sessionName}`));
       } catch (err) {
         if (err instanceof SessionNotRestorableError) {
           console.error(chalk.red(`Cannot restore: ${err.reason}`));

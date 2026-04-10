@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as childProcess from "node:child_process";
 import * as fs from "node:fs";
-import type { RuntimeHandle } from "@composio/ao-core";
+import type { RuntimeHandle } from "@aoagents/ao-core";
 
 // Mock node:child_process with custom promisify support
 vi.mock("node:child_process", () => {
@@ -144,6 +144,48 @@ describe("runtime.create()", () => {
     expect(mockExecFileCustom).toHaveBeenCalledWith(
       "tmux",
       ["send-keys", "-t", "launch-test", "claude --session abc", "Enter"],
+      expectedTmuxOptions,
+    );
+  });
+
+  it("uses a temp launch script for long launch commands", async () => {
+    const runtime = create();
+    const longCommand = "x".repeat(250);
+
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+
+    await runtime.create({
+      sessionId: "launch-long",
+      workspacePath: "/tmp/ws",
+      launchCommand: longCommand,
+      environment: {},
+    });
+
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining("ao-launch-test-uuid-1234.sh"),
+      expect.stringContaining(longCommand),
+      { encoding: "utf-8", mode: 0o700 },
+    );
+
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      2,
+      "tmux",
+      [
+        "send-keys",
+        "-t",
+        "launch-long",
+        "-l",
+        expect.stringContaining("bash "),
+      ],
+      expectedTmuxOptions,
+    );
+
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      3,
+      "tmux",
+      ["send-keys", "-t", "launch-long", "Enter"],
       expectedTmuxOptions,
     );
   });

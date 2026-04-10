@@ -1,3 +1,5 @@
+import type { ObservabilityLevel } from "./observability.js";
+
 /**
  * Agent Orchestrator — Core Type Definitions
  *
@@ -68,8 +70,23 @@ export interface ActivityDetection {
   timestamp?: Date;
 }
 
+/** A single entry in the AO activity JSONL log, written by agent plugins. */
+export interface ActivityLogEntry {
+  /** ISO 8601 timestamp */
+  ts: string;
+  /** Activity state derived from terminal output or agent-native data */
+  state: ActivityState;
+  /** What triggered this state classification */
+  source: "terminal" | "native";
+  /** Raw terminal snippet that caused waiting_input/blocked (for debugging) */
+  trigger?: string;
+}
+
 /** Default threshold (ms) before a "ready" session becomes "idle". */
 export const DEFAULT_READY_THRESHOLD_MS = 300_000; // 5 minutes
+
+/** Default window (ms) for "active" state — activity newer than this is "active", older is "ready". */
+export const DEFAULT_ACTIVE_WINDOW_MS = 30_000; // 30 seconds
 
 /** Session status constants */
 export const SESSION_STATUS = {
@@ -172,11 +189,37 @@ export interface Session {
   metadata: Record<string, string>;
 }
 
-export function isOrchestratorSession(session: {
-  id: SessionId;
-  metadata?: Record<string, string>;
-}): boolean {
-  return session.metadata?.["role"] === "orchestrator" || session.id.endsWith("-orchestrator");
+export function isOrchestratorSession(
+  session: { id: SessionId; metadata?: Record<string, string> },
+  sessionPrefix?: string,
+  allSessionPrefixes?: string[],
+): boolean {
+  if (session.metadata?.["role"] === "orchestrator" || session.id.endsWith("-orchestrator")) {
+    return true;
+  }
+  if (!sessionPrefix) {
+    return false;
+  }
+  const escaped = sessionPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!new RegExp(`^${escaped}-orchestrator-\\d+$`).test(session.id)) {
+    return false;
+  }
+  // Guard against cross-project false positives: if the session ID is a plain
+  // numbered worker for any other known prefix (e.g. prefix "app-orchestrator"
+  // matches "app-orchestrator-1" as a worker), it is not an orchestrator.
+  if (allSessionPrefixes) {
+    for (const prefix of allSessionPrefixes) {
+      if (prefix === sessionPrefix) continue;
+      if (
+        new RegExp(
+          `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`,
+        ).test(session.id)
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 /** Config for creating a new session */
@@ -337,6 +380,19 @@ export interface Agent {
    * run git/gh commands. Without this, PRs created by agents never show up.
    */
   setupWorkspaceHooks?(workspacePath: string, config: WorkspaceHooksConfig): Promise<void>;
+
+  /**
+   * Optional: Record an activity observation to the session's JSONL activity log.
+   * Called by the lifecycle manager during each poll cycle with captured terminal output.
+   *
+   * Plugins classify the terminal output (via detectActivity) and append a JSONL entry
+   * to `{session.workspacePath}/.ao/activity.jsonl`. The next `getActivityState()` call
+   * reads from this file to detect states like `waiting_input` and `blocked`.
+   *
+   * Agents with native JSONL (Claude Code, Codex) should NOT implement this — their
+   * `getActivityState` already reads richer data from the agent's own session files.
+   */
+  recordActivity?(session: Session, terminalOutput: string): Promise<void>;
 }
 
 export interface AgentLaunchConfig {
@@ -592,6 +648,21 @@ export interface SCM {
 
   /** Check if PR is ready to merge */
   getMergeability(pr: PRInfo): Promise<MergeReadiness>;
+
+  /**
+   * Batch fetch PR data for multiple PRs in a single GraphQL query.
+   * Used by the orchestrator to poll all active sessions efficiently.
+   *
+   * This is an optimization method that, when implemented, can dramatically
+   * reduce API calls by fetching data for multiple PRs in one request
+   * instead of calling getPRState/getCISummary/getReviewDecision separately
+   * for each PR.
+   *
+   * @param prs - Array of PR information to fetch data for
+   * @param observer - Optional observer for batch operation metrics
+   * @returns Map keyed by "${owner}/${repo}#${number}" containing enrichment data
+   */
+  enrichSessionsPRBatch?(prs: PRInfo[], observer?: BatchObserver): Promise<Map<string, PREnrichmentData>>;
 }
 
 // --- PR Types ---
@@ -716,6 +787,61 @@ export interface MergeReadiness {
   approved: boolean;
   noConflicts: boolean;
   blockers: string[];
+}
+
+/**
+ * Batch enrichment data returned by SCM plugins.
+ * Contains all the information the orchestrator needs for status detection.
+ */
+export interface PREnrichmentData {
+  /** Current PR state */
+  state: PRState;
+  /** Overall CI status */
+  ciStatus: CIStatus;
+  /** Review decision */
+  reviewDecision: ReviewDecision;
+  /** Whether the PR is mergeable based on CI, reviews, and merge state */
+  mergeable: boolean;
+  /** PR title */
+  title?: string;
+  /** Number of additions */
+  additions?: number;
+  /** Number of deletions */
+  deletions?: number;
+  /** Whether PR is a draft */
+  isDraft?: boolean;
+  /** Whether PR has merge conflicts */
+  hasConflicts?: boolean;
+  /** Whether PR is behind base branch */
+  isBehind?: boolean;
+  /** List of blockers preventing merge */
+  blockers?: string[];
+  /** Individual CI check results (populated from batch enrichment when available) */
+  ciChecks?: CICheck[];
+}
+
+/**
+ * Observer for GraphQL batch PR enrichment operations.
+ * Used by SCM plugins to report batch success/failure to the observability system.
+ */
+export interface BatchObserver {
+  /** Record a successful batch enrichment */
+  recordSuccess(data: {
+    batchIndex: number;
+    totalBatches: number;
+    prCount: number;
+    durationMs: number;
+  }): void;
+  /** Record a failed batch enrichment */
+  recordFailure(data: {
+    batchIndex: number;
+    totalBatches: number;
+    prCount: number;
+    error: string;
+    durationMs: number;
+  }): void;
+  /** Log a message at a specific level */
+  log(level: ObservabilityLevel, message: string): void;
 }
 
 // =============================================================================
@@ -901,6 +1027,9 @@ export interface OrchestratorConfig {
   /** Default plugin selections */
   defaults: DefaultPlugins;
 
+  /** Installer-managed external plugin descriptors */
+  plugins?: InstalledPluginConfig[];
+
   /** Project configurations */
   projects: Record<string, ProjectConfig>;
 
@@ -912,6 +1041,43 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /**
+   * Internal: External plugin entries collected from inline tracker/scm/notifier configs.
+   * Used by plugin-registry for manifest validation. Set automatically during config validation.
+   */
+  _externalPluginEntries?: ExternalPluginEntryRef[];
+}
+
+/**
+ * Structured location of an external plugin config.
+ * Used to update config with manifest.name after loading (avoids parsing dotted strings).
+ */
+export type ExternalPluginLocation =
+  | { kind: "project"; projectId: string; configType: "tracker" | "scm" }
+  | { kind: "notifier"; notifierId: string };
+
+/**
+ * Reference to an external plugin config (from inline tracker/scm/notifier configs).
+ * Used for manifest.name validation during plugin loading.
+ */
+export interface ExternalPluginEntryRef {
+  /** Where this config came from (for error messages) */
+  source: string;
+  /** Structured location for updating config (avoids parsing source string) */
+  location: ExternalPluginLocation;
+  /** The slot this plugin fills */
+  slot: "tracker" | "scm" | "notifier";
+  /** npm package name (if specified) */
+  package?: string;
+  /** Local path (if specified) */
+  path?: string;
+  /**
+   * Expected plugin name (manifest.name).
+   * Only set when user explicitly specified `plugin` field.
+   * When undefined, any manifest.name is accepted and config is updated with it.
+   */
+  expectedPluginName?: string;
 }
 
 export interface DefaultPlugins {
@@ -925,6 +1091,28 @@ export interface DefaultPlugins {
   worker?: {
     agent?: string;
   };
+}
+
+export type InstalledPluginSource = "registry" | "npm" | "local";
+
+export interface InstalledPluginConfig {
+  /** Stable logical plugin name used in config and CLI UX */
+  name: string;
+
+  /** Where the plugin should be resolved from */
+  source: InstalledPluginSource;
+
+  /** Package name for registry/npm-managed plugins */
+  package?: string;
+
+  /** Requested version/range for installer-managed plugins */
+  version?: string;
+
+  /** Filesystem path for local plugins */
+  path?: string;
+
+  /** Installer-managed enable flag (defaults to true) */
+  enabled?: boolean;
 }
 
 export interface RoleAgentConfig {
@@ -1012,13 +1200,41 @@ export interface ProjectConfig {
 }
 
 export interface TrackerConfig {
-  plugin: string;
+  /**
+   * Plugin name (manifest.name). Required when using built-in plugins.
+   * Optional when `package` or `path` is specified (will be inferred from manifest).
+   * When both plugin and package/path are specified, manifest.name must match plugin.
+   *
+   * POST-VALIDATION INVARIANT: After validateConfig(), this field is ALWAYS populated.
+   * Either from user input, inferred from repo (github/gitlab), or auto-generated from
+   * package/path via generateTempPluginName(). The optional typing exists for raw config
+   * input before validation. Downstream code can safely assume non-null after validation.
+   */
+  plugin?: string;
+  /** npm package name for external plugins (e.g. "@acme/ao-plugin-tracker-jira") */
+  package?: string;
+  /** Local filesystem path for external plugins (relative to config file or absolute) */
+  path?: string;
   /** Plugin-specific config (e.g. teamId for Linear) */
   [key: string]: unknown;
 }
 
 export interface SCMConfig {
-  plugin: string;
+  /**
+   * Plugin name (manifest.name). Required when using built-in plugins.
+   * Optional when `package` or `path` is specified (will be inferred from manifest).
+   * When both plugin and package/path are specified, manifest.name must match plugin.
+   *
+   * POST-VALIDATION INVARIANT: After validateConfig(), this field is ALWAYS populated.
+   * Either from user input, inferred from repo (github/gitlab), or auto-generated from
+   * package/path via generateTempPluginName(). The optional typing exists for raw config
+   * input before validation. Downstream code can safely assume non-null after validation.
+   */
+  plugin?: string;
+  /** npm package name for external plugins (e.g. "@acme/ao-plugin-scm-bitbucket") */
+  package?: string;
+  /** Local filesystem path for external plugins (relative to config file or absolute) */
+  path?: string;
   webhook?: SCMWebhookConfig;
   [key: string]: unknown;
 }
@@ -1034,7 +1250,21 @@ export interface SCMWebhookConfig {
 }
 
 export interface NotifierConfig {
-  plugin: string;
+  /**
+   * Plugin name (manifest.name). Required when using built-in plugins.
+   * Optional when `package` or `path` is specified (will be inferred from manifest).
+   * When both plugin and package/path are specified, manifest.name must match plugin.
+   *
+   * POST-VALIDATION INVARIANT: After validateConfig(), this field is ALWAYS populated.
+   * Either from user input or auto-generated from package/path via generateTempPluginName().
+   * The optional typing exists for raw config input before validation.
+   * Downstream code can safely assume non-null after validation.
+   */
+  plugin?: string;
+  /** npm package name for external plugins (e.g. "@acme/ao-plugin-notifier-teams") */
+  package?: string;
+  /** Local filesystem path for external plugins (relative to config file or absolute) */
+  path?: string;
   [key: string]: unknown;
 }
 
@@ -1158,6 +1388,7 @@ export interface SessionMetadata {
   terminalWsPort?: number;
   directTerminalWsPort?: number;
   opencodeSessionId?: string;
+  pinnedSummary?: string; // First quality summary, pinned for display stability
 }
 
 // =============================================================================

@@ -198,7 +198,7 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║           🎉 All Tests Passed!                         ║${NC}"
 echo -e "${GREEN}╔════════════════════════════════════════════════════════╗${NC}"
 echo ""
-echo -e "${BLUE}Total onboarding time: ${total_duration}s${NC}"
+echo -e "${BLUE}Total onboarding time: ${total_duration}s"
 echo ""
 
 # Export metrics for CI

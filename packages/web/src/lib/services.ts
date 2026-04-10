@@ -1,3 +1,5 @@
+import "server-only";
+
 /**
  * Server-side singleton for core services.
  *
@@ -32,16 +34,17 @@ import {
   DEFAULT_DECOMPOSER_CONFIG,
   isOrchestratorSession,
   TERMINAL_STATUSES,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 
 // Static plugin imports — webpack needs these to be string literals
-import pluginRuntimeTmux from "@composio/ao-plugin-runtime-tmux";
-import pluginAgentClaudeCode from "@composio/ao-plugin-agent-claude-code";
-import pluginAgentOpencode from "@composio/ao-plugin-agent-opencode";
-import pluginWorkspaceWorktree from "@composio/ao-plugin-workspace-worktree";
-import pluginScmGithub from "@composio/ao-plugin-scm-github";
-import pluginTrackerGithub from "@composio/ao-plugin-tracker-github";
-import pluginTrackerLinear from "@composio/ao-plugin-tracker-linear";
+import pluginRuntimeTmux from "@aoagents/ao-plugin-runtime-tmux";
+import pluginAgentClaudeCode from "@aoagents/ao-plugin-agent-claude-code";
+import pluginAgentCursor from "@aoagents/ao-plugin-agent-cursor";
+import pluginAgentOpencode from "@aoagents/ao-plugin-agent-opencode";
+import pluginWorkspaceWorktree from "@aoagents/ao-plugin-workspace-worktree";
+import pluginScmGithub from "@aoagents/ao-plugin-scm-github";
+import pluginTrackerGithub from "@aoagents/ao-plugin-tracker-github";
+import pluginTrackerLinear from "@aoagents/ao-plugin-tracker-linear";
 
 export interface Services {
   config: OrchestratorConfig;
@@ -79,6 +82,7 @@ async function initServices(): Promise<Services> {
   // Register plugins explicitly (webpack can't handle dynamic import() in core)
   registry.register(pluginRuntimeTmux);
   registry.register(pluginAgentClaudeCode);
+  registry.register(pluginAgentCursor);
   registry.register(pluginAgentOpencode);
   registry.register(pluginWorkspaceWorktree);
   registry.register(pluginScmGithub);
@@ -137,7 +141,7 @@ async function labelIssuesForVerification(
   for (const session of mergedSessions) {
     const key = `${session.projectId}:${session.issueId}`;
     const project = config.projects[session.projectId];
-    if (!project?.tracker) {
+    if (!project?.tracker?.plugin) {
       processedIssues.add(key);
       continue;
     }
@@ -180,7 +184,7 @@ async function relabelReopenedIssues(
   registry: PluginRegistry,
 ): Promise<void> {
   for (const [, project] of Object.entries(config.projects)) {
-    if (!project.tracker) continue;
+    if (!project.tracker?.plugin) continue;
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
     if (!tracker?.listIssues || !tracker.updateIssue) continue;
 
@@ -225,8 +229,16 @@ export async function pollBacklog(): Promise<void> {
     // Detect reopened issues: open state + agent:done label → relabel as agent:backlog
     await relabelReopenedIssues(config, registry);
 
+    const allSessionPrefixes = Object.entries(config.projects).map(
+      ([id, p]) => p.sessionPrefix ?? id,
+    );
     const workerSessions = allSessions.filter(
-      (session) => !isOrchestratorSession(session) && !TERMINAL_STATUSES.has(session.status),
+      (session) =>
+        !isOrchestratorSession(
+          session,
+          config.projects[session.projectId]?.sessionPrefix ?? session.projectId,
+          allSessionPrefixes,
+        ) && !TERMINAL_STATUSES.has(session.status),
     );
     const activeIssueIds = new Set(
       workerSessions
@@ -240,7 +252,7 @@ export async function pollBacklog(): Promise<void> {
 
     for (const [projectId, project] of Object.entries(config.projects)) {
       if (availableSlots <= 0) break;
-      if (!project.tracker) continue;
+      if (!project.tracker?.plugin) continue;
 
       const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
       if (!tracker?.listIssues) continue;
@@ -352,7 +364,7 @@ export async function getBacklogIssues(): Promise<Array<Issue & { projectId: str
   try {
     const { config, registry } = await getServices();
     for (const [projectId, project] of Object.entries(config.projects)) {
-      if (!project.tracker) continue;
+      if (!project.tracker?.plugin) continue;
       const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
       if (!tracker?.listIssues) continue;
 
@@ -380,7 +392,7 @@ export async function getVerifyIssues(): Promise<Array<Issue & { projectId: stri
   try {
     const { config, registry } = await getServices();
     for (const [projectId, project] of Object.entries(config.projects)) {
-      if (!project.tracker) continue;
+      if (!project.tracker?.plugin) continue;
       const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
       if (!tracker?.listIssues) continue;
 
@@ -404,6 +416,6 @@ export async function getVerifyIssues(): Promise<Array<Issue & { projectId: stri
 
 /** Resolve the SCM plugin for a project. Returns null if not configured. */
 export function getSCM(registry: PluginRegistry, project: ProjectConfig | undefined): SCM | null {
-  if (!project?.scm) return null;
+  if (!project?.scm?.plugin) return null;
   return registry.get<SCM>("scm", project.scm.plugin);
 }

@@ -19,6 +19,9 @@ describe("Config Loading", () => {
     originalCwd = process.cwd();
     originalEnv = { ...process.env };
 
+    // Clear AO_CONFIG_PATH to ensure test isolation
+    delete process.env.AO_CONFIG_PATH;
+
     // Change to test directory
     process.chdir(testDir);
   });
