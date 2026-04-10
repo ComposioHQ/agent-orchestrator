@@ -24,7 +24,7 @@ import {
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { stat, access, readFile, lstat } from "node:fs/promises";
-import { readFileSync, constants } from "node:fs";
+import { readFileSync, lstatSync, constants } from "node:fs";
 import { join, resolve } from "node:path";
 
 const execFileAsync = promisify(execFile);
@@ -101,10 +101,15 @@ async function extractCursorSummary(workspacePath: string): Promise<string | nul
     const chatFile = join(cursorDir, "chat.md");
 
     try {
-      // Security check: verify chatFile is not a symlink and stays under workspacePath
+      // Security check: reject symlinks to prevent path traversal
+      const dirStats = await lstat(cursorDir);
+      if (dirStats.isSymbolicLink()) {
+        return null; // Reject symlinked .cursor directory
+      }
+
       const lstats = await lstat(chatFile);
       if (lstats.isSymbolicLink()) {
-        return null; // Reject symlinks to prevent path traversal
+        return null; // Reject symlinked chat file
       }
 
       // Verify the resolved path stays under workspacePath
@@ -177,8 +182,14 @@ function createCursorAgent(): Agent {
       // Read system prompt from file or inline config
       if (config.systemPromptFile) {
         try {
-          const systemContent = readFileSync(config.systemPromptFile, "utf-8");
-          promptText = systemContent.trim();
+          // Security check: reject symlinks to prevent path traversal attacks
+          const lstats = lstatSync(config.systemPromptFile);
+          if (lstats.isSymbolicLink()) {
+            // Skip symlinked system prompt files
+          } else {
+            const systemContent = readFileSync(config.systemPromptFile, "utf-8");
+            promptText = systemContent.trim();
+          }
         } catch {
           // File doesn't exist or can't be read - continue without system prompt
         }

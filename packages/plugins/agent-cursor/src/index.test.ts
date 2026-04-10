@@ -14,8 +14,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 // Mock fs (sync) for getLaunchCommand systemPromptFile tests
-const { mockReadFileSync } = vi.hoisted(() => ({
+const { mockReadFileSync, mockLstatSync } = vi.hoisted(() => ({
   mockReadFileSync: vi.fn(),
+  mockLstatSync: vi.fn().mockReturnValue({ isSymbolicLink: () => false }),
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -23,6 +24,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return {
     ...actual,
     readFileSync: mockReadFileSync,
+    lstatSync: mockLstatSync,
   };
 });
 
@@ -255,6 +257,17 @@ describe("getLaunchCommand", () => {
       makeLaunchConfig({ systemPromptFile: "/nonexistent.txt", prompt: "Do the task" }),
     );
     expect(cmd).toBe("agent -- 'Do the task'");
+  });
+
+  it("rejects symlinked systemPromptFile for security", () => {
+    mockLstatSync.mockReturnValueOnce({ isSymbolicLink: () => true });
+    mockReadFileSync.mockReturnValueOnce("Should not be read");
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "/path/to/symlink.txt", prompt: "Do the task" }),
+    );
+    // Should skip the symlinked file and only include the prompt
+    expect(cmd).toBe("agent -- 'Do the task'");
+    expect(mockReadFileSync).not.toHaveBeenCalled();
   });
 });
 
