@@ -309,3 +309,168 @@ describe("spawning session liveness (#1035)", () => {
     expect(spawning!.status).toBe("spawning");
   });
 });
+
+describe("list() caching", () => {
+  it("returns cached result within TTL window", async () => {
+    const { execFile } = await import("node:child_process");
+
+    vi.mocked(execFile).mockImplementation(((
+      _file: string,
+      args: string[],
+      _options: any,
+      callback?: any,
+    ) => {
+      const cb = typeof _options === "function" ? _options : callback;
+      if (!cb) return null as any;
+      const argsArray = Array.isArray(args) ? args : [];
+      if (argsArray[1] === "list") {
+        cb(null, "[]", "");
+      }
+      return null as any;
+    }) as any);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "mock-agent",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const result1 = await sm.list();
+    const result2 = await sm.list();
+
+    // Both calls should return the same array reference (cached)
+    expect(result1).toBe(result2);
+    expect(result1).toHaveLength(1);
+  });
+
+  it("returns fresh result after TTL expires", async () => {
+    vi.useFakeTimers();
+    const { execFile } = await import("node:child_process");
+
+    vi.mocked(execFile).mockImplementation(((
+      _file: string,
+      args: string[],
+      _options: any,
+      callback?: any,
+    ) => {
+      const cb = typeof _options === "function" ? _options : callback;
+      if (!cb) return null as any;
+      const argsArray = Array.isArray(args) ? args : [];
+      if (argsArray[1] === "list") {
+        cb(null, "[]", "");
+      }
+      return null as any;
+    }) as any);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "mock-agent",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const result1 = await sm.list();
+
+    // Advance past the 2-second TTL
+    vi.advanceTimersByTime(3_000);
+
+    const result2 = await sm.list();
+
+    // After TTL, should be a new array (fresh I/O)
+    expect(result1).not.toBe(result2);
+    expect(result1).toHaveLength(1);
+    expect(result2).toHaveLength(1);
+
+    vi.useRealTimers();
+  });
+
+  it("invalidates cache when kill() is called", async () => {
+    const { execFile } = await import("node:child_process");
+
+    vi.mocked(execFile).mockImplementation(((
+      _file: string,
+      args: string[],
+      _options: any,
+      callback?: any,
+    ) => {
+      const cb = typeof _options === "function" ? _options : callback;
+      if (!cb) return null as any;
+      const argsArray = Array.isArray(args) ? args : [];
+      if (argsArray[1] === "list") {
+        cb(null, "[]", "");
+      }
+      return null as any;
+    }) as any);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "mock-agent",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const result1 = await sm.list();
+    expect(result1).toHaveLength(1);
+
+    // Kill the session — this should invalidate the cache
+    await sm.kill("app-1");
+
+    const result2 = await sm.list();
+
+    // After kill, cache was invalidated so we get a new result
+    expect(result1).not.toBe(result2);
+    // The session was archived by kill, so it no longer appears
+    expect(result2).toHaveLength(0);
+  });
+
+  it("coalesces concurrent list() calls into a single I/O operation", async () => {
+    const { execFile } = await import("node:child_process");
+
+    vi.mocked(execFile).mockImplementation(((
+      _file: string,
+      args: string[],
+      _options: any,
+      callback?: any,
+    ) => {
+      const cb = typeof _options === "function" ? _options : callback;
+      if (!cb) return null as any;
+      const argsArray = Array.isArray(args) ? args : [];
+      if (argsArray[1] === "list") {
+        cb(null, "[]", "");
+      }
+      return null as any;
+    }) as any);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "mock-agent",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // Fire 3 concurrent list() calls
+    const [r1, r2, r3] = await Promise.all([sm.list(), sm.list(), sm.list()]);
+
+    // All should return the exact same reference (coalesced)
+    expect(r1).toBe(r2);
+    expect(r2).toBe(r3);
+    expect(r1).toHaveLength(1);
+  });
+});

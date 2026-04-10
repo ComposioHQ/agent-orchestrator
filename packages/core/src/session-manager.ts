@@ -943,6 +943,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
   // Define methods as local functions so `this` is not needed
   async function spawn(spawnConfig: SessionSpawnConfig): Promise<Session> {
+    invalidateListCache();
     const project = config.projects[spawnConfig.projectId];
     if (!project) {
       throw new Error(`Unknown project: ${spawnConfig.projectId}`);
@@ -1271,6 +1272,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   async function spawnOrchestrator(orchestratorConfig: OrchestratorSpawnConfig): Promise<Session> {
+    invalidateListCache();
     const project = config.projects[orchestratorConfig.projectId];
     if (!project) {
       throw new Error(`Unknown project: ${orchestratorConfig.projectId}`);
@@ -1534,7 +1536,55 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return session;
   }
 
+  // ---------------------------------------------------------------------------
+  // list() cache — collapses redundant I/O when multiple callers (SSE poll,
+  // lifecycle manager, API refreshes) all call list() within a short window.
+  // ---------------------------------------------------------------------------
+  const LIST_CACHE_TTL_MS = 2_000;
+
+  interface ListCacheEntry {
+    sessions: Session[];
+    timestamp: number;
+  }
+
+  /** Cached results keyed by projectId (or "__all__" for unscoped). */
+  const listResultCache = new Map<string, ListCacheEntry>();
+  /** In-flight promises keyed the same way — deduplicates concurrent calls. */
+  const listInflightCache = new Map<string, Promise<Session[]>>();
+
+  /** Invalidate the list cache so the next call does fresh I/O. */
+  function invalidateListCache(): void {
+    listResultCache.clear();
+  }
+
   async function list(projectId?: string): Promise<Session[]> {
+    const cacheKey = projectId ?? "__all__";
+
+    // Return cached result if fresh enough
+    const cached = listResultCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < LIST_CACHE_TTL_MS) {
+      return cached.sessions;
+    }
+
+    // Coalesce with an in-flight request for the same key
+    const inflight = listInflightCache.get(cacheKey);
+    if (inflight) {
+      return inflight;
+    }
+
+    const promise = listUncached(projectId);
+    listInflightCache.set(cacheKey, promise);
+
+    try {
+      const sessions = await promise;
+      listResultCache.set(cacheKey, { sessions, timestamp: Date.now() });
+      return sessions;
+    } finally {
+      listInflightCache.delete(cacheKey);
+    }
+  }
+
+  async function listUncached(projectId?: string): Promise<Session[]> {
     const allSessions = Object.entries(config.projects).flatMap(([entryProjectId, project]) => {
       if (projectId && entryProjectId !== projectId) return [];
       return loadActiveSessionRecords(project).map((record) => ({
@@ -1645,6 +1695,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   async function kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void> {
+    invalidateListCache();
     const { raw, sessionsDir, project, projectId } = requireSessionRecord(sessionId);
 
     const cleanupAgent = resolveSelectionForSession(project, sessionId, raw).agentName;
@@ -1712,6 +1763,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     projectId?: string,
     options?: { dryRun?: boolean; purgeOpenCode?: boolean },
   ): Promise<CleanupResult> {
+    invalidateListCache();
     const result: CleanupResult = { killed: [], skipped: [], errors: [] };
     const sessions = await list(projectId);
     const activeSessionKeys = new Set(
@@ -2155,6 +2207,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     prRef: string,
     options?: ClaimPROptions,
   ): Promise<ClaimPRResult> {
+    invalidateListCache();
     const reference = prRef.trim();
     if (!reference) throw new Error("PR reference is required");
 
@@ -2251,6 +2304,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   async function remap(sessionId: SessionId, force = false): Promise<string> {
+    invalidateListCache();
     const { raw, sessionsDir, project } = requireSessionRecord(sessionId);
 
     const selection = resolveSelectionForSession(project, sessionId, raw);
@@ -2276,6 +2330,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   async function restore(sessionId: SessionId): Promise<Session> {
+    invalidateListCache();
     // 1. Find session metadata across all projects (active first, then archive)
     let raw: Record<string, string> | null = null;
     let sessionsDir: string | null = null;
