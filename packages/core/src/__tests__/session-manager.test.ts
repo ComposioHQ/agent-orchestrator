@@ -473,4 +473,55 @@ describe("list() caching", () => {
     expect(r2).toBe(r3);
     expect(r1).toHaveLength(1);
   });
+
+  it("does not cache stale result when mutation races with in-flight list()", async () => {
+    const { execFile } = await import("node:child_process");
+
+    vi.mocked(execFile).mockImplementation(((
+      _file: string,
+      args: string[],
+      _options: any,
+      callback?: any,
+    ) => {
+      const cb = typeof _options === "function" ? _options : callback;
+      if (!cb) return null as any;
+      const argsArray = Array.isArray(args) ? args : [];
+      if (argsArray[1] === "list") {
+        cb(null, "[]", "");
+      }
+      return null as any;
+    }) as any);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "mock-agent",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws2",
+      branch: "feat/two",
+      status: "working",
+      project: "my-app",
+      agent: "mock-agent",
+      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // First list() populates the cache with 2 sessions
+    const result1 = await sm.list();
+    expect(result1).toHaveLength(2);
+
+    // Kill a session — this invalidates the cache
+    await sm.kill("app-1");
+
+    // Next list() should see only 1 session (app-1 was archived)
+    const result2 = await sm.list();
+    expect(result2).toHaveLength(1);
+    expect(result2[0].id).toBe("app-2");
+  });
 });

@@ -1551,10 +1551,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   const listResultCache = new Map<string, ListCacheEntry>();
   /** In-flight promises keyed the same way — deduplicates concurrent calls. */
   const listInflightCache = new Map<string, Promise<Session[]>>();
+  /** Generation counter — prevents stale in-flight results from caching after invalidation. */
+  let listCacheGeneration = 0;
 
   /** Invalidate the list cache so the next call does fresh I/O. */
   function invalidateListCache(): void {
     listResultCache.clear();
+    listInflightCache.clear();
+    listCacheGeneration++;
   }
 
   async function list(projectId?: string): Promise<Session[]> {
@@ -1572,12 +1576,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       return inflight;
     }
 
+    const generationAtStart = listCacheGeneration;
     const promise = listUncached(projectId);
     listInflightCache.set(cacheKey, promise);
 
     try {
       const sessions = await promise;
-      listResultCache.set(cacheKey, { sessions, timestamp: Date.now() });
+      // Only cache if no invalidation happened while the fetch was in-flight
+      if (listCacheGeneration === generationAtStart) {
+        listResultCache.set(cacheKey, { sessions, timestamp: Date.now() });
+      }
       return sessions;
     } finally {
       listInflightCache.delete(cacheKey);
