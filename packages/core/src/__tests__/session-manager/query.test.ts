@@ -171,6 +171,78 @@ describe("list", () => {
     expect(sessions[0].activity).toBe("exited");
   });
 
+  it("preserves activity for merged sessions when the runtime is still alive", async () => {
+    const runtimeWithSpy: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(true),
+    };
+    const agentWithState: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "ready" }),
+    };
+    const registryWithLiveTerminalSession: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return runtimeWithSpy;
+        if (slot === "agent") return agentWithState;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-merged", {
+      worktree: "/tmp/w-merged",
+      branch: "feat/merged",
+      status: "merged",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-merged")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithLiveTerminalSession });
+    const sessions = await sm.list();
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("merged");
+    expect(sessions[0].activity).toBe("ready");
+    expect(runtimeWithSpy.isAlive).toHaveBeenCalledWith(makeHandle("rt-merged"));
+    expect(agentWithState.getActivityState).toHaveBeenCalled();
+  });
+
+  it("marks merged sessions exited when the runtime probe confirms the process is dead", async () => {
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const agentWithSpy: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "ready" }),
+    };
+    const registryWithDeadTerminalSession: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return agentWithSpy;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-merged", {
+      worktree: "/tmp/w-merged",
+      branch: "feat/merged",
+      status: "merged",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-merged")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithDeadTerminalSession });
+    const sessions = await sm.list();
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("merged");
+    expect(sessions[0].activity).toBe("exited");
+    expect(deadRuntime.isAlive).toHaveBeenCalledWith(makeHandle("rt-merged"));
+    expect(agentWithSpy.getActivityState).not.toHaveBeenCalled();
+  });
+
   it("detects activity using agent-native mechanism", async () => {
     const agentWithState: Agent = {
       ...mockAgent,

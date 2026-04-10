@@ -880,11 +880,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     plugins: ReturnType<typeof resolvePlugins>,
     handleFromMetadata: boolean,
   ): Promise<void> {
-    // Skip all subprocess/IO work for sessions already known to be terminal.
-    if (TERMINAL_SESSION_STATUSES.has(session.status)) {
-      session.activity = "exited";
-      return;
-    }
+    const hasTerminalStatus = TERMINAL_SESSION_STATUSES.has(session.status);
 
     // Check runtime liveness — but only if the handle came from metadata.
     // Fabricated handles (constructed as fallback for external sessions) should
@@ -892,9 +888,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // a tmux session, and we'd clobber meaningful statuses like "pr_open".
     if (handleFromMetadata && session.runtimeHandle && plugins.runtime) {
       try {
-        const alive = await plugins.runtime.isAlive(session.runtimeHandle);
-        if (!alive) {
-          session.status = "killed";
+        const isRuntimeAlive = await plugins.runtime.isAlive(session.runtimeHandle);
+        if (!isRuntimeAlive) {
+          if (!hasTerminalStatus) {
+            session.status = "killed";
+          }
           session.activity = "exited";
           return;
         }
