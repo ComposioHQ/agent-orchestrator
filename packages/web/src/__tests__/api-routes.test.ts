@@ -8,7 +8,7 @@ import {
   type OrchestratorConfig,
   type PluginRegistry,
   type SCM,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
 
@@ -207,6 +207,7 @@ import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
 import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
 import { GET as verifyGET, POST as verifyPOST } from "@/app/api/verify/route";
+import { GET as patchesGET } from "@/app/api/sessions/patches/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -980,6 +981,47 @@ describe("API Routes", () => {
       expect(res.status).toBe(400);
       const data = await res.json();
       expect(data.error).toMatch(/Invalid JSON body/);
+    });
+  });
+  // ── GET /api/sessions/patches ──────────────────────────────────────────
+
+  describe("GET /api/sessions/patches", () => {
+    it("returns patches array with lightweight fields", async () => {
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(Array.isArray(data.sessions)).toBe(true);
+      expect(data.sessions.length).toBe(testSessions.length);
+    });
+
+    it("each patch contains id, status, activity, attentionLevel, lastActivityAt", async () => {
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      const data = await res.json();
+      for (const patch of data.sessions) {
+        expect(patch).toHaveProperty("id");
+        expect(patch).toHaveProperty("status");
+        expect(patch).toHaveProperty("activity");
+        expect(patch).toHaveProperty("attentionLevel");
+        expect(patch).toHaveProperty("lastActivityAt");
+      }
+    });
+
+    it("filters by project query param", async () => {
+      const res = await patchesGET(
+        makeRequest("http://localhost:3000/api/sessions/patches?project=my-app"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(Array.isArray(data.sessions)).toBe(true);
+    });
+
+    it("returns 500 when getServices throws", async () => {
+      const { getServices } = await import("@/lib/services");
+      vi.mocked(getServices).mockRejectedValueOnce(new Error("db down"));
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toBe("db down");
     });
   });
 });

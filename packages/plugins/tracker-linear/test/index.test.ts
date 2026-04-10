@@ -12,7 +12,7 @@ vi.mock("node:https", () => ({
 }));
 
 import { create, manifest } from "../src/index.js";
-import type { ProjectConfig } from "@composio/ao-core";
+import type { ProjectConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Fixtures

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
+import { useMux } from "@/hooks/useMux";
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
@@ -24,53 +25,8 @@ interface DirectTerminalProps {
   reloadCommand?: string;
 }
 
-interface DirectTerminalLocation {
-  protocol: string;
-  hostname: string;
-  host: string;
-  port: string;
-}
-
-interface DirectTerminalWsUrlOptions {
-  location: DirectTerminalLocation;
-  sessionId: string;
-  proxyWsPath?: string;
-  directTerminalPort?: string;
-}
-
-interface RuntimeTerminalConfigResponse {
-  directTerminalPort?: unknown;
-  proxyWsPath?: unknown;
-}
-
-interface TerminalConnectionConfig {
-  directTerminalPort?: string;
-  proxyWsPath?: string;
-}
-
 type TerminalVariant = "agent" | "orchestrator";
 
-function normalizePortValue(value: unknown): string | undefined {
-  if (typeof value !== "string" && typeof value !== "number") return undefined;
-  const parsed = Number.parseInt(String(value), 10);
-  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 65535) return undefined;
-  return String(parsed);
-}
-
-function normalizePathValue(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("/")) return undefined;
-  return trimmed;
-}
-
-function parseRuntimeTerminalConfig(payload: unknown): TerminalConnectionConfig {
-  const response = (payload ?? {}) as RuntimeTerminalConfigResponse;
-  return {
-    directTerminalPort: normalizePortValue(response.directTerminalPort),
-    proxyWsPath: normalizePathValue(response.proxyWsPath),
-  };
-}
 
 export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; light: ITheme } {
   const agentAccent = {
@@ -136,26 +92,6 @@ export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; l
   return { dark, light };
 }
 
-export function buildDirectTerminalWsUrl({
-  location,
-  sessionId,
-  proxyWsPath,
-  directTerminalPort,
-}: DirectTerminalWsUrlOptions): string {
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  if (proxyWsPath) {
-    // Path-based proxy uses host so non-standard ports are preserved.
-    return `${protocol}//${location.host}${proxyWsPath}?session=${encodeURIComponent(sessionId)}`;
-  }
-
-  if (location.port === "" || location.port === "443" || location.port === "80") {
-    return `${protocol}//${location.hostname}/ao-terminal-ws?session=${encodeURIComponent(sessionId)}`;
-  }
-
-  const port = directTerminalPort ?? "14801";
-  return `${protocol}//${location.hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
-}
-
 /**
  * Direct xterm.js terminal with native WebSocket connection.
  * Implements Extended Device Attributes (XDA) handler to enable
@@ -179,16 +115,14 @@ export function DirectTerminal({
   const searchParams = useSearchParams();
   const { resolvedTheme } = useTheme();
   const terminalThemes = useMemo(() => buildTerminalThemes(variant), [variant]);
+  const { subscribeTerminal, writeTerminal, resizeTerminal: resizeTerminalMux, openTerminal, closeTerminal, status: muxStatus } = useMux();
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<TerminalType | null>(null);
   const fitAddon = useRef<FitAddonType | null>(null);
-  const ws = useRef<WebSocket | null>(null);
-  const reconnectAttemptRef = useRef(0);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const permanentErrorRef = useRef(false);
+  const muxStatusRef = useRef(muxStatus);
+  muxStatusRef.current = muxStatus;
   const [fullscreen, setFullscreen] = useState(startFullscreen);
-  const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
@@ -249,17 +183,11 @@ export function DirectTerminal({
   useEffect(() => {
     if (!terminalRef.current) return;
 
-    // Reset reconnection state when sessionId changes
-    permanentErrorRef.current = false;
-    reconnectAttemptRef.current = 0;
-
     // Dynamically import xterm.js to avoid SSR issues
     let mounted = true;
     let cleanup: (() => void) | null = null;
     let inputDisposable: { dispose(): void } | null = null;
-
-    const PERMANENT_CLOSE_CODES = new Set([4001, 4004]); // auth failure, session not found
-    const MAX_RECONNECT_DELAY = 15_000;
+    let unsubscribe: (() => void) | null = null;
 
     Promise.all([
       import("xterm").then((mod) => mod.Terminal),
@@ -340,11 +268,6 @@ export function DirectTerminal({
         // Fit terminal to container
         fit.fit();
 
-        // Runtime WS config cache. We do not rely on build-time NEXT_PUBLIC_* here
-        // because `ao start` can choose terminal ports dynamically at runtime.
-        const runtimeConnectionConfig: TerminalConnectionConfig = {};
-        let runtimeFetchDone = false;
-
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
         // buffer incoming data while a selection is active so the
@@ -404,147 +327,41 @@ export function DirectTerminal({
           return true;
         });
 
-        // Handle window resize (works with whatever ws is current)
+        // Open terminal via mux
+        openTerminal(sessionId);
+
+        // Subscribe to terminal data via mux
+        unsubscribe = subscribeTerminal(sessionId, (data) => {
+          if (selectionActive) {
+            writeBuffer.push(data);
+            bufferBytes += data.length;
+            // Flush if buffer exceeds 1 MB to prevent OOM
+            if (bufferBytes > MAX_BUFFER_BYTES) {
+              selectionActive = false;
+              flushWriteBuffer();
+            }
+          } else {
+            terminal.write(data);
+          }
+        });
+
+        // Handle window resize
         const handleResize = () => {
-          const currentWs = ws.current;
-          if (fit && currentWs?.readyState === WebSocket.OPEN) {
+          if (fit) {
             fit.fit();
-            currentWs.send(
-              JSON.stringify({
-                type: "resize",
-                cols: terminal.cols,
-                rows: terminal.rows,
-              }),
-            );
+            resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
           }
         };
 
         window.addEventListener("resize", handleResize);
 
-        // Terminal input → current WebSocket
+        // Terminal input → mux
         inputDisposable = terminal.onData((data) => {
-          if (ws.current?.readyState === WebSocket.OPEN) {
-            ws.current.send(data);
-          }
+          writeTerminal(sessionId, data);
         });
 
-        async function resolveConnectionConfig(): Promise<TerminalConnectionConfig> {
-          const fromBuild: TerminalConnectionConfig = {
-            proxyWsPath: normalizePathValue(process.env.NEXT_PUBLIC_TERMINAL_WS_PATH),
-            directTerminalPort: normalizePortValue(process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT),
-          };
-
-          if (!fromBuild.proxyWsPath && !runtimeFetchDone) {
-            runtimeFetchDone = true;
-            const controller = new AbortController();
-            const fetchTimeout = setTimeout(() => controller.abort(), 1500);
-            try {
-              const response = await fetch("/api/runtime/terminal", {
-                cache: "no-store",
-                signal: controller.signal,
-              });
-              if (response.ok) {
-                const runtimeConfig = parseRuntimeTerminalConfig(await response.json());
-                runtimeConnectionConfig.proxyWsPath = runtimeConfig.proxyWsPath;
-                runtimeConnectionConfig.directTerminalPort = runtimeConfig.directTerminalPort;
-              }
-            } catch {
-              // Runtime config endpoint is optional (timeout or network failure); fallback to build-time values.
-            } finally {
-              clearTimeout(fetchTimeout);
-            }
-          }
-
-          return {
-            proxyWsPath: runtimeConnectionConfig.proxyWsPath ?? fromBuild.proxyWsPath,
-            directTerminalPort:
-              runtimeConnectionConfig.directTerminalPort ?? fromBuild.directTerminalPort,
-          };
-        }
-
-        async function connectWebSocket() {
-          if (!mounted) return;
-
-          const config = await resolveConnectionConfig();
-          if (!mounted) return;
-
-          const wsUrl = buildDirectTerminalWsUrl({
-            location: window.location,
-            sessionId,
-            proxyWsPath: config.proxyWsPath,
-            directTerminalPort: config.directTerminalPort,
-          });
-
-          console.log("[DirectTerminal] Connecting to:", wsUrl);
-          const websocket = new WebSocket(wsUrl);
-          ws.current = websocket;
-          websocket.binaryType = "arraybuffer";
-
-          websocket.onopen = () => {
-            console.log("[DirectTerminal] WebSocket connected");
-            reconnectAttemptRef.current = 0;
-            setStatus("connected");
-            setError(null);
-
-            // Send initial size
-            websocket.send(
-              JSON.stringify({
-                type: "resize",
-                cols: terminal.cols,
-                rows: terminal.rows,
-              }),
-            );
-          };
-
-          websocket.onmessage = (event) => {
-            const data =
-              typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
-            if (selectionActive) {
-              writeBuffer.push(data);
-              bufferBytes += data.length;
-              // Flush if buffer exceeds 1 MB to prevent OOM
-              if (bufferBytes > MAX_BUFFER_BYTES) {
-                selectionActive = false;
-                flushWriteBuffer();
-              }
-            } else {
-              terminal.write(data);
-            }
-          };
-
-          websocket.onerror = (event) => {
-            console.error("[DirectTerminal] WebSocket error:", event);
-          };
-
-          websocket.onclose = (event) => {
-            console.log("[DirectTerminal] WebSocket closed:", event.code, event.reason);
-
-            if (!mounted) return;
-
-            // Permanent errors — don't retry
-            if (PERMANENT_CLOSE_CODES.has(event.code)) {
-              permanentErrorRef.current = true;
-              setStatus("error");
-              setError(event.reason || `Connection refused (${event.code})`);
-              return;
-            }
-
-            // Transient failure — schedule reconnect with exponential backoff
-            const attempt = reconnectAttemptRef.current;
-            const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
-            reconnectAttemptRef.current = attempt + 1;
-
-            console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
-            setStatus("connecting");
-            setError(null);
-
-            reconnectTimerRef.current = setTimeout(() => {
-              void connectWebSocket();
-            }, delay);
-          };
-        }
-
-        void connectWebSocket();
+        // Send initial size
+        resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
@@ -553,30 +370,32 @@ export function DirectTerminal({
           window.removeEventListener("resize", handleResize);
           inputDisposable?.dispose();
           inputDisposable = null;
-          if (reconnectTimerRef.current) {
-            clearTimeout(reconnectTimerRef.current);
-            reconnectTimerRef.current = null;
-          }
-          ws.current?.close();
+          unsubscribe?.();
+          closeTerminal(sessionId);
           terminal.dispose();
         };
       })
       .catch((err) => {
         console.error("[DirectTerminal] Failed to load xterm.js:", err);
-        permanentErrorRef.current = true;
-        setStatus("error");
         setError("Failed to load terminal");
       });
 
     return () => {
       mounted = false;
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
       cleanup?.();
     };
-  }, [sessionId, variant]);
+  }, [sessionId, variant, subscribeTerminal, writeTerminal, resizeTerminalMux, openTerminal, closeTerminal]);
+
+  // Re-send terminal dimensions on every reconnect so the server-side PTY
+  // matches the client's xterm.js size (new PTYs spawn at 80×24 default).
+  useEffect(() => {
+    if (muxStatus !== "connected") return;
+    const fit = fitAddon.current;
+    const terminal = terminalInstance.current;
+    if (!fit || !terminal) return;
+    fit.fit();
+    resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+  }, [muxStatus, sessionId, resizeTerminalMux]);
 
   // Live theme switching without terminal recreation
   useEffect(() => {
@@ -591,10 +410,9 @@ export function DirectTerminal({
   useEffect(() => {
     const fit = fitAddon.current;
     const terminal = terminalInstance.current;
-    const websocket = ws.current;
     const container = terminalRef.current;
 
-    if (!fit || !terminal || !websocket || websocket.readyState !== WebSocket.OPEN || !container) {
+    if (!fit || !terminal || muxStatusRef.current !== "connected" || !container) {
       return;
     }
 
@@ -624,17 +442,8 @@ export function DirectTerminal({
       fit.fit();
       terminal.refresh(0, terminal.rows - 1);
 
-      // Send new size to server (use ws.current in case WebSocket reconnected)
-      const currentWs = ws.current;
-      if (currentWs?.readyState === WebSocket.OPEN) {
-        currentWs.send(
-          JSON.stringify({
-            type: "resize",
-            cols: terminal.cols,
-            rows: terminal.rows,
-          }),
-        );
-      }
+      // Send new size to server via mux
+      resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
     };
 
     // Start resize polling
@@ -676,24 +485,33 @@ export function DirectTerminal({
       clearTimeout(timer1);
       clearTimeout(timer2);
     };
-  }, [fullscreen]);
+  }, [fullscreen, sessionId, resizeTerminalMux]);
 
   const accentColor = "var(--color-accent)";
 
+  // Local errors (e.g. xterm.js load failure) take priority over mux connection state
+  const displayStatus = error ? "error" : muxStatus;
+
   const statusDotClass =
-    status === "connected"
+    displayStatus === "connected"
       ? "bg-[var(--color-status-ready)]"
-      : status === "error"
+      : displayStatus === "error" || displayStatus === "disconnected"
         ? "bg-[var(--color-status-error)]"
         : "bg-[var(--color-status-attention)] animate-[pulse_1.5s_ease-in-out_infinite]";
 
   const statusText =
-    status === "connected" ? "Connected" : status === "error" ? (error ?? "Error") : "Connecting…";
+    displayStatus === "connected"
+      ? "Connected"
+      : displayStatus === "error"
+        ? (error ?? "Error")
+        : displayStatus === "disconnected"
+          ? "Disconnected"
+          : "Connecting…";
 
   const statusTextColor =
-    status === "connected"
+    displayStatus === "connected"
       ? "text-[var(--color-status-ready)]"
-      : status === "error"
+      : displayStatus === "error" || displayStatus === "disconnected"
         ? "text-[var(--color-status-error)]"
         : "text-[var(--color-text-tertiary)]";
 
@@ -729,7 +547,7 @@ export function DirectTerminal({
         {isOpenCodeSession ? (
           <button
             onClick={handleReload}
-            disabled={reloading || status !== "connected"}
+            disabled={reloading || muxStatus !== "connected"}
             title="Restart OpenCode session (/exit then resume mapped session)"
             aria-label="Restart OpenCode session"
             className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"

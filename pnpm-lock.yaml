@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  axios: ^1.15.0
+
 importers:
 
   .:
@@ -35,78 +38,78 @@ importers:
 
   packages/ao:
     dependencies:
-      '@composio/ao-cli':
+      '@aoagents/ao-cli':
         specifier: workspace:*
         version: link:../cli
 
   packages/cli:
     dependencies:
+      '@aoagents/ao-core':
+        specifier: workspace:*
+        version: link:../core
+      '@aoagents/ao-plugin-agent-aider':
+        specifier: workspace:*
+        version: link:../plugins/agent-aider
+      '@aoagents/ao-plugin-agent-claude-code':
+        specifier: workspace:*
+        version: link:../plugins/agent-claude-code
+      '@aoagents/ao-plugin-agent-codex':
+        specifier: workspace:*
+        version: link:../plugins/agent-codex
+      '@aoagents/ao-plugin-agent-opencode':
+        specifier: workspace:*
+        version: link:../plugins/agent-opencode
+      '@aoagents/ao-plugin-notifier-composio':
+        specifier: workspace:*
+        version: link:../plugins/notifier-composio
+      '@aoagents/ao-plugin-notifier-desktop':
+        specifier: workspace:*
+        version: link:../plugins/notifier-desktop
+      '@aoagents/ao-plugin-notifier-discord':
+        specifier: workspace:*
+        version: link:../plugins/notifier-discord
+      '@aoagents/ao-plugin-notifier-openclaw':
+        specifier: workspace:*
+        version: link:../plugins/notifier-openclaw
+      '@aoagents/ao-plugin-notifier-slack':
+        specifier: workspace:*
+        version: link:../plugins/notifier-slack
+      '@aoagents/ao-plugin-notifier-webhook':
+        specifier: workspace:*
+        version: link:../plugins/notifier-webhook
+      '@aoagents/ao-plugin-runtime-process':
+        specifier: workspace:*
+        version: link:../plugins/runtime-process
+      '@aoagents/ao-plugin-runtime-tmux':
+        specifier: workspace:*
+        version: link:../plugins/runtime-tmux
+      '@aoagents/ao-plugin-scm-github':
+        specifier: workspace:*
+        version: link:../plugins/scm-github
+      '@aoagents/ao-plugin-terminal-iterm2':
+        specifier: workspace:*
+        version: link:../plugins/terminal-iterm2
+      '@aoagents/ao-plugin-terminal-web':
+        specifier: workspace:*
+        version: link:../plugins/terminal-web
+      '@aoagents/ao-plugin-tracker-github':
+        specifier: workspace:*
+        version: link:../plugins/tracker-github
+      '@aoagents/ao-plugin-tracker-linear':
+        specifier: workspace:*
+        version: link:../plugins/tracker-linear
+      '@aoagents/ao-plugin-workspace-clone':
+        specifier: workspace:*
+        version: link:../plugins/workspace-clone
+      '@aoagents/ao-plugin-workspace-worktree':
+        specifier: workspace:*
+        version: link:../plugins/workspace-worktree
+      '@aoagents/ao-web':
+        specifier: workspace:*
+        version: link:../web
       '@clack/prompts':
         specifier: ^0.9.1
         version: 0.9.1
-      '@composio/ao-core':
-        specifier: workspace:*
-        version: link:../core
-      '@composio/ao-plugin-agent-aider':
-        specifier: workspace:*
-        version: link:../plugins/agent-aider
-      '@composio/ao-plugin-agent-claude-code':
-        specifier: workspace:*
-        version: link:../plugins/agent-claude-code
-      '@composio/ao-plugin-agent-codex':
-        specifier: workspace:*
-        version: link:../plugins/agent-codex
-      '@composio/ao-plugin-agent-opencode':
-        specifier: workspace:*
-        version: link:../plugins/agent-opencode
-      '@composio/ao-plugin-notifier-composio':
-        specifier: workspace:*
-        version: link:../plugins/notifier-composio
-      '@composio/ao-plugin-notifier-desktop':
-        specifier: workspace:*
-        version: link:../plugins/notifier-desktop
-      '@composio/ao-plugin-notifier-discord':
-        specifier: workspace:*
-        version: link:../plugins/notifier-discord
-      '@composio/ao-plugin-notifier-openclaw':
-        specifier: workspace:*
-        version: link:../plugins/notifier-openclaw
-      '@composio/ao-plugin-notifier-slack':
-        specifier: workspace:*
-        version: link:../plugins/notifier-slack
-      '@composio/ao-plugin-notifier-webhook':
-        specifier: workspace:*
-        version: link:../plugins/notifier-webhook
-      '@composio/ao-plugin-runtime-process':
-        specifier: workspace:*
-        version: link:../plugins/runtime-process
-      '@composio/ao-plugin-runtime-tmux':
-        specifier: workspace:*
-        version: link:../plugins/runtime-tmux
-      '@composio/ao-plugin-scm-github':
-        specifier: workspace:*
-        version: link:../plugins/scm-github
-      '@composio/ao-plugin-terminal-iterm2':
-        specifier: workspace:*
-        version: link:../plugins/terminal-iterm2
-      '@composio/ao-plugin-terminal-web':
-        specifier: workspace:*
-        version: link:../plugins/terminal-web
-      '@composio/ao-plugin-tracker-github':
-        specifier: workspace:*
-        version: link:../plugins/tracker-github
-      '@composio/ao-plugin-tracker-linear':
-        specifier: workspace:*
-        version: link:../plugins/tracker-linear
-      '@composio/ao-plugin-workspace-clone':
-        specifier: workspace:*
-        version: link:../plugins/workspace-clone
-      '@composio/ao-plugin-workspace-worktree':
-        specifier: workspace:*
-        version: link:../plugins/workspace-worktree
-      '@composio/ao-web':
-        specifier: workspace:*
-        version: link:../web
       chalk:
         specifier: ^5.4.0
         version: 5.6.2
@@ -163,56 +166,56 @@ importers:
 
   packages/integration-tests:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../core
-      '@composio/ao-plugin-agent-aider':
+      '@aoagents/ao-plugin-agent-aider':
         specifier: workspace:*
         version: link:../plugins/agent-aider
-      '@composio/ao-plugin-agent-claude-code':
+      '@aoagents/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
-      '@composio/ao-plugin-agent-codex':
+      '@aoagents/ao-plugin-agent-codex':
         specifier: workspace:*
         version: link:../plugins/agent-codex
-      '@composio/ao-plugin-agent-opencode':
+      '@aoagents/ao-plugin-agent-opencode':
         specifier: workspace:*
         version: link:../plugins/agent-opencode
-      '@composio/ao-plugin-runtime-process':
+      '@aoagents/ao-plugin-runtime-process':
         specifier: workspace:*
         version: link:../plugins/runtime-process
-      '@composio/ao-plugin-runtime-tmux':
+      '@aoagents/ao-plugin-runtime-tmux':
         specifier: workspace:*
         version: link:../plugins/runtime-tmux
-      '@composio/ao-plugin-tracker-linear':
+      '@aoagents/ao-plugin-tracker-linear':
         specifier: workspace:*
         version: link:../plugins/tracker-linear
-      '@composio/ao-plugin-workspace-clone':
+      '@aoagents/ao-plugin-workspace-clone':
         specifier: workspace:*
         version: link:../plugins/workspace-clone
-      '@composio/ao-plugin-workspace-worktree':
+      '@aoagents/ao-plugin-workspace-worktree':
         specifier: workspace:*
         version: link:../plugins/workspace-worktree
     devDependencies:
-      '@composio/ao-plugin-notifier-composio':
+      '@aoagents/ao-plugin-notifier-composio':
         specifier: workspace:*
         version: link:../plugins/notifier-composio
-      '@composio/ao-plugin-notifier-desktop':
+      '@aoagents/ao-plugin-notifier-desktop':
         specifier: workspace:*
         version: link:../plugins/notifier-desktop
-      '@composio/ao-plugin-notifier-openclaw':
+      '@aoagents/ao-plugin-notifier-openclaw':
         specifier: workspace:*
         version: link:../plugins/notifier-openclaw
-      '@composio/ao-plugin-notifier-slack':
+      '@aoagents/ao-plugin-notifier-slack':
         specifier: workspace:*
         version: link:../plugins/notifier-slack
-      '@composio/ao-plugin-notifier-webhook':
+      '@aoagents/ao-plugin-notifier-webhook':
         specifier: workspace:*
         version: link:../plugins/notifier-webhook
-      '@composio/ao-plugin-terminal-iterm2':
+      '@aoagents/ao-plugin-terminal-iterm2':
         specifier: workspace:*
         version: link:../plugins/terminal-iterm2
-      '@composio/ao-plugin-terminal-web':
+      '@aoagents/ao-plugin-terminal-web':
         specifier: workspace:*
         version: link:../plugins/terminal-web
       '@types/node':
@@ -230,7 +233,7 @@ importers:
 
   packages/plugins/agent-aider:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -246,7 +249,7 @@ importers:
 
   packages/plugins/agent-claude-code:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -262,7 +265,7 @@ importers:
 
   packages/plugins/agent-codex:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -278,7 +281,7 @@ importers:
 
   packages/plugins/agent-opencode:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -294,12 +297,12 @@ importers:
 
   packages/plugins/notifier-composio:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
       composio-core:
         specifier: '>=0.5.0'
-        version: 0.5.39(@ai-sdk/openai@3.0.29(zod@3.25.76))(@cloudflare/workers-types@4.20260214.0)(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(@langchain/openai@1.2.7(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(ws@8.19.0))(ai@6.0.86(zod@3.25.76))(langchain@1.2.24(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(ws@8.19.0)(zod-to-json-schema@3.25.1(zod@3.25.76)))(openai@6.22.0(ws@8.19.0)(zod@3.25.76))
+        version: 0.5.39(@ai-sdk/openai@3.0.29(zod@3.25.76))(@cloudflare/workers-types@4.20260214.0)(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(@langchain/openai@1.2.7(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(ws@8.19.0))(ai@6.0.86(zod@3.25.76))(langchain@1.2.24(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod-to-json-schema@3.25.1(zod@3.25.76)))(openai@6.22.0(ws@8.19.0)(zod@3.25.76))
     devDependencies:
       '@types/node':
         specifier: ^25.2.3
@@ -313,7 +316,7 @@ importers:
 
   packages/plugins/notifier-desktop:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -329,7 +332,7 @@ importers:
 
   packages/plugins/notifier-discord:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -348,7 +351,7 @@ importers:
 
   packages/plugins/notifier-openclaw:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -364,7 +367,7 @@ importers:
 
   packages/plugins/notifier-slack:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -380,7 +383,7 @@ importers:
 
   packages/plugins/notifier-webhook:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -396,7 +399,7 @@ importers:
 
   packages/plugins/runtime-process:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -412,7 +415,7 @@ importers:
 
   packages/plugins/runtime-tmux:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -428,7 +431,7 @@ importers:
 
   packages/plugins/scm-github:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -444,7 +447,7 @@ importers:
 
   packages/plugins/scm-gitlab:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -460,7 +463,7 @@ importers:
 
   packages/plugins/terminal-iterm2:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -476,7 +479,7 @@ importers:
 
   packages/plugins/terminal-web:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -492,7 +495,7 @@ importers:
 
   packages/plugins/tracker-github:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -508,10 +511,10 @@ importers:
 
   packages/plugins/tracker-gitlab:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
-      '@composio/ao-plugin-scm-gitlab':
+      '@aoagents/ao-plugin-scm-gitlab':
         specifier: workspace:*
         version: link:../scm-gitlab
     devDependencies:
@@ -527,7 +530,7 @@ importers:
 
   packages/plugins/tracker-linear:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -543,7 +546,7 @@ importers:
 
   packages/plugins/workspace-clone:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -559,7 +562,7 @@ importers:
 
   packages/plugins/workspace-worktree:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
     devDependencies:
@@ -575,28 +578,28 @@ importers:
 
   packages/web:
     dependencies:
-      '@composio/ao-core':
+      '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../core
-      '@composio/ao-plugin-agent-claude-code':
+      '@aoagents/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
-      '@composio/ao-plugin-agent-opencode':
+      '@aoagents/ao-plugin-agent-opencode':
         specifier: workspace:*
         version: link:../plugins/agent-opencode
-      '@composio/ao-plugin-runtime-tmux':
+      '@aoagents/ao-plugin-runtime-tmux':
         specifier: workspace:*
         version: link:../plugins/runtime-tmux
-      '@composio/ao-plugin-scm-github':
+      '@aoagents/ao-plugin-scm-github':
         specifier: workspace:*
         version: link:../plugins/scm-github
-      '@composio/ao-plugin-tracker-github':
+      '@aoagents/ao-plugin-tracker-github':
         specifier: workspace:*
         version: link:../plugins/tracker-github
-      '@composio/ao-plugin-tracker-linear':
+      '@aoagents/ao-plugin-tracker-linear':
         specifier: workspace:*
         version: link:../plugins/tracker-linear
-      '@composio/ao-plugin-workspace-worktree':
+      '@aoagents/ao-plugin-workspace-worktree':
         specifier: workspace:*
         version: link:../plugins/workspace-worktree
       '@xterm/addon-fit':
@@ -798,10 +801,6 @@ packages:
 
   '@babel/runtime@7.28.6':
     resolution: {integrity: sha512-05WQkdpL9COIMz4LjTxGpPNCdlpyimKppYNoJ5Di5EUObifl8t4tuLuUBBZEpoLYOmfvIWrsp9fCl0HoPRVTdA==}
-    engines: {node: '>=6.9.0'}
-
-  '@babel/runtime@7.29.2':
-    resolution: {integrity: sha512-JiDShH45zKHWyGe4ZNVRrCjBz8Nh9TMmZG1kh4QTK8hCBTWBi8Da+i7s1fJw7/lYpM4ccepSNfqzZ/QvABBi5g==}
     engines: {node: '>=6.9.0'}
 
   '@babel/template@7.28.6':
@@ -1267,7 +1266,7 @@ packages:
     resolution: {integrity: sha512-lBehVhbnhvm41cFguZuy1FO+4x8NO3Qy/ooL0Jw4bdqTu21n7DmZMPsXEF0gL7/gNdTt4QkJGwaojy+8ExtE8w==}
     deprecated: Starting with v0.73.0, this package is bundled directly inside @hey-api/openapi-ts.
     peerDependencies:
-      axios: '>= 1.0.0 < 2'
+      axios: ^1.15.0
 
   '@humanfs/core@0.19.1':
     resolution: {integrity: sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA==}
@@ -1527,20 +1526,18 @@ packages:
     resolution: {integrity: sha512-u6l0dmMHN/2PCsY6stXoh9CH1OTlVR5Gjz0JjT1XRPuidAlu3kTq4ivW95xCog/PRhiAsCh6GCEC4/PqhNrcgQ==}
     engines: {node: '>=20'}
 
-  '@langchain/langgraph-checkpoint@1.0.1':
-    resolution: {integrity: sha512-HM0cJLRpIsSlWBQ/xuDC67l52SqZ62Bh2Y61DX+Xorqwoh5e1KxYvfCD7GnSTbWWhjBOutvnR0vPhu4orFkZfw==}
+  '@langchain/langgraph-checkpoint@1.0.0':
+    resolution: {integrity: sha512-xrclBGvNCXDmi0Nz28t3vjpxSH6UYx6w5XAXSiiB1WEdc2xD2iY/a913I3x3a31XpInUW/GGfXXfePfaghV54A==}
     engines: {node: '>=18'}
     peerDependencies:
       '@langchain/core': ^1.0.1
 
-  '@langchain/langgraph-sdk@1.8.8':
-    resolution: {integrity: sha512-4OoqFAvPloOTZ6oPxXbJngz4FLJO8QSXb+BQV3qvNTvmfu1LQA7cCEqSNLYX9MoC340PbnDkHNgUtjajwkDHRg==}
+  '@langchain/langgraph-sdk@1.6.2':
+    resolution: {integrity: sha512-UzRZsnDqdTmeitf/K5yZnVdl+V+7bDj/hQUXm+Y8TwWUuKtWUDocIReKgAmPQLoIz0AN8bOUt0QGnIISmCZyuA==}
     peerDependencies:
       '@langchain/core': ^1.1.16
       react: ^18 || ^19
       react-dom: ^18 || ^19
-      svelte: ^4.0.0 || ^5.0.0
-      vue: ^3.0.0
     peerDependenciesMeta:
       '@langchain/core':
         optional: true
@@ -1548,13 +1545,9 @@ packages:
         optional: true
       react-dom:
         optional: true
-      svelte:
-        optional: true
-      vue:
-        optional: true
 
-  '@langchain/langgraph@1.2.8':
-    resolution: {integrity: sha512-kKkRpC5xFz1e6vPivE7lwRJa5oahLAMaVQvVGZdTa6uJIchIYJDIuM1n93FqGvg8aYVcgYU4FENtKKC5Eh1JYw==}
+  '@langchain/langgraph@1.1.4':
+    resolution: {integrity: sha512-9OhRF+7Zvcpure8TLtBrxfJDo0PAoHZhfzcPL6M3CsGXiYqLWm5tQe+FYqn9zRIV7IwphqVEl1QDNbOkVgo+kw==}
     engines: {node: '>=18'}
     peerDependencies:
       '@langchain/core': ^1.1.16
@@ -1956,6 +1949,9 @@ packages:
   '@types/react@19.2.14':
     resolution: {integrity: sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==}
 
+  '@types/uuid@10.0.0':
+    resolution: {integrity: sha512-7gqG38EyHgyP1S+7+xomFtL+ZNHcKv6DwNaCZmJmo1vgMugyF3TCnXVg4t1uk89mLNwnLtnY3TpOpCOyp1/xHQ==}
+
   '@types/wrap-ansi@3.0.0':
     resolution: {integrity: sha512-ltIpx+kM7g/MLRZfkbL7EsCEjfzCcScLpkg37eXEtx5kmrAKBkTJwd1GIAjDSL8wTpM6Hzn5YO4pSb91BEwu1g==}
 
@@ -2237,8 +2233,8 @@ packages:
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
 
-  axios@1.13.5:
-    resolution: {integrity: sha512-cz4ur7Vb0xS4/KUN0tPWe44eqxrIu31me+fbang3ijiNscE129POzipJJA6zniq2C/Z6sJCjMimjS8Lc/GAs8Q==}
+  axios@1.15.0:
+    resolution: {integrity: sha512-wWyJDlAatxk30ZJer+GeCWS209sA42X+N5jU2jy6oHTp7ufw8uzUTVFBX9+wTfAlhiJXGS0Bq7X6efruWjuK9Q==}
 
   balanced-match@1.0.2:
     resolution: {integrity: sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==}
@@ -2390,6 +2386,9 @@ packages:
     resolution: {integrity: sha512-fsfrO0MxV64Znoy8/l1vVIjjHa29SZyyqPgQBwhiDcaW8wJc2W3XWVOGx4M3oJBnv/zdUZIIp1gDeS98GzP8Ng==}
     engines: {node: '>=18'}
     hasBin: true
+
+  console-table-printer@2.15.0:
+    resolution: {integrity: sha512-SrhBq4hYVjLCkBVOWaTzceJalvn5K1Zq5aQA6wXC/cYjI3frKWNPEMK3sZsJfNNQApvCQmgBcc13ZKmFj8qExw==}
 
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
@@ -2878,8 +2877,8 @@ packages:
     resolution: {integrity: sha512-qP1vozQRI+BMOPcjFzrjXuQvdak2pHNUMZoeG2eRbiSqyvbEf/wQtEOTOX1guk6E3t36RkaqiSt8A/6YElNxLQ==}
     engines: {node: '>=12'}
 
-  is-network-error@1.3.1:
-    resolution: {integrity: sha512-6QCxa49rQbmUWLfk0nuGqzql9U8uaV2H6279bRErPBHe/109hCzsLUBUHfbEtvLIHBd6hyXbgedBSHevm43Edw==}
+  is-network-error@1.3.0:
+    resolution: {integrity: sha512-6oIwpsgRfnDiyEDLMay/GqCl3HoAtH5+RUKW29gYkL0QA+ipzpDLA16yQs7/RHCSu+BwgbJaOUqa4A99qNVQVw==}
     engines: {node: '>=16'}
 
   is-number@7.0.0:
@@ -3010,14 +3009,13 @@ packages:
     peerDependencies:
       '@langchain/core': ^1.1.24
 
-  langsmith@0.5.18:
-    resolution: {integrity: sha512-3zuZUWffTHQ+73EAwnodADtf534VNEZUpXr9jC12qyG8/IQuJET7PRsCpTb9wX2lmBspakwLUpqpj3tNm/0bVA==}
+  langsmith@0.5.4:
+    resolution: {integrity: sha512-qYkNIoKpf0ZYt+cYzrDV+XI3FCexApmZmp8EMs3eDTMv0OvrHMLoxJ9IpkeoXJSX24+GPk0/jXjKx2hWerpy9w==}
     peerDependencies:
       '@opentelemetry/api': '*'
       '@opentelemetry/exporter-trace-otlp-proto': '*'
       '@opentelemetry/sdk-trace-base': '*'
       openai: '*'
-      ws: '>=7'
     peerDependenciesMeta:
       '@opentelemetry/api':
         optional: true
@@ -3026,8 +3024,6 @@ packages:
       '@opentelemetry/sdk-trace-base':
         optional: true
       openai:
-        optional: true
-      ws:
         optional: true
 
   levn@0.4.1:
@@ -3383,8 +3379,8 @@ packages:
     resolution: {integrity: sha512-RwFpb72c/BhQLEXIZ5K2e+AhgNVmIejGlTgiB9MzZ0e93GRvqZ7uSi0dvRF7/XIXDeNkra2fNHBxTyPDGySpjQ==}
     engines: {node: '>=8'}
 
-  p-queue@9.1.2:
-    resolution: {integrity: sha512-ktsDOALzTYTWWF1PbkNVg2rOt+HaOaMWJMUnt7T3qf5tvZ1L8dBW3tObzprBcXNMKkwj+yFSLqHso0x+UFcJXw==}
+  p-queue@9.1.0:
+    resolution: {integrity: sha512-O/ZPaXuQV29uSLbxWBGGZO1mCQXV2BLIwUr59JUU9SoH76mnYvtms7aafH/isNSNGwuEfP6W/4xD0/TJXxrizw==}
     engines: {node: '>=20'}
 
   p-retry@7.1.1:
@@ -3509,8 +3505,9 @@ packages:
     resolution: {integrity: sha512-y+WKFlBR8BGXnsNlIHFGPZmyDf3DFMoLhaflAnyZgV6rG6xu+JwesTo2Q9R6XwYmtmwAFCkAk3e35jEdoeh/3g==}
     engines: {node: '>=10'}
 
-  proxy-from-env@1.1.0:
-    resolution: {integrity: sha512-D+zkORCbA9f1tdWRK0RaCR3GPv50cMxcrz4X8k5LTSUD1Dkw47mKJEZQNunItRTkWwgtaUSo1RVFRIG9ZXiFYg==}
+  proxy-from-env@2.1.0:
+    resolution: {integrity: sha512-cJ+oHTW1VAEa8cJslgmUZrc+sjRKgAKl3Zyse6+PV38hZe/V6Z14TbCuXcan9F9ghlz4QrFr2c92TNF82UkYHA==}
+    engines: {node: '>=10'}
 
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
@@ -3646,6 +3643,9 @@ packages:
   signal-exit@4.1.0:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
+
+  simple-wcswidth@1.1.2:
+    resolution: {integrity: sha512-j7piyCjAeTDSjzTSQ7DokZtMNwNlEAyxqSZeCS+CXH7fJ4jx3FuJ/mTW3mE+6JLs4VJBbcll0Kjn+KXI5t21Iw==}
 
   sirv@2.0.4:
     resolution: {integrity: sha512-94Bdh3cC2PKrbgSOUqTiGPWVZeSiXfKOVZNJniWoqrWrRkB1CJzBU3NEbiTsPcYy1lDsANA/THzS+9WBiy5nfQ==}
@@ -4213,9 +4213,6 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
-  zod@4.3.6:
-    resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
-
 snapshots:
 
   '@adobe/css-tools@4.4.4': {}
@@ -4351,8 +4348,6 @@ snapshots:
       '@babel/helper-plugin-utils': 7.28.6
 
   '@babel/runtime@7.28.6': {}
-
-  '@babel/runtime@7.29.2': {}
 
   '@babel/template@7.28.6':
     dependencies:
@@ -4750,9 +4745,9 @@ snapshots:
       '@eslint/core': 1.1.0
       levn: 0.4.1
 
-  '@hey-api/client-axios@0.2.12(axios@1.13.5)':
+  '@hey-api/client-axios@0.2.12(axios@1.15.0)':
     dependencies:
-      axios: 1.13.5
+      axios: 1.15.0
 
   '@humanfs/core@0.19.1': {}
 
@@ -5005,63 +5000,60 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0)':
+  '@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       ansi-styles: 5.2.0
       camelcase: 6.3.0
       decamelize: 1.2.0
       js-tiktoken: 1.0.21
-      langsmith: 0.5.18(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0)
+      langsmith: 0.5.4(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))
       mustache: 4.2.0
       p-queue: 6.6.2
       uuid: 10.0.0
-      zod: 4.3.6
+      zod: 3.25.76
     transitivePeerDependencies:
       - '@opentelemetry/api'
       - '@opentelemetry/exporter-trace-otlp-proto'
       - '@opentelemetry/sdk-trace-base'
       - openai
-      - ws
 
-  '@langchain/langgraph-checkpoint@1.0.1(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))':
+  '@langchain/langgraph-checkpoint@1.0.0(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))':
     dependencies:
-      '@langchain/core': 1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0)
+      '@langchain/core': 1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))
       uuid: 10.0.0
 
-  '@langchain/langgraph-sdk@1.8.8(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@langchain/langgraph-sdk@1.6.2(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
       '@types/json-schema': 7.0.15
-      p-queue: 9.1.2
+      p-queue: 9.1.0
       p-retry: 7.1.1
       uuid: 13.0.0
     optionalDependencies:
-      '@langchain/core': 1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0)
+      '@langchain/core': 1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
 
-  '@langchain/langgraph@1.2.8(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod-to-json-schema@3.25.1(zod@3.25.76))(zod@4.3.6)':
+  '@langchain/langgraph@1.1.4(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod-to-json-schema@3.25.1(zod@3.25.76))(zod@3.25.76)':
     dependencies:
-      '@langchain/core': 1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0)
-      '@langchain/langgraph-checkpoint': 1.0.1(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))
-      '@langchain/langgraph-sdk': 1.8.8(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@langchain/core': 1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))
+      '@langchain/langgraph-checkpoint': 1.0.0(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))
+      '@langchain/langgraph-sdk': 1.6.2(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@standard-schema/spec': 1.1.0
       uuid: 10.0.0
-      zod: 4.3.6
+      zod: 3.25.76
     optionalDependencies:
       zod-to-json-schema: 3.25.1(zod@3.25.76)
     transitivePeerDependencies:
       - react
       - react-dom
-      - svelte
-      - vue
 
-  '@langchain/openai@1.2.7(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(ws@8.19.0)':
+  '@langchain/openai@1.2.7(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(ws@8.19.0)':
     dependencies:
-      '@langchain/core': 1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0)
+      '@langchain/core': 1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))
       js-tiktoken: 1.0.21
-      openai: 6.22.0(ws@8.19.0)(zod@4.3.6)
-      zod: 4.3.6
+      openai: 6.22.0(ws@8.19.0)(zod@3.25.76)
+      zod: 3.25.76
     transitivePeerDependencies:
       - ws
 
@@ -5302,7 +5294,7 @@ snapshots:
   '@testing-library/dom@10.4.1':
     dependencies:
       '@babel/code-frame': 7.29.0
-      '@babel/runtime': 7.29.2
+      '@babel/runtime': 7.28.6
       '@types/aria-query': 5.0.4
       aria-query: 5.3.0
       dom-accessibility-api: 0.5.16
@@ -5386,6 +5378,8 @@ snapshots:
   '@types/react@19.2.14':
     dependencies:
       csstype: 3.2.3
+
+  '@types/uuid@10.0.0': {}
 
   '@types/wrap-ansi@3.0.0': {}
 
@@ -5745,11 +5739,11 @@ snapshots:
 
   asynckit@0.4.0: {}
 
-  axios@1.13.5:
+  axios@1.15.0:
     dependencies:
       follow-redirects: 1.15.11
       form-data: 4.0.5
-      proxy-from-env: 1.1.0
+      proxy-from-env: 2.1.0
     transitivePeerDependencies:
       - debug
 
@@ -5875,21 +5869,21 @@ snapshots:
 
   commander@7.2.0: {}
 
-  composio-core@0.5.39(@ai-sdk/openai@3.0.29(zod@3.25.76))(@cloudflare/workers-types@4.20260214.0)(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(@langchain/openai@1.2.7(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(ws@8.19.0))(ai@6.0.86(zod@3.25.76))(langchain@1.2.24(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(ws@8.19.0)(zod-to-json-schema@3.25.1(zod@3.25.76)))(openai@6.22.0(ws@8.19.0)(zod@3.25.76)):
+  composio-core@0.5.39(@ai-sdk/openai@3.0.29(zod@3.25.76))(@cloudflare/workers-types@4.20260214.0)(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(@langchain/openai@1.2.7(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(ws@8.19.0))(ai@6.0.86(zod@3.25.76))(langchain@1.2.24(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod-to-json-schema@3.25.1(zod@3.25.76)))(openai@6.22.0(ws@8.19.0)(zod@3.25.76)):
     dependencies:
       '@ai-sdk/openai': 3.0.29(zod@3.25.76)
       '@cloudflare/workers-types': 4.20260214.0
       '@composio/mcp': 1.0.3-0
-      '@hey-api/client-axios': 0.2.12(axios@1.13.5)
-      '@langchain/core': 1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0)
-      '@langchain/openai': 1.2.7(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(ws@8.19.0)
+      '@hey-api/client-axios': 0.2.12(axios@1.15.0)
+      '@langchain/core': 1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))
+      '@langchain/openai': 1.2.7(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(ws@8.19.0)
       ai: 6.0.86(zod@3.25.76)
-      axios: 1.13.5
+      axios: 1.15.0
       chalk: 4.1.2
       cli-progress: 3.12.0
       commander: 12.1.0
       inquirer: 10.2.2
-      langchain: 1.2.24(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(ws@8.19.0)(zod-to-json-schema@3.25.1(zod@3.25.76))
+      langchain: 1.2.24(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod-to-json-schema@3.25.1(zod@3.25.76))
       open: 8.4.2
       openai: 6.22.0(ws@8.19.0)(zod@3.25.76)
       pusher-js: 8.4.0-rc2
@@ -5908,6 +5902,10 @@ snapshots:
       supports-color: 8.1.1
       tree-kill: 1.2.2
       yargs: 17.7.2
+
+  console-table-printer@2.15.0:
+    dependencies:
+      simple-wcswidth: 1.1.2
 
   convert-source-map@2.0.0: {}
 
@@ -6411,7 +6409,7 @@ snapshots:
 
   is-interactive@2.0.0: {}
 
-  is-network-error@1.3.1: {}
+  is-network-error@1.3.0: {}
 
   is-number@7.0.0: {}
 
@@ -6537,14 +6535,14 @@ snapshots:
     dependencies:
       json-buffer: 3.0.1
 
-  langchain@1.2.24(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(ws@8.19.0)(zod-to-json-schema@3.25.1(zod@3.25.76)):
+  langchain@1.2.24(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod-to-json-schema@3.25.1(zod@3.25.76)):
     dependencies:
-      '@langchain/core': 1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0)
-      '@langchain/langgraph': 1.2.8(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod-to-json-schema@3.25.1(zod@3.25.76))(zod@4.3.6)
-      '@langchain/langgraph-checkpoint': 1.0.1(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0))
-      langsmith: 0.5.18(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0)
+      '@langchain/core': 1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))
+      '@langchain/langgraph': 1.1.4(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod-to-json-schema@3.25.1(zod@3.25.76))(zod@3.25.76)
+      '@langchain/langgraph-checkpoint': 1.0.0(@langchain/core@1.1.24(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)))
+      langsmith: 0.5.4(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))
       uuid: 10.0.0
-      zod: 4.3.6
+      zod: 3.25.76
     transitivePeerDependencies:
       - '@opentelemetry/api'
       - '@opentelemetry/exporter-trace-otlp-proto'
@@ -6552,19 +6550,19 @@ snapshots:
       - openai
       - react
       - react-dom
-      - svelte
-      - vue
-      - ws
       - zod-to-json-schema
 
-  langsmith@0.5.18(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76))(ws@8.19.0):
+  langsmith@0.5.4(@opentelemetry/api@1.9.0)(openai@6.22.0(ws@8.19.0)(zod@3.25.76)):
     dependencies:
+      '@types/uuid': 10.0.0
+      chalk: 4.1.2
+      console-table-printer: 2.15.0
       p-queue: 6.6.2
+      semver: 7.7.4
       uuid: 10.0.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
       openai: 6.22.0(ws@8.19.0)(zod@3.25.76)
-      ws: 8.19.0
 
   levn@0.4.1:
     dependencies:
@@ -6841,11 +6839,6 @@ snapshots:
       ws: 8.19.0
       zod: 3.25.76
 
-  openai@6.22.0(ws@8.19.0)(zod@4.3.6):
-    optionalDependencies:
-      ws: 8.19.0
-      zod: 4.3.6
-
   opener@1.5.2: {}
 
   optionator@0.9.4:
@@ -6904,14 +6897,14 @@ snapshots:
       eventemitter3: 4.0.7
       p-timeout: 3.2.0
 
-  p-queue@9.1.2:
+  p-queue@9.1.0:
     dependencies:
       eventemitter3: 5.0.4
       p-timeout: 7.0.1
 
   p-retry@7.1.1:
     dependencies:
-      is-network-error: 1.3.1
+      is-network-error: 1.3.0
 
   p-timeout@3.2.0:
     dependencies:
@@ -7006,7 +6999,7 @@ snapshots:
       err-code: 2.0.3
       retry: 0.12.0
 
-  proxy-from-env@1.1.0: {}
+  proxy-from-env@2.1.0: {}
 
   punycode@2.3.1: {}
 
@@ -7167,6 +7160,8 @@ snapshots:
   siginfo@2.0.0: {}
 
   signal-exit@4.1.0: {}
+
+  simple-wcswidth@1.1.2: {}
 
   sirv@2.0.4:
     dependencies:
@@ -7688,5 +7683,3 @@ snapshots:
       zod: 3.25.76
 
   zod@3.25.76: {}
-
-  zod@4.3.6: {}

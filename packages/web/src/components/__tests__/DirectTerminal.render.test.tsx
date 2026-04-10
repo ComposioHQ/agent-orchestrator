@@ -88,6 +88,19 @@ vi.mock("@xterm/addon-web-links", () => ({
   WebLinksAddon: MockWebLinksAddon,
 }));
 
+vi.mock("@/hooks/useMux", () => ({
+  useMux: () => ({
+    subscribeTerminal: vi.fn(() => vi.fn()),
+    writeTerminal: vi.fn(),
+    openTerminal: vi.fn(),
+    closeTerminal: vi.fn(),
+    resizeTerminal: vi.fn(),
+    status: "connected",
+    sessions: [],
+    terminals: [],
+  }),
+}));
+
 describe("DirectTerminal render", () => {
   beforeEach(() => {
     searchParams = new URLSearchParams();
@@ -117,13 +130,11 @@ describe("DirectTerminal render", () => {
   it("renders the shared accent chrome for orchestrator terminals", async () => {
     render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/runtime/terminal", expect.any(Object)));
     await waitFor(() =>
       expect(screen.getByText("Connected")).toBeInTheDocument(),
     );
 
     expect(screen.getByText("ao-orchestrator")).toHaveStyle({ color: "var(--color-accent)" });
     expect(screen.getByText("XDA")).toHaveStyle({ color: "var(--color-accent)" });
-    expect(MockWebSocket.instances[0]?.url).toContain("/ao-terminal-ws?session=ao-orchestrator");
   });
 });

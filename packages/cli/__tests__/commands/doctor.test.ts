@@ -27,11 +27,18 @@ vi.mock("../../src/lib/script-runner.js", () => ({
   runRepoScript: (...args: unknown[]) => mockRunRepoScript(...args),
 }));
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   createPluginRegistry: (...args: unknown[]) => mockCreatePluginRegistry(...args),
   findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
   getObservabilityBaseDir: () => "/tmp/.agent-orchestrator/observability",
   loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
+  resolveNotifierTarget: (config: { notifiers?: Record<string, { plugin?: string }> }, reference: string) => {
+    const configured = config.notifiers?.[reference];
+    return {
+      reference,
+      pluginName: configured?.plugin ?? reference,
+    };
+  },
 }));
 
 vi.mock("../../src/lib/openclaw-probe.js", () => ({
@@ -248,6 +255,57 @@ describe("doctor command", () => {
 
     expect(mockRegistry.get).toHaveBeenCalledWith("notifier", "slack");
     expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(processExitSpy).not.toHaveBeenCalled();
+  });
+
+  it("tests shared-plugin notifier aliases independently", async () => {
+    const config = makeConfig();
+    config.notifiers = {
+      alerts: { plugin: "slack" },
+      ops: { plugin: "slack" },
+    };
+    config.defaults.notifiers = ["alerts", "ops"];
+
+    const alertsNotifier = { notify: vi.fn().mockResolvedValue(undefined) };
+    const opsNotifier = { notify: vi.fn().mockResolvedValue(undefined) };
+
+    mockFindConfigFile.mockReturnValue(config.configPath);
+    mockLoadConfig.mockReturnValue(config);
+
+    mockRegistry.list.mockImplementation((slot: string) => {
+      switch (slot) {
+        case "runtime":
+          return [manifest("runtime", "tmux")];
+        case "agent":
+          return [manifest("agent", "claude-code"), manifest("agent", "codex")];
+        case "workspace":
+          return [manifest("workspace", "worktree")];
+        case "tracker":
+          return [manifest("tracker", "github")];
+        case "scm":
+          return [manifest("scm", "github")];
+        case "notifier":
+          return [manifest("notifier", "slack")];
+        default:
+          return [];
+      }
+    });
+    mockRegistry.get.mockImplementation((slot: string, name: string) => {
+      if (slot === "notifier" && name === "alerts") {
+        return alertsNotifier;
+      }
+      if (slot === "notifier" && name === "ops") {
+        return opsNotifier;
+      }
+      return null;
+    });
+
+    await program.parseAsync(["node", "test", "doctor", "--test-notify"]);
+
+    expect(mockRegistry.get).toHaveBeenCalledWith("notifier", "alerts");
+    expect(mockRegistry.get).toHaveBeenCalledWith("notifier", "ops");
+    expect(alertsNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(opsNotifier.notify).toHaveBeenCalledTimes(1);
     expect(processExitSpy).not.toHaveBeenCalled();
   });
 });

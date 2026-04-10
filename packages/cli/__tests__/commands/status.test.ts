@@ -14,7 +14,7 @@ import {
   type Session,
   type SessionManager,
   type ActivityState,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 
 const {
   mockTmux,
@@ -72,9 +72,9 @@ vi.mock("../../src/lib/shell.js", () => ({
   },
 }));
 
-vi.mock("@composio/ao-core", async (importOriginal) => {
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = await importOriginal<typeof import("@composio/ao-core")>();
+  const actual = await importOriginal<typeof import("@aoagents/ao-core")>();
   return {
     ...actual,
     loadConfig: () => mockConfigRef.current,
@@ -949,7 +949,7 @@ describe("status command", () => {
 
   // ── lines 262-266: loadConfig() throws → fallback to tmux discovery ───────
   it("falls back to tmux session discovery when loadConfig throws", async () => {
-    // The vi.mock for @composio/ao-core uses `() => mockConfigRef.current`.
+    // The vi.mock for @aoagents/ao-core uses `() => mockConfigRef.current`.
     // Setting current to a throwing getter makes loadConfig throw.
     // Simpler: use a Proxy-based trick — but easiest is a getter that throws.
     const originalCurrent = mockConfigRef.current;
