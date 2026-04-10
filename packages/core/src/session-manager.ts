@@ -1061,8 +1061,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       issueId: spawnConfig.issueId,
       issueContext,
       userPrompt: spawnConfig.prompt,
-      lineage: spawnConfig.lineage,
-      siblings: spawnConfig.siblings,
     });
 
     // Get agent launch config and create runtime — clean up workspace on failure

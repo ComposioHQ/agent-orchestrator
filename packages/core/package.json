@@ -47,7 +47,6 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.52.0",
     "yaml": "^2.7.0",
     "zod": "^3.24.0"
   },

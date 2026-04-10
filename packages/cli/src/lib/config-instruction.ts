@@ -95,13 +95,6 @@ projects:
     scm:
       plugin: github          # github | gitlab
 
-    # ── Task decomposition (optional) ─────────────────────────────
-    decomposer:
-      enabled: false          # Auto-decompose backlog issues
-      maxDepth: 3             # Max recursion depth
-      model: claude-sonnet-4-20250514
-      requireApproval: true   # Require human approval before executing
-
     # ── Per-project reaction overrides (optional) ─────────────────
     # reactions:
     #   ci-failed:

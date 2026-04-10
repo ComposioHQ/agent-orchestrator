@@ -49,11 +49,6 @@ vi.mock("@aoagents/ao-core", () => ({
     getStates: vi.fn(),
     check: vi.fn(),
   }),
-  decompose: vi.fn(),
-  getLeaves: vi.fn(),
-  getSiblings: vi.fn(),
-  formatPlanTree: vi.fn(),
-  DEFAULT_DECOMPOSER_CONFIG: {},
   TERMINAL_STATUSES: new Set(["merged", "killed"]) as ReadonlySet<string>,
 }));
 

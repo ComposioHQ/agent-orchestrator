@@ -4,14 +4,8 @@ import type { Command } from "commander";
 import { resolve } from "node:path";
 import {
   loadConfig,
-  decompose,
-  getLeaves,
-  getSiblings,
-  formatPlanTree,
   TERMINAL_STATUSES,
   type OrchestratorConfig,
-  type DecomposerConfig,
-  DEFAULT_DECOMPOSER_CONFIG,
 } from "@aoagents/ao-core";
 import { DEFAULT_PORT } from "../lib/constants.js";
 import { exec } from "../lib/shell.js";
@@ -179,9 +173,12 @@ export function registerSpawn(program: Command): void {
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
+<<<<<<< HEAD
     .option("--decompose", "Decompose issue into subtasks before spawning")
     .option("--max-depth <n>", "Max decomposition depth (default: 3)")
     .option("--prompt <text>", "Initial prompt/instructions for the agent (use instead of an issue)")
+=======
+>>>>>>> 3fb2ddf0 (refactor: remove --decompose feature entirely)
     .action(
       async (
         first: string | undefined,
@@ -191,9 +188,12 @@ export function registerSpawn(program: Command): void {
           agent?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
+<<<<<<< HEAD
           decompose?: boolean;
           maxDepth?: string;
           prompt?: string;
+=======
+>>>>>>> 3fb2ddf0 (refactor: remove --decompose feature entirely)
         },
       ) => {
         // Catch old two-arg usage: ao spawn <project> <issue>
@@ -245,6 +245,7 @@ export function registerSpawn(program: Command): void {
           await runSpawnPreflight(config, projectId, claimOptions);
           await ensureLifecycleWorker(config, projectId);
 
+<<<<<<< HEAD
           if (opts.decompose && issueId) {
             // Decompose the issue before spawning
             const project = config.projects[projectId];
@@ -298,6 +299,9 @@ export function registerSpawn(program: Command): void {
           } else {
             await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt);
           }
+=======
+          await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
+>>>>>>> 3fb2ddf0 (refactor: remove --decompose feature entirely)
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
           process.exit(1);
