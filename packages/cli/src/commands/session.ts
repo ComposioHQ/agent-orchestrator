@@ -1,12 +1,30 @@
 import { spawn } from "node:child_process";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig, SessionNotRestorableError, WorkspaceMissingError } from "@aoagents/ao-core";
+import {
+  isOrchestratorSession,
+  loadConfig,
+  SessionNotRestorableError,
+  WorkspaceMissingError,
+} from "@aoagents/ao-core";
 import { DEFAULT_PORT } from "../lib/constants.js";
 import { git, getTmuxActivity, tmux } from "../lib/shell.js";
 import { formatAge } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { isOrchestratorSessionName } from "../lib/session-utils.js";
+
+interface SessionListEntry {
+  id: string;
+  projectId: string;
+  projectName: string;
+  role: "worker" | "orchestrator";
+  branch: string | null;
+  status: string | null;
+  issueId: string | null;
+  pr: string | null;
+  workspacePath: string | null;
+  lastActivityAt: string | null;
+}
 
 export function registerSession(program: Command): void {
   const session = program
@@ -17,7 +35,8 @@ export function registerSession(program: Command): void {
     .command("ls")
     .description("List all sessions")
     .option("-p, --project <id>", "Filter by project ID")
-    .action(async (opts: { project?: string }) => {
+    .option("--json", "Output as JSON")
+    .action(async (opts: { project?: string; json?: boolean }) => {
       const config = loadConfig();
       if (opts.project && !config.projects[opts.project]) {
         console.error(chalk.red(`Unknown project: ${opts.project}`));
@@ -37,18 +56,26 @@ export function registerSession(program: Command): void {
 
       // Iterate over all configured projects (not just ones with sessions)
       const projectIds = opts.project ? [opts.project] : Object.keys(config.projects);
+      const allSessionPrefixes = Object.entries(config.projects).map(
+        ([id, project]) => project.sessionPrefix ?? id,
+      );
+      const jsonOutput: SessionListEntry[] = [];
 
       for (const projectId of projectIds) {
         const project = config.projects[projectId];
         if (!project) continue;
-        console.log(chalk.bold(`\n${project.name || projectId}:`));
+        if (!opts.json) {
+          console.log(chalk.bold(`\n${project.name || projectId}:`));
+        }
 
         const projectSessions = (byProject.get(projectId) ?? []).sort((a, b) =>
           a.id.localeCompare(b.id),
         );
 
         if (projectSessions.length === 0) {
-          console.log(chalk.dim("  (no active sessions)"));
+          if (!opts.json) {
+            console.log(chalk.dim("  (no active sessions)"));
+          }
           continue;
         }
 
@@ -76,17 +103,48 @@ export function registerSession(program: Command): void {
 
           // Priority: live branch from workspace > metadata branch > empty string
           const branchStr = (s.workspacePath && liveBranch) ? liveBranch : (s.branch || "");
-          const age = activityTs ? formatAge(activityTs) : "-";
+          const prUrl = s.metadata["pr"] ?? null;
 
+          if (opts.json) {
+            const role = isOrchestratorSession(
+              s,
+              project.sessionPrefix ?? projectId,
+              allSessionPrefixes,
+            )
+              ? "orchestrator"
+              : "worker";
+
+            jsonOutput.push({
+              id: s.id,
+              projectId,
+              projectName: project.name || projectId,
+              role,
+              branch: branchStr || null,
+              status: s.status,
+              issueId: s.issueId,
+              pr: prUrl,
+              workspacePath: s.workspacePath,
+              lastActivityAt: activityTs ? new Date(activityTs).toISOString() : null,
+            });
+
+            continue;
+          }
+
+          const age = activityTs ? formatAge(activityTs) : "-";
           const parts = [chalk.green(s.id), chalk.dim(`(${age})`)];
           if (branchStr) parts.push(chalk.cyan(branchStr));
           if (s.status) parts.push(chalk.dim(`[${s.status}]`));
-          const prUrl = s.metadata["pr"];
           if (prUrl) parts.push(chalk.blue(prUrl));
 
           console.log(`  ${parts.join("  ")}`);
         }
       }
+
+      if (opts.json) {
+        console.log(JSON.stringify(jsonOutput, null, 2));
+        return;
+      }
+
       console.log();
     });
 

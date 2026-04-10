@@ -24,6 +24,7 @@ ao spawn 123 --agent codex             # Override agent for this session
 ao batch-spawn 101 102 103             # Spawn agents for multiple issues at once
 ao send <session> "Fix the tests"      # Send instructions to a running agent
 ao session ls                          # List sessions
+ao session ls --json                   # Machine-readable session inventory
 ao session kill <session>              # Kill a session
 ao session restore <session>           # Revive a crashed agent
 ```

@@ -40,6 +40,7 @@ import {
 import pluginRuntimeTmux from "@aoagents/ao-plugin-runtime-tmux";
 import pluginAgentClaudeCode from "@aoagents/ao-plugin-agent-claude-code";
 import pluginAgentCodex from "@aoagents/ao-plugin-agent-codex";
+import pluginAgentCursor from "@aoagents/ao-plugin-agent-cursor";
 import pluginAgentOpencode from "@aoagents/ao-plugin-agent-opencode";
 import pluginWorkspaceWorktree from "@aoagents/ao-plugin-workspace-worktree";
 import pluginScmGitlab from "@aoagents/ao-plugin-scm-gitlab";
@@ -85,6 +86,7 @@ async function initServices(): Promise<Services> {
   registry.register(pluginRuntimeTmux);
   registry.register(pluginAgentClaudeCode);
   registry.register(pluginAgentCodex);
+  registry.register(pluginAgentCursor);
   registry.register(pluginAgentOpencode);
   registry.register(pluginWorkspaceWorktree);
   registry.register(pluginScmGitlab);
