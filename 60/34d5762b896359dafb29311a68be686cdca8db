@@ -1,0 +1,38 @@
+DESIGN.md
+  911ae66c9af9f825 150-220,283-289
+CLAUDE.md
+  911ae66c9af9f825 205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "6034d5762b896359dafb29311a68be686cdca8db",
+  "prompts": {
+    "02103e08b023cf16": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d740a-8277-7562-bf3e-53d60ebc7eef",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "911ae66c9af9f825": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d766f-c374-7630-8405-2bb9b7af23f4",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 80,
+      "total_deletions": 436,
+      "accepted_lines": 80,
+      "overriden_lines": 0
+    }
+  }
+}
