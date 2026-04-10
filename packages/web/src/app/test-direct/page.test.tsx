@@ -7,18 +7,28 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => searchParams,
 }));
 
+const MockDirectTerminal = ({
+  sessionId,
+  startFullscreen,
+}: {
+  sessionId: string;
+  startFullscreen: boolean;
+}) => (
+  <div data-testid="direct-terminal">
+    {sessionId}:{String(startFullscreen)}
+  </div>
+);
+
 vi.mock("@/components/DirectTerminal", () => ({
-  DirectTerminal: ({
-    sessionId,
-    startFullscreen,
-  }: {
-    sessionId: string;
-    startFullscreen: boolean;
-  }) => (
-    <div data-testid="direct-terminal">
-      {sessionId}:{String(startFullscreen)}
-    </div>
-  ),
+  DirectTerminal: MockDirectTerminal,
+}));
+
+// next/dynamic wraps lazy imports; in tests, bypass the dynamic loader and
+// return the mock component directly.
+vi.mock("next/dynamic", () => ({
+  __esModule: true,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  default: (_loader: any) => MockDirectTerminal,
 }));
 
 describe("TestDirectPage", () => {

@@ -1,5 +1,5 @@
 {
-  "name": "@composio/ao",
+  "name": "@aoagents/ao",
   "version": "0.2.2",
   "description": "Orchestrate parallel AI coding agents — global CLI wrapper",
   "license": "MIT",
@@ -26,6 +26,6 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@composio/ao-cli": "workspace:*"
+    "@aoagents/ao-cli": "workspace:*"
   }
 }

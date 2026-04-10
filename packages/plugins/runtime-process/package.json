@@ -1,5 +1,5 @@
 {
-  "name": "@composio/ao-plugin-runtime-process",
+  "name": "@aoagents/ao-plugin-runtime-process",
   "version": "0.2.0",
   "description": "Runtime plugin: child processes",
   "license": "MIT",
@@ -35,7 +35,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*"
+    "@aoagents/ao-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

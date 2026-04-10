@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { isPortAvailable } from "./web-dir.js";
 import { exec } from "./shell.js";
+import { isInstalledUnderNodeModules } from "./dashboard-rebuild.js";
 
 /**
  * Check that the dashboard port is free.
@@ -27,22 +28,32 @@ async function checkPort(port: number): Promise<void> {
 
 /**
  * Check that workspace packages have been compiled (TypeScript → JavaScript).
- * Locates @composio/ao-core by walking up from webDir, handling both pnpm
+ * Locates @aoagents/ao-core by walking up from webDir, handling both pnpm
  * workspaces (symlinked deps in webDir/node_modules) and npm/yarn global
  * installs (hoisted to a parent node_modules).
  */
 async function checkBuilt(webDir: string): Promise<void> {
-  const corePkgDir = findPackageUp(webDir, "@composio", "ao-core");
+  const isNpmInstall = isInstalledUnderNodeModules(webDir);
+  const corePkgDir = findPackageUp(webDir, "@aoagents", "ao-core");
   if (!corePkgDir) {
-    const hint = webDir.includes("node_modules")
-      ? "Run: npm install -g @composio/ao@latest"
+    const hint = isNpmInstall
+      ? "Run: npm install -g @aoagents/ao@latest"
       : "Run: pnpm install && pnpm build";
     throw new Error(`Dependencies not installed. ${hint}`);
   }
   const coreEntry = resolve(corePkgDir, "dist", "index.js");
   if (!existsSync(coreEntry)) {
-    const hint = webDir.includes("node_modules")
-      ? "Run: npm install -g @composio/ao@latest"
+    const hint = isNpmInstall
+      ? "Run: npm install -g @aoagents/ao@latest"
+      : "Run: pnpm build";
+    throw new Error(`Packages not built. ${hint}`);
+  }
+
+  const webBuildId = resolve(webDir, ".next", "BUILD_ID");
+  const startAllEntry = resolve(webDir, "dist-server", "start-all.js");
+  if (!existsSync(webBuildId) || !existsSync(startAllEntry)) {
+    const hint = isNpmInstall
+      ? "Run: npm install -g @aoagents/ao@latest"
       : "Run: pnpm build";
     throw new Error(`Packages not built. ${hint}`);
   }

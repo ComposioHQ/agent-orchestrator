@@ -1,5 +1,5 @@
 {
-  "name": "@composio/ao-plugin-terminal-web",
+  "name": "@aoagents/ao-plugin-terminal-web",
   "version": "0.2.0",
   "description": "Terminal plugin: xterm.js web terminal",
   "license": "MIT",
@@ -34,7 +34,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*"
+    "@aoagents/ao-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

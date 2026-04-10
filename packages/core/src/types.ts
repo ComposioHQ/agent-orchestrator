@@ -816,6 +816,8 @@ export interface PREnrichmentData {
   isBehind?: boolean;
   /** List of blockers preventing merge */
   blockers?: string[];
+  /** Individual CI check results (populated from batch enrichment when available) */
+  ciChecks?: CICheck[];
 }
 
 /**
@@ -1386,6 +1388,7 @@ export interface SessionMetadata {
   terminalWsPort?: number;
   directTerminalWsPort?: number;
   opencodeSessionId?: string;
+  pinnedSummary?: string; // First quality summary, pinned for display stability
 }
 
 // =============================================================================

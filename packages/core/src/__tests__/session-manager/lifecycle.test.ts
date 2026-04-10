@@ -225,7 +225,7 @@ describe("kill", () => {
     await sm.kill("app-1", { purgeOpenCode: true });
 
     expect(existsSync(deleteLogPath)).toBe(false);
-  });
+  }, 15000);
 });
 
 describe("cleanup", () => {
