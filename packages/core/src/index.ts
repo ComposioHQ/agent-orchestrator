@@ -1,5 +1,5 @@
 /**
- * @composio/ao-core
+ * @aoagents/ao-core
  *
  * Core library for the Agent Orchestrator.
  * Exports all types, config loader, and service implementations.
@@ -126,6 +126,7 @@ export {
   createProjectObserver,
   readObservabilitySummary,
 } from "./observability.js";
+export { resolveNotifierTarget } from "./notifier-resolution.js";
 export type {
   ObservabilityMetricName,
   ObservabilityHealthStatus,

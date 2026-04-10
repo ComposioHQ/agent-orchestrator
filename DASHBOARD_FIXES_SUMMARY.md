@@ -185,5 +185,5 @@ pnpm --filter @agent-orchestrator/web test
 ## Notes
 
 - Pre-existing component test failures (3) are unrelated to these changes
-- Pre-existing warnings (tracker-linear @composio/core, plugin-registry) are unrelated
+- Pre-existing warnings (tracker-linear @aoagents/core, plugin-registry) are unrelated
 - All new functionality is thoroughly tested with 54 new test cases

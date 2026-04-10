@@ -1,5 +1,5 @@
 {
-  "name": "@composio/ao-core",
+  "name": "@aoagents/ao-core",
   "version": "0.2.0",
   "description": "Core library — types, config, session manager, lifecycle manager, event bus",
   "license": "MIT",

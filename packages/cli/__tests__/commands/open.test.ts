@@ -20,7 +20,7 @@ vi.mock("../../src/lib/shell.js", () => ({
   getTmuxActivity: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   loadConfig: () => mockConfigRef.current,
 }));
 
@@ -167,7 +167,7 @@ describe("open command", () => {
     await program.parseAsync(["node", "test", "open", "app-1"]);
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(output).toContain("tmux attach");
+    expect(output).toContain("http://localhost:3000/sessions/app-1");
   });
 
   it("shows 'No sessions to open' when none exist", async () => {

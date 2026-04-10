@@ -16,9 +16,9 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { ActivityDetection, AgentSessionInfo } from "@composio/ao-core";
+import type { ActivityDetection, AgentSessionInfo } from "@aoagents/ao-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import opencodePlugin from "@composio/ao-plugin-agent-opencode";
+import opencodePlugin from "@aoagents/ao-plugin-agent-opencode";
 import {
   isTmuxAvailable,
   killSessionsByPrefix,

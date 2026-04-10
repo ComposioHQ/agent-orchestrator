@@ -16,7 +16,7 @@ import {
   TERMINAL_STATUSES as CORE_TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES as CORE_TERMINAL_ACTIVITIES,
   NON_RESTORABLE_STATUSES as CORE_NON_RESTORABLE_STATUSES,
-} from "@composio/ao-core/types";
+} from "@aoagents/ao-core/types";
 
 // Helper to create a minimal DashboardSession for testing
 function createSession(overrides?: Partial<DashboardSession>): DashboardSession {

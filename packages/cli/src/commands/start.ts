@@ -34,7 +34,7 @@ import {
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { exec, execSilent, git } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -66,7 +66,7 @@ import { detectOpenClawInstallation } from "../lib/openclaw-probe.js";
 import { applyOpenClawCredentials } from "../lib/credential-resolver.js";
 import { findProjectForDirectory } from "../lib/project-resolution.js";
 
-const DEFAULT_PORT = 3000;
+import { DEFAULT_PORT } from "../lib/constants.js";
 const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
 // =============================================================================
@@ -1009,7 +1009,6 @@ async function runStartup(
   }
 
   // Create orchestrator session (unless --no-orchestrator or existing orchestrators found)
-  let tmuxTarget = sessionId;
   let hasExistingOrchestrators = false;
   let selectedOrchestratorId: string | null = null;
 
@@ -1050,8 +1049,6 @@ async function runStartup(
       );
       const selected = sortedOrchestrators[0];
       selectedOrchestratorId = selected.id;
-      // Use runtimeHandle.id if available, otherwise fall back to the session ID
-      tmuxTarget = selected.runtimeHandle?.id ?? selected.id;
       if (opts?.dashboard !== false && existingOrchestrators.length > 1) {
         hasExistingOrchestrators = true;
       }
@@ -1067,9 +1064,6 @@ async function runStartup(
         const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
         const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
         selectedOrchestratorId = session.id;
-        if (session.runtimeHandle?.id) {
-          tmuxTarget = session.runtimeHandle.id;
-        }
         reused =
           orchestratorSessionStrategy === "reuse" &&
           session.metadata?.["orchestratorSessionReused"] === "true";
@@ -1108,22 +1102,23 @@ async function runStartup(
       "multiple sessions found — select one in the dashboard",
     );
   } else if (opts?.orchestrator !== false && !reused) {
-    console.log(chalk.cyan("Orchestrator:"), `tmux attach -t ${tmuxTarget}`);
+    const orchSessionId = selectedOrchestratorId ?? sessionId;
+    if (opts?.dashboard !== false) {
+      console.log(
+        chalk.cyan("Orchestrator:"),
+        `http://localhost:${port}/sessions/${orchSessionId}`,
+      );
+    } else {
+      console.log(
+        chalk.cyan("Orchestrator:"),
+        `ao session attach ${orchSessionId}`,
+      );
+    }
   } else if (reused) {
     console.log(chalk.cyan("Orchestrator:"), `reused existing session (${sessionId})`);
   }
 
   console.log(chalk.dim(`Config: ${config.configPath}`));
-
-  // Show next step hint (only if no existing orchestrators requiring selection)
-  if (!hasExistingOrchestrators) {
-    const projectIds = Object.keys(config.projects);
-    if (projectIds.length > 0) {
-      console.log(chalk.bold("\nNext step:\n"));
-      console.log(`  Spawn an agent session:`);
-      console.log(chalk.cyan(`     ao spawn <issue-number>\n`));
-    }
-  }
 
   // Auto-open browser once the server is ready.
   // With a single orchestrator (or a newly created one), navigate directly to the session page.
@@ -1439,7 +1434,7 @@ export function registerStop(program: Command): void {
           const config = loadConfig();
           const { projectId: _projectId, project } = await resolveProject(config, projectArg, "stop");
           const sessionId = `${project.sessionPrefix}-orchestrator`;
-          const port = config.port ?? 3000;
+          const port = config.port ?? DEFAULT_PORT;
 
           console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(project.name)}\n`));
 

@@ -12,7 +12,8 @@ import {
   type OrchestratorConfig,
   type DecomposerConfig,
   DEFAULT_DECOMPOSER_CONFIG,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
+import { DEFAULT_PORT } from "../lib/constants.js";
 import { exec } from "../lib/shell.js";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -102,7 +103,6 @@ async function spawnSession(
       agent,
     });
 
-    let branchStr = session.branch ?? "";
     let claimedPrUrl: string | null = null;
 
     if (claimOptions?.claimPr) {
@@ -111,7 +111,6 @@ async function spawnSession(
         const claimResult = await sm.claimPR(session.id, claimOptions.claimPr, {
           assignOnGithub: claimOptions.assignOnGithub,
         });
-        branchStr = claimResult.pr.branch;
         claimedPrUrl = claimResult.pr.url;
       } catch (err) {
         throw new Error(
@@ -121,20 +120,17 @@ async function spawnSession(
       }
     }
 
+    const issueLabel = issueId ? ` for issue #${issueId}` : "";
+    const claimLabel = claimedPrUrl ? ` (claimed ${claimedPrUrl})` : "";
+    const port = config.port ?? DEFAULT_PORT;
     spinner.succeed(
-      claimedPrUrl
-        ? `Session ${chalk.green(session.id)} created and claimed PR`
-        : `Session ${chalk.green(session.id)} created`,
+      `Session ${chalk.green(session.id)} spawned${issueLabel}${claimLabel}`,
     );
-
-    console.log(`  Worktree: ${chalk.dim(session.workspacePath ?? "-")}`);
-    if (branchStr) console.log(`  Branch:   ${chalk.dim(branchStr)}`);
-    if (claimedPrUrl) console.log(`  PR:       ${chalk.dim(claimedPrUrl)}`);
+    console.log(`  View:     ${chalk.dim(`http://localhost:${port}/sessions/${session.id}`)}`);
 
     // Warn if prompt delivery failed (for post-launch agents like Claude Code)
     const promptDelivered = session.metadata?.promptDelivered;
     if (promptDelivered === "false") {
-      console.log();
       console.warn(
         chalk.yellow(
           `  ⚠ Prompt delivery failed — agent may be idle.\n` +
@@ -143,14 +139,10 @@ async function spawnSession(
       );
     }
 
-    // Show the tmux name for attaching (stored in metadata or runtimeHandle)
-    const tmuxTarget = session.runtimeHandle?.id ?? session.id;
-    console.log(`  Attach:   ${chalk.dim(`tmux attach -t ${tmuxTarget}`)}`);
-    console.log();
-
     // Open terminal tab if requested
     if (openTab) {
       try {
+        const tmuxTarget = session.runtimeHandle?.id ?? session.id;
         await exec("open-iterm-tab", [tmuxTarget]);
       } catch {
         // Terminal plugin not available
