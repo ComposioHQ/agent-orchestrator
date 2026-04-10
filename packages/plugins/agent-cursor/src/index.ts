@@ -23,9 +23,9 @@ import {
 } from "@composio/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { stat, access, readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { constants } from "node:fs";
+import { stat, access, readFile, lstat } from "node:fs/promises";
+import { readFileSync, constants } from "node:fs";
+import { join, resolve } from "node:path";
 
 const execFileAsync = promisify(execFile);
 
@@ -61,8 +61,18 @@ async function getCursorSessionMtime(workspacePath: string): Promise<Date | null
     const cursorDir = join(workspacePath, ".cursor");
     const chatFile = join(cursorDir, "chat.md");
 
+    // Security check: reject symlinks to prevent path traversal
+    const dirStats = await lstat(cursorDir);
+    if (dirStats.isSymbolicLink()) {
+      return null;
+    }
+
     // First try to stat the chat file (preferred - tracks actual writes)
     try {
+      const fileStats = await lstat(chatFile);
+      if (fileStats.isSymbolicLink()) {
+        return null; // Reject symlinked chat file
+      }
       const stats = await stat(chatFile);
       return stats.mtime;
     } catch {
@@ -91,6 +101,19 @@ async function extractCursorSummary(workspacePath: string): Promise<string | nul
     const chatFile = join(cursorDir, "chat.md");
 
     try {
+      // Security check: verify chatFile is not a symlink and stays under workspacePath
+      const lstats = await lstat(chatFile);
+      if (lstats.isSymbolicLink()) {
+        return null; // Reject symlinks to prevent path traversal
+      }
+
+      // Verify the resolved path stays under workspacePath
+      const realPath = resolve(chatFile);
+      const realWorkspace = resolve(workspacePath);
+      if (!realPath.startsWith(realWorkspace)) {
+        return null; // Reject paths outside workspace
+      }
+
       const content = await readFile(chatFile, "utf-8");
       // Extract first meaningful line
       for (const line of content.split("\n")) {
@@ -145,13 +168,31 @@ function createCursorAgent(): Agent {
         parts.push("--model", shellEscape(config.model));
       }
 
-      // Note: Cursor agent doesn't have --system or --prompt flags
-      // System prompts would need to be passed differently (TBD)
-      // Prompt is passed as positional argument at the end
+      // Build the prompt argument
+      // Cursor agent doesn't have a dedicated --system flag, so we prepend
+      // system prompt content to the main prompt positional argument
       // Use -- separator to prevent prompts starting with - from being parsed as flags
+      let promptText = "";
 
+      // Read system prompt from file or inline config
+      if (config.systemPromptFile) {
+        try {
+          const systemContent = readFileSync(config.systemPromptFile, "utf-8");
+          promptText = systemContent.trim();
+        } catch {
+          // File doesn't exist or can't be read - continue without system prompt
+        }
+      } else if (config.systemPrompt) {
+        promptText = config.systemPrompt.trim();
+      }
+
+      // Append user prompt if provided
       if (config.prompt) {
-        parts.push("--", shellEscape(config.prompt));
+        promptText = promptText ? promptText + "\n\n" + config.prompt : config.prompt;
+      }
+
+      if (promptText) {
+        parts.push("--", shellEscape(promptText));
       }
 
       return parts.join(" ");
@@ -178,13 +219,9 @@ function createCursorAgent(): Agent {
       const lines = terminalOutput.trim().split("\n");
       const lastLine = lines[lines.length - 1]?.trim() ?? "";
 
-      // Cursor agent's input prompt — agent is idle, waiting for user command
-      if (/^[>$#]\s*$/.test(lastLine)) return "idle";
-      // Cursor agent-specific prompt patterns
-      if (/^agent>\s*$/.test(lastLine)) return "idle";
-      if (/^\[agent\]\s*$/.test(lastLine)) return "idle";
-
-      // Check the last few lines for permission/confirmation prompts
+      // Check for permission/confirmation prompts FIRST (actionable states take priority)
+      // This must come before idle prompt detection to avoid false negatives when
+      // a permission prompt is followed by an input cursor on the next line
       const tail = lines.slice(-5).join("\n");
       if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
       if (/Approve.*changes\?/i.test(tail)) return "waiting_input";
@@ -192,6 +229,12 @@ function createCursorAgent(): Agent {
       if (/\[Yes\].*\[No\]/i.test(tail)) return "waiting_input";
       if (/proceed\?/i.test(tail)) return "waiting_input";
       if (/Press Enter to continue/i.test(tail)) return "waiting_input";
+
+      // Cursor agent's input prompt — agent is idle, waiting for user command
+      if (/^[>$#]\s*$/.test(lastLine)) return "idle";
+      // Cursor agent-specific prompt patterns
+      if (/^agent>\s*$/.test(lastLine)) return "idle";
+      if (/^\[agent\]\s*$/.test(lastLine)) return "idle";
 
       // Note: "blocked" detection removed — compiler errors, test failures, and linter
       // messages are extremely common in normal tool output. Unlike Claude Code (which
@@ -225,6 +268,8 @@ function createCursorAgent(): Agent {
       if (activityState) return activityState;
 
       // 2. Fallback: check for recent git commits (Cursor may auto-commit changes)
+      //    Note: This can produce false "active" states if other processes make commits,
+      //    but it's better than missing real activity. Same pattern used in Aider plugin.
       const hasCommits = await hasRecentCommits(session.workspacePath);
       if (hasCommits) return { state: "active" };
 
@@ -272,9 +317,10 @@ function createCursorAgent(): Agent {
             timeout: 30_000,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          // Match "agent" binary (Cursor's CLI command name)
+          // Match "agent" or ".agent" binary (Cursor's CLI is called "agent")
           // Use word boundary to avoid matching "agent-orchestrator" etc.
-          const processRe = /(?:^|\/)\bagent\b(?:\s|$)/;
+          // Include optional dot prefix to match installations with dot-prefixed names
+          const processRe = /(?:^|\/)\.?agent\b(?:\s|$)/;
           for (const line of psOut.split("\n")) {
             const cols = line.trimStart().split(/\s+/);
             if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
@@ -346,12 +392,16 @@ export function create(): Agent {
 
 export function detect(): boolean {
   try {
-    // Check for Cursor-specific output to avoid false positives with generic "agent" commands
-    const result = execFileSync("agent", ["--version"], { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
-    // Cursor's agent binary should include "cursor" or "agent" in version output
-    // If version output is empty or doesn't match expected pattern, return false
-    const output = result.toString().toLowerCase();
-    return output.includes("cursor") || output.includes("agent");
+    // Check for Cursor-specific markers in help output to avoid false positives
+    // with other binaries named "agent" (SSH agents, monitoring agents, etc.)
+    // Note: --version only outputs a date/hash (e.g., "2026.04.08-a41fba1") with no
+    // "cursor" marker, so we check --help output instead.
+    const helpOutput = execFileSync("agent", ["--help"], { encoding: "utf-8" });
+    // Use multiple indicators for robustness - if Cursor changes one, others still work
+    const hasCursorAgent = helpOutput.includes("Cursor Agent");
+    const hasCursorFlags =
+      helpOutput.includes("--approve-mcps") && helpOutput.includes("--sandbox");
+    return hasCursorAgent || hasCursorFlags;
   } catch {
     return false;
   }
