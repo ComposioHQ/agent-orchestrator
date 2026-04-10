@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { type Session, type SessionManager, getProjectBaseDir } from "@aoagents/ao-core";
 
-const { mockExec, mockConfigRef, mockSessionManager, mockEnsureLifecycleWorker } = vi.hoisted(
+const {
+  mockExec,
+  mockConfigRef,
+  mockSessionManager,
+  mockEnsureLifecycleWorker,
+  mockDecompose,
+} = vi.hoisted(
   () => ({
     mockExec: vi.fn(),
     mockConfigRef: { current: null as Record<string, unknown> | null },
@@ -19,6 +25,7 @@ const { mockExec, mockConfigRef, mockSessionManager, mockEnsureLifecycleWorker }
       claimPR: vi.fn(),
     },
     mockEnsureLifecycleWorker: vi.fn(),
+    mockDecompose: vi.fn(),
   }),
 );
 
@@ -49,6 +56,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
   return {
     ...actual,
     loadConfig: () => mockConfigRef.current,
+    decompose: (...args: Parameters<typeof actual.decompose>) => mockDecompose(...args),
   };
 });
 
@@ -122,6 +130,7 @@ beforeEach(() => {
   mockSessionManager.claimPR.mockReset();
   mockExec.mockReset();
   mockEnsureLifecycleWorker.mockReset();
+  mockDecompose.mockReset();
   mockEnsureLifecycleWorker.mockResolvedValue({
     running: true,
     started: true,
@@ -367,6 +376,69 @@ describe("spawn command", () => {
       issueId: "INT-42",
       agent: "codex",
     });
+  });
+
+  it("prints prompt preview without starting lifecycle or spawning", async () => {
+    await program.parseAsync(["node", "test", "spawn", "INT-42", "--preview-prompt"]);
+
+    expect(mockEnsureLifecycleWorker).not.toHaveBeenCalled();
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Prompt Preview");
+    expect(output).toContain("Tracker issue context is not fetched in preview mode");
+    expect(output).toContain("Work on issue: INT-42");
+    expect(output).toContain("Repository: org/my-app");
+  });
+
+  it("prints decomposed leaf prompts in preview mode", async () => {
+    mockDecompose.mockResolvedValue({
+      id: "plan-1",
+      rootTask: "INT-42",
+      maxDepth: 3,
+      phase: "review",
+      createdAt: new Date().toISOString(),
+      tree: {
+        id: "1",
+        depth: 0,
+        description: "INT-42",
+        kind: "composite",
+        status: "ready",
+        lineage: [],
+        children: [
+          {
+            id: "1.1",
+            depth: 1,
+            description: "Build API",
+            kind: "atomic",
+            status: "ready",
+            lineage: ["INT-42"],
+            children: [],
+          },
+          {
+            id: "1.2",
+            depth: 1,
+            description: "Build UI",
+            kind: "atomic",
+            status: "ready",
+            lineage: ["INT-42"],
+            children: [],
+          },
+        ],
+      },
+    });
+
+    await program.parseAsync(["node", "test", "spawn", "INT-42", "--decompose", "--preview-prompt"]);
+
+    expect(mockEnsureLifecycleWorker).not.toHaveBeenCalled();
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Leaf 1: Build API");
+    expect(output).toContain("Leaf 2: Build UI");
+    expect(output).toContain("## Task Hierarchy");
+    expect(output).toContain("## Parallel Work");
+    expect(output).toContain("Build UI");
   });
 
   it("warns and exits when two positional args given (old syntax)", async () => {

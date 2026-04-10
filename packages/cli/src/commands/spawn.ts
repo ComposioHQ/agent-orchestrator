@@ -9,8 +9,10 @@ import {
   getSiblings,
   formatPlanTree,
   TERMINAL_STATUSES,
+  buildPrompt,
   type OrchestratorConfig,
   type DecomposerConfig,
+  type ProjectConfig,
   DEFAULT_DECOMPOSER_CONFIG,
 } from "@aoagents/ao-core";
 import { DEFAULT_PORT } from "../lib/constants.js";
@@ -58,6 +60,57 @@ function autoDetectProject(config: OrchestratorConfig): string {
 interface SpawnClaimOptions {
   claimPr?: string;
   assignOnGithub?: boolean;
+}
+
+interface PromptPreviewOptions {
+  issueId?: string;
+  lineage?: string[];
+  siblings?: string[];
+}
+
+function getDecomposerConfig(
+  config: OrchestratorConfig,
+  projectId: string,
+  maxDepth?: string,
+): DecomposerConfig {
+  const project = config.projects[projectId];
+  return {
+    ...DEFAULT_DECOMPOSER_CONFIG,
+    ...(project.decomposer ?? {}),
+    maxDepth: maxDepth ? parseInt(maxDepth, 10) : (project.decomposer?.maxDepth ?? 3),
+  };
+}
+
+function printPromptPreviewHeader(projectId: string, issueId?: string): void {
+  console.log(chalk.bold("Prompt Preview"));
+  console.log(chalk.dim(`Project: ${projectId}`));
+  if (issueId) {
+    console.log(chalk.dim(`Issue:   ${issueId}`));
+    console.log(
+      chalk.yellow(
+        "Tracker issue context is not fetched in preview mode because it requires a network call.",
+      ),
+    );
+  }
+  console.log(
+    chalk.dim("Preview mode only prints the composed prompt. No session or lifecycle worker is started."),
+  );
+  console.log();
+}
+
+function printPromptPreview(
+  project: ProjectConfig,
+  projectId: string,
+  options: PromptPreviewOptions,
+): void {
+  const prompt = buildPrompt({
+    project,
+    projectId,
+    issueId: options.issueId,
+    lineage: options.lineage,
+    siblings: options.siblings,
+  });
+  console.log(prompt);
 }
 
 /**
@@ -169,6 +222,7 @@ export function registerSpawn(program: Command): void {
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option("--decompose", "Decompose issue into subtasks before spawning")
+    .option("--preview-prompt", "Print the composed prompt without creating a session")
     .option("--max-depth <n>", "Max decomposition depth (default: 3)")
     .action(
       async (
@@ -180,6 +234,7 @@ export function registerSpawn(program: Command): void {
           claimPr?: string;
           assignOnGithub?: boolean;
           decompose?: boolean;
+          previewPrompt?: boolean;
           maxDepth?: string;
         },
       ) => {
@@ -228,20 +283,58 @@ export function registerSpawn(program: Command): void {
           assignOnGithub: opts.assignOnGithub,
         };
 
+        const project = config.projects[projectId];
+
+        if (opts.previewPrompt) {
+          try {
+            printPromptPreviewHeader(projectId, issueId);
+
+            if (opts.decompose && issueId) {
+              const spinner = ora("Decomposing task for prompt preview...").start();
+              const plan = await decompose(issueId, getDecomposerConfig(config, projectId, opts.maxDepth));
+              const leaves = getLeaves(plan.tree);
+              spinner.succeed(`Decomposed into ${chalk.bold(String(leaves.length))} subtasks`);
+
+              console.log();
+              console.log(chalk.dim(formatPlanTree(plan.tree)));
+              console.log();
+
+              if (leaves.length <= 1) {
+                printPromptPreview(project, projectId, { issueId });
+              } else {
+                for (const [index, leaf] of leaves.entries()) {
+                  const siblings = getSiblings(plan.tree, leaf.id);
+                  console.log(chalk.bold(`Leaf ${index + 1}: ${leaf.description}`));
+                  console.log();
+                  printPromptPreview(project, projectId, {
+                    issueId,
+                    lineage: leaf.lineage,
+                    siblings,
+                  });
+                  if (index < leaves.length - 1) {
+                    console.log();
+                    console.log(chalk.dim("=".repeat(80)));
+                    console.log();
+                  }
+                }
+              }
+            } else {
+              printPromptPreview(project, projectId, { issueId });
+            }
+            return;
+          } catch (err) {
+            console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
+            process.exit(1);
+          }
+        }
+
         try {
           await runSpawnPreflight(config, projectId, claimOptions);
           await ensureLifecycleWorker(config, projectId);
 
           if (opts.decompose && issueId) {
             // Decompose the issue before spawning
-            const project = config.projects[projectId];
-            const decompConfig: DecomposerConfig = {
-              ...DEFAULT_DECOMPOSER_CONFIG,
-              ...(project.decomposer ?? {}),
-              maxDepth: opts.maxDepth
-                ? parseInt(opts.maxDepth, 10)
-                : (project.decomposer?.maxDepth ?? 3),
-            };
+            const decompConfig = getDecomposerConfig(config, projectId, opts.maxDepth);
 
             const spinner = ora("Decomposing task...").start();
             const issueTitle = issueId;
