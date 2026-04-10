@@ -23,7 +23,8 @@ import {
   createPluginRegistry,
   type OrchestratorConfig,
   getSessionsDir,
-} from "@composio/ao-core";
+  type Session,
+} from "@aoagents/ao-core";
 
 // ── Shared setup ─────────────────────────────────────────────────────
 
@@ -129,7 +130,7 @@ describe("BLUE — main behavior: session metadata written without userPrompt", 
     const sessionManager = createSessionManager({ config, registry });
 
     const sessions = await sessionManager.list("test-project");
-    const session = sessions.find((s) => s.id === sessionId);
+    const session = sessions.find((s: Session) => s.id === sessionId);
 
     expect(session).toBeDefined();
     // On main: no userPrompt in metadata → undefined/absent → no dashboard identity
@@ -160,7 +161,7 @@ describe("BLUE — main behavior: session metadata written without userPrompt", 
     const sessionManager = createSessionManager({ config, registry });
 
     const sessions = await sessionManager.list("test-project");
-    const session = sessions.find((s) => s.id === sessionId);
+    const session = sessions.find((s: Session) => s.id === sessionId);
 
     expect(session?.metadata["userPrompt"]).toBeUndefined();
   });
@@ -197,7 +198,7 @@ describe("GREEN — branch behavior: session metadata persists userPrompt", () =
     const sessionManager = createSessionManager({ config, registry });
 
     const sessions = await sessionManager.list("test-project");
-    const session = sessions.find((s) => s.id === sessionId);
+    const session = sessions.find((s: Session) => s.id === sessionId);
 
     expect(session).toBeDefined();
     // After our PR: userPrompt is in metadata and readable by session-manager
@@ -228,7 +229,7 @@ describe("GREEN — branch behavior: session metadata persists userPrompt", () =
     const sessionManager = createSessionManager({ config, registry });
 
     const sessions = await sessionManager.list("test-project");
-    const session = sessions.find((s) => s.id === sessionId);
+    const session = sessions.find((s: Session) => s.id === sessionId);
 
     // sessionToDashboard(session) will call: session.metadata["userPrompt"] ?? null
     // This verifies the metadata value is present for the web serializer to pick up.
@@ -287,7 +288,7 @@ describe("GREEN — branch behavior: session metadata persists userPrompt", () =
     const sessionManager = createSessionManager({ config, registry });
 
     const sessions = await sessionManager.list("test-project");
-    const session = sessions.find((s) => s.id === sessionId);
+    const session = sessions.find((s: Session) => s.id === sessionId);
 
     expect(session?.issueId).toBe("https://github.com/acme/repo/issues/99");
     expect(session?.metadata["userPrompt"]).toBe(userPrompt);
@@ -339,8 +340,8 @@ describe("DELTA — before vs after: same session-manager, different metadata", 
 
     const sessions = await sessionManager.list("test-project");
 
-    const oldSession = sessions.find((s) => s.id === oldSessionId);
-    const newSession = sessions.find((s) => s.id === newSessionId);
+    const oldSession = sessions.find((s: Session) => s.id === oldSessionId);
+    const newSession = sessions.find((s: Session) => s.id === newSessionId);
 
     expect(oldSession).toBeDefined();
     expect(newSession).toBeDefined();
