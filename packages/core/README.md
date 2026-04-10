@@ -1,4 +1,4 @@
-# @composio/ao-core
+# @aoagents/ao-core
 
 Core services, types, and configuration for the Agent Orchestrator system.
 
@@ -125,7 +125,7 @@ Loads and validates `agent-orchestrator.yaml`:
 
 1. Edit `src/types.ts` → `Session` interface
 2. Edit `src/services/session-manager.ts` → initialize field in `spawn()`
-3. Rebuild: `pnpm --filter @composio/ao-core build`
+3. Rebuild: `pnpm --filter @aoagents/ao-core build`
 
 ### Adding an Event Type
 
@@ -141,7 +141,7 @@ Loads and validates `agent-orchestrator.yaml`:
 
 ### Feedback Tools (v1)
 
-`@composio/ao-core` exports two structured feedback tool contracts:
+`@aoagents/ao-core` exports two structured feedback tool contracts:
 
 - `bug_report`
 - `improvement_suggestion`
@@ -158,7 +158,7 @@ Both share the same required input fields:
 Example:
 
 ```ts
-import { FEEDBACK_TOOL_NAMES, FeedbackReportStore, getFeedbackReportsDir } from "@composio/ao-core";
+import { FEEDBACK_TOOL_NAMES, FeedbackReportStore, getFeedbackReportsDir } from "@aoagents/ao-core";
 
 const reportsDir = getFeedbackReportsDir(configPath, projectPath);
 const store = new FeedbackReportStore(reportsDir);
@@ -188,13 +188,13 @@ Migration notes:
 
 ```bash
 # Run all core tests
-pnpm --filter @composio/ao-core test
+pnpm --filter @aoagents/ao-core test
 
 # Run in watch mode
-pnpm --filter @composio/ao-core test -- --watch
+pnpm --filter @aoagents/ao-core test -- --watch
 
 # Run specific test
-pnpm --filter @composio/ao-core test -- session-manager.test.ts
+pnpm --filter @aoagents/ao-core test -- session-manager.test.ts
 ```
 
 Tests are in `src/__tests__/`:
@@ -209,10 +209,10 @@ Tests are in `src/__tests__/`:
 
 ```bash
 # Build core
-pnpm --filter @composio/ao-core build
+pnpm --filter @aoagents/ao-core build
 
 # Typecheck
-pnpm --filter @composio/ao-core typecheck
+pnpm --filter @aoagents/ao-core typecheck
 ```
 
 This package is a dependency of all other packages. Build it first if working on the codebase.

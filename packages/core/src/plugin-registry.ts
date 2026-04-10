@@ -3,7 +3,7 @@
  *
  * Plugins can be:
  * 1. Built-in (packages/plugins/*)
- * 2. npm packages (@composio/ao-plugin-*)
+ * 2. npm packages (@aoagents/ao-plugin-*)
  * 3. Local file paths specified in config
  */
 
@@ -28,6 +28,11 @@ interface NotifierRegistration {
   config?: Record<string, unknown>;
 }
 
+interface NotifierRegistration {
+  registrationName: string;
+  config?: Record<string, unknown>;
+}
+
 const LOCAL_PLUGIN_ENTRY_CANDIDATES = ["dist/index.js", "index.js"] as const;
 
 function makeKey(slot: PluginSlot, name: string): string {
@@ -37,67 +42,81 @@ function makeKey(slot: PluginSlot, name: string): string {
 /** Built-in plugin package names, mapped to their npm package */
 const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = [
   // Runtimes
-  { slot: "runtime", name: "tmux", pkg: "@composio/ao-plugin-runtime-tmux" },
-  { slot: "runtime", name: "process", pkg: "@composio/ao-plugin-runtime-process" },
+  { slot: "runtime", name: "tmux", pkg: "@aoagents/ao-plugin-runtime-tmux" },
+  { slot: "runtime", name: "process", pkg: "@aoagents/ao-plugin-runtime-process" },
   // Agents
-  { slot: "agent", name: "claude-code", pkg: "@composio/ao-plugin-agent-claude-code" },
-  { slot: "agent", name: "codex", pkg: "@composio/ao-plugin-agent-codex" },
-  { slot: "agent", name: "aider", pkg: "@composio/ao-plugin-agent-aider" },
-  { slot: "agent", name: "cursor", pkg: "@composio/ao-plugin-agent-cursor" },
-  { slot: "agent", name: "opencode", pkg: "@composio/ao-plugin-agent-opencode" },
+  { slot: "agent", name: "claude-code", pkg: "@aoagents/ao-plugin-agent-claude-code" },
+  { slot: "agent", name: "codex", pkg: "@aoagents/ao-plugin-agent-codex" },
+  { slot: "agent", name: "aider", pkg: "@aoagents/ao-plugin-agent-aider" },
+  { slot: "agent", name: "cursor", pkg: "@aoagents/ao-plugin-agent-cursor" },
+  { slot: "agent", name: "opencode", pkg: "@aoagents/ao-plugin-agent-opencode" },
   // Workspaces
-  { slot: "workspace", name: "worktree", pkg: "@composio/ao-plugin-workspace-worktree" },
-  { slot: "workspace", name: "clone", pkg: "@composio/ao-plugin-workspace-clone" },
+  { slot: "workspace", name: "worktree", pkg: "@aoagents/ao-plugin-workspace-worktree" },
+  { slot: "workspace", name: "clone", pkg: "@aoagents/ao-plugin-workspace-clone" },
   // Trackers
-  { slot: "tracker", name: "github", pkg: "@composio/ao-plugin-tracker-github" },
-  { slot: "tracker", name: "linear", pkg: "@composio/ao-plugin-tracker-linear" },
-  { slot: "tracker", name: "gitlab", pkg: "@composio/ao-plugin-tracker-gitlab" },
+  { slot: "tracker", name: "github", pkg: "@aoagents/ao-plugin-tracker-github" },
+  { slot: "tracker", name: "linear", pkg: "@aoagents/ao-plugin-tracker-linear" },
+  { slot: "tracker", name: "gitlab", pkg: "@aoagents/ao-plugin-tracker-gitlab" },
   // SCM
-  { slot: "scm", name: "github", pkg: "@composio/ao-plugin-scm-github" },
-  { slot: "scm", name: "gitlab", pkg: "@composio/ao-plugin-scm-gitlab" },
+  { slot: "scm", name: "github", pkg: "@aoagents/ao-plugin-scm-github" },
+  { slot: "scm", name: "gitlab", pkg: "@aoagents/ao-plugin-scm-gitlab" },
   // Notifiers
-  { slot: "notifier", name: "composio", pkg: "@composio/ao-plugin-notifier-composio" },
-  { slot: "notifier", name: "desktop", pkg: "@composio/ao-plugin-notifier-desktop" },
-  { slot: "notifier", name: "discord", pkg: "@composio/ao-plugin-notifier-discord" },
-  { slot: "notifier", name: "openclaw", pkg: "@composio/ao-plugin-notifier-openclaw" },
-  { slot: "notifier", name: "slack", pkg: "@composio/ao-plugin-notifier-slack" },
-  { slot: "notifier", name: "webhook", pkg: "@composio/ao-plugin-notifier-webhook" },
+  { slot: "notifier", name: "composio", pkg: "@aoagents/ao-plugin-notifier-composio" },
+  { slot: "notifier", name: "desktop", pkg: "@aoagents/ao-plugin-notifier-desktop" },
+  { slot: "notifier", name: "discord", pkg: "@aoagents/ao-plugin-notifier-discord" },
+  { slot: "notifier", name: "openclaw", pkg: "@aoagents/ao-plugin-notifier-openclaw" },
+  { slot: "notifier", name: "slack", pkg: "@aoagents/ao-plugin-notifier-slack" },
+  { slot: "notifier", name: "webhook", pkg: "@aoagents/ao-plugin-notifier-webhook" },
   // Terminals
-  { slot: "terminal", name: "iterm2", pkg: "@composio/ao-plugin-terminal-iterm2" },
-  { slot: "terminal", name: "web", pkg: "@composio/ao-plugin-terminal-web" },
+  { slot: "terminal", name: "iterm2", pkg: "@aoagents/ao-plugin-terminal-iterm2" },
+  { slot: "terminal", name: "web", pkg: "@aoagents/ao-plugin-terminal-web" },
 ];
 
-function extractPluginConfig(
-  slot: PluginSlot,
-  name: string,
+function matchesNotifierPlugin(
+  pluginName: string,
+  notifierId: string,
+  notifierConfig: Record<string, unknown>,
+): boolean {
+  const configuredPlugin = notifierConfig["plugin"];
+  const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
+  return hasExplicitPlugin ? configuredPlugin === pluginName : notifierId === pluginName;
+}
+
+function collectNotifierRegistrations(
+  pluginName: string,
   config: OrchestratorConfig,
   isExternalLoad = false,
-): Record<string, unknown> | undefined {
-  // 1. Handle Notifier Slot
-  if (slot === "notifier") {
-    for (const [notifierId, notifierConfig] of Object.entries(config.notifiers ?? {})) {
-      if (!notifierConfig || typeof notifierConfig !== "object") continue;
-      const configuredPlugin = (notifierConfig as Record<string, unknown>)["plugin"];
-      const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
-      const matches = hasExplicitPlugin ? configuredPlugin === name : notifierId === name;
+): NotifierRegistration[] {
+  const orderedMatches = new Map<string, Record<string, unknown>>();
+  const notifierEntries = Object.entries(config.notifiers ?? {});
 
-      if (matches) {
-        return prepareConfig(slot, name, notifierId, notifierConfig, config.configPath, isExternalLoad);
-      }
+  const exactMatch = config.notifiers?.[pluginName];
+  if (
+    exactMatch &&
+    typeof exactMatch === "object" &&
+    matchesNotifierPlugin(pluginName, pluginName, exactMatch)
+  ) {
+    orderedMatches.set(pluginName, exactMatch);
+  }
+
+  for (const [notifierId, notifierConfig] of notifierEntries) {
+    if (!notifierConfig || typeof notifierConfig !== "object") continue;
+    if (matchesNotifierPlugin(pluginName, notifierId, notifierConfig)) {
+      orderedMatches.set(notifierId, notifierConfig);
     }
   }
 
-  // 2. Handle Tracker and SCM Slots (Project-level)
-  // Tracker and SCM plugins are typically stateless singletons that receive
-  // project-specific config per-call (via ProjectConfig argument), not at create() time.
-  // This applies to BOTH built-in and external plugins to avoid order-dependent
-  // behavior when multiple projects share the same plugin but have different configs.
-  // Return undefined so plugins are initialized without project-specific config.
-  if (slot === "tracker" || slot === "scm") {
-    return undefined;
-  }
-
-  return undefined;
+  return [...orderedMatches.entries()].map(([registrationName, rawConfig]) => ({
+    registrationName,
+    config: prepareConfig(
+      "notifier",
+      pluginName,
+      registrationName,
+      rawConfig,
+      config.configPath,
+      isExternalLoad,
+    ),
+  }));
 }
 
 function collectNotifierRegistrations(
@@ -151,6 +170,7 @@ function prepareConfig(
   rawConfig: Record<string, unknown>,
   configPath?: string,
   isExternalLoad = false,
+  isExternalLoad = false,
 ): Record<string, unknown> {
   // Explicitly check for reserved fields to prevent silent stripping/collision.
   // 'path' is reserved for local resolution; 'package' is reserved for npm resolution.
@@ -164,6 +184,10 @@ function prepareConfig(
   // If loading via built-in name or npm package, having a 'path' field is ambiguous:
   // it could be a local plugin path (for loading) or a plugin config value.
   // We reject this to avoid silently stripping a config value the user intended to pass.
+  // Skip the built-in guard for external loads: when loading via `path`, the manifest.name
+  // may legitimately collide with a built-in (e.g. a forked "slack"), and the path field
+  // here IS the loading path, not a stray user config value.
+  const isBuiltin = !isExternalLoad && BUILTIN_PLUGINS.some((b) => b.slot === slot && b.name === name);
   // Skip the built-in guard for external loads: when loading via `path`, the manifest.name
   // may legitimately collide with a built-in (e.g. a forked "slack"), and the path field
   // here IS the loading path, not a stray user config value.
@@ -419,9 +443,13 @@ export function createPluginRegistry(): PluginRegistry {
     plugins.set(makeKey(slot, name), { manifest, instance });
   }
 
-  function registerNotifier(plugin: PluginModule, config: OrchestratorConfig): void {
+  function registerNotifier(
+    plugin: PluginModule,
+    config: OrchestratorConfig,
+    isExternalLoad = false,
+  ): void {
     const { manifest } = plugin;
-    const registrations = collectNotifierRegistrations(manifest.name, config);
+    const registrations = collectNotifierRegistrations(manifest.name, config, isExternalLoad);
 
     if (registrations.length === 0) {
       registerInstance(manifest.slot, manifest.name, manifest, plugin.create(undefined));
@@ -443,6 +471,7 @@ export function createPluginRegistry(): PluginRegistry {
       const { manifest } = plugin;
       const instance = plugin.create(config);
       registerInstance(manifest.slot, manifest.name, manifest, instance);
+      registerInstance(manifest.slot, manifest.name, manifest, instance);
     },
 
     get<T>(slot: PluginSlot, name: string): T | null {
@@ -452,11 +481,15 @@ export function createPluginRegistry(): PluginRegistry {
 
     list(slot: PluginSlot): PluginManifest[] {
       const result = new Map<string, PluginManifest>();
+      const result = new Map<string, PluginManifest>();
       for (const [key, entry] of plugins) {
+        if (key.startsWith(`${slot}:`) && !result.has(entry.manifest.name)) {
+          result.set(entry.manifest.name, entry.manifest);
         if (key.startsWith(`${slot}:`) && !result.has(entry.manifest.name)) {
           result.set(entry.manifest.name, entry.manifest);
         }
       }
+      return [...result.values()];
       return [...result.values()];
     },
 
@@ -479,10 +512,7 @@ export function createPluginRegistry(): PluginRegistry {
             if (orchestratorConfig && mod.manifest.slot === "notifier") {
               registerNotifier(mod, orchestratorConfig);
             } else {
-              const pluginConfig = orchestratorConfig
-                ? extractPluginConfig(builtin.slot, builtin.name, orchestratorConfig)
-                : undefined;
-              this.register(mod, pluginConfig);
+              this.register(mod);
             }
           } catch (error) {
             process.stderr.write(
@@ -519,8 +549,8 @@ export function createPluginRegistry(): PluginRegistry {
 
           // Check if this plugin was auto-added from inline tracker/scm/notifier config.
           // Multiple projects may share the same external plugin, so find ALL matching entries.
-          // We validate and update configs FIRST, before extracting plugin config, because
-          // extractPluginConfig looks up by manifest.name which may differ from the temp name.
+          // We validate and update configs FIRST so notifier alias registration uses
+          // the final manifest.name instead of any temporary inferred plugin name.
           const matchingEntries = findAllExternalPluginEntries(plugin, externalIndex);
           for (const externalEntry of matchingEntries) {
             try {
@@ -538,14 +568,10 @@ export function createPluginRegistry(): PluginRegistry {
             }
           }
 
-          // Extract plugin config AFTER updating configs with manifest.name.
-          // This ensures extractPluginConfig can find the config by manifest.name
-          // (e.g., manifest "ms-teams" after config was updated from temp "teams").
           if (mod.manifest.slot === "notifier") {
-            registerNotifier(mod, config);
+            registerNotifier(mod, config, true);
           } else {
-            const pluginConfig = extractPluginConfig(mod.manifest.slot, mod.manifest.name, config, true);
-            this.register(mod, pluginConfig);
+            this.register(mod);
           }
         } catch (error) {
           process.stderr.write(`[plugin-registry] Failed to load plugin "${specifier}": ${error}\n`);

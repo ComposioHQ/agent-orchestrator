@@ -152,9 +152,9 @@ describe("loadBuiltins", () => {
     const fakeOpenCode = makePlugin("agent", "opencode");
 
     await registry.loadBuiltins(undefined, async (pkg: string) => {
-      if (pkg === "@composio/ao-plugin-agent-claude-code") return fakeClaudeCode;
-      if (pkg === "@composio/ao-plugin-agent-codex") return fakeCodex;
-      if (pkg === "@composio/ao-plugin-agent-opencode") return fakeOpenCode;
+      if (pkg === "@aoagents/ao-plugin-agent-claude-code") return fakeClaudeCode;
+      if (pkg === "@aoagents/ao-plugin-agent-codex") return fakeCodex;
+      if (pkg === "@aoagents/ao-plugin-agent-opencode") return fakeOpenCode;
       throw new Error(`Not found: ${pkg}`);
     });
 
@@ -175,8 +175,8 @@ describe("loadBuiltins", () => {
     const fakeScm = makePlugin("scm", "gitlab");
 
     await registry.loadBuiltins(undefined, async (pkg: string) => {
-      if (pkg === "@composio/ao-plugin-tracker-gitlab") return fakeTracker;
-      if (pkg === "@composio/ao-plugin-scm-gitlab") return fakeScm;
+      if (pkg === "@aoagents/ao-plugin-tracker-gitlab") return fakeTracker;
+      if (pkg === "@aoagents/ao-plugin-scm-gitlab") return fakeScm;
       throw new Error(`Not found: ${pkg}`);
     });
 
@@ -203,7 +203,7 @@ describe("loadBuiltins", () => {
     });
 
     await registry.loadBuiltins(config, async (pkg: string) => {
-      if (pkg === "@composio/ao-plugin-notifier-webhook") return fakeWebhookNotifier;
+      if (pkg === "@aoagents/ao-plugin-notifier-webhook") return fakeWebhookNotifier;
       throw new Error(`Not found: ${pkg}`);
     });
 
@@ -228,7 +228,7 @@ describe("loadBuiltins", () => {
     });
 
     await registry.loadBuiltins(config, async (pkg: string) => {
-      if (pkg === "@composio/ao-plugin-notifier-webhook") return fakeWebhookNotifier;
+      if (pkg === "@aoagents/ao-plugin-notifier-webhook") return fakeWebhookNotifier;
       throw new Error(`Not found: ${pkg}`);
     });
 
@@ -330,7 +330,7 @@ describe("loadBuiltins", () => {
     });
 
     await registry.loadBuiltins(cfg, async (pkg: string) => {
-      if (pkg === "@composio/ao-plugin-notifier-openclaw") return fakeOpenClaw;
+      if (pkg === "@aoagents/ao-plugin-notifier-openclaw") return fakeOpenClaw;
       throw new Error(`Not found: ${pkg}`);
     });
 
@@ -349,7 +349,7 @@ describe("loadBuiltins", () => {
         mywebhook: {
           plugin: "webhook",
           // package field is allowed for resolution but should be stripped:
-          package: "@composio/ao-plugin-notifier-webhook",
+          package: "@aoagents/ao-plugin-notifier-webhook",
           // These are plugin-specific fields that should be passed through:
           url: "https://webhook.example.com/notify",
           retries: 3,
@@ -358,7 +358,7 @@ describe("loadBuiltins", () => {
     });
 
     await registry.loadBuiltins(cfg, async (pkg: string) => {
-      if (pkg === "@composio/ao-plugin-notifier-webhook") return fakeWebhook;
+      if (pkg === "@aoagents/ao-plugin-notifier-webhook") return fakeWebhook;
       throw new Error(`Not found: ${pkg}`);
     });
 
@@ -386,7 +386,7 @@ describe("loadBuiltins", () => {
     const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     await registry.loadBuiltins(cfg, async (pkg: string) => {
-      if (pkg === "@composio/ao-plugin-notifier-webhook") return fakeWebhook;
+      if (pkg === "@aoagents/ao-plugin-notifier-webhook") return fakeWebhook;
       return null;
     });
 
@@ -412,8 +412,8 @@ describe("loadBuiltins", () => {
     });
 
     await registry.loadBuiltins(cfg, async (pkg: string) => {
-      if (pkg === "@composio/ao-plugin-notifier-openclaw") return fakeOpenClaw;
-      if (pkg === "@composio/ao-plugin-notifier-webhook") return fakeWebhook;
+      if (pkg === "@aoagents/ao-plugin-notifier-openclaw") return fakeOpenClaw;
+      if (pkg === "@aoagents/ao-plugin-notifier-webhook") return fakeWebhook;
       throw new Error(`Not found: ${pkg}`);
     });
 
@@ -431,7 +431,7 @@ describe("loadBuiltins", () => {
     const fakeImportFn = async (pkg: string): Promise<unknown> => {
       importedPackages.push(pkg);
       // Return a valid plugin module for runtime-tmux
-      if (pkg === "@composio/ao-plugin-runtime-tmux") {
+      if (pkg === "@aoagents/ao-plugin-runtime-tmux") {
         return {
           manifest: { name: "tmux", slot: "runtime", description: "test", version: "0.0.0" },
           create: () => ({ name: "tmux" }),
@@ -445,7 +445,7 @@ describe("loadBuiltins", () => {
 
     // importFn should have been called for all builtin plugins
     expect(importedPackages.length).toBeGreaterThan(0);
-    expect(importedPackages).toContain("@composio/ao-plugin-runtime-tmux");
+    expect(importedPackages).toContain("@aoagents/ao-plugin-runtime-tmux");
 
     // The tmux plugin should be registered
     const tmux = registry.get("runtime", "tmux");
@@ -502,7 +502,7 @@ describe("loadFromConfig", () => {
 
     // Should have attempted to import builtin plugins via the provided importFn
     expect(importedPackages.length).toBeGreaterThan(0);
-    expect(importedPackages).toContain("@composio/ao-plugin-runtime-tmux");
+    expect(importedPackages).toContain("@aoagents/ao-plugin-runtime-tmux");
   });
 
   it("loads external package plugins from config.plugins", async () => {
