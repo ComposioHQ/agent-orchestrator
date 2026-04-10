@@ -61,14 +61,17 @@ function setupCheck(
       : undefined,
     ...opts.metaOverrides,
   };
+  const persistedStringMetadata = Object.fromEntries(
+    Object.entries(persistedMetadata).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
 
   vi.mocked(mockSessionManager.get).mockResolvedValue({
     ...opts.session,
     metadata: {
       ...opts.session.metadata,
-      ...Object.fromEntries(
-        Object.entries(persistedMetadata).filter(([, value]) => value !== undefined),
-      ),
+      ...persistedStringMetadata,
     },
   });
 

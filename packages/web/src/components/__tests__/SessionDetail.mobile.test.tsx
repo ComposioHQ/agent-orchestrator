@@ -127,10 +127,10 @@ describe("SessionDetail mobile navbar", () => {
     expect(screen.getAllByText("Compact header polish")).toHaveLength(1);
     expect(screen.getByText("feat/compact-header")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "PR #77" })).toHaveClass(
-      "session-detail-link-pill--link",
+      "session-detail-link-pill--pr",
     );
     expect(screen.getByRole("link", { name: "feat/compact-header" })).toHaveClass(
-      "session-detail-link-pill--link",
+      "session-detail-link-pill--branch-link",
     );
   });
 
