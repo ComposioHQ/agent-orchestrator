@@ -37,8 +37,8 @@ import { createSessionManager } from "../session-manager.js";
 import { createLifecycleManager } from "../lifecycle-manager.js";
 import { writeMetadata } from "../metadata.js";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
-import trackerGithub from "@composio/ao-plugin-tracker-github";
-import scmGithub from "@composio/ao-plugin-scm-github";
+import trackerGithub from "@aoagents/ao-plugin-tracker-github";
+import scmGithub from "@aoagents/ao-plugin-scm-github";
 import { createMockPlugins, makeHandle, makeSession as makeSessionBase, makePR, type TestEnvironment } from "./test-utils.js";
 import type {
   OrchestratorConfig,

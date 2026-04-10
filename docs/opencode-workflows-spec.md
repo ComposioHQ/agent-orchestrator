@@ -27,7 +27,7 @@ This document defines intended behavior for Agent Orchestrator when `agent: open
 ## 1) Plugin Resolution
 
 - CLI must resolve `opencode` via `getAgentByName` and `getAgent` without error.
-- Core plugin registry built-ins must include `@composio/ao-plugin-agent-opencode` under slot `agent`.
+- Core plugin registry built-ins must include `@aoagents/ao-plugin-agent-opencode` under slot `agent`.
 - Expected failure mode: unknown agent names fail fast with `Unknown agent plugin: <name>`.
 
 ## 2) `ao start` (orchestrator session)
@@ -98,7 +98,7 @@ This document defines intended behavior for Agent Orchestrator when `agent: open
 ## Revalidation Baseline (Current)
 
 - Unit/integration validation that should remain green for OpenCode workflows:
-  - `@composio/ao-plugin-agent-opencode` tests.
-  - `@composio/ao-core` tests: `session-manager.test.ts`, `plugin-registry.test.ts`.
-  - `@composio/ao-cli` tests: `plugins.test.ts`, `start.test.ts`, `session.test.ts`, `send.test.ts`, `status.test.ts`.
-  - `@composio/ao-integration-tests` with `test:integration` (includes `agent-opencode.integration.test.ts`, conditionally skipped tests where prerequisites are unavailable).
+  - `@aoagents/ao-plugin-agent-opencode` tests.
+  - `@aoagents/ao-core` tests: `session-manager.test.ts`, `plugin-registry.test.ts`.
+  - `@aoagents/ao-cli` tests: `plugins.test.ts`, `start.test.ts`, `session.test.ts`, `send.test.ts`, `status.test.ts`.
+  - `@aoagents/ao-integration-tests` with `test:integration` (includes `agent-opencode.integration.test.ts`, conditionally skipped tests where prerequisites are unavailable).

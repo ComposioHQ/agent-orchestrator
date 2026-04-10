@@ -1,7 +1,17 @@
-import type { OrchestratorConfig } from "@composio/ao-core";
+import type { OrchestratorConfig } from "@aoagents/ao-core";
 
 export function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Strip optional 12-char hex hash prefix from a tmux session name.
+ * "1686e4aaaeaa-ao-145" → "ao-145"
+ * "ao-145" → "ao-145" (no-op if no hash prefix)
+ */
+export function stripHashPrefix(name: string): string {
+  const match = name.match(/^[a-f0-9]{12}-(.+)$/);
+  return match ? match[1] : name;
 }
 
 /** Check whether a session name matches a project prefix (strict: prefix-\d+ only). */

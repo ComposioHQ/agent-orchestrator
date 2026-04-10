@@ -24,7 +24,7 @@ export function assertDashboardRebuildSupported(webDir: string): void {
   if (isInstalledUnderNodeModules(webDir)) {
     throw new Error(
       "Dashboard rebuild is only available from a source checkout. " +
-      "Run `ao update`, or reinstall with `npm install -g @composio/ao@latest`.",
+      "Run `ao update`, or reinstall with `npm install -g @aoagents/ao@latest`.",
     );
   }
 }

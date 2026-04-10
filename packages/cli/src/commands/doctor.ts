@@ -7,11 +7,12 @@ import {
   findConfigFile,
   getObservabilityBaseDir,
   loadConfig,
+  resolveNotifierTarget,
   type Notifier,
   type OrchestratorConfig,
   type PluginRegistry,
   type PluginSlot,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { runRepoScript } from "../lib/script-runner.js";
 import { detectOpenClawInstallation, validateToken } from "../lib/openclaw-probe.js";
 import { importPluginModuleFromSource } from "../lib/plugin-store.js";
@@ -53,11 +54,6 @@ interface PluginReference {
   source: string;
 }
 
-interface NotifierTarget {
-  label: string;
-  pluginName: string;
-}
-
 async function loadPluginRegistry(config: OrchestratorConfig): Promise<PluginRegistry> {
   const registry = createPluginRegistry();
   await registry.loadFromConfig(config, importPluginModuleFromSource);
@@ -72,14 +68,6 @@ function addPluginReference(
 ): void {
   if (!pluginName) return;
   refs.push({ slot, pluginName, source });
-}
-
-function resolveNotifierTarget(config: OrchestratorConfig, ref: string): NotifierTarget {
-  const configured = config.notifiers?.[ref];
-  if (configured?.plugin) {
-    return { label: ref, pluginName: configured.plugin };
-  }
-  return { label: ref, pluginName: ref };
 }
 
 function collectPluginReferences(config: OrchestratorConfig): PluginReference[] {
@@ -97,7 +85,7 @@ function collectPluginReferences(config: OrchestratorConfig): PluginReference[] 
       refs,
       "notifier",
       target.pluginName,
-      `defaults.notifiers: ${target.label} (plugin: ${target.pluginName})`,
+      `defaults.notifiers: ${target.reference} (plugin: ${target.pluginName})`,
     );
   }
 
@@ -108,7 +96,7 @@ function collectPluginReferences(config: OrchestratorConfig): PluginReference[] 
         refs,
         "notifier",
         target.pluginName,
-        `notificationRouting.${priority}: ${target.label} (plugin: ${target.pluginName})`,
+        `notificationRouting.${priority}: ${target.reference} (plugin: ${target.pluginName})`,
       );
     }
   }
@@ -339,22 +327,16 @@ async function sendTestNotifications(
   fail: (msg: string) => void,
 ): Promise<void> {
   const activeNotifierNames = config.defaults?.notifiers ?? [];
-  const configuredNotifiers = Object.entries(config.notifiers ?? {});
-  const targets = new Map<string, NotifierTarget>();
+  const targets = new Map<string, ReturnType<typeof resolveNotifierTarget>>();
 
-  for (const [name, notifierConfig] of configuredNotifiers) {
-    if (notifierConfig.plugin) {
-      targets.set(notifierConfig.plugin, { label: name, pluginName: notifierConfig.plugin });
-    } else {
-      // External plugin without explicit plugin name - manifest.name not yet resolved
-      warn(`${name}: notifier plugin name not resolved (external plugin may not be loaded yet)`);
-    }
+  for (const name of Object.keys(config.notifiers ?? {})) {
+    targets.set(name, resolveNotifierTarget(config, name));
   }
 
   for (const name of activeNotifierNames) {
     const target = resolveNotifierTarget(config, name);
-    if (!targets.has(target.pluginName)) {
-      targets.set(target.pluginName, target);
+    if (!targets.has(target.reference)) {
+      targets.set(target.reference, target);
     }
   }
 
@@ -366,9 +348,11 @@ async function sendTestNotifications(
   console.log(`\nSending test notification to ${targets.size} notifier(s)...\n`);
 
   for (const target of targets.values()) {
-    const notifier = registry.get<Notifier>("notifier", target.pluginName);
+    const notifier =
+      registry.get<Notifier>("notifier", target.reference) ??
+      registry.get<Notifier>("notifier", target.pluginName);
     if (!notifier) {
-      warn(`${target.label}: plugin "${target.pluginName}" not loaded (may not be installed)`);
+      warn(`${target.reference}: plugin "${target.pluginName}" not loaded (may not be installed)`);
       continue;
     }
 
@@ -385,10 +369,10 @@ async function sendTestNotifications(
       };
 
       await notifier.notify(testEvent);
-      pass(`${target.label}: test notification sent`);
+      pass(`${target.reference}: test notification sent`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      fail(`${target.label}: ${message}`);
+      fail(`${target.reference}: ${message}`);
     }
   }
 }

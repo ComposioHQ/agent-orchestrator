@@ -11,14 +11,14 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
-    "dev": "pnpm --filter @composio/ao-web dev",
+    "dev": "pnpm --filter @aoagents/ao-web dev",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r --filter '!@composio/ao-web' test",
-    "test:integration": "pnpm --filter @composio/ao-integration-tests test:integration",
+    "test": "pnpm -r --filter '!@aoagents/ao-web' test",
+    "test:integration": "pnpm --filter @aoagents/ao-integration-tests test:integration",
     "clean": "pnpm -r clean",
     "changeset": "changeset",
     "version-packages": "changeset version",
@@ -35,5 +35,10 @@
     "husky": "^9.1.7",
     "prettier": "^3.8.1",
     "typescript-eslint": "^8.55.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "axios": "^1.15.0"
+    }
   }
 }

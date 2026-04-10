@@ -22,7 +22,7 @@ import {
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { readdir, stat, lstat, open } from "node:fs/promises";
@@ -46,7 +46,7 @@ export const manifest = {
 };
 
 // =============================================================================
-// Workspace Setup (delegates to shared PATH-wrapper hooks from @composio/ao-core)
+// Workspace Setup (delegates to shared PATH-wrapper hooks from @aoagents/ao-core)
 // =============================================================================
 
 // =============================================================================
