@@ -1,0 +1,37 @@
+packages/core/src/__tests__/lifecycle-manager.test.ts
+  02103e08b023cf16 1393-1526
+packages/cli/src/commands/doctor.ts
+  02103e08b023cf16 10,88,99,330,332-333,338-339,351-353,355,372,375
+packages/core/src/plugin-registry.ts
+  02103e08b023cf16 496-497
+packages/core/src/notifier-resolution.ts
+  02103e08b023cf16 1-31
+package.json
+  02103e08b023cf16 38-42
+packages/core/src/index.ts
+  02103e08b023cf16 129
+packages/core/src/lifecycle-manager.ts
+  02103e08b023cf16 42,1190-1193
+packages/cli/__tests__/commands/doctor.test.ts
+  02103e08b023cf16 35-41,260-308
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "af2e25c6096674394c94c13e13d87918f7645ff7",
+  "prompts": {
+    "02103e08b023cf16": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d740a-8277-7562-bf3e-53d60ebc7eef",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 251,
+      "total_deletions": 34,
+      "accepted_lines": 253,
+      "overriden_lines": 0
+    }
+  }
+}
