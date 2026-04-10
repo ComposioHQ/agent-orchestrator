@@ -32,6 +32,8 @@
   --color-bg-elevated: #f9f7f5;
   --color-bg-elevated-hover: #f7f5f2;
   --color-bg-subtle: rgba(120, 100, 80, 0.06);
+  --color-bg-hover: #f7f5f2;
+  --color-bg-inset: #f0ede9;
   --color-bg-sidebar: #f0ede9;
   --color-bg-card: #ffffff;
 
@@ -181,6 +183,8 @@
   --color-bg-elevated: #222120;
   --color-bg-elevated-hover: #2a2928;
   --color-bg-subtle: rgba(255, 240, 220, 0.05);
+  --color-bg-hover: rgba(255, 240, 220, 0.08);
+  --color-bg-inset: #161514;
   --color-bg-sidebar: #0e0d0c;
   --color-bg-card: #1c1b19;
 
@@ -198,7 +202,7 @@
 
   /* Interactive accent — warm periwinkle */
   --color-accent: #8b9cf7;
-  --color-accent-hover: #8b9cf7;
+  --color-accent-hover: #a3b1fa;
   --color-accent-subtle: rgba(139, 156, 247, 0.12);
 
   /* Amber accent — orchestrator / CTA */
@@ -1397,7 +1401,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: var(--color-status-attention);
 }
 .sidebar-session-dot[data-level="review"] {
-  background: var(--color-status-review);
+  background: var(--color-accent-orange);
 }
 .sidebar-session-dot[data-level="respond"] {
   background: var(--color-status-respond);
@@ -2053,17 +2057,29 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: var(--color-status-working);
 }
 
+@keyframes design-ref-adot-pulse {
+  0%,
+  100% {
+    opacity: 0.42;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0;
+    transform: scale(1.55);
+  }
+}
+
 .card__adot--working::after {
   content: "";
   position: absolute;
   inset: -2px;
-  border: 1px solid rgba(96, 165, 250, 0.4);
+  border: 1px solid color-mix(in srgb, var(--color-status-working) 42%, transparent);
   border-radius: inherit;
   animation: design-ref-adot-pulse 2s ease-in-out infinite;
 }
 
 .card__adot--ready {
-  background: var(--color-status-working);
+  background: var(--color-status-ready);
   opacity: 0.5;
 }
 
@@ -2423,6 +2439,21 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-color: rgba(239, 68, 68, 0.6);
   color: var(--color-ci-fail);
   animation: kill-confirm-pulse 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes kill-confirm-pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.22);
+  }
+  55% {
+    transform: scale(1.04);
+    box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
 }
 
 .btn--danger.is-confirming::after {
