@@ -5,6 +5,7 @@ import {
   type DashboardSession,
   getAttentionLevel,
   isPRRateLimited,
+  isPRUnenriched,
   TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES,
   CI_STATUS,
@@ -17,7 +18,7 @@ import { getSizeLabel } from "./PRStatus";
 
 interface SessionCardProps {
   session: DashboardSession;
-  onSend?: (sessionId: string, message: string) => void;
+  onSend?: (sessionId: string, message: string) => Promise<void> | void;
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;
@@ -94,13 +95,47 @@ function getDoneStatusInfo(session: DashboardSession): {
 function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: SessionCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [sendingAction, setSendingAction] = useState<string | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [failedAction, setFailedAction] = useState<string | null>(null);
+  const [sendingQuickReply, setSendingQuickReply] = useState<string | null>(null);
+  const [sentQuickReply, setSentQuickReply] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quickReplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const level = getAttentionLevel(session);
   const pr = session.pr;
 
+  const handleQuickReply = async (message: string): Promise<boolean> => {
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage || sendingQuickReply !== null) return false;
+
+    setSendingQuickReply(trimmedMessage);
+    setSentQuickReply(null);
+
+    try {
+      await Promise.resolve(onSend?.(session.id, trimmedMessage));
+      setSentQuickReply(trimmedMessage);
+      if (quickReplyTimerRef.current) clearTimeout(quickReplyTimerRef.current);
+      quickReplyTimerRef.current = setTimeout(() => setSentQuickReply(null), 2000);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setSendingQuickReply(null);
+    }
+  };
+
+  const handleReplyKeyDown = async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      const sent = await handleQuickReply(replyText);
+      if (sent) setReplyText("");
+    }
+  };
+
   useEffect(() => {
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+      if (quickReplyTimerRef.current) clearTimeout(quickReplyTimerRef.current);
     };
   }, []);
 
@@ -108,12 +143,16 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
     if (sendingAction !== null) return;
 
     setSendingAction(action);
+    setFailedAction(null);
     try {
       await Promise.resolve(onSend?.(session.id, message));
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => setSendingAction(null), 2000);
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+      actionTimerRef.current = setTimeout(() => setSendingAction(null), 2000);
     } catch {
       setSendingAction(null);
+      setFailedAction(action);
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+      actionTimerRef.current = setTimeout(() => setFailedAction(null), 2000);
     }
   };
 
@@ -227,13 +266,15 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               #{pr.number}
             </a>
           )}
-          {pr && !rateLimited && (
+          {pr && !rateLimited && (isPRUnenriched(pr) ? (
+            <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
+          ) : (
             <span className="done-meta-chip font-[var(--font-mono)]">
               <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
               <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>{" "}
               {getSizeLabel(pr.additions, pr.deletions)}
             </span>
-          )}
+          ))}
         </div>
 
         {/* Expandable detail panel */}
@@ -436,11 +477,13 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               #{pr.number}
             </a>
           )}
-          {pr && !rateLimited && (
+          {pr && !rateLimited && (isPRUnenriched(pr) ? (
+            <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
+          ) : (
             <span className="inline-flex items-center rounded-full bg-[var(--color-chip-bg)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] font-semibold text-[var(--color-text-muted)]">
               +{pr.additions} -{pr.deletions} {getSizeLabel(pr.additions, pr.deletions)}
             </span>
-          )}
+          ))}
         </div>
 
         {secondaryText && (
@@ -499,6 +542,9 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                       </>
                     )}
                     {alert.label}
+                    {alert.notified && (
+                      <span className="ml-1 opacity-60" title="Agent has been notified"> · notified</span>
+                    )}
                   </a>
                   {alert.actionLabel && (
                     <button
@@ -509,6 +555,8 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                       disabled={sendingAction === alert.key}
                       className={cn(
                         "border-l px-2 py-0.5 font-[var(--font-mono)] text-[11px] font-medium transition-colors disabled:opacity-50",
+                        failedAction === alert.key &&
+                          "bg-[var(--color-tint-red)] text-[var(--color-status-error)]",
                         alert.actionClassName,
                       )}
                       style={{
@@ -516,7 +564,11 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                           alert.borderColor ?? alert.color ?? "var(--color-border-default)",
                       }}
                     >
-                      {sendingAction === alert.key ? "sent!" : alert.actionLabel}
+                      {sendingAction === alert.key
+                        ? "sent!"
+                        : failedAction === alert.key
+                          ? "failed"
+                          : alert.actionLabel}
                     </button>
                   )}
                 </span>
@@ -589,6 +641,61 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           )}
         </div>
       </div>
+
+      {level === "respond" && (
+        <div className="quick-reply" onClick={(e) => e.stopPropagation()}>
+          {session.summary && !session.summaryIsFallback && (
+            <p className="quick-reply__summary">{session.summary}</p>
+          )}
+          <div className="quick-reply__presets">
+            <button
+              className="quick-reply__preset-btn"
+              onClick={() => void handleQuickReply("continue")}
+              disabled={sendingQuickReply !== null}
+            >
+              {sendingQuickReply === "continue"
+                ? "Sending..."
+                : sentQuickReply === "continue"
+                  ? "Sent"
+                  : "Continue"}
+            </button>
+            <button
+              className="quick-reply__preset-btn"
+              onClick={() => void handleQuickReply("abort")}
+              disabled={sendingQuickReply !== null}
+            >
+              {sendingQuickReply === "abort"
+                ? "Sending..."
+                : sentQuickReply === "abort"
+                  ? "Sent"
+                  : "Abort"}
+            </button>
+            <button
+              className="quick-reply__preset-btn"
+              onClick={() => void handleQuickReply("skip")}
+              disabled={sendingQuickReply !== null}
+            >
+              {sendingQuickReply === "skip"
+                ? "Sending..."
+                : sentQuickReply === "skip"
+                  ? "Sent"
+                  : "Skip"}
+            </button>
+          </div>
+          <textarea
+            className="quick-reply__input"
+            placeholder={sendingQuickReply !== null ? "Sending..." : "Type a reply..."}
+            aria-label="Type a reply to the agent"
+            value={replyText}
+            onChange={(e) => setReplyText(e.target.value)}
+            onKeyDown={(e) => {
+              void handleReplyKeyDown(e);
+            }}
+            rows={1}
+            disabled={sendingQuickReply !== null}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -613,6 +720,7 @@ interface Alert {
   borderColor?: string;
   url: string;
   count?: number;
+  notified?: boolean;
   actionLabel?: string;
   actionMessage?: string;
   actionClassName?: string;
@@ -622,13 +730,39 @@ function getAlerts(session: DashboardSession): Alert[] {
   const pr = session.pr;
   if (!pr || pr.state !== "open") return [];
   if (isPRRateLimited(pr)) return [];
+  if (isPRUnenriched(pr)) return [];
 
+  const meta = session.metadata;
   const alerts: Alert[] = [];
 
-  if (pr.ciStatus === CI_STATUS.FAILING) {
+  // The lifecycle manager's status is the most up-to-date source of truth.
+  // PR enrichment data can be stale (5-min cache) or unavailable (rate limit/timeout).
+  // Use lifecycle status as fallback when PR data hasn't caught up yet.
+  const lifecycleStatus = meta["status"];
+
+  const ciIsFailing = pr.ciStatus === CI_STATUS.FAILING || lifecycleStatus === "ci_failed";
+  const hasChangesRequested =
+    pr.reviewDecision === "changes_requested" || lifecycleStatus === "changes_requested";
+  const hasConflicts = !pr.mergeability.noConflicts;
+
+  if (ciIsFailing) {
     const failedCheck = pr.ciChecks.find((c) => c.status === "failed");
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;
-    if (failCount === 0) {
+    if (failCount === 0 && pr.ciStatus !== CI_STATUS.FAILING) {
+      // Lifecycle says ci_failed but PR enrichment hasn't caught up — show generic alert
+      alerts.push({
+        key: "ci-fail",
+        label: "CI failing",
+        className: "",
+        color: "var(--color-alert-ci)",
+        borderColor: "var(--color-alert-ci)",
+        url: pr.url + "/checks",
+        notified: Boolean(meta["lastCIFailureDispatchHash"]),
+        actionLabel: "ask to fix",
+        actionMessage: `Please fix the failing CI checks on ${pr.url}`,
+        actionClassName: "bg-[var(--color-alert-ci-bg)] text-white hover:brightness-110",
+      });
+    } else if (failCount === 0) {
       alerts.push({
         key: "ci-unknown",
         label: "CI unknown",
@@ -644,6 +778,7 @@ function getAlerts(session: DashboardSession): Alert[] {
         color: "var(--color-alert-ci)",
         borderColor: "var(--color-alert-ci)",
         url: failedCheck?.url ?? pr.url + "/checks",
+        notified: Boolean(meta["lastCIFailureDispatchHash"]),
         actionLabel: "ask to fix",
         actionMessage: `Please fix the failing CI checks on ${pr.url}`,
         actionClassName: "bg-[var(--color-alert-ci-bg)] text-white hover:brightness-110",
@@ -651,13 +786,14 @@ function getAlerts(session: DashboardSession): Alert[] {
     }
   }
 
-  if (pr.reviewDecision === "changes_requested") {
+  if (hasChangesRequested) {
     alerts.push({
       key: "changes",
       label: "changes requested",
       className: "",
       color: "var(--color-alert-changes)",
       url: pr.url,
+      notified: Boolean(meta["lastPendingReviewDispatchHash"]),
       actionLabel: "ask to address",
       actionMessage: `Please address the requested changes on ${pr.url}`,
       actionClassName: "bg-[var(--color-alert-changes-bg)] text-white hover:brightness-110",
@@ -675,13 +811,14 @@ function getAlerts(session: DashboardSession): Alert[] {
     });
   }
 
-  if (!pr.mergeability.noConflicts) {
+  if (hasConflicts) {
     alerts.push({
       key: "conflict",
       label: "merge conflict",
       className: "",
       color: "var(--color-alert-conflict)",
       url: pr.url,
+      notified: meta["lastMergeConflictDispatched"] === "true",
       actionLabel: "ask to fix",
       actionMessage: `Please resolve the merge conflicts on ${pr.url} by rebasing on the base branch`,
       actionClassName: "bg-[var(--color-alert-conflict-bg)] text-white hover:brightness-110",

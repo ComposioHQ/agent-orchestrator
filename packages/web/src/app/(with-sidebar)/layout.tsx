@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
+import { MuxProvider } from "@/providers/MuxProvider";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SidebarContext } from "@/components/workspace/SidebarContext";
 import { NewTerminalModal } from "@/components/NewTerminalModal";
@@ -456,6 +457,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
   );
 
   return (
+    <MuxProvider>
     <SidebarContext.Provider value={sidebarContextValue}>
       <div className="dashboard-shell flex" style={{ height: "100dvh" }}>
         {/* Desktop sidebar — hidden on mobile via CSS */}
@@ -507,5 +509,6 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
         <ReconnectingPill />
       </div>
     </SidebarContext.Provider>
+    </MuxProvider>
   );
 }

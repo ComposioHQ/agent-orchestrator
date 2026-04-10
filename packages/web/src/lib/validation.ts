@@ -33,6 +33,17 @@ export function validateIdentifier(
   return null;
 }
 
+/** Validate that a project ID exists in the configured projects. */
+export function validateConfiguredProject(
+  projects: Record<string, unknown>,
+  projectId: string,
+): string | null {
+  if (!Object.hasOwn(projects, projectId)) {
+    return `Unknown project: ${projectId}`;
+  }
+  return null;
+}
+
 /**
  * Strip control characters (U+0000–U+001F, U+007F–U+009F) from a string.
  * Critical for messages that may be passed to shell-based runtimes (tmux send-keys, etc.)

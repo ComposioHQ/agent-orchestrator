@@ -10,19 +10,22 @@ import type {
   SessionManager,
   Session,
   Runtime,
+  RuntimeHandle,
   Agent,
   Workspace,
   SCM,
   Notifier,
   ActivityState,
   PRInfo,
-  RuntimeHandle,
-  SubSession,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Data factories
 // ---------------------------------------------------------------------------
+
+export function makeHandle(id: string): RuntimeHandle {
+  return { id, runtimeName: "mock", data: {} };
+}
 
 export function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -80,8 +83,8 @@ export function createMockPlugins(): MockPlugins {
   const agent: Agent = {
     name: "mock-agent",
     processName: "mock",
-    getLaunchCommand: vi.fn().mockReturnValue("mock-launch"),
-    getEnvironment: vi.fn().mockReturnValue({}),
+    getLaunchCommand: vi.fn().mockReturnValue("mock-agent --start"),
+    getEnvironment: vi.fn().mockReturnValue({ AGENT_VAR: "1" }),
     detectActivity: vi.fn().mockReturnValue("active" as ActivityState),
     getActivityState: vi.fn().mockResolvedValue({ state: "active" as ActivityState }),
     isProcessRunning: vi.fn().mockResolvedValue(true),
@@ -106,17 +109,23 @@ export function createMockPlugins(): MockPlugins {
 export function createMockSCM(overrides: Partial<SCM> = {}): SCM {
   return {
     name: "github",
-    detectPR: vi.fn(),
+    detectPR: vi.fn().mockResolvedValue(null),
     getPRState: vi.fn().mockResolvedValue("open"),
-    mergePR: vi.fn(),
-    closePR: vi.fn(),
-    getCIChecks: vi.fn(),
+    mergePR: vi.fn().mockResolvedValue(undefined),
+    closePR: vi.fn().mockResolvedValue(undefined),
+    getCIChecks: vi.fn().mockResolvedValue([]),
     getCISummary: vi.fn().mockResolvedValue("passing"),
-    getReviews: vi.fn(),
+    getReviews: vi.fn().mockResolvedValue([]),
     getReviewDecision: vi.fn().mockResolvedValue("none"),
-    getPendingComments: vi.fn(),
-    getAutomatedComments: vi.fn(),
-    getMergeability: vi.fn(),
+    getPendingComments: vi.fn().mockResolvedValue([]),
+    getAutomatedComments: vi.fn().mockResolvedValue([]),
+    getMergeability: vi.fn().mockResolvedValue({
+      mergeable: false,
+      ciPassing: true,
+      approved: false,
+      noConflicts: true,
+      blockers: [],
+    }),
     ...overrides,
   };
 }
@@ -135,28 +144,39 @@ export function createMockNotifier(): Notifier {
 export interface RegistryPlugins {
   runtime: Runtime;
   agent: Agent;
+  workspace?: Workspace;
   scm?: SCM;
   notifier?: Notifier;
 }
 
-export function createMockRegistry(plugins: RegistryPlugins): PluginRegistry {
+export function createMockRegistry(plugins: RegistryPlugins, options: { strict?: boolean } = {}): PluginRegistry {
   return {
     register: vi.fn(),
     get: vi.fn().mockImplementation((slot: string, name?: string) => {
+      // Check for exact name match first
       if (slot === "runtime") {
-        return !name || name === plugins.runtime.name ? plugins.runtime : null;
+        if (!name || name === plugins.runtime.name) return plugins.runtime;
+        if (!options.strict) return plugins.runtime;
       }
       if (slot === "agent") {
-        return !name || name === plugins.agent.name ? plugins.agent : null;
+        if (!name || name === plugins.agent.name) return plugins.agent;
+        if (!options.strict) return plugins.agent;
       }
-      if (slot === "scm") {
-        if (!plugins.scm) return null;
-        return !name || name === plugins.scm.name ? plugins.scm : null;
+      if (slot === "workspace" && plugins.workspace) {
+        if (!name || name === plugins.workspace.name) return plugins.workspace;
+        if (!options.strict) return plugins.workspace;
       }
-      if (slot === "notifier") {
-        if (!plugins.notifier) return null;
-        return !name || name === plugins.notifier.name ? plugins.notifier : null;
+      if (slot === "scm" && plugins.scm) {
+        if (!name || name === plugins.scm.name) return plugins.scm;
+        if (!options.strict) return plugins.scm;
       }
+      if (slot === "notifier" && plugins.notifier) {
+        if (!name || name === plugins.notifier.name) return plugins.notifier;
+        if (!options.strict) return plugins.notifier;
+      }
+
+
+
       return null;
     }),
     list: vi.fn().mockReturnValue([]),
@@ -229,6 +249,89 @@ export function createTestEnvironment(): TestEnvironment {
 }
 
 // ---------------------------------------------------------------------------
+// Test context (for session-manager tests)
+// ---------------------------------------------------------------------------
+
+export interface TestContext {
+  tmpDir: string;
+  configPath: string;
+  sessionsDir: string;
+  mockRuntime: Runtime;
+  mockAgent: Agent;
+  mockWorkspace: Workspace;
+  mockRegistry: PluginRegistry;
+  config: OrchestratorConfig;
+  originalPath: string | undefined;
+}
+
+export function setupTestContext(): TestContext {
+  const originalPath = process.env.PATH;
+  const tmpDir = join(tmpdir(), `ao-test-session-mgr-${randomUUID()}`);
+  mkdirSync(tmpDir, { recursive: true });
+
+  const configPath = join(tmpDir, "agent-orchestrator.yaml");
+  writeFileSync(configPath, "projects: {}\n");
+
+  const { runtime: mockRuntime, agent: mockAgent, workspace: mockWorkspace } = createMockPlugins();
+  const mockRegistry = createMockRegistry({ runtime: mockRuntime, agent: mockAgent, workspace: mockWorkspace });
+
+  const config: OrchestratorConfig = {
+    configPath,
+    port: 3000,
+    defaults: {
+      runtime: "mock",
+      agent: "mock-agent",
+      workspace: "mock-ws",
+      notifiers: ["desktop"],
+    },
+    projects: {
+      "my-app": {
+        name: "My App",
+        repo: "org/my-app",
+        path: join(tmpDir, "my-app"),
+        defaultBranch: "main",
+        sessionPrefix: "app",
+        scm: { plugin: "github" },
+        tracker: { plugin: "github" },
+      },
+    },
+    notifiers: {},
+    notificationRouting: {
+      urgent: ["desktop"],
+      action: ["desktop"],
+      warning: [],
+      info: [],
+    },
+    reactions: {},
+    readyThresholdMs: 300_000,
+  };
+
+  const sessionsDir = getSessionsDir(configPath, join(tmpDir, "my-app"));
+  mkdirSync(sessionsDir, { recursive: true });
+
+  return {
+    tmpDir,
+    configPath,
+    sessionsDir,
+    mockRuntime,
+    mockAgent,
+    mockWorkspace,
+    mockRegistry,
+    config,
+    originalPath,
+  };
+}
+
+export function teardownTestContext(ctx: TestContext): void {
+  process.env.PATH = ctx.originalPath;
+  const projectBaseDir = getProjectBaseDir(ctx.configPath, join(ctx.tmpDir, "my-app"));
+  if (existsSync(projectBaseDir)) {
+    rmSync(projectBaseDir, { recursive: true, force: true });
+  }
+  rmSync(ctx.tmpDir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
 // Session manager mock
 // ---------------------------------------------------------------------------
 
@@ -250,58 +353,5 @@ export function createMockSessionManager(): SessionManager {
       githubAssigned: true,
       takenOverFrom: [],
     }),
-    createSubSession: vi.fn().mockResolvedValue(makeSubSession()),
-    listSubSessions: vi.fn().mockResolvedValue([]),
-    killSubSession: vi.fn().mockResolvedValue(undefined),
-    restoreTerminalSubSession: vi.fn().mockResolvedValue(makeSubSession()),
-  } as unknown as SessionManager;
-}
-
-// ---------------------------------------------------------------------------
-// Runtime handle factory
-// ---------------------------------------------------------------------------
-
-export function makeHandle(id: string): RuntimeHandle {
-  return { id, runtimeName: "mock", data: {} };
-}
-
-// ---------------------------------------------------------------------------
-// Sub-session factory
-// ---------------------------------------------------------------------------
-
-export function makeSubSession(overrides: Partial<SubSession> = {}): SubSession {
-  return {
-    id: "sub-1",
-    parentId: "app-1",
-    type: "primary",
-    tmuxName: "ao_app-1_primary",
-    workspacePath: "/tmp/ws",
-    runtimeHandle: null,
-    alive: true,
-    ...overrides,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Test context helpers (used by session-manager.test.ts)
-// ---------------------------------------------------------------------------
-
-export interface TestContext {
-  tmpDir: string;
-  configPath: string;
-  sessionsDir: string;
-  config: OrchestratorConfig;
-  mockRegistry: PluginRegistry;
-  cleanup: () => void;
-}
-
-export function setupTestContext(): TestContext {
-  const env = createTestEnvironment();
-  const plugins = createMockPlugins();
-  const mockRegistry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
-  return { ...env, mockRegistry };
-}
-
-export function teardownTestContext(ctx: TestContext): void {
-  ctx.cleanup();
+  } as SessionManager;
 }

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
+import { useMux } from "@/hooks/useMux";
 import { attachTouchScroll } from "@/lib/terminal-touch-scroll";
 import {
   setTerminalConnection,
@@ -83,20 +84,6 @@ interface DirectTerminalProps {
   autoFocus?: boolean;
 }
 
-interface DirectTerminalLocation {
-  protocol: string;
-  hostname: string;
-  host: string;
-  port: string;
-}
-
-interface DirectTerminalWsUrlOptions {
-  location: DirectTerminalLocation;
-  sessionId: string;
-  proxyWsPath?: string;
-  directTerminalPort?: string;
-}
-
 type TerminalVariant = "agent" | "orchestrator";
 
 export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; light: ITheme } {
@@ -167,35 +154,14 @@ export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; l
   return { dark, light };
 }
 
-export function buildDirectTerminalWsUrl({
-  location,
-  sessionId,
-  proxyWsPath,
-  directTerminalPort,
-}: DirectTerminalWsUrlOptions): string {
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  if (proxyWsPath) {
-    // Path-based proxy uses host so non-standard ports are preserved.
-    return `${protocol}//${location.host}${proxyWsPath}?session=${encodeURIComponent(sessionId)}`;
-  }
-
-  if (location.port === "" || location.port === "443" || location.port === "80") {
-    return `${protocol}//${location.hostname}/ao-terminal-ws?session=${encodeURIComponent(sessionId)}`;
-  }
-
-  const port = directTerminalPort ?? "14801";
-  return `${protocol}//${location.hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
-}
-
 /**
- * Direct xterm.js terminal with native WebSocket connection.
+ * Direct xterm.js terminal with mux-based WebSocket connection.
  * Implements Extended Device Attributes (XDA) handler to enable
  * tmux clipboard support (OSC 52) without requiring iTerm2 attachment.
  *
- * Based on DeepWiki analysis:
- * - tmux queries for XDA (CSI > q / XTVERSION) to detect terminal type
- * - When tmux sees "XTerm(" in response, it enables TTYC_MS (clipboard)
- * - xterm.js doesn't implement XDA by default, so we register custom handler
+ * GB-specific variant with: font size settings, follow-output / jump-to-latest,
+ * touch scroll, header label, auto focus, terminal skeleton, connection store,
+ * orchestrator violet accent.
  */
 export function DirectTerminalGB({
   sessionId,
@@ -212,26 +178,30 @@ export function DirectTerminalGB({
   const searchParams = useSearchParams();
   const { resolvedTheme } = useTheme();
   const terminalThemes = useMemo(() => buildTerminalThemes(variant), [variant]);
+  const {
+    subscribeTerminal,
+    writeTerminal,
+    resizeTerminal: resizeTerminalMux,
+    openTerminal,
+    closeTerminal,
+    status: muxStatus,
+  } = useMux();
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<TerminalType | null>(null);
   const fitAddon = useRef<FitAddonType | null>(null);
-  const ws = useRef<WebSocket | null>(null);
-  const reconnectAttemptRef = useRef(0);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const permanentErrorRef = useRef(false);
+  const muxStatusRef = useRef(muxStatus);
+  muxStatusRef.current = muxStatus;
   const [fullscreen, setFullscreen] = useState(startFullscreen);
-  const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
   const [followOutput, setFollowOutput] = useState(true);
   const followOutputRef = useRef(true);
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Set when xterm mounts; used by Jump to latest (same logic as former touch auto-resume). */
+  /** Set when xterm mounts; used by Jump to latest. */
   const resumeLiveTailRef = useRef<(() => void) | null>(null);
   const programmaticScrollRef = useRef(false);
-  const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [fontSize, setFontSize] = useState(FONT_SIZE_DEFAULT);
   const [showFontSettings, setShowFontSettings] = useState(false);
   const fontSettingsRef = useRef<HTMLDivElement>(null);
@@ -275,9 +245,10 @@ export function DirectTerminalGB({
   // a global reconnection indicator.
   useEffect(() => {
     const key = `${sessionId}:${variant}`;
-    setTerminalConnection(key, { status, attempt: reconnectAttempt, error });
+    const status = error ? "error" : muxStatus === "connected" ? "connected" : "connecting";
+    setTerminalConnection(key, { status, attempt: 0, error });
     return () => clearTerminalConnection(key);
-  }, [sessionId, variant, status, reconnectAttempt, error]);
+  }, [sessionId, variant, muxStatus, error]);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -335,17 +306,11 @@ export function DirectTerminalGB({
   useEffect(() => {
     if (!terminalRef.current) return;
 
-    // Reset reconnection state when sessionId changes
-    permanentErrorRef.current = false;
-    reconnectAttemptRef.current = 0;
-
     // Dynamically import xterm.js to avoid SSR issues
     let mounted = true;
     let cleanup: (() => void) | null = null;
     let inputDisposable: { dispose(): void } | null = null;
-
-    const PERMANENT_CLOSE_CODES = new Set([4001, 4004]); // auth failure, session not found
-    const MAX_RECONNECT_DELAY = 15_000;
+    let unsubscribe: (() => void) | null = null;
 
     Promise.all([
       import("@xterm/xterm").then((mod) => mod.Terminal),
@@ -363,6 +328,8 @@ export function DirectTerminalGB({
         const terminal = new Terminal({
           cursorBlink: true,
           fontSize: getStoredFontSize(),
+          fontFamily:
+            '"JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
           theme: activeTheme,
           // Light mode needs an explicit contrast floor because agent UIs often emit
           // dim/faint ANSI sequences that become unreadable on a near-white background.
@@ -455,8 +422,7 @@ export function DirectTerminalGB({
               vp.scrollTop = vp.scrollHeight;
             }
           } else {
-            const sock = ws.current;
-            if (sock?.readyState === WebSocket.OPEN) sock.send("q");
+            writeTerminal(sessionId, "q");
           }
           followOutputRef.current = true;
           setFollowOutput(true);
@@ -464,7 +430,7 @@ export function DirectTerminalGB({
         resumeLiveTailRef.current = resumeLiveTail;
 
         // Touch scroll (mobile) — uses modular helper from lib/terminal-touch-scroll
-        const removeTouchScroll = attachTouchScroll(terminal, () => ws.current, {
+        const removeTouchScroll = attachTouchScroll(terminal, (data) => writeTerminal(sessionId, data), {
           onScrollAway: () => {
             followOutputRef.current = false;
             setFollowOutput(false);
@@ -474,16 +440,6 @@ export function DirectTerminalGB({
               scrollIdleTimerRef.current = null;
             }
           },
-        });
-
-        // WebSocket URL (stable across reconnects)
-        // When accessed via reverse proxy (HTTPS on standard port), use path-based
-        // WebSocket endpoint instead of direct port access.
-        const wsUrl = buildDirectTerminalWsUrl({
-          location: window.location,
-          sessionId,
-          proxyWsPath: process.env.NEXT_PUBLIC_TERMINAL_WS_PATH,
-          directTerminalPort: process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT,
         });
 
         // ── Preserve selection while terminal receives output ────────
@@ -547,11 +503,6 @@ export function DirectTerminalGB({
 
         const handleViewportScroll = () => {
           if (!viewport) return;
-          // Ignore scroll events triggered by our own programmatic scrolls.
-          // Without this, every auto-scroll-to-bottom on incoming data would
-          // re-fire this handler with nearBottom=true, immediately resetting
-          // followOutput=true and racing user scroll-up before the React
-          // state propagates to followOutputRef.
           if (programmaticScrollRef.current) {
             programmaticScrollRef.current = false;
             return;
@@ -559,7 +510,6 @@ export function DirectTerminalGB({
           const distFromBottom =
             viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
           if (distFromBottom < 24) {
-            // User scrolled to bottom — resume following immediately
             followOutputRef.current = true;
             setFollowOutput(true);
             if (scrollIdleTimerRef.current) {
@@ -567,15 +517,11 @@ export function DirectTerminalGB({
               scrollIdleTimerRef.current = null;
             }
           } else {
-            // User scrolled away from bottom — pause follow synchronously so
-            // the next data arrival doesn't snap us back down before the
-            // React state has had a chance to update.
             followOutputRef.current = false;
             setFollowOutput(false);
             if (scrollIdleTimerRef.current) {
               clearTimeout(scrollIdleTimerRef.current);
             }
-            // Auto-resume after 3s idle when within ~2 screen heights of bottom
             const viewportHeight = viewport.clientHeight || 400;
             if (distFromBottom < viewportHeight * 2) {
               scrollIdleTimerRef.current = setTimeout(() => {
@@ -592,20 +538,33 @@ export function DirectTerminalGB({
         };
         viewport?.addEventListener("scroll", handleViewportScroll, { passive: true });
 
-        // Handle window resize (works with whatever ws is current)
+        // Open terminal via mux
+        openTerminal(sessionId);
+
+        // Subscribe to terminal data via mux
+        unsubscribe = subscribeTerminal(sessionId, (data) => {
+          if (selectionActive) {
+            writeBuffer.push(data);
+            bufferBytes += data.length;
+            // Flush if buffer exceeds 1 MB to prevent OOM
+            if (bufferBytes > MAX_BUFFER_BYTES) {
+              selectionActive = false;
+              flushWriteBuffer();
+            }
+          } else {
+            terminal.write(data);
+            if (followOutputRef.current && viewport) {
+              programmaticScrollRef.current = true;
+              viewport.scrollTop = viewport.scrollHeight;
+            }
+          }
+        });
+
+        // Handle window resize
         const handleResize = () => {
-          const currentWs = ws.current;
           if (fit && terminalRef.current) {
             fitTerminal(fit, terminal, terminalRef.current);
-            if (currentWs?.readyState === WebSocket.OPEN) {
-              currentWs.send(
-                JSON.stringify({
-                  type: "resize",
-                  cols: terminal.cols,
-                  rows: terminal.rows,
-                }),
-              );
-            }
+            resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
           }
         };
 
@@ -622,90 +581,13 @@ export function DirectTerminalGB({
           resizeObserver.observe(terminalRef.current);
         }
 
-        // Terminal input → current WebSocket
+        // Terminal input → mux
         inputDisposable = terminal.onData((data) => {
-          if (ws.current?.readyState === WebSocket.OPEN) {
-            ws.current.send(data);
-          }
+          writeTerminal(sessionId, data);
         });
 
-        function connectWebSocket() {
-          if (!mounted) return;
-
-          console.log("[DirectTerminal] Connecting to:", wsUrl);
-          const websocket = new WebSocket(wsUrl);
-          ws.current = websocket;
-          websocket.binaryType = "arraybuffer";
-
-          websocket.onopen = () => {
-            console.log("[DirectTerminal] WebSocket connected");
-            reconnectAttemptRef.current = 0;
-            setReconnectAttempt(0);
-            setStatus("connected");
-            setError(null);
-
-            // Send initial size
-            websocket.send(
-              JSON.stringify({
-                type: "resize",
-                cols: terminal.cols,
-                rows: terminal.rows,
-              }),
-            );
-          };
-
-          websocket.onmessage = (event) => {
-            const data =
-              typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
-            if (selectionActive) {
-              writeBuffer.push(data);
-              bufferBytes += data.length;
-              // Flush if buffer exceeds 1 MB to prevent OOM
-              if (bufferBytes > MAX_BUFFER_BYTES) {
-                selectionActive = false;
-                flushWriteBuffer();
-              }
-            } else {
-              terminal.write(data);
-              if (followOutputRef.current && viewport) {
-                programmaticScrollRef.current = true;
-                viewport.scrollTop = viewport.scrollHeight;
-              }
-            }
-          };
-
-          websocket.onerror = (event) => {
-            console.error("[DirectTerminal] WebSocket error:", event);
-          };
-
-          websocket.onclose = (event) => {
-            console.log("[DirectTerminal] WebSocket closed:", event.code, event.reason);
-
-            if (!mounted) return;
-
-            // Permanent errors — don't retry
-            if (PERMANENT_CLOSE_CODES.has(event.code)) {
-              permanentErrorRef.current = true;
-              setStatus("error");
-              setError(event.reason || `Connection refused (${event.code})`);
-              return;
-            }
-
-            // Transient failure — schedule reconnect with exponential backoff
-            const attempt = reconnectAttemptRef.current;
-            const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
-            reconnectAttemptRef.current = attempt + 1;
-            setReconnectAttempt(attempt + 1);
-
-            console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
-            setStatus("connecting");
-            setError(null);
-
-            reconnectTimerRef.current = setTimeout(connectWebSocket, delay);
-          };
-        }
-
-        connectWebSocket();
+        // Send initial size
+        resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
@@ -723,30 +605,32 @@ export function DirectTerminalGB({
             clearTimeout(scrollIdleTimerRef.current);
             scrollIdleTimerRef.current = null;
           }
-          if (reconnectTimerRef.current) {
-            clearTimeout(reconnectTimerRef.current);
-            reconnectTimerRef.current = null;
-          }
-          ws.current?.close();
+          unsubscribe?.();
+          closeTerminal(sessionId);
           terminal.dispose();
         };
       })
       .catch((err) => {
         console.error("[DirectTerminal] Failed to load xterm.js:", err);
-        permanentErrorRef.current = true;
-        setStatus("error");
         setError("Failed to load terminal");
       });
 
     return () => {
       mounted = false;
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
       cleanup?.();
     };
-  }, [sessionId, variant]);
+  }, [sessionId, variant, subscribeTerminal, writeTerminal, resizeTerminalMux, openTerminal, closeTerminal]);
+
+  // Re-send terminal dimensions on every reconnect so the server-side PTY
+  // matches the client's xterm.js size (new PTYs spawn at 80×24 default).
+  useEffect(() => {
+    if (muxStatus !== "connected") return;
+    const fit = fitAddon.current;
+    const terminal = terminalInstance.current;
+    if (!fit || !terminal) return;
+    fit.fit();
+    resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+  }, [muxStatus, sessionId, resizeTerminalMux]);
 
   // Live theme switching without terminal recreation
   useEffect(() => {
@@ -761,10 +645,9 @@ export function DirectTerminalGB({
   useEffect(() => {
     const fit = fitAddon.current;
     const terminal = terminalInstance.current;
-    const websocket = ws.current;
     const container = terminalRef.current;
 
-    if (!fit || !terminal || !websocket || websocket.readyState !== WebSocket.OPEN || !container) {
+    if (!fit || !terminal || muxStatusRef.current !== "connected" || !container) {
       return;
     }
 
@@ -794,17 +677,8 @@ export function DirectTerminalGB({
       if (container) fitTerminal(fit, terminal, container);
       terminal.refresh(0, terminal.rows - 1);
 
-      // Send new size to server (use ws.current in case WebSocket reconnected)
-      const currentWs = ws.current;
-      if (currentWs?.readyState === WebSocket.OPEN) {
-        currentWs.send(
-          JSON.stringify({
-            type: "resize",
-            cols: terminal.cols,
-            rows: terminal.rows,
-          }),
-        );
-      }
+      // Send new size to server via mux
+      resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
     };
 
     // Start resize polling
@@ -830,25 +704,34 @@ export function DirectTerminalGB({
       cancelAnimationFrame(rafId);
       parent?.removeEventListener("transitionend", handleTransitionEnd);
     };
-  }, [fullscreen]);
+  }, [fullscreen, sessionId, resizeTerminalMux]);
 
   const accentColor =
     variant === "orchestrator" ? "var(--color-accent-violet)" : "var(--color-accent)";
 
+  // Local errors (e.g. xterm.js load failure) take priority over mux connection state
+  const displayStatus = error ? "error" : muxStatus;
+
   const statusDotClass =
-    status === "connected"
+    displayStatus === "connected"
       ? "bg-[var(--color-status-ready)]"
-      : status === "error"
+      : displayStatus === "error" || displayStatus === "disconnected"
         ? "bg-[var(--color-status-error)]"
         : "bg-[var(--color-status-attention)] animate-[pulse_1.5s_ease-in-out_infinite]";
 
   const statusText =
-    status === "connected" ? "Connected" : status === "error" ? (error ?? "Error") : "Connecting…";
+    displayStatus === "connected"
+      ? "Connected"
+      : displayStatus === "error"
+        ? (error ?? "Error")
+        : displayStatus === "disconnected"
+          ? "Disconnected"
+          : "Connecting…";
 
   const statusTextColor =
-    status === "connected"
+    displayStatus === "connected"
       ? "text-[var(--color-status-ready)]"
-      : status === "error"
+      : displayStatus === "error" || displayStatus === "disconnected"
         ? "text-[var(--color-status-error)]"
         : "text-[var(--color-text-tertiary)]";
 
@@ -894,7 +777,7 @@ export function DirectTerminalGB({
         {isOpenCodeSession ? (
           <button
             onClick={handleReload}
-            disabled={reloading || status !== "connected"}
+            disabled={reloading || muxStatus !== "connected"}
             title="Restart OpenCode session (/exit then resume mapped session)"
             aria-label="Restart OpenCode session"
             className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
@@ -1004,7 +887,7 @@ export function DirectTerminalGB({
       </div>
       {/* Terminal area */}
       <div className="relative flex-1" style={{ minHeight: 0 }}>
-        {status === "connecting" && (
+        {muxStatus === "connecting" && (
           <div className="absolute inset-0 z-10">
             <TerminalSkeleton />
           </div>

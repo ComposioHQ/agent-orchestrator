@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import { createRequire } from "node:module";
 import { registerInit } from "./commands/init.js";
 import { registerStatus } from "./commands/status.js";
 import { registerSpawn, registerBatchSpawn } from "./commands/spawn.js";
@@ -18,12 +19,14 @@ import { registerSetup } from "./commands/setup.js";
 import { registerPlugin } from "./commands/plugin.js";
 import { getConfigInstruction } from "./lib/config-instruction.js";
 
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json") as { version: string };
 const program = new Command();
 
 program
   .name("ao")
   .description("Agent Orchestrator — manage parallel AI coding agents")
-  .version("0.1.0");
+  .version(packageJson.version);
 
 registerInit(program);
 registerStart(program);

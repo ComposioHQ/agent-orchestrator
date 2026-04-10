@@ -17,7 +17,6 @@ export type {
   PRState,
 } from "@composio/ao-core/types";
 
-// Re-export global pause state from shared lib (provider-agnostic state contract)
 export type { GlobalPauseState } from "./global-pause";
 
 import {
@@ -115,6 +114,9 @@ export interface DashboardPR {
   mergeability: DashboardMergeability;
   unresolvedThreads: number;
   unresolvedComments: DashboardUnresolvedComment[];
+  /** Whether this PR has been enriched with live SCM data (or cache hit).
+   *  `false` means only basic data from the session metadata is available. */
+  enriched?: boolean;
 }
 
 /**
@@ -185,6 +187,12 @@ export function isPRRateLimited(pr: DashboardPR): boolean {
   return pr.mergeability.blockers.includes("API rate limited or unavailable");
 }
 
+/** Returns true when a PR has not yet been enriched with live SCM data.
+ *  Only returns true for explicit `false` — undefined (legacy data) is treated as enriched. */
+export function isPRUnenriched(pr: DashboardPR): boolean {
+  return pr.enriched === false;
+}
+
 /**
  * Returns true when a PR is open and all merge criteria are met.
  * Does NOT return true for merged or closed PRs — those are already done.
@@ -223,7 +231,7 @@ export function getAttentionLevel(session: DashboardSession): SessionAttentionLe
   if (session.status === "mergeable" || session.status === "approved") {
     return "merge";
   }
-  if (session.pr?.mergeability.mergeable) {
+  if (session.pr && !isPRUnenriched(session.pr) && session.pr.mergeability.mergeable) {
     return "merge";
   }
 
@@ -252,7 +260,7 @@ export function getAttentionLevel(session: DashboardSession): SessionAttentionLe
   if (session.status === "ci_failed" || session.status === "changes_requested") {
     return "review";
   }
-  if (session.pr && !isPRRateLimited(session.pr)) {
+  if (session.pr && !isPRRateLimited(session.pr) && !isPRUnenriched(session.pr)) {
     const pr = session.pr;
     if (pr.ciStatus === CI_STATUS.FAILING) return "review";
     if (pr.reviewDecision === "changes_requested") return "review";
@@ -263,7 +271,7 @@ export function getAttentionLevel(session: DashboardSession): SessionAttentionLe
   if (session.status === "review_pending") {
     return "pending";
   }
-  if (session.pr && !isPRRateLimited(session.pr)) {
+  if (session.pr && !isPRRateLimited(session.pr) && !isPRUnenriched(session.pr)) {
     const pr = session.pr;
     if (!pr.isDraft && pr.unresolvedThreads > 0) return "pending";
     if (!pr.isDraft && (pr.reviewDecision === "pending" || pr.reviewDecision === "none")) {

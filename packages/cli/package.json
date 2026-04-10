@@ -29,7 +29,7 @@
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "pnpm --filter @composio/ao-cli^... build && tsc --noEmit",
     "clean": "rm -rf dist"
   },
   "dependencies": {

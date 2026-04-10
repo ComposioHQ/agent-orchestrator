@@ -431,8 +431,7 @@ regexes = ['''your-pattern-here''']
 ## Environment Variables
 
 ```bash
-# Terminal server ports (web dashboard)
-TERMINAL_PORT=14800
+# Mux WebSocket server port (web dashboard terminal + session updates)
 DIRECT_TERMINAL_PORT=14801
 
 # User integrations

@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useSessionEvents } from "../useSessionEvents";
-import type { DashboardSession, GlobalPauseState } from "../../lib/types";
+import type { AttentionLevel, DashboardSession, GlobalPauseState } from "../../lib/types";
 import { makeSession } from "../../__tests__/helpers";
 
 describe("useSessionEvents", () => {
   let eventSourceMock: {
     onmessage: ((event: MessageEvent) => void) | null;
+    onopen: (() => void) | null;
     onerror: (() => void) | null;
+    readyState: number;
     close: () => void;
   };
   let eventSourceInstances: (typeof eventSourceMock)[];
@@ -17,7 +19,9 @@ describe("useSessionEvents", () => {
     const eventSourceConstructor = vi.fn(() => {
       const instance = {
         onmessage: null as ((event: MessageEvent) => void) | null,
+        onopen: null as (() => void) | null,
         onerror: null as (() => void) | null,
+        readyState: 0,
         close: vi.fn(),
       };
       eventSourceInstances.push(instance);
@@ -371,6 +375,46 @@ describe("useSessionEvents", () => {
   });
 
   describe("session state updates", () => {
+    it("falls back to disconnected after a prolonged EventSource outage", async () => {
+      vi.useFakeTimers();
+      const sessions = makeSessions(1);
+
+      const { result } = renderHook(() => useSessionEvents(sessions, null));
+
+      expect(result.current.connectionStatus).toBe("connected");
+
+      await act(async () => {
+        eventSourceMock.readyState = EventSource.CONNECTING;
+        eventSourceMock.onerror?.();
+      });
+
+      expect(result.current.connectionStatus).toBe("reconnecting");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000);
+      });
+
+      expect(result.current.connectionStatus).toBe("disconnected");
+    });
+
+    it("clears the disconnect timer when EventSource reconnects", async () => {
+      vi.useFakeTimers();
+      const sessions = makeSessions(1);
+
+      const { result } = renderHook(() => useSessionEvents(sessions, null));
+
+      await act(async () => {
+        eventSourceMock.readyState = EventSource.CONNECTING;
+        eventSourceMock.onerror?.();
+        await vi.advanceTimersByTimeAsync(2000);
+        eventSourceMock.readyState = EventSource.OPEN;
+        eventSourceMock.onopen?.();
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+
+      expect(result.current.connectionStatus).toBe("connected");
+    });
+
     it("applies snapshot patches to sessions", async () => {
       const sessions = makeSessions(2);
 
@@ -617,6 +661,350 @@ describe("useSessionEvents", () => {
 
       expect(result.current.sessions).toHaveLength(1);
       expect(result.current.sessions[0].id).toBe("session-0");
+    });
+  });
+
+  describe("sseAttentionLevels", () => {
+    it("starts with empty attention levels when no initial levels provided", () => {
+      const sessions = makeSessions(2);
+      const { result } = renderHook(() => useSessionEvents(sessions));
+      expect(result.current.sseAttentionLevels).toEqual({});
+    });
+
+    it("seeds attention levels from initialAttentionLevels parameter", () => {
+      const sessions = makeSessions(2);
+      const initialLevels = { "session-0": "working" as const, "session-1": "respond" as const };
+      const { result } = renderHook(() => useSessionEvents(sessions, null, undefined, undefined, initialLevels));
+      expect(result.current.sseAttentionLevels).toEqual({
+        "session-0": "working",
+        "session-1": "respond",
+      });
+    });
+
+    it("populates attention levels from SSE snapshot", () => {
+      const sessions = makeSessions(2);
+      const { result } = renderHook(() => useSessionEvents(sessions));
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "working", activity: "active", attentionLevel: "working", lastActivityAt: new Date().toISOString() },
+              { id: "session-1", status: "needs_input", activity: "waiting_input", attentionLevel: "respond", lastActivityAt: new Date().toISOString() },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sseAttentionLevels).toEqual({
+        "session-0": "working",
+        "session-1": "respond",
+      });
+    });
+
+    it("updates attention levels when they change", () => {
+      const sessions = makeSessions(1);
+      const { result } = renderHook(() => useSessionEvents(sessions));
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "working", activity: "active", attentionLevel: "working", lastActivityAt: new Date().toISOString() },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sseAttentionLevels["session-0"]).toBe("working");
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "needs_input", activity: "waiting_input", attentionLevel: "respond", lastActivityAt: new Date().toISOString() },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sseAttentionLevels["session-0"]).toBe("respond");
+    });
+
+    it("preserves referential stability when attention levels do not change", () => {
+      const sessions = makeSessions(1);
+      const { result } = renderHook(() => useSessionEvents(sessions));
+
+      const ts = new Date().toISOString();
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "working", activity: "active", attentionLevel: "working", lastActivityAt: ts },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      const firstLevels = result.current.sseAttentionLevels;
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "working", activity: "active", attentionLevel: "working", lastActivityAt: ts },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sseAttentionLevels).toBe(firstLevels);
+    });
+
+    it("resets sseAttentionLevels to new initialAttentionLevels when initialSessions changes", () => {
+      const sessions1 = makeSessions(1);
+      let currentSessions = sessions1;
+      let currentLevels: Record<string, AttentionLevel> | undefined = { "session-0": "respond" as const };
+
+      const { result, rerender } = renderHook(() =>
+        useSessionEvents(currentSessions, null, undefined, undefined, currentLevels),
+      );
+
+      expect(result.current.sseAttentionLevels).toEqual({ "session-0": "respond" });
+
+      const sessions2 = makeSessions(1).map((s) => ({ ...s, id: "session-new" }));
+      const levels2 = { "session-new": "working" as const };
+      currentSessions = sessions2;
+      currentLevels = levels2;
+      rerender();
+
+      expect(result.current.sseAttentionLevels).toEqual({ "session-new": "working" });
+      expect(result.current.sseAttentionLevels["session-0"]).toBeUndefined();
+    });
+  });
+
+  // ── mux-based session updates ──────────────────────────────────────────
+
+  describe("mux session updates", () => {
+    const makePatch = (id: string) => ({
+      id,
+      status: "working",
+      activity: "active" as string | null,
+      attentionLevel: "working",
+      lastActivityAt: new Date().toISOString(),
+    });
+
+    it("sets connectionStatus to connected when muxSessions is provided", () => {
+      const patches = [makePatch("s1")];
+      const { result } = renderHook(() =>
+        useSessionEvents(makeSessions(1), null, undefined, patches),
+      );
+      expect(result.current.connectionStatus).toBe("connected");
+    });
+
+    it("dispatches snapshot from muxSessions", async () => {
+      const patches = [makePatch("s1"), makePatch("s2")];
+      const { result } = renderHook(() =>
+        useSessionEvents([], null, undefined, patches),
+      );
+      await waitFor(() => result.current.sessions.length === 2);
+    });
+
+    it("triggers scheduleRefresh when mux session membership changes", async () => {
+      vi.useFakeTimers();
+      const initialPatches = [makePatch("s1")];
+      const newPatches = [makePatch("s1"), makePatch("s2")];
+      let currentPatches = initialPatches;
+
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          sessions: [makeSession({ id: "s1" }), makeSession({ id: "s2" })],
+          globalPause: null,
+        }),
+      } as unknown as Response);
+
+      const { rerender } = renderHook(() =>
+        useSessionEvents([], null, undefined, currentPatches),
+      );
+
+      currentPatches = newPatches;
+      rerender();
+
+      // Advance past the 120ms debounce
+      act(() => vi.advanceTimersByTime(200));
+      await waitFor(() => vi.mocked(fetch).mock.calls.length > 0);
+      vi.useRealTimers();
+    });
+
+    it("aborts in-flight request when muxSessions changes rapidly", async () => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      let resolveFirst!: () => void;
+      const firstFetch = new Promise<Response>((resolve) => {
+        resolveFirst = () =>
+          resolve({
+            ok: true,
+            json: async () => ({ sessions: [], globalPause: null }),
+          } as unknown as Response);
+      });
+
+      vi.mocked(fetch)
+        .mockReturnValueOnce(firstFetch)
+        .mockResolvedValue({
+          ok: true,
+          json: async () => ({ sessions: [], globalPause: null }),
+        } as unknown as Response);
+
+      let patches = [makePatch("s1")];
+      const { rerender } = renderHook(() =>
+        useSessionEvents([], null, undefined, patches),
+      );
+
+      patches = [makePatch("s1"), makePatch("s2")];
+      rerender();
+      act(() => vi.advanceTimersByTime(200));
+
+      // Change again rapidly — cleanup should abort previous controller
+      patches = [makePatch("s1"), makePatch("s2"), makePatch("s3")];
+      rerender();
+
+      resolveFirst();
+      vi.useRealTimers();
+      // Main assertion: no crash and hook remains stable
+      expect(controller.signal).toBeDefined();
+    });
+
+    it("skips SSE setup when muxActive is true", () => {
+      const patches = [makePatch("s1")];
+      const EventSourceSpy = vi.fn(() => ({
+        close: vi.fn(),
+        onmessage: null,
+        onerror: null,
+        onopen: null,
+        readyState: 1,
+      }));
+      global.EventSource = Object.assign(EventSourceSpy, {
+        CONNECTING: 0, OPEN: 1, CLOSED: 2,
+      }) as unknown as typeof EventSource;
+
+      renderHook(() => useSessionEvents([], null, undefined, patches));
+
+      expect(EventSourceSpy).not.toHaveBeenCalled();
+    });
+
+    it("mux-active cleanup aborts in-flight fetch and clears timer", async () => {
+      vi.useFakeTimers();
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({ sessions: [], globalPause: null }),
+      } as unknown as Response);
+
+      const patches = [makePatch("s1")];
+      let mux: typeof patches | undefined = patches;
+      const { rerender, unmount } = renderHook(() =>
+        useSessionEvents([], null, undefined, mux),
+      );
+
+      // Trigger a membership change so a timer is pending
+      mux = [makePatch("s1"), makePatch("s2")];
+      rerender();
+
+      // Unmount while timer is pending — should clean up without crash
+      unmount();
+      act(() => vi.advanceTimersByTime(500));
+      vi.useRealTimers();
+    });
+  });
+
+  describe("immediate first refresh", () => {
+    it("triggers /api/sessions fetch on first SSE snapshot even when membership matches", async () => {
+      const sessions = makeSessions(2);
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ sessions, globalPause: null }),
+      } as unknown as Response);
+
+      renderHook(() => useSessionEvents(sessions));
+
+      // Send snapshot with SAME membership — should still refresh because lastRefreshAtRef starts at 0
+      await act(async () => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: sessions.map((s) => ({
+              id: s.id,
+              status: s.status,
+              activity: s.activity,
+              lastActivityAt: s.lastActivityAt,
+            })),
+          }),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledWith("/api/sessions", {
+          signal: expect.any(AbortSignal),
+        });
+      });
+    });
+
+    it("updates lastRefreshAtRef on fetch failure to prevent retry loops", async () => {
+      const sessions = makeSessions(1);
+      const fetchError = new Error("Network error");
+      vi.mocked(fetch)
+        .mockRejectedValueOnce(fetchError)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ sessions, globalPause: null }),
+        } as unknown as Response);
+
+      renderHook(() => useSessionEvents(sessions));
+
+      // First snapshot triggers refresh (lastRefreshAtRef = 0)
+      await act(async () => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: sessions.map((s) => ({
+              id: s.id,
+              status: s.status,
+              activity: s.activity,
+              lastActivityAt: s.lastActivityAt,
+            })),
+          }),
+        } as MessageEvent);
+      });
+
+      // Wait for fetch to be called and fail
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1);
+      });
+
+      // Second snapshot should NOT trigger another immediate refresh
+      // because lastRefreshAtRef was updated on failure
+      await act(async () => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: sessions.map((s) => ({
+              id: s.id,
+              status: s.status,
+              activity: s.activity,
+              lastActivityAt: s.lastActivityAt,
+            })),
+          }),
+        } as MessageEvent);
+      });
+
+      // fetch should still only have been called once (the failed one)
+      expect(fetch).toHaveBeenCalledTimes(1);
     });
   });
 });

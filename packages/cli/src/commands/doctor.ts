@@ -343,7 +343,9 @@ async function sendTestNotifications(
   const targets = new Map<string, NotifierTarget>();
 
   for (const [name, notifierConfig] of configuredNotifiers) {
-    targets.set(notifierConfig.plugin, { label: name, pluginName: notifierConfig.plugin });
+    if (notifierConfig.plugin) {
+      targets.set(notifierConfig.plugin, { label: name, pluginName: notifierConfig.plugin });
+    }
   }
 
   for (const name of activeNotifierNames) {

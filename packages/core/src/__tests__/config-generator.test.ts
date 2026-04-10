@@ -255,7 +255,7 @@ describe("generateConfigFromUrl", () => {
       runtime: "tmux",
       agent: "claude-code",
       workspace: "worktree",
-      notifiers: ["desktop"],
+      notifiers: [],
     });
 
     // Check project config

@@ -13,6 +13,7 @@ import {
   type DecomposerConfig,
   DEFAULT_DECOMPOSER_CONFIG,
 } from "@composio/ao-core";
+import { DEFAULT_PORT } from "../lib/constants.js";
 import { exec } from "../lib/shell.js";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -89,7 +90,6 @@ async function spawnSession(
   openTab?: boolean,
   agent?: string,
   claimOptions?: SpawnClaimOptions,
-  prompt?: string,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -101,10 +101,8 @@ async function spawnSession(
       projectId,
       issueId,
       agent,
-      prompt,
     });
 
-    let branchStr = session.branch ?? "";
     let claimedPrUrl: string | null = null;
 
     if (claimOptions?.claimPr) {
@@ -113,7 +111,6 @@ async function spawnSession(
         const claimResult = await sm.claimPR(session.id, claimOptions.claimPr, {
           assignOnGithub: claimOptions.assignOnGithub,
         });
-        branchStr = claimResult.pr.branch;
         claimedPrUrl = claimResult.pr.url;
       } catch (err) {
         throw new Error(
@@ -123,24 +120,29 @@ async function spawnSession(
       }
     }
 
+    const issueLabel = issueId ? ` for issue #${issueId}` : "";
+    const claimLabel = claimedPrUrl ? ` (claimed ${claimedPrUrl})` : "";
+    const port = config.port ?? DEFAULT_PORT;
     spinner.succeed(
-      claimedPrUrl
-        ? `Session ${chalk.green(session.id)} created and claimed PR`
-        : `Session ${chalk.green(session.id)} created`,
+      `Session ${chalk.green(session.id)} spawned${issueLabel}${claimLabel}`,
     );
+    console.log(`  View:     ${chalk.dim(`http://localhost:${port}/sessions/${session.id}`)}`);
 
-    console.log(`  Worktree: ${chalk.dim(session.workspacePath ?? "-")}`);
-    if (branchStr) console.log(`  Branch:   ${chalk.dim(branchStr)}`);
-    if (claimedPrUrl) console.log(`  PR:       ${chalk.dim(claimedPrUrl)}`);
-
-    // Show the tmux name for attaching (stored in metadata or runtimeHandle)
-    const tmuxTarget = session.runtimeHandle?.id ?? session.id;
-    console.log(`  Attach:   ${chalk.dim(`tmux attach -t ${tmuxTarget}`)}`);
-    console.log();
+    // Warn if prompt delivery failed (for post-launch agents like Claude Code)
+    const promptDelivered = session.metadata?.promptDelivered;
+    if (promptDelivered === "false") {
+      console.warn(
+        chalk.yellow(
+          `  ⚠ Prompt delivery failed — agent may be idle.\n` +
+            `    Use '${chalk.cyan("ao send " + session.id + ' "message..."')}' to send instructions manually.`,
+        ),
+      );
+    }
 
     // Open terminal tab if requested
     if (openTab) {
       try {
+        const tmuxTarget = session.runtimeHandle?.id ?? session.id;
         await exec("open-iterm-tab", [tmuxTarget]);
       } catch {
         // Terminal plugin not available
@@ -161,14 +163,13 @@ export function registerSpawn(program: Command): void {
     .command("spawn")
     .description("Spawn a single agent session")
     .argument("[first]", "Issue identifier (project is auto-detected)")
-    .argument("[second]", "", /* hidden second arg to catch old two-arg usage */)
+    .argument("[second]", "" /* hidden second arg to catch old two-arg usage */)
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option("--decompose", "Decompose issue into subtasks before spawning")
     .option("--max-depth <n>", "Max decomposition depth (default: 3)")
-    .option("--prompt <text>", "Initial prompt to send to the agent after spawning")
     .action(
       async (
         first: string | undefined,
@@ -180,7 +181,6 @@ export function registerSpawn(program: Command): void {
           assignOnGithub?: boolean;
           decompose?: boolean;
           maxDepth?: string;
-          prompt?: string;
         },
       ) => {
         // Catch old two-arg usage: ao spawn <project> <issue>
@@ -256,7 +256,7 @@ export function registerSpawn(program: Command): void {
 
             if (leaves.length <= 1) {
               console.log(chalk.yellow("Task is atomic — spawning directly."));
-              await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt);
+              await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
             } else {
               // Create child issues and spawn sessions with lineage context
               const sm = await getSessionManager(config);
@@ -283,7 +283,7 @@ export function registerSpawn(program: Command): void {
               }
             }
           } else {
-            await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt);
+            await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
           }
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
@@ -299,8 +299,7 @@ export function registerBatchSpawn(program: Command): void {
     .description("Spawn sessions for multiple issues with duplicate detection")
     .argument("<issues...>", "Issue identifiers (project is auto-detected)")
     .option("--open", "Open sessions in terminal tabs")
-    .option("--prompt <text>", "Initial prompt to send to each agent after spawning")
-    .action(async (issues: string[], opts: { open?: boolean; prompt?: string }) => {
+    .action(async (issues: string[], opts: { open?: boolean }) => {
       const config = loadConfig();
       let projectId: string;
 
@@ -368,7 +367,7 @@ export function registerBatchSpawn(program: Command): void {
         }
 
         try {
-          const session = await sm.spawn({ projectId, issueId: issue, prompt: opts.prompt });
+          const session = await sm.spawn({ projectId, issueId: issue });
           created.push({ session: session.id, issue });
           spawnedIssues.add(issue.toLowerCase());
           console.log(chalk.green(`  Created ${session.id} for ${issue}`));

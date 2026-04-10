@@ -73,7 +73,7 @@ jobs:
 
       - name: Web tests with coverage
         if: needs.detect-changes.outputs.web == 'true'
-        run: pnpm --filter @composio/ao-web exec vitest run --coverage
+        run: NODE_OPTIONS="--max-old-space-size=6144" pnpm --filter @composio/ao-web exec vitest run --coverage
 
       - name: Prepare and merge lcov reports
         run: |

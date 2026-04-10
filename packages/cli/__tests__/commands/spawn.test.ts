@@ -32,14 +32,15 @@ vi.mock("../../src/lib/shell.js", () => ({
   getTmuxActivity: vi.fn().mockResolvedValue(null),
 }));
 
+const mockSpinner = {
+  start: vi.fn().mockReturnThis(),
+  stop: vi.fn().mockReturnThis(),
+  succeed: vi.fn().mockReturnThis(),
+  fail: vi.fn().mockReturnThis(),
+  text: "",
+};
 vi.mock("ora", () => ({
-  default: () => ({
-    start: vi.fn().mockReturnThis(),
-    stop: vi.fn().mockReturnThis(),
-    succeed: vi.fn().mockReturnThis(),
-    fail: vi.fn().mockReturnThis(),
-    text: "",
-  }),
+  default: () => mockSpinner,
 }));
 
 vi.mock("@composio/ao-core", async (importOriginal) => {
@@ -69,7 +70,7 @@ let configPath: string;
 let cwdSpy: ReturnType<typeof vi.spyOn> | undefined;
 
 import { Command } from "commander";
-import { registerSpawn, registerBatchSpawn } from "../../src/commands/spawn.js";
+import { registerSpawn } from "../../src/commands/spawn.js";
 
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -107,15 +108,17 @@ beforeEach(() => {
   program = new Command();
   program.exitOverride();
   registerSpawn(program);
-  registerBatchSpawn(program);
   consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(process, "exit").mockImplementation((code) => {
     throw new Error(`process.exit(${code})`);
   });
 
+  mockSpinner.start.mockClear().mockReturnThis();
+  mockSpinner.stop.mockClear().mockReturnThis();
+  mockSpinner.succeed.mockClear().mockReturnThis();
+  mockSpinner.fail.mockClear().mockReturnThis();
   mockSessionManager.spawn.mockReset();
-  mockSessionManager.list.mockReset();
   mockSessionManager.claimPR.mockReset();
   mockExec.mockReset();
   mockEnsureLifecycleWorker.mockReset();
@@ -283,7 +286,7 @@ describe("spawn command", () => {
     });
   });
 
-  it("shows tmux attach command using runtimeHandle.id (hash-based name)", async () => {
+  it("shows dashboard URL instead of raw tmux attach", async () => {
     const fakeSession: Session = {
       id: "app-7",
       projectId: "my-app",
@@ -305,7 +308,9 @@ describe("spawn command", () => {
     await program.parseAsync(["node", "test", "spawn"]);
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(output).toContain("8474d6f29887-app-7");
+    expect(output).toContain("http://localhost:3000/sessions/app-7");
+    expect(output).not.toContain("tmux attach");
+    expect(output).not.toContain("8474d6f29887-app-7");
   });
 
   it("passes --agent flag to sessionManager.spawn()", async () => {
@@ -362,73 +367,6 @@ describe("spawn command", () => {
       issueId: "INT-42",
       agent: "codex",
     });
-  });
-
-  it("passes --prompt to sessionManager.spawn() without an issue", async () => {
-    const fakeSession: Session = {
-      id: "app-1",
-      projectId: "my-app",
-      status: "spawning",
-      activity: null,
-      branch: null,
-      issueId: null,
-      pr: null,
-      workspacePath: "/tmp/ws",
-      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
-      agentInfo: null,
-      createdAt: new Date(),
-      lastActivityAt: new Date(),
-      metadata: {},
-    };
-
-    mockSessionManager.spawn.mockResolvedValue(fakeSession);
-
-    await program.parseAsync(["node", "test", "spawn", "--prompt", "Focus on API only"]);
-
-    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "my-app",
-        issueId: undefined,
-        prompt: "Focus on API only",
-      }),
-    );
-  });
-
-  it("passes --prompt with issue id to sessionManager.spawn()", async () => {
-    const fakeSession: Session = {
-      id: "app-1",
-      projectId: "my-app",
-      status: "spawning",
-      activity: null,
-      branch: "feat/INT-42",
-      issueId: "INT-42",
-      pr: null,
-      workspacePath: "/tmp/ws",
-      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
-      agentInfo: null,
-      createdAt: new Date(),
-      lastActivityAt: new Date(),
-      metadata: {},
-    };
-
-    mockSessionManager.spawn.mockResolvedValue(fakeSession);
-
-    await program.parseAsync([
-      "node",
-      "test",
-      "spawn",
-      "INT-42",
-      "--prompt",
-      "Focus on API layer only",
-    ]);
-
-    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "my-app",
-        issueId: "INT-42",
-        prompt: "Focus on API layer only",
-      }),
-    );
   });
 
   it("warns and exits when two positional args given (old syntax)", async () => {
@@ -490,19 +428,19 @@ describe("spawn command", () => {
 
     await program.parseAsync(["node", "test", "spawn", "--claim-pr", "123"]);
 
-    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "my-app",
-        issueId: undefined,
-      }),
-    );
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: undefined,
+      agent: undefined,
+    });
     expect(mockSessionManager.claimPR).toHaveBeenCalledWith("app-1", "123", {
       assignOnGithub: undefined,
     });
 
+    const succeedMsg = String(mockSpinner.succeed.mock.calls[0]?.[0] ?? "");
+    expect(succeedMsg).toContain("https://github.com/org/repo/pull/123");
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(output).toContain("https://github.com/org/repo/pull/123");
-    expect(output).toContain("feat/claimed-pr");
+    expect(output).toContain("http://localhost:3000/sessions/app-1");
   });
 
   it("passes GitHub assignment flag through to claimPR", async () => {
@@ -819,61 +757,5 @@ describe("spawn pre-flight checks", () => {
       .join("\n");
     expect(errors).toContain("not installed");
     expect(errors).not.toContain("not authenticated");
-  });
-});
-
-describe("batch-spawn command", () => {
-  it("passes --prompt to every session in the batch", async () => {
-    const fakeSession: Session = {
-      id: "app-1",
-      projectId: "my-app",
-      status: "spawning",
-      activity: null,
-      branch: "feat/issue",
-      issueId: "INT-1",
-      pr: null,
-      workspacePath: "/tmp/wt",
-      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
-      agentInfo: null,
-      createdAt: new Date(),
-      lastActivityAt: new Date(),
-      metadata: {},
-    };
-
-    mockSessionManager.spawn.mockResolvedValue(fakeSession);
-    mockSessionManager.list.mockResolvedValue([]);
-
-    await program.parseAsync([
-      "node",
-      "test",
-      "batch-spawn",
-      "INT-1",
-      "INT-2",
-      "--prompt",
-      "Be concise",
-    ]);
-
-    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
-      expect.objectContaining({ configPath: expect.any(String) }),
-      "my-app",
-    );
-    expect(mockSessionManager.spawn).toHaveBeenCalledTimes(2);
-    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "my-app",
-        issueId: "INT-1",
-        prompt: "Be concise",
-      }),
-    );
-    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "my-app",
-        issueId: "INT-2",
-        prompt: "Be concise",
-      }),
-    );
-
-    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(output).toContain("app-1");
   });
 });
