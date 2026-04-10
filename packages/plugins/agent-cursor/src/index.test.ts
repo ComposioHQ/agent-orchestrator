@@ -9,6 +9,20 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
     access: vi.fn().mockRejectedValue(new Error("ENOENT")),
     stat: vi.fn().mockRejectedValue(new Error("ENOENT")),
+    lstat: vi.fn().mockResolvedValue({ isSymbolicLink: () => false }),
+  };
+});
+
+// Mock fs (sync) for getLaunchCommand systemPromptFile tests
+const { mockReadFileSync } = vi.hoisted(() => ({
+  mockReadFileSync: vi.fn(),
+}));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    readFileSync: mockReadFileSync,
   };
 });
 
@@ -33,18 +47,22 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
 // ---------------------------------------------------------------------------
 // Hoisted mocks
 // ---------------------------------------------------------------------------
-const { mockExecFileAsync } = vi.hoisted(() => ({
+const { mockExecFileAsync, mockExecFileSync } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
+  mockExecFileSync: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => {
   const fn = Object.assign((..._args: unknown[]) => {}, {
     [Symbol.for("nodejs.util.promisify.custom")]: mockExecFileAsync,
   });
-  return { execFile: fn };
+  return {
+    execFile: fn,
+    execFileSync: mockExecFileSync,
+  };
 });
 
-import { create, manifest, default as defaultExport } from "./index.js";
+import { create, manifest, default as defaultExport, detect } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -190,6 +208,53 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
     expect(cmd).not.toContain("--force");
     expect(cmd).not.toContain("--model");
+  });
+
+  it("reads systemPromptFile and prepends content to prompt", () => {
+    mockReadFileSync.mockReturnValueOnce("You are a helpful assistant.");
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "/path/to/system.txt", prompt: "Do the task" }),
+    );
+    expect(mockReadFileSync).toHaveBeenCalledWith("/path/to/system.txt", "utf-8");
+    expect(cmd).toContain("You are a helpful assistant.");
+    expect(cmd).toContain("Do the task");
+  });
+
+  it("prepends inline systemPrompt to prompt when systemPromptFile not provided", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPrompt: "You are an expert.", prompt: "Do the task" }),
+    );
+    expect(cmd).toContain("You are an expert.");
+    expect(cmd).toContain("Do the task");
+  });
+
+  it("prefers systemPromptFile over systemPrompt", () => {
+    mockReadFileSync.mockReturnValueOnce("File content wins");
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({
+        systemPromptFile: "/path/to/file.txt",
+        systemPrompt: "Inline prompt",
+        prompt: "Task",
+      }),
+    );
+    expect(cmd).toContain("File content wins");
+    expect(cmd).not.toContain("Inline prompt");
+  });
+
+  it("works with systemPromptFile but no prompt", () => {
+    mockReadFileSync.mockReturnValueOnce("System instructions only");
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPromptFile: "/path/sys.txt" }));
+    expect(cmd).toContain("System instructions only");
+  });
+
+  it("continues without system prompt if file read fails", () => {
+    mockReadFileSync.mockImplementationOnce(() => {
+      throw new Error("ENOENT");
+    });
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "/nonexistent.txt", prompt: "Do the task" }),
+    );
+    expect(cmd).toBe("agent -- 'Do the task'");
   });
 });
 
@@ -517,5 +582,50 @@ describe("getActivityState with activity JSONL", () => {
 
     const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result).toBeNull();
+  });
+});
+
+describe("detect()", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns true when agent --help contains 'Cursor Agent'", () => {
+    mockExecFileSync.mockReturnValueOnce("Usage: agent [options]\n\nStart the Cursor Agent\n");
+    expect(detect()).toBe(true);
+    expect(mockExecFileSync).toHaveBeenCalledWith("agent", ["--help"], { encoding: "utf-8" });
+  });
+
+  it("returns true when agent --help contains Cursor-specific flags (fallback)", () => {
+    // Even without "Cursor Agent" text, detect via unique flag combination
+    mockExecFileSync.mockReturnValueOnce(
+      "Usage: agent\n--sandbox enabled|disabled\n--approve-mcps\n",
+    );
+    expect(detect()).toBe(true);
+  });
+
+  it("returns false when agent binary is not found", () => {
+    mockExecFileSync.mockImplementationOnce(() => {
+      throw new Error("ENOENT");
+    });
+    expect(detect()).toBe(false);
+  });
+
+  it("returns false when agent --help has neither Cursor markers nor flags", () => {
+    mockExecFileSync.mockReturnValueOnce("Some other agent\nUsage: agent [options]\n");
+    expect(detect()).toBe(false);
+  });
+
+  it("returns false when only one Cursor flag is present (not enough)", () => {
+    // Need BOTH --sandbox AND --approve-mcps to match via flags
+    mockExecFileSync.mockReturnValueOnce("Usage: agent\n--sandbox enabled|disabled\n");
+    expect(detect()).toBe(false);
+  });
+
+  it("returns false when execFileSync throws an error", () => {
+    mockExecFileSync.mockImplementationOnce(() => {
+      throw new Error("Command failed");
+    });
+    expect(detect()).toBe(false);
   });
 });
