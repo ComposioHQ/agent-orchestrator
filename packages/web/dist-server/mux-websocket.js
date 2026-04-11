@@ -10,6 +10,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { homedir, userInfo } from "node:os";
 import { spawn } from "node:child_process";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { createSessionRecoverer } from "./session-recovery.js";
 /**
  * Manages a single shared SSE connection to Next.js /api/events.
  * Broadcasts session patches to all subscribed callbacks.
@@ -164,14 +165,28 @@ catch (err) {
 const RING_BUFFER_MAX = 50 * 1024; // 50KB max per terminal
 const MAX_REATTACH_ATTEMPTS = 3;
 /**
+ * Cool-down between auto-recovery attempts for the same session id.
+ * Prevents loops if the agent immediately crashes after respawn
+ * (next click will try again, but not an unbounded retry storm).
+ */
+const RECOVERY_COOLDOWN_MS = 60_000;
+/**
  * TerminalManager manages PTY processes independently of WebSocket connections.
  * A single manager instance is shared across all mux connections.
  */
 class TerminalManager {
     terminals = new Map();
     TMUX;
-    constructor(tmuxPath) {
+    /** Auto-recovery function (respawns tmux via /api/sessions/:id/restore). */
+    recoverFn;
+    /** In-flight recovery promises keyed by session id — shared across
+     *  concurrent `openWithAutoRecovery` calls to avoid racing `tmux new-session`. */
+    recoveryInFlight = new Map();
+    /** Last auto-recovery attempt timestamp per session id (for cool-down). */
+    lastRecoveryAttemptAt = new Map();
+    constructor(tmuxPath, recoverFn) {
         this.TMUX = tmuxPath ?? findTmux();
+        this.recoverFn = recoverFn ?? null;
     }
     /**
      * Open/attach to a terminal. If already open, just return.
@@ -291,22 +306,104 @@ class TerminalManager {
         return tmuxSessionId;
     }
     /**
-     * Write data to the PTY if attached
+     * Open the terminal, and if the tmux session is missing, attempt an
+     * auto-recovery (respawn tmux via the Next.js /restore route) before
+     * giving up. Safe to call concurrently for the same id — the in-flight
+     * recovery promise is shared across callers.
+     *
+     * Intentionally separate from `open()` so the internal re-attach loop
+     * and the subscribe() fast-path stay synchronous.
+     */
+    async openWithAutoRecovery(id) {
+        if (!validateSessionId(id)) {
+            throw new Error(`Invalid session ID: ${id}`);
+        }
+        // Fast path — tmux session already exists.
+        if (resolveTmuxSession(id, this.TMUX)) {
+            return this.open(id);
+        }
+        // Slow path — tmux session is gone. Try to recover it.
+        if (!this.recoverFn) {
+            throw new Error(`Session not found: ${id}`);
+        }
+        // Rate-limit to prevent hammering /restore in a tight loop if the
+        // agent dies on every respawn. The user can still manually retry
+        // from the UI after the cool-down expires.
+        const lastAttempt = this.lastRecoveryAttemptAt.get(id) ?? 0;
+        const now = Date.now();
+        if (now - lastAttempt < RECOVERY_COOLDOWN_MS) {
+            throw new Error(`Session not found: ${id} (auto-recovery in cool-down, try again later)`);
+        }
+        // Dedup concurrent recovery for the same id (e.g. two browser tabs,
+        // React StrictMode double-mount, client reconnect resending `open`).
+        let recovery = this.recoveryInFlight.get(id);
+        if (!recovery) {
+            this.lastRecoveryAttemptAt.set(id, now);
+            console.log(`[MuxServer] Auto-recovering session ${id} — tmux session missing`);
+            recovery = this.recoverFn(id).finally(() => {
+                this.recoveryInFlight.delete(id);
+            });
+            this.recoveryInFlight.set(id, recovery);
+        }
+        const result = await recovery;
+        if (!result.ok) {
+            console.error(`[MuxServer] Auto-recovery failed for ${id}: ${result.reason ?? "unknown reason"}`);
+            throw new Error(`Session not found: ${id} — ${result.reason ?? "recovery failed"}`);
+        }
+        // Recovery succeeded — retry the resolve and continue with the normal
+        // open path. If tmux STILL isn't there we give up (restore lied, or
+        // something else killed it between calls).
+        const resolved = resolveTmuxSession(id, this.TMUX);
+        if (!resolved) {
+            throw new Error(`Session not found: ${id} (recovery reported success but tmux is still missing)`);
+        }
+        // Clear the cool-down timestamp on success so a future crash within the
+        // 60s window isn't blocked by a stale "recently attempted" marker.
+        // The cool-down exists to stop respawn loops after *failure*, not to
+        // rate-limit legitimate recoveries.
+        this.lastRecoveryAttemptAt.delete(id);
+        console.log(`[MuxServer] Auto-recovery succeeded for ${id}`);
+        return this.open(id);
+    }
+    /**
+     * Write data to the PTY if attached.
+     *
+     * Returns `false` when there was no PTY to write to. That's almost always
+     * benign (client sent data between open/close), but it also covers the
+     * window where an async `openWithAutoRecovery` is still in flight — any
+     * data typed during that window is silently lost. Callers that care can
+     * use the return value to warn.
      */
     write(id, data) {
         const terminal = this.terminals.get(id);
         if (terminal?.pty) {
             terminal.pty.write(data);
+            return true;
         }
+        return false;
     }
     /**
-     * Resize the PTY if attached
+     * Resize the PTY if attached.
+     *
+     * Returns `false` when there was no PTY to resize. See `write()` for the
+     * in-flight-recovery caveat; for resize, MuxProvider's replay-on-opened
+     * logic compensates, but callers may still want to log the drop.
      */
     resize(id, cols, rows) {
         const terminal = this.terminals.get(id);
         if (terminal?.pty) {
             terminal.pty.resize(cols, rows);
+            return true;
         }
+        return false;
+    }
+    /**
+     * Whether auto-recovery is currently in flight for this id. Used by the
+     * ws message loop to decide whether a dropped write/resize is expected
+     * (recovery in progress) or a real bug.
+     */
+    isRecovering(id) {
+        return this.recoveryInFlight.has(id);
     }
     /**
      * Subscribe to terminal data. Returns unsubscribe function.
@@ -358,8 +455,9 @@ export function createMuxWebSocket(tmuxPath) {
         console.warn("[MuxServer] node-pty not available — mux WebSocket will be disabled");
         return null;
     }
-    const terminalManager = new TerminalManager(tmuxPath);
     const nextPort = process.env.PORT || "3000";
+    const recoverFn = createSessionRecoverer(nextPort);
+    const terminalManager = new TerminalManager(tmuxPath, recoverFn);
     const broadcaster = new SessionBroadcaster(nextPort);
     const wss = new WebSocketServer({ noServer: true });
     wss.on("connection", (ws) => {
@@ -387,9 +485,14 @@ export function createMuxWebSocket(tmuxPath) {
             missedPongs = 0;
         });
         /**
-         * Handle incoming messages
+         * Handle incoming messages.
+         *
+         * Async because `openWithAutoRecovery` may need to call the Next.js
+         * /restore route to respawn a dead tmux session. All other message
+         * types remain synchronous; the `await` only pays its cost when a
+         * recovery is actually needed.
          */
-        ws.on("message", (data) => {
+        ws.on("message", async (data) => {
             try {
                 const msg = JSON.parse(data.toString("utf8"));
                 if (msg.ch === "system") {
@@ -402,8 +505,14 @@ export function createMuxWebSocket(tmuxPath) {
                     const { id, type } = msg;
                     try {
                         if (type === "open") {
-                            // Validate session exists
-                            terminalManager.open(id);
+                            // Validate + auto-recover if tmux session died out-of-band.
+                            // This is the only async branch — all other handlers remain sync.
+                            await terminalManager.openWithAutoRecovery(id);
+                            // The WebSocket may have been closed while /restore was running
+                            // (30s timeout). Bail silently; the client will reconnect and
+                            // retry `open`.
+                            if (ws.readyState !== WebSocket.OPEN)
+                                return;
                             // Send opened confirmation (idempotent — safe to send on re-open)
                             const openedMsg = { ch: "terminal", id, type: "opened" };
                             ws.send(JSON.stringify(openedMsg));
@@ -442,10 +551,21 @@ export function createMuxWebSocket(tmuxPath) {
                             }
                         }
                         else if (type === "data" && "data" in msg) {
-                            terminalManager.write(id, msg.data);
+                            const ok = terminalManager.write(id, msg.data);
+                            if (!ok && terminalManager.isRecovering(id)) {
+                                // Keystrokes arriving while auto-recovery is in flight are
+                                // silently dropped. Log so this is diagnosable; a future
+                                // change could buffer them and flush after `opened`.
+                                console.warn(`[MuxServer] Dropped data for ${id} — auto-recovery in flight`);
+                            }
                         }
                         else if (type === "resize" && "cols" in msg && "rows" in msg) {
-                            terminalManager.resize(id, msg.cols, msg.rows);
+                            const ok = terminalManager.resize(id, msg.cols, msg.rows);
+                            if (!ok && terminalManager.isRecovering(id)) {
+                                // Benign — MuxProvider will replay the size on the `opened`
+                                // frame once recovery finishes. Log for parity with `data`.
+                                console.warn(`[MuxServer] Dropped resize for ${id} — auto-recovery in flight (will replay on opened)`);
+                            }
                         }
                         else if (type === "close") {
                             // Unsubscribe this client only — TerminalManager is shared across

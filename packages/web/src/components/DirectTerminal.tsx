@@ -115,7 +115,7 @@ export function DirectTerminal({
   const searchParams = useSearchParams();
   const { resolvedTheme } = useTheme();
   const terminalThemes = useMemo(() => buildTerminalThemes(variant), [variant]);
-  const { subscribeTerminal, writeTerminal, resizeTerminal: resizeTerminalMux, openTerminal, closeTerminal, status: muxStatus } = useMux();
+  const { subscribeTerminal, writeTerminal, resizeTerminal: resizeTerminalMux, openTerminal, closeTerminal, status: muxStatus, subscribeTerminalError } = useMux();
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<TerminalType | null>(null);
@@ -126,6 +126,24 @@ export function DirectTerminal({
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+  // Per-terminal error pushed from the server (e.g. "Session not found").
+  // Takes precedence over `muxStatus === "connected"` when rendering the chrome.
+  const [terminalError, setTerminalError] = useState<string | null>(null);
+
+  // Subscribe to server-pushed terminal errors for this sessionId.
+  useEffect(() => {
+    const unsub = subscribeTerminalError(sessionId, (err) => {
+      setTerminalError(err);
+    });
+    return unsub;
+  }, [sessionId, subscribeTerminalError]);
+
+  // Retry: re-send the mux `open` message. The server will retry
+  // auto-recovery (respawn tmux via /api/sessions/:id/restore) on its own.
+  const handleRetryTerminal = () => {
+    setTerminalError(null);
+    openTerminal(sessionId);
+  };
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -489,8 +507,15 @@ export function DirectTerminal({
 
   const accentColor = "var(--color-accent)";
 
-  // Local errors (e.g. xterm.js load failure) take priority over mux connection state
-  const displayStatus = error ? "error" : muxStatus;
+  // Error precedence (highest first):
+  //   1. Local errors (e.g. xterm.js load failure)
+  //   2. Server-pushed terminal errors (e.g. "Session not found" from mux)
+  //   3. Mux connection state
+  // Terminal errors must win over `muxStatus === "connected"` because the
+  // websocket can be perfectly healthy while the underlying tmux session
+  // has died — we must not lie about "Connected" in that state.
+  const effectiveError = error ?? terminalError;
+  const displayStatus = effectiveError ? "error" : muxStatus;
 
   const statusDotClass =
     displayStatus === "connected"
@@ -503,7 +528,7 @@ export function DirectTerminal({
     displayStatus === "connected"
       ? "Connected"
       : displayStatus === "error"
-        ? (error ?? "Error")
+        ? (effectiveError ?? "Error")
         : displayStatus === "disconnected"
           ? "Disconnected"
           : "Connecting…";
@@ -544,13 +569,36 @@ export function DirectTerminal({
         >
           XDA
         </span>
+        {terminalError ? (
+          <button
+            onClick={handleRetryTerminal}
+            title={`Retry: ${terminalError}`}
+            aria-label="Retry terminal connection"
+            className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-[var(--color-status-error)] transition-colors hover:bg-[var(--color-bg-subtle)]"
+          >
+            <svg
+              className="h-3 w-3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
+              <path d="M21 12a9 9 0 11-2.64-6.36" />
+              <path d="M21 3v6h-6" />
+            </svg>
+            retry
+          </button>
+        ) : null}
         {isOpenCodeSession ? (
           <button
             onClick={handleReload}
             disabled={reloading || muxStatus !== "connected"}
             title="Restart OpenCode session (/exit then resume mapped session)"
             aria-label="Restart OpenCode session"
-            className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
+            className={cn(
+              "flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70",
+              !terminalError && "ml-auto",
+            )}
           >
             {reloading ? (
               <>
@@ -594,7 +642,7 @@ export function DirectTerminal({
           onClick={() => setFullscreen(!fullscreen)}
           className={cn(
             "flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
-            !isOpenCodeSession && "ml-auto",
+            !isOpenCodeSession && !terminalError && "ml-auto",
           )}
         >
           {fullscreen ? (

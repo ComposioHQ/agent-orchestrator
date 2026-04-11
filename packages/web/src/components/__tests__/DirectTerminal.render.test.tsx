@@ -95,6 +95,7 @@ vi.mock("@/hooks/useMux", () => ({
     openTerminal: vi.fn(),
     closeTerminal: vi.fn(),
     resizeTerminal: vi.fn(),
+    subscribeTerminalError: vi.fn(() => vi.fn()),
     status: "connected",
     sessions: [],
     terminals: [],

@@ -9,6 +9,13 @@ interface MuxContextValue {
   openTerminal: (id: string) => void;
   closeTerminal: (id: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => void;
+  /**
+   * Subscribe to terminal-level errors (e.g. "Session not found").
+   * The callback is invoked with the latest error for the given id, or `null`
+   * when the error clears (next successful `opened` message). Fires once
+   * immediately with the current state when a new subscriber attaches.
+   */
+  subscribeTerminalError: (id: string, callback: (error: string | null) => void) => () => void;
   status: "connecting" | "connected" | "reconnecting" | "disconnected";
   sessions: SessionPatch[];
 }
@@ -72,6 +79,19 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const subscribersRef = useRef(new Map<string, Set<(data: string) => void>>());
   const openedTerminalsRef = useRef(new Set<string>());
+  // Per-terminal error state (latest message from a `terminal.error` server
+  // frame). Absence of an entry means "no error" — we `delete` on recovery
+  // rather than setting to `null` so the map doesn't accumulate tombstones
+  // across a long session with many terminals.
+  const terminalErrorsRef = useRef(new Map<string, string>());
+  const errorSubscribersRef = useRef(
+    new Map<string, Set<(error: string | null) => void>>(),
+  );
+  // Last `{cols, rows}` sent per terminal id. Replayed on every `opened`
+  // frame so auto-recovered PTYs (which spawn at the server's 80×24 default)
+  // are resized back to the client's actual dimensions without waiting for
+  // the user to nudge the window. See handler in the `message` listener.
+  const terminalSizesRef = useRef(new Map<string, { cols: number; rows: number }>());
   const [status, setStatus] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">(
     "connecting",
   );
@@ -138,6 +158,35 @@ export function MuxProvider({ children }: { children: ReactNode }) {
             } else if (msg.type === "opened") {
               // Terminal opened successfully
               openedTerminalsRef.current.add(msg.id);
+              // Clear any stale error for this terminal (e.g. from a previous
+              // failed open that has now recovered). Delete the entry rather
+              // than setting it to `null` so the map doesn't grow unbounded
+              // across a long session with many opened terminals.
+              if (terminalErrorsRef.current.has(msg.id)) {
+                terminalErrorsRef.current.delete(msg.id);
+                const errSubs = errorSubscribersRef.current.get(msg.id);
+                if (errSubs) {
+                  for (const callback of errSubs) callback(null);
+                }
+              }
+              // Replay the last known size so auto-recovered PTYs (which
+              // spawn at the server's default 80×24) end up at the client's
+              // actual dimensions. The initial resize sent right after the
+              // open message is dropped on the server if recovery is still
+              // in flight (no PTY entry exists yet), so this replay is the
+              // thing that makes the restored terminal render at the right
+              // size without requiring a manual nudge.
+              const lastSize = terminalSizesRef.current.get(msg.id);
+              if (lastSize && wsRef.current?.readyState === WebSocket.OPEN) {
+                const resizeMsg: ClientMessage = {
+                  ch: "terminal",
+                  id: msg.id,
+                  type: "resize",
+                  cols: lastSize.cols,
+                  rows: lastSize.rows,
+                };
+                wsRef.current.send(JSON.stringify(resizeMsg));
+              }
             } else if (msg.type === "exited") {
               // PTY exited and could not be re-attached — remove so it isn't
               // re-opened on reconnect, and surface a terminal-level error chunk
@@ -151,6 +200,13 @@ export function MuxProvider({ children }: { children: ReactNode }) {
               }
             } else if (msg.type === "error") {
               console.error(`[MuxProvider] Terminal error for ${msg.id}:`, msg.message);
+              // Persist error so new subscribers get it immediately and
+              // DirectTerminal can render it instead of a green "Connected".
+              terminalErrorsRef.current.set(msg.id, msg.message);
+              const errSubs = errorSubscribersRef.current.get(msg.id);
+              if (errSubs) {
+                for (const callback of errSubs) callback(msg.message);
+              }
             }
           } else if (msg.ch === "sessions" && msg.type === "snapshot") {
             setSessions(msg.sessions);
@@ -283,6 +339,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
 
   const closeTerminal = useCallback((id: string) => {
     openedTerminalsRef.current.delete(id);
+    terminalSizesRef.current.delete(id);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const msg: ClientMessage = {
         ch: "terminal",
@@ -294,6 +351,9 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resizeTerminal = useCallback((id: string, cols: number, rows: number) => {
+    // Cache even if the socket isn't open yet — the next `opened` replay
+    // will pick up whatever size the client computed while disconnected.
+    terminalSizesRef.current.set(id, { cols, rows });
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const msg: ClientMessage = {
         ch: "terminal",
@@ -306,6 +366,33 @@ export function MuxProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const subscribeTerminalError = useCallback(
+    (id: string, callback: (error: string | null) => void): (() => void) => {
+      let subs = errorSubscribersRef.current.get(id);
+      if (!subs) {
+        subs = new Set();
+        errorSubscribersRef.current.set(id, subs);
+      }
+      subs.add(callback);
+
+      // Fire once with the current state so new subscribers don't have to
+      // wait for the next server message to render.
+      const current = terminalErrorsRef.current.get(id) ?? null;
+      callback(current);
+
+      return () => {
+        const s = errorSubscribersRef.current.get(id);
+        if (s) {
+          s.delete(callback);
+          if (s.size === 0) {
+            errorSubscribersRef.current.delete(id);
+          }
+        }
+      };
+    },
+    [],
+  );
+
   const contextValue: MuxContextValue = useMemo(
     () => ({
       subscribeTerminal,
@@ -313,10 +400,20 @@ export function MuxProvider({ children }: { children: ReactNode }) {
       openTerminal,
       closeTerminal,
       resizeTerminal,
+      subscribeTerminalError,
       status,
       sessions,
     }),
-    [subscribeTerminal, writeTerminal, openTerminal, closeTerminal, resizeTerminal, status, sessions],
+    [
+      subscribeTerminal,
+      writeTerminal,
+      openTerminal,
+      closeTerminal,
+      resizeTerminal,
+      subscribeTerminalError,
+      status,
+      sessions,
+    ],
   );
 
   return <MuxContext.Provider value={contextValue}>{children}</MuxContext.Provider>;
