@@ -317,8 +317,8 @@ export function createStateStore(configPath: string, projectPath: string): State
 export async function migrateFromMetadata(
   configPath: string,
   projectPath: string,
+  projectId: string,
 ): Promise<number> {
-  const projectId = generateProjectId(projectPath);
   const sessionsDir = getSessionsDir(configPath, projectPath);
 
   if (!existsSync(sessionsDir)) {
@@ -393,7 +393,7 @@ export async function migrateAllProjects(configPath: string): Promise<
     string,
     { path: string },
   ][]) {
-    const count = await migrateFromMetadata(configPath, projectConfig.path);
+    const count = await migrateFromMetadata(configPath, projectConfig.path, projectId);
     if (count > 0) {
       results.push({
         projectPath: projectConfig.path,

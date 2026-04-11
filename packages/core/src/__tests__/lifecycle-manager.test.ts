@@ -11,6 +11,7 @@ import type {
   Agent,
   ActivityState,
   SessionStatus,
+  LifecycleManager,
 } from "../types.js";
 import {
   createTestEnvironment,
@@ -24,6 +25,12 @@ import {
   type TestEnvironment,
   type MockPlugins,
 } from "./test-utils.js";
+
+// Helper to flush microtasks without running pending timers
+const flush = () =>
+  new Promise<void>((resolve) => {
+    setImmediate(() => resolve());
+  });
 
 let env: TestEnvironment;
 let plugins: MockPlugins;
@@ -44,23 +51,21 @@ afterEach(() => {
 });
 
 describe("runCompactLog helper", () => {
-  it("records observer success", () => {
+  it("records observer success", async () => {
     const observer = { recordOperation: vi.fn() };
-    const store = { compactLog: vi.fn() };
-    runCompactLog(store as any, observer as any, "test-project");
+    const store = { compactLog: vi.fn().mockResolvedValue(undefined) };
+    await runCompactLog(store as any, observer as any, "test-project");
     expect(observer.recordOperation).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "success", operation: "compact_log" }),
     );
   });
 
-  it("records failure when compaction throws", () => {
+  it("records failure when compaction throws", async () => {
     const observer = { recordOperation: vi.fn() };
     const store = {
-      compactLog: vi.fn().mockImplementation(() => {
-        throw new Error("boom");
-      }),
+      compactLog: vi.fn().mockRejectedValue(new Error("boom")),
     };
-    runCompactLog(store as any, observer as any, undefined);
+    await runCompactLog(store as any, observer as any, undefined);
     expect(observer.recordOperation).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "failure", reason: "boom" }),
     );
@@ -1720,7 +1725,10 @@ describe("rate limiting optimizations", () => {
       sessionManager: mockSessionManager,
     });
     lm.start(60_000);
-    await vi.advanceTimersByTimeAsync(0);
+    // Advance time to trigger the interval and let the poll run to completion
+    await vi.advanceTimersByTimeAsync(60_000);
+    // Wait for any pending microtasks from the poll
+    await flush();
     lm.stop();
 
     // getMergeability() should NOT be called — batch enrichment has the data
@@ -1787,13 +1795,11 @@ describe("rate limiting optimizations", () => {
       sessionManager: mockSessionManager,
     });
     lm.start(60_000);
-    // First poll: transitions to ci_failed, sends reaction message
-    await vi.advanceTimersByTimeAsync(0);
-
-    vi.mocked(mockSessionManager.send).mockClear();
-
-    // Second poll: dispatches detailed CI failure info
+    // Advance time to trigger the interval and let the poll run to completion
     await vi.advanceTimersByTimeAsync(60_000);
+    // Wait for any pending microtasks from the poll
+    await flush();
+    lm.stop();
 
     // getCIChecks() should NOT be called — batch enrichment has ciChecks
     expect(getCIChecksMock).not.toHaveBeenCalled();
@@ -1805,8 +1811,6 @@ describe("rate limiting optimizations", () => {
     expect(detailMessage).toContain("https://example.com/lint");
     // Passing check should not be included
     expect(detailMessage).not.toContain("test");
-
-    lm.stop();
   });
 
   it("throttles review backlog API calls to at most once per 2 minutes", async () => {

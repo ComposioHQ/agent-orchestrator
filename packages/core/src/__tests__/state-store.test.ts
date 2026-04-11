@@ -382,7 +382,7 @@ describe("StateStore", () => {
         agent: "claude-code",
       });
 
-      const count = await migrateFromMetadata(configPath, projectPath);
+      const count = await migrateFromMetadata(configPath, projectPath, "my-app");
 
       expect(count).toBe(2);
       expect(hasStateStore(configPath, projectPath)).toBe(true);
@@ -446,7 +446,7 @@ projects:
     it("migrateFromMetadata returns 0 when no sessions exist", async () => {
       mkdirSync(join(tmpDir, "my-app"), { recursive: true });
 
-      const count = await migrateFromMetadata(configPath, projectPath);
+      const count = await migrateFromMetadata(configPath, projectPath, "my-app");
 
       expect(count).toBe(0);
     });
