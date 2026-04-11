@@ -15,7 +15,7 @@
     "dev": "concurrently \"npm:dev:next\" \"npm:dev:direct-terminal\"",
     "dev:next": "next dev -p ${PORT:-3000}",
     "dev:direct-terminal": "tsx watch server/direct-terminal-ws.ts",
-    "prebuild": "rm -rf .next",
+    "prebuild": "rm -rf .next dist-server",
     "build": "next build && tsc -p tsconfig.server.json",
     "start": "next start",
     "start:all": "node dist-server/start-all.js",
