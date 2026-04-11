@@ -11,7 +11,6 @@ import type {
   Agent,
   ActivityState,
   SessionStatus,
-  LifecycleManager,
 } from "../types.js";
 import {
   createTestEnvironment,
