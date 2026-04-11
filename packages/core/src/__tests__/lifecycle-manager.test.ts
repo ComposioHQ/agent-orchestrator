@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { createLifecycleManager, runCompactLog } from "../lifecycle-manager.js";
+import type { LifecycleManager } from "../types.js";
 import { createSessionManager } from "../session-manager.js";
 import { writeMetadata, readMetadataRaw } from "../metadata.js";
 import { getEventsFilePath } from "../state-store.js";
@@ -55,7 +56,11 @@ describe("runCompactLog helper", () => {
 
   it("records failure when compaction throws", () => {
     const observer = { recordOperation: vi.fn() };
-    const store = { compactLog: vi.fn().mockImplementation(() => { throw new Error("boom"); }) };
+    const store = {
+      compactLog: vi.fn().mockImplementation(() => {
+        throw new Error("boom");
+      }),
+    };
     runCompactLog(store as any, observer as any, undefined);
     expect(observer.recordOperation).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "failure", reason: "boom" }),
@@ -64,7 +69,7 @@ describe("runCompactLog helper", () => {
 });
 
 /** Helper: write standard session metadata and return a lifecycle manager */
-function setupCheck(
+async function setupCheck(
   sessionId: string,
   opts: {
     session: ReturnType<typeof makeSession>;
@@ -72,7 +77,7 @@ function setupCheck(
     registry?: PluginRegistry;
     configOverride?: OrchestratorConfig;
   },
-) {
+): Promise<LifecycleManager> {
   vi.mocked(mockSessionManager.get).mockResolvedValue(opts.session);
 
   writeMetadata(env.sessionsDir, sessionId, {
@@ -83,7 +88,7 @@ function setupCheck(
     ...opts.metaOverrides,
   });
 
-  return createLifecycleManager({
+  return await createLifecycleManager({
     config: opts.configOverride ?? config,
     registry: opts.registry ?? mockRegistry,
     sessionManager: mockSessionManager,
@@ -91,8 +96,8 @@ function setupCheck(
 }
 
 describe("start / stop", () => {
-  it("starts and stops the polling loop", () => {
-    const lm = createLifecycleManager({
+  it("starts and stops the polling loop", async () => {
+    const lm = await createLifecycleManager({
       config,
       registry: mockRegistry,
       sessionManager: mockSessionManager,
@@ -109,7 +114,7 @@ describe("start / stop", () => {
 
 describe("check (single session)", () => {
   it("detects transition from spawning to working", async () => {
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "spawning" }),
     });
 
@@ -121,7 +126,7 @@ describe("check (single session)", () => {
   });
 
   it("persists an initial snapshot for a newly discovered session", async () => {
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "working", metadata: { agent: "mock-agent" } }),
       metaOverrides: { agent: "mock-agent" },
     });
@@ -129,7 +134,9 @@ describe("check (single session)", () => {
     await lm.check("app-1");
 
     const eventsFile = getEventsFilePath(env.configPath, config.projects["my-app"]!.path);
-    const lines = readFileSync(eventsFile, "utf-8").split("\n").filter((line) => line.trim());
+    const lines = readFileSync(eventsFile, "utf-8")
+      .split("\n")
+      .filter((line) => line.trim());
     expect(lines.length).toBe(1);
     expect(JSON.parse(lines[0])).toEqual(
       expect.objectContaining({
@@ -172,7 +179,7 @@ describe("check (single session)", () => {
       },
     };
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "working", metadata: {} }),
       registry: registryWithMultipleAgents,
       configOverride: configWithWorkerAgent,
@@ -187,7 +194,7 @@ describe("check (single session)", () => {
   it("detects killed state when runtime is dead", async () => {
     vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "working" }),
     });
 
@@ -198,7 +205,7 @@ describe("check (single session)", () => {
   it("detects killed state when getActivityState returns exited", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "exited" });
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "working" }),
     });
 
@@ -211,7 +218,7 @@ describe("check (single session)", () => {
     vi.mocked(plugins.agent.detectActivity).mockReturnValue("idle");
     vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "working" }),
     });
 
@@ -224,7 +231,7 @@ describe("check (single session)", () => {
     vi.mocked(plugins.agent.detectActivity).mockReturnValue("idle");
     vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(true);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "working" }),
     });
 
@@ -235,7 +242,7 @@ describe("check (single session)", () => {
   it("detects needs_input from agent", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "waiting_input" });
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "working" }),
     });
 
@@ -253,7 +260,7 @@ describe("check (single session)", () => {
       timestamp: new Date(Date.now() - 120_000),
     });
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "working", metadata: { agent: "mock-agent" } }),
       metaOverrides: { agent: "mock-agent" },
     });
@@ -276,7 +283,7 @@ describe("check (single session)", () => {
       timestamp: new Date(Date.now() - 120_000),
     });
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "working", metadata: { agent: "mock-agent" } }),
       metaOverrides: { agent: "mock-agent" },
     });
@@ -312,7 +319,7 @@ describe("check (single session)", () => {
       timestamp: new Date(Date.now() - 120_000),
     });
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({
         status: "working",
         branch: "feat/test",
@@ -334,7 +341,7 @@ describe("check (single session)", () => {
   it("preserves stuck state when getActivityState throws", async () => {
     vi.mocked(plugins.agent.getActivityState).mockRejectedValue(new Error("probe failed"));
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "stuck" }),
     });
 
@@ -345,7 +352,7 @@ describe("check (single session)", () => {
   it("preserves needs_input state when getActivityState throws", async () => {
     vi.mocked(plugins.agent.getActivityState).mockRejectedValue(new Error("probe failed"));
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "needs_input" }),
     });
 
@@ -357,7 +364,7 @@ describe("check (single session)", () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
     vi.mocked(plugins.runtime.getOutput).mockRejectedValue(new Error("tmux error"));
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "stuck" }),
     });
 
@@ -373,7 +380,7 @@ describe("check (single session)", () => {
       scm: mockSCM,
     });
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -404,7 +411,7 @@ describe("check (single session)", () => {
     expect(session).not.toBeNull();
     vi.mocked(mockSessionManager.get).mockResolvedValue(session);
 
-    const lm = createLifecycleManager({
+    const lm = await createLifecycleManager({
       config,
       registry,
       sessionManager: mockSessionManager,
@@ -438,7 +445,7 @@ describe("check (single session)", () => {
     expect(session).not.toBeNull();
     vi.mocked(mockSessionManager.get).mockResolvedValue(session);
 
-    const lm = createLifecycleManager({
+    const lm = await createLifecycleManager({
       config,
       registry,
       sessionManager: mockSessionManager,
@@ -471,7 +478,7 @@ describe("check (single session)", () => {
     expect(session).not.toBeNull();
     vi.mocked(mockSessionManager.get).mockResolvedValue(session);
 
-    const lm = createLifecycleManager({
+    const lm = await createLifecycleManager({
       config,
       registry,
       sessionManager: mockSessionManager,
@@ -491,7 +498,7 @@ describe("check (single session)", () => {
       scm: mockSCM,
     });
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "approved", pr: makePR() }),
       registry,
     });
@@ -517,7 +524,7 @@ describe("check (single session)", () => {
       scm: mockSCM,
     });
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -529,7 +536,7 @@ describe("check (single session)", () => {
   it("throws for nonexistent session", async () => {
     vi.mocked(mockSessionManager.get).mockResolvedValue(null);
 
-    const lm = createLifecycleManager({
+    const lm = await createLifecycleManager({
       config,
       registry: mockRegistry,
       sessionManager: mockSessionManager,
@@ -539,7 +546,7 @@ describe("check (single session)", () => {
   });
 
   it("does not change state when status is unchanged", async () => {
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "working" }),
     });
 
@@ -571,7 +578,7 @@ describe("reactions", () => {
       scm: mockSCM,
     });
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -592,7 +599,7 @@ describe("reactions", () => {
       scm: mockSCM,
     });
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -633,7 +640,7 @@ describe("reactions", () => {
       },
     };
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
       configOverride: configWithReaction,
@@ -678,7 +685,7 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -728,7 +735,7 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -772,7 +779,7 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -834,7 +841,7 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -872,9 +879,9 @@ describe("reactions", () => {
 
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
-      getCIChecks: vi.fn().mockResolvedValue([
-        { name: "lint", status: "failed", conclusion: "FAILURE" },
-      ]),
+      getCIChecks: vi
+        .fn()
+        .mockResolvedValue([{ name: "lint", status: "failed", conclusion: "FAILURE" }]),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -884,7 +891,7 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -920,9 +927,9 @@ describe("reactions", () => {
       },
     };
 
-    const getCIChecksMock = vi.fn().mockResolvedValue([
-      { name: "lint", status: "failed", conclusion: "FAILURE" },
-    ]);
+    const getCIChecksMock = vi
+      .fn()
+      .mockResolvedValue([{ name: "lint", status: "failed", conclusion: "FAILURE" }]);
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
       getCIChecks: getCIChecksMock,
@@ -935,7 +942,7 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -974,9 +981,9 @@ describe("reactions", () => {
 
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
-      getCIChecks: vi.fn().mockResolvedValue([
-        { name: "lint", status: "failed", conclusion: "FAILURE" },
-      ]),
+      getCIChecks: vi
+        .fn()
+        .mockResolvedValue([{ name: "lint", status: "failed", conclusion: "FAILURE" }]),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -986,7 +993,7 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -1014,9 +1021,9 @@ describe("reactions", () => {
     };
 
     const getCISummaryMock = vi.fn().mockResolvedValue("failing");
-    const getCIChecksMock = vi.fn().mockResolvedValue([
-      { name: "lint", status: "failed", conclusion: "FAILURE" },
-    ]);
+    const getCIChecksMock = vi
+      .fn()
+      .mockResolvedValue([{ name: "lint", status: "failed", conclusion: "FAILURE" }]);
     const mockSCM = createMockSCM({
       getCISummary: getCISummaryMock,
       getCIChecks: getCIChecksMock,
@@ -1029,7 +1036,7 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -1074,9 +1081,9 @@ describe("reactions", () => {
 
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
-      getCIChecks: vi.fn().mockResolvedValue([
-        { name: "lint", status: "failed", conclusion: "FAILURE" },
-      ]),
+      getCIChecks: vi
+        .fn()
+        .mockResolvedValue([{ name: "lint", status: "failed", conclusion: "FAILURE" }]),
     });
 
     const registry: PluginRegistry = {
@@ -1090,7 +1097,7 @@ describe("reactions", () => {
       }),
     };
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
       configOverride: configWithNotify,
@@ -1147,7 +1154,7 @@ describe("reactions", () => {
       }),
     };
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
       configOverride: configWithNotify,
@@ -1184,7 +1191,7 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -1222,7 +1229,7 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -1264,7 +1271,7 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -1326,7 +1333,7 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -1357,7 +1364,7 @@ describe("reactions", () => {
       }),
     };
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "approved", pr: makePR() }),
       registry,
     });
@@ -1399,7 +1406,7 @@ describe("reactions", () => {
       }),
     };
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "approved", pr: makePR() }),
       registry,
       configOverride: configWithAliasRouting,
@@ -1445,7 +1452,7 @@ describe("reactions", () => {
       }),
     };
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "approved", pr: makePR() }),
       registry,
       configOverride: configWithAliasDefaults,
@@ -1491,7 +1498,7 @@ describe("reactions", () => {
       }),
     };
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "approved", pr: makePR() }),
       registry,
       configOverride: configWithSharedPluginAliases,
@@ -1545,7 +1552,7 @@ describe("pollAll terminal status accounting", () => {
       "all-complete": { auto: true, action: "notify" },
     };
 
-    const lm = createLifecycleManager({
+    const lm = await createLifecycleManager({
       config,
       registry: registryWithNotifier,
       sessionManager: mockSessionManager,
@@ -1586,7 +1593,7 @@ describe("pollAll terminal status accounting", () => {
       "all-complete": { auto: true, action: "notify" },
     };
 
-    const lm = createLifecycleManager({
+    const lm = await createLifecycleManager({
       config,
       registry: registryWithNotifier,
       sessionManager: mockSessionManager,
@@ -1596,13 +1603,13 @@ describe("pollAll terminal status accounting", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     // all-complete should NOT have fired — "working" is still active
-    const allCompleteNotifications = vi.mocked(notifier.notify).mock.calls.filter(
-      (call: unknown[]) => {
+    const allCompleteNotifications = vi
+      .mocked(notifier.notify)
+      .mock.calls.filter((call: unknown[]) => {
         const event = call[0] as Record<string, unknown> | undefined;
         const data = event?.data as Record<string, unknown> | undefined;
         return event?.type === "reaction.triggered" && data?.reactionKey === "all-complete";
-      },
-    );
+      });
     expect(allCompleteNotifications).toHaveLength(0);
 
     lm.stop();
@@ -1621,7 +1628,7 @@ describe("pollAll terminal status accounting", () => {
     // Reset call count and verify it's not called.
     vi.mocked(plugins.runtime.isAlive).mockClear();
 
-    const lm = createLifecycleManager({
+    const lm = await createLifecycleManager({
       config,
       registry: mockRegistry,
       sessionManager: mockSessionManager,
@@ -1639,7 +1646,7 @@ describe("pollAll terminal status accounting", () => {
 
 describe("getStates", () => {
   it("returns copy of states map", async () => {
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "spawning" }),
     });
 
@@ -1708,7 +1715,11 @@ describe("rate limiting optimizations", () => {
     vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = createLifecycleManager({ config, registry, sessionManager: mockSessionManager });
+    const lm = await createLifecycleManager({
+      config,
+      registry,
+      sessionManager: mockSessionManager,
+    });
     lm.start(60_000);
     await vi.advanceTimersByTimeAsync(0);
     lm.stop();
@@ -1746,7 +1757,12 @@ describe("rate limiting optimizations", () => {
               mergeable: false,
               hasConflicts: false,
               ciChecks: [
-                { name: "lint", status: "failed" as const, conclusion: "FAILURE", url: "https://example.com/lint" },
+                {
+                  name: "lint",
+                  status: "failed" as const,
+                  conclusion: "FAILURE",
+                  url: "https://example.com/lint",
+                },
                 { name: "test", status: "passed" as const, conclusion: "SUCCESS" },
               ],
             },
@@ -1766,7 +1782,11 @@ describe("rate limiting optimizations", () => {
     vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = createLifecycleManager({ config, registry, sessionManager: mockSessionManager });
+    const lm = await createLifecycleManager({
+      config,
+      registry,
+      sessionManager: mockSessionManager,
+    });
     lm.start(60_000);
     // First poll: transitions to ci_failed, sends reaction message
     await vi.advanceTimersByTimeAsync(0);
@@ -1824,7 +1844,7 @@ describe("rate limiting optimizations", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
     });
@@ -1859,7 +1879,7 @@ describe("summary pinning", () => {
       },
       metadata: {},
     });
-    const lm = setupCheck("app-1", { session });
+    const lm = await setupCheck("app-1", { session });
 
     await lm.check("app-1");
 
@@ -1877,7 +1897,7 @@ describe("summary pinning", () => {
       },
       metadata: {},
     });
-    const lm = setupCheck("app-1", { session });
+    const lm = await setupCheck("app-1", { session });
 
     await lm.check("app-1");
 
@@ -1895,7 +1915,7 @@ describe("summary pinning", () => {
       },
       metadata: { pinnedSummary: "Original pinned summary" },
     });
-    const lm = setupCheck("app-1", {
+    const lm = await setupCheck("app-1", {
       session,
       metaOverrides: { pinnedSummary: "Original pinned summary" },
     });
@@ -1916,7 +1936,7 @@ describe("summary pinning", () => {
       },
       metadata: {},
     });
-    const lm = setupCheck("app-1", { session });
+    const lm = await setupCheck("app-1", { session });
 
     await lm.check("app-1");
 
@@ -1944,7 +1964,7 @@ describe("summary pinning", () => {
         },
       },
     };
-    const lm = setupCheck("app-1", { session, configOverride: badConfig });
+    const lm = await setupCheck("app-1", { session, configOverride: badConfig });
 
     // Should not throw — error is swallowed
     await expect(lm.check("app-1")).resolves.not.toThrow();

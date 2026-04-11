@@ -17,7 +17,6 @@ import {
   readdirSync,
   writeFileSync,
   mkdirSync,
-  appendFileSync,
   utimesSync,
   unlinkSync,
 } from "node:fs";
@@ -70,7 +69,6 @@ import {
   generateTmuxName,
   validateAndStoreOrigin,
 } from "./paths.js";
-import { getEventsFilePath } from "./state-store.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
@@ -110,32 +108,6 @@ async function deleteOpenCodeSession(sessionId: string): Promise<void> {
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
-}
-
-function appendInitialSessionEvent(
-  config: OrchestratorConfig,
-  projectPath: string,
-  event: {
-    sessionId: SessionId;
-    projectId: string;
-    status: Session["status"];
-    metadata?: Record<string, unknown>;
-  },
-): void {
-  try {
-    const eventsPath = getEventsFilePath(config.configPath, projectPath);
-    mkdirSync(dirname(eventsPath), { recursive: true });
-    appendFileSync(
-      eventsPath,
-      `${JSON.stringify({
-        timestamp: Math.floor(Date.now() / 1000),
-        ...event,
-      })}\n`,
-      "utf-8",
-    );
-  } catch {
-    // Best effort — spawning must not fail if the event log is unavailable.
-  }
 }
 
 interface OpenCodeSessionListEntry {
@@ -785,8 +757,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
     // After config validation, plugin is always set if tracker/scm exists
     // (either from user config or auto-generated from package/path)
-    const tracker =
-      project.tracker?.plugin ? registry.get<Tracker>("tracker", project.tracker.plugin) : null;
+    const tracker = project.tracker?.plugin
+      ? registry.get<Tracker>("tracker", project.tracker.plugin)
+      : null;
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     return { runtime, agent, workspace, tracker, scm };
@@ -1221,24 +1194,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (Object.keys(session.metadata || {}).length > 0) {
         updateMetadata(sessionsDir, sessionId, session.metadata);
       }
-
-      appendInitialSessionEvent(config, project.path, {
-        sessionId,
-        projectId: spawnConfig.projectId,
-        status: session.status,
-        metadata: {
-          worktree: workspacePath,
-          branch,
-          status: "spawning",
-          tmuxName,
-          issue: spawnConfig.issueId,
-          project: spawnConfig.projectId,
-          agent: selection.agentName,
-          createdAt: new Date().toISOString(),
-          runtimeHandle: JSON.stringify(handle),
-          opencodeSessionId: session.metadata["opencodeSessionId"] ?? reusedOpenCodeSessionId,
-        },
-      });
     } catch (err) {
       // Clean up runtime and workspace on post-launch failure
       try {
@@ -1488,7 +1443,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_CALLER_TYPE: "orchestrator",
           AO_PROJECT_ID: orchestratorConfig.projectId,
           AO_CONFIG_PATH: config.configPath,
-          ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+          ...(config.port !== undefined &&
+            config.port !== null && { AO_PORT: String(config.port) }),
         },
       });
     } catch (err) {
@@ -1550,24 +1506,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (Object.keys(session.metadata || {}).length > 0) {
         updateMetadata(sessionsDir, sessionId, session.metadata);
       }
-
-      appendInitialSessionEvent(config, project.path, {
-        sessionId,
-        projectId: orchestratorConfig.projectId,
-        status: session.status,
-        metadata: {
-          worktree: workspacePath,
-          branch,
-          status: "working",
-          role: "orchestrator",
-          tmuxName,
-          project: orchestratorConfig.projectId,
-          agent: selection.agentName,
-          createdAt: new Date().toISOString(),
-          runtimeHandle: JSON.stringify(handle),
-          opencodeSessionId: session.metadata["opencodeSessionId"] ?? reusableOpenCodeSessionId,
-        },
-      });
     } catch (err) {
       // Clean up runtime on post-launch failure
       try {
@@ -2234,7 +2172,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
 
     for (const { sessionName, raw: otherRaw } of activeRecords) {
-      if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix)) continue;
+      if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix))
+        continue;
 
       const samePr = otherRaw["pr"] === pr.url;
       const sameBranch =

@@ -9,17 +9,17 @@
  */
 
 import {
-  appendFileSync,
-  copyFileSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  unlinkSync,
-} from "node:fs";
+  appendFile,
+  copyFile,
+  readFile,
+  rename,
+  writeFile,
+  mkdir,
+  readdir,
+  unlink,
+} from "node:fs/promises";
 import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import type { SessionId, SessionStatus } from "./types.js";
 import { readMetadata, listMetadata } from "./metadata.js";
 import { generateProjectId, getProjectBaseDir, getSessionsDir } from "./paths.js";
@@ -74,7 +74,6 @@ export class StateStore {
   private readonly stateDir: string;
   private readonly eventsFile: string;
   private state: Map<SessionId, SessionState> = new Map();
-  private persisted = new Set<SessionId>();
   private initialized = false;
 
   constructor(private readonly config: StateStoreConfig) {
@@ -86,9 +85,9 @@ export class StateStore {
   /**
    * Initialize the state store and hydrate from disk
    */
-  init(): void {
-    this.ensureDirectoryExists();
-    this.ensureEventsFileExists();
+  async init(): Promise<void> {
+    await this.ensureDirectoryExists();
+    await this.ensureEventsFileExists();
     this.hydrateState();
     this.initialized = true;
   }
@@ -96,9 +95,9 @@ export class StateStore {
   /**
    * Ensure the events.jsonl file exists (create if not present)
    */
-  private ensureEventsFileExists(): void {
+  private async ensureEventsFileExists(): Promise<void> {
     if (!existsSync(this.eventsFile)) {
-      writeFileSync(this.eventsFile, "", "utf-8");
+      await writeFile(this.eventsFile, "", "utf-8");
     }
   }
 
@@ -112,9 +111,9 @@ export class StateStore {
   /**
    * Ensure the state directory exists
    */
-  private ensureDirectoryExists(): void {
+  private async ensureDirectoryExists(): Promise<void> {
     if (!existsSync(this.stateDir)) {
-      mkdirSync(this.stateDir, { recursive: true });
+      await mkdir(this.stateDir, { recursive: true });
     }
   }
 
@@ -134,35 +133,27 @@ export class StateStore {
 
   /**
    * Append a new event to the JSONL log
-   * Uses file locking for safe concurrent writes
+   * Uses atomic append for safe concurrent writes
    */
-  appendEvent(event: SessionEvent): void {
+  async appendEvent(event: SessionEvent): Promise<void> {
     if (!this.initialized) {
       throw new Error("StateStore not initialized. Call init() first.");
     }
 
     const line = JSON.stringify(event) + "\n";
 
-    // Use appendFileSync for atomic append (no read-modify-write)
+    // Use appendFile with flag 'a' for atomic append (no read-modify-write)
     // The OS guarantees atomic writes for sizes < PIPE_BUF (typically 4KB)
-    // For larger writes, we use flock-style locking via fsYNC
-    appendFileSync(this.eventsFile, line, "utf-8");
+    await appendFile(this.eventsFile, line, { flag: "a" });
 
     // Update in-memory state
-    this.applyEvent(event, true);
-  }
-
-  /**
-   * Sync the in-memory state without appending to disk.
-   */
-  syncState(event: SessionEvent): void {
-    this.applyEvent(event, false);
+    this.applyEvent(event);
   }
 
   /**
    * Update in-memory state after applying an event
    */
-  private applyEvent(event: SessionEvent, persisted: boolean): void {
+  private applyEvent(event: SessionEvent): void {
     const existing = this.state.get(event.sessionId);
     const newState: SessionState = {
       sessionId: event.sessionId,
@@ -172,15 +163,6 @@ export class StateStore {
       metadata: event.metadata ?? existing?.metadata ?? {},
     };
     this.state.set(event.sessionId, newState);
-    if (persisted) {
-      this.persisted.add(event.sessionId);
-    } else {
-      // Only delete if session was NOT previously persisted
-      // This prevents syncState from downgrading persisted sessions
-      if (!this.persisted.has(event.sessionId)) {
-        this.persisted.delete(event.sessionId);
-      }
-    }
   }
 
   /**
@@ -205,7 +187,7 @@ export class StateStore {
 
       try {
         const event = JSON.parse(line) as SessionEvent;
-        this.applyEvent(event, true);
+        this.applyEvent(event);
       } catch {
         // Discard truncated/incomplete JSON lines
         // This is expected after crashes/power loss
@@ -218,7 +200,7 @@ export class StateStore {
    * Compact the log by rewriting with only the latest state per session
    * Archives the old log file before writing the new one
    */
-  compactLog(): void {
+  async compactLog(): Promise<void> {
     if (!this.initialized) {
       throw new Error("StateStore not initialized. Call init() first.");
     }
@@ -232,12 +214,9 @@ export class StateStore {
     const tempFile = join(this.stateDir, `events-${timestamp}.jsonl.tmp`);
     const archiveFile = join(this.stateDir, `events-${timestamp}.jsonl`);
 
-    // Write new compacted log into a temp file first
+    // Write new compacted log with all current in-memory state
     const lines: string[] = [];
     for (const [, sessionState] of this.state) {
-      if (!this.persisted.has(sessionState.sessionId)) {
-        continue;
-      }
       const event: SessionEvent = {
         timestamp: sessionState.lastUpdated,
         sessionId: sessionState.sessionId,
@@ -248,22 +227,22 @@ export class StateStore {
       lines.push(JSON.stringify(event));
     }
 
-    // Guard: don't overwrite log if there are no persisted entries
+    // Guard: don't overwrite log if there are no entries
     if (lines.length === 0) {
       return;
     }
 
-    writeFileSync(tempFile, lines.join("\n") + "\n", "utf-8");
+    await writeFile(tempFile, lines.join("\n") + "\n", "utf-8");
 
     // Copy the old log to an archive before swapping
     if (existsSync(this.eventsFile)) {
-      copyFileSync(this.eventsFile, archiveFile);
+      await copyFile(this.eventsFile, archiveFile);
     }
 
     // Replace the live log with the compacted content
     // Wrap in try/catch to ensure the temp file is cleaned up if rename fails
     try {
-      renameSync(tempFile, this.eventsFile);
+      await rename(tempFile, this.eventsFile);
     } catch (renameErr) {
       // Log the error gracefully
       process.stderr.write(
@@ -277,7 +256,7 @@ export class StateStore {
       );
       // Clean up the temp file to avoid leaving orphaned files
       try {
-        unlinkSync(tempFile);
+        await unlink(tempFile);
       } catch {
         // Best effort cleanup — ignore
       }
@@ -285,11 +264,12 @@ export class StateStore {
       return;
     }
 
-    this.cleanupArchives();
+    await this.cleanupArchives();
   }
 
-  private cleanupArchives(): void {
-    const archives = readdirSync(this.stateDir)
+  private async cleanupArchives(): Promise<void> {
+    const files = await readdir(this.stateDir);
+    const archives = files
       .filter((name) => name.startsWith("events-") && name.endsWith(".jsonl"))
       .sort();
 
@@ -300,7 +280,7 @@ export class StateStore {
 
     for (let i = 0; i < excess; i++) {
       const archivePath = join(this.stateDir, archives[i]);
-      unlinkSync(archivePath);
+      await unlink(archivePath);
     }
   }
 
@@ -342,7 +322,10 @@ export function createStateStore(configPath: string, projectPath: string): State
  * @param projectPath - Path to project directory
  * @returns Number of sessions migrated
  */
-export function migrateFromMetadata(configPath: string, projectPath: string): number {
+export async function migrateFromMetadata(
+  configPath: string,
+  projectPath: string,
+): Promise<number> {
   const projectId = generateProjectId(projectPath);
   const sessionsDir = getSessionsDir(configPath, projectPath);
 
@@ -356,7 +339,7 @@ export function migrateFromMetadata(configPath: string, projectPath: string): nu
   }
 
   const store = createStateStore(configPath, projectPath);
-  store.init();
+  await store.init();
 
   const now = Math.floor(Date.now() / 1000);
   let migrated = 0;
@@ -386,7 +369,7 @@ export function migrateFromMetadata(configPath: string, projectPath: string): nu
       },
     };
 
-    store.appendEvent(event);
+    await store.appendEvent(event);
     migrated++;
   }
 
@@ -400,11 +383,13 @@ export function migrateFromMetadata(configPath: string, projectPath: string): nu
  * @param configPath - Path to config file
  * @returns Array of migrated project paths and counts
  */
-export function migrateAllProjects(configPath: string): Array<{
-  projectPath: string;
-  projectId: string;
-  migratedCount: number;
-}> {
+export async function migrateAllProjects(configPath: string): Promise<
+  Array<{
+    projectPath: string;
+    projectId: string;
+    migratedCount: number;
+  }>
+> {
   const config = loadConfig(configPath);
   const results: Array<{
     projectPath: string;
@@ -416,7 +401,7 @@ export function migrateAllProjects(configPath: string): Array<{
     string,
     { path: string },
   ][]) {
-    const count = migrateFromMetadata(configPath, projectConfig.path);
+    const count = await migrateFromMetadata(configPath, projectConfig.path);
     if (count > 0) {
       results.push({
         projectPath: projectConfig.path,

@@ -236,20 +236,20 @@ interface ReactionTracker {
 }
 
 /** Create a LifecycleManager instance. */
-export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
+export async function createLifecycleManager(
+  deps: LifecycleManagerDeps,
+): Promise<LifecycleManager> {
   const { config, registry, sessionManager, projectId: scopedProjectId } = deps;
   const observer = createProjectObserver(config, "lifecycle-manager");
 
   // Initialize StateStore for single-source-of-truth state management
   // Note: When scopedProjectId is provided, we use that project's path for state storage
-  const projectPath = scopedProjectId
-    ? Object.values(config.projects).find((p) => p.name === scopedProjectId)?.path || ""
-    : "";
+  const projectPath = scopedProjectId ? (config.projects[scopedProjectId]?.path ?? "") : "";
   const stateStore = createStateStore(
     config.configPath,
-    projectPath || Object.values(config.projects)[0]?.path || "",
+    (projectPath || Object.values(config.projects)[0]?.path) ?? "",
   );
-  stateStore.init();
+  await stateStore.init();
 
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
   let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -278,12 +278,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   /**
    * Record a state transition event to the StateStore
    */
-  function recordStateTransition(
+  async function recordStateTransition(
     sessionId: SessionId,
     projectId: string,
     status: SessionStatus,
     metadata?: Record<string, unknown>,
-  ): void {
+  ): Promise<void> {
     const event: SessionEvent = {
       timestamp: Math.floor(Date.now() / 1000),
       sessionId,
@@ -291,7 +291,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       status,
       metadata,
     };
-    stateStore.appendEvent(event);
+    await stateStore.appendEvent(event);
   }
 
   /**
@@ -807,10 +807,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return reactionConfig ? (reactionConfig as ReactionConfig) : null;
   }
 
-  function updateSessionMetadata(
-    session: Session,
-    updates: Partial<Record<string, string>>,
-  ): void {
+  function updateSessionMetadata(session: Session, updates: Partial<Record<string, string>>): void {
     const project = config.projects[session.projectId];
     if (!project) return;
 
@@ -965,12 +962,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // --- Automated (bot) review comments ---
     if (automatedComments !== null) {
-      const automatedFingerprint = makeFingerprint(
-        automatedComments.map((comment) => comment.id),
-      );
+      const automatedFingerprint = makeFingerprint(automatedComments.map((comment) => comment.id));
       const lastAutomatedFingerprint = session.metadata["lastAutomatedReviewFingerprint"] ?? "";
-      const lastAutomatedDispatchHash =
-        session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
+      const lastAutomatedDispatchHash = session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
 
       if (automatedFingerprint !== lastAutomatedFingerprint) {
         clearReactionTracker(session.id, automatedReactionKey);
@@ -1291,7 +1285,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (newStatus !== oldStatus) {
       const correlationId = createCorrelationId("lifecycle-transition");
       // State transition detected
-      recordStateTransition(session.id, session.projectId, newStatus, {
+      await recordStateTransition(session.id, session.projectId, newStatus, {
         oldStatus,
         transition: true,
       });
@@ -1367,7 +1361,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // No transition yet, but this is the first time we've seen the session.
       // Persist an initial snapshot so brand-new sessions show up in events.jsonl
       // even before their first status change.
-      stateStore.appendEvent({
+      await stateStore.appendEvent({
         timestamp: Math.floor(Date.now() / 1000),
         sessionId: session.id,
         projectId: session.projectId,

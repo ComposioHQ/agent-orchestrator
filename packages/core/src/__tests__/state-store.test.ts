@@ -22,7 +22,6 @@ import {
 } from "../state-store.js";
 import { writeMetadata } from "../metadata.js";
 import { getSessionsDir } from "../paths.js";
-import type { SessionStatus } from "../types.js";
 
 describe("StateStore", () => {
   let tmpDir: string;
@@ -48,29 +47,29 @@ describe("StateStore", () => {
   });
 
   describe("init() and basic operations", () => {
-    it("creates state directory and initializes without error", () => {
-      store.init();
+    it("creates state directory and initializes without error", async () => {
+      await store.init();
 
       expect(store.isInitialized()).toBe(true);
       expect(existsSync(getStateDir(configPath, projectPath))).toBe(true);
     });
 
-    it("returns empty state when file is new", () => {
-      store.init();
+    it("returns empty state when file is new", async () => {
+      await store.init();
 
       const state = store.getState();
       expect(state.size).toBe(0);
     });
 
-    it("throws error if appendEvent called before init", () => {
-      expect(() => {
+    it("throws error if appendEvent called before init", async () => {
+      await expect(() =>
         store.appendEvent({
           timestamp: Date.now(),
           sessionId: "app-1",
           projectId: "my-app",
           status: "working",
-        });
-      }).toThrow("StateStore not initialized");
+        }),
+      ).rejects.toThrow("StateStore not initialized");
     });
   });
 
@@ -79,7 +78,7 @@ describe("StateStore", () => {
       await store.init();
     });
 
-    it("appends a single event to the jsonl file", () => {
+    it("appends a single event to the jsonl file", async () => {
       const event: SessionEvent = {
         timestamp: 1712300000,
         sessionId: "app-1",
@@ -88,7 +87,7 @@ describe("StateStore", () => {
         metadata: { branch: "feat/test" },
       };
 
-      store.appendEvent(event);
+      await store.appendEvent(event);
 
       const content = readFileSync(getEventsFilePath(configPath, projectPath), "utf-8");
       const lines = content.split("\n").filter((l) => l.trim());
@@ -99,7 +98,7 @@ describe("StateStore", () => {
       expect(parsed.status).toBe("working");
     });
 
-    it("updates in-memory state after append", () => {
+    it("updates in-memory state after append", async () => {
       const event: SessionEvent = {
         timestamp: 1712300000,
         sessionId: "app-1",
@@ -107,7 +106,7 @@ describe("StateStore", () => {
         status: "working",
       };
 
-      store.appendEvent(event);
+      await store.appendEvent(event);
 
       const state = store.getSessionState("app-1");
       expect(state).toBeDefined();
@@ -115,9 +114,9 @@ describe("StateStore", () => {
       expect(state?.sessionId).toBe("app-1");
     });
 
-    it("appends multiple events and preserves order", () => {
+    it("appends multiple events and preserves order", async () => {
       for (let i = 0; i < 5; i++) {
-        store.appendEvent({
+        await store.appendEvent({
           timestamp: 1712300000 + i,
           sessionId: `app-${i + 1}`,
           projectId: "my-app",
@@ -137,7 +136,7 @@ describe("StateStore", () => {
   });
 
   describe("hydrateState()", () => {
-    it("reconstructs state from existing jsonl file", () => {
+    it("reconstructs state from existing jsonl file", async () => {
       const eventsFile = getEventsFilePath(configPath, projectPath);
       mkdirSync(join(tmpDir, "my-app"), { recursive: true });
       const stateDir = getStateDir(configPath, projectPath);
@@ -154,7 +153,7 @@ describe("StateStore", () => {
       }
 
       const freshStore = createStateStore(configPath, projectPath);
-      freshStore.init();
+      await freshStore.init();
 
       const state = freshStore.getState();
       expect(state.size).toBe(2);
@@ -178,14 +177,14 @@ describe("StateStore", () => {
       const timestamps = Array.from({ length: numEvents }, (_, i) => 1712300000 + i);
 
       const appendPromises = timestamps.map((ts, i) => {
-        return Promise.resolve().then(() => {
+        return Promise.resolve().then(() =>
           store.appendEvent({
             timestamp: ts,
             sessionId: `app-${i + 1}`,
             projectId: "my-app",
             status: "working",
-          });
-        });
+          }),
+        );
       });
 
       await Promise.all(appendPromises);
@@ -221,20 +220,20 @@ describe("StateStore", () => {
       await store.init();
     });
 
-    it("compacts log to keep only latest state per session", () => {
-      const statuses: SessionStatus[] = ["spawning", "working", "errored", "working", "done"];
+    it("compacts log to keep only latest state per session", async () => {
+      const statuses = ["spawning", "working", "errored", "working", "done"];
 
       for (let i = 0; i < statuses.length; i++) {
-        store.appendEvent({
+        await store.appendEvent({
           timestamp: 1712300000 + i,
           sessionId: "app-1",
           projectId: "my-app",
-          status: statuses[i],
+          status: statuses[i] as any,
           metadata: { attempt: i + 1 },
         });
       }
 
-      store.compactLog();
+      await store.compactLog();
 
       const content = readFileSync(getEventsFilePath(configPath, projectPath), "utf-8");
       const lines = content.split("\n").filter((l) => l.trim());
@@ -246,7 +245,7 @@ describe("StateStore", () => {
       expect(parsed.status).toBe("done");
 
       const freshStore = createStateStore(configPath, projectPath);
-      freshStore.init();
+      await freshStore.init();
 
       const state = freshStore.getState();
       expect(state.size).toBe(1);
@@ -255,26 +254,36 @@ describe("StateStore", () => {
       expect(app1State?.status).toBe("done");
     });
 
-    it("compacts multiple sessions correctly", () => {
-      store.appendEvent({
+    it("compacts multiple sessions correctly", async () => {
+      await store.appendEvent({
         timestamp: 1,
         sessionId: "app-1",
         projectId: "my-app",
         status: "working",
       });
-      store.appendEvent({
+      await store.appendEvent({
         timestamp: 2,
         sessionId: "app-2",
         projectId: "my-app",
         status: "working",
       });
-      store.appendEvent({ timestamp: 3, sessionId: "app-1", projectId: "my-app", status: "done" });
-      store.appendEvent({ timestamp: 4, sessionId: "app-2", projectId: "my-app", status: "done" });
+      await store.appendEvent({
+        timestamp: 3,
+        sessionId: "app-1",
+        projectId: "my-app",
+        status: "done",
+      });
+      await store.appendEvent({
+        timestamp: 4,
+        sessionId: "app-2",
+        projectId: "my-app",
+        status: "done",
+      });
 
-      store.compactLog();
+      await store.compactLog();
 
       const freshStore = createStateStore(configPath, projectPath);
-      freshStore.init();
+      await freshStore.init();
 
       const state = freshStore.getState();
       expect(state.size).toBe(2);
@@ -288,14 +297,14 @@ describe("StateStore", () => {
       await store.init();
     });
 
-    it("gracefully drops truncated JSON at end of file", () => {
-      store.appendEvent({
+    it("gracefully drops truncated JSON at end of file", async () => {
+      await store.appendEvent({
         timestamp: 1712300000,
         sessionId: "app-1",
         projectId: "my-app",
         status: "working",
       });
-      store.appendEvent({
+      await store.appendEvent({
         timestamp: 1712300001,
         sessionId: "app-2",
         projectId: "my-app",
@@ -310,7 +319,7 @@ describe("StateStore", () => {
       );
 
       const freshStore = createStateStore(configPath, projectPath);
-      freshStore.init();
+      await freshStore.init();
 
       const state = freshStore.getState();
       expect(state.size).toBe(2);
@@ -319,8 +328,8 @@ describe("StateStore", () => {
       expect(state.get("app-3")).toBeUndefined();
     });
 
-    it("handles multiple corrupted lines", () => {
-      store.appendEvent({
+    it("handles multiple corrupted lines", async () => {
+      await store.appendEvent({
         timestamp: 1712300000,
         sessionId: "app-1",
         projectId: "my-app",
@@ -331,7 +340,7 @@ describe("StateStore", () => {
       appendFileSync(eventsFile, 'invalid json\n{"truncated": true\n{"also broken', "utf-8");
 
       const freshStore = createStateStore(configPath, projectPath);
-      freshStore.init();
+      await freshStore.init();
 
       const state = freshStore.getState();
       expect(state.size).toBe(1);
@@ -351,7 +360,7 @@ describe("StateStore", () => {
   });
 
   describe("4. The Migration Pathway", () => {
-    it("migrates from legacy metadata files to events.jsonl", () => {
+    it("migrates from legacy metadata files to events.jsonl", async () => {
       const sessionsDir = getSessionsDir(configPath, projectPath);
       mkdirSync(sessionsDir, { recursive: true });
 
@@ -373,13 +382,13 @@ describe("StateStore", () => {
         agent: "claude-code",
       });
 
-      const count = migrateFromMetadata(configPath, projectPath);
+      const count = await migrateFromMetadata(configPath, projectPath);
 
       expect(count).toBe(2);
       expect(hasStateStore(configPath, projectPath)).toBe(true);
 
       const freshStore = createStateStore(configPath, projectPath);
-      freshStore.init();
+      await freshStore.init();
 
       const state = freshStore.getState();
       expect(state.size).toBe(2);
@@ -392,7 +401,7 @@ describe("StateStore", () => {
       expect(app2State?.status).toBe("done");
     });
 
-    it("migrateAllProjects migrates all projects in config", () => {
+    it("migrateAllProjects migrates all projects in config", async () => {
       const configFile = join(tmpDir, "agent-orchestrator.yaml");
       writeFileSync(
         configFile,
@@ -428,16 +437,16 @@ projects:
         project: "project-b",
       });
 
-      const results = migrateAllProjects(configPath);
+      const results = await migrateAllProjects(configPath);
 
       expect(results.length).toBe(2);
       expect(results.map((r) => r.projectId).sort()).toEqual(["project-a", "project-b"]);
     });
 
-    it("migrateFromMetadata returns 0 when no sessions exist", () => {
+    it("migrateFromMetadata returns 0 when no sessions exist", async () => {
       mkdirSync(join(tmpDir, "my-app"), { recursive: true });
 
-      const count = migrateFromMetadata(configPath, projectPath);
+      const count = await migrateFromMetadata(configPath, projectPath);
 
       expect(count).toBe(0);
     });
@@ -453,22 +462,6 @@ projects:
     it("returns correct events file path", () => {
       const eventsPath = getEventsFilePath(configPath, projectPath);
       expect(eventsPath).toContain("events.jsonl");
-    });
-
-    it("does not persist syncState-only entries during compaction", () => {
-      store.init();
-      store.syncState({
-        timestamp: 123,
-        sessionId: "sync-only",
-        projectId: "my-app",
-        status: "working",
-      });
-
-      store.compactLog();
-
-      const content = readFileSync(getEventsFilePath(configPath, projectPath), "utf-8");
-      const lines = content.split("\n").filter(Boolean);
-      expect(lines.length).toBe(0);
     });
   });
 });
