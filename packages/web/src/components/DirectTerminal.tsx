@@ -269,8 +269,12 @@ export function DirectTerminal({
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
 
-        // Fit terminal to container
-        fit.fit();
+        // Fit terminal to container — defer so DOM has settled, then send
+        // the real dimensions to the server (cols/rows are 0 until fit runs)
+        const initialFitRafId = requestAnimationFrame(() => {
+          fit.fit();
+          resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+        });
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
@@ -349,29 +353,25 @@ export function DirectTerminal({
           }
         });
 
-        // Handle window resize
-        const handleResize = () => {
+        const resizeObserver = new ResizeObserver(() => {
           if (fit) {
             fit.fit();
             resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
           }
-        };
-
-        window.addEventListener("resize", handleResize);
+        });
+        resizeObserver.observe(terminalRef.current);
 
         // Terminal input → mux
         inputDisposable = terminal.onData((data) => {
           writeTerminal(sessionId, data);
         });
 
-        // Send initial size
-        resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
-
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
+          cancelAnimationFrame(initialFitRafId);
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
-          window.removeEventListener("resize", handleResize);
+          resizeObserver.disconnect();
           inputDisposable?.dispose();
           inputDisposable = null;
           unsubscribe?.();
@@ -693,7 +693,7 @@ export function DirectTerminal({
       {/* Terminal area */}
       <div
         ref={terminalRef}
-        className={cn("w-full p-1.5")}
+        className={cn("w-full")}
         style={{
           overflow: "hidden",
           display: "flex",
