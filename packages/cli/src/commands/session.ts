@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig, SessionNotRestorableError, WorkspaceMissingError } from "@composio/ao-core";
+import { loadConfig, SessionNotRestorableError, WorkspaceMissingError, updateMetadata, getSessionsDir } from "@composio/ao-core";
 import { DEFAULT_PORT } from "../lib/constants.js";
 import { git, getTmuxActivity, tmux } from "../lib/shell.js";
 import { formatAge } from "../lib/format.js";
@@ -336,5 +336,47 @@ export function registerSession(program: Command): void {
         console.error(chalk.red(`Failed to remap session ${sessionName}: ${err}`));
         process.exit(1);
       }
+    });
+
+  session
+    .command("open-plan")
+    .description("Pre-select a plan file in the web preview for the next session visit")
+    .argument("<file-path>", "Relative path to the plan file (e.g. .feature-plans/pending/foo.md)")
+    .argument("[session]", "Session name (defaults to AO_SESSION_NAME or AO_SESSION env var)")
+    .action(async (filePath: string, sessionName: string | undefined) => {
+      const config = loadConfig();
+      const resolvedSession =
+        sessionName ?? process.env["AO_SESSION_NAME"] ?? process.env["AO_SESSION"];
+
+      if (!resolvedSession) {
+        console.error(
+          chalk.red(
+            "No session provided. Pass a session name or run this inside a managed AO session.",
+          ),
+        );
+        process.exit(1);
+      }
+
+      const sm = await getSessionManager(config);
+      const session = await sm.get(resolvedSession);
+      if (!session) {
+        console.error(chalk.red(`Session '${resolvedSession}' not found.`));
+        process.exit(1);
+      }
+
+      const project = config.projects[session.projectId];
+      if (!project) {
+        console.error(chalk.red(`Project '${session.projectId}' not found in config.`));
+        process.exit(1);
+      }
+
+      const sessionsDir = getSessionsDir(config.configPath, project.path);
+      updateMetadata(sessionsDir, resolvedSession, { pendingPreviewFile: filePath });
+      console.log(
+        chalk.green(`\nSession ${resolvedSession}: plan preview set to ${filePath}`),
+      );
+      console.log(
+        chalk.dim(`  The plan will open in the file preview on your next visit to this session.`),
+      );
     });
 }

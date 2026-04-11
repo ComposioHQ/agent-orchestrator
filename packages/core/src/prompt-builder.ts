@@ -48,6 +48,8 @@ Store plans under \`.feature-plans/\` at the project root (create it if missing)
 
 If \`.feature-plans/_plan_sample_format.md\` exists, use it as the reference format for your plan.
 
+After saving the plan file, run \`ao session open-plan <relative-path-to-plan>\` — this pre-loads the plan in the file preview for the user's next visit. Run it once, immediately after writing the plan.
+
 **Do not start implementation until the user approves or explicitly asks you to proceed.**
 
 ## Git Workflow

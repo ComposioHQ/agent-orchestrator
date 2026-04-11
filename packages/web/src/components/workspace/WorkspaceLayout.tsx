@@ -107,22 +107,28 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
     });
   }, []);
 
-  // Compute effective selected file: URL takes precedence, then storage
+  // Compute effective selected file: URL takes precedence, then storage, then metadata hint
   const [restoredFile, setRestoredFile] = useState<string | null>(null);
   const lastSessionRef = useRef<string | null>(null);
-  
+
   useEffect(() => {
     if (lastSessionRef.current !== session.id) {
       lastSessionRef.current = session.id;
       // Session changed - check storage for this session
       if (!urlFile) {
         const stored = loadSessionFileState(session.id);
-        setRestoredFile(stored?.filePath ?? null);
+        if (stored?.filePath) {
+          setRestoredFile(stored.filePath);
+        } else {
+          // Fall back to plan hint set by agent via `ao session open-plan`
+          const hint = session.metadata["pendingPreviewFile"];
+          setRestoredFile(typeof hint === "string" && hint.length > 0 ? hint : null);
+        }
       } else {
         setRestoredFile(null);
       }
     }
-  }, [session.id, urlFile]);
+  }, [session.id, urlFile, session.metadata]);
 
   // URL file always wins; fall back to restored file from storage
   const selectedFile = urlFile ?? restoredFile;
@@ -362,6 +368,13 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
       ensurePreviewVisible();
     }
   }, [diffMode, selectedFile, ensurePreviewVisible]);
+
+  // Ensure preview is visible when a file is restored from metadata hint
+  useEffect(() => {
+    if (restoredFile) {
+      ensurePreviewVisible();
+    }
+  }, [restoredFile, ensurePreviewVisible]);
 
   const topBarProps = {
     session,
