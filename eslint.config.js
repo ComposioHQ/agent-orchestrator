@@ -1,6 +1,7 @@
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 import eslintConfigPrettier from "eslint-config-prettier";
+import nextPlugin from "@next/eslint-plugin-next";
 
 export default tseslint.config(
   // Global ignores
@@ -79,11 +80,15 @@ export default tseslint.config(
     },
   },
 
-  // Relaxed rules for Next.js pages/components
+  // Next.js rules scoped to the web package
   {
     files: ["packages/web/**/*.tsx", "packages/web/**/*.ts"],
+    plugins: { "@next/next": nextPlugin },
+    settings: { next: { rootDir: "packages/web" } },
     rules: {
-      "no-console": "off", // Next.js uses console for server logs
+      ...nextPlugin.configs.recommended.rules,
+      "@next/next/no-html-link-for-pages": "off",
+      "no-console": "off",
     },
   },
 
