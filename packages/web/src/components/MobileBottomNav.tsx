@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 
-export type MobileBottomNavTab = "dashboard" | "prs" | "orchestrator";
+export type MobileBottomNavTab = "dashboard" | "prs" | "phases" | "orchestrator";
 
 interface MobileBottomNavProps {
   ariaLabel: string;
   activeTab?: MobileBottomNavTab;
   dashboardHref: string;
   prsHref: string;
+  phasesHref: string;
   showOrchestrator?: boolean;
   orchestratorHref?: string | null;
 }
@@ -18,6 +19,7 @@ export function MobileBottomNav({
   activeTab,
   dashboardHref,
   prsHref,
+  phasesHref,
   showOrchestrator = true,
   orchestratorHref = null,
 }: MobileBottomNavProps) {
@@ -33,6 +35,17 @@ export function MobileBottomNav({
           <path d="M3 13h8V3H3zm10 8h8V11h-8zM3 21h8v-6H3zm10-10h8V3h-8z" />
         </svg>
         <span>Dashboard</span>
+      </Link>
+      <Link
+        href={phasesHref}
+        className="mobile-bottom-nav__item"
+        data-active={activeTab === "phases" ? "true" : "false"}
+        aria-current={activeTab === "phases" ? "page" : undefined}
+      >
+        <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v7h-4z" />
+        </svg>
+        <span>Kanban</span>
       </Link>
       <Link
         href={prsHref}

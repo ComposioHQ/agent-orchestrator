@@ -461,6 +461,7 @@ export function SessionDetail({
     : undefined;
   const dashboardHref = session.projectId ? `/?project=${encodeURIComponent(session.projectId)}` : "/";
   const prsHref = session.projectId ? `/prs?project=${encodeURIComponent(session.projectId)}` : "/prs";
+  const phasesHref = session.projectId ? `/phases?project=${encodeURIComponent(session.projectId)}` : "/phases";
   const crumbHref = dashboardHref;
   const crumbLabel = "Dashboard";
   const headerProjectLabel =
@@ -713,6 +714,7 @@ export function SessionDetail({
         activeTab={isOrchestrator ? "orchestrator" : undefined}
         dashboardHref={dashboardHref}
         prsHref={prsHref}
+        phasesHref={phasesHref}
         showOrchestrator={orchestratorHref !== null}
         orchestratorHref={orchestratorHref}
       />

@@ -3543,6 +3543,84 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-radius: 0;
 }
 
+/* ── Phase lanes board (/phases view) ────────────────────────────────── */
+
+.phase-lanes-board {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.phase-lanes-board[data-expanded="true"] {
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(220px, 1fr);
+  grid-template-columns: none;
+  gap: 12px;
+}
+
+.phase-lane {
+  min-width: 0;
+}
+
+.phase-lane--expanded {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 7px;
+  background: var(--color-column-bg);
+  padding: 8px;
+  min-width: 0;
+}
+
+.phase-lane__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.phase-lane__label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  color: var(--color-text-secondary);
+}
+
+.phase-lane__count {
+  padding: 0 4px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 3px;
+  background: var(--color-bg-subtle);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+.phase-lane__description {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+
+.phase-lane__sub {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(200px, 1fr);
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow-x: auto;
+}
+
+.phase-lane__sub-column {
+  min-width: 0;
+}
+
 /* ── Done / Terminated collapsible bar ────────────────────────────────── */
 
 .done-bar__toggle {
