@@ -362,79 +362,77 @@ function _OrchestratorStatusStrip({
     : null;
 
   return (
-    <div className="mx-auto max-w-[1180px] px-5 pt-5 lg:px-8">
-      <SessionTopStrip
-        headline={headline}
-        crumbId={headline}
-        activityLabel={activityLabel}
-        activityColor={activityColor}
-        branch={branch}
-        pr={pr}
-        isOrchestrator
-        crumbHref={crumbHref}
-        crumbLabel={crumbLabel}
-        rightSlot={
-          <div className="flex flex-wrap items-center gap-3 lg:justify-end">
-            {total !== null ? (
-              <>
-                <div className="flex items-baseline gap-1.5 mr-2">
-                  <span className="text-[22px] font-bold leading-none tabular-nums text-[var(--color-text-primary)]">
-                    {total}
-                  </span>
-                  <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
-                </div>
+    <SessionTopStrip
+      headline={headline}
+      crumbId={headline}
+      activityLabel={activityLabel}
+      activityColor={activityColor}
+      branch={branch}
+      pr={pr}
+      isOrchestrator
+      crumbHref={crumbHref}
+      crumbLabel={crumbLabel}
+      rightSlot={
+        <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+          {total !== null ? (
+            <>
+              <div className="flex items-baseline gap-1.5 mr-2">
+                <span className="text-[22px] font-bold leading-none tabular-nums text-[var(--color-text-primary)]">
+                  {total}
+                </span>
+                <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
+              </div>
 
-                <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
+              <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
 
-                {/* Per-zone pills */}
-                {stats && stats.length > 0 ? (
-                  stats.map((s) => (
-                    <div
-                      key={s.label}
-                      className="flex items-center gap-1.5 px-2.5 py-1"
-                      style={{ background: s.bg }}
+              {/* Per-zone pills */}
+              {stats && stats.length > 0 ? (
+                stats.map((s) => (
+                  <div
+                    key={s.label}
+                    className="flex items-center gap-1.5 px-2.5 py-1"
+                    style={{ background: s.bg }}
+                  >
+                    <span
+                      className="text-[15px] font-bold leading-none tabular-nums"
+                      style={{ color: s.color }}
                     >
-                      <span
-                        className="text-[15px] font-bold leading-none tabular-nums"
-                        style={{ color: s.color }}
-                      >
-                        {s.value}
-                      </span>
-                      <span
-                        className="text-[10px] font-medium"
-                        style={{ color: s.color, opacity: 0.8 }}
-                      >
-                        {s.label}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <span className="text-[12px] text-[var(--color-text-tertiary)]">
-                    no active agents
-                  </span>
-                )}
+                      {s.value}
+                    </span>
+                    <span
+                      className="text-[10px] font-medium"
+                      style={{ color: s.color, opacity: 0.8 }}
+                    >
+                      {s.label}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <span className="text-[12px] text-[var(--color-text-tertiary)]">
+                  no active agents
+                </span>
+              )}
 
-                {uptime && (
-                  <span className="ml-auto font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
-                    up {uptime}
-                  </span>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="flex items-baseline gap-1.5 mr-2">
-                  <div className="h-5 w-6 animate-pulse rounded bg-[var(--color-bg-subtle)]" />
-                  <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
-                </div>
-                <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
-                <div className="h-5 w-20 animate-pulse rounded bg-[var(--color-bg-subtle)]" />
-                <div className="h-5 w-16 animate-pulse rounded bg-[var(--color-bg-subtle)]" />
-              </>
-            )}
-          </div>
-        }
-      />
-    </div>
+              {uptime && (
+                <span className="ml-auto font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+                  up {uptime}
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="flex items-baseline gap-1.5 mr-2">
+                <div className="h-5 w-6 animate-pulse rounded bg-[var(--color-bg-subtle)]" />
+                <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
+              </div>
+              <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
+              <div className="h-5 w-20 animate-pulse rounded bg-[var(--color-bg-subtle)]" />
+              <div className="h-5 w-16 animate-pulse rounded bg-[var(--color-bg-subtle)]" />
+            </>
+          )}
+        </div>
+      }
+    />
   );
 }
 
