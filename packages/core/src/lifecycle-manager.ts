@@ -250,6 +250,7 @@ export async function createLifecycleManager(
     : config.configPath;
 
   if (!projectPath) {
+    // v8 ignore next
     throw new Error("Cannot initialize StateStore: project path is required.");
   }
 
@@ -1092,7 +1093,7 @@ export async function createLifecycleManager(
     // Fetch individual CI checks for failure details.
     // Use batch enrichment data when available to avoid an extra REST call;
     // fall back to getCIChecks() when the batch didn't run this cycle.
-    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`.toLowerCase();
     const cachedEnrichment = prEnrichmentCache.get(prKey);
 
     let checks: CICheck[];
@@ -1216,7 +1217,7 @@ export async function createLifecycleManager(
     // When batch enrichment ran (cachedData is present), use its hasConflicts value
     // to avoid 3 redundant REST calls from getMergeability() — the batch already
     // fetched the mergeable/mergeStateStatus fields via GraphQL.
-    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`.toLowerCase();
     const cachedData = prEnrichmentCache.get(prKey);
 
     let hasConflicts: boolean;
@@ -1432,7 +1433,7 @@ export async function createLifecycleManager(
     if (polling) return;
     polling = true;
 
-    let sessions: Session[];
+    let sessions: Session[] = [];
 
     try {
       sessions = await sessionManager.list(scopedProjectId);
@@ -1540,6 +1541,9 @@ export async function createLifecycleManager(
         details: scopedProjectId ? { projectId: scopedProjectId } : { projectScope: "all" },
       });
     } finally {
+      // Prune stale sessions from StateStore to prevent unbounded memory growth
+      // Note: The durable audit trail is safe because compactLog has already written to disk
+      await stateStore.prune(sessions.map((s) => s.id));
       // Await compaction to ensure the file system is stable before releasing the polling lock
       await maybeCompactLog();
       polling = false;

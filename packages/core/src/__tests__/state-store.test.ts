@@ -347,12 +347,12 @@ describe("StateStore", () => {
       expect(state.get("app-1")?.status).toBe("working");
     });
 
-    it("handles empty file without error", () => {
+    it("handles empty file without error", async () => {
       const eventsFile = getEventsFilePath(configPath, projectPath);
       writeFileSync(eventsFile, "", "utf-8");
 
       const freshStore = createStateStore(configPath, projectPath);
-      freshStore.init();
+      await freshStore.init();
 
       const state = freshStore.getState();
       expect(state.size).toBe(0);

@@ -126,6 +126,7 @@ export function createMockSCM(overrides: Partial<SCM> = {}): SCM {
       noConflicts: true,
       blockers: [],
     }),
+    enrichSessionsPRBatch: vi.fn().mockResolvedValue(new Map()),
     ...overrides,
   };
 }
@@ -149,7 +150,10 @@ export interface RegistryPlugins {
   notifier?: Notifier;
 }
 
-export function createMockRegistry(plugins: RegistryPlugins, options: { strict?: boolean } = {}): PluginRegistry {
+export function createMockRegistry(
+  plugins: RegistryPlugins,
+  options: { strict?: boolean } = {},
+): PluginRegistry {
   return {
     register: vi.fn(),
     get: vi.fn().mockImplementation((slot: string, name?: string) => {
@@ -174,8 +178,6 @@ export function createMockRegistry(plugins: RegistryPlugins, options: { strict?:
         if (!name || name === plugins.notifier.name) return plugins.notifier;
         if (!options.strict) return plugins.notifier;
       }
-
-
 
       return null;
     }),
@@ -273,7 +275,11 @@ export function setupTestContext(): TestContext {
   writeFileSync(configPath, "projects: {}\n");
 
   const { runtime: mockRuntime, agent: mockAgent, workspace: mockWorkspace } = createMockPlugins();
-  const mockRegistry = createMockRegistry({ runtime: mockRuntime, agent: mockAgent, workspace: mockWorkspace });
+  const mockRegistry = createMockRegistry({
+    runtime: mockRuntime,
+    agent: mockAgent,
+    workspace: mockWorkspace,
+  });
 
   const config: OrchestratorConfig = {
     configPath,
@@ -338,7 +344,11 @@ export function teardownTestContext(ctx: TestContext): void {
 export function createMockSessionManager(): SessionManager {
   return {
     spawn: vi.fn().mockResolvedValue(makeSession()),
-    spawnOrchestrator: vi.fn().mockResolvedValue(makeSession({ id: "app-orchestrator", metadata: { role: "orchestrator" } })),
+    spawnOrchestrator: vi
+      .fn()
+      .mockResolvedValue(
+        makeSession({ id: "app-orchestrator", metadata: { role: "orchestrator" } }),
+      ),
     restore: vi.fn().mockResolvedValue(makeSession()),
     list: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(null),

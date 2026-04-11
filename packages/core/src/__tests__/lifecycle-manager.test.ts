@@ -1702,7 +1702,7 @@ describe("rate limiting optimizations", () => {
       enrichSessionsPRBatch: vi.fn().mockResolvedValue(
         new Map([
           [
-            `${pr.owner}/${pr.repo}#${pr.number}`,
+            `${pr.owner}/${pr.repo}#${pr.number}`.toLowerCase(),
             {
               state: "open" as const,
               ciStatus: "passing" as const,
@@ -1762,7 +1762,7 @@ describe("rate limiting optimizations", () => {
       enrichSessionsPRBatch: vi.fn().mockResolvedValue(
         new Map([
           [
-            `${pr.owner}/${pr.repo}#${pr.number}`,
+            `${pr.owner}/${pr.repo}#${pr.number}`.toLowerCase(),
             {
               state: "open" as const,
               ciStatus: "failing" as const,
