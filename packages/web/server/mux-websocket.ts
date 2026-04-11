@@ -405,21 +405,24 @@ class TerminalManager {
       throw new Error(`Session not found: ${id}`);
     }
 
-    // Rate-limit to prevent hammering /restore in a tight loop if the
-    // agent dies on every respawn. The user can still manually retry
-    // from the UI after the cool-down expires.
-    const lastAttempt = this.lastRecoveryAttemptAt.get(id) ?? 0;
-    const now = Date.now();
-    if (now - lastAttempt < RECOVERY_COOLDOWN_MS) {
-      throw new Error(
-        `Session not found: ${id} (auto-recovery in cool-down, try again later)`,
-      );
-    }
-
     // Dedup concurrent recovery for the same id (e.g. two browser tabs,
     // React StrictMode double-mount, client reconnect resending `open`).
+    // Must come BEFORE the cool-down check — otherwise a second concurrent
+    // caller hits the cool-down (the first caller has already stamped
+    // `lastRecoveryAttemptAt`) and the user sees a spurious "cool-down"
+    // error while a perfectly good recovery is already in flight.
     let recovery = this.recoveryInFlight.get(id);
     if (!recovery) {
+      // Rate-limit to prevent hammering /restore in a tight loop if the
+      // agent dies on every respawn. The user can still manually retry
+      // from the UI after the cool-down expires.
+      const lastAttempt = this.lastRecoveryAttemptAt.get(id) ?? 0;
+      const now = Date.now();
+      if (now - lastAttempt < RECOVERY_COOLDOWN_MS) {
+        throw new Error(
+          `Session not found: ${id} (auto-recovery in cool-down, try again later)`,
+        );
+      }
       this.lastRecoveryAttemptAt.set(id, now);
       console.log(`[MuxServer] Auto-recovering session ${id} — tmux session missing`);
       recovery = this.recoverFn(id).finally(() => {
@@ -664,8 +667,7 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
               const ok = terminalManager.write(id, msg.data);
               if (!ok && terminalManager.isRecovering(id)) {
                 // Keystrokes arriving while auto-recovery is in flight are
-                // silently dropped. Log so this is diagnosable; a future
-                // change could buffer them and flush after `opened`.
+                // silently dropped. Log so this is diagnosable.
                 console.warn(
                   `[MuxServer] Dropped data for ${id} — auto-recovery in flight`,
                 );
