@@ -819,7 +819,7 @@ function getAlerts(session: DashboardSession): Alert[] {
       color: "var(--color-alert-review)",
       url: pr.url,
       actionLabel: "ask to post",
-      actionMessage: `Post ${pr.url} on slack asking for a review.`,
+      actionMessage: `Please request a code review for ${pr.url}. Add reviewers using 'gh pr request-review' with the appropriate team members, or notify the team through any available channel.`,
       actionClassName: "bg-[var(--color-alert-review-bg)] text-white hover:brightness-110",
     });
   }
