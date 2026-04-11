@@ -1,7 +1,7 @@
 {
-  "name": "@aoagents/ao-core",
-  "version": "0.2.0",
-  "description": "Core library — types, config, session manager, lifecycle manager, event bus",
+  "name": "@aoagents/ao-plugin-agent-cursor",
+  "version": "0.1.0",
+  "description": "Agent plugin: Cursor CLI",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -10,18 +10,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./types": {
-      "types": "./dist/types.d.ts",
-      "import": "./dist/types.js"
-    },
-    "./utils": {
-      "types": "./dist/utils.d.ts",
-      "import": "./dist/utils.js"
-    },
-    "./scm-webhook-utils": {
-      "types": "./dist/scm-webhook-utils.d.ts",
-      "import": "./dist/scm-webhook-utils.js"
     }
   },
   "files": [
@@ -30,7 +18,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/ComposioHQ/agent-orchestrator.git",
-    "directory": "packages/core"
+    "directory": "packages/plugins/agent-cursor"
   },
   "homepage": "https://github.com/ComposioHQ/agent-orchestrator",
   "bugs": {
@@ -40,20 +28,17 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "yaml": "^2.7.0",
-    "zod": "^3.24.0"
+    "@aoagents/ao-core": "workspace:*"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.0.18",
     "@types/node": "^25.2.3",
     "typescript": "^5.7.0",
-    "vitest": "^4.0.18"
+    "vitest": "^3.0.0"
   }
 }

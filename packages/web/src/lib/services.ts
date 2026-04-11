@@ -17,10 +17,6 @@ import {
   createPluginRegistry,
   createSessionManager,
   createLifecycleManager,
-  decompose,
-  getLeaves,
-  getSiblings,
-  formatPlanTree,
   type OrchestratorConfig,
   type PluginRegistry,
   type OpenCodeSessionManager,
@@ -30,8 +26,6 @@ import {
   type Tracker,
   type Issue,
   type Session,
-  type DecomposerConfig,
-  DEFAULT_DECOMPOSER_CONFIG,
   isOrchestratorSession,
   TERMINAL_STATUSES,
 } from "@aoagents/ao-core";
@@ -39,6 +33,7 @@ import {
 // Static plugin imports — webpack needs these to be string literals
 import pluginRuntimeTmux from "@aoagents/ao-plugin-runtime-tmux";
 import pluginAgentClaudeCode from "@aoagents/ao-plugin-agent-claude-code";
+import pluginAgentCursor from "@aoagents/ao-plugin-agent-cursor";
 import pluginAgentOpencode from "@aoagents/ao-plugin-agent-opencode";
 import pluginWorkspaceWorktree from "@aoagents/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@aoagents/ao-plugin-scm-github";
@@ -81,6 +76,7 @@ async function initServices(): Promise<Services> {
   // Register plugins explicitly (webpack can't handle dynamic import() in core)
   registry.register(pluginRuntimeTmux);
   registry.register(pluginAgentClaudeCode);
+  registry.register(pluginAgentCursor);
   registry.register(pluginAgentOpencode);
   registry.register(pluginWorkspaceWorktree);
   registry.register(pluginScmGithub);
@@ -272,65 +268,8 @@ export async function pollBacklog(): Promise<void> {
         if (activeIssueIds.has(issue.id.toLowerCase())) continue;
 
         try {
-          const decompConfig = project.decomposer;
-          const shouldDecompose = decompConfig?.enabled ?? false;
-
-          if (shouldDecompose) {
-            // Decompose the issue before spawning
-            const taskDescription = `${issue.title}\n\n${issue.description}`;
-            const decomposerConfig: DecomposerConfig = {
-              ...DEFAULT_DECOMPOSER_CONFIG,
-              ...decompConfig,
-            };
-
-            console.log(`[backlog] Decomposing issue ${issue.id}: "${issue.title}"`);
-            const plan = await decompose(taskDescription, decomposerConfig);
-            const leaves = getLeaves(plan.tree);
-
-            if (leaves.length <= 1) {
-              // Atomic — spawn directly
-              await sessionManager.spawn({ projectId, issueId: issue.id });
-              availableSlots--;
-            } else if (decomposerConfig.requireApproval) {
-              // Post plan as comment and wait for human approval
-              const treeText = formatPlanTree(plan.tree);
-              if (tracker.updateIssue) {
-                await tracker.updateIssue(
-                  issue.id,
-                  {
-                    comment: `## Decomposition Plan\n\n\`\`\`\n${treeText}\n\`\`\`\n\n${leaves.length} subtasks identified. Remove \`agent:backlog\` and add \`agent:decompose-approved\` to execute.`,
-                    labels: ["agent:decompose-pending"],
-                    removeLabels: ["agent:backlog"],
-                  },
-                  project,
-                );
-              }
-              console.log(
-                `[backlog] Posted decomposition plan for ${issue.id} (${leaves.length} subtasks, awaiting approval)`,
-              );
-              continue;
-            } else {
-              // Auto-execute: spawn each leaf with lineage context
-              console.log(
-                `[backlog] Auto-executing decomposition for ${issue.id} (${leaves.length} subtasks)`,
-              );
-              for (const leaf of leaves) {
-                if (availableSlots <= 0) break;
-                const siblings = getSiblings(plan.tree, leaf.id);
-                await sessionManager.spawn({
-                  projectId,
-                  issueId: issue.id,
-                  lineage: leaf.lineage,
-                  siblings,
-                });
-                availableSlots--;
-              }
-            }
-          } else {
-            // No decomposition — spawn directly (classic behavior)
-            await sessionManager.spawn({ projectId, issueId: issue.id });
-            availableSlots--;
-          }
+          await sessionManager.spawn({ projectId, issueId: issue.id });
+          availableSlots--;
 
           activeIssueIds.add(issue.id.toLowerCase());
 

@@ -4,14 +4,8 @@ import type { Command } from "commander";
 import { resolve } from "node:path";
 import {
   loadConfig,
-  decompose,
-  getLeaves,
-  getSiblings,
-  formatPlanTree,
   TERMINAL_STATUSES,
   type OrchestratorConfig,
-  type DecomposerConfig,
-  DEFAULT_DECOMPOSER_CONFIG,
 } from "@aoagents/ao-core";
 import { DEFAULT_PORT } from "../lib/constants.js";
 import { exec } from "../lib/shell.js";
@@ -168,8 +162,6 @@ export function registerSpawn(program: Command): void {
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
-    .option("--decompose", "Decompose issue into subtasks before spawning")
-    .option("--max-depth <n>", "Max decomposition depth (default: 3)")
     .action(
       async (
         first: string | undefined,
@@ -179,8 +171,6 @@ export function registerSpawn(program: Command): void {
           agent?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
-          decompose?: boolean;
-          maxDepth?: string;
         },
       ) => {
         // Catch old two-arg usage: ao spawn <project> <issue>
@@ -232,59 +222,7 @@ export function registerSpawn(program: Command): void {
           await runSpawnPreflight(config, projectId, claimOptions);
           await ensureLifecycleWorker(config, projectId);
 
-          if (opts.decompose && issueId) {
-            // Decompose the issue before spawning
-            const project = config.projects[projectId];
-            const decompConfig: DecomposerConfig = {
-              ...DEFAULT_DECOMPOSER_CONFIG,
-              ...(project.decomposer ?? {}),
-              maxDepth: opts.maxDepth
-                ? parseInt(opts.maxDepth, 10)
-                : (project.decomposer?.maxDepth ?? 3),
-            };
-
-            const spinner = ora("Decomposing task...").start();
-            const issueTitle = issueId;
-
-            const plan = await decompose(issueTitle, decompConfig);
-            const leaves = getLeaves(plan.tree);
-            spinner.succeed(`Decomposed into ${chalk.bold(String(leaves.length))} subtasks`);
-
-            console.log();
-            console.log(chalk.dim(formatPlanTree(plan.tree)));
-            console.log();
-
-            if (leaves.length <= 1) {
-              console.log(chalk.yellow("Task is atomic — spawning directly."));
-              await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
-            } else {
-              // Create child issues and spawn sessions with lineage context
-              const sm = await getSessionManager(config);
-              console.log(chalk.bold(`Spawning ${leaves.length} sessions with lineage context...`));
-              console.log();
-
-              for (const leaf of leaves) {
-                const siblings = getSiblings(plan.tree, leaf.id);
-                try {
-                  const session = await sm.spawn({
-                    projectId,
-                    issueId, // All work on the same parent issue for now
-                    lineage: leaf.lineage,
-                    siblings,
-                    agent: opts.agent,
-                  });
-                  console.log(`  ${chalk.green("✓")} ${session.id} — ${leaf.description}`);
-                } catch (err) {
-                  console.error(
-                    `  ${chalk.red("✗")} ${leaf.description} — ${err instanceof Error ? err.message : err}`,
-                  );
-                }
-                await new Promise((r) => setTimeout(r, 500));
-              }
-            }
-          } else {
-            await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
-          }
+          await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
           process.exit(1);
