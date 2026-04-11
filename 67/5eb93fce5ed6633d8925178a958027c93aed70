@@ -1,0 +1,50 @@
+packages/web/src/app/globals.css
+  a175ae786c724b0f 4007,4010-4013,4025,4027-4030,4033,4043-4044,4736-5100
+packages/web/src/components/PullRequestsPage.tsx
+  a175ae786c724b0f 188-224
+packages/web/src/components/PRStatus.tsx
+  a175ae786c724b0f 144-162,165-173,175,183,192,199-218
+packages/web/src/components/__tests__/PRStatus.coverage.test.tsx
+  a175ae786c724b0f 18,21
+packages/web/src/components/SessionDetail.tsx
+  a175ae786c724b0f 11-12,53-87,600-607,609-628,630-651,653-669,671-677,679-687
+packages/web/src/components/Dashboard.tsx
+  a175ae786c724b0f 8,14,138-234,504-517,1037-1049
+packages/web/src/components/__tests__/SessionDetail.mobile.test.tsx
+  a175ae786c724b0f 63,111,125-126,129,143-144,147,166-168,171,188-189
+packages/web/src/components/__tests__/Dashboard.mobile.test.tsx
+  a175ae786c724b0f 53,71,83-85,88,108,229,246,249,271-272,297-298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "675eb93fce5ed6633d8925178a958027c93aed70",
+  "prompts": {
+    "02103e08b023cf16": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d740a-8277-7562-bf3e-53d60ebc7eef",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "a175ae786c724b0f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "296f35d4-7f4b-469d-adc2-7682f68aa010",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 742,
+      "total_deletions": 196,
+      "accepted_lines": 742,
+      "overriden_lines": 0
+    }
+  }
+}
