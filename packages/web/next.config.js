@@ -1,9 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  eslint: { ignoreDuringBuilds: true },
   serverExternalPackages: ["@composio/core", "@aoagents/ao-core"],
   transpilePackages: [
-    "@aoagents/ao-core",
     "@aoagents/ao-plugin-agent-claude-code",
     "@aoagents/ao-plugin-agent-opencode",
     "@aoagents/ao-plugin-runtime-tmux",
@@ -12,6 +10,13 @@ const nextConfig = {
     "@aoagents/ao-plugin-tracker-linear",
     "@aoagents/ao-plugin-workspace-worktree",
   ],
+  webpack(config) {
+    config.module.rules.push({
+      test: /plugin-registry\.js$/,
+      parser: { exprContextCritical: false },
+    });
+    return config;
+  },
   async headers() {
     return [
       {

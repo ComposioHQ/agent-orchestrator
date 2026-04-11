@@ -80,10 +80,16 @@ export default tseslint.config(
     },
   },
 
+  // Register Next.js plugin globally so Next.js build-time detection finds it
+  // (Next.js calls calculateConfigForFile on the config file itself, which is .js
+  // and would not match a packages/web/**/*.tsx scope — plugin must be global)
+  {
+    plugins: { "@next/next": nextPlugin },
+  },
+
   // Next.js rules scoped to the web package
   {
     files: ["packages/web/**/*.tsx", "packages/web/**/*.ts"],
-    plugins: { "@next/next": nextPlugin },
     settings: { next: { rootDir: "packages/web" } },
     rules: {
       ...nextPlugin.configs.recommended.rules,
