@@ -1,0 +1,584 @@
+packages/web/src/app/api/sessions/patches/route.ts
+  df29bf6c92c89fe4 1-42
+packages/plugins/scm-gitlab/src/index.ts
+  df29bf6c92c89fe4 27,33
+packages/plugins/agent-cursor/package.json
+  df29bf6c92c89fe4 1-44
+packages/integration-tests/src/agent-codex-launch-env.integration.test.ts
+  df29bf6c92c89fe4 2-3
+packages/integration-tests/src/notifier-composio.integration.test.ts
+  df29bf6c92c89fe4 8-9
+packages/plugins/notifier-openclaw/src/index.test.ts
+  df29bf6c92c89fe4 5
+packages/core/src/__tests__/plugin-integration.test.ts
+  df29bf6c92c89fe4 40-41
+packages/core/src/config.ts
+  df29bf6c92c89fe4 199,243
+packages/integration-tests/src/tracker-linear.integration.test.ts
+  df29bf6c92c89fe4 22,24,220-223
+packages/web/src/app/api/sessions/[id]/restore/route.ts
+  df29bf6c92c89fe4 9
+packages/web/src/lib/project-utils.ts
+  df29bf6c92c89fe4 1
+packages/plugins/notifier-composio/src/index.test.ts
+  df29bf6c92c89fe4 2
+packages/plugins/tracker-github/package.json
+  df29bf6c92c89fe4 2,37
+packages/ao/package.json
+  df29bf6c92c89fe4 2,29
+packages/web/next.config.js
+  df29bf6c92c89fe4 3,5-12,27-34
+packages/plugins/notifier-webhook/src/index.test.ts
+  df29bf6c92c89fe4 2
+packages/plugins/tracker-linear/test/index.test.ts
+  df29bf6c92c89fe4 15,46,193,644
+packages/web/src/lib/format.ts
+  df29bf6c92c89fe4 32-37,43-53,58,61
+docs/design-cli-redesign-analysis.html
+  df29bf6c92c89fe4 434
+packages/web/src/lib/scm-webhooks.ts
+  df29bf6c92c89fe4 1-2,12
+packages/plugins/runtime-tmux/src/__tests__/index.test.ts
+  df29bf6c92c89fe4 4
+packages/plugins/notifier-webhook/package.json
+  df29bf6c92c89fe4 2,37
+packages/cli/src/lib/plugins.ts
+  df29bf6c92c89fe4 1-7,13
+packages/core/src/session-manager.ts
+  df29bf6c92c89fe4 68,766-771,992-996,2344
+packages/cli/src/lib/detect-agent.ts
+  df29bf6c92c89fe4 7,18-22
+packages/cli/__tests__/commands/dashboard.test.ts
+  df29bf6c92c89fe4 92-94,96-97,99-100,102,105-106,108-110,112-124,126-134,136,138,140,142-147,150-154,156-161,163-164,166-168
+packages/web/src/app/api/verify/route.ts
+  df29bf6c92c89fe4 4
+packages/web/src/components/SessionDetail.tsx
+  df29bf6c92c89fe4 6-14,16-19,21-31,47-48,53-86,129,138,141,150,153-155,158,171-174,177-181,184,187,192,195,205,210,220,225-230,234-254,256,284,320-355,365,431-432,437-438,440,445,450-452,465-469,476-545,547-557,560-625,627-681,683-708,710-718,796-797,800-802,807,811-817,819-825,828-829,831,833-834,842,845-860,863,865-867,869-876,878-879,881-911,913,921-922,928,930,933-957,959-960,965,967-972,974-975,989-992,996,1000,1002,1006,1010,1013
+packages/web/src/lib/observability.ts
+  df29bf6c92c89fe4 1-2,10
+packages/plugins/agent-aider/src/index.ts
+  df29bf6c92c89fe4 22
+packages/cli/src/lib/constants.ts
+  df29bf6c92c89fe4 1-2
+packages/plugins/agent-claude-code/src/index.test.ts
+  df29bf6c92c89fe4 2
+packages/web/src/components/__tests__/ProjectSidebar.test.tsx
+  df29bf6c92c89fe4 1-2,4,7,14-20,23-24,28-29,32,34-39,45-53,56-58,61-77,80-92,95-96,98-108,112-139,142-173,176-198,200-210,212-213
+packages/integration-tests/src/terminal-web.integration.test.ts
+  df29bf6c92c89fe4 8
+changelog/hash-based-architecture-migration.md
+  df29bf6c92c89fe4 206
+packages/ao/bin/ao.js
+  df29bf6c92c89fe4 2
+packages/web/server/__tests__/direct-terminal-ws.integration.test.ts
+  df29bf6c92c89fe4 4-7,10,19,34,43-44,46,53,55-60,63-70,76,101-102,114-116,119-120,124,135-136,140,144,149,152-156,159-167,172,175-177,179,181-182,187-188,190,192-193,198-199,201,203-204,209-210,212,214-215,220-222,224,226-227,234,237-239,241-242,244-247,252-253,255-257,260-279,281,285-286,288-289,291,293-294,296-312,314,320,323-325,327,329-330,341
+.gitignore
+  df29bf6c92c89fe4 5
+packages/plugins/notifier-openclaw/package.json
+  df29bf6c92c89fe4 2,37
+packages/cli/__tests__/lib/preflight.test.ts
+  df29bf6c92c89fe4 21-25,63-66,70,79-80,99-101,103,109-129
+packages/core/src/__tests__/plugin-registry.test.ts
+  df29bf6c92c89fe4 155-157,178-179,206,231,241-318,333,352,361,389,415-416,434,448,505,837-895
+packages/plugins/agent-opencode/src/index.ts
+  df29bf6c92c89fe4 24
+packages/plugins/notifier-discord/src/index.ts
+  df29bf6c92c89fe4 10-11
+packages/web/src/lib/session-project.ts
+  df29bf6c92c89fe4 1
+scripts/try-pr.sh
+  df29bf6c92c89fe4 58-60,66
+packages/cli/src/lib/config-instruction.ts
+  df29bf6c92c89fe4 24,137
+packages/web/src/components/__tests__/SessionDetail.mobile.test.tsx
+  df29bf6c92c89fe4 43,57-58,63,111,125-140,142-144,147,166-168,171,188-189
+packages/web/vitest.config.ts
+  df29bf6c92c89fe4 20,22,26,30,34,38,42,46,50,53
+packages/web/src/components/BottomSheet.tsx
+  df29bf6c92c89fe4 4,128-130,162-259
+packages/web/src/app/api/orchestrators/route.ts
+  df29bf6c92c89fe4 2
+scripts/ao-update.sh
+  df29bf6c92c89fe4 109-111,113-115
+packages/cli/src/lib/lifecycle-service.ts
+  df29bf6c92c89fe4 12
+packages/integration-tests/src/notifier-webhook.integration.test.ts
+  df29bf6c92c89fe4 8-9
+packages/web/server/mux-websocket.ts
+  df29bf6c92c89fe4 2-3,5-7,10-12,15-43,47-49,51-72,74-84,87,89-97,99-114,116-119,121-127,129-132,135-137,139-175,177-184,187-190,192-193,195,197-207,209-218,220-221,223-229,231-233,235-263,266-268,270-274,276-297,300-321,323-325,327-353,356-363,366-372,374,376-382,384,386-396,399-415,418-436,439-466,468-580,582-594,596-600,603-605
+packages/plugins/scm-github/package.json
+  df29bf6c92c89fe4 2,38
+packages/web/src/app/orchestrators/page.tsx
+  df29bf6c92c89fe4 5
+packages/web/src/app/manifest.test.ts
+  df29bf6c92c89fe4 1-25
+packages/web/src/lib/__tests__/types.test.ts
+  df29bf6c92c89fe4 19,133-140,185-189
+packages/plugins/terminal-web/src/index.ts
+  df29bf6c92c89fe4 1
+packages/cli/__tests__/commands/plugin.test.ts
+  df29bf6c92c89fe4 7,27,51,224
+packages/cli/src/lib/create-session-manager.ts
+  df29bf6c92c89fe4 18
+packages/plugins/agent-aider/src/index.test.ts
+  df29bf6c92c89fe4 2,21
+packages/plugins/notifier-webhook/src/index.ts
+  df29bf6c92c89fe4 7,12
+packages/web/src/components/__tests__/DirectTerminal.test.ts
+  df29bf6c92c89fe4 2
+packages/plugins/terminal-iterm2/package.json
+  df29bf6c92c89fe4 2,37
+packages/web/server/terminal-observability.ts
+  df29bf6c92c89fe4 7
+packages/core/src/lifecycle-manager.ts
+  df29bf6c92c89fe4 42,359-364,374-378,381,389-395,399,433-441,443-445,1190-1193,1292-1305
+packages/cli/src/commands/review-check.ts
+  df29bf6c92c89fe4 4
+.github/workflows/integration-tests.yml
+  df29bf6c92c89fe4 51,62
+packages/cli/__tests__/scripts/update-script.test.ts
+  df29bf6c92c89fe4 74-75
+packages/cli/src/commands/verify.ts
+  df29bf6c92c89fe4 9,59
+.changeset/linear-spawn-branch-name.md
+  df29bf6c92c89fe4 1-6
+packages/web/src/lib/dashboard-page-data.ts
+  df29bf6c92c89fe4 1-2
+packages/web/src/lib/orchestrator-utils.ts
+  df29bf6c92c89fe4 1-2
+packages/cli/src/commands/doctor.ts
+  df29bf6c92c89fe4 10,15,88,99,330,332-333,338-339,351-353,355,372,375
+packages/integration-tests/src/config-metadata-service.integration.test.ts
+  df29bf6c92c89fe4 24
+packages/web/src/providers/__tests__/MuxProvider.test.tsx
+  df29bf6c92c89fe4 1-560
+packages/plugins/tracker-linear/test/composio-transport.test.ts
+  df29bf6c92c89fe4 20
+packages/core/src/__tests__/metadata.test.ts
+  df29bf6c92c89fe4 99-110
+packages/core/src/plugin-registry.ts
+  df29bf6c92c89fe4 6,26-30,40-41,43-47,49-50,52-54,56-57,59-64,66-67,70-81,83-94,97-101,104-114,127,141-144,387-417,423,432,434-435,438,457-461,497-498,516-520
+packages/cli/src/lib/plugin-scaffold.ts
+  df29bf6c92c89fe4 3,83,125
+packages/web/src/components/ProjectSidebar.tsx
+  df29bf6c92c89fe4 4,8,10,23,25,29-30,32,37-44,47,59,86,88-91,93,96-111,116-122,129-142,145-164,166-167,169-170,172-192,195,197-239,241-249
+packages/web/src/components/PullRequestsPage.tsx
+  df29bf6c92c89fe4 13,32-40,49,57-62,76-78,80,82,84-87,93,100-102,117-161,163-181,183-190,194-197,200-201,204-303,306,309-310,313,316,319,322,325-326,331-379
+docs/opencode-workflows-spec.md
+  df29bf6c92c89fe4 30,101-104
+packages/plugins/notifier-desktop/package.json
+  df29bf6c92c89fe4 2,37
+packages/plugins/tracker-linear/src/index.ts
+  df29bf6c92c89fe4 20,218,264,299,432,625
+packages/plugins/notifier-composio/src/index.ts
+  df29bf6c92c89fe4 8
+packages/cli/src/lib/plugin-marketplace.ts
+  df29bf6c92c89fe4 6,128
+packages/web/server/__tests__/mux-websocket.test.ts
+  df29bf6c92c89fe4 1-257
+packages/web/src/components/ThemeToggle.tsx
+  df29bf6c92c89fe4 6-11,17,24-27,41
+packages/web/src/components/__tests__/PullRequestsPage.test.tsx
+  df29bf6c92c89fe4 30-45,111-149
+packages/web/src/components/__tests__/DirectTerminal.render.test.tsx
+  df29bf6c92c89fe4 6,98-110,115,176,182,186,193,196-211
+packages/cli/__tests__/commands/session.test.ts
+  df29bf6c92c89fe4 22,90,92,334-402
+packages/plugins/terminal-web/src/index.test.ts
+  df29bf6c92c89fe4 2
+packages/cli/src/commands/send.ts
+  df29bf6c92c89fe4 11
+DESIGN.md
+  df29bf6c92c89fe4 6,10-13,16,31-35,38-44,47-55,60-62,67-69,74-76,79-86,88-90,103-105,130-289,308-310,315-333
+packages/cli/__tests__/commands/open.test.ts
+  df29bf6c92c89fe4 23,170
+packages/web/src/__tests__/api-routes.test.ts
+  df29bf6c92c89fe4 11,210,986-1024
+.github/workflows/coverage.yml
+  df29bf6c92c89fe4 64,68,72,76
+packages/web/src/app/api/issues/route.ts
+  df29bf6c92c89fe4 4
+packages/web/src/hooks/useSessionEvents.ts
+  df29bf6c92c89fe4 3,99,101,116,131-207,209-243,245-263,338-339,346
+packages/web/src/__tests__/components.test.tsx
+  df29bf6c92c89fe4 187-188,291,396,415,421,551,561,578-597
+packages/plugins/workspace-clone/src/index.ts
+  df29bf6c92c89fe4 12
+packages/web/src/app/api/sessions/route.ts
+  df29bf6c92c89fe4 1
+DASHBOARD_FIXES_SUMMARY.md
+  df29bf6c92c89fe4 188
+packages/integration-tests/src/notifier-openclaw.integration.test.ts
+  df29bf6c92c89fe4 7-8
+packages/web/src/app/sessions/[id]/page.tsx
+  df29bf6c92c89fe4 5,10,34,62-63,90,191-201,211,215,222,225,254-255
+packages/integration-tests/src/helpers/session-factory.ts
+  df29bf6c92c89fe4 5
+examples/README.md
+  df29bf6c92c89fe4 35-36
+packages/web/src/app/manifest.ts
+  df29bf6c92c89fe4 12-13
+packages/ao/bin/postinstall.js
+  df29bf6c92c89fe4 3,5-8,10-12,16,40,48-55,57-60,62-69,71-82
+packages/cli/__tests__/commands/doctor.test.ts
+  df29bf6c92c89fe4 30,35-41,260-308
+packages/plugins/notifier-desktop/src/index.ts
+  df29bf6c92c89fe4 10,20
+packages/plugins/notifier-discord/package.json
+  df29bf6c92c89fe4 2,37
+packages/web/src/lib/scm-webhooks.test.ts
+  df29bf6c92c89fe4 2
+AGENTS.md
+  df29bf6c92c89fe4 13
+packages/web/src/components/Dashboard.tsx
+  df29bf6c92c89fe4 8,14,19,48,52-69,84-232,243,254,256,270,279,281,285,294-305,307-317,324-325,467-478,482-508,510-512,514-529,531-533,535-539,541,543-546,565-580,582-584,586-601,603-605,645-646,652-665,668-670,673-674,677,679,681-682,685-738,740-747,750-752,754,760-761,763-843,845,847-850,852-865,868-898,900-924,927,929,931-948,950-983,987-1027,1031-1033,1035-1066,1068-1088,1144-1148,1193-1196,1204-1207,1216,1228,1236-1237
+packages/cli/__tests__/commands/spawn.test.ts
+  df29bf6c92c89fe4 5,35-41,43,46,48,117-120,289,311-313,440-441,443
+packages/cli/__tests__/lib/plugins.test.ts
+  df29bf6c92c89fe4 8
+packages/web/src/app/api/sessions/[id]/message/route.ts
+  df29bf6c92c89fe4 4
+packages/plugins/agent-claude-code/package.json
+  df29bf6c92c89fe4 2,37
+packages/plugins/agent-opencode/package.json
+  df29bf6c92c89fe4 2,37
+skills/agent-orchestrator/references/config.md
+  df29bf6c92c89fe4 18
+packages/integration-tests/src/agent-claude-code.integration.test.ts
+  df29bf6c92c89fe4 26,28
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  df29bf6c92c89fe4 83-188
+packages/plugins/agent-codex/src/index.test.ts
+  df29bf6c92c89fe4 2,66
+packages/plugins/notifier-discord/src/index.test.ts
+  df29bf6c92c89fe4 2
+packages/cli/src/commands/plugin.ts
+  df29bf6c92c89fe4 11
+packages/web/src/components/Skeleton.tsx
+  df29bf6c92c89fe4 5,8-10,12-109
+CLAUDE.md
+  df29bf6c92c89fe4 65,69-70,162,204-205,216,225,234,298,346
+packages/cli/src/commands/setup.ts
+  df29bf6c92c89fe4 17,293
+packages/web/src/components/DirectTerminal.tsx
+  df29bf6c92c89fe4 7,21,27,111,115,122,127-128,194,205,336-337,339-353,355,357,373,375,378-379,389-390,403-425,431,434,442,472-473,515,519-521,523,525,530-536,539,541,544-582,587-588,590,593-600,602-603,605-609,611,613-704,709-713
+packages/web/src/components/__tests__/Dashboard.mobile.test.tsx
+  df29bf6c92c89fe4 53,58,71,83-85,88,108,210,217,229,238,246-366,368-376,379,388,395,401-402,412,420,427-428
+packages/plugins/agent-cursor/tsconfig.json
+  df29bf6c92c89fe4 1-9
+packages/plugins/notifier-openclaw/src/index.ts
+  df29bf6c92c89fe4 12-13
+packages/web/src/app/test-direct/page.tsx
+  df29bf6c92c89fe4 3,7-13
+packages/plugins/workspace-clone/package.json
+  df29bf6c92c89fe4 2,38
+packages/cli/__tests__/commands/send.test.ts
+  df29bf6c92c89fe4 50
+packages/integration-tests/src/helpers/event-factory.ts
+  df29bf6c92c89fe4 8
+packages/web/src/components/SessionCard.tsx
+  df29bf6c92c89fe4 100,169-172,176-177,183-202,251,284-297,415-423,428,430-431,434-445,474,493-494,499,501,505-509,516,521-534,538-550,555,572-581,586-593,607-610,613-630,634-643,645-647,649,651-706,714,728,730-740,742-758,778-790,793-794,829-830,834,840-841,848-851,854,863-864,868,874-881,884,892-893,897,906-907,911
+packages/integration-tests/src/runtime-tmux.integration.test.ts
+  df29bf6c92c89fe4 2-3
+packages/web/src/app/api/events/route.ts
+  df29bf6c92c89fe4 9
+packages/plugins/runtime-tmux/src/index.ts
+  df29bf6c92c89fe4 16
+packages/plugins/agent-claude-code/src/index.ts
+  df29bf6c92c89fe4 18,273
+.changeset/config.json
+  df29bf6c92c89fe4 8-28,34
+packages/web/src/app/providers.test.tsx
+  df29bf6c92c89fe4 1-27
+packages/web/src/providers/MuxProvider.tsx
+  df29bf6c92c89fe4 1-323
+packages/web/src/app/test-direct/page.test.tsx
+  df29bf6c92c89fe4 10-21,23-31
+packages/plugins/terminal-iterm2/src/index.test.ts
+  df29bf6c92c89fe4 2
+packages/plugins/notifier-slack/src/index.test.ts
+  df29bf6c92c89fe4 2
+packages/cli/src/commands/dashboard.ts
+  df29bf6c92c89fe4 5,7-14,23,26,40,53,55-56,70-75,109-111,115,124
+packages/web/src/lib/project-name.ts
+  df29bf6c92c89fe4 1-2,4
+scripts/claude-batch-spawn
+  df29bf6c92c89fe4 139,141
+packages/web/src/components/PRStatus.tsx
+  df29bf6c92c89fe4 75,78,86-89,111,148-166,169,171,174,176-177,179-191,194-204,211,217-232
+packages/integration-tests/src/notifier-slack.integration.test.ts
+  df29bf6c92c89fe4 8-9
+packages/plugins/agent-codex/src/index.ts
+  df29bf6c92c89fe4 25,49
+packages/cli/__tests__/commands/review-check.test.ts
+  df29bf6c92c89fe4 13,58,60
+.cursor/BUGBOT.md
+  df29bf6c92c89fe4 20
+packages/plugins/notifier-desktop/src/index.test.ts
+  df29bf6c92c89fe4 2
+scripts/ao-doctor.sh
+  df29bf6c92c89fe4 253,259
+packages/web/src/app/api/sessions/[id]/kill/route.ts
+  df29bf6c92c89fe4 4
+artifacts/architecture-design.md
+  df29bf6c92c89fe4 672,683,697
+packages/plugins/terminal-web/package.json
+  df29bf6c92c89fe4 2,37
+packages/core/src/config-generator.ts
+  df29bf6c92c89fe4 246
+packages/integration-tests/src/notifier-desktop.integration.test.ts
+  df29bf6c92c89fe4 8,26
+packages/plugins/workspace-worktree/src/__tests__/index.test.ts
+  df29bf6c92c89fe4 2
+packages/core/src/recovery/validator.ts
+  df29bf6c92c89fe4 34-39
+packages/core/src/agent-selection.ts
+  df29bf6c92c89fe4 25,27-29
+packages/plugins/scm-github/src/index.ts
+  df29bf6c92c89fe4 31,40
+packages/plugins/agent-cursor/src/index.ts
+  df29bf6c92c89fe4 1-30,33,36-49,52-68,70-86,90,93-134,136,140,143-149,152,155,157-404,408-410,412-413,416-429,433
+packages/cli/src/assets/plugin-registry.json
+  df29bf6c92c89fe4 4,12,20,28,37,45,53
+packages/web/server/__tests__/server-compatibility.test.ts
+  df29bf6c92c89fe4 28-29
+packages/cli/src/lib/dashboard-rebuild.ts
+  df29bf6c92c89fe4 2-3,9,12-30,60,72-92
+packages/integration-tests/src/prompt-delivery.integration.test.ts
+  df29bf6c92c89fe4 22-23
+packages/cli/__tests__/commands/status.test.ts
+  df29bf6c92c89fe4 17,75,77,952
+packages/plugins/notifier-composio/package.json
+  df29bf6c92c89fe4 2,37
+packages/integration-tests/src/agent-opencode.integration.test.ts
+  df29bf6c92c89fe4 19,21
+packages/plugins/tracker-gitlab/src/index.ts
+  df29bf6c92c89fe4 15,17
+docs/CLI.md
+  df29bf6c92c89fe4 27
+packages/cli/src/commands/spawn.ts
+  df29bf6c92c89fe4 9-10,117-119,121,123,139,225
+openclaw-plugin/index.ts
+  df29bf6c92c89fe4 950
+README.md
+  df29bf6c92c89fe4 4,14,53,148
+packages/cli/src/lib/format.ts
+  df29bf6c92c89fe4 2
+packages/core/src/metadata.ts
+  df29bf6c92c89fe4 96,146
+packages/integration-tests/src/runtime-process.integration.test.ts
+  df29bf6c92c89fe4 2-3
+packages/plugins/agent-aider/package.json
+  df29bf6c92c89fe4 2,37
+packages/plugins/workspace-worktree/src/index.ts
+  df29bf6c92c89fe4 12
+packages/cli/src/commands/status.ts
+  df29bf6c92c89fe4 15
+packages/web/server/direct-terminal-ws.ts
+  df29bf6c92c89fe4 2-3,7-9,22-25,36-37,48,50-54,56-57,60,62-65,67-69,71-72,77-83,88
+packages/cli/__tests__/commands/setup.test.ts
+  df29bf6c92c89fe4 28,59,235-264
+packages/core/src/notifier-resolution.ts
+  df29bf6c92c89fe4 1-31
+packages/integration-tests/src/cli-spawn-core-read-new.integration.test.ts
+  df29bf6c92c89fe4 28
+packages/cli/__tests__/lib/session-utils.test.ts
+  df29bf6c92c89fe4 5,9,33-47
+packages/web/src/components/__tests__/Dashboard.projectOverview.test.tsx
+  df29bf6c92c89fe4 61,70,73,84
+docs/PLUGIN_SPEC.md
+  df29bf6c92c89fe4 50,57,79
+packages/web/src/hooks/__tests__/useSessionEvents.mux.test.ts
+  df29bf6c92c89fe4 1-38
+packages/plugins/runtime-process/src/index.ts
+  df29bf6c92c89fe4 9
+packages/integration-tests/src/metadata-lifecycle.integration.test.ts
+  df29bf6c92c89fe4 5,22
+packages/plugins/agent-codex/package.json
+  df29bf6c92c89fe4 2,37
+packages/cli/__tests__/commands/start.test.ts
+  df29bf6c92c89fe4 9,12-13,52-55,77,79,117,156,175-185,194,254,275,856,861,880,903-904,911-947,951,966-967,970,973-981,988-989,1084-1102,1104-1126
+packages/cli/vitest.config.ts
+  df29bf6c92c89fe4 23,27,31,35,39,43,47,51-55
+packages/web/src/components/AttentionZone.tsx
+  df29bf6c92c89fe4 35,40,44,48,52,56,60,114,116,122,156,168,176,188,239
+packages/web/src/components/ActivityDot.tsx
+  df29bf6c92c89fe4 5-11,22-23,29-31,38-39,42-43,45-46
+packages/cli/src/commands/lifecycle-worker.ts
+  df29bf6c92c89fe4 3
+packages/plugins/scm-github/test/index.test.ts
+  df29bf6c92c89fe4 18
+packages/plugins/tracker-gitlab/package.json
+  df29bf6c92c89fe4 2,37-38
+packages/web/src/app/api/sessions/[id]/send/route.ts
+  df29bf6c92c89fe4 4
+packages/plugins/tracker-linear/package.json
+  df29bf6c92c89fe4 2,37
+packages/core/src/__tests__/lifecycle-manager.test.ts
+  df29bf6c92c89fe4 54,59-61,63-75,78,117-160,1393-1475,1477-1522,1525,1871-1970
+packages/web/src/components/__tests__/PRStatus.coverage.test.tsx
+  df29bf6c92c89fe4 18,21-37
+packages/web/src/app/dev/terminal-test/page.tsx
+  df29bf6c92c89fe4 3,7-18
+packages/web/src/app/layout.tsx
+  df29bf6c92c89fe4 5,26-27,51
+packages/plugins/runtime-process/src/__tests__/index.test.ts
+  df29bf6c92c89fe4 3
+packages/web/src/lib/mux-protocol.ts
+  df29bf6c92c89fe4 1-28
+packages/core/src/__tests__/config-generator.test.ts
+  df29bf6c92c89fe4 258
+packages/integration-tests/src/workspace-worktree.integration.test.ts
+  df29bf6c92c89fe4 8-9
+packages/web/src/lib/serialize.ts
+  df29bf6c92c89fe4 1-2,20
+packages/cli/src/commands/open.ts
+  df29bf6c92c89fe4 3,5-6,64,70,72
+packages/web/src/components/__tests__/Dashboard.emptyState.test.tsx
+  df29bf6c92c89fe4 29-32,59-88
+packages/plugins/agent-opencode/src/index.test.ts
+  df29bf6c92c89fe4 2,13
+packages/web/src/components/__tests__/Dashboard.doneBar.test.tsx
+  df29bf6c92c89fe4 60
+.github/workflows/release.yml
+  df29bf6c92c89fe4 29
+.github/workflows/ci.yml
+  df29bf6c92c89fe4 39,41,43,56,74,76
+packages/cli/src/lib/session-utils.ts
+  df29bf6c92c89fe4 1,7-14
+packages/integration-tests/src/agent-aider.integration.test.ts
+  df29bf6c92c89fe4 17,19
+packages/plugins/notifier-slack/package.json
+  df29bf6c92c89fe4 2,37
+packages/web/src/lib/activity-icons.ts
+  df29bf6c92c89fe4 1
+packages/core/README.md
+  df29bf6c92c89fe4 1,128,144,161,191,194,197,212,215
+packages/core/package.json
+  df29bf6c92c89fe4 2,14-49,61-64
+packages/integration-tests/src/agent-codex.integration.test.ts
+  df29bf6c92c89fe4 17,19
+packages/plugins/agent-cursor/src/index.test.ts
+  df29bf6c92c89fe4 1-651
+packages/plugins/tracker-gitlab/test/index.test.ts
+  df29bf6c92c89fe4 16
+packages/core/src/types.ts
+  df29bf6c92c89fe4 544,1376
+packages/web/src/lib/__tests__/serialize.test.ts
+  df29bf6c92c89fe4 15,194-235
+packages/web/src/lib/types.ts
+  df29bf6c92c89fe4 5,18,33,93
+packages/plugins/scm-gitlab/test/index.test.ts
+  df29bf6c92c89fe4 16
+packages/cli/src/lib/preflight.ts
+  df29bf6c92c89fe4 14,31,36-37,39-40,46-56
+packages/plugins/runtime-tmux/package.json
+  df29bf6c92c89fe4 2,38
+packages/plugins/tracker-github/src/index.ts
+  df29bf6c92c89fe4 17
+CONTRIBUTING.md
+  df29bf6c92c89fe4 39,45-46,55,68,101,112,123,158,181-182
+packages/web/src/components/__tests__/SessionDetail.desktop.test.tsx
+  df29bf6c92c89fe4 1-189
+packages/plugins/scm-gitlab/package.json
+  df29bf6c92c89fe4 2,41
+packages/plugins/agent-claude-code/src/__tests__/activity-detection.test.ts
+  df29bf6c92c89fe4 6
+packages/web/src/__tests__/server-only-mock.ts
+  df29bf6c92c89fe4 1-3
+packages/cli/src/commands/start.ts
+  df29bf6c92c89fe4 37,51,69,585,752,759,763-765,767-769,772-774,782-788,797-798,812,915,966-970,972-974,984,1042-1052,1055-1059,1102,1105-1116,1123-1126,1191,1200,1437
+packages/web/src/__tests__/setup.ts
+  df29bf6c92c89fe4 1-8
+packages/web/src/lib/services.ts
+  df29bf6c92c89fe4 1-2,31,34-41,79,271-272
+packages/plugins/scm-github/src/graphql-batch.ts
+  df29bf6c92c89fe4 18
+packages/core/vitest.config.ts
+  df29bf6c92c89fe4 13,17
+packages/web/src/app/layout.test.ts
+  df29bf6c92c89fe4 1-37
+packages/core/src/index.ts
+  df29bf6c92c89fe4 2,73,111
+packages/cli/src/lib/web-dir.ts
+  df29bf6c92c89fe4 2,180,187,203-204
+packages/web/src/app/providers.tsx
+  df29bf6c92c89fe4 1-12
+packages/integration-tests/package.json
+  df29bf6c92c89fe4 2,13-22,25-31
+packages/plugins/workspace-worktree/package.json
+  df29bf6c92c89fe4 2,38
+packages/web/src/app/api/sessions/[id]/remap/route.ts
+  df29bf6c92c89fe4 4
+docs/DEVELOPMENT.md
+  df29bf6c92c89fe4 161,188,226,260,271,321,324,347,434
+packages/web/src/hooks/useMux.ts
+  df29bf6c92c89fe4 1
+packages/plugins/tracker-github/test/index.test.ts
+  df29bf6c92c89fe4 16
+packages/cli/package.json
+  df29bf6c92c89fe4 2,36-57
+packages/web/src/lib/__tests__/format.test.ts
+  df29bf6c92c89fe4 124,131,144,151,181,188-229,231
+package.json
+  df29bf6c92c89fe4 14,20-21,38-42
+SETUP.md
+  df29bf6c92c89fe4 63,75,78,85,347-348,390
+packages/core/src/utils.ts
+  df29bf6c92c89fe4 37-59
+packages/web/src/app/globals.css
+  df29bf6c92c89fe4 30,32-38,45-48,54-58,61-64,66-69,73-74,76-79,81-83,86,88,91-92,95-99,104,107,121-124,128,131-132,134-135,140-146,158,162-172,180-211,215-216,218-221,223-225,228,230,233-234,237,239,241,246,249,256-258,261,263-265,268-269,271-274,277-278,280-281,286-292,295,299-301,304,307-318,327,380,383-384,388-389,393-394,396,399-400,404-405,409,522-676,679-688,782,785-812,818,864-868,871,873-880,883-895,898-900,903,906-910,913-915,917-919,922-926,929-932,935-936,939,945-962,965-969,972-973,976-979,982-984,987-993,995-996,999-1004,1007-1009,1012-1014,1017-1018,1021-1027,1030-1032,1035-1039,1042-1045,1048,1050-1054,1057-1061,1063-1068,1071-1078,1081-1082,1085-1086,1089-1092,1095-1098,1101-1108,1111-1112,1115-1123,1126-1131,1134-1139,1142-1146,1149-1156,1158-1161,1164-1168,1171-1178,1181-1187,1190-1196,1199-1206,1209-1210,1213-1224,1227-1229,1232-1258,1260-1263,1267-1268,1271-1284,1287-1292,1295-1299,1302,1304-1309,1312-1323,1326-1327,1330-1335,1338-1339,1342-1344,1346-1349,1351-1352,1354-1355,1357-1358,1360-1361,1364,1366-1367,1369-1370,1372-1373,1376-1379,1381-1382,1385-1389,1391-1413,1416-1432,1434-1440,1443-1452,1454-1461,1464-1474,1477-1487,1489-1493,1496-1512,1515-1518,1521-1522,1524-1531,1534-1537,1540-1545,1548,1550,1553-1555,1558-1563,1566,1569-1571,1573,1576-1584,1587-1590,1593-1599,1602-1609,1612-1614,1617-1619,1621,1623,1625,1628-1632,1635-1643,1646-1648,1651-1652,1655-1659,1662-1667,1669-1670,1673-1675,1678-1681,1683-1687,1689-1693,1696-1699,1701,1703-1709,1712-1717,1720-1724,1727-1729,1732,1736-1738,1741,1744-1761,1764-1766,1769-1771,1774-1803,1808,1811-1816,1818-1821,1824-1825,1828-1832,1835-1838,1841-1844,1847-1850,1853-1856,1859-1862,1865-1866,1869-1870,1873-1877,1880-1881,1884-1893,1896-1897,1900-1901,1904,1906-1908,1911-1914,1917-1919,1925-1928,1931,1933-1945,1948-1949,1952-1953,1956-1957,1960-1961,1964-1965,1968-1972,1975-1980,1983-1984,1987-1988,1991-1992,1995-1997,1999-2002,2005-2006,2008-2009,2012-2015,2018-2020,2023-2028,2030-2034,2036-2037,2040-2045,2048-2053,2056-2057,2060-2069,2072-2073,2075-2078,2081-2084,2086-2087,2090-2091,2094-2095,2098-2099,2102-2103,2106-2122,2124,2126-2127,2130-2137,2140-2142,2145-2150,2152-2156,2159-2163,2166-2172,2175-2176,2179-2180,2183-2187,2189-2195,2197-2201,2204-2207,2210-2215,2218-2225,2227-2249,2251,2254-2259,2263-2266,2269-2271,2273-2278,2280-2288,2291-2295,2297-2298,2301-2303,2306-2312,2315-2322,2325-2326,2328,2332-2334,2337-2340,2343-2345,2347-2349,2352-2355,2358-2368,2371-2384,2386-2388,2390-3712,3715-3939,3942-3954,3957-3960,3963-3964,3967-3968,3971-3973,3976-3987,3990-3995,3998-4003,4006-4064,4066-4074,4077-4080,4083-4085,4088-4092,4095-4099,4102-4106,4108,4110-4118,4120-4128,4130-4151,4155-4157,4159-4178,4181-4182,4185-4189,4192-4195,4198-4199,4202-4204,4210-4211,4214-4218,4221,4223-4226,4229-4232,4235,4239-4246,4249-4251,4254-4257,4260-4262,4265-4266,4269-4270,4273,4277,4279-4281,4284-4286,4290-4291,4294-4297,4300-4301,4304-4307,4310-4313,4316,4320-4323,4328-4329,4331,4334-4338,4341-4343,4345-4348,4351-4354,4357-4360,4363-4365,4368-4371,4374-4387,4390-4391,4394-4395,4398,4400-4402,4404-4408,4412,4414-4417,4419,4422,4427,4430-4436,4439-4441,4444,4447-4452,4454-4462,4466-4474,4477-4484,4487,4490-4501,4504-4506,4509-4511,4514-4518,4521-4523,4526-4529,4532-4542,4545,4547-4551,4554-4557,4559-4565,4568-4572,4575-4576,4578-4579,4581-4582,4584-4585,4587-4588,4591-4592,4594-4595,4597-4604,4607-4612,4615-4616,4619-4620,4623-4624,4627-4630,4633-4635,4638-4642,4645-4646,4649-4650,4652-4654,4657-4658,4661-4662,4665-4668,4671-4680,4683-4684,4687,4690-4692,4695-4697,4699-4700,4703-4711,4714,4717-4720,4723-4724,4726-4730,4733-4738,4741-4746,4749-4754,4757,4759,4762-4763,4766-4779,4782-4785,4788-4792,4795-4796,4798-4799,4801-4802,4804-4805,4807-4808,4811-4812,4816,4819-4822,4826-4838,4842,4844-4845,4847-4850,4853-4854,4856-4868,4871-4882,4886-4893,4895-4925,4927,4930-4937,4940-4946,4948-4953,4956-4961,4968-4972,4975-4978,4981-4986,4989-4993,4997-5017,5021-5042,5045-5046,5049,5052-5054,5057-5067,5071-5092,5094-5097,5100-5101,5104-5121,5124-5125,5128-5134,5136-5138,5140-5145,5148-5149,5152-5160,5163-5166,5169-5174,5176-5178,5181-5185,5188-5190,5193-5198,5201,5208,5210-5213,5216-5219,5223-5226,5229,5231,5255,5263,5329,5374,5384,5386-5388,5395,5397-5399,5403-5414,5417-5474,5478-5482,5484,5489,5495-5500,5504,5507,5519,5521,5523-5561,5568-5571,5574-5577,5582-5584,5587-5590,5596,5600,5606,5622-5624,5628-5633,5643,5647,5653,5657-5658,5663-5664,5671-5672,5678-5679,5683,5701-5703,5717,5729-5747
+packages/plugins/workspace-clone/src/__tests__/index.test.ts
+  df29bf6c92c89fe4 4
+packages/integration-tests/src/terminal-iterm2.integration.test.ts
+  df29bf6c92c89fe4 22
+packages/plugins/terminal-iterm2/src/index.ts
+  df29bf6c92c89fe4 8,18
+packages/plugins/runtime-process/package.json
+  df29bf6c92c89fe4 2,38
+packages/web/src/__tests__/services.test.ts
+  df29bf6c92c89fe4 42,55-61
+packages/cli/src/commands/session.ts
+  df29bf6c92c89fe4 4-10,16-28,38-40,48-55,67-70,75-77,84-86,114-139,141,150-155,371-372
+packages/core/src/__tests__/utils.test.ts
+  df29bf6c92c89fe4 5-10,95-120
+packages/integration-tests/src/workspace-clone.integration.test.ts
+  df29bf6c92c89fe4 8-9
+packages/web/package.json
+  df29bf6c92c89fe4 2,15,21,30-38,45,53,61
+packages/plugins/notifier-slack/src/index.ts
+  df29bf6c92c89fe4 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "4297631399b950844ae2303d0ad52e358e0e788f",
+  "prompts": {
+    "02103e08b023cf16": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d740a-8277-7562-bf3e-53d60ebc7eef",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "df29bf6c92c89fe4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d7c34-a84d-7f31-9ae7-441e2c0aac13",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 28084,
+      "total_deletions": 9363,
+      "accepted_lines": 25706,
+      "overriden_lines": 0
+    }
+  }
+}
