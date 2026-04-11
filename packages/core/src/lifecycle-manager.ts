@@ -355,9 +355,9 @@ export async function createLifecycleManager(
     // Collect all unique PRs
     const prs = sessions.map((s) => s.pr).filter((pr): pr is NonNullable<typeof pr> => pr !== null);
 
-    // Deduplicate by key
+    // Deduplicate by key (case-insensitive)
     const uniquePRs = Array.from(
-      new Map(prs.map((pr) => [`${pr.owner}/${pr.repo}#${pr.number}`, pr])).values(),
+      new Map(prs.map((pr) => [`${pr.owner}/${pr.repo}#${pr.number}`.toLowerCase(), pr])).values(),
     );
 
     if (uniquePRs.length === 0) return;
@@ -365,10 +365,13 @@ export async function createLifecycleManager(
     // Group by SCM plugin and batch fetch for each group
     const prsByPlugin = new Map<string, typeof uniquePRs>();
     for (const pr of uniquePRs) {
-      // Find the project for this PR
+      // Find the project for this PR (case-insensitive matching)
       const project = Object.values(config.projects).find((p) => {
         const [owner, repo] = p.repo.split("/");
-        return owner === pr.owner && repo === pr.repo;
+        return (
+          owner?.toLowerCase() === pr.owner.toLowerCase() &&
+          repo?.toLowerCase() === pr.repo.toLowerCase()
+        );
       });
       if (!project?.scm?.plugin) continue;
 
@@ -438,9 +441,9 @@ export async function createLifecycleManager(
           },
         });
 
-        // Merge into cache
+        // Merge into cache (normalize keys to lowercase)
         for (const [key, data] of enrichmentData) {
-          prEnrichmentCache.set(key, data);
+          prEnrichmentCache.set(key.toLowerCase(), data);
         }
       } catch (err) {
         // Batch fetch failed - individual calls will still work
@@ -597,7 +600,7 @@ export async function createLifecycleManager(
     if (session.pr && scm) {
       try {
         // Try to use cached enrichment data from batch GraphQL query
-        const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+        const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`.toLowerCase();
         const cachedData = prEnrichmentCache.get(prKey);
 
         if (cachedData) {
@@ -1457,7 +1460,7 @@ export async function createLifecycleManager(
 
       // Prune stale entries from reactionTrackers and lastReviewBacklogCheckAt
       // for sessions that no longer appear in the session list (e.g., after kill/cleanup).
-      // Note: StateStore retains history; we don't explicitly delete states.
+      // Note: StateStore retains history; we do not prune sessions from memory so that compaction preserves the full audit trail on disk.
       const currentSessionIds = new Set(sessions.map((s) => s.id));
       for (const trackerKey of reactionTrackers.keys()) {
         const sessionId = trackerKey.split(":")[0];
@@ -1468,6 +1471,12 @@ export async function createLifecycleManager(
       for (const sessionId of lastReviewBacklogCheckAt.keys()) {
         if (!currentSessionIds.has(sessionId)) {
           lastReviewBacklogCheckAt.delete(sessionId);
+        }
+      }
+      // Prune stale entries from dispatchedTerminalPRs to prevent memory growth
+      for (const sessionId of dispatchedTerminalPRs) {
+        if (!currentSessionIds.has(sessionId)) {
+          dispatchedTerminalPRs.delete(sessionId);
         }
       }
 
