@@ -478,12 +478,26 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       for (const record of staleRecords) {
         const updates: Partial<Record<string, string>> = {
-          pr: "",
-          prAutoDetect: "off",
+          prOwnership: "stale",
           ...(PR_TRACKING_STATUSES.has(record.raw["status"] ?? "") ? { status: "working" } : {}),
         };
         updateMetadataPreservingMtime(sessionsDir, record.sessionName, updates, record.modifiedAt);
         record.raw = applyMetadataUpdatesToRaw(record.raw, updates);
+      }
+    }
+
+    // Promote stale sessions that are now the sole owner of their PR
+    // (original owner was killed/cleaned up, metadata deleted)
+    for (const attachedRecords of duplicatePRAttachments.values()) {
+      if (attachedRecords.length === 1 && attachedRecords[0].raw["prOwnership"] === "stale") {
+        const updates = { prOwnership: "" };
+        updateMetadataPreservingMtime(
+          sessionsDir,
+          attachedRecords[0].sessionName,
+          updates,
+          attachedRecords[0].modifiedAt,
+        );
+        attachedRecords[0].raw = applyMetadataUpdatesToRaw(attachedRecords[0].raw, updates);
       }
     }
 
@@ -2163,6 +2177,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     for (const { sessionName, raw: otherRaw } of activeRecords) {
       if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix)) continue;
+      // Skip sessions already marked as stale PR owners — they don't actively own the PR
+      if (otherRaw["prOwnership"] === "stale") continue;
 
       const samePr = otherRaw["pr"] === pr.url;
       const sameBranch =
@@ -2187,6 +2203,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       status: "pr_open",
       branch: pr.branch,
       prAutoDetect: "",
+      prOwnership: "", // Clear stale flag if this session was previously marked stale
     });
 
     for (const previousSessionId of takenOverFrom) {

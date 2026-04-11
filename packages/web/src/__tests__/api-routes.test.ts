@@ -203,6 +203,7 @@ import { POST as killPOST } from "@/app/api/sessions/[id]/kill/route";
 import { POST as restorePOST } from "@/app/api/sessions/[id]/restore/route";
 import { POST as remapPOST } from "@/app/api/sessions/[id]/remap/route";
 import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
+import { GET as sessionDetailGET } from "@/app/api/sessions/[id]/route";
 import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
 import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
@@ -362,6 +363,82 @@ describe("API Routes", () => {
       await vi.advanceTimersByTimeAsync(5_000);
       const res = await responsePromise;
       expect(res.status).toBe(200);
+
+      metadataSpy.mockRestore();
+      enrichSpy.mockRestore();
+      vi.useRealTimers();
+    });
+  });
+
+  // ── GET /api/sessions/:id ─────────────────────────────────────────
+
+  describe("GET /api/sessions/[id]", () => {
+    it("returns basic session data when metadata enrichment hangs", async () => {
+      vi.useFakeTimers();
+
+      const metadataSpy = vi
+        .spyOn(serialize, "enrichSessionsMetadata")
+        .mockImplementation(() => new Promise<void>(() => {}));
+
+      const responsePromise = sessionDetailGET(
+        makeRequest("http://localhost:3000/api/sessions/backend-9"),
+        { params: Promise.resolve({ id: "backend-9" }) },
+      );
+
+      // Advance past the 3s metadata enrichment timeout
+      await vi.advanceTimersByTimeAsync(3_000);
+      const res = await responsePromise;
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.id).toBe("backend-9");
+      expect(data.projectId).toBe("my-app");
+      expect(data.status).toBe("working");
+      expect(data.activity).toBe("active");
+
+      metadataSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it("returns basic PR data when PR enrichment hangs", async () => {
+      vi.useFakeTimers();
+
+      const metadataSpy = vi
+        .spyOn(serialize, "enrichSessionsMetadata")
+        .mockResolvedValue(undefined);
+
+      // enrichSessionPR: cacheOnly call returns false (no cache), live call hangs
+      const enrichSpy = vi
+        .spyOn(serialize, "enrichSessionPR")
+        .mockImplementation(
+          async (
+            _dashboard: Parameters<typeof serialize.enrichSessionPR>[0],
+            _scm: Parameters<typeof serialize.enrichSessionPR>[1],
+            _pr: Parameters<typeof serialize.enrichSessionPR>[2],
+            opts?: { cacheOnly?: boolean },
+          ) => {
+            if (opts?.cacheOnly) return false;
+            // Live enrichment: never resolves (simulates hang)
+            return new Promise<boolean>(() => {});
+          },
+        );
+
+      const responsePromise = sessionDetailGET(
+        makeRequest("http://localhost:3000/api/sessions/backend-7"),
+        { params: Promise.resolve({ id: "backend-7" }) },
+      );
+
+      // Advance past both the metadata (3s) and PR enrichment (4s) timeouts
+      await vi.advanceTimersByTimeAsync(4_000);
+      const res = await responsePromise;
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.id).toBe("backend-7");
+      expect(data.pr).toBeDefined();
+      expect(data.pr.number).toBe(432);
+      expect(data.pr.url).toBe("https://github.com/acme/my-app/pull/432");
+      expect(data.pr.enriched).toBe(false);
 
       metadataSpy.mockRestore();
       enrichSpy.mockRestore();

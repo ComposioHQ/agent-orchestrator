@@ -1361,6 +1361,7 @@ export interface SessionMetadata {
   issue?: string;
   pr?: string;
   prAutoDetect?: "on" | "off";
+  prOwnership?: "stale" | "";
   summary?: string;
   project?: string;
   agent?: string; // Agent plugin name (e.g. "codex", "claude-code") — persisted for lifecycle

@@ -7,6 +7,10 @@ import {
   enrichSessionsMetadata,
 } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
+import { settlesWithin } from "@/lib/async-utils";
+
+const METADATA_ENRICH_TIMEOUT_MS = 3_000;
+const PR_ENRICH_TIMEOUT_MS = 4_000;
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const correlationId = getCorrelationId(_request);
@@ -23,20 +27,35 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     const dashboardSession = sessionToDashboard(coreSession);
 
     // Enrich metadata (issue labels, agent summaries, issue titles)
-    await enrichSessionsMetadata([coreSession], [dashboardSession], config, registry);
+    // Non-blocking: timeout ensures basic session data is always returned
+    await settlesWithin(
+      enrichSessionsMetadata([coreSession], [dashboardSession], config, registry),
+      METADATA_ENRICH_TIMEOUT_MS,
+    );
 
-    // Enrich PR — serve cache immediately, refresh in background if stale
+    // Enrich PR — serve cache immediately, timeout on cold-cache fetch
     if (coreSession.pr) {
-      const project = resolveProject(coreSession, config.projects);
-      const scm = getSCM(registry, project);
-      if (scm) {
-        const cached = await enrichSessionPR(dashboardSession, scm, coreSession.pr, {
-          cacheOnly: true,
-        });
-        if (!cached) {
-          // Nothing cached yet — block once to populate, then future calls use cache
-          await enrichSessionPR(dashboardSession, scm, coreSession.pr);
+      try {
+        const project = resolveProject(coreSession, config.projects);
+        const scm = getSCM(registry, project);
+        if (scm) {
+          const cached = await enrichSessionPR(dashboardSession, scm, coreSession.pr, {
+            cacheOnly: true,
+          });
+          if (!cached) {
+            await settlesWithin(
+              enrichSessionPR(dashboardSession, scm, coreSession.pr),
+              PR_ENRICH_TIMEOUT_MS,
+            );
+          }
         }
+      } catch (prError) {
+        // resolveProject/getSCM may throw synchronously on bad config
+        // dashboard.pr still has basic data from basicPRToDashboard()
+        console.warn(
+          `[GET /api/sessions/${id}] PR enrichment failed:`,
+          prError instanceof Error ? prError.message : String(prError),
+        );
       }
     }
 

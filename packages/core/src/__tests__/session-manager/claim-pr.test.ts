@@ -214,8 +214,9 @@ describe("claimPR", () => {
     expect(orchestrator!["status"]).toBe("working");
 
     const staleWorker = readMetadataRaw(sessionsDir, "app-1");
-    expect(staleWorker!["pr"]).toBeUndefined();
-    expect(staleWorker!["prAutoDetect"]).toBe("off");
+    // Stale sessions preserve PR URL but get prOwnership="stale" (non-destructive repair)
+    expect(staleWorker!["pr"]).toBe("https://github.com/org/my-app/pull/42");
+    expect(staleWorker!["prOwnership"]).toBe("stale");
     expect(staleWorker!["status"]).toBe("working");
 
     const activeWorker = readMetadataRaw(sessionsDir, "app-2");
@@ -261,8 +262,9 @@ describe("claimPR", () => {
     expect(result.takenOverFrom).toEqual(["app-2"]);
 
     const staleWorker = readMetadataRaw(sessionsDir, "app-1");
-    expect(staleWorker!["pr"]).toBeUndefined();
-    expect(staleWorker!["prAutoDetect"]).toBe("off");
+    // Stale sessions preserve PR URL but get prOwnership="stale" (non-destructive repair)
+    expect(staleWorker!["pr"]).toBe("https://github.com/org/my-app/pull/42");
+    expect(staleWorker!["prOwnership"]).toBe("stale");
 
     const activeWorker = readMetadataRaw(sessionsDir, "app-2");
     expect(activeWorker!["pr"]).toBeUndefined();

@@ -530,10 +530,14 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
           PR #{pr.number}: {pr.title}
         </a>
         <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
-          <span>
-            <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
-            <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>
-          </span>
+          {pr.enriched ? (
+            <span>
+              <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
+              <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>
+            </span>
+          ) : (
+            <span className="text-[var(--color-text-tertiary)]">loading…</span>
+          )}
           {pr.isDraft && (
             <>
               <span className="text-[var(--color-text-tertiary)]">&middot;</span>
@@ -575,8 +579,12 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
               Ready to merge
             </span>
           </div>
-        ) : (
+        ) : pr.enriched || metadata["status"] === "ci_failed" || metadata["status"] === "changes_requested" ? (
           <IssuesList pr={pr} metadata={metadata} />
+        ) : (
+          <div className="text-[11px] text-[var(--color-text-tertiary)]">
+            Fetching CI and review status…
+          </div>
         )}
 
         {/* CI Checks */}

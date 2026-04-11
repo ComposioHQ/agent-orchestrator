@@ -1238,8 +1238,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
         if (reactionKey) {
           const reactionConfig = getReactionConfigForSession(session, reactionKey);
+          // Skip automated reactions for stale PR owners — they don't own
+          // the PR and shouldn't send messages to agents or trigger auto-merge.
+          // Human notifications still fire below so operators see the transition.
+          const skipReaction = session.metadata["prOwnership"] === "stale";
 
-          if (reactionConfig && reactionConfig.action) {
+          if (reactionConfig && reactionConfig.action && !skipReaction) {
             // auto: false skips automated agent actions but still allows notifications
             if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
               const reactionResult = await executeReaction(
@@ -1293,11 +1297,21 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    await Promise.allSettled([
-      maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
-      maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
-      maybeDispatchMergeConflicts(session, newStatus),
-    ]);
+    // For stale PR owners: skip dispatches for non-terminal states (no duplicate
+    // notifications), but allow terminal transitions (merged/killed) through so
+    // dispatch helpers can run their cleanup paths (clearing CI fingerprints,
+    // merge conflict tracking, etc.).
+    const isStaleOwner = session.metadata["prOwnership"] === "stale";
+    const isTerminal = newStatus === "merged" || newStatus === "killed";
+    if (isStaleOwner && !isTerminal) {
+      // Non-terminal stale session: skip dispatches entirely (no cleanup needed)
+    } else {
+      await Promise.allSettled([
+        maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
+        maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
+        maybeDispatchMergeConflicts(session, newStatus),
+      ]);
+    }
   }
 
   /** Run one polling cycle across all sessions. */
