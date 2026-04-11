@@ -21,7 +21,7 @@ describe("cli entrypoint", () => {
   });
 
   it("prints a clean message and exits 1 on ConfigNotFoundError", async () => {
-    const { ConfigNotFoundError } = await import("@composio/ao-core");
+    const { ConfigNotFoundError } = await import("@aoagents/ao-core");
     const error = new ConfigNotFoundError();
     let rejectionHandler:
       | ((reason: unknown) => unknown)

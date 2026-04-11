@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { ConfigNotFoundError } from "@composio/ao-core";
+import { ConfigNotFoundError } from "@aoagents/ao-core";
 import { createProgram } from "./program.js";
 
 createProgram()
