@@ -485,6 +485,7 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
       <div
         ref={previewScrollRef}
         onScroll={handlePreviewScroll}
+        className="workspace-preview-scroll"
         style={{ flex: 1, overflow: "auto", minHeight: 0 }}
       >
         {children.preview(selectedFile, { diffMode })}

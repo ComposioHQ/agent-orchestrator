@@ -11,7 +11,7 @@
   width: 100%;
   height: 100dvh;
   height: 100vh; /* fallback for older browsers */
-  background: var(--color-bg);
+  background: var(--color-bg-base);
   color: var(--color-text-primary);
   overflow: hidden;
 }
@@ -108,6 +108,11 @@
   overflow-x: auto;
   padding: 4px 0;
   height: 100%;
+  background: var(--color-bg-base);
+}
+
+.workspace-preview-scroll {
+  background: var(--color-bg-base);
 }
 
 .workspace-file-tree-item {
@@ -125,11 +130,11 @@
 }
 
 .workspace-file-tree-item:hover {
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: var(--color-bg-elevated);
 }
 
 .workspace-file-tree-item--selected {
-  background-color: rgba(255, 255, 255, 0.08) !important;
+  background-color: var(--color-bg-elevated-hover) !important;
 }
 
 .workspace-file-tree-chevron {
@@ -224,7 +229,7 @@
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 20px;
-  background: var(--color-bg);
+  background: var(--color-bg-base);
 }
 
 .workspace-code-line {
@@ -233,7 +238,7 @@
 }
 
 .workspace-code-line:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--color-bg-elevated);
 }
 
 .workspace-code-gutter {
@@ -292,53 +297,57 @@
   border: none !important;
 }
 
-/* ── Markdown Preview — VSCode-like colors ─────────────── */
+/* ── Markdown Preview — flat monochromatic, token-driven ─ */
 
 .workspace-markdown-preview {
   padding: 24px 32px;
-  color: #d4d4d4;
+  color: var(--color-text-primary);
+  background: var(--color-bg-base);
   font-size: 14px;
   line-height: 1.6;
 }
 
-/* Headings */
+/* Headings — accent-blue throughout, size + weight differentiate */
 .workspace-markdown-preview h1 {
-  font-size: 28px;
-  font-weight: 600;
-  color: #e2e2e2;
-  margin: 24px 0 12px;
+  font-size: 30px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--color-accent-violet) 82%, var(--color-text-primary));
+  margin: 24px 0 14px;
   padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-accent-violet) 24%, var(--color-border-default));
+  letter-spacing: -0.01em;
 }
 
 .workspace-markdown-preview h2 {
   font-size: 22px;
-  font-weight: 600;
-  color: #4fc1ff;
+  font-weight: 650;
+  color: color-mix(in srgb, var(--color-accent) 86%, var(--color-text-primary));
   margin: 20px 0 10px;
   padding-bottom: 6px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 
 .workspace-markdown-preview h3 {
   font-size: 18px;
   font-weight: 600;
-  color: #dcdcaa;
+  color: var(--color-accent);
   margin: 16px 0 8px;
 }
 
 .workspace-markdown-preview h4 {
   font-size: 15px;
   font-weight: 600;
-  color: #9cdcfe;
+  color: var(--color-accent);
   margin: 14px 0 6px;
 }
 
 .workspace-markdown-preview h5,
 .workspace-markdown-preview h6 {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
-  color: #c586c0;
+  color: color-mix(in srgb, var(--color-accent) 70%, var(--color-text-tertiary));
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   margin: 12px 0 6px;
 }
 
@@ -346,12 +355,12 @@
 .workspace-markdown-preview p {
   margin: 10px 0;
   line-height: 1.7;
-  color: #d4d4d4;
+  color: var(--color-text-primary);
 }
 
-/* Links */
+/* Links — one accent pop */
 .workspace-markdown-preview a {
-  color: #3794ff;
+  color: var(--color-accent);
   text-decoration: none;
 }
 
@@ -361,33 +370,34 @@
 
 /* Bold & italic */
 .workspace-markdown-preview strong {
-  color: #e2e2e2;
-  font-weight: 600;
+  color: color-mix(in srgb, var(--color-accent-yellow) 72%, var(--color-text-primary));
+  font-weight: 650;
 }
 
 .workspace-markdown-preview em {
-  color: #c586c0;
+  color: var(--color-text-secondary);
   font-style: italic;
 }
 
-/* Inline code */
-.workspace-markdown-preview code {
-  background: rgba(110, 118, 129, 0.25);
+/* Inline code — subtle accent tint */
+.workspace-markdown-preview :not(pre) > code {
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-elevated));
   padding: 2px 6px;
   border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 15%, var(--color-border-subtle));
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 0.9em;
-  color: #ce9178;
+  color: color-mix(in srgb, var(--color-accent) 30%, var(--color-text-primary));
 }
 
-/* Code blocks */
+/* Code blocks — flat surface, subtle border */
 .workspace-markdown-preview pre {
-  background: #1e1e1e;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 16px;
-  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
+  padding: 14px 16px;
+  border-radius: 0 0 6px 6px;
   overflow-x: auto;
-  margin: 14px 0;
+  margin: 0;
   line-height: 1.5;
   font-size: 13px;
 }
@@ -395,22 +405,79 @@
 .workspace-markdown-preview pre code {
   background: none;
   padding: 0;
+  border: none;
   border-radius: 0;
-  color: #d4d4d4;
+  color: var(--color-text-primary);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* Code block wrapper with language label + copy button */
+.workspace-md-code-block {
+  margin: 14px 0;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-subtle);
+  overflow: hidden;
+  background: var(--color-bg-elevated);
+}
+
+.workspace-md-code-block > pre {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+
+.workspace-md-code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 60%, var(--color-bg-base));
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.workspace-md-code-block-lang {
+  color: var(--color-text-tertiary);
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.workspace-md-code-block-copy {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.workspace-md-code-block-copy:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated-hover);
+  border-color: var(--color-border-subtle);
+}
+
+.workspace-md-code-block-copy--copied {
+  color: var(--color-accent);
 }
 
 /* Blockquotes */
 .workspace-markdown-preview blockquote {
   margin: 12px 0;
   padding: 8px 16px;
-  border-left: 3px solid #3794ff;
-  background: rgba(55, 148, 255, 0.06);
-  color: #b0b0b0;
+  border-left: 3px solid var(--color-border-default);
+  background: color-mix(in srgb, var(--color-bg-elevated) 70%, transparent);
+  color: var(--color-text-secondary);
+  border-radius: 0 4px 4px 0;
 }
 
 .workspace-markdown-preview blockquote p {
-  color: #b0b0b0;
+  color: var(--color-text-secondary);
 }
 
 /* Lists */
@@ -438,17 +505,17 @@
 
 .workspace-markdown-preview li {
   margin: 4px 0;
-  color: #d4d4d4;
+  color: var(--color-text-primary);
 }
 
 .workspace-markdown-preview li::marker {
-  color: #6a9955;
+  color: var(--color-text-tertiary);
 }
 
 /* Task lists (checkboxes) */
 .workspace-markdown-preview input[type="checkbox"] {
   margin-right: 6px;
-  accent-color: #3794ff;
+  accent-color: var(--color-accent);
 }
 
 /* Tables */
@@ -460,28 +527,28 @@
 }
 
 .workspace-markdown-preview table th {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
   padding: 8px 12px;
   text-align: left;
   font-weight: 600;
-  color: #4fc1ff;
+  color: var(--color-text-primary);
 }
 
 .workspace-markdown-preview table td {
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--color-border-subtle);
   padding: 8px 12px;
-  color: #d4d4d4;
+  color: var(--color-text-primary);
 }
 
 .workspace-markdown-preview table tr:hover td {
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--color-bg-elevated) 50%, transparent);
 }
 
 /* Horizontal rule */
 .workspace-markdown-preview hr {
   border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--color-border-subtle);
   margin: 24px 0;
 }
 
@@ -491,35 +558,109 @@
   border-radius: 4px;
 }
 
-/* ── highlight.js overrides for code blocks ────────────── */
+/* ── highlight.js overrides — IDE-style multi-hue from accent tokens ─ */
 
-.workspace-markdown-preview .hljs {
+.workspace-markdown-preview .hljs,
+.workspace-code-viewer .hljs {
   background: transparent;
   padding: 0;
+  color: var(--color-text-primary);
 }
 
-.hljs-keyword { color: #569cd6; }
-.hljs-string { color: #ce9178; }
-.hljs-number { color: #b5cea8; }
-.hljs-literal { color: #569cd6; }
-.hljs-built_in { color: #4ec9b0; }
-.hljs-function { color: #dcdcaa; }
-.hljs-title { color: #dcdcaa; }
-.hljs-title.function_ { color: #dcdcaa; }
-.hljs-params { color: #9cdcfe; }
-.hljs-comment { color: #6a9955; font-style: italic; }
-.hljs-doctag { color: #608b4e; }
-.hljs-meta { color: #569cd6; }
-.hljs-attr { color: #9cdcfe; }
-.hljs-variable { color: #9cdcfe; }
-.hljs-variable.language_ { color: #569cd6; }
-.hljs-type { color: #4ec9b0; }
-.hljs-property { color: #9cdcfe; }
-.hljs-regexp { color: #d16969; }
-.hljs-symbol { color: #b5cea8; }
-.hljs-template-variable { color: #9cdcfe; }
-.hljs-addition { color: #b5cea8; background: rgba(181, 206, 168, 0.1); }
-.hljs-deletion { color: #ce9178; background: rgba(206, 145, 120, 0.1); }
+/* Keywords: control flow, declarations, modifiers */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link,
+.hljs-variable.language_ {
+  color: var(--color-accent-violet);
+  font-weight: 600;
+}
+
+/* Strings and regex */
+.hljs-string,
+.hljs-regexp,
+.hljs-char.escape_ {
+  color: var(--color-accent-green);
+}
+
+/* Numbers, booleans, symbols, template literals */
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-template-variable,
+.hljs-template-tag {
+  color: var(--color-accent-orange);
+}
+
+/* Types, built-ins, class names */
+.hljs-type,
+.hljs-built_in,
+.hljs-class .hljs-title,
+.hljs-title.class_,
+.hljs-title.class_.inherited__ {
+  color: var(--color-accent-yellow);
+}
+
+/* Function names and titles */
+.hljs-function .hljs-title,
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.function_.invoke__ {
+  color: var(--color-accent);
+}
+
+/* HTML/JSX tags, CSS selectors */
+.hljs-name,
+.hljs-tag,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-selector-attr,
+.hljs-selector-pseudo {
+  color: var(--color-accent-red);
+}
+
+/* Attribute names, YAML/JSON keys, decorators / preprocessor meta */
+.hljs-attr,
+.hljs-attribute,
+.hljs-meta,
+.hljs-meta .hljs-keyword,
+.hljs-meta .hljs-string {
+  color: var(--color-accent-yellow);
+}
+
+/* Variables, params, properties — near default */
+.hljs-variable,
+.hljs-params,
+.hljs-property {
+  color: var(--color-text-primary);
+}
+
+/* Operators and punctuation */
+.hljs-operator,
+.hljs-punctuation {
+  color: var(--color-text-secondary);
+}
+
+/* Comments, docs, quotes */
+.hljs-comment,
+.hljs-quote,
+.hljs-doctag {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+/* Diff additions / deletions — semantic green/red */
+.hljs-addition {
+  color: var(--color-accent-green);
+  background: color-mix(in srgb, var(--color-accent-green) 12%, transparent);
+}
+
+.hljs-deletion {
+  color: var(--color-accent-red);
+  background: color-mix(in srgb, var(--color-accent-red) 12%, transparent);
+}
 
 /* Mermaid diagrams */
 .mermaid-diagram {
@@ -564,7 +705,7 @@
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 20px;
-  background: var(--color-bg);
+  background: var(--color-bg-base);
 }
 
 .workspace-diff-hunk-header {
