@@ -1302,6 +1302,8 @@ export async function createLifecycleManager(
     const oldStatus =
       tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
     const newStatus = await determineStatus(session);
+    // Update session status immediately for accurate terminal detection
+    session.status = newStatus;
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
 
     if (newStatus !== oldStatus) {
@@ -1427,12 +1429,10 @@ export async function createLifecycleManager(
     if (polling) return;
     polling = true;
 
-    let sessionsFetched = false;
-    let sessions: Session[] = [];
+    let sessions: Session[];
 
     try {
       sessions = await sessionManager.list(scopedProjectId);
-      sessionsFetched = true;
 
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
@@ -1449,7 +1449,8 @@ export async function createLifecycleManager(
 
       // Populate PR enrichment cache using batch GraphQL queries
       // This reduces API calls from N×3 to 1 per poll cycle
-      await populatePREnrichmentCache(sessionsToCheck);
+      // Use FULL session list to ensure cache is always warm
+      await populatePREnrichmentCache(sessions);
 
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
@@ -1530,12 +1531,6 @@ export async function createLifecycleManager(
         details: scopedProjectId ? { projectId: scopedProjectId } : { projectScope: "all" },
       });
     } finally {
-      // Prune dead sessions from StateStore ONLY if sessions were successfully fetched
-      if (sessionsFetched) {
-        const activeSessionIds = sessions.map((s) => s.id);
-        stateStore.prune(activeSessionIds);
-      }
-
       // Await compaction to ensure the file system is stable before releasing the polling lock
       await maybeCompactLog();
       polling = false;
