@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { highlightFileContentByLines, languageForFilePath } from "./codeHighlight";
+import { CodeBlock } from "./CodeBlock";
 
 const MermaidDiagram = dynamic(
   () => import("./MermaidDiagram").then((m) => ({ default: m.MermaidDiagram })),
@@ -22,6 +23,9 @@ const markdownComponents = {
       return <MermaidDiagram code={String(children).trim()} />;
     }
     return <code className={className} {...props}>{children}</code>;
+  },
+  pre({ children }: React.ComponentPropsWithoutRef<"pre">) {
+    return <CodeBlock>{children}</CodeBlock>;
   },
 };
 
