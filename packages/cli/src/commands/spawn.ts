@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import {
   loadConfig,
   TERMINAL_STATUSES,
+  buildPrompt,
   type OrchestratorConfig,
 } from "@aoagents/ao-core";
 import { DEFAULT_PORT } from "../lib/constants.js";
@@ -162,6 +163,7 @@ export function registerSpawn(program: Command): void {
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
+    .option("--preview-prompt", "Print the composed agent prompt without spawning a session")
     .action(
       async (
         first: string | undefined,
@@ -171,6 +173,7 @@ export function registerSpawn(program: Command): void {
           agent?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
+          previewPrompt?: boolean;
         },
       ) => {
         // Catch old two-arg usage: ao spawn <project> <issue>
@@ -211,6 +214,19 @@ export function registerSpawn(program: Command): void {
         if (!opts.claimPr && opts.assignOnGithub) {
           console.error(chalk.red("--assign-on-github requires --claim-pr on `ao spawn`."));
           process.exit(1);
+        }
+
+        if (opts.previewPrompt) {
+          const project = config.projects[projectId];
+          const prompt = buildPrompt({
+            project,
+            projectId,
+            issueId,
+          });
+          console.log(chalk.bold("Agent Prompt Preview") + chalk.dim(` (project: ${projectId}${issueId ? `, issue: ${issueId}` : ""})\n`));
+          console.log(prompt);
+          console.log(chalk.dim("\nNote: tracker issue context is not fetched in preview mode."));
+          return;
         }
 
         const claimOptions: SpawnClaimOptions = {

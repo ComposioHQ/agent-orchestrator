@@ -758,4 +758,41 @@ describe("spawn pre-flight checks", () => {
     expect(errors).toContain("not installed");
     expect(errors).not.toContain("not authenticated");
   });
+
+  describe("preview-prompt flag", () => {
+    it("prints the composed prompt without spawning a session", async () => {
+      await program.parseAsync(["node", "test", "spawn", "--preview-prompt"]);
+
+      expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+      expect(mockEnsureLifecycleWorker).not.toHaveBeenCalled();
+
+      const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(output).toContain("Agent Prompt Preview");
+      expect(output).toContain("my-app");
+    });
+
+    it("includes issue ID in preview when provided", async () => {
+      await program.parseAsync(["node", "test", "spawn", "INT-42", "--preview-prompt"]);
+
+      expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+
+      const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(output).toContain("INT-42");
+    });
+
+    it("includes project context in the preview", async () => {
+      await program.parseAsync(["node", "test", "spawn", "--preview-prompt"]);
+
+      const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(output).toContain("My App");
+      expect(output).toContain("org/my-app");
+    });
+
+    it("notes that tracker context is not fetched", async () => {
+      await program.parseAsync(["node", "test", "spawn", "--preview-prompt"]);
+
+      const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(output).toContain("tracker issue context is not fetched in preview mode");
+    });
+  });
 });
