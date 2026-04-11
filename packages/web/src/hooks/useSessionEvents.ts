@@ -98,6 +98,7 @@ export function useSessionEvents(
   project?: string,
   muxSessions?: Array<{ id: string; status: string; activity: string | null; attentionLevel: string; lastActivityAt: string }>,
   initialAttentionLevels?: SSEAttentionMap,
+  disabled = false,
 ): State {
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
@@ -205,7 +206,7 @@ export function useSessionEvents(
 
   // Mux-based session updates (replaces SSE when available)
   useEffect(() => {
-    if (!muxSessions) return;
+    if (disabled || !muxSessions) return;
     // Note: empty array is intentional — it means all sessions were removed and we
     // must still run the membership-key comparison to trigger scheduleRefresh().
 
@@ -238,9 +239,11 @@ export function useSessionEvents(
       activeRefreshControllerRef.current?.abort();
       activeRefreshControllerRef.current = null;
     };
-  }, [muxSessions, scheduleRefresh]);
+  }, [disabled, muxSessions, scheduleRefresh]);
 
   useEffect(() => {
+    if (disabled) return;
+
     // Skip SSE if mux sessions are available
     if (muxActive) {
       dispatch({ type: "setConnection", status: "connected" });
@@ -340,7 +343,7 @@ export function useSessionEvents(
       clearDisconnectedTimer();
       es.close();
     };
-  }, [project, muxActive, scheduleRefresh]);
+  }, [disabled, project, muxActive, scheduleRefresh]);
 
   return state;
 }

@@ -137,4 +137,21 @@ describe("DirectTerminal render", () => {
     expect(screen.getByText("ao-orchestrator")).toHaveStyle({ color: "var(--color-accent)" });
     expect(screen.getByText("XDA")).toHaveStyle({ color: "var(--color-accent)" });
   });
+
+  it("keeps restart and fullscreen actions available in chromeless mode", async () => {
+    render(
+      <DirectTerminal
+        sessionId="ao-opencode"
+        chromeless
+        isOpenCodeSession
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Restart OpenCode session" })).toBeInTheDocument(),
+    );
+
+    expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument();
+    expect(screen.queryByText("XDA")).toBeNull();
+  });
 });

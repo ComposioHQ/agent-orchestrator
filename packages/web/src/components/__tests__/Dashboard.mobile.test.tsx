@@ -50,7 +50,7 @@ describe("Dashboard mobile layout", () => {
     );
   });
 
-  it("caps mobile sections to five rows until view-all is tapped", () => {
+  it("shows all sessions in the mobile feed without row caps", () => {
     const sessions = Array.from({ length: 6 }, (_, index) =>
       makeSession({
         id: `needs-input-${index + 1}`,
@@ -65,14 +65,10 @@ describe("Dashboard mobile layout", () => {
 
     expect(screen.getByText("Need approval 1")).toBeInTheDocument();
     expect(screen.getByText("Need approval 5")).toBeInTheDocument();
-    expect(screen.queryByText("Need approval 6")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /view all 6/i }));
-
     expect(screen.getByText("Need approval 6")).toBeInTheDocument();
   });
 
-  it("opens a preview sheet from a mobile row and keeps prompting out of the dashboard", async () => {
+  it("opens a preview sheet from a mobile feed card", async () => {
     const session = makeSession({
       id: "respond-1",
       status: "needs_input",
@@ -84,24 +80,16 @@ describe("Dashboard mobile layout", () => {
 
     render(<Dashboard initialSessions={[session]} />);
 
-    expect(screen.getByRole("link", { name: /go to mobile density/i })).toHaveAttribute(
-      "href",
-      "/sessions/respond-1",
-    );
+    const feedCard = screen.getByRole("button", { name: /respond-1/i });
+    expect(feedCard).toBeInTheDocument();
+    expect(screen.getByText("feat/mobile-density")).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /open mobile density/i }));
+      fireEvent.click(feedCard);
     });
 
     expect(screen.getByRole("link", { name: "Open session" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Terminate" })).toBeInTheDocument();
-    expect(screen.getAllByText("Mobile Density").length).toBeGreaterThan(1);
-    expect(screen.getAllByText("respond").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("needs input").length).toBeGreaterThan(0);
-    expect(screen.getByText("waiting input")).toBeInTheDocument();
-    expect(screen.getByText("feat/mobile-density")).toBeInTheDocument();
-    expect(screen.getByText("#557")).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("Type a reply...")).not.toBeInTheDocument();
   });
 
   it("keeps the mobile preview sheet in sync with live session updates", async () => {
@@ -117,11 +105,10 @@ describe("Dashboard mobile layout", () => {
     const { rerender } = render(<Dashboard initialSessions={[session]} />);
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /open mobile density/i }));
+      fireEvent.click(screen.getByRole("button", { name: /respond-1/i }));
     });
 
     expect(screen.getByRole("button", { name: "Terminate" })).toBeInTheDocument();
-    expect(screen.getAllByText("needs input").length).toBeGreaterThan(0);
 
     rerender(
       <Dashboard
@@ -239,7 +226,7 @@ describe("Dashboard mobile layout", () => {
     expect(screen.queryByText("Need approval to proceed")).not.toBeInTheDocument();
   });
 
-  it("shows a stable empty state when an expanded mobile section has no sessions", () => {
+  it("shows empty state when a filtered feed has no matching sessions", () => {
     render(
       <Dashboard
         initialSessions={[
@@ -256,10 +243,140 @@ describe("Dashboard mobile layout", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Ready" }));
 
-    expect(screen.getByText("No sessions")).toBeInTheDocument();
+    expect(screen.getByText("No sessions match this filter.")).toBeInTheDocument();
   });
 
-  it("preserves a deliberate all-collapsed state across session updates", () => {
+  it("shows CI and review pills for enriched PRs in the mobile feed", () => {
+    render(
+      <Dashboard
+        initialSessions={[
+          makeSession({
+            id: "merge-7",
+            status: "approved",
+            activity: "idle",
+            summary: "Ship dashboard polish",
+            branch: "feat/dashboard-polish",
+            pr: makePR({
+              number: 207,
+              additions: 24,
+              deletions: 7,
+              ciStatus: "failing",
+              reviewDecision: "changes_requested",
+            }),
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("feat/dashboard-polish")).toBeInTheDocument();
+    expect(screen.getByText("#207")).toBeInTheDocument();
+    expect(screen.getByText("CI failed")).toBeInTheDocument();
+    expect(screen.getByText("changes requested")).toBeInTheDocument();
+    expect(screen.getByText("+24")).toBeInTheDocument();
+    expect(screen.getByText("-7")).toBeInTheDocument();
+  });
+
+  it("shows and dismisses the rate limit banner", () => {
+    render(
+      <Dashboard
+        initialSessions={[
+          makeSession({
+            id: "review-2",
+            status: "reviewing",
+            activity: "idle",
+            pr: makePR({
+              number: 208,
+              mergeability: {
+                mergeable: false,
+                ciPassing: false,
+                approved: false,
+                noConflicts: true,
+                blockers: ["API rate limited or unavailable"],
+              },
+            }),
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText(/GitHub API rate limited/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText(/GitHub API rate limited/i)).not.toBeInTheDocument();
+  });
+
+  it("opens the done bar and restores completed sessions", async () => {
+    vi.setSystemTime(new Date("2026-04-11T11:07:00.000Z"));
+
+    render(
+      <Dashboard
+        initialSessions={[
+          makeSession({
+            id: "done-1",
+            status: "terminated",
+            activity: "exited",
+            summaryIsFallback: true,
+            issueTitle: "Restore completed agent",
+            branch: null,
+            lastActivityAt: "2026-04-11T09:07:00.000Z",
+            pr: makePR({ number: 209, state: "merged", title: "Wrapped up work" }),
+          }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Done \/ Terminated/i }));
+
+    expect(screen.getByText("Restore completed agent")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "#209" })).toHaveAttribute(
+      "href",
+      "https://github.com/acme/app/pull/100",
+    );
+    expect(screen.getByText("merged")).toBeInTheDocument();
+    expect(screen.getByText("2h ago")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith("/api/sessions/done-1/restore", {
+      method: "POST",
+    });
+  });
+
+  it("confirms termination from the mobile preview sheet", async () => {
+    render(
+      <Dashboard
+        initialSessions={[
+          makeSession({
+            id: "respond-terminate",
+            status: "needs_input",
+            activity: "waiting_input",
+            summary: "Need a kill confirmation path",
+          }),
+        ]}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /respond-terminate/i }));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Terminate" }));
+    });
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "Terminate" }).at(-1)!);
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith("/api/sessions/respond-terminate/kill", {
+      method: "POST",
+    });
+  });
+
+  it("preserves feed cards across session updates", () => {
     const { rerender } = render(
       <Dashboard
         initialSessions={[
@@ -281,11 +398,8 @@ describe("Dashboard mobile layout", () => {
       />,
     );
 
-    const respondAccordion = screen.getByRole("button", { name: /respond 1/i });
-    expect(respondAccordion).toHaveAttribute("aria-expanded", "true");
-
-    fireEvent.click(respondAccordion);
-    expect(respondAccordion).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("Need approval to proceed")).toBeInTheDocument();
+    expect(screen.getByText("Implement dashboard filters")).toBeInTheDocument();
 
     rerender(
       <Dashboard
@@ -310,13 +424,7 @@ describe("Dashboard mobile layout", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: /respond 1/i })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(screen.getByRole("button", { name: /working 1/i })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    expect(screen.getByText("Need approval to proceed")).toBeInTheDocument();
+    expect(screen.getByText("Implement dashboard filters")).toBeInTheDocument();
   });
 });

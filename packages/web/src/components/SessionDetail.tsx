@@ -3,13 +3,22 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
-import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
+import {
+  type DashboardSession,
+  type DashboardPR,
+  TERMINAL_STATUSES,
+  isPRMergeReady,
+  isPRRateLimited,
+  isPRUnenriched,
+} from "@/lib/types";
 import { CI_STATUS } from "@aoagents/ao-core/types";
 import { cn } from "@/lib/cn";
 import dynamic from "next/dynamic";
 import { getSessionTitle } from "@/lib/format";
-import { CICheckList } from "./CIBadge";
+import type { ProjectInfo } from "@/lib/project-name";
+
 import { MobileBottomNav } from "./MobileBottomNav";
+import { ProjectSidebar } from "./ProjectSidebar";
 
 const DirectTerminal = dynamic(
   () => import("./DirectTerminal").then((m) => ({ default: m.DirectTerminal })),
@@ -35,9 +44,46 @@ interface SessionDetailProps {
   isOrchestrator?: boolean;
   orchestratorZones?: OrchestratorZones;
   projectOrchestratorId?: string | null;
+  projects?: ProjectInfo[];
+  sidebarSessions?: DashboardSession[];
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+function formatTimeCompact(isoDate: string | null): string {
+  if (!isoDate) return "just now";
+  const ts = new Date(isoDate).getTime();
+  if (!Number.isFinite(ts)) return "just now";
+  const diffMs = Date.now() - ts;
+  if (diffMs <= 0) return "just now";
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffMins < 1) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return `${Math.floor(diffHours / 24)}d ago`;
+}
+
+function getCiDotBg(pr: DashboardPR): string {
+  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "var(--color-text-tertiary)";
+  if (pr.ciStatus === "passing") return "var(--color-accent-green)";
+  if (pr.ciStatus === "failing") return "var(--color-accent-red)";
+  return "var(--color-status-attention)";
+}
+
+function getCiShortLabel(pr: DashboardPR): string {
+  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "CI";
+  if (pr.ciStatus === "passing") return "CI passing";
+  if (pr.ciStatus === "failing") return "CI failed";
+  return "CI pending";
+}
+
+function getReviewShortLabel(pr: DashboardPR): string {
+  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "";
+  if (pr.reviewDecision === "approved") return "approved";
+  if (pr.reviewDecision === "changes_requested") return "changes";
+  return "review";
+}
 
 const activityMeta: Record<string, { label: string; color: string }> = {
   active: { label: "Active", color: "var(--color-status-working)" },
@@ -80,6 +126,7 @@ function activityStateClass(activityLabel: string): string {
 
 function SessionTopStrip({
   headline,
+  crumbId,
   activityLabel,
   activityColor,
   branch,
@@ -87,10 +134,11 @@ function SessionTopStrip({
   isOrchestrator = false,
   crumbHref,
   crumbLabel,
-  mobileSimple = false,
   rightSlot,
+  onKill,
 }: {
   headline: string;
+  crumbId: string;
   activityLabel: string;
   activityColor: string;
   branch: string | null;
@@ -98,15 +146,16 @@ function SessionTopStrip({
   isOrchestrator?: boolean;
   crumbHref: string;
   crumbLabel: string;
-  mobileSimple?: boolean;
   rightSlot?: ReactNode;
+  onKill?: () => void;
 }) {
   return (
-    <section className={`session-page-header${mobileSimple ? " session-page-header--mobile" : ""}`}>
-      <div className="session-page-header__crumbs">
+    <div className="session-detail-top-strip">
+      {/* Breadcrumbs */}
+      <div className="session-detail-crumbs">
         <a
           href={crumbHref}
-          className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
+          className="session-detail-crumb-back"
         >
           <svg
             className="h-3 w-3 opacity-60"
@@ -119,37 +168,31 @@ function SessionTopStrip({
           </svg>
           {crumbLabel}
         </a>
-        <span className="text-[var(--color-border-strong)]">/</span>
-        {!mobileSimple ? (
-          <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
-            {headline}
-          </span>
-        ) : null}
-        {isOrchestrator && !mobileSimple ? (
-          <span className="session-page-header__mode">orchestrator</span>
+        <span className="session-detail-crumb-sep">/</span>
+        <span className="session-detail-crumb-id">{crumbId}</span>
+        {isOrchestrator ? (
+          <span className="session-detail-mode-badge">orchestrator</span>
         ) : null}
       </div>
-      <div className="session-page-header__main">
-        <div className="session-page-header__identity">
-          <h1 className="truncate text-[17px] font-semibold tracking-[-0.03em] text-[var(--color-text-primary)]">
+
+      {/* Identity strip */}
+      <div className="session-detail-identity">
+        <div className="session-detail-identity__info">
+          <h1 className="session-detail-identity__title">
             {headline}
           </h1>
-          <div className="session-page-header__meta">
+          <div className="session-detail-identity__pills">
             <div
               className={cn(
-                "session-detail-status-pill flex items-center gap-1.5 border px-2.5 py-1",
+                "session-detail-status-pill",
                 activityStateClass(activityLabel),
               )}
-              style={{
-                background: `color-mix(in srgb, ${activityColor} 12%, transparent)`,
-                border: `1px solid color-mix(in srgb, ${activityColor} 20%, transparent)`,
-              }}
             >
               <span
-                className="session-detail-status-pill__dot h-1.5 w-1.5 shrink-0"
+                className="session-detail-status-pill__dot"
                 style={{ background: activityColor }}
               />
-              <span className="text-[11px] font-semibold" style={{ color: activityColor }}>
+              <span className="session-detail-status-pill__label">
                 {activityLabel}
               </span>
             </div>
@@ -159,12 +202,12 @@ function SessionTopStrip({
                   href={buildGitHubBranchUrl(pr)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="session-detail-link-pill session-detail-link-pill--link font-[var(--font-mono)] text-[10px] hover:no-underline"
+                  className="session-detail-link-pill session-detail-link-pill--branch session-detail-link-pill--branch-link hover:no-underline"
                 >
                   {branch}
                 </a>
               ) : (
-                <span className="session-detail-link-pill font-[var(--font-mono)] text-[10px]">
+                <span className="session-detail-link-pill session-detail-link-pill--branch">
                   {branch}
                 </span>
               )
@@ -174,16 +217,43 @@ function SessionTopStrip({
                 href={pr.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="session-detail-link-pill session-detail-link-pill--link session-detail-link-pill--accent hover:no-underline"
+                className="session-detail-link-pill session-detail-link-pill--pr hover:no-underline"
               >
                 PR #{pr.number}
               </a>
             ) : null}
+            {pr && (pr.additions > 0 || pr.deletions > 0) ? (
+              <span className="session-detail-link-pill session-detail-link-pill--diff">
+                <span className="session-detail-diff--add">+{pr.additions}</span>
+                {" "}
+                <span className="session-detail-diff--del">-{pr.deletions}</span>
+              </span>
+            ) : null}
           </div>
         </div>
-        {rightSlot ? <div className="session-page-header__side">{rightSlot}</div> : null}
+
+        {rightSlot ? (
+          <div className="session-detail-identity__actions session-detail-identity__actions--custom">
+            {rightSlot}
+          </div>
+        ) : (
+          <div className="session-detail-identity__actions">
+            {onKill ? (
+              <button
+                type="button"
+                className="session-detail-action-btn session-detail-action-btn--danger"
+                onClick={onKill}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+                Kill
+              </button>
+            ) : null}
+          </div>
+        )}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -211,7 +281,7 @@ async function askAgentToFix(
 
 // ── Orchestrator status strip ─────────────────────────────────────────
 
-function OrchestratorStatusStrip({
+function _OrchestratorStatusStrip({
   zones,
   createdAt,
   headline,
@@ -247,12 +317,42 @@ function OrchestratorStatusStrip({
   }, [createdAt]);
 
   const stats: Array<{ value: number; label: string; color: string; bg: string }> = [
-    { value: zones.merge, label: "merge-ready", color: "#3fb950", bg: "rgba(63,185,80,0.1)" },
-    { value: zones.respond, label: "responding", color: "#f85149", bg: "rgba(248,81,73,0.1)" },
-    { value: zones.review, label: "review", color: "#d18616", bg: "rgba(209,134,22,0.1)" },
-    { value: zones.working, label: "working", color: "#58a6ff", bg: "rgba(88,166,255,0.1)" },
-    { value: zones.pending, label: "pending", color: "#d29922", bg: "rgba(210,153,34,0.1)" },
-    { value: zones.done, label: "done", color: "#484f58", bg: "rgba(72,79,88,0.15)" },
+    {
+      value: zones.merge,
+      label: "merge-ready",
+      color: "var(--color-status-ready)",
+      bg: "color-mix(in srgb, var(--color-status-ready) 10%, transparent)",
+    },
+    {
+      value: zones.respond,
+      label: "responding",
+      color: "var(--color-status-error)",
+      bg: "color-mix(in srgb, var(--color-status-error) 10%, transparent)",
+    },
+    {
+      value: zones.review,
+      label: "review",
+      color: "var(--color-accent-orange)",
+      bg: "color-mix(in srgb, var(--color-accent-orange) 10%, transparent)",
+    },
+    {
+      value: zones.working,
+      label: "working",
+      color: "var(--color-accent-blue)",
+      bg: "color-mix(in srgb, var(--color-accent-blue) 10%, transparent)",
+    },
+    {
+      value: zones.pending,
+      label: "pending",
+      color: "var(--color-status-attention)",
+      bg: "color-mix(in srgb, var(--color-status-attention) 10%, transparent)",
+    },
+    {
+      value: zones.done,
+      label: "done",
+      color: "var(--color-text-tertiary)",
+      bg: "color-mix(in srgb, var(--color-text-tertiary) 14%, transparent)",
+    },
   ].filter((s) => s.value > 0);
 
   const total =
@@ -262,6 +362,7 @@ function OrchestratorStatusStrip({
     <div className="mx-auto max-w-[1180px] px-5 pt-5 lg:px-8">
       <SessionTopStrip
         headline={headline}
+        crumbId={headline}
         activityLabel={activityLabel}
         activityColor={activityColor}
         branch={branch}
@@ -327,11 +428,16 @@ export function SessionDetail({
   isOrchestrator = false,
   orchestratorZones,
   projectOrchestratorId = null,
+  projects = [],
+  sidebarSessions = [],
 }: SessionDetailProps) {
   const searchParams = useSearchParams();
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const startFullscreen = searchParams.get("fullscreen") === "true";
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showTerminal, setShowTerminal] = useState(false);
   const pr = session.pr;
+  const terminalEnded = TERMINAL_STATUSES.has(session.status);
   const activity = (session.activity && activityMeta[session.activity]) ?? {
     label: session.activity ?? "unknown",
     color: "var(--color-text-muted)",
@@ -341,7 +447,9 @@ export function SessionDetail({
   const accentColor = "var(--color-accent)";
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
 
-  const terminalHeight = isOrchestrator ? "clamp(560px, 76vh, 920px)" : "clamp(520px, 72vh, 860px)";
+  const terminalHeight = isOrchestrator
+    ? "clamp(400px, 52vh, 620px)"
+    : "clamp(380px, 48vh, 560px)";
   const isOpenCodeSession = session.metadata["agent"] === "opencode";
   const opencodeSessionId =
     typeof session.metadata["opencodeSessionId"] === "string" &&
@@ -354,83 +462,260 @@ export function SessionDetail({
   const dashboardHref = session.projectId ? `/?project=${encodeURIComponent(session.projectId)}` : "/";
   const prsHref = session.projectId ? `/prs?project=${encodeURIComponent(session.projectId)}` : "/prs";
   const crumbHref = dashboardHref;
-  const crumbLabel = isOrchestrator ? "Orchestrator" : "Dashboard";
+  const crumbLabel = "Dashboard";
+  const headerProjectLabel =
+    projects.find((project) => project.id === session.projectId)?.name ?? session.projectId;
+  const showHeaderProjectLabel =
+    headerProjectLabel.trim().toLowerCase() !== "agent orchestrator";
   const orchestratorHref = useMemo(() => {
     if (isOrchestrator) return `/sessions/${encodeURIComponent(session.id)}`;
     if (!projectOrchestratorId) return null;
     return `/sessions/${encodeURIComponent(projectOrchestratorId)}`;
   }, [isOrchestrator, projectOrchestratorId, session.id]);
 
-  return (
-    <div className="session-detail-page min-h-screen bg-[var(--color-bg-base)]">
-      {isOrchestrator && orchestratorZones && !isMobile && (
-        <OrchestratorStatusStrip
-          zones={orchestratorZones}
-          createdAt={session.createdAt}
-          headline={headline}
-          activityLabel={activity.label}
-          activityColor={activity.color}
-          branch={session.branch}
-          pr={pr}
-          crumbHref={crumbHref}
-          crumbLabel={crumbLabel}
-        />
-      )}
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => setShowTerminal(true));
+    return () => {
+      window.cancelAnimationFrame(frame);
+      setShowTerminal(false);
+    };
+  }, [session.id]);
 
-      <div className="dashboard-main mx-auto max-w-[1180px] px-5 py-5 lg:px-8">
-        <main className="min-w-0">
-          {(!isOrchestrator || isMobile) && (
-            <SessionTopStrip
-              headline={headline}
-              activityLabel={activity.label}
-              activityColor={activity.color}
-              branch={session.branch}
-              pr={pr}
-              isOrchestrator={isOrchestrator}
-              crumbHref={crumbHref}
-              crumbLabel={crumbLabel}
-              mobileSimple={isMobile}
+  if (!isMobile) {
+    return (
+      <div className="dashboard-app-shell">
+        <header className="dashboard-app-header">
+          {projects.length > 0 ? (
+            <button
+              type="button"
+              className="dashboard-app-sidebar-toggle"
+              onClick={() => setSidebarCollapsed((current) => !current)}
+              aria-label="Toggle sidebar"
+            >
+              <svg
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M9 3v18" />
+              </svg>
+            </button>
+          ) : null}
+          <div className="dashboard-app-header__brand">
+            <span>Agent Orchestrator</span>
+          </div>
+          {showHeaderProjectLabel ? (
+            <>
+              <span className="dashboard-app-header__sep" aria-hidden="true" />
+              <span className="dashboard-app-header__project">{headerProjectLabel}</span>
+            </>
+          ) : null}
+          <div className="dashboard-app-header__spacer" />
+          <div className="dashboard-app-header__actions">
+            {orchestratorHref ? (
+              <a
+                href={orchestratorHref}
+                className="dashboard-app-btn dashboard-app-btn--amber"
+                aria-label="Orchestrator"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+                  <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+                  <circle cx="6" cy="17" r="2" />
+                  <circle cx="12" cy="17" r="2" />
+                  <circle cx="18" cy="17" r="2" />
+                </svg>
+                Orchestrator
+              </a>
+            ) : null}
+          </div>
+        </header>
+
+        <div
+          className={`dashboard-shell dashboard-shell--desktop${sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
+        >
+          {projects.length > 0 ? (
+            <ProjectSidebar
+              projects={projects}
+              sessions={sidebarSessions}
+              activeProjectId={session.projectId}
+              activeSessionId={session.id}
+              collapsed={sidebarCollapsed}
+              onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
             />
-          )}
-
-          {pr ? (
-            <section id="session-pr-section" className="mt-5">
-              <SessionDetailPRCard pr={pr} sessionId={session.id} metadata={session.metadata} />
-            </section>
           ) : null}
 
-          <section className={pr ? "mt-6" : "mt-5"}>
-            <div id="session-terminal-section" aria-hidden="true" />
-            <div className="mb-3 flex items-center gap-2">
-              <div
-                className="h-3 w-0.5"
-                style={{ background: isOrchestrator ? accentColor : activity.color, opacity: 0.75 }}
-              />
-              <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--color-text-tertiary)]">
-                Live Terminal
-              </span>
-            </div>
-            <DirectTerminal
-              sessionId={session.id}
-              startFullscreen={startFullscreen}
-              variant={terminalVariant}
-              height={terminalHeight}
-              isOpenCodeSession={isOpenCodeSession}
-              reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-            />
-          </section>
-        </main>
+          <div className="dashboard-main dashboard-main--desktop">
+            <main className="session-detail-page min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-base)]">
+              <div className="session-detail-layout">
+                <main className="min-w-0">
+                  {(!isOrchestrator || (isOrchestrator && orchestratorZones)) && (
+                    <SessionTopStrip
+                      headline={headline}
+                      crumbId={session.id}
+                      activityLabel={activity.label}
+                      activityColor={activity.color}
+                      branch={session.branch}
+                      pr={pr}
+                      isOrchestrator={isOrchestrator}
+                      crumbHref={crumbHref}
+                      crumbLabel={crumbLabel}
+                      onKill={isOrchestrator ? undefined : () => {}}
+                    />
+                  )}
+
+                  {pr ? (
+                    <section id="session-pr-section" className="session-detail-pr-section">
+                      <SessionDetailPRCard
+                        pr={pr}
+                        sessionId={session.id}
+                        metadata={session.metadata}
+                      />
+                    </section>
+                  ) : null}
+
+                  <section className="session-detail-terminal-wrap">
+                    <div id="session-terminal-section" aria-hidden="true" />
+                    <div className="session-detail-section-label">
+                      <div
+                        className="session-detail-section-label__bar"
+                        style={{ background: isOrchestrator ? accentColor : activity.color }}
+                      />
+                      <span className="session-detail-section-label__text">
+                        Live Terminal
+                      </span>
+                    </div>
+                    {!showTerminal ? (
+                      <div className="session-detail-terminal-placeholder" style={{ height: terminalHeight }} />
+                    ) : terminalEnded ? (
+                      <div className="terminal-exited-placeholder" style={{ height: terminalHeight }}>
+                        <span className="terminal-exited-placeholder__text">
+                          Terminal session has ended
+                        </span>
+                      </div>
+                    ) : (
+                      <DirectTerminal
+                        sessionId={session.id}
+                        startFullscreen={startFullscreen}
+                        variant={terminalVariant}
+                        appearance="dark"
+                        height={terminalHeight}
+                        isOpenCodeSession={isOpenCodeSession}
+                        reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+                      />
+                    )}
+                  </section>
+                </main>
+              </div>
+            </main>
+          </div>
+        </div>
       </div>
-      {isMobile ? (
-        <MobileBottomNav
-          ariaLabel="Session navigation"
-          activeTab={isOrchestrator ? "orchestrator" : undefined}
-          dashboardHref={dashboardHref}
-          prsHref={prsHref}
-          showOrchestrator={orchestratorHref !== null}
-          orchestratorHref={orchestratorHref}
-        />
+    );
+  }
+
+  const statusPillBg = activity.color === "var(--color-status-working)"
+    ? "color-mix(in srgb, var(--color-status-working) 12%, transparent)"
+    : activity.color === "var(--color-status-attention)"
+      ? "color-mix(in srgb, var(--color-status-attention) 12%, transparent)"
+      : activity.color === "var(--color-status-error)"
+        ? "color-mix(in srgb, var(--color-status-error) 12%, transparent)"
+        : "color-mix(in srgb, var(--color-accent) 12%, transparent)";
+
+  return (
+    <div className="session-detail--terminal-first">
+      {/* Floating header */}
+      <div className="session-detail__floating-header">
+        <a href={crumbHref} className="session-detail__back" aria-label="Back to dashboard">
+          <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path d="M19 12H5M12 19l-7-7 7-7" />
+          </svg>
+        </a>
+        <span className="session-detail__status-dot" style={{ background: activity.color }} />
+        <span className="session-detail__session-id">{session.id}</span>
+        <span
+          className="session-detail__status-pill"
+          style={{ background: statusPillBg, color: activity.color }}
+        >
+          {activity.label.toLowerCase()}
+        </span>
+        <span className="session-detail__time">
+          {formatTimeCompact(session.lastActivityAt)}
+        </span>
+      </div>
+
+      {/* Terminal fills the viewport */}
+      <div className={`session-detail__terminal-full${pr ? " session-detail__terminal-full--with-sheet" : ""}`}>
+        {!showTerminal ? (
+          <div className="session-detail-terminal-placeholder" style={{ height: "100%" }} />
+        ) : terminalEnded ? (
+          <div className="terminal-exited-placeholder" style={{ height: "100%" }}>
+            <span className="terminal-exited-placeholder__text">
+              Terminal session has ended
+            </span>
+          </div>
+        ) : (
+          <DirectTerminal
+            sessionId={session.id}
+            startFullscreen={startFullscreen}
+            variant={terminalVariant}
+            appearance="dark"
+            height="100%"
+            chromeless
+            isOpenCodeSession={isOpenCodeSession}
+            reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+          />
+        )}
+      </div>
+
+      {/* Bottom sheet with PR info */}
+      {pr ? (
+        <div className="session-detail__bottom-sheet">
+          <div className="session-detail__sheet-handle" />
+          <div className="session-detail__sheet-row">
+            <a
+              href={pr.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="session-detail__sheet-pr"
+            >
+              PR #{pr.number}
+            </a>
+            <span className="session-detail__sheet-item">
+              <span
+                className="session-detail__sheet-ci-dot"
+                style={{ background: getCiDotBg(pr) }}
+              />
+              {getCiShortLabel(pr)}
+            </span>
+            <span className="session-detail__sheet-item">
+              {getReviewShortLabel(pr) || "—"}
+            </span>
+          </div>
+        </div>
       ) : null}
+
+      <MobileBottomNav
+        ariaLabel="Session navigation"
+        activeTab={isOrchestrator ? "orchestrator" : undefined}
+        dashboardHref={dashboardHref}
+        prsHref={prsHref}
+        showOrchestrator={orchestratorHref !== null}
+        orchestratorHref={orchestratorHref}
+      />
     </div>
   );
 }
@@ -508,62 +793,45 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
   };
 
   const allGreen = isPRMergeReady(pr);
-
-  const failedChecks = pr.ciChecks.filter((c) => c.status === "failed");
-
-  const borderColor = allGreen
-    ? "rgba(63,185,80,0.4)"
-    : pr.state === "merged"
-      ? "rgba(163,113,247,0.3)"
-      : "var(--color-border-default)";
+  const blockerIssues = buildBlockerChips(pr, metadata);
+  const fileCount = pr.changedFiles ?? 0;
 
   return (
-    <div className="detail-card mb-6 overflow-hidden border" style={{ borderColor }}>
-      {/* Title row */}
-      <div className="border-b border-[var(--color-border-subtle)] px-5 py-3.5">
+    <div className={cn("session-detail-pr-card", allGreen && "session-detail-pr-card--green")}>
+      {/* Row 1: Title + diff stats */}
+      <div className="session-detail-pr-card__row">
         <a
           href={pr.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-[13px] font-semibold text-[var(--color-text-primary)] transition-colors hover:text-[var(--color-accent)] hover:no-underline"
+          className="session-detail-pr-card__title-link"
         >
           PR #{pr.number}: {pr.title}
         </a>
-        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
-          <span>
-            <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
-            <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>
+        <span className="session-detail-pr-card__diff-stats">
+          <span className="session-detail-diff--add">+{pr.additions}</span>{" "}
+          <span className="session-detail-diff--del">-{pr.deletions}</span>
+        </span>
+        {fileCount > 0 && (
+          <span className="session-detail-pr-card__diff-label">
+            {fileCount} file{fileCount !== 1 ? "s" : ""}
           </span>
-          {pr.isDraft && (
-            <>
-              <span className="text-[var(--color-text-tertiary)]">&middot;</span>
-              <span className="font-medium text-[var(--color-text-tertiary)]">Draft</span>
-            </>
-          )}
-          {pr.state === "merged" && (
-            <>
-              <span className="text-[var(--color-text-tertiary)]">&middot;</span>
-              <span
-                className="px-2 py-0.5 text-[10px] font-semibold"
-                style={{
-                  color: "var(--color-text-secondary)",
-                  background: "var(--color-chip-bg)",
-                }}
-              >
-                Merged
-              </span>
-            </>
-          )}
-        </div>
+        )}
+        {pr.isDraft && (
+          <span className="session-detail-pr-card__diff-label">Draft</span>
+        )}
+        {pr.state === "merged" && (
+          <span className="session-detail-pr-card__diff-label">Merged</span>
+        )}
       </div>
 
-      {/* Body */}
-      <div className="px-5 py-4">
-        {/* Ready-to-merge banner */}
+      {/* Row 2: Blocker chips + CI chips inline */}
+      <div className="session-detail-pr-card__details">
         {allGreen ? (
-          <div className="flex items-center gap-2 border border-[rgba(63,185,80,0.25)] bg-[rgba(63,185,80,0.07)] px-3.5 py-2.5">
+          <div className="session-detail-merge-banner">
             <svg
-              className="h-4 w-4 shrink-0 text-[var(--color-status-ready)]"
+              width="11"
+              height="11"
               fill="none"
               stroke="currentColor"
               strokeWidth="2.5"
@@ -571,44 +839,78 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
             >
               <path d="M20 6L9 17l-5-5" />
             </svg>
-            <span className="text-[13px] font-semibold text-[var(--color-status-ready)]">
-              Ready to merge
-            </span>
+            Ready to merge
           </div>
         ) : (
-          <IssuesList pr={pr} metadata={metadata} />
+          blockerIssues.map((issue) => (
+            <span
+              key={issue.text}
+              className={cn(
+                "session-detail-blocker-chip",
+                issue.variant === "fail" && "session-detail-blocker-chip--fail",
+                issue.variant === "warn" && "session-detail-blocker-chip--warn",
+                issue.variant === "muted" && "session-detail-blocker-chip--muted",
+              )}
+            >
+              {issue.icon} {issue.text}
+              {issue.notified && (
+                <span className="session-detail-blocker-chip__note">· notified</span>
+              )}
+            </span>
+          ))
         )}
 
-        {/* CI Checks */}
+        {/* Separator between blockers and CI chips */}
         {pr.ciChecks.length > 0 && (
-          <div className="mt-4 border-t border-[var(--color-border-subtle)] pt-4">
-            <CICheckList
-              checks={pr.ciChecks}
-              layout={failedChecks.length > 0 ? "expanded" : "inline"}
-            />
-          </div>
-        )}
-
-        {/* Unresolved comments */}
-        {pr.unresolvedComments.length > 0 && (
-          <div className="mt-4 border-t border-[var(--color-border-subtle)] pt-4">
-            <h4 className="mb-2.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
-              Unresolved Comments
+          <>
+            <div className="session-detail-pr-sep" />
+            {pr.ciChecks.map((check) => (
               <span
-                className="px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal"
-                style={{ color: "#f85149", background: "rgba(248,81,73,0.12)" }}
+                key={check.name}
+                className={cn(
+                  "session-detail-ci-chip",
+                  check.status === "passed" && "session-detail-ci-chip--pass",
+                  check.status === "failed" && "session-detail-ci-chip--fail",
+                  check.status === "pending" && "session-detail-ci-chip--pending",
+                  check.status !== "passed" && check.status !== "failed" && check.status !== "pending" && "session-detail-ci-chip--queued",
+                )}
               >
-                {pr.unresolvedThreads}
+                {check.status === "passed" ? "\u2713" : check.status === "failed" ? "\u2717" : check.status === "pending" ? "\u25CF" : "\u25CB"}{" "}
+                {check.name}
               </span>
-            </h4>
-            <div className="space-y-1">
-              {pr.unresolvedComments.map((c) => {
-                const { title, description } = cleanBugbotComment(c.body);
-                return (
-                  <details key={c.url} className="group">
-                    <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 text-[12px] transition-colors hover:bg-[rgba(255,255,255,0.04)]">
+            ))}
+          </>
+        )}
+      </div>
+
+      {/* Row 3: Collapsible unresolved comments */}
+      {pr.unresolvedComments.length > 0 && (
+        <details className="session-detail-comments-strip">
+          <summary>
+            <div className="session-detail-comments-strip__toggle">
+              <svg
+                className="session-detail-comments-strip__chevron"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                viewBox="0 0 24 24"
+              >
+                <path d="M9 5l7 7-7 7" />
+              </svg>
+              <span className="session-detail-comments-strip__label">Unresolved Comments</span>
+              <span className="session-detail-comments-strip__count">{pr.unresolvedThreads}</span>
+              <span className="session-detail-comments-strip__hint">click to expand</span>
+            </div>
+          </summary>
+          <div className="session-detail-comments-strip__body">
+            {pr.unresolvedComments.map((c, index) => {
+              const { title, description } = cleanBugbotComment(c.body);
+              return (
+                <details key={c.url} className="session-detail-comment" open={index === 0}>
+                  <summary>
+                    <div className="session-detail-comment__row">
                       <svg
-                        className="h-3 w-3 shrink-0 text-[var(--color-text-tertiary)] transition-transform group-open:rotate-90"
+                        className="session-detail-comment__chevron"
                         fill="none"
                         stroke="currentColor"
                         strokeWidth="2"
@@ -616,71 +918,65 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
                       >
                         <path d="M9 5l7 7-7 7" />
                       </svg>
-                      <span className="font-medium text-[var(--color-text-secondary)]">
-                        {title}
-                      </span>
-                      <span className="text-[var(--color-text-tertiary)]">· {c.author}</span>
+                      <span className="session-detail-comment__title">{title}</span>
+                      <span className="session-detail-comment__author">· {c.author}</span>
                       <a
                         href={c.url}
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="ml-auto text-[10px] text-[var(--color-accent)] hover:underline"
+                        className="session-detail-comment__view"
                       >
-                        view →
+                        view &rarr;
                       </a>
-                    </summary>
-                    <div className="ml-5 mt-1 space-y-1.5 px-2 pb-2">
-                      <div className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-tertiary)]">
-                        {c.path}
-                      </div>
-                      <p className="border-l-2 border-[var(--color-border-default)] pl-3 text-[12px] leading-relaxed text-[var(--color-text-secondary)]">
-                        {description}
-                      </p>
-                      <button
-                        onClick={() => handleAskAgentToFix(c)}
-                        disabled={sendingComments.has(c.url)}
-                        className={cn(
-                          "mt-1.5 px-3 py-1 text-[11px] font-semibold transition-colors duration-150",
-                          sentComments.has(c.url)
-                            ? "bg-[var(--color-status-ready)] text-white"
-                            : errorComments.has(c.url)
-                              ? "bg-[var(--color-status-error)] text-white"
-                              : "bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50",
-                        )}
-                      >
-                        {sendingComments.has(c.url)
-                          ? "Sending…"
-                          : sentComments.has(c.url)
-                            ? "Sent ✓"
-                            : errorComments.has(c.url)
-                              ? "Failed"
-                              : "Ask Agent to Fix"}
-                      </button>
                     </div>
-                  </details>
-                );
-              })}
-            </div>
+                  </summary>
+                  <div className="session-detail-comment__body">
+                    <div className="session-detail-comment__file">{c.path}</div>
+                    <p className="session-detail-comment__text">{description}</p>
+                    <button
+                      onClick={() => handleAskAgentToFix(c)}
+                      disabled={sendingComments.has(c.url)}
+                      className={cn(
+                        "session-detail-comment__fix-btn",
+                        sentComments.has(c.url) && "session-detail-comment__fix-btn--sent",
+                        errorComments.has(c.url) && "session-detail-comment__fix-btn--error",
+                      )}
+                    >
+                      {sendingComments.has(c.url)
+                        ? "Sending\u2026"
+                        : sentComments.has(c.url)
+                          ? "Sent \u2713"
+                          : errorComments.has(c.url)
+                            ? "Failed"
+                            : "Ask Agent to Fix"}
+                    </button>
+                  </div>
+                </details>
+              );
+            })}
           </div>
-        )}
-      </div>
+        </details>
+      )}
     </div>
   );
 }
 
-// ── Issues list (pre-merge blockers) ─────────────────────────────────
+// ── Blocker chips helper (pre-merge blockers) ───────────────────────
 
-function IssuesList({ pr, metadata }: { pr: DashboardPR; metadata: Record<string, string> }) {
-  const issues: Array<{ icon: string; color: string; text: string; notified?: boolean }> = [];
+interface BlockerChip {
+  icon: string;
+  text: string;
+  variant: "fail" | "warn" | "muted";
+  notified?: boolean;
+}
+
+function buildBlockerChips(pr: DashboardPR, metadata: Record<string, string>): BlockerChip[] {
+  const chips: BlockerChip[] = [];
 
   const ciNotified = Boolean(metadata["lastCIFailureDispatchHash"]);
   const conflictNotified = metadata["lastMergeConflictDispatched"] === "true";
   const reviewNotified = Boolean(metadata["lastPendingReviewDispatchHash"]);
-
-  // The lifecycle manager's status is the most up-to-date source of truth.
-  // PR enrichment data can be stale (5-min cache) or unavailable (rate limit/timeout).
-  // Use lifecycle status as fallback when PR data hasn't caught up yet.
   const lifecycleStatus = metadata["status"];
 
   const ciIsFailing = pr.ciStatus === CI_STATUS.FAILING || lifecycleStatus === "ci_failed";
@@ -690,79 +986,29 @@ function IssuesList({ pr, metadata }: { pr: DashboardPR; metadata: Record<string
 
   if (ciIsFailing) {
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;
-    issues.push({
-      icon: "✗",
-      color: "var(--color-status-error)",
-      text:
-        failCount > 0
-          ? `CI failing — ${failCount} check${failCount !== 1 ? "s" : ""} failed`
-          : "CI failing",
+    chips.push({
+      icon: "\u2717",
+      variant: "fail",
+      text: failCount > 0 ? `${failCount} check${failCount !== 1 ? "s" : ""} failing` : "CI failing",
       notified: ciNotified,
     });
   } else if (pr.ciStatus === CI_STATUS.PENDING) {
-    issues.push({ icon: "●", color: "var(--color-status-attention)", text: "CI pending" });
+    chips.push({ icon: "\u25CF", variant: "warn", text: "CI pending" });
   }
 
   if (hasChangesRequested) {
-    issues.push({
-      icon: "✗",
-      color: "var(--color-status-error)",
-      text: "Changes requested",
-      notified: reviewNotified,
-    });
+    chips.push({ icon: "\u2717", variant: "fail", text: "Changes requested", notified: reviewNotified });
   } else if (!pr.mergeability.approved) {
-    issues.push({
-      icon: "○",
-      color: "var(--color-text-tertiary)",
-      text: "Not approved — awaiting reviewer",
-    });
+    chips.push({ icon: "\u25CB", variant: "muted", text: "Awaiting reviewer" });
   }
 
   if (hasConflicts) {
-    issues.push({
-      icon: "✗",
-      color: "var(--color-status-error)",
-      text: "Merge conflicts",
-      notified: conflictNotified,
-    });
-  }
-
-  if (!pr.mergeability.mergeable && issues.length === 0) {
-    issues.push({ icon: "○", color: "var(--color-text-tertiary)", text: "Not mergeable" });
-  }
-
-  if (pr.unresolvedThreads > 0) {
-    issues.push({
-      icon: "●",
-      color: "var(--color-status-attention)",
-      text: `${pr.unresolvedThreads} unresolved comment${pr.unresolvedThreads !== 1 ? "s" : ""}`,
-    });
+    chips.push({ icon: "\u2717", variant: "fail", text: "Merge conflicts", notified: conflictNotified });
   }
 
   if (pr.isDraft) {
-    issues.push({ icon: "○", color: "var(--color-text-tertiary)", text: "Draft PR" });
+    chips.push({ icon: "\u25CB", variant: "muted", text: "Draft" });
   }
 
-  if (issues.length === 0) return null;
-
-  return (
-    <div className="space-y-1.5">
-      <h4 className="mb-2 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
-        Blockers
-      </h4>
-      {issues.map((issue) => (
-        <div key={issue.text} className="flex items-center gap-2.5 text-[12px]">
-          <span className="w-3 shrink-0 text-center text-[11px]" style={{ color: issue.color }}>
-            {issue.icon}
-          </span>
-          <span className="text-[var(--color-text-secondary)]">{issue.text}</span>
-          {issue.notified && (
-            <span className="text-[10px] text-[var(--color-text-tertiary)]">
-              · agent notified
-            </span>
-          )}
-        </div>
-      ))}
-    </div>
-  );
+  return chips;
 }

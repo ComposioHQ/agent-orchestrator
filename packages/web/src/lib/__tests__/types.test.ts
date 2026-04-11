@@ -130,6 +130,14 @@ describe("getAttentionLevel", () => {
       });
       expect(getAttentionLevel(session)).toBe("done");
     });
+
+    it("should ignore metadata attention overrides for terminal sessions", () => {
+      const session = createSession({
+        status: "terminated",
+        metadata: { attentionLevel: "working" },
+      });
+      expect(getAttentionLevel(session)).toBe("done");
+    });
   });
 
   describe("merge state", () => {
@@ -171,6 +179,14 @@ describe("getAttentionLevel", () => {
           unresolvedThreads: 0,
           unresolvedComments: [],
         },
+      });
+      expect(getAttentionLevel(session)).toBe("merge");
+    });
+
+    it("should ignore metadata attention overrides when merge criteria are met", () => {
+      const session = createSession({
+        status: "mergeable",
+        metadata: { attentionLevel: "working" },
       });
       expect(getAttentionLevel(session)).toBe("merge");
     });

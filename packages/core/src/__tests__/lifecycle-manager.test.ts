@@ -51,15 +51,31 @@ function setupCheck(
     configOverride?: OrchestratorConfig;
   },
 ) {
-  vi.mocked(mockSessionManager.get).mockResolvedValue(opts.session);
-
-  writeMetadata(env.sessionsDir, sessionId, {
+  const persistedMetadata = {
     worktree: "/tmp",
     branch: opts.session.branch ?? "main",
     status: opts.session.status,
     project: "my-app",
+    runtimeHandle: opts.session.runtimeHandle
+      ? JSON.stringify(opts.session.runtimeHandle)
+      : undefined,
     ...opts.metaOverrides,
+  };
+  const persistedStringMetadata = Object.fromEntries(
+    Object.entries(persistedMetadata).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+
+  vi.mocked(mockSessionManager.get).mockResolvedValue({
+    ...opts.session,
+    metadata: {
+      ...opts.session.metadata,
+      ...persistedStringMetadata,
+    },
   });
+
+  writeMetadata(env.sessionsDir, sessionId, persistedMetadata);
 
   return createLifecycleManager({
     config: opts.configOverride ?? config,
@@ -96,6 +112,52 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("working");
     const meta = readMetadataRaw(env.sessionsDir, "app-1");
     expect(meta!["status"]).toBe("working");
+  });
+
+  it("does not kill a spawning session when its runtime handle has not been persisted yet", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "spawning",
+        runtimeHandle: { id: "app-1", runtimeName: "mock", data: {} },
+        metadata: {},
+      }),
+      metaOverrides: {
+        runtimeHandle: undefined,
+        tmuxName: undefined,
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("working");
+    expect(plugins.runtime.isAlive).not.toHaveBeenCalled();
+  });
+
+  it("still probes a working session when it relies on a synthesized runtime handle", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "working",
+        runtimeHandle: { id: "app-1", runtimeName: "mock", data: {} },
+        metadata: {},
+      }),
+      metaOverrides: {
+        runtimeHandle: undefined,
+        tmuxName: undefined,
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(plugins.runtime.isAlive).toHaveBeenCalledWith({
+      id: "app-1",
+      runtimeName: "mock",
+      data: {},
+    });
+    expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
   it("uses worker-specific agent fallback when metadata does not persist an agent", async () => {
