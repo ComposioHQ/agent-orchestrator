@@ -311,11 +311,11 @@ export async function createLifecycleManager(
   /**
    * Compact the state log periodically (every 10 poll cycles)
    */
-  function maybeCompactLog(): void {
+  async function maybeCompactLog(): Promise<void> {
     pollCycleCount++;
     if (pollCycleCount >= 10) {
       pollCycleCount = 0;
-      void runCompactLog(stateStore, observer, scopedProjectId);
+      await runCompactLog(stateStore, observer, scopedProjectId);
     }
   }
 
@@ -1420,10 +1420,13 @@ export async function createLifecycleManager(
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
       // process that transition even though the new status is terminal)
+      // Also keep PR sessions in the loop for sidecar dispatches (CI details, merge conflicts)
       const sessionsToCheck = sessions.filter((s) => {
         if (!TERMINAL_STATUSES.has(s.status)) return true;
         const tracked = getSessionStatus(s.id);
-        return tracked !== undefined && tracked !== s.status;
+        if (tracked !== undefined && tracked !== s.status) return true;
+        if (s.pr) return true; // Keep PR sessions for sidecar dispatches
+        return false;
       });
 
       // Populate PR enrichment cache using batch GraphQL queries
@@ -1509,8 +1512,9 @@ export async function createLifecycleManager(
         details: scopedProjectId ? { projectId: scopedProjectId } : { projectScope: "all" },
       });
     } finally {
+      // Await compaction to ensure the file system is stable before releasing the polling lock
+      await maybeCompactLog();
       polling = false;
-      maybeCompactLog();
     }
   }
 

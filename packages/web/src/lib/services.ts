@@ -87,7 +87,14 @@ async function initServices(): Promise<Services> {
 
   // Start the lifecycle manager — polls sessions every 30s, triggers reactions
   // (CI failure → send fix message, review comments → forward to agent, etc.)
-  const lifecycleManager = await createLifecycleManager({ config, registry, sessionManager });
+  // For global dashboard with multiple projects, use the first project key
+  const projectId = Object.keys(config.projects)[0];
+  const lifecycleManager = await createLifecycleManager({
+    config,
+    registry,
+    sessionManager,
+    projectId,
+  });
   lifecycleManager.start(30_000);
 
   const services = { config, registry, sessionManager, lifecycleManager };
