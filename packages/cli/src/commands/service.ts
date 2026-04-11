@@ -15,7 +15,7 @@ import { homedir, platform } from "node:os";
 import { join, resolve } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig, sanitizeProjectId, type OrchestratorConfig } from "@composio/ao-core";
+import { loadConfig, sanitizeProjectId, type OrchestratorConfig } from "@aoagents/ao-core";
 
 // Re-export canonical sanitizeProjectId from core so existing test imports work
 export { sanitizeProjectId };

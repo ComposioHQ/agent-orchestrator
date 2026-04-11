@@ -46,7 +46,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   loadConfig: () => mockLoadConfig(),
   sanitizeProjectId: (id: string) =>
     id

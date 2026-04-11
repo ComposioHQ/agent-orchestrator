@@ -44,7 +44,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   loadConfig: () => mockLoadConfig(),
   sanitizeProjectId: (id: string) =>
     id
@@ -67,7 +67,7 @@ import {
   getServiceStatus,
 } from "../../src/commands/service.js";
 
-import type { OrchestratorConfig } from "@composio/ao-core";
+import type { OrchestratorConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Setup

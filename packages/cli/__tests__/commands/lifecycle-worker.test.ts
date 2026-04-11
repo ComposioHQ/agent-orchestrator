@@ -16,9 +16,9 @@ const {
   mockLoadConfig: vi.fn(),
 }));
 
-vi.mock("@composio/ao-core", async (importOriginal) => {
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = (await importOriginal()) as typeof import("@composio/ao-core");
+  const actual = (await importOriginal()) as typeof import("@aoagents/ao-core");
   return {
     ...actual,
     loadConfig: () => mockLoadConfig(),
