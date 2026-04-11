@@ -293,6 +293,27 @@ export interface Runtime {
   /** Check if the session environment is still alive */
   isAlive(handle: RuntimeHandle): Promise<boolean>;
 
+  /**
+   * Optional: report whether the runtime has ANY live sessions at all.
+   *
+   * Purpose: when the tmux server (or equivalent) dies out-of-band —
+   * e.g. PC crash, OOM, `tmux kill-server` — every persisted session's
+   * `isAlive()` returns false in the next poll. Instead of probing each
+   * session individually, `list()` can probe the runtime once and
+   * cascade-mark all sessions killed, which is both faster and more
+   * honest (the "something is globally wrong" signal is preserved).
+   *
+   * Return `true` if the runtime host is reachable and at least one
+   * session exists. Return `false` if the runtime host is reachable but
+   * there are zero sessions. Throw (or return `false`) if the runtime
+   * host itself is unreachable — callers treat both "no sessions" and
+   * "host down" as a signal to stop probing individual sessions.
+   *
+   * Plugins that can't answer cheaply should leave this undefined; the
+   * core will fall back to per-session `isAlive()` probes.
+   */
+  hasAnySessions?(): Promise<boolean>;
+
   /** Get resource metrics (uptime, memory, etc.) */
   getMetrics?(handle: RuntimeHandle): Promise<RuntimeMetrics>;
 

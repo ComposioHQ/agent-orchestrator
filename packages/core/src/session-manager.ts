@@ -876,6 +876,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   /**
+   * Optional per-list()-call cache: `runtimeName -> hasAnySessions()` result.
+   * Lets list() probe the runtime host ONCE for "is the tmux server even
+   * up?" instead of calling `isAlive()` N times when nothing is running.
+   *
+   * `undefined` entry means the plugin didn't implement `hasAnySessions`
+   * and the caller should fall back to per-session `isAlive`.
+   */
+  type RuntimeAvailabilityMap = Map<string, boolean | undefined>;
+
+  /**
    * Ensure session has a runtime handle (fabricate one if missing) and enrich
    * with live runtime state + activity detection. Used by both list() and get().
    */
@@ -887,6 +897,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     effectiveAgentName: string,
     plugins: ReturnType<typeof resolvePlugins>,
     sessionListPromise?: Promise<OpenCodeSessionListEntry[]>,
+    runtimeAvailability?: RuntimeAvailabilityMap,
   ): Promise<void> {
     await ensureOpenCodeSessionMapping(
       session,
@@ -913,7 +924,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         data: {},
       };
     }
-    await enrichSessionWithRuntimeState(session, plugins, handleFromMetadata);
+    await enrichSessionWithRuntimeState(
+      session,
+      plugins,
+      handleFromMetadata,
+      runtimeAvailability,
+    );
   }
 
   /**
@@ -926,6 +942,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     session: Session,
     plugins: ReturnType<typeof resolvePlugins>,
     handleFromMetadata: boolean,
+    runtimeAvailability?: RuntimeAvailabilityMap,
   ): Promise<void> {
     // Skip all subprocess/IO work for sessions already known to be terminal.
     if (TERMINAL_SESSION_STATUSES.has(session.status)) {
@@ -938,6 +955,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // NOT override status to "killed" — we don't know if the session ever had
     // a tmux session, and we'd clobber meaningful statuses like "pr_open".
     if (handleFromMetadata && session.runtimeHandle && plugins.runtime) {
+      // Fast path: if the runtime told us at list()-start time that it has
+      // zero sessions (e.g. tmux server was killed out-of-band), cascade-
+      // mark this session killed without the per-session `isAlive` probe.
+      // Saves N subprocess calls on a dead tmux server and gives the UI a
+      // consistent "everything is killed" signal in one poll cycle.
+      const runtimeName = plugins.runtime.name;
+      const runtimeHasAny = runtimeAvailability?.get(runtimeName);
+      if (runtimeHasAny === false) {
+        session.status = "killed";
+        session.activity = "exited";
+        return;
+      }
+
       try {
         const alive = await plugins.runtime.isAlive(session.runtimeHandle);
         if (!alive) {
@@ -1578,6 +1608,34 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
     let openCodeSessionListPromise: Promise<OpenCodeSessionListEntry[]> | undefined;
 
+    // Probe each distinct runtime ONCE for "does it have any sessions at
+    // all?" Populate a per-list()-call availability map so enrichment can
+    // cascade-kill without calling isAlive() N times when the runtime host
+    // (e.g. tmux server) has gone away. Plugins without hasAnySessions()
+    // record `undefined` so the per-session fallback still runs.
+    const runtimeAvailability: RuntimeAvailabilityMap = new Map();
+    const distinctRuntimeNames = new Set<string>();
+    for (const { projectId: sessionProjectId } of allSessions) {
+      const project = config.projects[sessionProjectId];
+      if (!project) continue;
+      distinctRuntimeNames.add(project.runtime ?? config.defaults.runtime);
+    }
+    await Promise.all(
+      Array.from(distinctRuntimeNames).map(async (runtimeName) => {
+        const runtime = registry.get<Runtime>("runtime", runtimeName);
+        if (!runtime?.hasAnySessions) {
+          runtimeAvailability.set(runtimeName, undefined);
+          return;
+        }
+        try {
+          const hasAny = await runtime.hasAnySessions();
+          runtimeAvailability.set(runtimeName, hasAny);
+        } catch {
+          runtimeAvailability.set(runtimeName, undefined);
+        }
+      }),
+    );
+
     const tasks = allSessions.map(async ({ sessionName, projectId: sessionProjectId, raw }) => {
       const project = config.projects[sessionProjectId];
       if (!project) return null;
@@ -1616,6 +1674,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         effectiveAgentName,
         plugins,
         sessionListPromise,
+        runtimeAvailability,
       ).catch(() => {});
       try {
         await Promise.race([enrichPromise, enrichTimeout]);

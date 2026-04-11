@@ -183,6 +183,21 @@ export function create(): Runtime {
       return false;
     },
 
+    async hasAnySessions(): Promise<boolean> {
+      // `tmux list-sessions` exits 1 with "no server running" when the
+      // tmux server is down, and exits 0 with an empty stdout when the
+      // server is up but has zero sessions. We treat both as "false".
+      //
+      // This is called by session-manager.list() as a fast-path to detect
+      // whole-server death (e.g. PC crash) and avoid N per-session probes.
+      try {
+        const out = await tmux("list-sessions", "-F", "#{session_name}");
+        return out.trim().length > 0;
+      } catch {
+        return false;
+      }
+    },
+
     async getMetrics(handle: RuntimeHandle): Promise<RuntimeMetrics> {
       const createdAt = (handle.data.createdAt as number) ?? Date.now();
       return {
