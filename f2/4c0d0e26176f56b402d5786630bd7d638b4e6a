@@ -1,0 +1,47 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "f24c0d0e26176f56b402d5786630bd7d638b4e6a",
+  "prompts": {
+    "02103e08b023cf16": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d740a-8277-7562-bf3e-53d60ebc7eef",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "42bdb33ae853f6c0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d7b0a-b164-7752-a294-c354154f41aa",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 23246,
+      "total_deletions": 3242,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "ccfa6aff8fbae860": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d7b13-9e16-7830-9e90-21e552d2ff6c",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 20004,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    }
+  }
+}
