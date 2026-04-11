@@ -21,7 +21,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { execFile } from "node:child_process";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
 import {

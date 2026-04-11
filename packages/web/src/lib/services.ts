@@ -87,7 +87,7 @@ async function initServices(): Promise<Services> {
 
   // Start the lifecycle manager — polls sessions every 30s, triggers reactions
   // (CI failure → send fix message, review comments → forward to agent, etc.)
-  const lifecycleManager = createLifecycleManager({ config, registry, sessionManager });
+  const lifecycleManager = await createLifecycleManager({ config, registry, sessionManager });
   lifecycleManager.start(30_000);
 
   const services = { config, registry, sessionManager, lifecycleManager };

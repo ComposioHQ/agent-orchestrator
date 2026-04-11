@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { createLifecycleManager, runCompactLog } from "../lifecycle-manager.js";
-import type { LifecycleManager } from "../types.js";
 import { createSessionManager } from "../session-manager.js";
 import { writeMetadata, readMetadataRaw } from "../metadata.js";
 import { getEventsFilePath } from "../state-store.js";

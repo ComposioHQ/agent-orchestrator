@@ -8,16 +8,7 @@
  * - Crash-safe: incomplete JSON lines discarded on hydration
  */
 
-import {
-  appendFile,
-  copyFile,
-  readFile,
-  rename,
-  writeFile,
-  mkdir,
-  readdir,
-  unlink,
-} from "node:fs/promises";
+import { appendFile, copyFile, rename, writeFile, mkdir, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import type { SessionId, SessionStatus } from "./types.js";
@@ -97,6 +88,7 @@ export class StateStore {
    */
   private async ensureEventsFileExists(): Promise<void> {
     if (!existsSync(this.eventsFile)) {
+      await mkdir(this.stateDir, { recursive: true });
       await writeFile(this.eventsFile, "", "utf-8");
     }
   }
