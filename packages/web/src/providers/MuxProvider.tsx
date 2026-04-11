@@ -177,36 +177,16 @@ export function MuxProvider({ children }: { children: ReactNode }) {
     }
   }, [fetchTerminalGrant, isTerminalDesired]);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(() => {
     if (wsRef.current) {
       return;
     }
 
     setStatus("connecting");
 
-    let muxToken: string | undefined;
     try {
-      const muxRes = await fetch("/api/mux/connect", { cache: "no-store" });
-      if (muxRes.ok) {
-        const data = (await muxRes.json()) as { token?: unknown };
-        if (typeof data.token === "string" && data.token.length > 0) {
-          muxToken = data.token;
-        }
-      }
-    } catch {
-      // ignore — handled below
-    }
-
-    if (!muxToken) {
-      console.error("[MuxProvider] Mux connect token unavailable — cannot open WebSocket");
-      setStatus("disconnected");
-      return;
-    }
-
-    try {
-      const baseUrl = buildMuxWsUrl(runtimeConfigRef.current);
-      const url = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(muxToken)}`;
-      console.log("[MuxProvider] Connecting to", baseUrl);
+      const url = buildMuxWsUrl(runtimeConfigRef.current);
+      console.log("[MuxProvider] Connecting to", url);
       const ws = new WebSocket(url);
       // Assign immediately so cleanup can close it even during CONNECTING state
       wsRef.current = ws;
@@ -299,7 +279,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
 
         reconnectTimer.current = setTimeout(() => {
           console.log(`[MuxProvider] Reconnecting (attempt ${reconnectAttempt.current})...`);
-          void connect();
+          connect();
         }, delayMs);
       });
     } catch (err) {

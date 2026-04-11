@@ -8,10 +8,7 @@ describe("Terminal", () => {
       "fetch",
       vi.fn(async () => ({
         ok: true,
-        json: async () => ({
-          url: "http://localhost:14800/terminal?session=ao-77#token=demo-token",
-          token: "demo-token",
-        }),
+        json: async () => ({ url: "http://localhost:14800/session/demo?token=abc" }),
       })),
     );
   });
@@ -27,7 +24,7 @@ describe("Terminal", () => {
     await waitFor(() =>
       expect(screen.getByTitle("Terminal: ao-77")).toHaveAttribute(
         "src",
-        "http://localhost:14800/terminal?session=ao-77#token=demo-token",
+        "http://localhost:14800/session/demo?token=abc",
       ),
     );
 
