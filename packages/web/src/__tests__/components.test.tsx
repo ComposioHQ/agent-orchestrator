@@ -313,7 +313,7 @@ describe("SessionCard", () => {
     // Should NOT show "0 CI check failing"
     expect(screen.queryByText(/0.*CI check.*failing/i)).not.toBeInTheDocument();
     // Should NOT show "ask to fix" action for unknown CI
-    expect(screen.queryByText("ask to fix")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ask to fix" })).not.toBeInTheDocument();
   });
 
   it("shows changes requested alert", () => {
