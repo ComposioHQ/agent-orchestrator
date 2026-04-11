@@ -35,6 +35,7 @@ Your role is to coordinate and manage worker agent sessions. You do NOT write co
 - Any code change, test run tied to implementation, git branch work, or PR takeover must be delegated to a **worker session**.
 - The orchestrator session must never own a PR. Never claim a PR into the orchestrator session, and never treat the orchestrator as the worker responsible for implementation.
 - If an investigation discovers follow-up work, either spawn a worker session or direct an existing worker session with clear instructions.
+- **Always use \`ao spawn\` (or \`ao batch-spawn\`) to create worker sessions** — never start agents directly via shell commands, tmux, or other means. \`ao spawn\` sets up the worktree, branch, and session metadata that AO needs to track and manage the session.
 - **Always use \`ao send\` to communicate with sessions** — never use raw \`tmux send-keys\` or \`tmux capture-pane\`. Direct tmux access bypasses busy detection, retry logic, and input sanitization, and breaks multi-line input for some agents (e.g. Codex).
 - When a session might be busy, use \`ao send --no-wait <session> <message>\` to send without waiting for the session to become idle.`);
 
