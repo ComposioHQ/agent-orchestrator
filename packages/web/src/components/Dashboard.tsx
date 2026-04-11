@@ -45,7 +45,7 @@ const MOBILE_FILTERS = [
   { value: "pending", label: "Pending" },
   { value: "working", label: "Working" },
 ] as const;
-type MobileAttentionLevel = (typeof MOBILE_KANBAN_ORDER)[number];
+
 type MobileFilterValue = (typeof MOBILE_FILTERS)[number]["value"];
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
 
@@ -266,7 +266,6 @@ function DashboardInner({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const [hasMounted, setHasMounted] = useState(false);
-  const [expandedLevel, setExpandedLevel] = useState<MobileAttentionLevel | null>(null);
   const [mobileFilter, setMobileFilter] = useState<MobileFilterValue>("all");
   const showSidebar = projects.length >= 1;
   const { showToast } = useToast();
@@ -277,7 +276,7 @@ function DashboardInner({
   const [sheetSessionOverride, setSheetSessionOverride] = useState<DashboardSession | null>(null);
   const [doneExpanded, setDoneExpanded] = useState(false);
   const sessionsRef = useRef(sessions);
-  const hasSeededMobileExpansionRef = useRef(false);
+
   sessionsRef.current = sessions;
   const allProjectsView = projects.length > 1 && showSidebar && projectId === undefined;
   const currentProjectOrchestrator = useMemo(
@@ -414,32 +413,6 @@ function DashboardInner({
     setHasMounted(true);
   }, []);
 
-  useEffect(() => {
-    if (!isMobile) {
-      hasSeededMobileExpansionRef.current = false;
-      return;
-    }
-    if (hasSeededMobileExpansionRef.current) return;
-
-    hasSeededMobileExpansionRef.current = true;
-    setExpandedLevel(MOBILE_KANBAN_ORDER.find((level) => grouped[level].length > 0) ?? null);
-  }, [grouped, isMobile]);
-
-  useEffect(() => {
-    if (!isMobile) return;
-    if (mobileFilter !== "all") {
-      setExpandedLevel(mobileFilter);
-      return;
-    }
-    // Preserve an explicit all-collapsed state. Only auto-expand when a specific expanded
-    // section becomes empty, so SSE regrouping does not override a deliberate user collapse.
-    setExpandedLevel((current) => {
-      if (current === null) return current;
-      if (current !== null && grouped[current].length > 0) return current;
-      return MOBILE_KANBAN_ORDER.find((level) => grouped[level].length > 0) ?? null;
-    });
-  }, [grouped, isMobile, mobileFilter]);
-
   const sessionsByProject = useMemo(() => {
     const groupedSessions = new Map<string, DashboardSession[]>();
     for (const session of sessions) {
@@ -482,25 +455,14 @@ function DashboardInner({
     });
   }, [activeOrchestrators, allProjectsView, projects, sessionsByProject]);
 
-  const handleAccordionToggle = useCallback((level: AttentionLevel) => {
-    if (level === "done") return;
-    setExpandedLevel((current) => (current === level ? null : level));
-  }, []);
-
   const handlePillTap = useCallback((level: AttentionLevel) => {
     if (level === "done") return;
     setMobileFilter(level);
-    setExpandedLevel(level);
     const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches
       ? ("instant" as ScrollBehavior)
       : "smooth";
     document.getElementById("mobile-board")?.scrollIntoView({ behavior, block: "start" });
   }, []);
-
-  const visibleMobileLevels =
-    mobileFilter === "all"
-      ? MOBILE_KANBAN_ORDER
-      : MOBILE_KANBAN_ORDER.filter((level) => level === mobileFilter);
 
   const mobileFeedSessions = useMemo(() => {
     const levels = mobileFilter === "all"

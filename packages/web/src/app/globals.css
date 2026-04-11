@@ -4970,6 +4970,10 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
   }
 
+  .session-detail__terminal-full--with-sheet {
+    padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+  }
+
   .session-detail__terminal-full .direct-terminal,
   .session-detail__terminal-full .direct-terminal__container,
   .session-detail__terminal-full .terminal-exited-placeholder,

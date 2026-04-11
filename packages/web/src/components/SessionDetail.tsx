@@ -628,7 +628,7 @@ export function SessionDetail({
       </div>
 
       {/* Terminal fills the viewport */}
-      <div className="session-detail__terminal-full">
+      <div className={`session-detail__terminal-full${pr ? " session-detail__terminal-full--with-sheet" : ""}`}>
         {!showTerminal ? (
           <div className="session-detail-terminal-placeholder" style={{ height: "100%" }} />
         ) : terminalEnded ? (
