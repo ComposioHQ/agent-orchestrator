@@ -60,7 +60,7 @@ if (existsSync(spawnHelper)) {
 // failure only surfaces when the helper binary is actually executed.
 try {
   execSync(
-    "node -e \"var p=require('node-pty');var t=p.spawn('/bin/sh',['-c','exit 0'],{});t.kill();\"",
+    "node -e \"var p=require('node-pty');var t=p.spawn('/bin/sh',['-c','exit 0'],{});t.kill();process.exit(0);\"",
     {
       cwd: resolve(nodePtyDir, ".."),
       stdio: "ignore",
