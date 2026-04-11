@@ -442,8 +442,14 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
   const broadcaster = new SessionBroadcaster(nextPort);
 
   const wss = new WebSocketServer({ noServer: true });
+  const maxMuxConnections = Number.parseInt(process.env.AO_MUX_MAX_CONNECTIONS ?? "256", 10);
 
   wss.on("connection", (ws) => {
+    if (wss.clients.size > maxMuxConnections) {
+      ws.close(1013, "Too many connections");
+      return;
+    }
+
     console.log("[MuxServer] New mux connection");
 
     const subscriptions = new Map<string, () => void>();
@@ -489,6 +495,9 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
 
           try {
             if (type === "open") {
+              if (!("token" in msg) || typeof msg.token !== "string" || msg.token.length === 0) {
+                throw new Error("Missing terminal token");
+              }
               verifyTerminalAccess(id, msg.token);
 
               // Validate session exists
@@ -536,16 +545,52 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
                 subscriptions.set(id, unsub);
               }
             } else if (type === "data" && "data" in msg) {
-              terminalManager.write(id, msg.data);
+              if (!subscriptions.has(id)) {
+                if (ws.readyState === WebSocket.OPEN) {
+                  const denied: ServerMessage = {
+                    ch: "terminal",
+                    id,
+                    type: "error",
+                    message: "Terminal not open on this connection",
+                  };
+                  ws.send(JSON.stringify(denied));
+                }
+              } else {
+                terminalManager.write(id, msg.data);
+              }
             } else if (type === "resize" && "cols" in msg && "rows" in msg) {
-              terminalManager.resize(id, msg.cols, msg.rows);
+              if (!subscriptions.has(id)) {
+                if (ws.readyState === WebSocket.OPEN) {
+                  const denied: ServerMessage = {
+                    ch: "terminal",
+                    id,
+                    type: "error",
+                    message: "Terminal not open on this connection",
+                  };
+                  ws.send(JSON.stringify(denied));
+                }
+              } else {
+                terminalManager.resize(id, msg.cols, msg.rows);
+              }
             } else if (type === "close") {
               // Unsubscribe this client only — TerminalManager is shared across
               // all mux connections so we must not kill the PTY here.
-              const unsub = subscriptions.get(id);
-              if (unsub) {
-                unsub();
-                subscriptions.delete(id);
+              if (!subscriptions.has(id)) {
+                if (ws.readyState === WebSocket.OPEN) {
+                  const denied: ServerMessage = {
+                    ch: "terminal",
+                    id,
+                    type: "error",
+                    message: "Terminal not open on this connection",
+                  };
+                  ws.send(JSON.stringify(denied));
+                }
+              } else {
+                const unsub = subscriptions.get(id);
+                if (unsub) {
+                  unsub();
+                  subscriptions.delete(id);
+                }
               }
             }
           } catch (err) {
@@ -561,7 +606,22 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
           }
         } else if (msg.ch === "subscribe") {
           if (msg.topics.includes("sessions") && !sessionUnsubscribe) {
+            let snapshotWindowStart = Date.now();
+            let snapshotCount = 0;
+            /** Per-connection cap on session list pushes (SSE + initial fetch). */
+            const SNAPSHOT_MAX_PER_WINDOW = 90;
+            const SNAPSHOT_WINDOW_MS = 60_000;
+
             sessionUnsubscribe = broadcaster.subscribe((sessions) => {
+              const now = Date.now();
+              if (now - snapshotWindowStart >= SNAPSHOT_WINDOW_MS) {
+                snapshotWindowStart = now;
+                snapshotCount = 0;
+              }
+              if (snapshotCount >= SNAPSHOT_MAX_PER_WINDOW) {
+                return;
+              }
+              snapshotCount += 1;
               if (ws.readyState === WebSocket.OPEN) {
                 const snapMsg: ServerMessage = { ch: "sessions", type: "snapshot", sessions };
                 ws.send(JSON.stringify(snapMsg));

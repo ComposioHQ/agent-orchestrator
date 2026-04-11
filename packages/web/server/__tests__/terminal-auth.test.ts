@@ -5,8 +5,10 @@ import { tmpdir } from "node:os";
 import { getSessionsDir, updateMetadata, writeMetadata } from "@composio/ao-core";
 import {
   TerminalAuthError,
+  issueMuxConnectToken,
   issueTerminalAccess,
   resetTerminalAuthStateForTests,
+  verifyMuxConnectToken,
   verifyTerminalAccess,
 } from "../terminal-auth";
 
@@ -171,13 +173,30 @@ describe("terminal-auth", () => {
     }
   });
 
-  it("rejects tokens with mismatched owner metadata", () => {
+  it("still verifies when owner metadata changes after issuance (returns current record)", () => {
     const grant = issueTerminalAccess("ao-1");
     updateMetadata(sessionsDir, "ao-1", { ownerId: "another-owner" });
 
-    expect(() => verifyTerminalAccess("ao-1", grant.token)).toThrowError(
-      expect.objectContaining({ code: "ownership_denied", statusCode: 403 }),
-    );
+    const verified = verifyTerminalAccess("ao-1", grant.token);
+    expect(verified.ownerId).toBe("another-owner");
+  });
+
+  it("still verifies when tmux name metadata changes after issuance", () => {
+    const grant = issueTerminalAccess("ao-1");
+    updateMetadata(sessionsDir, "ao-1", { tmuxName: "renamed-tmux-session" });
+
+    const verified = verifyTerminalAccess("ao-1", grant.token);
+    expect(verified.tmuxSessionName).toBe("renamed-tmux-session");
+  });
+
+  it("issues and verifies mux connect tokens", () => {
+    const grant = issueMuxConnectToken();
+    expect(grant.token).toMatch(/\./);
+    verifyMuxConnectToken(grant.token);
+  });
+
+  it("rejects invalid mux tokens", () => {
+    expect(() => verifyMuxConnectToken("not-a-token")).toThrow(TerminalAuthError);
   });
 
   it("wraps config load failures as config_unavailable", () => {

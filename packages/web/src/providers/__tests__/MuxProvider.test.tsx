@@ -76,8 +76,23 @@ function wrapper({ children }: { children: React.ReactNode }) {
   return <MuxProvider>{children}</MuxProvider>;
 }
 
+/** Custom fetch mocks must handle this so MuxProvider can connect to `/mux`. */
+function muxConnectFetchResponse() {
+  return {
+    ok: true,
+    json: async () => ({
+      token: "mux-test-token",
+      expiresAt: new Date(Date.now() + 900_000).toISOString(),
+    }),
+  };
+}
+
 function makeFetchMock() {
   return vi.fn(async (input: string) => {
+    if (input === "/api/mux/connect") {
+      return muxConnectFetchResponse();
+    }
+
     if (input === "/api/runtime/terminal") {
       return {
         ok: true,
@@ -271,17 +286,25 @@ describe("MuxProvider connection lifecycle", () => {
     expect(MockWebSocket.instances[0].url).toContain("/mux");
   });
 
-  it("falls back gracefully when fetch fails", async () => {
+  it("does not open WebSocket when fetch fails before mux token", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network"); }));
-    renderHook(() => useMux(), { wrapper });
+    const { result } = renderHook(() => useMux(), { wrapper });
     await flushInit();
-    // Still creates a WebSocket (using defaults)
-    expect(MockWebSocket.instances.length).toBeGreaterThan(0);
+    expect(MockWebSocket.instances.length).toBe(0);
+    expect(result.current.status).toBe("disconnected");
   });
 
   it("sets disconnected status when WebSocket constructor throws", async () => {
     vi.stubGlobal("WebSocket", vi.fn(() => { throw new Error("unavailable"); }));
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (input === "/api/mux/connect") {
+          return muxConnectFetchResponse();
+        }
+        return { ok: false };
+      }),
+    );
     const { result } = renderHook(() => useMux(), { wrapper });
     await flushInit();
     expect(result.current.status).toBe("disconnected");
@@ -538,6 +561,9 @@ describe("MuxProvider terminal operations", () => {
   it("reuses inflight terminal grant requests", async () => {
     const deferred = createDeferred<{ ok: true; json: () => Promise<{ token: string; expiresAt: string }> }>();
     const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/mux/connect") {
+        return muxConnectFetchResponse();
+      }
       if (input === "/api/runtime/terminal") {
         return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
       }
@@ -573,6 +599,9 @@ describe("MuxProvider terminal operations", () => {
 
   it("logs terminal grant fetch failures", async () => {
     const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/mux/connect") {
+        return muxConnectFetchResponse();
+      }
       if (input === "/api/runtime/terminal") {
         return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
       }
@@ -601,6 +630,9 @@ describe("MuxProvider terminal operations", () => {
 
   it("logs invalid terminal grant responses", async () => {
     const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/mux/connect") {
+        return muxConnectFetchResponse();
+      }
       if (input === "/api/runtime/terminal") {
         return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
       }
@@ -639,6 +671,9 @@ describe("MuxProvider terminal operations", () => {
   it("does not send terminal open when the socket closes before auth resolves", async () => {
     const deferred = createDeferred<{ ok: true; json: () => Promise<{ token: string; expiresAt: string }> }>();
     const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/mux/connect") {
+        return muxConnectFetchResponse();
+      }
       if (input === "/api/runtime/terminal") {
         return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
       }
@@ -668,6 +703,9 @@ describe("MuxProvider terminal operations", () => {
   it("does not send terminal open when the terminal closes before auth resolves", async () => {
     const deferred = createDeferred<{ ok: true; json: () => Promise<{ token: string; expiresAt: string }> }>();
     const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/mux/connect") {
+        return muxConnectFetchResponse();
+      }
       if (input === "/api/runtime/terminal") {
         return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
       }
@@ -766,6 +804,9 @@ describe("buildMuxWsUrl", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string) => {
+        if (input === "/api/mux/connect") {
+          return muxConnectFetchResponse();
+        }
         if (input === "/api/runtime/terminal") {
           return { ok: true, json: async () => ({ directTerminalPort: 14802 }) };
         }
@@ -789,6 +830,7 @@ describe("buildMuxWsUrl", () => {
     renderHook(() => useMux(), { wrapper });
     await flushInit();
     expect(MockWebSocket.instances[0].url).toContain(":14802/mux");
+    expect(MockWebSocket.instances[0].url).toContain("token=");
     Object.defineProperty(window, "location", {
       writable: true,
       value: { protocol: "http:", host: "localhost", hostname: "localhost", port: "" },
@@ -799,6 +841,9 @@ describe("buildMuxWsUrl", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string) => {
+        if (input === "/api/mux/connect") {
+          return muxConnectFetchResponse();
+        }
         if (input === "/api/runtime/terminal") {
           return { ok: false };
         }
@@ -821,21 +866,26 @@ describe("buildMuxWsUrl", () => {
     });
     renderHook(() => useMux(), { wrapper });
     await flushInit();
-    expect(MockWebSocket.instances[0].url).toMatch(/\/ao-terminal-mux$/);
+    expect(MockWebSocket.instances[0].url).toMatch(/\/ao-terminal-mux\?token=/);
   });
 
   it("refreshes terminal grants after they expire", async () => {
     vi.useFakeTimers();
+    let terminalGrantFetchCount = 0;
     const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/mux/connect") {
+        return muxConnectFetchResponse();
+      }
       if (input === "/api/runtime/terminal") {
         return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
       }
       if (input.startsWith("/api/sessions/") && input.endsWith("/terminal")) {
         const sessionId = decodeURIComponent(input.split("/")[3] ?? "");
+        terminalGrantFetchCount += 1;
         return {
           ok: true,
           json: async () => ({
-            token: `token-${sessionId}-${fetchMock.mock.calls.length}`,
+            token: `token-${sessionId}-${terminalGrantFetchCount}`,
             expiresAt: new Date(Date.now() + 1_000).toISOString(),
           }),
         };
@@ -866,7 +916,7 @@ describe("buildMuxWsUrl", () => {
         .filter((m) => m.ch === "terminal" && m.type === "open" && m.id === "session-expiring");
 
       expect(openMessages).toHaveLength(1);
-      expect(openMessages[0]?.["token"]).toBe("token-session-expiring-3");
+      expect(openMessages[0]?.["token"]).toBe("token-session-expiring-2");
     } finally {
       vi.useRealTimers();
     }

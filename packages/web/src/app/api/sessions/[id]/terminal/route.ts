@@ -29,10 +29,11 @@ export async function GET(
     const terminalPort = normalizePort(process.env.TERMINAL_PORT, 14800);
     const protocol = getRequestProtocol(request);
     const hostname = getRequestHostname(request);
+    // Keep the token out of the query string (proxy access logs). Fragment is not sent in HTTP request lines.
     const url =
       `${protocol}://${hostname}:${terminalPort}/terminal` +
       `?session=${encodeURIComponent(grant.sessionId)}` +
-      `&token=${encodeURIComponent(grant.token)}`;
+      `#token=${encodeURIComponent(grant.token)}`;
 
     return NextResponse.json(
       {

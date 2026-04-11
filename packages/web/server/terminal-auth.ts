@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import {
@@ -38,6 +38,19 @@ interface TerminalTokenPayload {
   nonce: string;
 }
 
+interface MuxConnectTokenPayload {
+  v: 1;
+  purpose: "mux_connect";
+  iat: number;
+  exp: number;
+  nonce: string;
+}
+
+export interface MuxConnectGrant {
+  token: string;
+  expiresAt: string;
+}
+
 export interface TerminalAccessGrant extends TerminalSessionRecord {
   token: string;
   expiresAt: string;
@@ -64,10 +77,14 @@ export class TerminalAuthError extends Error {
 }
 
 const TOKEN_TTL_MS = 60_000;
+/** WebSocket /mux upgrade — long enough for reconnect backoff + idle tabs. */
+const MUX_TOKEN_TTL_MS = 15 * 60_000;
 const SECRET_FILE_NAME = "terminal-auth-secret";
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const ISSUE_LIMIT = 20;
 const VERIFY_LIMIT = 40;
+const MUX_ISSUE_LIMIT = 120;
+const RATE_LIMIT_PRUNE_THRESHOLD = 10_000;
 
 const rateLimits = new Map<string, { count: number; resetAt: number }>();
 
@@ -92,8 +109,20 @@ function getLocalOwnerId(): string {
   }
 }
 
+function pruneExpiredRateLimits(now: number): void {
+  if (rateLimits.size <= RATE_LIMIT_PRUNE_THRESHOLD) {
+    return;
+  }
+  for (const [k, v] of rateLimits) {
+    if (v.resetAt <= now) {
+      rateLimits.delete(k);
+    }
+  }
+}
+
 function enforceRateLimit(key: string, limit: number): void {
   const now = Date.now();
+  pruneExpiredRateLimits(now);
   const current = rateLimits.get(key);
 
   if (!current || current.resetAt <= now) {
@@ -122,16 +151,26 @@ function getContext() {
     }
 
     const secretDir = getObservabilityBaseDir(config.configPath);
-    mkdirSync(secretDir, { recursive: true });
+    mkdirSync(secretDir, { recursive: true, mode: 0o700 });
     const secretPath = join(secretDir, SECRET_FILE_NAME);
 
     let secret: Buffer;
     try {
       secret = Buffer.from(readFileSync(secretPath, "utf-8").trim(), "utf-8");
       if (secret.length === 0) throw new Error("empty secret");
+      try {
+        chmodSync(secretPath, 0o600);
+      } catch {
+        /* best-effort */
+      }
     } catch {
       const generated = randomBytes(32).toString("hex");
-      writeFileSync(secretPath, `${generated}\n`, "utf-8");
+      writeFileSync(secretPath, `${generated}\n`, { encoding: "utf-8", mode: 0o600 });
+      try {
+        chmodSync(secretPath, 0o600);
+      } catch {
+        /* best-effort */
+      }
       secret = Buffer.from(generated, "utf-8");
     }
 
@@ -174,7 +213,7 @@ function getSessionRecord(sessionId: string): TerminalSessionRecord {
   return { sessionId, projectId, tmuxSessionName, ownerId };
 }
 
-function encodePayload(payload: TerminalTokenPayload): string {
+function encodePayload(payload: TerminalTokenPayload | MuxConnectTokenPayload): string {
   return Buffer.from(JSON.stringify(payload), "utf-8").toString("base64url");
 }
 
@@ -182,34 +221,97 @@ function signPayload(encodedPayload: string, secret: Buffer): string {
   return createHmac("sha256", secret).update(encodedPayload).digest("base64url");
 }
 
-function decodePayload(token: string | undefined, secret: Buffer): TerminalTokenPayload {
+/**
+ * Verify HMAC and return parsed JSON. Caller validates shape and purpose.
+ */
+function verifySignedTokenJson(
+  token: string | undefined,
+  secret: Buffer,
+  missingMessage: string,
+  invalidTokenMessage = "Invalid terminal token",
+): unknown {
   if (typeof token !== "string" || token.length === 0) {
-    throw new TerminalAuthError("Missing terminal token", 401, "auth_required");
+    throw new TerminalAuthError(missingMessage, 401, "auth_required");
   }
 
   const [encodedPayload, providedSignature] = token.split(".");
   if (!encodedPayload || !providedSignature) {
-    throw new TerminalAuthError("Missing terminal token", 401, "auth_required");
+    throw new TerminalAuthError(missingMessage, 401, "auth_required");
   }
 
   const expectedSignature = signPayload(encodedPayload, secret);
   const provided = Buffer.from(providedSignature, "utf-8");
   const expected = Buffer.from(expectedSignature, "utf-8");
   if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
-    throw new TerminalAuthError("Invalid terminal token", 401, "token_invalid");
+    throw new TerminalAuthError(invalidTokenMessage, 401, "token_invalid");
   }
 
   try {
-    return JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf-8")) as TerminalTokenPayload;
+    return JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf-8"));
   } catch {
-    throw new TerminalAuthError("Invalid terminal token", 401, "token_invalid");
+    throw new TerminalAuthError(invalidTokenMessage, 401, "token_invalid");
+  }
+}
+
+function decodePayload(token: string | undefined, secret: Buffer): TerminalTokenPayload {
+  const parsed = verifySignedTokenJson(token, secret, "Missing terminal token");
+  return parsed as TerminalTokenPayload;
+}
+
+/**
+ * Issue a short-lived token required on the `/mux` WebSocket upgrade URL.
+ * Proves the client reached the dashboard API before opening a raw TCP connection to the mux port.
+ */
+export function issueMuxConnectToken(): MuxConnectGrant {
+  getContext();
+  enforceRateLimit("mux_issue", MUX_ISSUE_LIMIT);
+
+  const { secret } = getContext();
+  const now = Date.now();
+  const exp = now + MUX_TOKEN_TTL_MS;
+
+  const payload: MuxConnectTokenPayload = {
+    v: 1,
+    purpose: "mux_connect",
+    iat: now,
+    exp,
+    nonce: randomBytes(8).toString("hex"),
+  };
+
+  const encodedPayload = encodePayload(payload);
+  const token = `${encodedPayload}.${signPayload(encodedPayload, secret)}`;
+
+  return {
+    token,
+    expiresAt: new Date(exp).toISOString(),
+  };
+}
+
+/**
+ * Validates a mux upgrade token (query `token`). Used by the direct terminal HTTP server.
+ */
+export function verifyMuxConnectToken(token: string | null | undefined): void {
+  const { secret } = getContext();
+  const parsed = verifySignedTokenJson(
+    token ?? undefined,
+    secret,
+    "Missing mux token",
+    "Invalid mux token",
+  ) as Record<string, unknown>;
+
+  if (parsed["v"] !== 1 || parsed["purpose"] !== "mux_connect") {
+    throw new TerminalAuthError("Invalid mux token", 401, "token_invalid");
+  }
+  const exp = parsed["exp"];
+  if (typeof exp !== "number" || exp <= Date.now()) {
+    throw new TerminalAuthError("Mux token expired", 401, "token_expired");
   }
 }
 
 export function issueTerminalAccess(sessionId: string): TerminalAccessGrant {
+  const record = getSessionRecord(sessionId);
   enforceRateLimit(`issue:${sessionId}`, ISSUE_LIMIT);
 
-  const record = getSessionRecord(sessionId);
   const { secret } = getContext();
   const now = Date.now();
   const expiresAt = new Date(now + TOKEN_TTL_MS);
@@ -236,12 +338,24 @@ export function issueTerminalAccess(sessionId: string): TerminalAccessGrant {
   };
 }
 
+/**
+ * Verify a short-lived terminal access token and return **current** session metadata.
+ *
+ * Re-reads metadata from disk after validating the token. Only `sessionId` and
+ * `projectId` must match the signed payload — `tmuxSessionName` and `ownerId` may
+ * change between issuance and verification (lifecycle updates) without revoking
+ * the grant; the returned record always reflects on-disk state for attach/hooks.
+ */
 export function verifyTerminalAccess(sessionId: string, token: string | undefined): TerminalSessionRecord {
-  enforceRateLimit(`verify:${sessionId}`, VERIFY_LIMIT);
-
   const { secret } = getContext();
   const payload = decodePayload(token, secret);
+
+  if (payload.sessionId !== sessionId) {
+    throw new TerminalAuthError("Terminal token does not match this session", 403, "ownership_denied");
+  }
+
   const record = getSessionRecord(sessionId);
+  enforceRateLimit(`verify:${sessionId}`, VERIFY_LIMIT);
 
   if (payload.purpose !== "terminal_access" || payload.v !== 1) {
     throw new TerminalAuthError("Invalid terminal token", 401, "token_invalid");
@@ -252,11 +366,7 @@ export function verifyTerminalAccess(sessionId: string, token: string | undefine
   if (payload.sessionId !== sessionId || payload.sessionId !== record.sessionId) {
     throw new TerminalAuthError("Terminal token does not match this session", 403, "ownership_denied");
   }
-  if (
-    payload.projectId !== record.projectId ||
-    payload.tmuxSessionName !== record.tmuxSessionName ||
-    payload.ownerId !== record.ownerId
-  ) {
+  if (payload.projectId !== record.projectId) {
     throw new TerminalAuthError("Terminal access denied", 403, "ownership_denied");
   }
 

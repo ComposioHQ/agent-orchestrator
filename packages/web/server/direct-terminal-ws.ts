@@ -7,6 +7,7 @@ import { createServer, type Server } from "node:http";
 import type { WebSocketServer } from "ws";
 import { findTmux } from "./tmux-utils.js";
 import { createMuxWebSocket } from "./mux-websocket.js";
+import { verifyMuxConnectToken } from "./terminal-auth.js";
 
 export interface DirectTerminalServer {
   server: Server;
@@ -43,6 +44,17 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     const pathname = new URL(request.url ?? "/", "ws://localhost").pathname;
 
     if (pathname === "/mux" && muxWss) {
+      const skipMuxAuth = process.env["AO_MUX_SKIP_UPGRADE_AUTH"] === "1";
+      if (!skipMuxAuth) {
+        const token = new URL(request.url ?? "/", "ws://localhost").searchParams.get("token");
+        try {
+          verifyMuxConnectToken(token);
+        } catch {
+          socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+      }
       muxWss.handleUpgrade(request, socket, head, (ws) => {
         muxWss!.emit("connection", ws, request);
       });

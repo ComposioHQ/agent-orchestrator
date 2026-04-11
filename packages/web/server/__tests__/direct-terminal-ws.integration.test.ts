@@ -17,7 +17,11 @@ import { WebSocket } from "ws";
 import { getSessionsDir, writeMetadata } from "@composio/ao-core";
 import { findTmux } from "../tmux-utils.js";
 import { createDirectTerminalServer, type DirectTerminalServer } from "../direct-terminal-ws.js";
-import { issueTerminalAccess, resetTerminalAuthStateForTests } from "../terminal-auth.js";
+import {
+  issueMuxConnectToken,
+  issueTerminalAccess,
+  resetTerminalAuthStateForTests,
+} from "../terminal-auth.js";
 
 const TMUX = findTmux();
 const TEST_SESSION = `ao-test-integration-${process.pid}`;
@@ -25,10 +29,12 @@ const TEST_HASH_SESSION = `abcdef123456-ao-test-hash-${process.pid}`;
 
 let terminal: DirectTerminalServer;
 let port: number;
+let muxUpgradeToken: string;
 let tempRoot: string;
 let projectPath: string;
 let configPath: string;
 const previousConfigPath = process.env["AO_CONFIG_PATH"];
+let previousHome: string | undefined;
 
 // =============================================================================
 // Helpers
@@ -52,7 +58,8 @@ function httpGet(path: string): Promise<{ status: number; body: string }> {
 /** Open a raw WebSocket to /mux and wait for the connection to be established. */
 function connectMux(): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://localhost:${port}/mux`);
+    const qs = `?token=${encodeURIComponent(muxUpgradeToken)}`;
+    const ws = new WebSocket(`ws://localhost:${port}/mux${qs}`);
     ws.on("open", () => resolve(ws));
     ws.on("error", reject);
     setTimeout(() => reject(new Error("WebSocket connect timeout")), 5000);
@@ -92,7 +99,10 @@ function waitForMessage(
 // =============================================================================
 
 beforeAll(() => {
+  previousHome = process.env["HOME"];
   tempRoot = mkdtempSync(join(tmpdir(), "ao-direct-terminal-"));
+  // Session metadata and terminal-auth secrets live under ~/.agent-orchestrator — use a temp HOME.
+  process.env["HOME"] = tempRoot;
   projectPath = join(tempRoot, "project");
   mkdirSync(projectPath, { recursive: true });
   configPath = join(tempRoot, "agent-orchestrator.yaml");
@@ -127,6 +137,7 @@ beforeAll(() => {
   );
   process.env["AO_CONFIG_PATH"] = configPath;
   resetTerminalAuthStateForTests();
+  muxUpgradeToken = issueMuxConnectToken().token;
 
   const sessionsDir = getSessionsDir(configPath, projectPath);
   writeMetadata(sessionsDir, TEST_SESSION, {
@@ -158,7 +169,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  terminal.shutdown();
+  terminal?.shutdown();
   try { execFileSync(TMUX, ["kill-session", "-t", TEST_SESSION], { timeout: 5000 }); } catch { /* */ }
   try { execFileSync(TMUX, ["kill-session", "-t", TEST_HASH_SESSION], { timeout: 5000 }); } catch { /* */ }
   resetTerminalAuthStateForTests();
@@ -166,6 +177,11 @@ afterAll(() => {
     delete process.env["AO_CONFIG_PATH"];
   } else {
     process.env["AO_CONFIG_PATH"] = previousConfigPath;
+  }
+  if (previousHome === undefined) {
+    delete process.env["HOME"];
+  } else {
+    process.env["HOME"] = previousHome;
   }
   rmSync(tempRoot, { recursive: true, force: true });
 });
@@ -222,6 +238,46 @@ describe("WebSocket upgrade routing", () => {
     const ws = await connectMux();
     expect(ws.readyState).toBe(WebSocket.OPEN);
     ws.close();
+  });
+
+  it("rejects /mux upgrade without a mux token", async () => {
+    const outcome = await new Promise<"open" | "fail">((resolve) => {
+      const ws = new WebSocket(`ws://localhost:${port}/mux`);
+      const timer = setTimeout(() => resolve("fail"), 5000);
+      ws.on("open", () => {
+        clearTimeout(timer);
+        resolve("open");
+      });
+      ws.on("error", () => {
+        clearTimeout(timer);
+        resolve("fail");
+      });
+      ws.on("close", () => {
+        clearTimeout(timer);
+        resolve("fail");
+      });
+    });
+    expect(outcome).not.toBe("open");
+  });
+
+  it("rejects /mux upgrade with an invalid mux token", async () => {
+    const outcome = await new Promise<"open" | "fail">((resolve) => {
+      const ws = new WebSocket(`ws://localhost:${port}/mux?token=${encodeURIComponent("invalid")}`);
+      const timer = setTimeout(() => resolve("fail"), 5000);
+      ws.on("open", () => {
+        clearTimeout(timer);
+        resolve("open");
+      });
+      ws.on("error", () => {
+        clearTimeout(timer);
+        resolve("fail");
+      });
+      ws.on("close", () => {
+        clearTimeout(timer);
+        resolve("fail");
+      });
+    });
+    expect(outcome).not.toBe("open");
   });
 
   it("destroys connections on unknown paths", async () => {
@@ -380,6 +436,40 @@ describe("mux terminal I/O", () => {
 
     expect(received).toContain(marker);
     ws.close();
+  });
+
+  it("rejects data from a connection that did not open the terminal", async () => {
+    const wsA = await connectMux();
+    const wsB = await connectMux();
+    const { token } = issueTerminalAccess(TEST_SESSION);
+
+    wsA.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open", token }));
+    await waitForMessage(wsA, (m) => m.ch === "terminal" && m.type === "opened");
+
+    wsB.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "data", data: "whoami\n" }));
+
+    const err = await waitForMessage(wsB, (m) => m.ch === "terminal" && m.type === "error");
+    expect(String(err.message)).toMatch(/not open on this connection/i);
+
+    wsA.close();
+    wsB.close();
+  });
+
+  it("rejects resize from a connection that did not open the terminal", async () => {
+    const wsA = await connectMux();
+    const wsB = await connectMux();
+    const { token } = issueTerminalAccess(TEST_SESSION);
+
+    wsA.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open", token }));
+    await waitForMessage(wsA, (m) => m.ch === "terminal" && m.type === "opened");
+
+    wsB.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "resize", cols: 100, rows: 40 }));
+
+    const err = await waitForMessage(wsB, (m) => m.ch === "terminal" && m.type === "error");
+    expect(String(err.message)).toMatch(/not open on this connection/i);
+
+    wsA.close();
+    wsB.close();
   });
 });
 

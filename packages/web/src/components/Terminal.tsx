@@ -75,6 +75,7 @@ export function Terminal({ sessionId }: TerminalProps) {
             className="h-full w-full border-0"
             title={`Terminal: ${sessionId}`}
             allow="clipboard-read; clipboard-write"
+            referrerPolicy="no-referrer"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
           />
         ) : (

@@ -493,7 +493,8 @@ describe("API Routes", () => {
       expect(data.token).toBe("token-backend-3");
       expect(data.url).toContain("http://localhost:14800/terminal");
       expect(data.url).toContain("session=backend-3");
-      expect(data.url).toContain("token=token-backend-3");
+      expect(data.url).not.toMatch(/[?&]token=/);
+      expect(data.url).toContain("#token=");
     });
 
     it("uses forwarded protocol and host when present", async () => {
