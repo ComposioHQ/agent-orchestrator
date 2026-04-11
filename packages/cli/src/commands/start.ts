@@ -1419,6 +1419,7 @@ export function registerStart(program: Command): void {
           }
           process.exit(1);
         }
+        /* v8 ignore stop */
       },
     );
 }
@@ -1438,6 +1439,7 @@ export function registerStop(program: Command): void {
     .option("--purge-session", "Delete mapped OpenCode session when stopping")
     .option("--all", "Stop all running AO instances")
     .action(async (projectArg?: string, opts: { purgeSession?: boolean; all?: boolean } = {}) => {
+      /* v8 ignore start */
       try {
         // Check running.json first
         const running = await getRunning();

@@ -71,5 +71,5 @@ export async function getLifecycleManager(
 ): Promise<LifecycleManager> {
   const registry = await getPluginRegistry(config);
   const sessionManager = createSessionManager({ config, registry });
-  return createLifecycleManager({ config, registry, sessionManager, projectId });
+  return await createLifecycleManager({ config, registry, sessionManager, projectId });
 }
