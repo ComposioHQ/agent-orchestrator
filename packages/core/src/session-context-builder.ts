@@ -115,8 +115,11 @@ export async function buildPreviousSessionContext(
   }
 
   if (isDone) {
+    const prInstruction = archivedRaw["pr"]
+      ? " Check the PR for review comments and address any feedback."
+      : "";
     parts.push(
-      `\n### Instructions\nThe previous session completed. Check the PR for review comments and address any feedback. Do not redo work that is already done.`,
+      `\n### Instructions\nThe previous session completed.${prInstruction} Do not redo work that is already done.`,
     );
   } else {
     parts.push(
