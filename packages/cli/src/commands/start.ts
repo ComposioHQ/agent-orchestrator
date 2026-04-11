@@ -48,7 +48,10 @@ import {
   findFreePort,
   MAX_PORT_SCAN,
 } from "../lib/web-dir.js";
-import { rebuildDashboardProductionArtifacts } from "../lib/dashboard-rebuild.js";
+import {
+  clearStaleCacheIfNeeded,
+  rebuildDashboardProductionArtifacts,
+} from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
 import { register, unregister, isAlreadyRunning, getRunning, waitForExit } from "../lib/running-state.js";
 import { isHumanCaller } from "../lib/caller-context.js";
@@ -972,6 +975,7 @@ async function runStartup(
       await rebuildDashboardProductionArtifacts(webDir);
     } else if (!willUseDevServer) {
       await preflight.checkBuilt(webDir);
+      await clearStaleCacheIfNeeded(webDir);
     }
 
     spinner.start("Starting dashboard");

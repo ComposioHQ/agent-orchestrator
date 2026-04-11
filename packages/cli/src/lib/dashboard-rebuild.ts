@@ -4,7 +4,7 @@
  */
 
 import { resolve } from "node:path";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import ora from "ora";
 import { exec, execSilent } from "./shell.js";
 
@@ -66,6 +66,51 @@ export async function cleanNextCache(webDir: string): Promise<void> {
     spinner.start("Cleaning .next build cache");
     rmSync(nextDir, { recursive: true, force: true });
     spinner.succeed(`Cleaned .next build cache (${webDir})`);
+  }
+}
+
+/**
+ * Compare the .next/AO_VERSION stamp against the current web package version.
+ * If they differ (or the stamp is missing), clear the .next/cache directory
+ * so Next.js doesn't serve stale pages after a version upgrade.
+ */
+export async function clearStaleCacheIfNeeded(webDir: string): Promise<void> {
+  try {
+    const stampPath = resolve(webDir, ".next", "AO_VERSION");
+    const pkgPath = resolve(webDir, "package.json");
+
+    if (!existsSync(pkgPath)) return;
+
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version: string };
+    const currentVersion = pkg.version;
+
+    if (!currentVersion) return;
+
+    let needsClear = false;
+
+    if (!existsSync(stampPath)) {
+      needsClear = true;
+    } else {
+      const stamp = readFileSync(stampPath, "utf8").trim();
+      needsClear = stamp !== currentVersion;
+    }
+
+    if (needsClear) {
+      const cacheDir = resolve(webDir, ".next", "cache");
+      if (existsSync(cacheDir)) {
+        const spinner = ora();
+        spinner.start("Clearing stale Next.js cache (version upgrade detected)");
+        rmSync(cacheDir, { recursive: true, force: true });
+        spinner.succeed(`Cleared stale .next cache → v${currentVersion}`);
+      }
+      // Update stamp so subsequent starts skip the check
+      const nextDir = resolve(webDir, ".next");
+      if (existsSync(nextDir)) {
+        writeFileSync(stampPath, currentVersion, "utf8");
+      }
+    }
+  } catch {
+    // Best-effort cache cleanup — never prevent dashboard from starting
   }
 }
 

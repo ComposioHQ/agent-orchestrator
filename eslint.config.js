@@ -89,7 +89,7 @@ export default tseslint.config(
 
   // Scripts directory - Node.js environment
   {
-    files: ["scripts/**/*.js", "scripts/**/*.mjs"],
+    files: ["scripts/**/*.js", "scripts/**/*.mjs", "packages/*/scripts/**/*.js"],
     languageOptions: {
       globals: {
         console: "readonly",

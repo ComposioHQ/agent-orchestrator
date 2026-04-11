@@ -169,6 +169,64 @@ describe("rebuildDashboardProductionArtifacts", () => {
   });
 });
 
+describe("clearStaleCacheIfNeeded", () => {
+  it("clears .next/cache and writes stamp when version differs", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(join(webDir, ".next", "cache", "webpack"), { recursive: true });
+    writeFileSync(join(webDir, ".next", "AO_VERSION"), "0.1.0");
+    writeFileSync(join(webDir, "package.json"), JSON.stringify({ version: "0.2.0" }));
+
+    const { clearStaleCacheIfNeeded } = await import("../../src/lib/dashboard-rebuild.js");
+    await clearStaleCacheIfNeeded(webDir);
+
+    expect(existsSync(join(webDir, ".next", "cache"))).toBe(false);
+    expect(existsSync(join(webDir, ".next", "AO_VERSION"))).toBe(true);
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(join(webDir, ".next", "AO_VERSION"), "utf8")).toBe("0.2.0");
+  });
+
+  it("clears cache when stamp is missing (upgrade from old version)", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(join(webDir, ".next", "cache"), { recursive: true });
+    writeFileSync(join(webDir, "package.json"), JSON.stringify({ version: "0.2.0" }));
+
+    const { clearStaleCacheIfNeeded } = await import("../../src/lib/dashboard-rebuild.js");
+    await clearStaleCacheIfNeeded(webDir);
+
+    expect(existsSync(join(webDir, ".next", "cache"))).toBe(false);
+    expect(existsSync(join(webDir, ".next", "AO_VERSION"))).toBe(true);
+  });
+
+  it("is a no-op when version matches", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(join(webDir, ".next", "cache", "webpack"), { recursive: true });
+    writeFileSync(join(webDir, ".next", "AO_VERSION"), "0.2.0");
+    writeFileSync(join(webDir, "package.json"), JSON.stringify({ version: "0.2.0" }));
+
+    const { clearStaleCacheIfNeeded } = await import("../../src/lib/dashboard-rebuild.js");
+    await clearStaleCacheIfNeeded(webDir);
+
+    // cache should still exist
+    expect(existsSync(join(webDir, ".next", "cache", "webpack"))).toBe(true);
+  });
+
+  it("leaves .next/server and .next/static intact", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(join(webDir, ".next", "cache"), { recursive: true });
+    mkdirSync(join(webDir, ".next", "server"), { recursive: true });
+    mkdirSync(join(webDir, ".next", "static"), { recursive: true });
+    writeFileSync(join(webDir, ".next", "AO_VERSION"), "0.1.0");
+    writeFileSync(join(webDir, "package.json"), JSON.stringify({ version: "0.2.0" }));
+
+    const { clearStaleCacheIfNeeded } = await import("../../src/lib/dashboard-rebuild.js");
+    await clearStaleCacheIfNeeded(webDir);
+
+    expect(existsSync(join(webDir, ".next", "cache"))).toBe(false);
+    expect(existsSync(join(webDir, ".next", "server"))).toBe(true);
+    expect(existsSync(join(webDir, ".next", "static"))).toBe(true);
+  });
+});
+
 describe("looksLikeStaleBuild pattern matching", () => {
   // We can't import the private function directly, so we replicate the patterns
   // to ensure the detection logic catches the actual error messages seen in production.
