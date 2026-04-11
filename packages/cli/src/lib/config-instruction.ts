@@ -8,25 +8,41 @@ export function getConfigInstruction(): string {
 # File: agent-orchestrator.yaml
 
 # ── Top-level settings ──────────────────────────────────────────────
+# Runtime data paths are auto-derived from the config location under:
+#   ~/.agent-orchestrator/{hash}-{projectId}/
 
-port: 3000                    # Dashboard port (default: 3000, auto-finds free port if busy)
-terminalPort: 3001            # Terminal WebSocket port (default: 3001)
-directTerminalPort: 3003      # Direct terminal WebSocket port (default: 3003)
-readyThresholdMs: 300000      # Ms before "ready" session becomes "idle" (default: 5 min)
+port: 3000                    # Dashboard port
+terminalPort: 14800           # Optional terminal WebSocket port override
+directTerminalPort: 14801     # Optional direct terminal WebSocket port override
+readyThresholdMs: 300000      # Ms before "ready" becomes "idle" (default: 5 min)
 
 # ── Default plugins ─────────────────────────────────────────────────
 # These apply to all projects unless overridden per-project.
 
 defaults:
   runtime: tmux               # tmux | process
-  agent: claude-code          # claude-code | aider | codex | opencode
+  agent: claude-code          # claude-code | aider | codex | cursor | opencode
   workspace: worktree         # worktree | clone
-  notifiers:                  # List of active notifier plugins
+  notifiers:
     - desktop                 # desktop | discord | slack | webhook | composio | openclaw
   orchestrator:
-    agent: claude-code        # Agent for orchestrator sessions (optional override)
+    agent: claude-code        # Optional override for orchestrator sessions
   worker:
-    agent: claude-code        # Agent for worker sessions (optional override)
+    agent: claude-code        # Optional override for worker sessions
+
+# ── Installer-managed marketplace plugins (optional) ───────────────
+# External plugins are declared here. Built-ins do not need entries.
+
+plugins:
+  - name: owasp-auditor
+    source: registry          # registry | npm | local
+    package: "@ao-plugins/owasp-auditor"
+    version: "^0.1.0"
+    enabled: true
+  - name: local-dev-plugin
+    source: local
+    path: ./plugins/local-dev-plugin
+    enabled: true
 
 # ── Projects ────────────────────────────────────────────────────────
 # Each key is a project ID (typically the repo directory name).
@@ -46,7 +62,7 @@ projects:
 
     # ── Agent configuration (optional) ────────────────────────────
     agentConfig:
-      permissions: auto       # auto | manual — agent permission mode
+      permissions: permissionless   # permissionless | default | auto-edit | suggest
       model: claude-sonnet-4-20250514
 
     # ── Agent rules (optional) ────────────────────────────────────
@@ -79,17 +95,11 @@ projects:
     scm:
       plugin: github          # github | gitlab
 
-    # ── Task decomposition (optional) ─────────────────────────────
-    decomposer:
-      enabled: false          # Auto-decompose backlog issues
-      maxDepth: 3             # Max recursion depth
-      model: claude-sonnet-4-20250514
-      requireApproval: true   # Require human approval before executing
-
     # ── Per-project reaction overrides (optional) ─────────────────
     # reactions:
-    #   ci-failure:
-    #     enabled: true
+    #   ci-failed:
+    #     auto: true
+    #     retries: 2
 
 # ── Notification channels (optional) ────────────────────────────────
 
@@ -112,17 +122,19 @@ notifiers:
 # Route notifications by priority level.
 
 notificationRouting:
-  critical:
+  urgent:
     - desktop
     - slack
-  high:
+  action:
     - desktop
-  low:
-    - desktop
+  warning:
+    - slack
+  info:
+    - composio
 
 # ── Available plugins ───────────────────────────────────────────────
 #
-# Agent:     claude-code, aider, codex, opencode
+# Agent:     claude-code, aider, codex, cursor, opencode
 # Runtime:   tmux, process
 # Workspace: worktree, clone
 # SCM:       github, gitlab

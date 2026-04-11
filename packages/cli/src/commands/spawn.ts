@@ -4,21 +4,16 @@ import type { Command } from "commander";
 import { resolve } from "node:path";
 import {
   loadConfig,
-  decompose,
-  getLeaves,
-  getSiblings,
-  formatPlanTree,
   TERMINAL_STATUSES,
-  expandHome,
   type OrchestratorConfig,
-  type DecomposerConfig,
-  DEFAULT_DECOMPOSER_CONFIG,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
+import { DEFAULT_PORT } from "../lib/constants.js";
 import { exec } from "../lib/shell.js";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker } from "../lib/lifecycle-service.js";
 import { preflight } from "../lib/preflight.js";
+import { findProjectForDirectory } from "../lib/project-resolution.js";
 
 /**
  * Auto-detect the project ID from the config.
@@ -43,10 +38,9 @@ function autoDetectProject(config: OrchestratorConfig): string {
 
   // Try matching cwd to a project path
   const cwd = resolve(process.cwd());
-  for (const [id, project] of Object.entries(config.projects)) {
-    if (project.path && resolve(expandHome(project.path)) === cwd) {
-      return id;
-    }
+  const matchedProjectId = findProjectForDirectory(config.projects, cwd);
+  if (matchedProjectId) {
+    return matchedProjectId;
   }
 
   throw new Error(
@@ -103,7 +97,6 @@ async function spawnSession(
       agent,
     });
 
-    let branchStr = session.branch ?? "";
     let claimedPrUrl: string | null = null;
 
     if (claimOptions?.claimPr) {
@@ -112,7 +105,6 @@ async function spawnSession(
         const claimResult = await sm.claimPR(session.id, claimOptions.claimPr, {
           assignOnGithub: claimOptions.assignOnGithub,
         });
-        branchStr = claimResult.pr.branch;
         claimedPrUrl = claimResult.pr.url;
       } catch (err) {
         throw new Error(
@@ -122,24 +114,29 @@ async function spawnSession(
       }
     }
 
+    const issueLabel = issueId ? ` for issue #${issueId}` : "";
+    const claimLabel = claimedPrUrl ? ` (claimed ${claimedPrUrl})` : "";
+    const port = config.port ?? DEFAULT_PORT;
     spinner.succeed(
-      claimedPrUrl
-        ? `Session ${chalk.green(session.id)} created and claimed PR`
-        : `Session ${chalk.green(session.id)} created`,
+      `Session ${chalk.green(session.id)} spawned${issueLabel}${claimLabel}`,
     );
+    console.log(`  View:     ${chalk.dim(`http://localhost:${port}/sessions/${session.id}`)}`);
 
-    console.log(`  Worktree: ${chalk.dim(session.workspacePath ?? "-")}`);
-    if (branchStr) console.log(`  Branch:   ${chalk.dim(branchStr)}`);
-    if (claimedPrUrl) console.log(`  PR:       ${chalk.dim(claimedPrUrl)}`);
-
-    // Show the tmux name for attaching (stored in metadata or runtimeHandle)
-    const tmuxTarget = session.runtimeHandle?.id ?? session.id;
-    console.log(`  Attach:   ${chalk.dim(`tmux attach -t ${tmuxTarget}`)}`);
-    console.log();
+    // Warn if prompt delivery failed (for post-launch agents like Claude Code)
+    const promptDelivered = session.metadata?.promptDelivered;
+    if (promptDelivered === "false") {
+      console.warn(
+        chalk.yellow(
+          `  ⚠ Prompt delivery failed — agent may be idle.\n` +
+            `    Use '${chalk.cyan("ao send " + session.id + ' "message..."')}' to send instructions manually.`,
+        ),
+      );
+    }
 
     // Open terminal tab if requested
     if (openTab) {
       try {
+        const tmuxTarget = session.runtimeHandle?.id ?? session.id;
         await exec("open-iterm-tab", [tmuxTarget]);
       } catch {
         // Terminal plugin not available
@@ -160,13 +157,11 @@ export function registerSpawn(program: Command): void {
     .command("spawn")
     .description("Spawn a single agent session")
     .argument("[first]", "Issue identifier (project is auto-detected)")
-    .argument("[second]", "", /* hidden second arg to catch old two-arg usage */)
+    .argument("[second]", "" /* hidden second arg to catch old two-arg usage */)
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
-    .option("--decompose", "Decompose issue into subtasks before spawning")
-    .option("--max-depth <n>", "Max decomposition depth (default: 3)")
     .action(
       async (
         first: string | undefined,
@@ -176,8 +171,6 @@ export function registerSpawn(program: Command): void {
           agent?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
-          decompose?: boolean;
-          maxDepth?: string;
         },
       ) => {
         // Catch old two-arg usage: ao spawn <project> <issue>
@@ -229,59 +222,7 @@ export function registerSpawn(program: Command): void {
           await runSpawnPreflight(config, projectId, claimOptions);
           await ensureLifecycleWorker(config, projectId);
 
-          if (opts.decompose && issueId) {
-            // Decompose the issue before spawning
-            const project = config.projects[projectId];
-            const decompConfig: DecomposerConfig = {
-              ...DEFAULT_DECOMPOSER_CONFIG,
-              ...(project.decomposer ?? {}),
-              maxDepth: opts.maxDepth
-                ? parseInt(opts.maxDepth, 10)
-                : (project.decomposer?.maxDepth ?? 3),
-            };
-
-            const spinner = ora("Decomposing task...").start();
-            const issueTitle = issueId;
-
-            const plan = await decompose(issueTitle, decompConfig);
-            const leaves = getLeaves(plan.tree);
-            spinner.succeed(`Decomposed into ${chalk.bold(String(leaves.length))} subtasks`);
-
-            console.log();
-            console.log(chalk.dim(formatPlanTree(plan.tree)));
-            console.log();
-
-            if (leaves.length <= 1) {
-              console.log(chalk.yellow("Task is atomic — spawning directly."));
-              await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
-            } else {
-              // Create child issues and spawn sessions with lineage context
-              const sm = await getSessionManager(config);
-              console.log(chalk.bold(`Spawning ${leaves.length} sessions with lineage context...`));
-              console.log();
-
-              for (const leaf of leaves) {
-                const siblings = getSiblings(plan.tree, leaf.id);
-                try {
-                  const session = await sm.spawn({
-                    projectId,
-                    issueId, // All work on the same parent issue for now
-                    lineage: leaf.lineage,
-                    siblings,
-                    agent: opts.agent,
-                  });
-                  console.log(`  ${chalk.green("✓")} ${session.id} — ${leaf.description}`);
-                } catch (err) {
-                  console.error(
-                    `  ${chalk.red("✗")} ${leaf.description} — ${err instanceof Error ? err.message : err}`,
-                  );
-                }
-                await new Promise((r) => setTimeout(r, 500));
-              }
-            }
-          } else {
-            await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
-          }
+          await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
           process.exit(1);

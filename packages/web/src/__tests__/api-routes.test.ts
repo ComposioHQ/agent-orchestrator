@@ -8,7 +8,7 @@ import {
   type OrchestratorConfig,
   type PluginRegistry,
   type SCM,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
 
@@ -188,13 +188,14 @@ vi.mock("@/lib/services", () => ({
     registry: mockRegistry,
     sessionManager: mockSessionManager,
   })),
+  getVerifyIssues: vi.fn(async () => []),
   getSCM: vi.fn(() => mockSCM),
 }));
 
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
-import { POST as orchestratorsPOST } from "@/app/api/orchestrators/route";
+import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
 import { POST as messagePOST } from "@/app/api/sessions/[id]/message/route";
@@ -205,6 +206,8 @@ import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
 import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
 import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
+import { GET as verifyGET, POST as verifyPOST } from "@/app/api/verify/route";
+import { GET as patchesGET } from "@/app/api/sessions/patches/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -314,81 +317,6 @@ describe("API Routes", () => {
       ]);
       expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
       expect(mockSessionManager.list).toHaveBeenCalledWith("docs-app");
-    });
-
-    it("keeps global pause sourced from all projects even for project-scoped requests", async () => {
-      const pausedUntil = new Date(Date.now() + 60_000).toISOString();
-      const pausedSessions = [
-        makeSession({
-          id: "docs-orchestrator",
-          projectId: "docs-app",
-          metadata: {
-            role: "orchestrator",
-            globalPauseUntil: pausedUntil,
-            globalPauseReason: "Rate limit hit",
-            globalPauseSource: "docs-orchestrator",
-          },
-        }),
-        makeSession({ id: "docs-1", projectId: "docs-app", status: "working", activity: "active" }),
-        makeSession({
-          id: "backend-3",
-          projectId: "my-app",
-          status: "working",
-          activity: "active",
-        }),
-      ];
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockImplementation(
-        async (projectId?: string) =>
-          projectId
-            ? pausedSessions.filter((session) => session.projectId === projectId)
-            : pausedSessions,
-      );
-
-      const res = await sessionsGET(
-        makeRequest("http://localhost:3000/api/sessions?project=my-app"),
-      );
-      expect(res.status).toBe(200);
-      const data = await res.json();
-
-      expect(data.globalPause).toMatchObject({
-        pausedUntil,
-        reason: "Rate limit hit",
-        sourceSessionId: "docs-orchestrator",
-      });
-      expect(mockSessionManager.list).toHaveBeenNthCalledWith(1, "my-app");
-      expect(mockSessionManager.list).toHaveBeenNthCalledWith(2);
-    });
-
-    it("finds active global pause even when a metadata-role orchestrator appears first", async () => {
-      const pausedUntil = new Date(Date.now() + 60_000).toISOString();
-      const sessions = [
-        makeSession({
-          id: "control-session",
-          projectId: "docs-app",
-          metadata: { role: "orchestrator" },
-        }),
-        makeSession({
-          id: "docs-orchestrator",
-          projectId: "docs-app",
-          metadata: {
-            role: "orchestrator",
-            globalPauseUntil: pausedUntil,
-            globalPauseReason: "Rate limit hit",
-            globalPauseSource: "docs-orchestrator",
-          },
-        }),
-      ];
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce(sessions);
-
-      const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
-      expect(res.status).toBe(200);
-      const data = await res.json();
-
-      expect(data.globalPause).toMatchObject({
-        pausedUntil,
-        reason: "Rate limit hit",
-        sourceSessionId: "docs-orchestrator",
-      });
     });
 
     it("enriches all PRs concurrently, not sequentially", async () => {
@@ -679,6 +607,52 @@ describe("API Routes", () => {
       });
 
       const res = await orchestratorsPOST(req);
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toBe("boom");
+    });
+  });
+
+  describe("GET /api/orchestrators", () => {
+    it("returns orchestrators for a project", async () => {
+      const orchestrator = makeSession({
+        id: "my-app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+      });
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([orchestrator]);
+
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.orchestrators).toHaveLength(1);
+      expect(data.orchestrators[0].id).toBe("my-app-orchestrator");
+      expect(data.projectName).toBe("My App");
+    });
+
+    it("returns 400 when project parameter is missing", async () => {
+      const res = await orchestratorsGET(makeRequest("http://localhost:3000/api/orchestrators"));
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/Missing project query parameter/);
+    });
+
+    it("returns 404 for unknown project", async () => {
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=unknown-app"),
+      );
+      expect(res.status).toBe(404);
+      const data = await res.json();
+      expect(data.error).toMatch(/Unknown project/);
+    });
+
+    it("returns 500 when list fails", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("boom"));
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
+      );
       expect(res.status).toBe(500);
       const data = await res.json();
       expect(data.error).toBe("boom");
@@ -984,6 +958,70 @@ describe("API Routes", () => {
       expect(data).toHaveProperty("generatedAt");
       expect(data).toHaveProperty("overallStatus");
       expect(data).toHaveProperty("projects");
+    });
+  });
+
+  describe("GET /api/verify", () => {
+    it("returns verify issues", async () => {
+      const res = await verifyGET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(Array.isArray(data.issues)).toBe(true);
+    });
+  });
+
+  describe("POST /api/verify", () => {
+    it("returns 400 for invalid JSON body", async () => {
+      const req = makeRequest("/api/verify", {
+        method: "POST",
+        body: "not json",
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await verifyPOST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/Invalid JSON body/);
+    });
+  });
+  // ── GET /api/sessions/patches ──────────────────────────────────────────
+
+  describe("GET /api/sessions/patches", () => {
+    it("returns patches array with lightweight fields", async () => {
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(Array.isArray(data.sessions)).toBe(true);
+      expect(data.sessions.length).toBe(testSessions.length);
+    });
+
+    it("each patch contains id, status, activity, attentionLevel, lastActivityAt", async () => {
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      const data = await res.json();
+      for (const patch of data.sessions) {
+        expect(patch).toHaveProperty("id");
+        expect(patch).toHaveProperty("status");
+        expect(patch).toHaveProperty("activity");
+        expect(patch).toHaveProperty("attentionLevel");
+        expect(patch).toHaveProperty("lastActivityAt");
+      }
+    });
+
+    it("filters by project query param", async () => {
+      const res = await patchesGET(
+        makeRequest("http://localhost:3000/api/sessions/patches?project=my-app"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(Array.isArray(data.sessions)).toBe(true);
+    });
+
+    it("returns 500 when getServices throws", async () => {
+      const { getServices } = await import("@/lib/services");
+      vi.mocked(getServices).mockRejectedValueOnce(new Error("db down"));
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toBe("db down");
     });
   });
 });

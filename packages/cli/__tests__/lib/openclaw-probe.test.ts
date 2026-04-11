@@ -1,9 +1,39 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { probeGateway, validateToken } from "../../src/lib/openclaw-probe.js";
+
+const { mockExistsSync, mockSpawnSync } = vi.hoisted(() => ({
+  mockExistsSync: vi.fn(),
+  mockSpawnSync: vi.fn(),
+}));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    existsSync: (...args: unknown[]) => mockExistsSync(...args),
+  };
+});
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    spawnSync: (...args: unknown[]) => mockSpawnSync(...args),
+  };
+});
+
+import {
+  detectOpenClawInstallation,
+  probeGateway,
+  validateToken,
+} from "../../src/lib/openclaw-probe.js";
 
 describe("openclaw-probe", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    mockExistsSync.mockReset();
+    mockExistsSync.mockReturnValue(false);
+    mockSpawnSync.mockReset();
+    mockSpawnSync.mockReturnValue({ status: 1, stdout: "" });
   });
 
   describe("probeGateway", () => {
@@ -64,6 +94,51 @@ describe("openclaw-probe", () => {
       await probeGateway();
 
       expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:18789");
+    });
+
+    it("strips /hooks/agent when probing a hooks URL", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ status: 200, ok: true });
+      vi.stubGlobal("fetch", fetchMock);
+
+      await probeGateway("http://127.0.0.1:18789/hooks/agent");
+
+      expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:18789");
+    });
+  });
+
+  describe("detectOpenClawInstallation", () => {
+    it("reports missing when binary/config are absent and gateway is down", async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await detectOpenClawInstallation();
+
+      expect(result.state).toBe("missing");
+      expect(result.binaryPath).toBeUndefined();
+      expect(result.configPath).toBeUndefined();
+    });
+
+    it("reports installed-but-stopped when binary exists but gateway is down", async () => {
+      mockSpawnSync.mockReturnValue({ status: 0, stdout: "/usr/local/bin/openclaw\n" });
+      const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await detectOpenClawInstallation();
+
+      expect(result.state).toBe("installed-but-stopped");
+      expect(result.binaryPath).toBe("/usr/local/bin/openclaw");
+    });
+
+    it("reports running when gateway is reachable", async () => {
+      mockSpawnSync.mockReturnValue({ status: 0, stdout: "/usr/local/bin/openclaw\n" });
+      mockExistsSync.mockReturnValue(true);
+      const fetchMock = vi.fn().mockResolvedValue({ status: 200, ok: true });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await detectOpenClawInstallation();
+
+      expect(result.state).toBe("running");
+      expect(result.configPath).toContain(".openclaw/openclaw.json");
     });
   });
 

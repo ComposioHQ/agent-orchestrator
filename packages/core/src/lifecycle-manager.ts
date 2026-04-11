@@ -15,6 +15,7 @@ import {
   SESSION_STATUS,
   PR_STATE,
   CI_STATUS,
+  TERMINAL_STATUSES,
   type LifecycleManager,
   type SessionManager,
   type SessionId,
@@ -33,10 +34,12 @@ import {
   type EventPriority,
   type ProjectConfig as _ProjectConfig,
   type PREnrichmentData,
+  type CICheck,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
+import { resolveNotifierTarget } from "./notifier-resolution.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
@@ -207,6 +210,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   const prEnrichmentCache = new Map<string, PREnrichmentData>();
 
   /**
+   * Per-session timestamp of last review backlog API check.
+   * Used to throttle getPendingComments/getAutomatedComments to at most once per 2 minutes.
+   * In-memory only — resets on restart (acceptable since it's a rate-limit hint, not state).
+   */
+  const lastReviewBacklogCheckAt = new Map<SessionId, number>();
+
+  /** Throttle interval for review backlog API calls (2 minutes). */
+  const REVIEW_BACKLOG_THROTTLE_MS = 2 * 60 * 1000;
+
+  /**
    * Populate the PR enrichment cache using batch GraphQL queries.
    * This is called once per poll cycle to fetch data for all PRs efficiently.
    */
@@ -234,7 +247,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const [owner, repo] = p.repo.split("/");
         return owner === pr.owner && repo === pr.repo;
       });
-      if (!project?.scm) continue;
+      if (!project?.scm?.plugin) continue;
 
       const pluginKey = project.scm.plugin;
       if (!prsByPlugin.has(pluginKey)) {
@@ -343,19 +356,29 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (!project) return session.status;
 
     const agentName = resolveAgentSelection({
-      role: resolveSessionRole(session.id, session.metadata),
+      role: resolveSessionRole(
+        session.id,
+        session.metadata,
+        project.sessionPrefix,
+        Object.values(config.projects).map((p) => p.sessionPrefix),
+      ),
       project,
       defaults: config.defaults,
       persistedAgent: session.metadata["agent"],
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
+    const hasPersistedRuntimeIdentity =
+      typeof session.metadata["runtimeHandle"] === "string" ||
+      typeof session.metadata["tmuxName"] === "string";
+    const canProbeRuntimeIdentity =
+      hasPersistedRuntimeIdentity || session.status !== SESSION_STATUS.SPAWNING;
 
     // 1. Check if runtime is alive
-    if (session.runtimeHandle) {
+    if (session.runtimeHandle && canProbeRuntimeIdentity) {
       const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
       if (runtime) {
         const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
@@ -363,9 +386,33 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    // 2. Check agent activity — prefer JSONL-based detection (runtime-agnostic)
-    if (agent && session.runtimeHandle) {
+    // 2. Check agent activity.
+    // JSONL-based activity detection is runtime-agnostic, but terminal probing
+    // and process checks should only run once a real runtime identity has been
+    // persisted. During spawn, sessionManager may fabricate a temporary handle
+    // to keep the object shape stable; treating that as a real tmux target can
+    // falsely mark a just-reserved session as killed before launch completes.
+    if (agent && (session.runtimeHandle || session.workspacePath)) {
       try {
+        // If the agent implements recordActivity, capture terminal output and record
+        // BEFORE calling getActivityState so the JSONL has fresh data to read.
+        if (agent.recordActivity && session.workspacePath && session.runtimeHandle && canProbeRuntimeIdentity) {
+          try {
+            const runtime = registry.get<Runtime>(
+              "runtime",
+              project.runtime ?? config.defaults.runtime,
+            );
+            const terminalOutput = runtime
+              ? await runtime.getOutput(session.runtimeHandle, 10)
+              : "";
+            if (terminalOutput) {
+              await agent.recordActivity(session, terminalOutput);
+            }
+          } catch {
+            // Non-fatal — activity recording is best-effort
+          }
+        }
+
         // Try JSONL-based activity detection first (reads agent's session files directly)
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
         if (activityState) {
@@ -383,17 +430,19 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           // proceed to PR checks below
         } else {
           // getActivityState returned null — fall back to terminal output parsing
-          const runtime = registry.get<Runtime>(
-            "runtime",
-            project.runtime ?? config.defaults.runtime,
-          );
-          const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
-          if (terminalOutput) {
-            const activity = agent.detectActivity(terminalOutput);
-            if (activity === "waiting_input") return "needs_input";
+          if (session.runtimeHandle && canProbeRuntimeIdentity) {
+            const runtime = registry.get<Runtime>(
+              "runtime",
+              project.runtime ?? config.defaults.runtime,
+            );
+            const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
+            if (terminalOutput) {
+              const activity = agent.detectActivity(terminalOutput);
+              if (activity === "waiting_input") return "needs_input";
 
-            const processAlive = await agent.isProcessRunning(session.runtimeHandle);
-            if (!processAlive) return "killed";
+              const processAlive = await agent.isProcessRunning(session.runtimeHandle);
+              if (!processAlive) return "killed";
+            }
           }
         }
       } catch {
@@ -673,7 +722,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return reactionConfig ? (reactionConfig as ReactionConfig) : null;
   }
 
-  function updateSessionMetadata(session: Session, updates: Partial<Record<string, string>>): void {
+  function updateSessionMetadata(
+    session: Session,
+    updates: Partial<Record<string, string>>,
+  ): void {
     const project = config.projects[session.projectId];
     if (!project) return;
 
@@ -706,15 +758,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
 
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
     const humanReactionKey = "changes-requested";
     const automatedReactionKey = "bugbot-comments";
 
-    if (newStatus === "merged" || newStatus === "killed") {
+    if (TERMINAL_STATUSES.has(newStatus)) {
       clearReactionTracker(session.id, humanReactionKey);
       clearReactionTracker(session.id, automatedReactionKey);
+      lastReviewBacklogCheckAt.delete(session.id);
       updateSessionMetadata(session, {
         lastPendingReviewFingerprint: "",
         lastPendingReviewDispatchHash: "",
@@ -725,6 +778,27 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
       return;
     }
+
+    // Throttle review backlog API calls to at most once per 2 minutes.
+    // Comments don't change faster than this in practice, and the SCM calls
+    // (getPendingComments + getAutomatedComments) consume API quota on every poll.
+    //
+    // Exception: bypass throttle when a transition reaction just fired for a
+    // review reaction key. The transitionReaction branch records
+    // lastPendingReviewDispatchHash, which requires the current fingerprint from
+    // the API. If we throttle here, that metadata never gets written and the
+    // next unthrottled poll sees a "new" fingerprint, clears the reaction tracker,
+    // and fires a duplicate dispatch.
+    const hasRelevantTransition =
+      transitionReaction?.key === humanReactionKey ||
+      transitionReaction?.key === automatedReactionKey;
+    if (!hasRelevantTransition) {
+      const lastCheckAt = lastReviewBacklogCheckAt.get(session.id) ?? 0;
+      if (Date.now() - lastCheckAt < REVIEW_BACKLOG_THROTTLE_MS) {
+        return;
+      }
+    }
+    lastReviewBacklogCheckAt.set(session.id, Date.now());
 
     const [pendingResult, automatedResult] = await Promise.allSettled([
       scm.getPendingComments(session.pr),
@@ -806,9 +880,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // --- Automated (bot) review comments ---
     if (automatedComments !== null) {
-      const automatedFingerprint = makeFingerprint(automatedComments.map((comment) => comment.id));
+      const automatedFingerprint = makeFingerprint(
+        automatedComments.map((comment) => comment.id),
+      );
       const lastAutomatedFingerprint = session.metadata["lastAutomatedReviewFingerprint"] ?? "";
-      const lastAutomatedDispatchHash = session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
+      const lastAutomatedDispatchHash =
+        session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
 
       if (automatedFingerprint !== lastAutomatedFingerprint) {
         clearReactionTracker(session.id, automatedReactionKey);
@@ -848,13 +925,272 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /**
+   * Format CI check failures into a human-readable message for the agent.
+   * Includes check names, statuses, and links for debugging.
+   */
+  function formatCIFailureMessage(failedChecks: CICheck[]): string {
+    const lines = [
+      "CI checks are failing on your PR. Here are the failed checks:",
+      "",
+    ];
+    for (const check of failedChecks) {
+      const status = check.conclusion ?? check.status;
+      const link = check.url ? ` — ${check.url}` : "";
+      lines.push(`- **${check.name}**: ${status}${link}`);
+    }
+    lines.push(
+      "",
+      "Investigate the failures, fix the issues, and push again.",
+    );
+    return lines.join("\n");
+  }
+
+  /**
+   * Dispatch CI failure details to the agent session when new or changed
+   * failures are detected. Follows the same fingerprinting/deduplication
+   * pattern as maybeDispatchReviewBacklog().
+   */
+  async function maybeDispatchCIFailureDetails(
+    session: Session,
+    _oldStatus: SessionStatus,
+    newStatus: SessionStatus,
+    transitionReaction?: { key: string; result: ReactionResult | null },
+  ): Promise<void> {
+    const project = config.projects[session.projectId];
+    if (!project || !session.pr) return;
+
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    if (!scm) return;
+
+    const ciReactionKey = "ci-failed";
+
+    // Clear tracking when PR is closed/merged
+    if (newStatus === "merged" || newStatus === "killed") {
+      clearReactionTracker(session.id, ciReactionKey);
+      updateSessionMetadata(session, {
+        lastCIFailureFingerprint: "",
+        lastCIFailureDispatchHash: "",
+        lastCIFailureDispatchAt: "",
+      });
+      return;
+    }
+
+    // Only dispatch CI details when in ci_failed state
+    if (newStatus !== "ci_failed") {
+      // CI is no longer failing — clear tracking so next failure is dispatched fresh
+      const lastFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
+      if (lastFingerprint) {
+        clearReactionTracker(session.id, ciReactionKey);
+        updateSessionMetadata(session, {
+          lastCIFailureFingerprint: "",
+          lastCIFailureDispatchHash: "",
+          lastCIFailureDispatchAt: "",
+        });
+      }
+      return;
+    }
+
+    // Fetch individual CI checks for failure details.
+    // Use batch enrichment data when available to avoid an extra REST call;
+    // fall back to getCIChecks() when the batch didn't run this cycle.
+    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+    const cachedEnrichment = prEnrichmentCache.get(prKey);
+
+    let checks: CICheck[];
+    if (cachedEnrichment?.ciChecks !== undefined) {
+      checks = cachedEnrichment.ciChecks;
+    } else {
+      try {
+        checks = await scm.getCIChecks(session.pr);
+      } catch {
+        // Failed to fetch checks — skip this cycle
+        return;
+      }
+    }
+
+    const failedChecks = checks.filter(
+      (c) => c.status === "failed" || c.conclusion?.toUpperCase() === "FAILURE",
+    );
+    if (failedChecks.length === 0) return;
+
+    const ciFingerprint = makeFingerprint(
+      failedChecks.map((c) => `${c.name}:${c.status}:${c.conclusion ?? ""}`),
+    );
+    const lastCIFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
+    const lastCIDispatchHash = session.metadata["lastCIFailureDispatchHash"] ?? "";
+
+    // Reset reaction tracker when failure set changes
+    if (ciFingerprint !== lastCIFingerprint && transitionReaction?.key !== ciReactionKey) {
+      clearReactionTracker(session.id, ciReactionKey);
+    }
+    if (ciFingerprint !== lastCIFingerprint) {
+      updateSessionMetadata(session, {
+        lastCIFailureFingerprint: ciFingerprint,
+      });
+    }
+
+    // If transition already sent a ci-failed reaction with the static message,
+    // skip this cycle but do NOT record dispatch hash — the next poll will send
+    // the detailed CI failure info with check names and URLs.
+    if (
+      transitionReaction?.key === ciReactionKey &&
+      transitionReaction.result?.success
+    ) {
+      return;
+    }
+
+    // Skip if we already dispatched this exact failure set
+    if (ciFingerprint === lastCIDispatchHash) return;
+
+    // Dispatch CI failure details directly via sessionManager.send() rather than
+    // executeReaction() to avoid consuming the ci-failed reaction's retry budget.
+    // The transition reaction owns escalation; this is a follow-up info delivery.
+    const reactionConfig = getReactionConfigForSession(session, ciReactionKey);
+    if (
+      reactionConfig &&
+      reactionConfig.action &&
+      (reactionConfig.auto !== false || reactionConfig.action === "notify")
+    ) {
+      const detailedMessage = formatCIFailureMessage(failedChecks);
+
+      try {
+        if (reactionConfig.action === "send-to-agent") {
+          await sessionManager.send(session.id, detailedMessage);
+        } else {
+          // For "notify" action, send to human notifiers instead
+          const event = createEvent("ci.failing", {
+            sessionId: session.id,
+            projectId: session.projectId,
+            message: detailedMessage,
+            data: { failedChecks: failedChecks.map((c) => c.name) },
+          });
+          await notifyHuman(event, reactionConfig.priority ?? "warning");
+        }
+
+        updateSessionMetadata(session, {
+          lastCIFailureDispatchHash: ciFingerprint,
+          lastCIFailureDispatchAt: new Date().toISOString(),
+        });
+      } catch {
+        // Send failed — will retry on next poll cycle
+      }
+    }
+  }
+
+  /**
+   * Dispatch merge conflict notifications to the agent session.
+   * Conflicts are detected from the PR enrichment cache or getMergeability()
+   * and dispatched independently of the session status (conflicts can coexist
+   * with ci_failed, changes_requested, etc.).
+   */
+  async function maybeDispatchMergeConflicts(
+    session: Session,
+    newStatus: SessionStatus,
+  ): Promise<void> {
+    const project = config.projects[session.projectId];
+    if (!project || !session.pr) return;
+
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    if (!scm) return;
+
+    const conflictReactionKey = "merge-conflicts";
+
+    // Clear tracking when PR is closed/merged
+    if (newStatus === "merged" || newStatus === "killed") {
+      clearReactionTracker(session.id, conflictReactionKey);
+      updateSessionMetadata(session, {
+        lastMergeConflictDispatched: "",
+      });
+      return;
+    }
+
+    // Only check for conflicts on open PRs
+    if (
+      newStatus !== "pr_open" &&
+      newStatus !== "ci_failed" &&
+      newStatus !== "review_pending" &&
+      newStatus !== "changes_requested" &&
+      newStatus !== "approved" &&
+      newStatus !== "mergeable"
+    ) {
+      return;
+    }
+
+    // Check for conflicts using cached enrichment data or fallback to individual call.
+    // When batch enrichment ran (cachedData is present), use its hasConflicts value
+    // to avoid 3 redundant REST calls from getMergeability() — the batch already
+    // fetched the mergeable/mergeStateStatus fields via GraphQL.
+    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+    const cachedData = prEnrichmentCache.get(prKey);
+
+    let hasConflicts: boolean;
+    if (cachedData) {
+      // Batch ran — trust its data (undefined means CONFLICTING wasn't set → no conflicts)
+      hasConflicts = cachedData.hasConflicts ?? false;
+    } else {
+      // Batch didn't run this cycle — fall back to individual API call
+      try {
+        const mergeReadiness = await scm.getMergeability(session.pr);
+        hasConflicts = !mergeReadiness.noConflicts;
+      } catch {
+        return;
+      }
+    }
+
+    const lastDispatched = session.metadata["lastMergeConflictDispatched"] ?? "";
+
+    if (hasConflicts) {
+      // Already dispatched for current conflict state — skip
+      if (lastDispatched === "true") return;
+
+      const reactionConfig = getReactionConfigForSession(session, conflictReactionKey);
+      if (
+        reactionConfig &&
+        reactionConfig.action &&
+        (reactionConfig.auto !== false || reactionConfig.action === "notify")
+      ) {
+        try {
+          if (reactionConfig.action === "send-to-agent") {
+            const message =
+              reactionConfig.message ??
+              "Your branch has merge conflicts. Rebase on the default branch and resolve them.";
+            await sessionManager.send(session.id, message);
+          } else {
+            const event = createEvent("merge.conflicts", {
+              sessionId: session.id,
+              projectId: session.projectId,
+              message: `${session.id}: PR has merge conflicts`,
+            });
+            await notifyHuman(event, reactionConfig.priority ?? "warning");
+          }
+
+          updateSessionMetadata(session, {
+            lastMergeConflictDispatched: "true",
+          });
+        } catch {
+          // Send failed — will retry on next poll cycle
+        }
+      }
+    } else if (lastDispatched === "true") {
+      // Conflicts resolved — clear so we can re-dispatch if they recur
+      clearReactionTracker(session.id, conflictReactionKey);
+      updateSessionMetadata(session, {
+        lastMergeConflictDispatched: "",
+      });
+    }
+  }
+
   /** Send a notification to all configured notifiers. */
   async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<void> {
     const eventWithPriority = { ...event, priority };
     const notifierNames = config.notificationRouting[priority] ?? config.defaults.notifiers;
 
     for (const name of notifierNames) {
-      const notifier = registry.get<Notifier>("notifier", name);
+      const target = resolveNotifierTarget(config, name);
+      const notifier =
+        registry.get<Notifier>("notifier", target.reference) ??
+        registry.get<Notifier>("notifier", target.pluginName);
       if (notifier) {
         try {
           await notifier.notify(eventWithPriority);
@@ -893,7 +1229,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
 
       // Reset allCompleteEmitted when any session becomes active again
-      if (newStatus !== "merged" && newStatus !== "killed") {
+      if (!TERMINAL_STATUSES.has(newStatus)) {
         allCompleteEmitted = false;
       }
 
@@ -953,7 +1289,27 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       states.set(session.id, newStatus);
     }
 
-    await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
+    // Pin first quality summary for title stability
+    if (
+      session.agentInfo?.summary &&
+      !session.agentInfo.summaryIsFallback &&
+      !session.metadata["pinnedSummary"]
+    ) {
+      const trimmed = session.agentInfo.summary.replace(/[\n\r]/g, " ").trim();
+      if (trimmed.length >= 5) {
+        try {
+          updateSessionMetadata(session, { pinnedSummary: trimmed });
+        } catch {
+          // Non-critical: title just won't be pinned this cycle
+        }
+      }
+    }
+
+    await Promise.allSettled([
+      maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
+      maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
+      maybeDispatchMergeConflicts(session, newStatus),
+    ]);
   }
 
   /** Run one polling cycle across all sessions. */
@@ -971,7 +1327,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
       // process that transition even though the new status is terminal)
       const sessionsToCheck = sessions.filter((s) => {
-        if (s.status !== "merged" && s.status !== "killed") return true;
+        if (!TERMINAL_STATUSES.has(s.status)) return true;
         const tracked = states.get(s.id);
         return tracked !== undefined && tracked !== s.status;
       });
@@ -983,8 +1339,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
 
-      // Prune stale entries from states and reactionTrackers for sessions
-      // that no longer appear in the session list (e.g., after kill/cleanup)
+      // Prune stale entries from states, reactionTrackers, and lastReviewBacklogCheckAt
+      // for sessions that no longer appear in the session list (e.g., after kill/cleanup)
       const currentSessionIds = new Set(sessions.map((s) => s.id));
       for (const trackedId of states.keys()) {
         if (!currentSessionIds.has(trackedId)) {
@@ -997,9 +1353,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           reactionTrackers.delete(trackerKey);
         }
       }
+      for (const sessionId of lastReviewBacklogCheckAt.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          lastReviewBacklogCheckAt.delete(sessionId);
+        }
+      }
 
       // Check if all sessions are complete (trigger reaction only once)
-      const activeSessions = sessions.filter((s) => s.status !== "merged" && s.status !== "killed");
+      const activeSessions = sessions.filter((s) => !TERMINAL_STATUSES.has(s.status));
       if (sessions.length > 0 && activeSessions.length === 0 && !allCompleteEmitted) {
         allCompleteEmitted = true;
 

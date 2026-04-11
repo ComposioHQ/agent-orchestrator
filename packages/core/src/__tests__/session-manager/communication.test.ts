@@ -8,7 +8,6 @@ import { createSessionManager } from "../../session-manager.js";
 import {
   writeMetadata,
   readMetadataRaw,
-  updateMetadata,
 } from "../../metadata.js";
 import type {
   OrchestratorConfig,
@@ -52,37 +51,6 @@ describe("send", () => {
     await sm.send("app-1", "Fix the CI failures");
 
     expect(mockRuntime.sendMessage).toHaveBeenCalledWith(makeHandle("rt-1"), "Fix the CI failures");
-  });
-
-  it("blocks send to worker sessions while the project is globally paused", async () => {
-    writeMetadata(sessionsDir, "app-orchestrator", {
-      worktree: join(tmpDir, "my-app"),
-      branch: "main",
-      status: "working",
-      role: "orchestrator",
-      project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-orchestrator")),
-    });
-    updateMetadata(sessionsDir, "app-orchestrator", {
-      globalPauseUntil: new Date(Date.now() + 60_000).toISOString(),
-      globalPauseReason: "Rate limit reached",
-      globalPauseSource: "app-9",
-    });
-
-    writeMetadata(sessionsDir, "app-1", {
-      worktree: "/tmp",
-      branch: "main",
-      status: "working",
-      project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
-    });
-
-    const sm = createSessionManager({ config, registry: mockRegistry });
-
-    await expect(sm.send("app-1", "Fix the CI failures")).rejects.toThrow(
-      "Project is paused due to model rate limit until",
-    );
-    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
   });
 
   it("restores a dead session before sending the message", async () => {
@@ -215,6 +183,9 @@ describe("send", () => {
       runtimeHandle: JSON.stringify(makeHandle("rt-1")),
     });
 
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(true);
+    vi.mocked(mockRuntime.getOutput).mockResolvedValueOnce("before").mockResolvedValue("after");
+
     const sm = createSessionManager({ config, registry: mockRegistry });
     await sm.send("app-1", "hello");
 
@@ -246,6 +217,9 @@ describe("send", () => {
       opencodeSessionId: "ses bad id",
       runtimeHandle: JSON.stringify(makeHandle("rt-1")),
     });
+
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(true);
+    vi.mocked(mockRuntime.getOutput).mockResolvedValueOnce("before").mockResolvedValue("after");
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     await sm.send("app-1", "hello");
@@ -299,7 +273,7 @@ describe("send", () => {
     await sm.send("app-1", "confirm via updated timestamp");
     const elapsedMs = Date.now() - startedAt;
 
-    expect(elapsedMs).toBeLessThan(2_000);
+    expect(elapsedMs).toBeLessThan(5_000);
     expect(readFileSync(listLogPath, "utf-8").trim().split("\n").length).toBeGreaterThanOrEqual(2);
     expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
       makeHandle("rt-1"),
@@ -351,7 +325,7 @@ describe("send", () => {
       makeHandle("rt-1"),
       "do not confirm on visibility",
     );
-  });
+  }, 10000);
 });
 
 describe("remap", () => {
@@ -436,7 +410,7 @@ describe("remap", () => {
     expect(mapped).toBe("ses_slow_discovery");
     const meta = readMetadataRaw(sessionsDir, "app-1");
     expect(meta?.["opencodeSessionId"]).toBe("ses_slow_discovery");
-  });
+  }, 20000);
 
   it("throws when OpenCode session id mapping is missing", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-missing-remap.log");

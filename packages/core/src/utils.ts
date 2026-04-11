@@ -34,6 +34,30 @@ export function validateUrl(url: string, label: string): void {
 }
 
 /**
+ * Conservative subset of git `check-ref-format` rules for branch-like names.
+ * Used before passing tracker-supplied names to `git worktree` / `checkout -b`.
+ *
+ * Slashes are allowed (e.g. `feature/foo-bar`).
+ */
+export function isGitBranchNameSafe(name: string): boolean {
+  if (!name) return false;
+  if (name === "@" || name.startsWith(".") || name.endsWith(".") || name.endsWith("/")) return false;
+  if (name.endsWith(".lock")) return false;
+  if (name.includes("..")) return false;
+  if (name.includes("//")) return false;
+  if (name.includes("/.")) return false;
+  if (name.includes("@{")) return false;
+  if (name.startsWith("/")) return false;
+  for (let i = 0; i < name.length; i++) {
+    const c = name.charCodeAt(i);
+    if (c <= 0x1f || c === 0x7f) return false;
+  }
+  // Space and git-forbidden punctuation (see git-check-ref-format)
+  if (/[\s~^:?*[\\]/.test(name)) return false;
+  return true;
+}
+
+/**
  * Returns true if an HTTP status code should be retried.
  * Retry only 429 (rate-limit) and 5xx (server) failures.
  */

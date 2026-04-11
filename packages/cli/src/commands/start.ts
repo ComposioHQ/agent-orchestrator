@@ -28,11 +28,13 @@ import {
   generateConfigFromUrl,
   configToYaml,
   normalizeOrchestratorSessionStrategy,
+  isOrchestratorSession,
+  isTerminalSession,
   ConfigNotFoundError,
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { exec, execSilent, git } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -41,11 +43,12 @@ import {
   findWebDir,
   buildDashboardEnv,
   waitForPortAndOpen,
+  openUrl,
   isPortAvailable,
   findFreePort,
   MAX_PORT_SCAN,
 } from "../lib/web-dir.js";
-import { cleanNextCache } from "../lib/dashboard-rebuild.js";
+import { rebuildDashboardProductionArtifacts } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
 import { register, unregister, isAlreadyRunning, getRunning, waitForExit } from "../lib/running-state.js";
 import { isHumanCaller } from "../lib/caller-context.js";
@@ -58,8 +61,12 @@ import {
   generateRulesFromTemplates,
   formatProjectTypeForDisplay,
 } from "../lib/project-detection.js";
+import { formatCommandError } from "../lib/cli-errors.js";
+import { detectOpenClawInstallation } from "../lib/openclaw-probe.js";
+import { applyOpenClawCredentials } from "../lib/credential-resolver.js";
+import { findProjectForDirectory } from "../lib/project-resolution.js";
 
-const DEFAULT_PORT = 3000;
+import { DEFAULT_PORT } from "../lib/constants.js";
 const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
 // =============================================================================
@@ -102,10 +109,9 @@ async function resolveProject(
   // Multiple projects — try matching cwd to a project path
   // Note: loadConfig() already expands ~ in project paths via expandPaths()
   const currentDir = resolve(cwd());
-  for (const [id, proj] of Object.entries(config.projects)) {
-    if (resolve(proj.path) === currentDir) {
-      return { projectId: id, project: proj };
-    }
+  const matchedProjectId = findProjectForDirectory(config.projects, currentDir);
+  if (matchedProjectId) {
+    return { projectId: matchedProjectId, project: config.projects[matchedProjectId] };
   }
 
   // No match — prompt if interactive, otherwise error
@@ -160,6 +166,26 @@ interface InstallAttempt {
 
 function canPromptForInstall(): boolean {
   return isHumanCaller() && IS_TTY;
+}
+
+function genericInstallHints(command: string): string[] {
+  switch (command) {
+    case "node":
+    case "npm":
+      return ["Install Node.js/npm from https://nodejs.org/"];
+    case "pnpm":
+      return [
+        "corepack enable && corepack prepare pnpm@latest --activate",
+        "npm install -g pnpm",
+      ];
+    case "pipx":
+      return [
+        "python3 -m pip install --user pipx",
+        "python3 -m pipx ensurepath",
+      ];
+    default:
+      return [];
+  }
 }
 
 /**
@@ -254,7 +280,16 @@ function ghInstallAttempts(): InstallAttempt[] {
 async function runInteractiveCommand(cmd: string, args: string[]): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: "inherit" });
-    child.once("error", reject);
+    child.once("error", (err) => {
+      reject(
+        formatCommandError(err, {
+          cmd,
+          args,
+          action: "run an interactive installer",
+          installHints: genericInstallHints(cmd),
+        }),
+      );
+    });
     child.once("close", (code) => {
       if (code === 0) {
         resolve();
@@ -547,7 +582,7 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
       runtime: "tmux",
       agent,
       workspace: "worktree",
-      notifiers: ["desktop"],
+      notifiers: [],
     },
     projects: {
       [projectId]: {
@@ -714,22 +749,29 @@ export async function createConfigOnly(): Promise<void> {
  * Start dashboard server in the background.
  * Returns the child process handle for cleanup.
  */
+/* c8 ignore start -- process-spawning startup code, tested via integration/onboarding */
 async function startDashboard(
   port: number,
   webDir: string,
   configPath: string | null,
   terminalPort?: number,
   directTerminalPort?: number,
+  devMode?: boolean,
 ): Promise<ChildProcess> {
   const env = await buildDashboardEnv(port, configPath, terminalPort, directTerminalPort);
 
-  // Detect dev vs production: the `server/` source directory only exists in the
-  // monorepo. Published npm packages only have `dist-server/`.
-  const isDevMode = existsSync(resolve(webDir, "server"));
+  // Detect monorepo vs npm install: the `server/` source directory only exists
+  // in the monorepo. Published npm packages only have `dist-server/`.
+  const isMonorepo = existsSync(resolve(webDir, "server"));
+
+  // In monorepo: use HMR dev server only when --dev is passed explicitly.
+  // Default is optimized production server for faster loading.
+  const useDevServer = isMonorepo && devMode === true;
 
   let child: ChildProcess;
-  if (isDevMode) {
-    // Monorepo development: use pnpm run dev (tsx, HMR, etc.)
+  if (useDevServer) {
+    // Monorepo with --dev: use pnpm run dev (tsx watch, HMR, etc.)
+    console.log(chalk.dim("  Mode: development (HMR enabled)"));
     child = spawn("pnpm", ["run", "dev"], {
       cwd: webDir,
       stdio: "inherit",
@@ -737,8 +779,13 @@ async function startDashboard(
       env,
     });
   } else {
-    // Production (installed from npm): use pre-built start-all script
-    child = spawn("node", [resolve(webDir, "dist-server", "start-all.js")], {
+    // Production: use pre-built start-all script.
+    if (isMonorepo) {
+      console.log(chalk.dim("  Mode: optimized (production bundles)"));
+      console.log(chalk.dim("  Tip: use --dev for hot reload when editing dashboard UI\n"));
+    }
+    const startScript = resolve(webDir, "dist-server", "start-all.js");
+    child = spawn("node", [startScript], {
       cwd: webDir,
       stdio: "inherit",
       detached: false,
@@ -747,13 +794,22 @@ async function startDashboard(
   }
 
   child.on("error", (err) => {
-    console.error(chalk.red("Dashboard failed to start:"), err.message);
+    const cmd = useDevServer ? "pnpm" : "node";
+    const args = useDevServer ? ["run", "dev"] : [resolve(webDir, "dist-server", "start-all.js")];
+    const formatted = formatCommandError(err, {
+      cmd,
+      args,
+      action: "start the AO dashboard",
+      installHints: genericInstallHints(cmd),
+    });
+    console.error(chalk.red("Dashboard failed to start:"), formatted.message);
     // Emit synthetic exit so callers listening on "exit" can clean up
     child.emit("exit", 1, null);
   });
 
   return child;
 }
+/* c8 ignore stop */
 
 /**
  * Ensure tmux is available — interactive install with user consent if missing.
@@ -811,6 +867,43 @@ async function ensureTmux(): Promise<void> {
   process.exit(1);
 }
 
+async function warnAboutOpenClawStatus(config: OrchestratorConfig): Promise<void> {
+  const openclawConfig = config.notifiers?.["openclaw"];
+  const openclawConfigured =
+    openclawConfig !== null && openclawConfig !== undefined &&
+    typeof openclawConfig === "object" &&
+    openclawConfig.plugin === "openclaw";
+  const configuredUrl =
+    openclawConfigured && typeof openclawConfig.url === "string" ? openclawConfig.url : undefined;
+
+  try {
+    const installation = configuredUrl
+      ? await detectOpenClawInstallation(configuredUrl)
+      : await detectOpenClawInstallation();
+
+    if (openclawConfigured) {
+      if (installation.state !== "running") {
+        console.log(
+          chalk.yellow(
+            `⚠ OpenClaw is configured but the gateway is not reachable at ${installation.gatewayUrl}. Notifications may fail until it is running.`,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (installation.state === "running") {
+      console.log(
+        chalk.yellow(
+          `⚠ OpenClaw is running at ${installation.gatewayUrl} but AO is not configured to use it. Run \`ao setup openclaw\` if you want OpenClaw notifications.`,
+        ),
+      );
+    }
+  } catch {
+    // OpenClaw probing is advisory for `ao start`; never block startup on it.
+  }
+}
+
 /**
  * Shared startup logic: launch dashboard + orchestrator session, print summary.
  * Used by both normal and URL-based start flows.
@@ -819,13 +912,28 @@ async function runStartup(
   config: OrchestratorConfig,
   projectId: string,
   project: ProjectConfig,
-  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean },
+  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean; dev?: boolean },
 ): Promise<number> {
   // Ensure tmux is available before doing anything — covers all entry paths
   // (normal start, URL start, retry with existing config)
   const runtime = config.defaults?.runtime ?? "tmux";
   if (runtime === "tmux") {
     await ensureTmux();
+  }
+  await warnAboutOpenClawStatus(config);
+
+  // Only inject OpenClaw credentials when the project actually uses OpenClaw.
+  // This avoids exposing API keys to projects/plugins that don't need them.
+  const openclawNotifier = config.notifiers?.["openclaw"];
+  const hasOpenClaw =
+    openclawNotifier !== null && openclawNotifier !== undefined &&
+    typeof openclawNotifier === "object" && openclawNotifier.plugin === "openclaw";
+  if (hasOpenClaw) {
+    const injectedKeys = applyOpenClawCredentials();
+    if (injectedKeys.length > 0) {
+      const names = injectedKeys.map((k) => k.key).join(", ");
+      console.log(chalk.dim(`  Resolved from OpenClaw config: ${names}`));
+    }
   }
 
   const sessionId = `${project.sessionPrefix}-orchestrator`;
@@ -855,10 +963,15 @@ async function runStartup(
       port = newPort;
     }
     const webDir = findWebDir(); // throws with install-specific guidance if not found
-    await preflight.checkBuilt(webDir);
-
+    // Dev mode (HMR) only works in the monorepo where `server/` source exists.
+    // For npm installs, --dev is silently ignored and production server runs,
+    // so preflight must still verify production artifacts exist.
+    const isMonorepo = existsSync(resolve(webDir, "server"));
+    const willUseDevServer = isMonorepo && opts?.dev === true;
     if (opts?.rebuild) {
-      await cleanNextCache(webDir);
+      await rebuildDashboardProductionArtifacts(webDir);
+    } else if (!willUseDevServer) {
+      await preflight.checkBuilt(webDir);
     }
 
     spinner.start("Starting dashboard");
@@ -868,6 +981,7 @@ async function runStartup(
       config.configPath,
       config.terminalPort,
       config.directTerminalPort,
+      opts?.dev,
     );
     spinner.succeed(`Dashboard starting on http://localhost:${port}`);
     console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
@@ -894,31 +1008,76 @@ async function runStartup(
     }
   }
 
-  // Create orchestrator session (unless --no-orchestrator or already exists)
-  let tmuxTarget = sessionId;
+  // Create orchestrator session (unless --no-orchestrator or existing orchestrators found)
+  let hasExistingOrchestrators = false;
+  let selectedOrchestratorId: string | null = null;
+
   if (opts?.orchestrator !== false) {
     const sm = await getSessionManager(config);
 
+    // Check for existing orchestrator sessions for this project
+    let allSessions;
     try {
-      spinner.start("Creating orchestrator session");
-      const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-      const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
-      if (session.runtimeHandle?.id) {
-        tmuxTarget = session.runtimeHandle.id;
-      }
-      reused =
-        orchestratorSessionStrategy === "reuse" &&
-        session.metadata?.["orchestratorSessionReused"] === "true";
-      spinner.succeed(reused ? "Orchestrator session reused" : "Orchestrator session created");
+      allSessions = await sm.list(projectId);
     } catch (err) {
-      spinner.fail("Orchestrator setup failed");
+      spinner.fail("Failed to list sessions");
       if (dashboardProcess) {
         dashboardProcess.kill();
       }
       throw new Error(
-        `Failed to setup orchestrator: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to list sessions: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
       );
+    }
+    const allSessionPrefixes = Object.entries(config.projects).map(
+      ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
+    );
+    const existingOrchestrators = allSessions.filter(
+      (s) =>
+        isOrchestratorSession(s, project.sessionPrefix ?? projectId, allSessionPrefixes) &&
+        !isTerminalSession(s),
+    );
+
+    if (existingOrchestrators.length > 0) {
+      // Existing orchestrators found — always auto-select the most recently active one.
+      // With a single orchestrator, navigate directly to its session page.
+      // With multiple orchestrators, keep the selection page so the user can choose or spawn a
+      // new one — the dashboard only links to one orchestrator per project, so the selection page
+      // is the only startup path for multi-orchestrator projects.
+      const sortedOrchestrators = [...existingOrchestrators].sort(
+        (a, b) => (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0),
+      );
+      const selected = sortedOrchestrators[0];
+      selectedOrchestratorId = selected.id;
+      if (opts?.dashboard !== false && existingOrchestrators.length > 1) {
+        hasExistingOrchestrators = true;
+      }
+      spinner.succeed(
+        `Using existing orchestrator session: ${selected.id}` +
+          (existingOrchestrators.length > 1
+            ? ` (${existingOrchestrators.length - 1} other session(s) available)` : ""),
+      );
+    } else {
+      // No existing orchestrators — spawn a new one
+      try {
+        spinner.start("Creating orchestrator session");
+        const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
+        const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
+        selectedOrchestratorId = session.id;
+        reused =
+          orchestratorSessionStrategy === "reuse" &&
+          session.metadata?.["orchestratorSessionReused"] === "true";
+        spinner.succeed(reused ? "Orchestrator session reused" : "Orchestrator session created");
+      } catch (err) {
+        spinner.fail("Orchestrator setup failed");
+        if (dashboardProcess) {
+          dashboardProcess.kill();
+        }
+        throw new Error(
+          `Failed to setup orchestrator: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        );
+      }
     }
   }
 
@@ -937,29 +1096,42 @@ async function runStartup(
     console.log(chalk.cyan("Lifecycle:"), lifecycleTarget);
   }
 
-  if (opts?.orchestrator !== false && !reused) {
-    console.log(chalk.cyan("Orchestrator:"), `tmux attach -t ${tmuxTarget}`);
+  if (hasExistingOrchestrators) {
+    console.log(
+      chalk.cyan("Orchestrator:"),
+      "multiple sessions found — select one in the dashboard",
+    );
+  } else if (opts?.orchestrator !== false && !reused) {
+    const orchSessionId = selectedOrchestratorId ?? sessionId;
+    if (opts?.dashboard !== false) {
+      console.log(
+        chalk.cyan("Orchestrator:"),
+        `http://localhost:${port}/sessions/${orchSessionId}`,
+      );
+    } else {
+      console.log(
+        chalk.cyan("Orchestrator:"),
+        `ao session attach ${orchSessionId}`,
+      );
+    }
   } else if (reused) {
     console.log(chalk.cyan("Orchestrator:"), `reused existing session (${sessionId})`);
   }
 
   console.log(chalk.dim(`Config: ${config.configPath}`));
 
-  // Show next step hint
-  const projectIds = Object.keys(config.projects);
-  if (projectIds.length > 0) {
-    console.log(chalk.bold("\nNext step:\n"));
-    console.log(`  Spawn an agent session:`);
-    console.log(chalk.cyan(`     ao spawn <issue-number>\n`));
-  }
-
-  // Auto-open browser to orchestrator session page once the server is accepting connections.
+  // Auto-open browser once the server is ready.
+  // With a single orchestrator (or a newly created one), navigate directly to the session page.
+  // With multiple existing orchestrators, open the selection page so the user can choose or
+  // spawn a new one — the dashboard only links one orchestrator per project.
   // Polls the port instead of using a fixed delay — deterministic and works regardless of
   // how long Next.js takes to compile. AbortController cancels polling on early exit.
   let openAbort: AbortController | undefined;
   if (opts?.dashboard !== false) {
     openAbort = new AbortController();
-    const orchestratorUrl = `http://localhost:${port}/sessions/${sessionId}`;
+    const orchestratorUrl = hasExistingOrchestrators
+      ? `http://localhost:${port}/orchestrators?project=${projectId}`
+      : `http://localhost:${port}/sessions/${selectedOrchestratorId ?? sessionId}`;
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
   }
 
@@ -1016,6 +1188,7 @@ export function registerStart(program: Command): void {
     .option("--no-dashboard", "Skip starting the dashboard server")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
     .option("--rebuild", "Clean and rebuild dashboard before starting")
+    .option("--dev", "Use Next.js dev server with hot reload (for dashboard UI development)")
     .option("--interactive", "Prompt to configure config settings")
     .action(
       async (
@@ -1024,6 +1197,7 @@ export function registerStart(program: Command): void {
           dashboard?: boolean;
           orchestrator?: boolean;
           rebuild?: boolean;
+          dev?: boolean;
           interactive?: boolean;
         },
       ) => {
@@ -1121,11 +1295,7 @@ export function registerStart(program: Command): void {
 
               if (choice === "open") {
                 const url = `http://localhost:${running.port}`;
-                const [cmd, args]: [string, string[]] =
-                  process.platform === "win32"
-                    ? ["cmd.exe", ["/c", "start", "", url]]
-                    : [process.platform === "linux" ? "xdg-open" : "open", [url]];
-                spawn(cmd, args, { stdio: "ignore" });
+                openUrl(url);
                 process.exit(0);
               } else if (choice === "new") {
                 // Generate unique orchestrator: same project, new session
@@ -1231,13 +1401,12 @@ export function registerStop(program: Command): void {
   program
     .command("stop [project]")
     .description("Stop orchestrator agent and dashboard")
-    .option("--keep-session", "Keep mapped OpenCode session after stopping")
     .option("--purge-session", "Delete mapped OpenCode session when stopping")
     .option("--all", "Stop all running AO instances")
     .action(
       async (
         projectArg?: string,
-        opts: { keepSession?: boolean; purgeSession?: boolean; all?: boolean } = {},
+        opts: { purgeSession?: boolean; all?: boolean } = {},
       ) => {
         try {
           // Check running.json first
@@ -1265,7 +1434,7 @@ export function registerStop(program: Command): void {
           const config = loadConfig();
           const { projectId: _projectId, project } = await resolveProject(config, projectArg, "stop");
           const sessionId = `${project.sessionPrefix}-orchestrator`;
-          const port = config.port ?? 3000;
+          const port = config.port ?? DEFAULT_PORT;
 
           console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(project.name)}\n`));
 
@@ -1275,7 +1444,7 @@ export function registerStop(program: Command): void {
 
           if (existing) {
             const spinner = ora("Stopping orchestrator session").start();
-            const purgeOpenCode = opts.purgeSession === true ? true : opts.keepSession !== true;
+            const purgeOpenCode = opts?.purgeSession === true;
             await sm.kill(sessionId, { purgeOpenCode });
             spinner.succeed("Orchestrator session stopped");
           } else {
@@ -1316,6 +1485,5 @@ export function registerStop(program: Command): void {
           }
           process.exit(1);
         }
-      },
-    );
+      });
 }

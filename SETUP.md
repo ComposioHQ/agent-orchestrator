@@ -60,7 +60,7 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
 ### Install via npm (recommended)
 
 ```bash
-npm install -g @composio/ao
+npm install -g @aoagents/ao
 
 # Verify
 ao --version
@@ -72,17 +72,17 @@ This installs the `ao` CLI globally along with all default plugins and the web d
 
 ```bash
 # Option 1: Use sudo
-sudo npm install -g @composio/ao
+sudo npm install -g @aoagents/ao
 
 # Option 2: Use npx (no global install needed)
-npx @composio/ao start
+npx @aoagents/ao start
 
 # Option 3: Fix npm permissions permanently (recommended)
 mkdir -p ~/.npm-global
 npm config set prefix '~/.npm-global'
 echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc
 source ~/.zshrc
-npm install -g @composio/ao
+npm install -g @aoagents/ao
 ```
 
 ### Build from Source (for contributors)
@@ -344,6 +344,8 @@ gh auth status
          teamId: "your-team-id"
    ```
 
+**Branch names:** On `ao spawn <issue>` with the Linear tracker, AO **prefers** Linear’s branch name (same as **Copy git branch name**, API field `branchName`). If that value is missing, it **falls back** to the previous convention: `feat/<ISSUE-ID>` (e.g. `feat/INT-123`). To change how Linear generates `branchName`, use **Linear → Settings → Integrations → GitHub → Branch format**.
+
 **Verification:**
 
 ```bash
@@ -385,7 +387,7 @@ curl -X POST -H 'Content-type: application/json' \
 To add a custom tracker (Jira, Asana, etc.), create a plugin:
 
 1. See plugin examples in `packages/plugins/tracker-*/`
-2. Implement the `Tracker` interface from `@composio/ao-core`
+2. Implement the `Tracker` interface from `@aoagents/ao-core`
 3. Register your plugin in the config
 
 See [Development Guide](./docs/DEVELOPMENT.md) for plugin development guidelines.
@@ -505,11 +507,11 @@ lsof -ti:3000 | xargs kill
 **Solution:**
 
 ```bash
-# Check worktreeDir permissions
-ls -la ~/.worktrees
+# AO stores runtime data under ~/.agent-orchestrator/
+ls -la ~/.agent-orchestrator
 
-# Create directory if missing
-mkdir -p ~/.worktrees
+# Create the base directory if missing
+mkdir -p ~/.agent-orchestrator
 
 # Check disk space
 df -h
@@ -817,11 +819,10 @@ ao session ls --json | jq -r '.[] | select(.status == "merged") | .id' | xargs -
 
 Yes! Each orchestrator instance should have:
 
-- Different data directory (`dataDir`)
 - Different dashboard port (`port`) — e.g., 3000 for project A, 3001 for project B
-- Different config file
+- Different config location or project paths
 
-Terminal WebSocket ports are auto-detected by default, so you typically only need to set `port:` differently. If you need explicit control, you can also set `terminalPort:` and `directTerminalPort:` per config.
+AO derives runtime directories from the config location, so separate config locations already produce separate hash-scoped runtime paths under `~/.agent-orchestrator/`. Terminal WebSocket ports are auto-detected by default, so you typically only need to set `port:` differently. If you need explicit control, you can also set `terminalPort:` and `directTerminalPort:` per config.
 
 Useful for:
 

@@ -19,12 +19,13 @@ const { mockReadFileSync, mockWriteFileSync, mockExistsSync, mockMkdirSync } = v
   mockMkdirSync: vi.fn(),
 }));
 
-const { mockProbeGateway, mockValidateToken } = vi.hoisted(() => ({
+const { mockProbeGateway, mockValidateToken, mockDetectOpenClawInstallation } = vi.hoisted(() => ({
   mockProbeGateway: vi.fn(),
   mockValidateToken: vi.fn(),
+  mockDetectOpenClawInstallation: vi.fn(),
 }));
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
 }));
 
@@ -42,6 +43,7 @@ vi.mock("node:fs", async (importOriginal) => {
 vi.mock("../../src/lib/openclaw-probe.js", () => ({
   probeGateway: (...args: unknown[]) => mockProbeGateway(...args),
   validateToken: (...args: unknown[]) => mockValidateToken(...args),
+  detectOpenClawInstallation: (...args: unknown[]) => mockDetectOpenClawInstallation(...args),
   DEFAULT_OPENCLAW_URL: "http://127.0.0.1:18789",
   HOOKS_PATH: "/hooks/agent",
 }));
@@ -54,9 +56,7 @@ import { registerSetup } from "../../src/commands/setup.js";
 
 const MINIMAL_CONFIG = `
 port: 3000
-defaults:
-  notifiers:
-    - desktop
+defaults: {}
 projects:
   my-app:
     name: my-app
@@ -68,7 +68,6 @@ const CONFIG_WITH_OPENCLAW = `
 port: 3000
 defaults:
   notifiers:
-    - desktop
     - openclaw
 notifiers:
   openclaw:
@@ -233,8 +232,36 @@ describe("setup openclaw command", () => {
 
       const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
       expect(writtenYaml).toContain("openclaw");
-      // Should have both desktop and openclaw in defaults.notifiers
-      expect(writtenYaml).toContain("desktop");
+      expect(writtenYaml).not.toContain("desktop");
+    });
+
+    it("does not add desktop to defaults.notifiers when initializing notifiers", async () => {
+      // Config with no notifiers at all
+      mockReadFileSync.mockReturnValue(`
+port: 3000
+defaults: {}
+projects:
+  my-app:
+    name: my-app
+`);
+      const program = createProgram();
+
+      await program.parseAsync([
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "tok",
+        "--non-interactive",
+      ]);
+
+      const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
+      const parsed = parseYaml(writtenYaml) as { defaults?: { notifiers?: string[] } };
+      expect(parsed.defaults?.notifiers).not.toContain("desktop");
+      expect(parsed.defaults?.notifiers).toContain("openclaw");
     });
 
     it("does not duplicate openclaw in defaults.notifiers", async () => {
@@ -280,6 +307,60 @@ describe("setup openclaw command", () => {
       expect(writtenYaml).toContain("retries: 3");
       expect(writtenYaml).toContain("retryDelayMs: 1000");
       expect(writtenYaml).toContain("wakeMode: now");
+    });
+
+    it("defaults OpenClaw routing to urgent + action only", async () => {
+      const program = createProgram();
+
+      await program.parseAsync([
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "tok",
+        "--non-interactive",
+      ]);
+
+      const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
+      const parsed = parseYaml(writtenYaml) as {
+        notificationRouting?: Record<string, string[]>;
+      };
+
+      expect(parsed.notificationRouting?.["urgent"]).toContain("openclaw");
+      expect(parsed.notificationRouting?.["action"]).toContain("openclaw");
+      expect(parsed.notificationRouting?.["warning"]).not.toContain("openclaw");
+      expect(parsed.notificationRouting?.["info"]).not.toContain("openclaw");
+    });
+
+    it("supports overriding the routing preset in non-interactive mode", async () => {
+      const program = createProgram();
+
+      await program.parseAsync([
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "tok",
+        "--routing-preset",
+        "all",
+        "--non-interactive",
+      ]);
+
+      const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
+      const parsed = parseYaml(writtenYaml) as {
+        notificationRouting?: Record<string, string[]>;
+      };
+
+      expect(parsed.notificationRouting?.["urgent"]).toContain("openclaw");
+      expect(parsed.notificationRouting?.["action"]).toContain("openclaw");
+      expect(parsed.notificationRouting?.["warning"]).toContain("openclaw");
+      expect(parsed.notificationRouting?.["info"]).toContain("openclaw");
     });
 
     it("merges existing allowedSessionKeyPrefixes in openclaw.json", async () => {
@@ -427,7 +508,12 @@ describe("setup openclaw command", () => {
       expect(mockWriteFileSync).toHaveBeenCalled();
     });
 
-    it("exits when --url missing in non-interactive mode", async () => {
+    it("exits when --url missing and gateway unreachable in non-interactive mode", async () => {
+      mockDetectOpenClawInstallation.mockResolvedValue({
+        state: "missing",
+        gatewayUrl: "http://127.0.0.1:18789",
+        probe: { reachable: false, error: "ECONNREFUSED" },
+      });
       const program = createProgram();
 
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
