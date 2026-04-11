@@ -258,7 +258,7 @@ describe("loadBuiltins", () => {
     });
 
     await registry.loadBuiltins(config, async (pkg: string) => {
-      if (pkg === "@composio/ao-plugin-notifier-slack") return fakeSlackNotifier;
+      if (pkg === "@aoagents/ao-plugin-notifier-slack") return fakeSlackNotifier;
       throw new Error(`Not found: ${pkg}`);
     });
 
@@ -300,7 +300,7 @@ describe("loadBuiltins", () => {
     });
 
     await registry.loadBuiltins(config, async (pkg: string) => {
-      if (pkg === "@composio/ao-plugin-notifier-slack") return fakeSlackNotifier;
+      if (pkg === "@aoagents/ao-plugin-notifier-slack") return fakeSlackNotifier;
       throw new Error(`Not found: ${pkg}`);
     });
 

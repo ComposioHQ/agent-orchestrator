@@ -331,6 +331,76 @@ describe("session ls", () => {
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(output).toContain("https://github.com/org/repo/pull/42");
   });
+
+  it("outputs structured JSON when requested", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "worktree=/tmp/wt\nbranch=feat/INT-100\nstatus=working\nissue=INT-100\npr=https://github.com/org/repo/pull/42\n",
+    );
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "display-message") {
+        return "1710000000";
+      }
+      return null;
+    });
+    mockGit.mockResolvedValue("live-branch");
+
+    await program.parseAsync(["node", "test", "session", "ls", "--json"]);
+
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toEqual([
+      {
+        id: "app-1",
+        projectId: "my-app",
+        projectName: "My App",
+        role: "worker",
+        branch: "live-branch",
+        status: "working",
+        issueId: "INT-100",
+        pr: "https://github.com/org/repo/pull/42",
+        workspacePath: "/tmp/wt",
+        lastActivityAt: "2024-03-09T16:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("marks metadata-based orchestrators correctly in JSON output", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-control"),
+      "branch=control\nstatus=working\nrole=orchestrator\n",
+    );
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls", "--json"]);
+
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toEqual([
+      {
+        id: "app-control",
+        projectId: "my-app",
+        projectName: "My App",
+        role: "orchestrator",
+        branch: "control",
+        status: "working",
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        lastActivityAt: null,
+      },
+    ]);
+  });
+
+  it("returns an empty JSON array when there are no active sessions", async () => {
+    mockTmux.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls", "--json"]);
+
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toEqual([]);
+  });
 });
 
 describe("session kill", () => {
