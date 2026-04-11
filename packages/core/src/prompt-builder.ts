@@ -44,7 +44,15 @@ A script \`ao-emit\` is available in your workspace at \`.ao/ao-emit\`. Use it t
 - \`ao-emit completion "task done"\` — call this when you finish your task
 - \`ao-emit escalation "blocked on X"\` — call this when you are stuck and need help
 - \`ao-emit status "running tests"\` — call this to report progress at any point
-Always call \`ao-emit completion\` when done, and \`ao-emit escalation\` if you cannot proceed.`;
+Always call \`ao-emit completion\` when done, and \`ao-emit escalation\` if you cannot proceed.
+
+## Reading Instructions from the Orchestrator
+The orchestrator can send you new instructions via a file at \`$AO_INBOX_PATH\` (JSONL, one message per line). Check this file at the start of each task, before creating a PR, and after any long-running operation:
+  cursor=$(cat "$AO_INBOX_PATH.hook-cursor" 2>/dev/null || echo 0)
+  tail -c +$((cursor + 1)) "$AO_INBOX_PATH"
+Then update the cursor so you don't re-process the same messages:
+  wc -c < "$AO_INBOX_PATH" > "$AO_INBOX_PATH.hook-cursor"
+Each line is a JSON object with \`type\` and \`content\` fields. Treat entries with \`type="instruction"\` as new user messages and act on them.`;
 
 export interface PromptBuildConfig {
   /** The project config from the orchestrator config */
