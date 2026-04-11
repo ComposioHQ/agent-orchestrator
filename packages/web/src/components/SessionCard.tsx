@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect, useLayoutEffect, useRef } from "react";
 import {
   type DashboardSession,
   getAttentionLevel,
@@ -99,6 +99,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   const [sendingQuickReply, setSendingQuickReply] = useState<string | null>(null);
   const [sentQuickReply, setSentQuickReply] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
+  const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickReplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const level = getAttentionLevel(session);
@@ -131,6 +132,18 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
       if (sent) setReplyText("");
     }
   };
+
+  // Auto-resize reply textarea synchronously before browser paint to avoid flicker.
+  // useLayoutEffect runs after DOM mutation but before paint, so scrollHeight is
+  // accurate and the height update is applied in the same frame.
+  useLayoutEffect(() => {
+    const el = replyTextareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const capped = Math.min(el.scrollHeight, 120);
+    el.style.height = `${capped}px`;
+    el.style.overflowY = el.scrollHeight > 120 ? "auto" : "hidden";
+  }, [replyText]);
 
   useEffect(() => {
     return () => {
@@ -696,6 +709,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
             </button>
           </div>
           <textarea
+            ref={replyTextareaRef}
             className="quick-reply__input"
             placeholder={sendingQuickReply !== null ? "Sending..." : "Type a reply..."}
             aria-label="Type a reply to the agent"
@@ -706,6 +720,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
             }}
             rows={1}
             disabled={sendingQuickReply !== null}
+            style={{ resize: "none" }}
           />
         </div>
       )}

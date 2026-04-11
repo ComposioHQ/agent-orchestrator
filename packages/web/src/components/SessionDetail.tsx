@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
@@ -39,6 +39,17 @@ interface SessionDetailProps {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
+const AGENT_DISPLAY_NAMES: Record<string, string> = {
+  "claude-code": "Claude Code",
+  "opencode": "OpenCode",
+  "codex": "Codex",
+  "aider": "Aider",
+};
+
+function formatAgentName(agent: string): string {
+  return AGENT_DISPLAY_NAMES[agent] ?? agent.charAt(0).toUpperCase() + agent.slice(1);
+}
+
 const activityMeta: Record<string, { label: string; color: string }> = {
   active: { label: "Active", color: "var(--color-status-working)" },
   ready: { label: "Ready", color: "var(--color-status-ready)" },
@@ -66,127 +77,6 @@ function buildGitHubBranchUrl(pr: DashboardPR): string {
   return `https://github.com/${pr.owner}/${pr.repo}/tree/${pr.branch}`;
 }
 
-function activityStateClass(activityLabel: string): string {
-  const normalized = activityLabel.toLowerCase();
-  if (normalized === "active") return "session-detail-status-pill--active";
-  if (normalized === "ready") return "session-detail-status-pill--ready";
-  if (normalized === "idle") return "session-detail-status-pill--idle";
-  if (normalized === "waiting for input") return "session-detail-status-pill--waiting";
-  if (normalized === "blocked" || normalized === "exited") {
-    return "session-detail-status-pill--error";
-  }
-  return "session-detail-status-pill--neutral";
-}
-
-function SessionTopStrip({
-  headline,
-  activityLabel,
-  activityColor,
-  branch,
-  pr,
-  isOrchestrator = false,
-  crumbHref,
-  crumbLabel,
-  mobileSimple = false,
-  rightSlot,
-}: {
-  headline: string;
-  activityLabel: string;
-  activityColor: string;
-  branch: string | null;
-  pr: DashboardPR | null;
-  isOrchestrator?: boolean;
-  crumbHref: string;
-  crumbLabel: string;
-  mobileSimple?: boolean;
-  rightSlot?: ReactNode;
-}) {
-  return (
-    <section className={`session-page-header${mobileSimple ? " session-page-header--mobile" : ""}`}>
-      <div className="session-page-header__crumbs">
-        <a
-          href={crumbHref}
-          className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
-        >
-          <svg
-            className="h-3 w-3 opacity-60"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            viewBox="0 0 24 24"
-          >
-            <path d="M15 18l-6-6 6-6" />
-          </svg>
-          {crumbLabel}
-        </a>
-        <span className="text-[var(--color-border-strong)]">/</span>
-        {!mobileSimple ? (
-          <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
-            {headline}
-          </span>
-        ) : null}
-        {isOrchestrator && !mobileSimple ? (
-          <span className="session-page-header__mode">orchestrator</span>
-        ) : null}
-      </div>
-      <div className="session-page-header__main">
-        <div className="session-page-header__identity">
-          <h1 className="truncate text-[17px] font-semibold tracking-[-0.03em] text-[var(--color-text-primary)]">
-            {headline}
-          </h1>
-          <div className="session-page-header__meta">
-            <div
-              className={cn(
-                "session-detail-status-pill flex items-center gap-1.5 border px-2.5 py-1",
-                activityStateClass(activityLabel),
-              )}
-              style={{
-                background: `color-mix(in srgb, ${activityColor} 12%, transparent)`,
-                border: `1px solid color-mix(in srgb, ${activityColor} 20%, transparent)`,
-              }}
-            >
-              <span
-                className="session-detail-status-pill__dot h-1.5 w-1.5 shrink-0"
-                style={{ background: activityColor }}
-              />
-              <span className="text-[11px] font-semibold" style={{ color: activityColor }}>
-                {activityLabel}
-              </span>
-            </div>
-            {branch ? (
-              pr ? (
-                <a
-                  href={buildGitHubBranchUrl(pr)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="session-detail-link-pill session-detail-link-pill--link font-[var(--font-mono)] text-[10px] hover:no-underline"
-                >
-                  {branch}
-                </a>
-              ) : (
-                <span className="session-detail-link-pill font-[var(--font-mono)] text-[10px]">
-                  {branch}
-                </span>
-              )
-            ) : null}
-            {pr ? (
-              <a
-                href={pr.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="session-detail-link-pill session-detail-link-pill--link session-detail-link-pill--accent hover:no-underline"
-              >
-                PR #{pr.number}
-              </a>
-            ) : null}
-          </div>
-        </div>
-        {rightSlot ? <div className="session-page-header__side">{rightSlot}</div> : null}
-      </div>
-    </section>
-  );
-}
-
 async function askAgentToFix(
   sessionId: string,
   comment: { url: string; path: string; body: string },
@@ -209,7 +99,7 @@ async function askAgentToFix(
   }
 }
 
-// ── Orchestrator status strip ─────────────────────────────────────────
+// ── Orchestrator status strip — compact bar matching terminal chrome ──
 
 function OrchestratorStatusStrip({
   zones,
@@ -217,20 +107,20 @@ function OrchestratorStatusStrip({
   headline,
   activityLabel,
   activityColor,
-  branch,
-  pr,
   crumbHref,
   crumbLabel,
+  branch,
+  pr,
 }: {
   zones: OrchestratorZones;
   createdAt: string;
   headline: string;
   activityLabel: string;
   activityColor: string;
-  branch: string | null;
-  pr: DashboardPR | null;
   crumbHref: string;
   crumbLabel: string;
+  branch?: string;
+  pr?: DashboardPR;
 }) {
   const [uptime, setUptime] = useState<string>("");
 
@@ -247,8 +137,8 @@ function OrchestratorStatusStrip({
   }, [createdAt]);
 
   const stats: Array<{ value: number; label: string; color: string; bg: string }> = [
-    { value: zones.merge, label: "merge-ready", color: "#3fb950", bg: "rgba(63,185,80,0.1)" },
-    { value: zones.respond, label: "responding", color: "#f85149", bg: "rgba(248,81,73,0.1)" },
+    { value: zones.merge, label: "merge", color: "#3fb950", bg: "rgba(63,185,80,0.1)" },
+    { value: zones.respond, label: "respond", color: "#f85149", bg: "rgba(248,81,73,0.1)" },
     { value: zones.review, label: "review", color: "#d18616", bg: "rgba(209,134,22,0.1)" },
     { value: zones.working, label: "working", color: "#58a6ff", bg: "rgba(88,166,255,0.1)" },
     { value: zones.pending, label: "pending", color: "#d29922", bg: "rgba(210,153,34,0.1)" },
@@ -259,63 +149,121 @@ function OrchestratorStatusStrip({
     zones.merge + zones.respond + zones.review + zones.working + zones.pending + zones.done;
 
   return (
-    <div className="mx-auto max-w-[1180px] px-5 pt-5 lg:px-8">
-      <SessionTopStrip
-        headline={headline}
-        activityLabel={activityLabel}
-        activityColor={activityColor}
-        branch={branch}
-        pr={pr}
-        isOrchestrator
-        crumbHref={crumbHref}
-        crumbLabel={crumbLabel}
-        rightSlot={
-          <div className="flex flex-wrap items-center gap-3 lg:justify-end">
-            <div className="flex items-baseline gap-1.5 mr-2">
-              <span className="text-[22px] font-bold leading-none tabular-nums text-[var(--color-text-primary)]">
-                {total}
-              </span>
-              <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
-            </div>
+    <div className="mx-auto max-w-full px-3 pt-3 sm:px-5 sm:pt-4 lg:px-8">
+      {/* Breadcrumb */}
+      <div className="mb-2 flex items-center gap-1.5">
+        <a
+          href={crumbHref}
+          className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
+        >
+          <svg className="h-3 w-3 opacity-60" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+          {crumbLabel}
+        </a>
+        <span className="text-[11px] text-[var(--color-border-strong)]">/</span>
+        <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+          {headline}
+        </span>
+        <span
+          className="ml-1 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.05em]"
+          style={{
+            color: "var(--color-accent)",
+            background: "color-mix(in srgb, var(--color-accent) 10%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--color-accent) 20%, transparent)",
+            borderRadius: 6,
+          }}
+        >
+          orchestrator
+        </span>
+        {branch ? (
+          pr ? (
+            <a
+              href={buildGitHubBranchUrl(pr)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="session-detail-link-pill session-detail-link-pill--link font-[var(--font-mono)] text-[10px] hover:no-underline"
+            >
+              {branch}
+            </a>
+          ) : (
+            <span className="session-detail-link-pill font-[var(--font-mono)] text-[10px]">
+              {branch}
+            </span>
+          )
+        ) : null}
+        {pr ? (
+          <a
+            href={pr.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="session-detail-link-pill session-detail-link-pill--link session-detail-link-pill--accent hover:no-underline"
+          >
+            PR #{pr.number}
+          </a>
+        ) : null}
+      </div>
+      {/* Compact status bar */}
+      <div
+        className="flex flex-wrap items-center gap-x-3 gap-y-1.5"
+        style={{
+          padding: "8px 16px",
+          background: "var(--color-bg-elevated)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          border: "1px solid var(--color-border-default)",
+          borderRadius: 12,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+        }}
+      >
+        {/* Title + activity */}
+        <h1 className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)]">
+          {headline}
+        </h1>
+        <div
+          className="flex items-center gap-1.5 px-2 py-0.5"
+          style={{
+            background: `color-mix(in srgb, ${activityColor} 15%, transparent)`,
+            border: `1px solid color-mix(in srgb, ${activityColor} 25%, transparent)`,
+            borderRadius: 10,
+          }}
+        >
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: activityColor }} />
+          <span className="text-[10px] font-semibold" style={{ color: activityColor }}>
+            {activityLabel}
+          </span>
+        </div>
 
-            <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
+        {/* Divider */}
+        <div className="h-4 w-px bg-[var(--color-border-subtle)]" />
 
-            {/* Per-zone pills */}
-            {stats.length > 0 ? (
-              stats.map((s) => (
-                <div
-                  key={s.label}
-                  className="flex items-center gap-1.5 px-2.5 py-1"
-                  style={{ background: s.bg }}
-                >
-                  <span
-                    className="text-[15px] font-bold leading-none tabular-nums"
-                    style={{ color: s.color }}
-                  >
-                    {s.value}
-                  </span>
-                  <span
-                    className="text-[10px] font-medium"
-                    style={{ color: s.color, opacity: 0.8 }}
-                  >
-                    {s.label}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <span className="text-[12px] text-[var(--color-text-tertiary)]">
-                no active agents
-              </span>
-            )}
+        {/* Agent count */}
+        <span className="text-[13px] font-bold tabular-nums text-[var(--color-text-primary)]">{total}</span>
+        <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
 
-            {uptime && (
-              <span className="ml-auto font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
-                up {uptime}
-              </span>
-            )}
+        {/* Zone pills */}
+        {stats.map((s) => (
+          <div
+            key={s.label}
+            className="flex items-center gap-1 px-2 py-0.5"
+            style={{ background: s.bg, borderRadius: 4 }}
+          >
+            <span className="text-[12px] font-bold tabular-nums" style={{ color: s.color }}>
+              {s.value}
+            </span>
+            <span className="text-[10px]" style={{ color: s.color, opacity: 0.8 }}>
+              {s.label}
+            </span>
           </div>
-        }
-      />
+        ))}
+
+        {/* Uptime — pushed to right */}
+        {uptime ? (
+          <span className="ml-auto font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+            up {uptime}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -338,10 +286,13 @@ export function SessionDetail({
   };
   const headline = getSessionTitle(session);
 
-  const accentColor = "var(--color-accent)";
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
 
-  const terminalHeight = isOrchestrator ? "clamp(560px, 76vh, 920px)" : "clamp(520px, 72vh, 860px)";
+  // Orchestrator: fill remaining viewport below the compact status strip
+  // Worker: tall but not full-viewport (PR card may follow below)
+  const terminalHeight = isOrchestrator
+    ? "calc(100dvh - 140px)"
+    : "clamp(520px, 72vh, 860px)";
   const isOpenCodeSession = session.metadata["agent"] === "opencode";
   const opencodeSessionId =
     typeof session.metadata["opencodeSessionId"] === "string" &&
@@ -370,27 +321,90 @@ export function SessionDetail({
           headline={headline}
           activityLabel={activity.label}
           activityColor={activity.color}
-          branch={session.branch}
-          pr={pr}
           crumbHref={crumbHref}
           crumbLabel={crumbLabel}
+          branch={session.branch ?? undefined}
+          pr={pr ?? undefined}
         />
       )}
 
-      <div className="dashboard-main mx-auto max-w-[1180px] px-5 py-5 lg:px-8">
+      <div className={cn(
+        "dashboard-main mx-auto max-w-full px-3 sm:px-5 lg:px-8",
+        isOrchestrator && orchestratorZones && !isMobile ? "py-2 sm:py-3" : "py-4 sm:py-5",
+      )}>
         <main className="min-w-0">
+          {/* ── Page header — breadcrumb, title, badges (page-level chrome) */}
+          <div id="session-terminal-section" aria-hidden="true" />
           {(!isOrchestrator || isMobile) && (
-            <SessionTopStrip
-              headline={headline}
-              activityLabel={activity.label}
-              activityColor={activity.color}
-              branch={session.branch}
-              pr={pr}
-              isOrchestrator={isOrchestrator}
-              crumbHref={crumbHref}
-              crumbLabel={crumbLabel}
-              mobileSimple={isMobile}
-            />
+            <div className="mb-5">
+              {/* Breadcrumbs — headline omitted on mobile to avoid duplicate with h1 */}
+              <div className="mb-2 flex items-center gap-1.5">
+                <a
+                  href={crumbHref}
+                  className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
+                >
+                  <svg className="h-3 w-3 opacity-60" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                    <path d="M15 18l-6-6 6-6" />
+                  </svg>
+                  {crumbLabel}
+                </a>
+                {!isMobile ? (
+                  <>
+                    <span className="text-[11px] text-[var(--color-border-strong)]">/</span>
+                    <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+                      {headline}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+              {/* Title + badges row */}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <h1 className="truncate text-[17px] font-semibold tracking-[-0.03em] text-[var(--color-text-primary)]">
+                  {headline}
+                </h1>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div
+                    className="flex items-center gap-1.5 border px-2.5 py-1"
+                    style={{
+                      background: `color-mix(in srgb, ${activity.color} 12%, transparent)`,
+                      border: `1px solid color-mix(in srgb, ${activity.color} 20%, transparent)`,
+                      borderRadius: 6,
+                    }}
+                  >
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: activity.color }} />
+                    <span className="text-[11px] font-semibold" style={{ color: activity.color }}>
+                      {activity.label}
+                    </span>
+                  </div>
+                  {session.branch ? (
+                    pr ? (
+                      <a
+                        href={buildGitHubBranchUrl(pr)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="session-detail-link-pill session-detail-link-pill--link font-[var(--font-mono)] text-[10px] hover:no-underline"
+                      >
+                        {session.branch}
+                      </a>
+                    ) : (
+                      <span className="session-detail-link-pill font-[var(--font-mono)] text-[10px]">
+                        {session.branch}
+                      </span>
+                    )
+                  ) : null}
+                  {pr ? (
+                    <a
+                      href={pr.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="session-detail-link-pill session-detail-link-pill--link session-detail-link-pill--accent hover:no-underline"
+                    >
+                      PR #{pr.number}
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            </div>
           )}
 
           {pr ? (
@@ -404,7 +418,7 @@ export function SessionDetail({
             <div className="mb-3 flex items-center gap-2">
               <div
                 className="h-3 w-0.5"
-                style={{ background: isOrchestrator ? accentColor : activity.color, opacity: 0.75 }}
+                style={{ background: isOrchestrator ? "var(--color-accent)" : activity.color, opacity: 0.75 }}
               />
               <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--color-text-tertiary)]">
                 Live Terminal
@@ -417,6 +431,9 @@ export function SessionDetail({
               height={terminalHeight}
               isOpenCodeSession={isOpenCodeSession}
               reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+              agentName={session.metadata["agent"] ? formatAgentName(session.metadata["agent"]) : undefined}
+              prNumber={pr?.number}
+              prUrl={pr?.url}
             />
           </section>
         </main>
