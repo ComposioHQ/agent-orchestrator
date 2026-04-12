@@ -1,0 +1,25 @@
+packages/cli/__tests__/lib/update-check.test.ts
+  fe86f0b8794a6d4a 17
+packages/cli/__tests__/commands/update.test.ts
+  fe86f0b8794a6d4a 62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "dfb3e209065125b590e3c18f66c95b9287a8b539",
+  "prompts": {
+    "fe86f0b8794a6d4a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02fdcf41-8be9-41c4-a512-5262e8209203",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 1340,
+      "overriden_lines": 0
+    }
+  }
+}
