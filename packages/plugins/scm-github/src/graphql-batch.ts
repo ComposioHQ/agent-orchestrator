@@ -432,8 +432,11 @@ async function checkCommitStatusETag(
     // CI status changed - cost: 1 REST point
     return true;
   } catch (err) {
-    // On error, assume change to ensure we don't miss anything
     const errorMsg = err instanceof Error ? err.message : String(err);
+    // gh CLI exits non-zero on HTTP 304 — that's "not modified", not a failure
+    if (errorMsg.includes("HTTP 304")) {
+      return false; // Not modified — skip batch, use cache
+    }
     // eslint-disable-next-line no-console -- Observability logging for ETag errors
     console.warn(
       `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`,
