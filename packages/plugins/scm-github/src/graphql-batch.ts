@@ -33,6 +33,7 @@ export function setExecFileAsync(fn: typeof execFileAsync): void {
  * LRU cache automatically evicts oldest entries when these limits are reached.
  */
 const MAX_PR_LIST_ETAGS = 100;  // Number of repos to cache
+const MAX_PR_DETAIL_ETAGS = 500;  // Number of PRs to cache
 const MAX_COMMIT_STATUS_ETAGS = 500;  // Number of commits to cache
 const MAX_PR_METADATA = 200;  // Number of PRs to cache full data
 
@@ -46,6 +47,7 @@ const MAX_PR_METADATA = 200;  // Number of PRs to cache full data
  */
 interface ETagCache {
   prList: LRUCache<string, string>; // Key: "owner/repo", Value: ETag
+  prDetail: LRUCache<string, string>; // Key: "owner/repo#number", Value: ETag
   commitStatus: LRUCache<string, string>; // Key: "owner/repo#sha", Value: ETag
 }
 
@@ -58,6 +60,7 @@ interface ETagCache {
  */
 const etagCache: ETagCache = {
   prList: new LRUCache(MAX_PR_LIST_ETAGS),
+  prDetail: new LRUCache(MAX_PR_DETAIL_ETAGS),
   commitStatus: new LRUCache(MAX_COMMIT_STATUS_ETAGS),
 };
 
@@ -75,6 +78,7 @@ interface ETagGuardResult {
  */
 export function clearETagCache(): void {
   etagCache.prList.clear();
+  etagCache.prDetail.clear();
   etagCache.commitStatus.clear();
 }
 
@@ -83,6 +87,17 @@ export function clearETagCache(): void {
  */
 export function getPRListETag(owner: string, repo: string): string | undefined {
   return etagCache.prList.get(`${owner}/${repo}`);
+}
+
+/**
+ * Get PR detail ETag for a specific PR.
+ */
+export function getPRDetailETag(
+  owner: string,
+  repo: string,
+  number: number,
+): string | undefined {
+  return etagCache.prDetail.get(`${owner}/${repo}#${number}`);
 }
 
 /**
@@ -102,6 +117,19 @@ export function getCommitStatusETag(
  */
 export function setPRListETag(owner: string, repo: string, etag: string): void {
   etagCache.prList.set(`${owner}/${repo}`, etag);
+}
+
+/**
+ * Set PR detail ETag for a specific PR.
+ * Exported for testing.
+ */
+export function setPRDetailETag(
+  owner: string,
+  repo: string,
+  number: number,
+  etag: string,
+): void {
+  etagCache.prDetail.set(`${owner}/${repo}#${number}`, etag);
 }
 
 /**
@@ -157,7 +185,7 @@ function updatePRMetadataCache(
 }
 
 /**
- * 2-Guard ETag Strategy: Check if PR enrichment cache needs refreshing.
+ * 3-Guard ETag Strategy: Check if PR enrichment cache needs refreshing.
  *
  * Before running expensive GraphQL batch queries, use two lightweight REST API
  * ETag checks to detect if anything actually changed:
@@ -166,7 +194,11 @@ function updatePRMetadataCache(
  *   - Detects: New commits, PR title/body edits, labels changes, reviews, PR state changes
  *   - Misses: CI status changes
  *
- * Guard 2: Commit Status ETag Check (per PR with cached metadata)
+ * Guard 2: PR Detail ETag Check (per tracked PR)
+ *   - Detects: Head SHA changes, review changes, mergeability changes, draft/state updates
+ *   - Closes the stale-head window that repo-level PR-list ETags can miss
+ *
+ * Guard 3: Commit Status ETag Check (per PR with cached metadata)
  *   - Checks ALL PRs with cached metadata and head SHA
  *   - Detects: CI check starts, passes, fails, or external status updates
  *   - Critical for catching CI transitions (failing -> passing, passing -> failing, etc.)
@@ -210,19 +242,27 @@ export async function shouldRefreshPREnrichment(
     }
   }
 
-  // Guard 2: Check commit status ETag only when Guard 1 didn't detect changes
+  // Guard 2 + Guard 3: when Guard 1 did not detect changes, validate each tracked
+  // PR directly before trusting cached enrichment. Repo-level PR list ETags can miss
+  // updates on a tracked PR that is not the most recently updated PR in the repo.
   // We check ALL PRs (not just pending) to catch CI status transitions:
   // - failing -> passing (PR becomes merge-ready)
   // - passing -> failing (PR becomes unmergeable)
   // - pending -> passing/failing (CI completes)
   // - passing -> pending (new CI run starts)
   //
-  // Guard 2 is only needed when Guard 1 returns 304 (no PR list changes).
+  // These guards are only needed when Guard 1 returns 304 (no repo-level PR list changes).
   // If Guard 1 detected changes, we're going to refresh all PRs anyway.
   if (!guard1DetectedChanges) {
     for (const pr of prs) {
       const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
       const cached = prMetadataCache.get(prKey);
+
+      if (!cached) {
+        shouldRefresh = true;
+        details.push(`First time seeing PR #${pr.number} (Guard 2: no cached metadata)`);
+        continue;
+      }
 
       // Check for incomplete cache (cached but no headSha)
       // This happens when PR was cached but headSha wasn't captured
@@ -233,22 +273,30 @@ export async function shouldRefreshPREnrichment(
         continue;
       }
 
-      // Only check commit status ETag if we have cached data with a non-null head SHA
-      if (!cached || !cached.headSha) {
-        // No cached metadata - skip Guard 2. Since Guard 1 didn't detect changes
-        // and we have no cached data, there's nothing to check.
+      const prDetailChanged = await checkPRDetailETag(pr.owner, pr.repo, pr.number);
+      if (prDetailChanged) {
+        shouldRefresh = true;
+        details.push(`PR metadata changed for ${pr.owner}/${pr.repo}#${pr.number} (Guard 2)`);
         continue;
       }
 
+      const headSha = cached.headSha;
+      if (!headSha) {
+        shouldRefresh = true;
+        details.push(`First time seeing PR #${pr.number} (Guard 3: no cached head SHA)`);
+        continue;
+      }
+
+      // Only check commit status ETag if we have cached data with a non-null head SHA
       const statusChanged = await checkCommitStatusETag(
         pr.owner,
         pr.repo,
-        cached.headSha,
+        headSha,
       );
       if (statusChanged) {
         shouldRefresh = true;
         details.push(
-          `CI status changed for ${pr.owner}/${pr.repo}#${pr.number} (Guard 2)`,
+          `CI status changed for ${pr.owner}/${pr.repo}#${pr.number} (Guard 3)`,
         );
       }
     }
@@ -381,14 +429,58 @@ async function checkPRListETag(
 }
 
 /**
- * Guard 2: Commit Status ETag Check (per PR with pending CI)
+ * Guard 2: PR Detail ETag Check (per PR)
+ *
+ * Detects if a tracked PR changed using its own REST ETag. This catches stale head
+ * SHA / mergeability / review state windows that a repo-level PR-list ETag can miss.
+ *
+ * @returns true if PR details changed (200 OK), false if unchanged (304 Not Modified)
+ */
+async function checkPRDetailETag(
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<boolean> {
+  const prKey = `${owner}/${repo}#${number}`;
+  const cachedETag = etagCache.prDetail.get(prKey);
+
+  const url = `repos/${owner}/${repo}/pulls/${number}`;
+  const args = ["api", "--method", "GET", url, "-i"];
+
+  if (cachedETag) {
+    args.push("-H", `If-None-Match: ${cachedETag}`);
+  }
+
+  try {
+    const { stdout } = await execFileAsync("gh", args, { timeout: 10_000 });
+    const output = stdout.trim();
+
+    if (output.includes("HTTP/1.1 304") || output.includes("HTTP/2 304")) {
+      return false;
+    }
+
+    const etagMatch = output.match(/etag:\s*(.+)/i);
+    if (etagMatch) {
+      const newETag = etagMatch[1].trim();
+      setPRDetailETag(owner, repo, number, newETag);
+    }
+
+    return true;
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    // eslint-disable-next-line no-console -- Observability logging for ETag errors
+    console.warn(`[ETag Guard 2] PR detail check failed for ${prKey}: ${errorMsg}`);
+    return true;
+  }
+}
+
+/**
+ * Guard 3: Commit Status ETag Check (per PR with cached head SHA)
  *
  * Detects if CI status has changed for a specific commit using REST ETag.
  *
  * - Endpoint: GET /repos/{owner}/{repo}/commits/{head_sha}/status
  * - Detects: CI check starts, passes, fails, or external status updates
- * - Only checked for PRs with ciStatus === "pending" to minimize calls
- *
  * @returns true if CI status has changed (200 OK), false if unchanged (304 Not Modified)
  */
 async function checkCommitStatusETag(
@@ -788,7 +880,12 @@ function extractPREnrichment(
     typeof pr["mergeStateStatus"] === "string"
       ? pr["mergeStateStatus"].toUpperCase()
       : "";
-  const hasConflicts = mergeable === "CONFLICTING";
+  const hasConflicts =
+    mergeable === "CONFLICTING"
+      ? true
+      : mergeable === "MERGEABLE"
+        ? false
+        : undefined;
   const isBehind = mergeStateStatus === "BEHIND";
 
   // Extract review decision
@@ -825,7 +922,7 @@ function extractPREnrichment(
   if (reviewDecision === "changes_requested")
     blockers.push("Changes requested in review");
   if (reviewDecision === "pending") blockers.push("Review required");
-  if (hasConflicts) blockers.push("Merge conflicts");
+  if (hasConflicts === true) blockers.push("Merge conflicts");
   if (isBehind) blockers.push("Branch is behind base branch");
   if (isDraft) blockers.push("PR is still a draft");
 
@@ -844,6 +941,7 @@ function extractPREnrichment(
 
   const data: PREnrichmentData = {
     state,
+    ...(headSha ? { headSha } : {}),
     ciStatus,
     reviewDecision,
     mergeable: mergeReady,
@@ -1016,6 +1114,7 @@ export {
   parsePRState,
   extractPREnrichment,
   checkPRListETag,
+  checkPRDetailETag,
   checkCommitStatusETag,
   // shouldRefreshPREnrichment is already exported as async function
   updatePRMetadataCache,

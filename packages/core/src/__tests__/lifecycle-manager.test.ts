@@ -1216,6 +1216,41 @@ describe("reactions", () => {
     );
   });
 
+  it("does not dispatch merge conflict notification when GitHub mergeability is unknown", async () => {
+    config.reactions = {
+      "merge-conflicts": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Resolve merge conflicts.",
+      },
+    };
+
+    const mockSCM = createMockSCM({
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: false,
+        ciPassing: true,
+        approved: false,
+        noConflicts: false,
+        blockers: ["Merge status unknown (GitHub is computing)"],
+      }),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+  });
+
   it("does not re-dispatch merge conflict notification when already dispatched", async () => {
     config.reactions = {
       "merge-conflicts": {
@@ -1318,6 +1353,76 @@ describe("reactions", () => {
     });
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-dispatches merge conflict notification when the same conflict persists on a new head SHA", async () => {
+    config.reactions = {
+      "merge-conflicts": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Resolve merge conflicts.",
+      },
+    };
+
+    const pr = makePR({ owner: "org", repo: "my-app" });
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      enrichSessionsPRBatch: vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Map([
+            [
+              `${pr.owner}/${pr.repo}#${pr.number}`,
+              {
+                state: "open" as const,
+                headSha: "sha-1",
+                ciStatus: "passing" as const,
+                reviewDecision: "none" as const,
+                mergeable: false,
+                hasConflicts: true,
+              },
+            ],
+          ]),
+        )
+        .mockResolvedValueOnce(
+          new Map([
+            [
+              `${pr.owner}/${pr.repo}#${pr.number}`,
+              {
+                state: "open" as const,
+                headSha: "sha-2",
+                ciStatus: "passing" as const,
+                reviewDecision: "none" as const,
+                mergeable: false,
+                hasConflicts: true,
+              },
+            ],
+          ]),
+        ),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const session = makeSession({ id: "s-head", status: "pr_open", pr });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    vi.useFakeTimers();
+    const lm = createLifecycleManager({ config, registry, sessionManager: mockSessionManager });
+    lm.start(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    vi.mocked(mockSessionManager.send).mockClear();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+
+    lm.stop();
+    vi.useRealTimers();
   });
 
   it("clears merge conflict tracking when PR is merged", async () => {
