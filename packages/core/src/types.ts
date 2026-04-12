@@ -432,6 +432,8 @@ export interface WorkspaceHooksConfig {
   dataDir: string;
   /** Optional session ID (may not be known at ao init time) */
   sessionId?: string;
+  /** Optional explicit prompts directory from orchestrator config. */
+  promptsDir?: string;
 }
 
 export interface AgentSessionInfo {
@@ -1038,6 +1040,9 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /** Optional explicit prompt template override directory. */
+  promptsDir?: string;
 
   /**
    * Internal: External plugin entries collected from inline tracker/scm/notifier configs.

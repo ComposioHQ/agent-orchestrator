@@ -10,6 +10,7 @@
  * Reference: scripts/claude-session-status, scripts/claude-review-check
  */
 
+import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   SESSION_STATUS,
@@ -41,6 +42,7 @@ import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveNotifierTarget } from "./notifier-resolution.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { PromptLoader } from "./prompts/loader.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -183,6 +185,7 @@ export interface LifecycleManagerDeps {
   sessionManager: SessionManager;
   /** When set, only poll sessions belonging to this project. */
   projectId?: string;
+  promptLoader?: PromptLoader;
 }
 
 /** Track attempt counts for reactions per session. */
@@ -194,6 +197,15 @@ interface ReactionTracker {
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
   const { config, registry, sessionManager, projectId: scopedProjectId } = deps;
+  const promptLoader =
+    deps.promptLoader ??
+    new PromptLoader({
+      projectDir:
+        config.configPath
+          ? dirname(config.configPath)
+          : Object.values(config.projects)[0]?.path ?? process.cwd(),
+      promptsDir: config.promptsDir,
+    });
   const observer = createProjectObserver(config, "lifecycle-manager");
 
   const states = new Map<SessionId, SessionStatus>();
@@ -930,20 +942,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
    * Includes check names, statuses, and links for debugging.
    */
   function formatCIFailureMessage(failedChecks: CICheck[]): string {
-    const lines = [
-      "CI checks are failing on your PR. Here are the failed checks:",
-      "",
-    ];
-    for (const check of failedChecks) {
-      const status = check.conclusion ?? check.status;
-      const link = check.url ? ` — ${check.url}` : "";
-      lines.push(`- **${check.name}**: ${status}${link}`);
-    }
-    lines.push(
-      "",
-      "Investigate the failures, fix the issues, and push again.",
-    );
-    return lines.join("\n");
+    const failedChecksList = failedChecks
+      .map((check) => {
+        const status = check.conclusion ?? check.status;
+        const link = check.url ? ` — ${check.url}` : "";
+        return `- **${check.name}**: ${status}${link}`;
+      })
+      .join("\n");
+    return promptLoader.render("ci-failure", { failedChecksList });
   }
 
   /**

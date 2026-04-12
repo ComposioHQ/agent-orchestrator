@@ -3,15 +3,19 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { buildPrompt, BASE_AGENT_PROMPT } from "../prompt-builder.js";
+import { buildPrompt } from "../prompt-builder.js";
+import { PromptLoader } from "../prompts/loader.js";
 import type { ProjectConfig } from "../types.js";
 
 let tmpDir: string;
 let project: ProjectConfig;
+let loader: PromptLoader;
 
 beforeEach(() => {
   tmpDir = join(tmpdir(), `ao-prompt-test-${randomUUID()}`);
   mkdirSync(tmpDir, { recursive: true });
+  const promptsDir = join(tmpDir, ".agent-orchestrator", "prompts");
+  mkdirSync(promptsDir, { recursive: true });
 
   project = {
     name: "Test App",
@@ -20,6 +24,17 @@ beforeEach(() => {
     defaultBranch: "main",
     sessionPrefix: "test",
   };
+
+  writeFileSync(
+    join(promptsDir, "base-agent.yaml"),
+    `name: base-agent
+description: test base prompt
+variables: []
+template: |-
+  BASE PROMPT FROM LOADER`,
+  );
+
+  loader = new PromptLoader({ projectDir: tmpDir });
 });
 
 afterEach(() => {
@@ -28,8 +43,8 @@ afterEach(() => {
 
 describe("buildPrompt", () => {
   it("includes base prompt on bare spawns", () => {
-    const result = buildPrompt({ project, projectId: "test-app" });
-    expect(result).toContain(BASE_AGENT_PROMPT);
+    const result = buildPrompt({ loader, project, projectId: "test-app" });
+    expect(result).toContain("BASE PROMPT FROM LOADER");
     expect(result).toContain("## Project Context");
     expect(result).toContain("Project: Test App");
   });
@@ -39,9 +54,10 @@ describe("buildPrompt", () => {
       project,
       projectId: "test-app",
       issueId: "INT-1343",
+      loader,
     });
     expect(result).not.toBeNull();
-    expect(result).toContain(BASE_AGENT_PROMPT);
+    expect(result).toContain("BASE PROMPT FROM LOADER");
   });
 
   it("includes project context", () => {
@@ -49,6 +65,7 @@ describe("buildPrompt", () => {
       project,
       projectId: "test-app",
       issueId: "INT-1343",
+      loader,
     });
     expect(result).toContain("Test App");
     expect(result).toContain("org/test-app");
@@ -60,6 +77,7 @@ describe("buildPrompt", () => {
       project,
       projectId: "test-app",
       issueId: "INT-1343",
+      loader,
     });
     expect(result).toContain("Work on issue: INT-1343");
     expect(result).toContain("feat/INT-1343");
@@ -71,6 +89,7 @@ describe("buildPrompt", () => {
       projectId: "test-app",
       issueId: "INT-1343",
       issueContext: "## Linear Issue INT-1343\nTitle: Layered Prompt System\nPriority: High",
+      loader,
     });
     expect(result).toContain("## Issue Details");
     expect(result).toContain("Layered Prompt System");
@@ -83,6 +102,7 @@ describe("buildPrompt", () => {
       project,
       projectId: "test-app",
       issueId: "INT-1343",
+      loader,
     });
     expect(result).toContain("## Project Rules");
     expect(result).toContain("Always run pnpm test before pushing.");
@@ -97,6 +117,7 @@ describe("buildPrompt", () => {
       project,
       projectId: "test-app",
       issueId: "INT-1343",
+      loader,
     });
     expect(result).toContain("Use conventional commits.");
     expect(result).toContain("No force pushes.");
@@ -112,6 +133,7 @@ describe("buildPrompt", () => {
       project,
       projectId: "test-app",
       issueId: "INT-1343",
+      loader,
     });
     expect(result).toContain("Inline rule.");
     expect(result).toContain("File rule.");
@@ -124,6 +146,7 @@ describe("buildPrompt", () => {
       project,
       projectId: "test-app",
       issueId: "INT-1343",
+      loader,
     });
     // Should not throw, should still build prompt without rules
     expect(result).not.toBeNull();
@@ -137,6 +160,7 @@ describe("buildPrompt", () => {
       projectId: "test-app",
       issueId: "INT-1343",
       userPrompt: "Focus on the API layer only.",
+      loader,
     });
 
     expect(result).not.toBeNull();
@@ -154,9 +178,10 @@ describe("buildPrompt", () => {
     const result = buildPrompt({
       project,
       projectId: "test-app",
+      loader,
     });
     expect(result).not.toBeNull();
-    expect(result).toContain(BASE_AGENT_PROMPT);
+    expect(result).toContain("BASE PROMPT FROM LOADER");
     expect(result).toContain("Always lint before committing.");
   });
 
@@ -165,6 +190,7 @@ describe("buildPrompt", () => {
       project,
       projectId: "test-app",
       userPrompt: "Just explore the codebase.",
+      loader,
     });
     expect(result).not.toBeNull();
     expect(result).toContain("Just explore the codebase.");
@@ -176,6 +202,7 @@ describe("buildPrompt", () => {
       project,
       projectId: "test-app",
       issueId: "INT-100",
+      loader,
     });
     expect(result).toContain("Tracker: linear");
   });
@@ -185,6 +212,7 @@ describe("buildPrompt", () => {
       project,
       projectId: "my-project",
       issueId: "INT-100",
+      loader,
     });
     expect(result).toContain("Project: Test App");
   });
@@ -198,22 +226,26 @@ describe("buildPrompt", () => {
       project,
       projectId: "test-app",
       issueId: "INT-100",
+      loader,
     });
     expect(result).toContain("ci-failed");
     expect(result).not.toContain("approved-and-green");
   });
-});
 
-describe("BASE_AGENT_PROMPT", () => {
-  it("is a non-empty string", () => {
-    expect(typeof BASE_AGENT_PROMPT).toBe("string");
-    expect(BASE_AGENT_PROMPT.length).toBeGreaterThan(100);
-  });
+  it("uses loader override for base prompt content", () => {
+    writeFileSync(
+      join(tmpDir, ".agent-orchestrator", "prompts", "base-agent.yaml"),
+      `name: base-agent
+description: override base prompt
+variables: []
+template: |-
+  OVERRIDDEN BASE`,
+    );
 
-  it("covers key topics", () => {
-    expect(BASE_AGENT_PROMPT).toContain("Session Lifecycle");
-    expect(BASE_AGENT_PROMPT).toContain("Git Workflow");
-    expect(BASE_AGENT_PROMPT).toContain("PR Best Practices");
-    expect(BASE_AGENT_PROMPT).toContain("ao session claim-pr");
+    const overriddenLoader = new PromptLoader({ projectDir: tmpDir });
+    const result = buildPrompt({ loader: overriddenLoader, project, projectId: "test-app" });
+
+    expect(result).toContain("OVERRIDDEN BASE");
+    expect(result).not.toContain("BASE PROMPT FROM LOADER");
   });
 });

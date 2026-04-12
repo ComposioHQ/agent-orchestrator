@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Extract 5 hardcoded LLM prompts from `@aoagents/ao-core` into versionable YAML template files, with project-local and config-based overrides, preserving byte-identical default output.
+**Goal:** Extract 5 hardcoded LLM prompts from `@aoagents/ao-core` into versionable YAML template files, preserving byte-identical default output while adding explicit, well-scoped override paths that match the current multi-project config model.
 
-**Architecture:** A new `PromptLoader` class in `packages/core/src/prompts/` reads YAML templates from a lookup chain (explicit `promptsDir` → project-local `.agent-orchestrator/prompts/` → bundled defaults) and performs declared-only variable interpolation. Callers (session manager, lifecycle manager, CLI, web API, config post-processor, workspace hooks) are refactored to obtain prompts through the loader instead of from inline string literals.
+**Architecture:** A new `PromptLoader` class in `packages/core/src/prompts/` reads YAML templates from a lookup chain and performs declared-only variable interpolation. The lookup root depends on the call site: session-scoped prompts (`base-agent`, `orchestrator`) use `project.path`; config-scoped prompts (`reactions`, `ci-failure`) use the directory containing `agent-orchestrator.yaml`; workspace-hook prompts (`agent-workspace`) use the managed workspace path plus an optional explicit `promptsDir` threaded into the hook. Callers (session manager, lifecycle manager, CLI, web API, config post-processor, workspace hooks) are refactored to obtain prompts through the loader instead of from inline string literals.
 
 **Tech Stack:** TypeScript 5.7 (ESM, `Node16` module resolution), Zod 3 (schema validation), `yaml` 2.7 (already a core dep, synchronous `parse`), Vitest (tests), fs sync APIs (`readFileSync`), `fileURLToPath(import.meta.url)` for ESM-safe path resolution.
 
@@ -14,8 +14,8 @@
 
 ## Pre-flight
 
-- **Branch:** `feat/llm-prompt-templates` (already exists, branched from `main` at `f7ef5360`)
-- **Working directory:** `/Users/vitor/LocalProjects/agent-orchestrator`
+- **Authoring target:** The feature described here is `llm-prompt-templates`. Execute the plan from whatever checkout currently contains these files; do not assume a specific branch name or non-worktree path.
+- **Working directory:** repo root of the active checkout (for this worktree: `/Users/vitor/LocalProjects/agent-orchestrator/.worktrees/adversarial-validation`)
 - **Build command:** `pnpm build` (root) or `pnpm --filter @aoagents/ao-core build` (core only)
 - **Test commands:**
   - Core only: `pnpm --filter @aoagents/ao-core test`
@@ -23,6 +23,13 @@
 - **Typecheck:** `pnpm typecheck`
 - **Node version:** 20+
 - **Known constraint:** `@aoagents/ao-core` is ESM (`"type": "module"`) — use `import.meta.url`, NOT `__dirname`
+
+## Override Semantics
+
+- `base-agent.yaml` and `orchestrator.yaml` are **project-scoped**. Lookup root is the project repo path: `promptsDir` if set, else `<project.path>/.agent-orchestrator/prompts/`, else bundled defaults.
+- `reactions.yaml` and `ci-failure.yaml` are **config-scoped**. They are loaded before or outside any single project session, so lookup root is the directory containing `agent-orchestrator.yaml`: `promptsDir` if set, else `<configDir>/.agent-orchestrator/prompts/`, else bundled defaults.
+- `agent-workspace.yaml` is **workspace-scoped**. It should honor the same explicit `promptsDir` as other templates when available; otherwise it falls back to `<workspacePath>/.agent-orchestrator/prompts/`, then bundled defaults.
+- This plan intentionally does **not** claim per-project overrides for `reactions.yaml` or `ci-failure.yaml`. The current config model applies those defaults globally, so pretending they are project-local would be incorrect.
 
 ## File Structure
 
@@ -53,17 +60,21 @@ agent-orchestrator.yaml.example          # NOT new — documents new promptsDir 
 |------|---------------|------|
 | `packages/core/package.json` | Add postbuild asset copy step | Task 1 |
 | `packages/core/src/types.ts` | Re-export `PromptLoader` type + add `promptsDir` to `OrchestratorConfig` | Task 3 |
-| `packages/core/src/config.ts` | Add `promptsDir` to Zod schema; thread loader into `applyDefaultReactions` | Task 7 |
+| `packages/core/src/config.ts` | Add `promptsDir` to Zod schema; thread config-scoped loader into `applyDefaultReactions` | Task 7 |
 | `packages/core/src/prompt-builder.ts` | Delete `BASE_AGENT_PROMPT`; `buildPrompt` takes `loader` via config | Task 4 |
 | `packages/core/src/orchestrator-prompt.ts` | Delegate to loader; pre-format optional sections as scalars | Task 5 |
 | `packages/core/src/lifecycle-manager.ts` | `formatCIFailureMessage` uses loader; `LifecycleManagerDeps` gains `promptLoader` | Task 6 |
-| `packages/core/src/agent-workspace-hooks.ts` | Replace `AO_AGENTS_MD_SECTION` constant with module-level lazy loader | Task 8 |
+| `packages/core/src/agent-workspace-hooks.ts` | Replace `AO_AGENTS_MD_SECTION` constant with loader-backed helper that accepts optional `promptsDir` | Task 8 |
 | `packages/core/src/session-manager.ts` | `SessionManagerDeps` accepts `promptLoaderFactory`; thread into spawn path | Task 9 |
 | `packages/core/src/index.ts` | Export `PromptLoader` and related types | Task 3 |
 | `packages/cli/src/commands/start.ts` | Pass loader to `generateOrchestratorPrompt` | Task 5 |
 | `packages/web/src/app/api/orchestrators/route.ts` | Pass loader to `generateOrchestratorPrompt` | Task 5 |
 | `packages/cli/src/lib/create-session-manager.ts` | Pass prompt loader factory when creating session manager | Task 9 |
 | `packages/web/src/lib/services.ts` | Same — pass factory | Task 9 |
+| `packages/plugins/agent-codex/src/index.ts` | Pass optional `promptsDir` into workspace hook setup | Task 8 |
+| `packages/plugins/agent-aider/src/index.ts` | Pass optional `promptsDir` into workspace hook setup | Task 8 |
+| `packages/plugins/agent-opencode/src/index.ts` | Pass optional `promptsDir` into workspace hook setup | Task 8 |
+| `packages/plugins/agent-cursor/src/index.ts` | Pass optional `promptsDir` into workspace hook setup | Task 8 |
 | `packages/core/src/__tests__/prompt-builder.test.ts` | Update for new signature; add golden snapshot | Task 4 |
 | `packages/core/src/__tests__/orchestrator-prompt.test.ts` | Update for new signature; add 8-fixture cartesian | Task 5 |
 | `packages/core/src/__tests__/config.test.ts` (if exists) | Verify reaction default messages still apply | Task 7 |
@@ -80,8 +91,8 @@ agent-orchestrator.yaml.example          # NOT new — documents new promptsDir 
 | 4 | Extract `BASE_AGENT_PROMPT` → `base-agent.yaml` + refactor `buildPrompt` | 2, 3, 0 |
 | 5 | Extract orchestrator prompt → `orchestrator.yaml` + refactor `generateOrchestratorPrompt` + update 2 callers | 2, 3, 0 |
 | 6 | Extract CI failure formatter → `ci-failure.yaml` + wire into `lifecycle-manager.ts` | 2, 3 |
-| 7 | Extract 6 reaction messages → `reactions.yaml` + refactor `applyDefaultReactions` | 2, 3 |
-| 8 | Extract `.ao/AGENTS.md` blurb → `agent-workspace.yaml` + module-level loader | 2 |
+| 7 | Extract 6 reaction messages → `reactions.yaml` + refactor `applyDefaultReactions` with config-scoped lookup | 2, 3 |
+| 8 | Extract `.ao/AGENTS.md` blurb → `agent-workspace.yaml` + loader-backed workspace hook with optional `promptsDir` | 2, 3 |
 | 9 | Thread PromptLoader through `SessionManagerDeps` and call sites | 4, 5, 6, 7 |
 | 10 | Document `promptsDir` in `agent-orchestrator.yaml.example` | 3 |
 | 11 | Full typecheck + full test suite + integration smoke | 9, 10 |
@@ -1360,7 +1371,7 @@ git commit -m "refactor(core): extract CI failure message template"
 
 ---
 
-## Task 7: Extract reaction messages → `reactions.yaml`
+## Task 7: Extract reaction messages → `reactions.yaml` with config-scoped lookup
 
 **Files:**
 - Create: `packages/core/src/prompts/templates/reactions.yaml`
@@ -1436,17 +1447,25 @@ Replace each `message: "..."` string literal in the 6 message-carrying entries w
 
 The other 5 entries (`agent-stuck`, `agent-needs-input`, `agent-exited`, `all-complete`, and any non-message fields) are unchanged.
 
-Update the caller of `applyDefaultReactions` (search for it — likely `loadConfig` or `parseConfig` in the same file) to construct a loader and pass it:
+Update the caller of `applyDefaultReactions` (search for it — likely `validateConfig` in the same file) to construct a config-scoped loader and pass it:
 
 ```ts
 const promptLoader = new PromptLoader({
-  projectDir: /* the dir containing agent-orchestrator.yaml */,
+  projectDir: /* dirname(configFilePath) */,
   promptsDir: config.promptsDir,
 });
 return applyDefaultReactions(config, promptLoader);
 ```
 
-**Decision on `projectDir` for the config-scoped loader:** the orchestrator config is loaded from a specific file path (e.g., `/Users/vitor/project/agent-orchestrator.yaml`). Use `dirname(configFilePath)` as the `projectDir`. This is NOT per-project in the multi-project sense — it is the directory containing the config file. That IS where a user would put `.agent-orchestrator/prompts/` to override the reaction defaults.
+**Decision on `projectDir` for the config-scoped loader:** the orchestrator config is loaded from a specific file path (e.g., `/Users/vitor/project/agent-orchestrator.yaml`). Use `dirname(configFilePath)` as the lookup root. This is intentionally **config-scoped, not per-project**. In the current schema, `config.reactions` is global across all projects, so a project-local lookup here would be ambiguous and wrong.
+
+**Implementation note:** if `validateConfig(raw)` does not currently know the config file path, widen the API so the loader-construction point does. The minimal safe change is:
+
+```ts
+export function validateConfig(raw: unknown, options?: { configPath?: string }): OrchestratorConfig
+```
+
+Then thread `{ configPath: path }` from `loadConfig()` and `loadConfigWithPath()`.
 
 - [ ] **Step 7.3: Update tests**
 
@@ -1477,11 +1496,15 @@ git commit -m "refactor(core): extract default reaction messages into reactions.
 
 ---
 
-## Task 8: Extract `.ao/AGENTS.md` blurb → `agent-workspace.yaml` + module-level loader
+## Task 8: Extract `.ao/AGENTS.md` blurb → `agent-workspace.yaml` + loader-backed workspace hook
 
 **Files:**
 - Create: `packages/core/src/prompts/templates/agent-workspace.yaml`
 - Modify: `packages/core/src/agent-workspace-hooks.ts`
+- Modify: `packages/plugins/agent-codex/src/index.ts`
+- Modify: `packages/plugins/agent-aider/src/index.ts`
+- Modify: `packages/plugins/agent-opencode/src/index.ts`
+- Modify: `packages/plugins/agent-cursor/src/index.ts`
 
 - [ ] **Step 8.1: Create the YAML template**
 
@@ -1511,7 +1534,7 @@ Note the `|2` indicator: this preserves the leading blank line that the current 
 
 Use the Read tool on `packages/core/src/agent-workspace-hooks.ts:267-278` and confirm the literal newlines.
 
-- [ ] **Step 8.2: Replace `AO_AGENTS_MD_SECTION` with a lazy module-level loader**
+- [ ] **Step 8.2: Replace `AO_AGENTS_MD_SECTION` with a loader-backed helper**
 
 In `packages/core/src/agent-workspace-hooks.ts`:
 
@@ -1520,22 +1543,31 @@ In `packages/core/src/agent-workspace-hooks.ts`:
    ```ts
    import { PromptLoader } from "./prompts/loader.js";
 
-   let cachedAgentWorkspaceSection: string | null = null;
+   interface WorkspacePromptOptions {
+     promptsDir?: string;
+   }
 
-   function getAgentWorkspaceSection(workspacePath: string): string {
-     if (cachedAgentWorkspaceSection !== null) return cachedAgentWorkspaceSection;
-     // projectDir is the workspace path — this allows a user to drop a
-     // .agent-orchestrator/prompts/agent-workspace.yaml into their workspace
-     // root to override the default. promptsDir is intentionally omitted;
-     // this code path doesn't have a config object in scope.
-     const loader = new PromptLoader({ projectDir: workspacePath });
-     cachedAgentWorkspaceSection = loader.render("agent-workspace", {});
-     return cachedAgentWorkspaceSection;
+   function getAgentWorkspaceSection(
+     workspacePath: string,
+     options?: WorkspacePromptOptions,
+   ): string {
+     const loader = new PromptLoader({
+       projectDir: workspacePath,
+       promptsDir: options?.promptsDir,
+     });
+     return loader.render("agent-workspace", {});
    }
    ```
-3. Replace every reference to `AO_AGENTS_MD_SECTION` in this file with `getAgentWorkspaceSection(workspacePath)` where `workspacePath` is in scope (which it should be, since this is a hook that runs per-workspace).
+3. Update `setupPathWrapperWorkspace` to accept the same optional options bag:
+   ```ts
+   export async function setupPathWrapperWorkspace(
+     workspacePath: string,
+     options?: WorkspacePromptOptions,
+   ): Promise<void>
+   ```
+4. Replace every reference to `AO_AGENTS_MD_SECTION` in this file with `getAgentWorkspaceSection(workspacePath, options)`.
 
-**Cache note:** the module-level cache means different workspaces will see the same content after the first call. Since `agent-workspace.yaml` has no variables and the bundled default is always the same, this is correct as long as no workspace has a different project-local override. This is an acceptable trade-off (documented in the spec).
+**Decision:** do **not** use a module-level string cache here. `agent-workspace.yaml` can legitimately vary by explicit `promptsDir` or workspace-local override, so a global cache would cause cross-workspace leakage.
 
 - [ ] **Step 8.3: Grep for remaining references**
 
@@ -1543,7 +1575,19 @@ In `packages/core/src/agent-workspace-hooks.ts`:
 ```
 Use the Grep tool for `AO_AGENTS_MD_SECTION` across all files — expect 0 matches after the refactor.
 
-- [ ] **Step 8.4: Build and test**
+- [ ] **Step 8.4: Update PATH-wrapper agent plugins to pass `promptsDir` when available**
+
+For each plugin that calls `setupPathWrapperWorkspace(...)`, thread the global `config.promptsDir` if it is available in that call path. Use the optional second arg so existing call sites without config remain valid:
+
+```ts
+await setupPathWrapperWorkspace(workspacePath, {
+  promptsDir: session.config?.promptsDir ?? config?.promptsDir,
+});
+```
+
+If a particular call site does not have the orchestrator config in scope, leave it using the one-arg form and note that it will still honor workspace-local overrides.
+
+- [ ] **Step 8.5: Build and test**
 
 ```bash
 pnpm --filter @aoagents/ao-core build
@@ -1552,11 +1596,15 @@ pnpm --filter @aoagents/ao-core test
 
 Expected: all green. Any existing test of `agent-workspace-hooks` that referenced `AO_AGENTS_MD_SECTION` should now call `getAgentWorkspaceSection(...)` or check the on-disk `AGENTS.md` contents.
 
-- [ ] **Step 8.5: Commit**
+- [ ] **Step 8.6: Commit**
 
 ```bash
 git add packages/core/src/prompts/templates/agent-workspace.yaml \
-        packages/core/src/agent-workspace-hooks.ts
+        packages/core/src/agent-workspace-hooks.ts \
+        packages/plugins/agent-codex/src/index.ts \
+        packages/plugins/agent-aider/src/index.ts \
+        packages/plugins/agent-opencode/src/index.ts \
+        packages/plugins/agent-cursor/src/index.ts
 git commit -m "refactor(core): extract .ao/AGENTS.md blurb into agent-workspace.yaml"
 ```
 
@@ -1626,7 +1674,7 @@ const composedPrompt = buildPrompt({
 
 Find where `createLifecycleManager` is called from inside `createSessionManager` (or wherever it is wired up — typically in the session manager's own constructor or in the CLI/web bootstrap). Pass `promptLoader: getPromptLoader(/* first project path */)` or, preferably, construct a dedicated loader for the lifecycle manager.
 
-**Trade-off note:** the lifecycle manager spans multiple projects, so a single `promptLoader` in its deps is not ideal. Simplest correct approach: for `ci-failure` (the one template it loads), project-local overrides via the config-scoped loader are sufficient. Construct the lifecycle manager's loader from the config directory (same pattern as Task 7 for `applyDefaultReactions`). The `ci-failure` template has no per-project semantics.
+**Decision:** the lifecycle manager spans multiple projects, so do not pretend `ci-failure.yaml` is project-local. Treat it as config-scoped, just like Task 7. Construct the lifecycle manager's loader from the config directory. The `ci-failure` template formats one global reaction message shape and has no project-specific interpolation needs beyond data passed at render time.
 
 If the lifecycle manager construction site doesn't have a `projectDir` handy, use the config file directory:
 
@@ -1683,11 +1731,15 @@ Edit `agent-orchestrator.yaml.example`. Find an appropriate top-level section (n
 # Optional: directory to search for prompt template overrides.
 #
 # The PromptLoader looks up templates in this order (first hit wins):
-#   1. <promptsDir>/<name>.yaml                                  (this key, if set)
-#   2. <projectDir>/.agent-orchestrator/prompts/<name>.yaml      (convention)
+#   1. <promptsDir>/<name>.yaml                             (this key, if set)
+#   2. Scope-local .agent-orchestrator/prompts/<name>.yaml
 #   3. Bundled defaults shipped with @aoagents/ao-core
 #
-# Paths are absolute or relative to the directory containing this config file.
+# promptsDir is absolute or relative to the directory containing this config file.
+# Scope-local means:
+#   - project repo root for: base-agent, orchestrator
+#   - config file directory for: reactions, ci-failure
+#   - managed workspace root for: agent-workspace
 # Templates available: base-agent, orchestrator, reactions, ci-failure, agent-workspace.
 # promptsDir: ./my-custom-prompts
 ```

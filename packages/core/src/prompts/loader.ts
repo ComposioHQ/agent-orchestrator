@@ -68,7 +68,10 @@ export interface PromptLoaderOptions {
 // =============================================================================
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
-const BUNDLED_TEMPLATES_DIR = join(MODULE_DIR, "templates");
+const BUNDLED_TEMPLATES_DIRS = [
+  join(MODULE_DIR, "templates"),
+  resolve(MODULE_DIR, "../../src/prompts/templates"),
+];
 
 // =============================================================================
 // Loader
@@ -137,7 +140,9 @@ export class PromptLoader {
     candidates.push(
       join(this.projectDir, ".agent-orchestrator", "prompts", `${name}.yaml`),
     );
-    candidates.push(join(BUNDLED_TEMPLATES_DIR, `${name}.yaml`));
+    for (const bundledDir of BUNDLED_TEMPLATES_DIRS) {
+      candidates.push(join(bundledDir, `${name}.yaml`));
+    }
 
     let sourcePath: string | undefined;
     for (const path of candidates) {
