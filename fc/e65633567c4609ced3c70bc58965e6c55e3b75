@@ -1,0 +1,37 @@
+packages/cli/__tests__/commands/update.test.ts
+  fe86f0b8794a6d4a 4-7,16-46,60,62,72-74,76-78,82-83,98-174,176
+packages/cli/__tests__/lib/update-check.test.ts
+  fe86f0b8794a6d4a 1-387
+packages/cli/src/commands/update.ts
+  fe86f0b8794a6d4a 1,3,5-12,14,19-30,32-91,93-139,141-160
+packages/cli/src/lib/update-check.ts
+  fe86f0b8794a6d4a 1-279
+packages/cli/src/commands/doctor.ts
+  fe86f0b8794a6d4a 19,382-416,444-447,461
+packages/cli/__tests__/commands/doctor.test.ts
+  fe86f0b8794a6d4a 12-13,26-27,53-57,148-152,275-317
+packages/cli/src/index.ts
+  fe86f0b8794a6d4a 3-6,8,10-12
+packages/cli/__tests__/index.test.ts
+  fe86f0b8794a6d4a 9-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "fce65633567c4609ced3c70bc58965e6c55e3b75",
+  "prompts": {
+    "fe86f0b8794a6d4a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02fdcf41-8be9-41c4-a512-5262e8209203",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1076,
+      "total_deletions": 45,
+      "accepted_lines": 1056,
+      "overriden_lines": 0
+    }
+  }
+}
