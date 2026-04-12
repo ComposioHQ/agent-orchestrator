@@ -114,7 +114,11 @@ export function PRTableRow({ pr, muted = false }: PRTableRowProps) {
           #{pr.number}
         </a>
       </td>
-      <td className="max-w-[420px] truncate px-3 py-2.5 text-sm font-medium">{pr.title}</td>
+      <td className="max-w-[420px] truncate px-3 py-2.5 text-sm font-medium">
+        <a href={pr.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+          {pr.title}
+        </a>
+      </td>
       <td className="px-3 py-2.5 text-sm">
         {unenriched ? shimmer : rateLimited ? (
           <span className="text-[var(--color-text-tertiary)]">—</span>
