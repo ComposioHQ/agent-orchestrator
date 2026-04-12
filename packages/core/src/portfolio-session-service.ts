@@ -46,7 +46,7 @@ export async function listPortfolioSessions(
 
 async function loadProjectSessions(project: PortfolioProject): Promise<PortfolioSession[]> {
   const results: PortfolioSession[] = [];
-  const sessionsDir = getSessionsDir(project.configPath, project.repoPath);
+  const sessionsDir = getSessionsDir(project.configPath, project.repoPath, project.storageKey);
 
   let entries: string[];
   try {
@@ -150,7 +150,7 @@ export async function getPortfolioSessionCounts(portfolio: PortfolioProject[]): 
     }
 
     try {
-      const sessionsDir = getSessionsDir(project.configPath, project.repoPath);
+      const sessionsDir = getSessionsDir(project.configPath, project.repoPath, project.storageKey);
       let entries: string[];
       try {
         entries = await readdir(sessionsDir);

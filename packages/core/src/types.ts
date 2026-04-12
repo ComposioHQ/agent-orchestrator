@@ -1216,6 +1216,9 @@ export interface ProjectConfig {
   /** Local path to the repo */
   path: string;
 
+  /** Persisted storage hash — stable across directory moves */
+  storageKey?: string;
+
   /** Default branch (main, master, next, develop, etc.) */
   defaultBranch: string;
 
@@ -1636,6 +1639,7 @@ export interface PortfolioProject {
   configPath: string;                  // Absolute path to agent-orchestrator.yaml
   configProjectKey: string;            // Key in config.projects map
   repoPath: string;                    // Absolute local filesystem path
+  storageKey?: string;                 // Persisted storage hash — stable across directory moves
   repo?: string;                       // "owner/repo" for SCM
   defaultBranch?: string;
   sessionPrefix: string;

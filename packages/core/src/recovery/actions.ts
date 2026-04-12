@@ -39,7 +39,7 @@ export async function recoverSession(
     const preservedStatus = validateStatus(rawMetadata["status"]);
 
     const project = config.projects[projectId];
-    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    const sessionsDir = getSessionsDir(config.configPath, project.path, project.storageKey);
 
     if (recoveryCount > context.recoveryConfig.maxRecoveryAttempts) {
       updateMetadata(sessionsDir, sessionId, {
@@ -135,7 +135,7 @@ export async function cleanupSession(
       }
     }
 
-    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    const sessionsDir = getSessionsDir(config.configPath, project.path, project.storageKey);
 
     updateMetadata(sessionsDir, sessionId, {
       status: "terminated",
@@ -180,7 +180,7 @@ export async function escalateSession(
 
   try {
     const project = config.projects[projectId];
-    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    const sessionsDir = getSessionsDir(config.configPath, project.path, project.storageKey);
 
     updateMetadata(sessionsDir, sessionId, {
       status: "stuck",

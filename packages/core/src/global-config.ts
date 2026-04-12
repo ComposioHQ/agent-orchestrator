@@ -33,13 +33,14 @@ import { homedir } from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 import { atomicWriteFileSync } from "./atomic-write.js";
+import { generateProjectHash } from "./paths.js";
 
 // =============================================================================
 // CONSTANTS
 // =============================================================================
 
 /** Identity fields owned by the global registry — never overwritten by shadow. */
-const IDENTITY_FIELDS = new Set(["name", "path", "sessionPrefix"]);
+const IDENTITY_FIELDS = new Set(["name", "path", "sessionPrefix", "storageKey"]);
 
 /** Internal fields prefixed with underscore (e.g. _shadowSyncedAt). */
 const INTERNAL_FIELD_PREFIX = "_";
@@ -92,6 +93,8 @@ export const GlobalProjectEntrySchema = z
     name: z.string().optional(),
     /** Absolute path to the project root (identity). */
     path: z.string(),
+    /** Persisted storage hash — assigned once at registration, never recomputed. */
+    storageKey: z.string().optional(),
     /** Unix timestamp of last successful shadow sync from local config. */
     _shadowSyncedAt: z.number().optional(),
   })
@@ -377,11 +380,17 @@ export function registerProjectInGlobalConfig(
     | (GlobalProjectEntry & Record<string, unknown>)
     | undefined;
 
-  // Preserve existing shadow behavior fields; update identity
+  // Preserve existing shadow behavior fields; update identity.
+  // storageKey is assigned once at registration and never recomputed —
+  // this decouples storage identity from the current filesystem path.
+  const storageKey =
+    (existing?.storageKey as string | undefined) ?? generateProjectHash(projectPath);
+
   globalConfig.projects[projectId] = {
     ...(existing ?? {}),
     name,
     path: projectPath,
+    storageKey,
   };
 
   saveGlobalConfig(globalConfig, configPath);
@@ -410,7 +419,8 @@ export function registerProjectInGlobalConfig(
 export function buildEffectiveProjectConfig(
   projectId: string,
   globalConfig: GlobalConfig,
-): (Record<string, unknown> & { name: string; path: string }) | null {
+  globalConfigPath?: string,
+): (Record<string, unknown> & { name: string; path: string; storageKey: string }) | null {
   const entry = globalConfig.projects[projectId] as
     | (GlobalProjectEntry & Record<string, unknown>)
     | undefined;
@@ -419,18 +429,35 @@ export function buildEffectiveProjectConfig(
   const projectPath = entry.path as string;
   const name = (entry.name as string | undefined) ?? projectId;
 
+  // Lazy migration: persist storageKey for projects registered before this feature.
+  // The computed value is identical to what was being derived dynamically, so
+  // existing storage directories remain valid.
+  let storageKey = entry.storageKey as string | undefined;
+  if (!storageKey) {
+    storageKey = generateProjectHash(projectPath);
+    entry.storageKey = storageKey;
+    try {
+      const configPath = globalConfigPath ?? getGlobalConfigPath();
+      saveGlobalConfig(globalConfig, configPath);
+    } catch {
+      // Non-fatal: storageKey will be retried on next load
+    }
+  }
+
   const localConfig = loadLocalProjectConfig(projectPath);
 
   if (localConfig) {
     // In-project mode: global identity + local behavior (override shadow)
-    const { name: _name, path: _path, _shadowSyncedAt: _ts, ...shadowBehavior } = entry;
+    const { name: _name, path: _path, storageKey: _sk, _shadowSyncedAt: _ts, ...shadowBehavior } = entry;
     void _name;
     void _path;
+    void _sk;
     void _ts;
 
     return {
       name,
       path: projectPath,
+      storageKey,
       ...shadowBehavior,
       ...(localConfig as Record<string, unknown>),
     };
@@ -443,6 +470,7 @@ export function buildEffectiveProjectConfig(
     ...rest,
     name,
     path: projectPath,
+    storageKey,
   };
 }
 

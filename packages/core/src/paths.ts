@@ -76,8 +76,8 @@ export function generateProjectId(projectPath: string): string {
  * produce a different (wrong) hash.  Keying on projectPath keeps existing
  * session directories reachable.
  */
-export function generateInstanceId(_configPath: string, projectPath: string): string {
-  const hash = generateProjectHash(projectPath);
+export function generateInstanceId(_configPath: string, projectPath: string, storageKey?: string): string {
+  const hash = storageKey ?? generateProjectHash(projectPath);
   const projectId = generateProjectId(projectPath);
   return `${hash}-${projectId}`;
 }
@@ -120,8 +120,8 @@ export function generateSessionPrefix(projectId: string): string {
  * Get the project base directory for a given config and project.
  * Format: ~/.agent-orchestrator/{hash}-{projectId}
  */
-export function getProjectBaseDir(configPath: string, projectPath: string): string {
-  const instanceId = generateInstanceId(configPath, projectPath);
+export function getProjectBaseDir(configPath: string, projectPath: string, storageKey?: string): string {
+  const instanceId = generateInstanceId(configPath, projectPath, storageKey);
   return join(expandHome("~/.agent-orchestrator"), instanceId);
 }
 
@@ -138,40 +138,40 @@ export function getObservabilityBaseDir(configPath: string): string {
  * Get the sessions directory for a project.
  * Format: ~/.agent-orchestrator/{hash}-{projectId}/sessions
  */
-export function getSessionsDir(configPath: string, projectPath: string): string {
-  return join(getProjectBaseDir(configPath, projectPath), "sessions");
+export function getSessionsDir(configPath: string, projectPath: string, storageKey?: string): string {
+  return join(getProjectBaseDir(configPath, projectPath, storageKey), "sessions");
 }
 
 /**
  * Get the worktrees directory for a project.
  * Format: ~/.agent-orchestrator/{hash}-{projectId}/worktrees
  */
-export function getWorktreesDir(configPath: string, projectPath: string): string {
-  return join(getProjectBaseDir(configPath, projectPath), "worktrees");
+export function getWorktreesDir(configPath: string, projectPath: string, storageKey?: string): string {
+  return join(getProjectBaseDir(configPath, projectPath, storageKey), "worktrees");
 }
 
 /**
  * Get the feedback reports directory for a project.
  * Format: ~/.agent-orchestrator/{hash}-{projectId}/feedback-reports
  */
-export function getFeedbackReportsDir(configPath: string, projectPath: string): string {
-  return join(getProjectBaseDir(configPath, projectPath), "feedback-reports");
+export function getFeedbackReportsDir(configPath: string, projectPath: string, storageKey?: string): string {
+  return join(getProjectBaseDir(configPath, projectPath, storageKey), "feedback-reports");
 }
 
 /**
  * Get the archive directory for a project.
  * Format: ~/.agent-orchestrator/{hash}-{projectId}/archive
  */
-export function getArchiveDir(configPath: string, projectPath: string): string {
-  return join(getSessionsDir(configPath, projectPath), "archive");
+export function getArchiveDir(configPath: string, projectPath: string, storageKey?: string): string {
+  return join(getSessionsDir(configPath, projectPath, storageKey), "archive");
 }
 
 /**
  * Get the .origin file path for a project.
  * This file stores the config path for collision detection.
  */
-export function getOriginFilePath(configPath: string, projectPath: string): string {
-  return join(getProjectBaseDir(configPath, projectPath), ".origin");
+export function getOriginFilePath(configPath: string, projectPath: string, storageKey?: string): string {
+  return join(getProjectBaseDir(configPath, projectPath, storageKey), ".origin");
 }
 
 /**
@@ -195,8 +195,8 @@ export function generateSessionName(prefix: string, num: number): string {
  * generateConfigHash would hash ~/.agent-orchestrator/ — a completely
  * different value, breaking the mapping between session dirs and tmux names.
  */
-export function generateTmuxName(projectPath: string, prefix: string, num: number): string {
-  const hash = generateProjectHash(projectPath);
+export function generateTmuxName(projectPath: string, prefix: string, num: number, storageKey?: string): string {
+  const hash = storageKey ?? generateProjectHash(projectPath);
   return `${hash}-${prefix}-${num}`;
 }
 
@@ -258,8 +258,8 @@ export function getRegisteredPath(): string {
  * chars (1 in 2^48) is astronomically unlikely and not worth blocking a
  * legitimate config migration.
  */
-export function validateAndStoreOrigin(configPath: string, projectPath: string): void {
-  const originPath = getOriginFilePath(configPath, projectPath);
+export function validateAndStoreOrigin(configPath: string, projectPath: string, storageKey?: string): void {
+  const originPath = getOriginFilePath(configPath, projectPath, storageKey);
   let resolvedConfigPath: string;
   try {
     resolvedConfigPath = realpathSync(configPath);
@@ -275,7 +275,7 @@ export function validateAndStoreOrigin(configPath: string, projectPath: string):
     }
   } else {
     // Create project base directory and .origin file
-    const baseDir = getProjectBaseDir(configPath, projectPath);
+    const baseDir = getProjectBaseDir(configPath, projectPath, storageKey);
     mkdirSync(baseDir, { recursive: true });
     writeFileSync(originPath, resolvedConfigPath, "utf-8");
   }

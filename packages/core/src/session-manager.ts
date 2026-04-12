@@ -279,7 +279,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
    * Get the sessions directory for a project.
    */
   function getProjectSessionsDir(project: ProjectConfig): string {
-    return getSessionsDir(config.configPath, project.path);
+    return getSessionsDir(config.configPath, project.path, project.storageKey);
   }
 
   function normalizePath(path: string): string {
@@ -293,7 +293,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   function getManagedWorkspaceRoots(project: ProjectConfig, projectId?: string): string[] {
-    const roots = [getWorktreesDir(config.configPath, project.path)];
+    const roots = [getWorktreesDir(config.configPath, project.path, project.storageKey)];
     const legacyIds = new Set<string>();
     if (projectId) {
       legacyIds.add(projectId);
@@ -667,7 +667,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     for (let attempts = 0; attempts < 10_000; attempts++) {
       const sessionId = `${project.sessionPrefix}-${num}`;
       const tmuxName = project.path
-        ? generateTmuxName(project.path, project.sessionPrefix, num)
+        ? generateTmuxName(project.path, project.sessionPrefix, num, project.storageKey)
         : undefined;
 
       if (!usedNumbers.has(num) && reserveSessionId(sessionsDir, sessionId)) {
@@ -729,7 +729,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (!usedNumbers.has(num)) {
         const sessionId = `${orchestratorPrefix}-${num}`;
         const tmuxName = config.configPath
-          ? generateTmuxName(config.configPath, orchestratorPrefix, num)
+          ? generateTmuxName(project.path ?? config.configPath, orchestratorPrefix, num, project.storageKey)
           : undefined;
         if (reserveSessionId(sessionsDir, sessionId)) {
           return { num, sessionId, tmuxName };
@@ -986,7 +986,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // Validate and store .origin file (new architecture only)
     if (config.configPath) {
-      validateAndStoreOrigin(config.configPath, project.path);
+      validateAndStoreOrigin(config.configPath, project.path, project.storageKey);
     }
 
     // Determine session ID — atomically reserve to prevent concurrent collisions
@@ -1300,7 +1300,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // Validate and store .origin file before reserving any identity so that
     // a validation failure does not leave an orphaned metadata entry.
     if (config.configPath) {
-      validateAndStoreOrigin(config.configPath, project.path);
+      validateAndStoreOrigin(config.configPath, project.path, project.storageKey);
     }
 
     // Reserve a new unique orchestrator identity (e.g. {prefix}-orchestrator-1, -2, …).
@@ -1380,7 +1380,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     let systemPromptFile: string | undefined;
     if (orchestratorConfig.systemPrompt) {
       try {
-        const baseDir = getProjectBaseDir(config.configPath, project.path);
+        const baseDir = getProjectBaseDir(config.configPath, project.path, project.storageKey);
         mkdirSync(baseDir, { recursive: true });
         systemPromptFile = join(baseDir, `orchestrator-prompt-${sessionId}.md`);
         writeFileSync(systemPromptFile, orchestratorConfig.systemPrompt, "utf-8");

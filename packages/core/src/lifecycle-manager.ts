@@ -482,7 +482,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           // Persist PR URL so subsequent polls don't need to re-query.
           // Don't write status here — step 4 below will determine the
           // correct status (merged, ci_failed, etc.) on this same cycle.
-          const sessionsDir = getSessionsDir(config.configPath, project.path);
+          const sessionsDir = getSessionsDir(config.configPath, project.path, project.storageKey);
           updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
         }
       } catch {
@@ -697,7 +697,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project) return;
 
-    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    const sessionsDir = getSessionsDir(config.configPath, project.path, project.storageKey);
     updateMetadata(sessionsDir, session.id, updates);
 
     const cleaned = Object.fromEntries(

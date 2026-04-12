@@ -236,6 +236,7 @@ function projectFromGlobalConfig(): PortfolioProject[] {
     configPath: globalConfigPath,
     configProjectKey: id,
     repoPath: entry.path,
+    storageKey: typeof entry.storageKey === "string" ? entry.storageKey : undefined,
     repo: typeof entry.repo === "string" ? entry.repo : undefined,
     defaultBranch: typeof entry.defaultBranch === "string" ? entry.defaultBranch : undefined,
     sessionPrefix:
@@ -258,6 +259,7 @@ function fallbackPortfolioFromLoadedConfig(): PortfolioProject[] {
       configPath: config.configPath,
       configProjectKey: id,
       repoPath: project.path,
+      storageKey: project.storageKey,
       repo: project.repo,
       defaultBranch: project.defaultBranch,
       sessionPrefix: project.sessionPrefix ?? generateSessionPrefix(id),
