@@ -1412,6 +1412,17 @@ export interface SessionManager {
   ): Promise<CleanupResult>;
   send(sessionId: SessionId, message: string): Promise<void>;
   claimPR(sessionId: SessionId, prRef: string, options?: ClaimPROptions): Promise<ClaimPRResult>;
+  swapAgent(
+    sessionId: SessionId,
+    projectId: string,
+    nextAgent: string,
+    opts: {
+      resume: boolean;
+      phasePrompt: string;
+      newStatus: SessionStatus;
+      metadataUpdates: Record<string, string | undefined>;
+    },
+  ): Promise<void>;
 }
 
 /** OpenCode-specific session manager with remap capability */

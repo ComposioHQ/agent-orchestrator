@@ -11,7 +11,7 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
+import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync, unlinkSync, renameSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -53,7 +53,8 @@ import {
   listMetadata,
   reserveSessionId,
 } from "./metadata.js";
-import { buildPrompt } from "./prompt-builder.js";
+import { buildPrompt, buildPhasePrompt } from "./prompt-builder.js";
+import type { SessionStatus } from "./types.js";
 import {
   getSessionsDir,
   getWorktreesDir,
@@ -1077,7 +1078,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    const composedPrompt = buildPrompt({
+    let composedPrompt = buildPrompt({
       loader: getPromptLoader(project.path),
       project,
       projectId: spawnConfig.projectId,
@@ -1085,6 +1086,28 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       issueContext,
       userPrompt: spawnConfig.prompt,
     });
+
+    // Adversarial validation: start in planning if enabled
+    const adversarial = project.adversarialReview;
+    const isAdversarial = adversarial?.enabled === true && adversarial.plan?.enabled !== false;
+    const initialStatus: SessionStatus = isAdversarial ? "planning" : "spawning";
+
+    if (isAdversarial && adversarial) {
+      const phasePrompt = buildPhasePrompt({
+        phase: "planning",
+        round: 0,
+        maxRounds: adversarial.plan?.maxRounds ?? 2,
+      });
+      composedPrompt = composedPrompt + "\n\n" + phasePrompt;
+
+      // Create adversarial directory
+      const adversarialDir = join(workspacePath, ".ao", "adversarial");
+      mkdirSync(adversarialDir, { recursive: true });
+      writeFileSync(
+        join(adversarialDir, "round.json"),
+        JSON.stringify({ phase: "planning", round: 0, updatedAt: new Date().toISOString() }),
+      );
+    }
 
     // Get agent launch config and create runtime — clean up workspace on failure
     const opencodeIssueSessionStrategy = project.opencodeIssueSessionStrategy ?? "reuse";
@@ -1158,7 +1181,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const session: Session = {
       id: sessionId,
       projectId: spawnConfig.projectId,
-      status: "spawning",
+      status: initialStatus,
       activity: "active",
       branch,
       issueId: spawnConfig.issueId ?? null,
@@ -1178,7 +1201,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       writeMetadata(sessionsDir, sessionId, {
         worktree: workspacePath,
         branch,
-        status: "spawning",
+        status: initialStatus,
         tmuxName, // Store tmux name for mapping
         issue: spawnConfig.issueId,
         project: spawnConfig.projectId,
@@ -1187,6 +1210,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusedOpenCodeSessionId,
         userPrompt: spawnConfig.prompt,
+        ...(isAdversarial && adversarial ? {
+          adversarialEnabled: "true",
+          adversarialPrimary: selection.agentName,
+          adversarialCritic: adversarial.critic.agent,
+          adversarialRound: "0",
+          adversarialPlanMaxRounds: String(adversarial.plan?.maxRounds ?? 2),
+          adversarialCodeMaxRounds: String(adversarial.code?.maxRounds ?? 1),
+        } : {}),
       });
 
       if (plugins.agent.postLaunchSetup) {
@@ -2528,5 +2559,166 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR, remap };
+  async function swapAgent(
+    sessionId: SessionId,
+    projectId: string,
+    nextAgent: string,
+    opts: {
+      resume: boolean;
+      phasePrompt: string;
+      newStatus: SessionStatus;
+      metadataUpdates: Record<string, string | undefined>;
+    },
+  ): Promise<void> {
+    const project = config.projects[projectId];
+    if (!project) throw new Error(`Unknown project: ${projectId}`);
+
+    const sessionsDir = getProjectSessionsDir(project);
+    const meta = readMetadataRaw(sessionsDir, sessionId);
+    if (!meta) throw new Error(`Session metadata not found: ${sessionId}`);
+
+    const workspacePath = meta.worktree;
+    if (!workspacePath) throw new Error(`No workspace path for session: ${sessionId}`);
+
+    // 1. Destroy current runtime
+    const runtimeName = project.runtime ?? config.defaults.runtime;
+    const runtime = registry.get<Runtime>("runtime", runtimeName);
+    if (runtime && meta.runtimeHandle) {
+      try {
+        const handle = JSON.parse(meta.runtimeHandle) as RuntimeHandle;
+        await runtime.destroy(handle);
+      } catch {
+        // Best effort — runtime may already be dead
+      }
+    }
+
+    // 2. Rotate activity log to prevent stale entries from leaking across agents
+    try {
+      const activityPath = join(workspacePath, ".ao", "activity.jsonl");
+      const previousAgent = meta.agent ?? "unknown";
+      const rotatedPath = join(workspacePath, ".ao", `activity.${previousAgent}.jsonl`);
+      if (existsSync(activityPath)) {
+        renameSync(activityPath, rotatedPath);
+      }
+    } catch {
+      // Non-fatal — stale activity is a minor issue
+    }
+
+    // 3. Resolve next agent
+    const selection = resolveAgentSelection({
+      role: "worker",
+      project,
+      defaults: config.defaults,
+      spawnAgentOverride: nextAgent,
+    });
+    const agent = registry.get<Agent>("agent", selection.agentName);
+    if (!agent) throw new Error(`Agent plugin '${selection.agentName}' not found`);
+
+    // 4. Build prompt: existing layers + phase prompt
+    const composedPrompt = buildPrompt({
+      loader: getPromptLoader(project.path),
+      project,
+      projectId,
+      issueId: meta.issue,
+      userPrompt: opts.phasePrompt,
+    });
+
+    // 5. Determine launch or restore command
+    const isPrimary = meta.adversarialPrimary === nextAgent;
+    let launchCommand: string;
+    const agentLaunchConfig = {
+      sessionId,
+      projectConfig: { ...project, agentConfig: selection.agentConfig },
+      issueId: meta.issue,
+      prompt: composedPrompt,
+      permissions: selection.permissions,
+      model: selection.model,
+    };
+
+    if (opts.resume && isPrimary && agent.getRestoreCommand) {
+      const session = await get(sessionId);
+      const restoreCmd = session ? await agent.getRestoreCommand(session, project) : null;
+      launchCommand = restoreCmd ?? agent.getLaunchCommand(agentLaunchConfig);
+    } else {
+      launchCommand = agent.getLaunchCommand(agentLaunchConfig);
+    }
+
+    const environment = agent.getEnvironment(agentLaunchConfig);
+
+    // 6. Launch new runtime
+    if (!runtime) throw new Error(`Runtime plugin '${runtimeName}' not found`);
+    const tmuxName = meta.tmuxName ?? sessionId;
+    const handle = await runtime.create({
+      sessionId: tmuxName,
+      workspacePath,
+      launchCommand,
+      environment: {
+        ...environment,
+        AO_SESSION: sessionId,
+        AO_DATA_DIR: sessionsDir,
+        AO_SESSION_NAME: sessionId,
+        ...(meta.tmuxName && { AO_TMUX_NAME: meta.tmuxName }),
+        AO_CALLER_TYPE: "agent",
+        AO_PROJECT_ID: projectId,
+        AO_CONFIG_PATH: config.configPath,
+        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+      },
+    });
+
+    // 7. Post-launch: deliver prompt if needed, setup hooks
+    if (agent.promptDelivery === "post-launch") {
+      try {
+        await new Promise((r) => setTimeout(r, 3_000));
+        await runtime.sendMessage(handle, composedPrompt);
+      } catch {
+        // Non-fatal — user can resend
+      }
+    }
+
+    if (agent.postLaunchSetup) {
+      const session: Session = {
+        id: sessionId,
+        projectId,
+        status: opts.newStatus,
+        activity: "active",
+        branch: meta.branch,
+        issueId: meta.issue ?? null,
+        pr: null,
+        workspacePath,
+        runtimeHandle: handle,
+        agentInfo: null,
+        createdAt: new Date(meta.createdAt ?? Date.now()),
+        lastActivityAt: new Date(),
+        metadata: { ...meta, ...opts.metadataUpdates },
+      };
+      await agent.postLaunchSetup(session);
+    }
+
+    // 8. Update metadata
+    updateMetadata(sessionsDir, sessionId, {
+      agent: selection.agentName,
+      runtimeHandle: JSON.stringify(handle),
+      status: opts.newStatus,
+      ...opts.metadataUpdates,
+    });
+
+    // 9. Keep round.json in sync
+    try {
+      const adversarialDir = join(workspacePath, ".ao", "adversarial");
+      writeFileSync(
+        join(adversarialDir, "round.json"),
+        JSON.stringify({
+          phase: opts.newStatus,
+          adversarialPhase: opts.metadataUpdates.adversarialPhase ?? meta.adversarialPhase,
+          round: parseInt(opts.metadataUpdates.adversarialRound ?? meta.adversarialRound ?? "0", 10),
+          agent: selection.agentName,
+          updatedAt: new Date().toISOString(),
+        }),
+      );
+    } catch {
+      // Non-fatal — round.json is for debugging only
+    }
+  }
+
+  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR, remap, swapAgent };
 }
