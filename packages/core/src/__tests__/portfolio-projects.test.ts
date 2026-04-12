@@ -98,6 +98,7 @@ describe("portfolio-projects", () => {
       vi.mocked(buildEffectiveProjectConfig).mockReturnValue({
         name: "Test",
         path: "/tmp/project",
+        storageKey: "test00000000",
         repo: "test/repo",
         agent: "claude-code",
       });
@@ -219,6 +220,7 @@ describe("portfolio-projects", () => {
       vi.mocked(buildEffectiveProjectConfig).mockReturnValue({
         name: "Test",
         path: "/tmp/project",
+        storageKey: "test00000000",
         repo: "test/repo",
       });
 

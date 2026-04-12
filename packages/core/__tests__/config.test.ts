@@ -25,6 +25,7 @@ describe("Config Loading", () => {
     process.env["HOME"] = testDir;
     delete process.env["AO_GLOBAL_CONFIG"];
     delete process.env["AO_CONFIG_PATH"];
+    delete process.env["XDG_CONFIG_HOME"];
   });
 
   afterEach(() => {
