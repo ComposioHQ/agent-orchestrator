@@ -32,14 +32,15 @@ vi.mock("@aoagents/ao-core", () => ({
 }));
 
 // Stub all plugin imports
-vi.mock("@composio/ao-plugin-runtime-tmux", () => ({ default: { manifest: { slot: "runtime" } } }));
-vi.mock("@composio/ao-plugin-agent-claude-code", () => ({ default: { manifest: { slot: "agent" } } }));
-vi.mock("@composio/ao-plugin-agent-codex", () => ({ default: { manifest: { slot: "agent" } } }));
-vi.mock("@composio/ao-plugin-agent-opencode", () => ({ default: { manifest: { slot: "agent" } } }));
-vi.mock("@composio/ao-plugin-workspace-worktree", () => ({ default: { manifest: { slot: "workspace" } } }));
-vi.mock("@composio/ao-plugin-scm-github", () => ({ default: { manifest: { slot: "scm" } } }));
-vi.mock("@composio/ao-plugin-tracker-github", () => ({ default: { manifest: { slot: "tracker" } } }));
-vi.mock("@composio/ao-plugin-tracker-linear", () => ({ default: { manifest: { slot: "tracker" } } }));
+vi.mock("@aoagents/ao-plugin-runtime-tmux", () => ({ default: { manifest: { slot: "runtime" } } }));
+vi.mock("@aoagents/ao-plugin-agent-claude-code", () => ({ default: { manifest: { slot: "agent" } } }));
+vi.mock("@aoagents/ao-plugin-agent-codex", () => ({ default: { manifest: { slot: "agent" } } }));
+vi.mock("@aoagents/ao-plugin-agent-cursor", () => ({ default: { manifest: { slot: "agent" } } }));
+vi.mock("@aoagents/ao-plugin-agent-opencode", () => ({ default: { manifest: { slot: "agent" } } }));
+vi.mock("@aoagents/ao-plugin-workspace-worktree", () => ({ default: { manifest: { slot: "workspace" } } }));
+vi.mock("@aoagents/ao-plugin-scm-github", () => ({ default: { manifest: { slot: "scm" } } }));
+vi.mock("@aoagents/ao-plugin-tracker-github", () => ({ default: { manifest: { slot: "tracker" } } }));
+vi.mock("@aoagents/ao-plugin-tracker-linear", () => ({ default: { manifest: { slot: "tracker" } } }));
 
 describe("services", () => {
   beforeEach(() => {

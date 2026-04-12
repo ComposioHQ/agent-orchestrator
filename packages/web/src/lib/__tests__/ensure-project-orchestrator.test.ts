@@ -89,4 +89,23 @@ describe("ensureProjectOrchestrator", () => {
       projectName: "my-app",
     });
   });
+
+  it("deduplicates concurrent orchestrator spawn attempts per project", async () => {
+    mockGetServices.mockResolvedValue({
+      config: { projects: { "my-app": { name: "My App" } } },
+      sessionManager: mockSessionManager,
+    });
+    mockSessionManager.list.mockResolvedValue([]);
+    mockListDashboardOrchestrators.mockReturnValue([]);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "orch-new" });
+
+    const pendingA = ensureProjectOrchestrator("my-app");
+    const pendingB = ensureProjectOrchestrator("my-app");
+
+    await expect(Promise.all([pendingA, pendingB])).resolves.toEqual([
+      { id: "orch-new", projectId: "my-app", projectName: "My App" },
+      { id: "orch-new", projectId: "my-app", projectName: "My App" },
+    ]);
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledTimes(1);
+  });
 });

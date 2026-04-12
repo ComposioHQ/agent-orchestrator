@@ -52,30 +52,34 @@ function isCacheFresh(): boolean {
   return Date.now() - cached.refreshedAt < CACHE_TTL_MS;
 }
 
+function fallbackPortfolioFromConfig(): PortfolioProject[] {
+  try {
+    const config = loadConfig();
+    return Object.entries(config.projects).map(([id, project]) => ({
+      id,
+      name: project.name ?? id,
+      configPath: config.configPath,
+      configProjectKey: id,
+      repoPath: project.path,
+      repo: project.repo,
+      defaultBranch: project.defaultBranch,
+      sessionPrefix: project.sessionPrefix ?? generateSessionPrefix(id),
+      source: "config" as const,
+      enabled: true,
+      pinned: false,
+      lastSeenAt: new Date().toISOString(),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 function refreshCache(): CachedPortfolio {
   const existingSessions = globalForPortfolio._aoPortfolioCache?.sessions ?? [];
   const existingSessionsLoaded = globalForPortfolio._aoPortfolioCache?.sessionsLoaded ?? false;
   let portfolio = getPortfolio();
   if (portfolio.length === 0) {
-    try {
-      const config = loadConfig();
-      portfolio = Object.entries(config.projects).map(([id, project]) => ({
-        id,
-        name: project.name ?? id,
-        configPath: config.configPath,
-        configProjectKey: id,
-        repoPath: project.path,
-        repo: project.repo,
-        defaultBranch: project.defaultBranch,
-        sessionPrefix: project.sessionPrefix ?? generateSessionPrefix(id),
-        source: "config" as const,
-        enabled: true,
-        pinned: false,
-        lastSeenAt: new Date().toISOString(),
-      }));
-    } catch {
-      // No local config available — keep the portfolio empty.
-    }
+    portfolio = fallbackPortfolioFromConfig();
   }
   const preferences = loadPreferences();
   const cached: CachedPortfolio = {
@@ -118,10 +122,8 @@ function ensureBackgroundRefresh(): void {
 /** Get portfolio services (cached, non-blocking after first call). */
 export function getPortfolioServices(): PortfolioServices {
   ensureBackgroundRefresh();
-  if (isCacheFresh()) {
-    return globalForPortfolio._aoPortfolioCache!.services;
-  }
-  return refreshCache().services;
+  const cached = globalForPortfolio._aoPortfolioCache;
+  return cached && isCacheFresh() ? cached.services : refreshCache().services;
 }
 
 /** Get cached portfolio sessions. First call triggers async load. */

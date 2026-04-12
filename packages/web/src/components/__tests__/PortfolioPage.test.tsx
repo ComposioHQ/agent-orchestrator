@@ -4,7 +4,16 @@ import { PortfolioPage } from "@/components/PortfolioPage";
 import type { PortfolioProjectSummary } from "@/lib/types";
 
 vi.mock("next/link", () => ({
-  default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
+  default: ({
+    href,
+    children,
+    prefetch: _prefetch,
+    ...rest
+  }: {
+    href: string;
+    children: React.ReactNode;
+    prefetch?: boolean;
+  }) => (
     <a href={href} {...rest}>
       {children}
     </a>
@@ -183,6 +192,25 @@ describe("PortfolioPage — AttentionHome (sessions present)", () => {
 
     const betaLink = screen.getByText("Beta").closest("a");
     expect(betaLink).toHaveAttribute("href", "/projects/proj-b");
+  });
+
+  it("shows a stale badge on stale projects", () => {
+    render(
+      <PortfolioPage
+        projectSummaries={[
+          makeSummary({
+            id: "proj-a",
+            name: "Alpha",
+            sessionCount: 1,
+            activeCount: 1,
+            isStale: true,
+            attentionCounts: { merge: 0, respond: 0, review: 0, pending: 0, working: 1, done: 0 },
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Stale")).toBeInTheDocument();
   });
 
   it("uses singular 'workspace' for single project", () => {

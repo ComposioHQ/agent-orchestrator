@@ -150,15 +150,18 @@ async function labelIssuesForVerification(
   config: OrchestratorConfig,
   registry: PluginRegistry,
 ): Promise<void> {
-  const mergedSessions = sessions.filter(
-    (s) =>
-      s.status === "merged" && s.issueId && !processedIssues.has(`${s.projectId}:${s.issueId}`),
-  );
+  const batches = new Map<
+    string,
+    { project: ProjectConfig; tracker: Tracker; sessions: Session[] }
+  >();
 
-  for (const session of mergedSessions) {
+  for (const session of sessions) {
+    if (session.status !== "merged" || !session.issueId) continue;
     const key = `${session.projectId}:${session.issueId}`;
+    if (processedIssues.has(key)) continue;
+
     const project = config.projects[session.projectId];
-    if (!project?.tracker?.plugin) {
+    if (!project?.tracker?.plugin || project.enabled === false) {
       processedIssues.add(key);
       continue;
     }
@@ -169,66 +172,151 @@ async function labelIssuesForVerification(
       continue;
     }
 
-    const issueId = session.issueId;
-    if (!issueId) {
-      processedIssues.add(key);
-      continue;
+    const batchKey = `${session.projectId}:${project.tracker.plugin}`;
+    const batch = batches.get(batchKey);
+    if (batch) {
+      batch.sessions.push(session);
+    } else {
+      batches.set(batchKey, { project, tracker, sessions: [session] });
     }
-
-    try {
-      await tracker.updateIssue(
-        issueId,
-        {
-          labels: ["merged-unverified"],
-          removeLabels: ["agent:backlog", "agent:in-progress"],
-          comment: `PR merged. Issue awaiting human verification on staging.`,
-        },
-        project,
-      );
-    } catch (err) {
-      console.error(`[backlog] Failed to close issue ${session.issueId}:`, err);
-    }
-    processedIssues.add(key);
   }
+
+  await Promise.allSettled(
+    [...batches.values()].flatMap(({ project, tracker, sessions: trackerSessions }) =>
+      trackerSessions.map(async (session) => {
+        const key = `${session.projectId}:${session.issueId}`;
+        try {
+          await tracker.updateIssue(
+            session.issueId!,
+            {
+              labels: ["merged-unverified"],
+              removeLabels: ["agent:backlog", "agent:in-progress"],
+              comment: `PR merged. Issue awaiting human verification on staging.`,
+            },
+            project,
+          );
+        } catch (err) {
+          console.error(`[backlog] Failed to close issue ${session.issueId}:`, err);
+        }
+        processedIssues.add(key);
+      }),
+    ),
+  );
 }
 
-/**
- * Detect reopened issues (open + agent:done label) and swap the label
- * back to agent:backlog so pollBacklog picks them up on the next cycle.
- */
+function getEnabledTrackerProjects(
+  config: OrchestratorConfig,
+  registry: PluginRegistry,
+): Array<{ projectId: string; project: ProjectConfig; tracker: Tracker }> {
+  return Object.entries(config.projects).flatMap(([projectId, project]) => {
+    if (project.enabled === false || !project.tracker?.plugin) return [];
+    const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+    if (!tracker) return [];
+    return [{ projectId, project, tracker }];
+  });
+}
+
+async function listTrackerIssuesByProject(
+  trackerProjects: Array<{ projectId: string; project: ProjectConfig; tracker: Tracker }>,
+  args: { state: "open"; labels: string[]; limit: number },
+): Promise<Map<string, Issue[]>> {
+  const entries = await Promise.all(
+    trackerProjects.map(async ({ projectId, tracker, project }) => {
+      if (!tracker.listIssues) return [projectId, []] as const;
+      try {
+        return [projectId, await tracker.listIssues(args, project)] as const;
+      } catch {
+        return [projectId, []] as const;
+      }
+    }),
+  );
+  return new Map(entries);
+}
+
 async function relabelReopenedIssues(
   config: OrchestratorConfig,
   registry: PluginRegistry,
 ): Promise<void> {
-  for (const [, project] of Object.entries(config.projects)) {
-    if (!project.tracker?.plugin) continue;
-    const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
-    if (!tracker?.listIssues || !tracker.updateIssue) continue;
+  const trackerProjects = getEnabledTrackerProjects(config, registry).filter(
+    ({ tracker }) => tracker.listIssues && tracker.updateIssue,
+  );
+  const reopenedByProject = await listTrackerIssuesByProject(trackerProjects, {
+    state: "open",
+    labels: ["agent:done"],
+    limit: 20,
+  });
 
-    let reopened: Issue[];
-    try {
-      reopened = await tracker.listIssues(
-        { state: "open", labels: ["agent:done"], limit: 20 },
-        project,
-      );
-    } catch {
-      continue;
-    }
+  await Promise.allSettled(
+    trackerProjects.flatMap(({ project, tracker, projectId }) =>
+      (reopenedByProject.get(projectId) ?? []).map(async (issue) => {
+        try {
+          await tracker.updateIssue!(
+            issue.id,
+            {
+              labels: [BACKLOG_LABEL],
+              removeLabels: ["agent:done"],
+              comment: "Issue reopened — returning to agent backlog.",
+            },
+            project,
+          );
+          console.log(`[backlog] Relabeled reopened issue ${issue.id} → ${BACKLOG_LABEL}`);
+        } catch (err) {
+          console.error(`[backlog] Failed to relabel reopened issue ${issue.id}:`, err);
+        }
+      }),
+    ),
+  );
+}
 
-    for (const issue of reopened) {
+function getEnabledProjects(config: OrchestratorConfig): OrchestratorConfig["projects"] {
+  return Object.fromEntries(
+    Object.entries(config.projects).filter(([, project]) => project.enabled !== false),
+  );
+}
+
+async function claimBacklogIssues(
+  config: OrchestratorConfig,
+  registry: PluginRegistry,
+  sessionManager: OpenCodeSessionManager,
+  activeIssueIds: Set<string>,
+  initialAvailableSlots: number,
+): Promise<void> {
+  let availableSlots = initialAvailableSlots;
+  if (availableSlots <= 0) return;
+
+  const trackerProjects = getEnabledTrackerProjects(config, registry).filter(
+    ({ tracker }) => tracker.listIssues,
+  );
+  const backlogByProject = await listTrackerIssuesByProject(trackerProjects, {
+    state: "open",
+    labels: [BACKLOG_LABEL],
+    limit: 10,
+  });
+
+  for (const { projectId, project, tracker } of trackerProjects) {
+    if (availableSlots <= 0) break;
+    for (const issue of backlogByProject.get(projectId) ?? []) {
+      if (availableSlots <= 0) break;
+      if (activeIssueIds.has(issue.id.toLowerCase())) continue;
+
       try {
-        await tracker.updateIssue(
-          issue.id,
-          {
-            labels: [BACKLOG_LABEL],
-            removeLabels: ["agent:done"],
-            comment: "Issue reopened — returning to agent backlog.",
-          },
-          project,
-        );
-        console.log(`[backlog] Relabeled reopened issue ${issue.id} → ${BACKLOG_LABEL}`);
+        await sessionManager.spawn({ projectId, issueId: issue.id });
+        availableSlots--;
+        activeIssueIds.add(issue.id.toLowerCase());
+
+        if (tracker.updateIssue) {
+          await tracker.updateIssue(
+            issue.id,
+            {
+              labels: ["agent:in-progress"],
+              removeLabels: ["agent:backlog"],
+              comment: "Claimed by agent orchestrator — session spawned.",
+            },
+            project,
+          );
+        }
       } catch (err) {
-        console.error(`[backlog] Failed to relabel reopened issue ${issue.id}:`, err);
+        console.error(`[backlog] Failed to spawn session for issue ${issue.id}:`, err);
       }
     }
   }
@@ -237,6 +325,7 @@ async function relabelReopenedIssues(
 export async function pollBacklog(): Promise<void> {
   try {
     const { config, registry, sessionManager } = await getServices();
+    const enabledProjects = getEnabledProjects(config);
 
     // Get all sessions
     const allSessions = await sessionManager.list();
@@ -246,16 +335,18 @@ export async function pollBacklog(): Promise<void> {
     // Detect reopened issues: open state + agent:done label → relabel as agent:backlog
     await relabelReopenedIssues(config, registry);
 
-    const allSessionPrefixes = Object.entries(config.projects).map(
+    const allSessionPrefixes = Object.entries(enabledProjects).map(
       ([id, p]) => p.sessionPrefix ?? id,
     );
     const workerSessions = allSessions.filter(
       (session) =>
         !isOrchestratorSession(
           session,
-          config.projects[session.projectId]?.sessionPrefix ?? session.projectId,
+          enabledProjects[session.projectId]?.sessionPrefix ?? session.projectId,
           allSessionPrefixes,
-        ) && !TERMINAL_STATUSES.has(session.status),
+        ) &&
+        enabledProjects[session.projectId] &&
+        !TERMINAL_STATUSES.has(session.status),
     );
     const activeIssueIds = new Set(
       workerSessions
@@ -266,53 +357,7 @@ export async function pollBacklog(): Promise<void> {
     // Auto-scaling: respect max concurrent agents
     let availableSlots = MAX_CONCURRENT_AGENTS - workerSessions.length;
     if (availableSlots <= 0) return; // At capacity
-
-    for (const [projectId, project] of Object.entries(config.projects)) {
-      if (availableSlots <= 0) break;
-      if (!project.tracker?.plugin) continue;
-
-      const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
-      if (!tracker?.listIssues) continue;
-
-      let backlogIssues: Issue[];
-      try {
-        backlogIssues = await tracker.listIssues(
-          { state: "open", labels: [BACKLOG_LABEL], limit: 10 },
-          project,
-        );
-      } catch {
-        continue; // Tracker unavailable — skip this project
-      }
-
-      for (const issue of backlogIssues) {
-        if (availableSlots <= 0) break;
-
-        // Skip if already being worked on
-        if (activeIssueIds.has(issue.id.toLowerCase())) continue;
-
-        try {
-          await sessionManager.spawn({ projectId, issueId: issue.id });
-          availableSlots--;
-
-          activeIssueIds.add(issue.id.toLowerCase());
-
-          // Mark as claimed on the tracker
-          if (tracker.updateIssue) {
-            await tracker.updateIssue(
-              issue.id,
-              {
-                labels: ["agent:in-progress"],
-                removeLabels: ["agent:backlog"],
-                comment: "Claimed by agent orchestrator — session spawned.",
-              },
-              project,
-            );
-          }
-        } catch (err) {
-          console.error(`[backlog] Failed to spawn session for issue ${issue.id}:`, err);
-        }
-      }
-    }
+    await claimBacklogIssues(config, registry, sessionManager, activeIssueIds, availableSlots);
   } catch (err) {
     console.error("[backlog] Poll failed:", err);
   }

@@ -303,6 +303,8 @@ export interface PortfolioProjectSummary {
   attentionCounts: Record<AttentionLevel, number>;
   degraded?: boolean;
   degradedReason?: string;
+  isDefault?: boolean;
+  isStale?: boolean;
 }
 
 /** Triage ranking for portfolio attention center — lower = more urgent */

@@ -330,6 +330,14 @@ describe("global-config", () => {
       expect(config!.projects["proj"]["agent"]).toBe("aider");
       expect(config!.projects["proj"]["_shadowSyncedAt"]).toBeDefined();
     });
+
+    it("rejects path collisions across different project ids", () => {
+      registerProjectInGlobalConfig("proj-a", "Project A", "/tmp/shared", undefined, configPath);
+
+      expect(() =>
+        registerProjectInGlobalConfig("proj-b", "Project B", "/tmp/shared", undefined, configPath),
+      ).toThrow('Project path "/tmp/shared" is already registered as "proj-a"');
+    });
   });
 
   describe("buildEffectiveProjectConfig", () => {

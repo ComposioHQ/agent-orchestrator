@@ -38,6 +38,7 @@ import {
   loadGlobalConfig,
   isOldConfigFormat,
   migrateToGlobalConfig,
+  loadPreferences,
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
@@ -143,6 +144,12 @@ async function resolveProject(
   const matchedProjectId = findProjectForDirectory(config.projects, currentDir);
   if (matchedProjectId) {
     return { projectId: matchedProjectId, project: config.projects[matchedProjectId] };
+  }
+
+  // Default project preference — use it before prompting
+  const defaultProjectId = loadPreferences().defaultProjectId;
+  if (defaultProjectId && config.projects[defaultProjectId]) {
+    return { projectId: defaultProjectId, project: config.projects[defaultProjectId] };
   }
 
   // No match — prompt if interactive, otherwise error
@@ -736,7 +743,9 @@ async function addProjectToConfig(
   };
 
   writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
-  console.log(chalk.green(`\n✓ Added "${projectId}" to ${config.configPath}\n`));
+  const dashboardPort = config.port ?? DEFAULT_PORT;
+  console.log(chalk.green(`\n✓ Added "${projectId}" to ${config.configPath}`));
+  console.log(chalk.dim(`  Dashboard: http://localhost:${dashboardPort}/projects/${projectId}\n`));
 
   if (!ownerRepo) {
     console.log(chalk.yellow("⚠ Could not detect GitHub remote."));
@@ -1192,7 +1201,7 @@ export function registerStart(program: Command): void {
   program
     .command("start [project]")
     .description(
-      "Start orchestrator agent and dashboard (auto-creates config on first run, adds projects by path/URL)",
+      "Start orchestrator agent and dashboard (auto-creates config on first run, adds projects by path/URL). To register a project without starting the orchestrator, use `ao project add <path>`.",
     )
     .option("--no-dashboard", "Skip starting the dashboard server")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
@@ -1234,17 +1243,22 @@ export function registerStart(program: Command): void {
             }
 
             if (!configPath) {
-              // No config anywhere — auto-create in cwd, then add the path as project
-              config = await autoCreateConfig(cwd());
-              // If the path is different from cwd, add it as a second project
+              // No existing config. If the path arg points elsewhere, don't auto-create
+              // in cwd — that would surprise the user with an unexpected config file.
+              // Instead, run setup from within the target directory.
               if (resolve(cwd()) !== resolvedPath) {
-                const addedId = await addProjectToConfig(config, resolvedPath);
-                config = loadConfig(config.configPath);
-                projectId = addedId;
-                project = config.projects[projectId];
-              } else {
-                ({ projectId, project } = await resolveProject(config));
+                console.error(chalk.red(`\n✗ No agent-orchestrator.yaml found.\n`));
+                console.log(
+                  chalk.dim(`  Run \`ao start\` from inside ${resolvedPath} to set it up first,`),
+                );
+                console.log(
+                  chalk.dim(`  then run \`ao start ${projectArg}\` to add it to your portfolio.\n`),
+                );
+                process.exit(1);
               }
+              // Path matches cwd — auto-create config here as expected
+              config = await autoCreateConfig(cwd());
+              ({ projectId, project } = await resolveProject(config));
             } else {
               config = loadConfig(configPath);
 
@@ -1313,7 +1327,9 @@ export function registerStart(program: Command): void {
                       loadedConfig = loadConfig();
                     } catch (migErr) {
                       spinner.fail("  Migration failed — continuing with existing config");
-                      console.log(chalk.dim(`  ${migErr instanceof Error ? migErr.message : String(migErr)}`));
+                      console.log(chalk.dim(`  Cause: ${migErr instanceof Error ? migErr.message : String(migErr)}`));
+                      console.log(chalk.dim(`  Your config at ${loadedPath} was not changed.`));
+                      console.log(chalk.dim(`  To register manually: ao project add ${resolve(cwd())}\n`));
                     }
                   } else {
                     console.log(chalk.dim("  Skipping migration. Run `ao start` again to migrate later.\n"));

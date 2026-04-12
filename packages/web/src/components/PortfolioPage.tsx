@@ -8,6 +8,7 @@ import type { AttentionLevel, PortfolioProjectSummary } from "@/lib/types";
 interface PortfolioPageProps {
   projectSummaries: PortfolioProjectSummary[];
   orphanedSessionCount?: number;
+  orphanedProjectPaths?: string[];
   onOpenProject?: () => void;
   onCloneFromUrl?: () => void;
 }
@@ -18,6 +19,7 @@ const ACTIVE_LEVELS: AttentionLevel[] = ["merge", "respond", "review", "pending"
 export function PortfolioPage({
   projectSummaries,
   orphanedSessionCount = 0,
+  orphanedProjectPaths = [],
   onOpenProject,
   onCloneFromUrl,
 }: PortfolioPageProps) {
@@ -28,7 +30,7 @@ export function PortfolioPage({
   const hasSessions = projectSummaries.some((p) => p.sessionCount > 0);
 
   if (hasSessions) {
-    return <AttentionHome projectSummaries={projectSummaries} orphanedSessionCount={orphanedSessionCount} />;
+    return <AttentionHome projectSummaries={projectSummaries} orphanedSessionCount={orphanedSessionCount} orphanedProjectPaths={orphanedProjectPaths} />;
   }
 
   return <LauncherHome
@@ -42,7 +44,7 @@ export function PortfolioPage({
 // Attention-first home — for returning users with sessions
 // ---------------------------------------------------------------------------
 
-function AttentionHome({ projectSummaries, orphanedSessionCount = 0 }: { projectSummaries: PortfolioProjectSummary[]; orphanedSessionCount?: number }) {
+function AttentionHome({ projectSummaries, orphanedSessionCount = 0, orphanedProjectPaths = [] }: { projectSummaries: PortfolioProjectSummary[]; orphanedSessionCount?: number; orphanedProjectPaths?: string[] }) {
   const totalActive = projectSummaries.reduce((s, p) => s + p.activeCount, 0);
   const totalSessions = projectSummaries.reduce((s, p) => s + p.sessionCount, 0);
 
@@ -103,10 +105,21 @@ function AttentionHome({ projectSummaries, orphanedSessionCount = 0 }: { project
         {orphanedSessionCount > 0 && (
           <div className="mt-4 rounded-[2px] border border-[var(--color-status-attention)] bg-[rgba(210,153,34,0.08)] px-4 py-3">
             <p className="text-[var(--font-size-sm)] text-[var(--color-status-attention)]">
-              {orphanedSessionCount} session{orphanedSessionCount === 1 ? "" : "s"} belong{orphanedSessionCount === 1 ? "s" : ""} to
-              a project that was removed.
-              Run <code className="font-[var(--font-mono)] text-[11px]">ao project add &lt;path&gt;</code> to
-              re-register, or <code className="font-[var(--font-mono)] text-[11px]">ao stop</code> to clean up.
+              {orphanedSessionCount} session{orphanedSessionCount === 1 ? "" : "s"} belong{orphanedSessionCount === 1 ? "s" : ""} to{" "}
+              {orphanedProjectPaths.length === 1 ? "a project" : "projects"} that {orphanedSessionCount === 1 ? "was" : "were"} removed.
+            </p>
+            {orphanedProjectPaths.length > 0 && (
+              <ul className="mt-1.5 space-y-1">
+                {orphanedProjectPaths.map((path) => (
+                  <li key={path} className="font-[var(--font-mono)] text-[11px] text-[var(--color-status-attention)]">
+                    ao project add {path}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-1.5 text-[var(--font-size-sm)] text-[var(--color-status-attention)]">
+              Run the command{orphanedProjectPaths.length === 1 ? "" : "s"} above to re-register, or{" "}
+              <code className="font-[var(--font-mono)] text-[11px]">ao stop</code> to clean up.
             </p>
           </div>
         )}
@@ -130,15 +143,23 @@ function ProjectCard({ project }: { project: PortfolioProjectSummary }) {
   return (
     <Link
       href={`/projects/${encodeURIComponent(project.id)}`}
+      prefetch={false}
       className="group flex flex-col rounded-[2px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] p-4 shadow-[var(--card-shadow)] transition duration-150 hover:border-[var(--color-border-default)] hover:shadow-[var(--card-shadow-hover)]"
     >
       <div className="flex items-center justify-between">
         <span className="text-[var(--font-size-base)] font-medium tracking-[-0.015em] text-[var(--color-text-primary)]">
           {project.name}
         </span>
-        <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
-          {project.activeCount}/{project.sessionCount}
-        </span>
+        <div className="flex items-center gap-2">
+          {project.isStale && (
+            <span className="rounded-full border border-[var(--color-status-attention)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] uppercase tracking-[0.04em] text-[var(--color-status-attention)]">
+              Stale
+            </span>
+          )}
+          <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+            {project.activeCount}/{project.sessionCount}
+          </span>
+        </div>
       </div>
 
       {project.repo && (

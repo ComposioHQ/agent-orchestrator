@@ -25,6 +25,9 @@ vi.mock("@aoagents/ao-core", () => ({
       workspace: "worktree",
     },
   }),
+  loadPreferences: () => ({}),
+  loadGlobalConfig: () => null,
+  isProjectShadowStale: () => false,
 }));
 
 // Mock portfolio-services

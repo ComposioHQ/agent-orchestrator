@@ -88,6 +88,10 @@ That's it. The dashboard opens at `http://localhost:3000` and the orchestrator a
 ao start ~/path/to/another-repo
 ```
 
+Or use the **+ button** in the dashboard sidebar to register or clone a project without leaving the browser.
+
+See the [Multi-Project Guide](docs/multi-project-guide.md) for the full URL scheme, migration from single-project configs, and `ao project` commands.
+
 ## How It Works
 
 1. **You start** — `ao start` launches the dashboard and an orchestrator agent
@@ -167,6 +171,7 @@ Running one AI agent in a terminal is easy. Running 30 across different issues, 
 | Doc                                      | What it covers                                               |
 | ---------------------------------------- | ------------------------------------------------------------ |
 | [Setup Guide](SETUP.md)                  | Detailed installation, configuration, and troubleshooting    |
+| [Multi-Project Guide](docs/multi-project-guide.md) | Portfolio setup, migration, URL scheme, `ao project` commands |
 | [CLI Reference](docs/CLI.md)             | All `ao` commands (mostly used by the orchestrator agent)    |
 | [Examples](examples/)                    | Config templates (GitHub, Linear, multi-project, auto-merge) |
 | [Development Guide](docs/DEVELOPMENT.md) | Architecture, conventions, plugin pattern                    |

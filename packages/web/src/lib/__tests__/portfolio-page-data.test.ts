@@ -5,6 +5,9 @@ const mockGetPortfolioServices = vi.fn();
 const mockGetCachedPortfolioSessions = vi.fn();
 const mockSessionToDashboard = vi.fn();
 const mockIsOrchestratorSession = vi.fn();
+const mockLoadPreferences = vi.fn(() => ({}));
+const mockLoadGlobalConfig = vi.fn(() => null);
+const mockIsProjectShadowStale = vi.fn(() => false);
 
 vi.mock("@/lib/portfolio-services", () => ({
   getPortfolioServices: () => mockGetPortfolioServices(),
@@ -17,6 +20,9 @@ vi.mock("@/lib/serialize", () => ({
 
 vi.mock("@aoagents/ao-core", () => ({
   isOrchestratorSession: (...args: unknown[]) => mockIsOrchestratorSession(...args),
+  loadPreferences: () => mockLoadPreferences(),
+  loadGlobalConfig: () => mockLoadGlobalConfig(),
+  isProjectShadowStale: (...args: unknown[]) => mockIsProjectShadowStale(...args),
 }));
 
 vi.mock("@/lib/types", async () => {
@@ -35,6 +41,9 @@ beforeEach(() => {
   mockGetPortfolioServices.mockReturnValue({ portfolio: defaultPortfolio });
   mockGetCachedPortfolioSessions.mockResolvedValue([]);
   mockIsOrchestratorSession.mockReturnValue(false);
+  mockLoadPreferences.mockReturnValue({});
+  mockLoadGlobalConfig.mockReturnValue(null);
+  mockIsProjectShadowStale.mockReturnValue(false);
 });
 
 describe("loadPortfolioPageData", () => {
@@ -130,5 +139,17 @@ describe("loadPortfolioPageData", () => {
     expect(sessions).toHaveLength(0);
     expect(projectSummaries).toHaveLength(3);
     expect(projectSummaries.every((p) => p.sessionCount === 0)).toBe(true);
+  });
+
+  it("marks stale projects and default project flags on summaries", async () => {
+    mockLoadPreferences.mockReturnValue({ defaultProjectId: "alpha" });
+    mockLoadGlobalConfig.mockReturnValue({ projects: {} });
+    mockIsProjectShadowStale.mockImplementation((projectId: string) => projectId === "charlie");
+
+    const { loadPortfolioPageData } = await import("../portfolio-page-data");
+    const { projectSummaries } = await loadPortfolioPageData();
+
+    expect(projectSummaries.find((project) => project.id === "alpha")?.isDefault).toBe(true);
+    expect(projectSummaries.find((project) => project.id === "charlie")?.isStale).toBe(true);
   });
 });

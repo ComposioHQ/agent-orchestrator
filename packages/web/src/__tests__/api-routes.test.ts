@@ -1134,6 +1134,35 @@ describe("API Routes", () => {
       expect(event.sessions[0]).toHaveProperty("id");
       expect(event.sessions[0]).toHaveProperty("attentionLevel");
     });
+
+    it("filters disabled projects from event snapshots", async () => {
+      const originalProjects = mockConfig.projects;
+      mockConfig.projects = {
+        ...originalProjects,
+        "my-app": { ...originalProjects["my-app"], enabled: true },
+        disabled: {
+          ...originalProjects["my-app"],
+          name: "disabled",
+          path: "/tmp/disabled",
+          sessionPrefix: "disabled",
+          enabled: false,
+        },
+      };
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeSession({ id: "my-app-1", projectId: "my-app" }),
+        makeSession({ id: "disabled-1", projectId: "disabled" }),
+      ]);
+
+      const req = makeRequest("/api/events", { method: "GET" });
+      const res = await eventsGET(req);
+      const reader = res.body!.getReader();
+      const { value } = await reader.read();
+      reader.cancel();
+      const text = new TextDecoder().decode(value);
+      const event = JSON.parse(text.replace("data: ", "").trim());
+      expect(event.sessions.every((session: { id: string }) => session.id !== "disabled-1")).toBe(true);
+      mockConfig.projects = originalProjects;
+    });
   });
 
   describe("GET /api/observability", () => {
@@ -1210,6 +1239,31 @@ describe("API Routes", () => {
       expect(res.status).toBe(500);
       const data = await res.json();
       expect(data.error).toBe("db down");
+    });
+
+    it("excludes disabled projects from patch responses", async () => {
+      const originalProjects = mockConfig.projects;
+      mockConfig.projects = {
+        ...originalProjects,
+        "my-app": { ...originalProjects["my-app"], enabled: true },
+        disabled: {
+          ...originalProjects["my-app"],
+          name: "disabled",
+          path: "/tmp/disabled",
+          sessionPrefix: "disabled",
+          enabled: false,
+        },
+      };
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeSession({ id: "my-app-1", projectId: "my-app" }),
+        makeSession({ id: "disabled-1", projectId: "disabled" }),
+      ]);
+
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.sessions.every((session: { id: string }) => session.id !== "disabled-1")).toBe(true);
+      mockConfig.projects = originalProjects;
     });
   });
 });

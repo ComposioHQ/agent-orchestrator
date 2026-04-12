@@ -22,6 +22,37 @@ import { Modal } from "./Modal";
 import { ThemeToggle } from "./ThemeToggle";
 import { WorkspaceResourcesModal } from "./WorkspaceResourcesModal";
 import { ProjectAvatar } from "./ProjectAvatar";
+import {
+  AGENT_DOT_COLORS,
+  AgentFaviconIcon,
+  ATTENTION_BORDER_CLASS,
+  CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ClockIcon,
+  CloseIcon,
+  FolderOpenIcon,
+  FolderPlusIcon,
+  formatAgentLabel,
+  GearIcon,
+  GripIcon,
+  LinkIcon,
+  MoreIcon,
+  PlusIcon,
+  SelectChevronIcon,
+  SidebarAgentIcon,
+  SortIcon,
+  StarIcon,
+  StatusChip,
+  TrashIcon,
+} from "./UnifiedSidebarIcons";
+import {
+  PopoverField,
+  PopoverOption,
+  SidebarIconButton,
+  SidebarMenuButton,
+  Tooltip,
+} from "./UnifiedSidebarPrimitives";
 
 interface UnifiedSidebarProps {
   projects: PortfolioProjectSummary[];
@@ -72,41 +103,6 @@ function reorderProjects(
   const [moved] = next.splice(fromIndex, 1);
   next.splice(targetIndex, 0, moved);
   return next;
-}
-
-function formatAgentLabel(agentId: string | undefined): string {
-  switch (agentId) {
-    case "claude-code":
-      return "Claude";
-    case "opencode":
-      return "OpenCode";
-    case "codex":
-      return "Codex";
-    default:
-      return agentId
-        ? agentId.replace(/[-_]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
-        : "Agent";
-  }
-}
-
-function getAgentIconProps(agentId: string | undefined): { src?: string; fallback: string } {
-  switch (agentId) {
-    case "claude-code":
-      return { src: "/agent-icons/claude-code.png", fallback: "CC" };
-    case "opencode":
-      return { src: "/agent-icons/opencode.png", fallback: "OC" };
-    case "codex":
-      return { src: "/agent-icons/codex.svg", fallback: "CX" };
-    default: {
-      const fallback = formatAgentLabel(agentId)
-        .split(" ")
-        .map((part) => part[0])
-        .join("")
-        .slice(0, 2)
-        .toUpperCase() || "AG";
-      return { fallback };
-    }
-  }
 }
 
 function SidebarContent({
@@ -397,6 +393,21 @@ function SidebarContent({
       router.refresh();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to terminate session");
+    }
+  }
+
+  async function handleSetDefaultProject(projectId: string) {
+    setProjectMenuId(null);
+    try {
+      const res = await fetch("/api/settings/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ defaultProject: projectId }),
+      });
+      if (!res.ok) throw new Error("Failed to set default project");
+      router.refresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to set default project");
     }
   }
 
@@ -779,6 +790,13 @@ function SidebarContent({
                               setResourceProject(project);
                             }}
                           />
+                          {!project.isDefault && (
+                            <SidebarMenuButton
+                              icon={<StarIcon />}
+                              label="Set as default"
+                              onClick={() => void handleSetDefaultProject(project.id)}
+                            />
+                          )}
                           <SidebarMenuButton
                             icon={<TrashIcon />}
                             label="Remove workspace"
@@ -1317,349 +1335,5 @@ export function UnifiedSidebar({
         </div>
       ) : null}
     </>
-  );
-}
-
-const AGENT_DOT_COLORS: Record<AttentionLevel, string> = {
-  working: "var(--color-status-working)",
-  respond: "var(--color-status-attention)",
-  review: "var(--color-accent-violet)",
-  merge: "var(--color-status-ready)",
-  pending: "var(--color-text-tertiary)",
-  done: "var(--color-text-quaternary, var(--color-text-tertiary))",
-};
-
-const ATTENTION_BORDER_CLASS: Record<AttentionLevel, string> = {
-  working: "border-l-[var(--color-status-working)]",
-  respond: "border-l-[var(--color-status-attention)]",
-  review: "border-l-[var(--color-accent-violet)]",
-  merge: "border-l-[var(--color-status-ready)]",
-  pending: "border-l-[var(--color-border-subtle)]",
-  done: "border-l-[var(--color-border-subtle)]",
-};
-
-const ATTENTION_STATUS_LABEL: Record<AttentionLevel, string> = {
-  working: "working",
-  respond: "waiting",
-  review: "in review",
-  merge: "mergeable",
-  pending: "pending",
-  done: "done",
-};
-
-function StatusChip({ attention }: { attention: AttentionLevel }) {
-  const label = ATTENTION_STATUS_LABEL[attention];
-  const color = AGENT_DOT_COLORS[attention];
-  if (attention === "pending" || attention === "done") return null;
-  return (
-    <span
-      className="shrink-0 rounded-[3px] px-1 py-px text-[9px] font-semibold uppercase tracking-[0.055em]"
-      style={{ color, backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)` }}
-    >
-      {label}
-    </span>
-  );
-}
-
-function PopoverField({
-  label,
-  valueLabel,
-  onToggle,
-  isOpen,
-  onClose,
-  children,
-}: {
-  label: string;
-  valueLabel: string;
-  onToggle: () => void;
-  isOpen: boolean;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  const fieldRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handlePointerDown(event: MouseEvent | PointerEvent) {
-      if (!fieldRef.current?.contains(event.target as Node)) {
-        onClose();
-      }
-    }
-
-    if (!isOpen) return;
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [isOpen, onClose]);
-
-  return (
-    <div ref={fieldRef} className="relative grid grid-cols-[60px_minmax(0,1fr)] items-center gap-2">
-      <label className="font-[family-name:var(--font-mono)] text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">
-        {label}
-      </label>
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex h-[32px] min-w-0 w-full items-center justify-between rounded-[var(--radius-sm)] border border-[var(--color-border-default)] bg-[var(--color-bg-base)] px-3 text-left text-[12px] font-medium tracking-[-0.011em] text-[var(--color-text-primary)] transition-colors duration-100 hover:border-[var(--color-border-strong)]"
-      >
-        <span className="min-w-0 flex-1 truncate">{valueLabel}</span>
-        <span className="ml-2 shrink-0 text-[var(--color-text-tertiary)]">
-          <SelectChevronIcon />
-        </span>
-      </button>
-      {isOpen ? (
-        <div className="absolute right-0 top-[36px] z-30 min-w-[200px] rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] p-1.5 shadow-[var(--box-shadow-lg,0_18px_44px_rgba(0,0,0,0.22))]">
-          {children}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function PopoverOption({
-  label,
-  selected,
-  onSelect,
-  swatch,
-}: {
-  label: string;
-  selected: boolean;
-  onSelect: () => void;
-  swatch?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        "flex w-full items-center gap-2.5 rounded-[var(--radius-sm)] px-3 py-2 text-left text-[13px] tracking-[-0.011em] transition-colors duration-100",
-        selected
-          ? "bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)]"
-          : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-elevated-hover)] hover:text-[var(--color-text-primary)]",
-      )}
-    >
-      {swatch !== undefined ? (
-        <span
-          className="h-3 w-3 shrink-0 rounded-[2px]"
-          style={{ background: swatch, border: swatch === "transparent" ? "1px solid var(--color-border-default)" : "none" }}
-        >
-        </span>
-      ) : null}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {selected ? <CheckIcon /> : null}
-    </button>
-  );
-}
-
-function SidebarMenuButton({
-  icon,
-  label,
-  onClick,
-}: {
-  icon?: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-center gap-2 rounded-[var(--radius-sm)] px-3 py-2 text-left text-[13px] tracking-[-0.011em] text-[var(--color-text-primary)] transition-colors duration-100 hover:bg-[var(--color-bg-elevated-hover)]"
-    >
-      {icon ? <span className="shrink-0 text-[var(--color-text-tertiary)]">{icon}</span> : null}
-      {label}
-    </button>
-  );
-}
-
-/* ── Icons ─────────────────────────────────────────────────────────── */
-
-function ClockIcon() {
-  return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="8.25" />
-      <path d="M12 7.75V12l2.75 1.75" />
-    </svg>
-  );
-}
-
-function MoreIcon() {
-  return (
-    <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
-      <circle cx="12" cy="5" r="1.5" />
-      <circle cx="12" cy="12" r="1.5" />
-      <circle cx="12" cy="19" r="1.5" />
-    </svg>
-  );
-}
-
-function SortIcon() {
-  return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24">
-      <path d="M5 7h10M5 12h7M5 17h4" />
-      <path d="m17 15 2 2 2-2" />
-      <path d="M19 7v10" />
-    </svg>
-  );
-}
-
-function FolderPlusIcon() {
-  return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24">
-      <path d="M3.75 7.5A1.75 1.75 0 0 1 5.5 5.75h4.1l1.75 1.75h7.15A1.75 1.75 0 0 1 20.25 9.25v8A1.75 1.75 0 0 1 18.5 19H5.5a1.75 1.75 0 0 1-1.75-1.75V7.5Z" />
-      <path d="M12 10.25v5.5M9.25 13h5.5" />
-    </svg>
-  );
-}
-
-function GearIcon() {
-  return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
-function LinkIcon() {
-  return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M15 7h1a5 5 0 0 1 0 10h-1M9 17H8a5 5 0 0 1 0-10h1" />
-      <path d="M8.5 12h7" />
-    </svg>
-  );
-}
-
-function GripIcon() {
-  return (
-    <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" strokeLinecap="round">
-      <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round">
-      <path d="M12 5v14M5 12h14" />
-    </svg>
-  );
-}
-
-function CloseIcon() {
-  return (
-    <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-      <path d="M18 6 6 18M6 6l12 12" />
-    </svg>
-  );
-}
-
-function SelectChevronIcon() {
-  return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-      <path d="m8 10 4-4 4 4M16 14l-4 4-4-4" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-[var(--color-accent)]" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
-      <path d="m5 12 4.5 4.5L19 7" />
-    </svg>
-  );
-}
-
-function ChevronLeftIcon() {
-  return (
-    <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m15 6-6 6 6 6" />
-    </svg>
-  );
-}
-
-function ChevronRightIcon() {
-  return (
-    <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m9 6 6 6-6 6" />
-    </svg>
-  );
-}
-
-function FolderOpenIcon() {
-  return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3.75 7.5A1.75 1.75 0 0 1 5.5 5.75h4.1l1.75 1.75h7.15A1.75 1.75 0 0 1 20.25 9.25v.25" />
-      <path d="M3.08 12.25a1.25 1.25 0 0 1 1.22-1h15.4a1.25 1.25 0 0 1 1.22 1.53l-1.5 6a1.25 1.25 0 0 1-1.22.97H5.5a1.75 1.75 0 0 1-1.75-1.75l-.67-5.75Z" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
-    </svg>
-  );
-}
-
-function SidebarAgentIcon({ agentId, attention }: { agentId: string | undefined; attention: AttentionLevel }) {
-  const label = formatAgentLabel(agentId);
-  const { src, fallback } = getAgentIconProps(agentId);
-  const badgeColor = AGENT_DOT_COLORS[attention];
-  const isAnimated = attention === "working";
-
-  return (
-    <span
-      className="relative shrink-0"
-      aria-label={`${label} agent`}
-      title={label}
-    >
-      {src ? <AgentFaviconIcon src={src} fallback={fallback} /> : <AgentFaviconIconFallback fallback={fallback} />}
-      <span className="absolute -bottom-px -right-px flex h-[7px] w-[7px] items-center justify-center rounded-full bg-[var(--color-bg-primary)] p-px">
-        {isAnimated && (
-          <span
-            className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
-            style={{ backgroundColor: badgeColor }}
-          />
-        )}
-        <span
-          className="relative inline-flex h-full w-full rounded-full"
-          style={{ backgroundColor: badgeColor }}
-        />
-      </span>
-    </span>
-  );
-}
-
-function AgentFaviconIconFallback({ fallback }: { fallback: string }) {
-  return (
-    <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] bg-slate-100 text-[9px] font-semibold tracking-[0.08em] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-      {fallback}
-    </span>
-  );
-}
-
-function AgentFaviconIcon({
-  src,
-  fallback,
-}: {
-  src: string;
-  fallback: string;
-}) {
-  const [failed, setFailed] = useState(false);
-
-  if (failed) {
-    return <AgentFaviconIconFallback fallback={fallback} />;
-  }
-
-  return (
-    <span className="flex h-[18px] w-[18px] items-center justify-center overflow-hidden rounded-[4px] bg-white ring-1 ring-slate-200/70 dark:bg-slate-900 dark:ring-slate-700/70">
-      <img
-        alt=""
-        aria-hidden="true"
-        className="h-full w-full object-cover"
-        src={src}
-        onError={() => setFailed(true)}
-      />
-    </span>
   );
 }

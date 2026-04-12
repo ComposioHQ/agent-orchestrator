@@ -40,10 +40,16 @@ describe("filterProjectSessions", () => {
 
   it("matches by sessionPrefix", () => {
     const sessions: SessionLike[] = [
-      { id: "myapp-x", projectId: "other" },
+      { id: "myapp-1", projectId: "other" },
     ];
     const result = filterProjectSessions(sessions, "my-app", projects);
     expect(result).toHaveLength(1);
+  });
+
+  it("does not match similarly-prefixed sessions without a boundary", () => {
+    const sessions: SessionLike[] = [{ id: "myappv2-1", projectId: "other" }];
+    const result = filterProjectSessions(sessions, "my-app", projects);
+    expect(result).toEqual([]);
   });
 });
 
@@ -89,6 +95,16 @@ describe("filterWorkerSessions", () => {
       { id: "worker-2", projectId: "other" },
     ];
     const result = filterWorkerSessions(sessions, "my-app", projects);
+    expect(result).toEqual([{ id: "worker-1", projectId: "my-app" }]);
+  });
+
+  it("drops sessions for projects not present in the supplied project map", () => {
+    const sessions: SessionLike[] = [
+      { id: "worker-1", projectId: "my-app" },
+      { id: "worker-2", projectId: "disabled" },
+    ];
+
+    const result = filterWorkerSessions(sessions, null, projects);
     expect(result).toEqual([{ id: "worker-1", projectId: "my-app" }]);
   });
 });

@@ -22,12 +22,14 @@ const PER_PR_ENRICH_TIMEOUT_MS = 1_500;
 /** Handle scope=portfolio: aggregate sessions across all portfolio projects */
 async function handlePortfolioScope(correlationId: string, _startedAt: number) {
   const { portfolio } = getPortfolioServices();
+  const enabledPortfolio = portfolio.filter((project) => project.enabled !== false);
   const portfolioSessions = await getCachedPortfolioSessions();
 
   const dashboardSessions: DashboardSession[] = [];
   const actionItems: PortfolioActionItem[] = [];
 
   for (const ps of portfolioSessions) {
+    if (ps.project.enabled === false) continue;
     if (isOrchestratorSession(ps.session)) continue;
     const dashSession = sessionToDashboard(ps.session);
     dashboardSessions.push(dashSession);
@@ -71,7 +73,7 @@ async function handlePortfolioScope(correlationId: string, _startedAt: number) {
     return new Date(b.session.lastActivityAt).getTime() - new Date(a.session.lastActivityAt).getTime();
   });
 
-  const projectSummaries = portfolio.map(p => ({
+  const projectSummaries = enabledPortfolio.map(p => ({
     id: p.id,
     name: p.name,
     degraded: p.degraded,
@@ -107,16 +109,19 @@ export async function GET(request: Request) {
     }
 
     const { config, registry, sessionManager } = await getServices();
+    const enabledProjects = Object.fromEntries(
+      Object.entries(config.projects).filter(([, project]) => project.enabled !== false),
+    );
     const requestedProjectId =
-      projectFilter && projectFilter !== "all" && config.projects[projectFilter]
+      projectFilter && projectFilter !== "all" && enabledProjects[projectFilter]
         ? projectFilter
         : undefined;
     const coreSessions = await sessionManager.list(requestedProjectId);
     // Fetch all sessions for global pause computation when filtered by project,
     // since the pause may originate from a different project's orchestrator.
     const allSessions = requestedProjectId ? await sessionManager.list() : coreSessions;
-    const visibleSessions = filterProjectSessions(coreSessions, projectFilter, config.projects);
-    const orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
+    const visibleSessions = filterProjectSessions(coreSessions, projectFilter, enabledProjects);
+    const orchestrators = listDashboardOrchestrators(visibleSessions, enabledProjects);
     const orchestratorId = orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null;
 
     if (orchestratorOnly) {
@@ -142,16 +147,16 @@ export async function GET(request: Request) {
       );
     }
 
-    const allSessionPrefixes = Object.entries(config.projects).map(
+    const allSessionPrefixes = Object.entries(enabledProjects).map(
       ([projectId, p]) => p.sessionPrefix ?? projectId,
     );
     let workerSessions = visibleSessions.filter(
       (session) =>
         !isOrchestratorSession(
           session,
-          config.projects[session.projectId]?.sessionPrefix ?? session.projectId,
+          enabledProjects[session.projectId]?.sessionPrefix ?? session.projectId,
           allSessionPrefixes,
-        ),
+        ) && Boolean(enabledProjects[session.projectId]),
     );
 
     // Convert to dashboard format
@@ -174,7 +179,7 @@ export async function GET(request: Request) {
       const enrichPromises = workerSessions.map((core, i) => {
         if (!core?.pr) return Promise.resolve();
 
-        const project = resolveProject(core, config.projects);
+        const project = resolveProject(core, enabledProjects);
         const scm = getSCM(registry, project);
         if (!scm) return Promise.resolve();
 

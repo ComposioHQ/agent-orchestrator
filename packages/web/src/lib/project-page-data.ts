@@ -29,6 +29,14 @@ export async function loadProjectPageData(projectFilter: string): Promise<Projec
   };
 
   try {
+    const { config, registry, sessionManager } = await getServices();
+    const enabledProjects = Object.fromEntries(
+      Object.entries(config.projects).filter(([, project]) => project.enabled !== false),
+    );
+    if (!enabledProjects[projectFilter]) {
+      return pageData;
+    }
+
     try {
       await ensureProjectOrchestrator(projectFilter);
     } catch {
@@ -36,12 +44,11 @@ export async function loadProjectPageData(projectFilter: string): Promise<Projec
       // the page using whatever sessions currently exist.
     }
 
-    const { config, registry, sessionManager } = await getServices();
     const allSessions = await sessionManager.list();
 
     pageData.globalPause = resolveGlobalPause(allSessions);
-    const visibleSessions = filterProjectSessions(allSessions, projectFilter, config.projects);
-    pageData.orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
+    const visibleSessions = filterProjectSessions(allSessions, projectFilter, enabledProjects);
+    pageData.orchestrators = listDashboardOrchestrators(visibleSessions, enabledProjects);
     pageData.sidebarSessions = visibleSessions.map(sessionToDashboard);
 
     const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
@@ -99,7 +106,7 @@ export async function loadProjectPageData(projectFilter: string): Promise<Projec
         }
       }
 
-      const project = resolveProject(core, config.projects);
+      const project = resolveProject(core, enabledProjects);
       const scm = getSCM(registry, project);
       if (!scm) return Promise.resolve();
       return enrichSessionPR(dashboard, scm, core.pr);

@@ -29,6 +29,14 @@ import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
 const issueTitleCache = new TTLCache<string>(300_000);
 
+function matchesSessionPrefix(sessionId: string, prefix: string | undefined): boolean {
+  if (!prefix) return false;
+  if (sessionId === prefix) return true;
+  if (!sessionId.startsWith(prefix)) return false;
+  if (prefix.endsWith("-")) return true;
+  return sessionId[prefix.length] === "-";
+}
+
 /** Resolve which project a session belongs to. */
 export function resolveProject(
   core: Session,
@@ -39,7 +47,9 @@ export function resolveProject(
   if (direct) return direct;
 
   // Match by session prefix
-  const entry = Object.entries(projects).find(([, p]) => core.id.startsWith(p.sessionPrefix));
+  const entry = Object.entries(projects).find(([, p]) =>
+    matchesSessionPrefix(core.id, p.sessionPrefix),
+  );
   if (entry) return entry[1];
 
   // No match — return undefined instead of falling back to first project

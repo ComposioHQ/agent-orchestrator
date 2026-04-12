@@ -169,6 +169,16 @@ function makeSession(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockConfig.projects = {
+    "my-project": {
+      name: "my-project",
+      repo: "acme/my-project",
+      path: "/tmp/my-project",
+      defaultBranch: "main",
+      sessionPrefix: "my-project",
+      scm: { plugin: "github" },
+    },
+  };
 
   // Defaults
   mockSessionManager.list.mockResolvedValue([]);
@@ -394,6 +404,43 @@ describe("GET /api/sessions — default scope", () => {
     );
     expect(mockRecordApiObservation).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ orchestratorOnly: true }) }),
+    );
+  });
+
+  it("excludes disabled-project orchestrators from orchestratorOnly responses", async () => {
+    const enabledSession = makeSession({ id: "orch-enabled", projectId: "my-project" });
+    const disabledSession = makeSession({ id: "orch-disabled", projectId: "disabled" });
+    mockConfig.projects = {
+      "my-project": { ...mockConfig.projects["my-project"] },
+      disabled: {
+        ...mockConfig.projects["my-project"],
+        name: "disabled",
+        path: "/tmp/disabled",
+        enabled: false,
+      },
+    };
+    mockSessionManager.list.mockResolvedValue([enabledSession, disabledSession]);
+    mockFilterProjectSessions.mockImplementation((sessions, _filter, projects) =>
+      (sessions as Array<{ projectId: string }>).filter((session) => Boolean(projects[session.projectId])),
+    );
+    mockListDashboardOrchestrators.mockImplementation((sessions, projects) =>
+      (sessions as Array<{ id: string; projectId: string }>)
+        .filter((session: { projectId: string }) => projects[session.projectId])
+        .map((session: { id: string; projectId: string }) => ({
+          id: session.id,
+          projectId: session.projectId,
+          projectName: projects[session.projectId].name,
+        })),
+    );
+
+    const res = await GET(makeRequest("/api/sessions?orchestratorOnly=true"));
+    expect(res.status).toBe(200);
+    expect(mockJsonWithCorrelation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orchestrators: [{ id: "orch-enabled", projectId: "my-project", projectName: "my-project" }],
+      }),
+      { status: 200 },
+      "test-corr-id",
     );
   });
 

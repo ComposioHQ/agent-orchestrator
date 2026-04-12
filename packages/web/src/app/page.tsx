@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 };
 
 export default async function Home() {
-  const { projectSummaries, sessions, orphanedSessionCount } = await loadPortfolioPageData();
+  const { projectSummaries, sessions, orphanedSessionCount, orphanedProjectPaths } = await loadPortfolioPageData();
 
   return (
     <DashboardShell
@@ -19,7 +19,11 @@ export default async function Home() {
       sessions={sessions}
       defaultLocation={getDefaultCloneLocation()}
     >
-      <PortfolioPage projectSummaries={projectSummaries} orphanedSessionCount={orphanedSessionCount} />
+      <PortfolioPage
+        projectSummaries={projectSummaries}
+        orphanedSessionCount={orphanedSessionCount}
+        orphanedProjectPaths={orphanedProjectPaths}
+      />
     </DashboardShell>
   );
 }

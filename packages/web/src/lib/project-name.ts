@@ -9,13 +9,15 @@ export interface ProjectInfo {
   sessionPrefix?: string;
 }
 
-export const getPrimaryProjectId = cache((): string => {
+function getPrimaryProject(): ProjectInfo | null {
   try {
     const prefs = loadPreferences();
     if (prefs.defaultProjectId) {
       const portfolio = getPortfolio();
       const found = portfolio.find(p => p.id === prefs.defaultProjectId);
-      if (found) return found.id;
+      if (found && found.enabled !== false) {
+        return { id: found.id, name: found.name };
+      }
     }
   } catch {
     // Portfolio not available
@@ -23,44 +25,36 @@ export const getPrimaryProjectId = cache((): string => {
 
   try {
     const config = loadConfig();
-    const firstKey = Object.keys(config.projects)[0];
-    if (firstKey) return firstKey;
+    const entry = Object.entries(config.projects).find(([, project]) => project.enabled !== false);
+    if (entry) {
+      const [id, project] = entry;
+      return {
+        id,
+        name: project.name ?? id,
+        ...(project.sessionPrefix ? { sessionPrefix: project.sessionPrefix } : {}),
+      };
+    }
   } catch {
     // Config not available
   }
-  return "ao";
+  return null;
+}
+
+export const getPrimaryProjectId = cache((): string => {
+  return getPrimaryProject()?.id ?? "ao";
 });
 
 export const getProjectName = cache((): string => {
-  try {
-    const prefs = loadPreferences();
-    if (prefs.defaultProjectId) {
-      const portfolio = getPortfolio();
-      const found = portfolio.find(p => p.id === prefs.defaultProjectId);
-      if (found) return found.name;
-    }
-  } catch {
-    // Portfolio not available
-  }
-
-  try {
-    const config = loadConfig();
-    const firstKey = Object.keys(config.projects)[0];
-    if (firstKey) {
-      const name = config.projects[firstKey].name ?? firstKey;
-      return name || firstKey || "ao";
-    }
-  } catch {
-    // Config not available
-  }
-  return "ao";
+  return getPrimaryProject()?.name ?? "ao";
 });
 
 export const getAllProjects = cache((): ProjectInfo[] => {
   try {
     const portfolio = getPortfolio();
     if (portfolio.length > 0) {
-      return portfolio.map(p => ({ id: p.id, name: p.name }));
+      return portfolio
+        .filter((project) => project.enabled !== false)
+        .map(p => ({ id: p.id, name: p.name }));
     }
   } catch {
     // Portfolio not available
@@ -68,11 +62,13 @@ export const getAllProjects = cache((): ProjectInfo[] => {
 
   try {
     const config = loadConfig();
-    return Object.entries(config.projects).map(([id, project]) => ({
-      id,
-      name: project.name ?? id,
-      ...(project.sessionPrefix ? { sessionPrefix: project.sessionPrefix } : {}),
-    }));
+    return Object.entries(config.projects)
+      .filter(([, project]) => project.enabled !== false)
+      .map(([id, project]) => ({
+        id,
+        name: project.name ?? id,
+        ...(project.sessionPrefix ? { sessionPrefix: project.sessionPrefix } : {}),
+      }));
   } catch {
     return [];
   }

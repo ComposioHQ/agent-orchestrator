@@ -11,13 +11,16 @@ export async function GET(request: Request) {
     const projectFilter = searchParams.get("project");
 
     const { config, sessionManager } = await getServices();
+    const enabledProjects = Object.fromEntries(
+      Object.entries(config.projects).filter(([, project]) => project.enabled !== false),
+    );
     const requestedProjectId =
-      projectFilter && projectFilter !== "all" && config.projects[projectFilter]
+      projectFilter && projectFilter !== "all" && enabledProjects[projectFilter]
         ? projectFilter
         : undefined;
 
     const coreSessions = await sessionManager.list(requestedProjectId);
-    const visibleSessions = filterWorkerSessions(coreSessions, projectFilter, config.projects);
+    const visibleSessions = filterWorkerSessions(coreSessions, projectFilter, enabledProjects);
 
     // Convert to dashboard format
     const dashboardSessions = visibleSessions.map(sessionToDashboard);

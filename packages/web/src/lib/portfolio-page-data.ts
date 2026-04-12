@@ -5,7 +5,12 @@
  * to populate the UnifiedSidebar with project summaries.
  */
 
-import { isOrchestratorSession } from "@aoagents/ao-core";
+import {
+  isOrchestratorSession,
+  isProjectShadowStale,
+  loadGlobalConfig,
+  loadPreferences,
+} from "@aoagents/ao-core";
 import { getCachedPortfolioSessions, getPortfolioServices } from "@/lib/portfolio-services";
 import { sessionToDashboard } from "@/lib/serialize";
 import {
@@ -39,12 +44,16 @@ export async function loadPortfolioPageData(): Promise<{
   projectSummaries: PortfolioProjectSummary[];
   sessions: DashboardSession[];
   orphanedSessionCount: number;
+  orphanedProjectPaths: string[];
 }> {
   const { portfolio } = getPortfolioServices();
+  const preferences = loadPreferences();
+  const globalConfig = loadGlobalConfig();
   const portfolioSessions = await getCachedPortfolioSessions().catch(() => []);
   const summaries = new Map<string, PortfolioProjectSummary>();
   const sessions: DashboardSession[] = [];
   let orphanedSessionCount = 0;
+  const orphanedProjectPaths = new Set<string>();
 
   for (const project of portfolio) {
     if (project.enabled === false) continue;
@@ -57,6 +66,8 @@ export async function loadPortfolioPageData(): Promise<{
       attentionCounts: emptyAttentionCounts(),
       degraded: project.degraded,
       degradedReason: project.degradedReason,
+      isDefault: preferences.defaultProjectId === project.id,
+      isStale: globalConfig ? isProjectShadowStale(project.id, globalConfig) : false,
     });
   }
 
@@ -66,6 +77,7 @@ export async function loadPortfolioPageData(): Promise<{
     const summary = summaries.get(item.project.id);
     if (!summary) {
       orphanedSessionCount++;
+      orphanedProjectPaths.add(item.project.repoPath);
       continue;
     }
 
@@ -87,5 +99,5 @@ export async function loadPortfolioPageData(): Promise<{
     }
   }
 
-  return { projectSummaries, sessions, orphanedSessionCount };
+  return { projectSummaries, sessions, orphanedSessionCount, orphanedProjectPaths: [...orphanedProjectPaths] };
 }

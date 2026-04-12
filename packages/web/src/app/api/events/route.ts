@@ -26,14 +26,19 @@ export async function GET(request: Request): Promise<Response> {
   let updates: ReturnType<typeof setInterval> | undefined;
   let observerProjectId: string | undefined;
   let observer: ProjectObserver | null = null;
+  const getEnabledProjects = (config: ServicesConfig): ServicesConfig["projects"] =>
+    Object.fromEntries(
+      Object.entries(config.projects).filter(([, project]) => project.enabled !== false),
+    );
 
   const ensureObserver = (config: ServicesConfig): ProjectObserver | null => {
+    const enabledProjects = getEnabledProjects(config);
     if (!observerProjectId) {
       const requestedProjectId =
-        projectFilter && projectFilter !== "all" && config.projects[projectFilter]
+        projectFilter && projectFilter !== "all" && enabledProjects[projectFilter]
           ? projectFilter
           : undefined;
-      observerProjectId = requestedProjectId ?? Object.keys(config.projects)[0];
+      observerProjectId = requestedProjectId ?? Object.keys(enabledProjects)[0];
     }
     if (!observerProjectId) return null;
     if (!observer) {
@@ -72,12 +77,13 @@ export async function GET(request: Request): Promise<Response> {
 
         try {
           const { config, sessionManager } = await getServices();
+          const enabledProjects = getEnabledProjects(config);
           const requestedProjectId =
-            projectFilter && projectFilter !== "all" && config.projects[projectFilter]
+            projectFilter && projectFilter !== "all" && enabledProjects[projectFilter]
               ? projectFilter
               : undefined;
           const sessions = await sessionManager.list(requestedProjectId);
-          const workerSessions = filterWorkerSessions(sessions, projectFilter, config.projects);
+          const workerSessions = filterWorkerSessions(sessions, projectFilter, enabledProjects);
           const dashboardSessions = workerSessions.map(sessionToDashboard);
           const projectObserver = ensureObserver(config);
 
@@ -131,12 +137,13 @@ export async function GET(request: Request): Promise<Response> {
           let dashboardSessions;
           try {
             const { config, sessionManager } = await getServices();
+            const enabledProjects = getEnabledProjects(config);
             const requestedProjectId =
-              projectFilter && projectFilter !== "all" && config.projects[projectFilter]
+              projectFilter && projectFilter !== "all" && enabledProjects[projectFilter]
                 ? projectFilter
                 : undefined;
             const sessions = await sessionManager.list(requestedProjectId);
-            const workerSessions = filterWorkerSessions(sessions, projectFilter, config.projects);
+            const workerSessions = filterWorkerSessions(sessions, projectFilter, enabledProjects);
             dashboardSessions = workerSessions.map(sessionToDashboard);
             const projectObserver = ensureObserver(config);
 

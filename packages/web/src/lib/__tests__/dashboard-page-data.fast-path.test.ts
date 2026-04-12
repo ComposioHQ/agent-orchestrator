@@ -135,4 +135,40 @@ describe("getDashboardPageData fast path", () => {
       vi.useRealTimers();
     }
   });
+
+  it("filters disabled projects before worker/orchestrator selection", async () => {
+    const core = { id: "session-enabled", status: "working", pr: null };
+    const dashboard = { id: "session-enabled", pr: null };
+
+    hoisted.getServicesMock.mockResolvedValue({
+      config: {
+        projects: {
+          mono: { id: "mono", enabled: true },
+          disabled: { id: "disabled", enabled: false },
+        },
+      },
+      registry: { scm: "registry" },
+      sessionManager: { list: vi.fn().mockResolvedValue([core]) },
+    });
+    hoisted.filterProjectSessionsMock.mockReturnValue([core]);
+    hoisted.filterWorkerSessionsMock.mockReturnValue([core]);
+    hoisted.sessionToDashboardMock.mockReturnValue(dashboard);
+
+    await getDashboardPageData("mono");
+
+    expect(hoisted.filterProjectSessionsMock).toHaveBeenCalledWith(
+      [core],
+      "mono",
+      { mono: { id: "mono", enabled: true } },
+    );
+    expect(hoisted.filterWorkerSessionsMock).toHaveBeenCalledWith(
+      [core],
+      "mono",
+      { mono: { id: "mono", enabled: true } },
+    );
+    expect(hoisted.listDashboardOrchestratorsMock).toHaveBeenCalledWith(
+      [core],
+      { mono: { id: "mono", enabled: true } },
+    );
+  });
 });

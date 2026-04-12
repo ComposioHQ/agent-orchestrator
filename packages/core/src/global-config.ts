@@ -380,6 +380,15 @@ export function registerProjectInGlobalConfig(
     | (GlobalProjectEntry & Record<string, unknown>)
     | undefined;
 
+  for (const [existingProjectId, entry] of Object.entries(globalConfig.projects)) {
+    if (existingProjectId === projectId) continue;
+    if (entry.path === projectPath) {
+      throw new Error(
+        `Project path "${projectPath}" is already registered as "${existingProjectId}"`,
+      );
+    }
+  }
+
   // Preserve existing shadow behavior fields; update identity.
   // storageKey is assigned once at registration and never recomputed —
   // this decouples storage identity from the current filesystem path.
@@ -644,11 +653,19 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
     // (single-project setup: the config IS in the project root)
     if (resolve(projectPath) !== resolve(oldConfigDir)) continue;
 
-    const behaviorFields: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(project)) {
-      if (key === "name" || key === "path" || key === "sessionPrefix") continue;
-      if (key.startsWith(INTERNAL_FIELD_PREFIX)) continue;
-      behaviorFields[key] = value;
+    const {
+      name: _name,
+      path: _path,
+      sessionPrefix: _sessionPrefix,
+      ...behaviorFields
+    } = project;
+    void _name;
+    void _path;
+    void _sessionPrefix;
+    for (const key of Object.keys(behaviorFields)) {
+      if (key.startsWith(INTERNAL_FIELD_PREFIX)) {
+        delete behaviorFields[key];
+      }
     }
 
     // Write flat local config

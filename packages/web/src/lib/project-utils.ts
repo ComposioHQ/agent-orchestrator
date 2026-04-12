@@ -3,6 +3,13 @@ import { isOrchestratorSession } from "@aoagents/ao-core/types";
 type ProjectWithPrefix = { sessionPrefix?: string };
 type SessionLike = { id: string; projectId: string; metadata?: Record<string, string> };
 
+function matchesSessionPrefix(sessionId: string, prefix: string): boolean {
+  if (sessionId === prefix) return true;
+  if (!sessionId.startsWith(prefix)) return false;
+  if (prefix.endsWith("-")) return true;
+  return sessionId[prefix.length] === "-";
+}
+
 /**
  * Check if a session belongs to a specific project.
  * Matches by projectId or sessionPrefix (same logic as resolveProject).
@@ -18,7 +25,7 @@ function matchesProject(
 ): boolean {
   if (session.projectId === projectId) return true;
   const project = projects[projectId];
-  if (project?.sessionPrefix && session.id.startsWith(project.sessionPrefix)) return true;
+  if (project?.sessionPrefix && matchesSessionPrefix(session.id, project.sessionPrefix)) return true;
   // Removed loose reverse-match fallback (projects[session.projectId]?.sessionPrefix === projectId)
   // to prevent cross-project leakage in multi-project portfolios
   return false;
@@ -55,6 +62,7 @@ export function filterWorkerSessions<T extends SessionLike>(
   );
   const workers = sessions.filter(
     (s) =>
+      Boolean(projects[s.projectId]) &&
       !isOrchestratorSession(
         s,
         projects[s.projectId]?.sessionPrefix ?? s.projectId,

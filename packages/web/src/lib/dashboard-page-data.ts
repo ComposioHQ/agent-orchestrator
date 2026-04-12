@@ -58,12 +58,15 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
 
   try {
     const { config, registry, sessionManager } = await getServices();
+    const enabledProjects = Object.fromEntries(
+      Object.entries(config.projects).filter(([, project]) => project.enabled !== false),
+    );
     const allSessions = await sessionManager.list();
 
-    const visibleSessions = filterProjectSessions(allSessions, projectFilter, config.projects);
-    pageData.orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
+    const visibleSessions = filterProjectSessions(allSessions, projectFilter, enabledProjects);
+    pageData.orchestrators = listDashboardOrchestrators(visibleSessions, enabledProjects);
 
-    const coreSessions = filterWorkerSessions(allSessions, projectFilter, config.projects);
+    const coreSessions = filterWorkerSessions(allSessions, projectFilter, enabledProjects);
     pageData.sessions = coreSessions.map(sessionToDashboard);
 
     // Fast enrichment: issue labels (sync) + agent summaries (local disk I/O).
@@ -78,7 +81,7 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
     for (let i = 0; i < coreSessions.length; i++) {
       const core = coreSessions[i];
       if (!core.pr) continue;
-      const projectConfig = resolveProject(core, config.projects);
+      const projectConfig = resolveProject(core, enabledProjects);
       const scm = getSCM(registry, projectConfig);
       if (scm) {
         await enrichSessionPR(pageData.sessions[i], scm, core.pr, { cacheOnly: true });
