@@ -9,6 +9,8 @@ const {
   mockDetectOpenClawInstallation,
   mockValidateToken,
   mockRegistry,
+  mockGetCurrentVersion,
+  mockReadCachedUpdateInfo,
 } = vi.hoisted(() => ({
   mockRunRepoScript: vi.fn(),
   mockFindConfigFile: vi.fn(),
@@ -21,6 +23,8 @@ const {
     list: vi.fn(),
     get: vi.fn(),
   },
+  mockGetCurrentVersion: vi.fn(() => "0.2.2"),
+  mockReadCachedUpdateInfo: vi.fn(() => null),
 }));
 
 vi.mock("../../src/lib/script-runner.js", () => ({
@@ -44,6 +48,11 @@ vi.mock("@aoagents/ao-core", () => ({
 vi.mock("../../src/lib/openclaw-probe.js", () => ({
   detectOpenClawInstallation: (...args: unknown[]) => mockDetectOpenClawInstallation(...args),
   validateToken: (...args: unknown[]) => mockValidateToken(...args),
+}));
+
+vi.mock("../../src/lib/update-check.js", () => ({
+  getCurrentVersion: () => mockGetCurrentVersion(),
+  readCachedUpdateInfo: () => mockReadCachedUpdateInfo(),
 }));
 
 import { registerDoctor } from "../../src/commands/doctor.js";
@@ -136,6 +145,11 @@ describe("doctor command", () => {
     });
     mockValidateToken.mockReset();
     mockValidateToken.mockResolvedValue({ valid: true });
+
+    mockGetCurrentVersion.mockReset();
+    mockGetCurrentVersion.mockReturnValue("0.2.2");
+    mockReadCachedUpdateInfo.mockReset();
+    mockReadCachedUpdateInfo.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -256,6 +270,49 @@ describe("doctor command", () => {
     expect(mockRegistry.get).toHaveBeenCalledWith("notifier", "slack");
     expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
     expect(processExitSpy).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // Version freshness
+  // -----------------------------------------------------------------------
+
+  it("shows PASS when cached version is current", async () => {
+    mockReadCachedUpdateInfo.mockReturnValue({
+      latestVersion: "0.2.2",
+      checkedAt: new Date().toISOString(),
+      currentVersionAtCheck: "0.2.2",
+    });
+
+    await program.parseAsync(["node", "test", "doctor"]);
+
+    const output = consoleLogSpy.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).toContain("PASS");
+    expect(output).toContain("latest version");
+  });
+
+  it("shows WARN when cached version is outdated", async () => {
+    mockReadCachedUpdateInfo.mockReturnValue({
+      latestVersion: "0.3.0",
+      checkedAt: new Date().toISOString(),
+      currentVersionAtCheck: "0.2.2",
+    });
+
+    await program.parseAsync(["node", "test", "doctor"]);
+
+    const output = consoleLogSpy.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).toContain("WARN");
+    expect(output).toContain("outdated");
+    expect(output).toContain("0.3.0");
+  });
+
+  it("shows informational PASS when no cache exists", async () => {
+    mockReadCachedUpdateInfo.mockReturnValue(null);
+
+    await program.parseAsync(["node", "test", "doctor"]);
+
+    const output = consoleLogSpy.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).toContain("PASS");
+    expect(output).toContain("installed");
   });
 
   it("tests shared-plugin notifier aliases independently", async () => {

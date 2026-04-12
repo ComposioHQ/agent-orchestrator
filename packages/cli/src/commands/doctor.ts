@@ -16,6 +16,7 @@ import {
 import { runRepoScript } from "../lib/script-runner.js";
 import { detectOpenClawInstallation, validateToken } from "../lib/openclaw-probe.js";
 import { importPluginModuleFromSource } from "../lib/plugin-store.js";
+import { getCurrentVersion, readCachedUpdateInfo } from "../lib/update-check.js";
 
 // ---------------------------------------------------------------------------
 // Helpers — match the PASS / WARN / FAIL style of ao-doctor.sh
@@ -378,6 +379,42 @@ async function sendTestNotifications(
 }
 
 // ---------------------------------------------------------------------------
+// Version freshness (cache-only — no network call)
+// ---------------------------------------------------------------------------
+
+function checkVersionFreshness(): void {
+  console.log("");
+  console.log("Version:");
+
+  const current = getCurrentVersion();
+  const cached = readCachedUpdateInfo();
+
+  if (!cached) {
+    pass(`ao v${current} installed (run any ao command to check for updates)`);
+    return;
+  }
+
+  const currentParts = current.split(".").map(Number);
+  const latestParts = cached.latestVersion.split(".").map(Number);
+  let outdated = false;
+  for (let i = 0; i < 3; i++) {
+    const c = currentParts[i] ?? 0;
+    const l = latestParts[i] ?? 0;
+    if (c < l) {
+      outdated = true;
+      break;
+    }
+    if (c > l) break;
+  }
+
+  if (outdated) {
+    warn(`ao v${current} is outdated (latest: v${cached.latestVersion}). Run: ao update`);
+  } else {
+    pass(`ao v${current} is the latest version`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Command registration
 // ---------------------------------------------------------------------------
 
@@ -404,7 +441,10 @@ export function registerDoctor(program: Command): void {
         shellExitCode = 1;
       }
 
-      // 2. Run TypeScript-based notifier checks if a config file exists
+      // 2. Version freshness (cache-only, no network dependency)
+      checkVersionFreshness();
+
+      // 3. Run TypeScript-based notifier checks if a config file exists
       const configPath = findConfigFile();
       if (configPath) {
         let config: ReturnType<typeof loadConfig> | undefined;
@@ -418,7 +458,7 @@ export function registerDoctor(program: Command): void {
           fail(`Config-aware doctor checks failed: ${message}`);
         }
 
-        // 3. Send test notifications if requested (separate catch for accurate errors)
+        // 4. Send test notifications if requested (separate catch for accurate errors)
         if (opts.testNotify && config && registry) {
           try {
             await sendTestNotifications(config, registry, fail);
