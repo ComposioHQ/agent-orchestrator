@@ -170,34 +170,14 @@ export function create(config?: Record<string, unknown>): Workspace {
           "--path-format=absolute",
           "--git-common-dir",
         );
-        // Capture the branch name before removing the worktree
-        let branchName: string | undefined;
-        try {
-          const ref = await git(workspacePath, "symbolic-ref", "--short", "HEAD");
-          branchName = ref.trim();
-        } catch {
-          // Detached HEAD or other issue — skip branch cleanup
-        }
-
         // git-common-dir returns something like /path/to/repo/.git
         const repoPath = resolve(gitCommonDir, "..");
         await git(repoPath, "worktree", "remove", "--force", workspacePath);
 
-        // Clean up the branch if it was an AO-created branch (matches known
-        // AO naming patterns). Pre-existing or user branches are left alone.
-        if (branchName) {
-          const isAOBranch =
-            branchName.startsWith("feat/issue-") ||
-            branchName.startsWith("session/") ||
-            branchName.startsWith("orchestrator/");
-          if (isAOBranch) {
-            try {
-              await git(repoPath, "branch", "-D", branchName);
-            } catch {
-              // Branch may already be gone or checked out elsewhere
-            }
-          }
-        }
+        // NOTE: Branch cleanup is intentionally left to the session manager
+        // (kill/cleanup), which has full metadata to determine branch ownership.
+        // The workspace plugin only sees a path and cannot reliably distinguish
+        // AO-created branches from pre-existing user branches.
       } catch {
         // If git commands fail, try to clean up the directory
         if (existsSync(workspacePath)) {
