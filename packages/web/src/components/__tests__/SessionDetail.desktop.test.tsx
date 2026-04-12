@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionDetail } from "../SessionDetail";
 import { makePR, makeSession } from "../../__tests__/helpers";
@@ -104,9 +104,18 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Toggle sidebar" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    const desktopNav = screen.getByRole("navigation", { name: "Desktop navigation" });
+    expect(within(desktopNav).getByRole("link", { name: "Dashboard" })).toHaveAttribute(
+      "href",
+      "/?project=my-app",
+    );
+    expect(within(desktopNav).getByRole("link", { name: "Kanban" })).toHaveAttribute(
+      "href",
+      "/phases?project=my-app",
+    );
     expect(screen.getAllByText("My App").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole("link", { name: "Orchestrator" })).toHaveAttribute(
+    expect(screen.getByLabelText("Orchestrator")).toHaveAttribute(
       "href",
       "/sessions/my-app-orchestrator",
     );

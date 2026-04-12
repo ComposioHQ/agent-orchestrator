@@ -881,23 +881,85 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .dashboard-app-sidebar-toggle {
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--color-text-muted);
+  min-width: 68px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
   display: inline-flex;
   align-items: center;
+  gap: 7px;
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 100ms, color 100ms;
+  transition:
+    border-color 100ms,
+    background 100ms,
+    color 100ms;
 }
 
 .dashboard-app-sidebar-toggle:hover {
-  background: var(--color-bg-subtle);
+  border-color: var(--color-border-strong);
+  background: var(--color-hover-overlay);
+  color: var(--color-text-primary);
+}
+
+.dashboard-app-sidebar-toggle__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.desktop-app-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.desktop-app-menu__panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: calc(var(--z-overlay) + 1);
+  min-width: 184px;
+  padding: 8px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-bg-surface) 96%, transparent);
+  box-shadow: var(--box-shadow-lg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.desktop-app-menu__item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
   color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 100ms, color 100ms;
+}
+
+.desktop-app-menu__item:hover {
+  background: var(--color-hover-overlay);
+  color: var(--color-text-primary);
+}
+
+.desktop-app-menu__item[data-active="true"] {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+}
+
+.desktop-app-menu__item--disabled {
+  opacity: 0.48;
+  cursor: default;
 }
 
 .dashboard-app-header__brand {

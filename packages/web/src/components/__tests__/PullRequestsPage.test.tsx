@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PullRequestsPage } from "../PullRequestsPage";
 import { makePR, makeSession } from "../../__tests__/helpers";
@@ -147,5 +147,38 @@ describe("PullRequestsPage", () => {
     render(<PullRequestsPage initialSessions={[]} projectId="my-app" projectName="My App" />);
 
     expect(screen.getByText("No pull requests yet.")).toBeInTheDocument();
+  });
+
+  it("opens the desktop app menu when the header menu is clicked", () => {
+    mockDesktopViewport();
+
+    render(
+      <PullRequestsPage
+        initialSessions={[]}
+        projectId="my-app"
+        projectName="My App"
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+        orchestrators={[{ id: "my-app-orchestrator", projectId: "my-app", projectName: "My App" }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute(
+      "href",
+      "/?project=my-app",
+    );
+    expect(screen.getByRole("link", { name: "Kanban" })).toHaveAttribute(
+      "href",
+      "/phases?project=my-app",
+    );
+    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute(
+      "href",
+      "/prs?project=my-app",
+    );
+    expect(screen.getByRole("link", { name: "Orchestrator" })).toHaveAttribute(
+      "href",
+      "/sessions/my-app-orchestrator",
+    );
   });
 });

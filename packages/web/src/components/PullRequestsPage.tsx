@@ -16,6 +16,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { PRCard, PRTableRow } from "./PRStatus";
 import { MobileBottomNav } from "./MobileBottomNav";
+import { DesktopAppMenu } from "./DesktopAppMenu";
 import type { ProjectInfo } from "@/lib/project-name";
 import { getProjectScopedHref } from "@/lib/project-utils";
 
@@ -61,11 +62,10 @@ export function PullRequestsPage({
     initialAttentionLevels,
   );
   const searchParams = useSearchParams();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
-  const showSidebar = projects.length > 1;
-  const allProjectsView = showSidebar && projectId === undefined;
+  const showSidebar = projects.length >= 1;
+  const allProjectsView = projects.length > 1 && projectId === undefined;
   const currentProjectOrchestrator = useMemo(
     () =>
       projectId
@@ -98,17 +98,14 @@ export function PullRequestsPage({
   }, [searchParams]);
 
   return (
-      <div
-        className={`dashboard-shell flex h-screen${!isMobile && sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
-      >
+      <div className="dashboard-shell flex h-screen">
       {showSidebar ? (
         <ProjectSidebar
           projects={projects}
           sessions={sessions}
           activeProjectId={projectId}
           activeSessionId={undefined}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+          collapsed={false}
           mobileOpen={mobileMenuOpen}
           onMobileClose={() => setMobileMenuOpen(false)}
         />
@@ -154,24 +151,14 @@ export function PullRequestsPage({
           <section className="dashboard-hero mb-5">
             <div className="dashboard-hero__backdrop" />
             <div className="dashboard-hero__content">
-              {showSidebar ? (
-                <button
-                  type="button"
-                  className="mobile-menu-toggle"
-                  onClick={() => setMobileMenuOpen(true)}
-                  aria-label="Open menu"
-                >
-                  <svg
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    className="h-5 w-5"
-                  >
-                    <path d="M4 6h16M4 12h16M4 18h16" />
-                  </svg>
-                </button>
-              ) : null}
+              <DesktopAppMenu
+                activeTab="prs"
+                dashboardHref={dashboardHref}
+                prsHref={prsHref}
+                phasesHref={phasesHref}
+                showOrchestrator={!allProjectsView}
+                orchestratorHref={orchestratorHref}
+              />
               <div className="dashboard-hero__primary">
                 <div className="dashboard-hero__heading">
                   <div>

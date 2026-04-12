@@ -19,6 +19,7 @@ import type { ProjectInfo } from "@/lib/project-name";
 
 import { MobileBottomNav } from "./MobileBottomNav";
 import { ProjectSidebar } from "./ProjectSidebar";
+import { DesktopAppMenu } from "./DesktopAppMenu";
 
 const DirectTerminal = dynamic(
   () => import("./DirectTerminal").then((m) => ({ default: m.DirectTerminal })),
@@ -434,7 +435,6 @@ export function SessionDetail({
   const searchParams = useSearchParams();
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const startFullscreen = searchParams.get("fullscreen") === "true";
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
   const pr = session.pr;
   const terminalEnded = TERMINAL_STATUSES.has(session.status);
@@ -486,27 +486,14 @@ export function SessionDetail({
     return (
       <div className="dashboard-app-shell">
         <header className="dashboard-app-header">
-          {projects.length > 0 ? (
-            <button
-              type="button"
-              className="dashboard-app-sidebar-toggle"
-              onClick={() => setSidebarCollapsed((current) => !current)}
-              aria-label="Toggle sidebar"
-            >
-              <svg
-                width="14"
-                height="14"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.75"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <path d="M9 3v18" />
-              </svg>
-            </button>
-          ) : null}
+          <DesktopAppMenu
+            activeTab={isOrchestrator ? "orchestrator" : undefined}
+            dashboardHref={dashboardHref}
+            prsHref={prsHref}
+            phasesHref={phasesHref}
+            showOrchestrator={orchestratorHref !== null}
+            orchestratorHref={orchestratorHref}
+          />
           <div className="dashboard-app-header__brand">
             <span>Agent Orchestrator</span>
           </div>
@@ -545,17 +532,14 @@ export function SessionDetail({
           </div>
         </header>
 
-        <div
-          className={`dashboard-shell dashboard-shell--desktop${sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
-        >
+        <div className="dashboard-shell dashboard-shell--desktop">
           {projects.length > 0 ? (
             <ProjectSidebar
               projects={projects}
               sessions={sidebarSessions}
               activeProjectId={session.projectId}
               activeSessionId={session.id}
-              collapsed={sidebarCollapsed}
-              onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+              collapsed={false}
             />
           ) : null}
 

@@ -15,6 +15,7 @@ import { DynamicFavicon } from "./DynamicFavicon";
 import { ConnectionBar } from "./ConnectionBar";
 import { ToastProvider, useToast } from "./Toast";
 import { MobileBottomNav } from "./MobileBottomNav";
+import { DesktopAppMenu } from "./DesktopAppMenu";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { useMuxOptional } from "@/providers/MuxProvider";
 import { getProjectScopedHref } from "@/lib/project-utils";
@@ -129,7 +130,6 @@ function PhaseKanbanInner({
   const searchParams = useSearchParams();
   const expanded = searchParams.get("subphases") === "1";
 
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [doneExpanded, setDoneExpanded] = useState(false);
   const { showToast } = useToast();
@@ -281,27 +281,14 @@ function PhaseKanbanInner({
       <ConnectionBar status={connectionStatus} />
       <div className="dashboard-app-shell">
         <header className="dashboard-app-header">
-          {showSidebar ? (
-            <button
-              type="button"
-              className="dashboard-app-sidebar-toggle"
-              onClick={() => setSidebarCollapsed((current) => !current)}
-              aria-label="Toggle sidebar"
-            >
-              <svg
-                width="14"
-                height="14"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.75"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <path d="M9 3v18" />
-              </svg>
-            </button>
-          ) : null}
+          <DesktopAppMenu
+            activeTab="phases"
+            dashboardHref={dashboardHref}
+            prsHref={prsHref}
+            phasesHref={phasesHref}
+            showOrchestrator
+            orchestratorHref={orchestratorHref}
+          />
           <div className="dashboard-app-header__brand">
             <span className="dashboard-app-header__brand-dot" aria-hidden="true" />
             <span>Agent Orchestrator</span>
@@ -348,17 +335,14 @@ function PhaseKanbanInner({
           </div>
         </header>
 
-        <div
-          className={`dashboard-shell dashboard-shell--desktop${sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
-        >
+        <div className="dashboard-shell dashboard-shell--desktop">
           {showSidebar && (
             <ProjectSidebar
               projects={projects}
               sessions={sessions}
               activeProjectId={projectId}
               activeSessionId={undefined}
-              collapsed={sidebarCollapsed}
-              onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+              collapsed={false}
               mobileOpen={mobileMenuOpen}
               onMobileClose={() => setMobileMenuOpen(false)}
             />
