@@ -73,7 +73,7 @@ export function resolveTmuxSession(
   // Try exact match first using = prefix for exact matching (e.g., "ao-orchestrator")
   // Without =, tmux uses prefix matching: "ao-1" would match "ao-15"
   try {
-    execFn(tmuxPath, ["has-session", "-t", `=${sessionId}`], { timeout: 5000 });
+    execFn(tmuxPath, ["has-session", "-t", `=${sessionId}`], { timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
     return sessionId;
   } catch {
     // Not an exact match
