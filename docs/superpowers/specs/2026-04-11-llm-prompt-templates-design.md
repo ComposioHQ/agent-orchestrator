@@ -22,6 +22,9 @@ Agent Orchestrator currently embeds all LLM-facing prompts as string literals in
 - Versioning or migration of template schemas.
 - A dashboard UI for editing prompts.
 - Changing how users override reaction messages in `agent-orchestrator.yaml` (that path stays exactly as it is).
+- Looping or conditionals inside templates. Any repeating or optional content is pre-formatted to a scalar string by the caller and passed in as a declared variable.
+- Moving non-message reaction defaults (`auto`, `action`, `retries`, `escalateAfter`, `priority`, `threshold`, `includeSummary`) out of `applyDefaultReactions`. Only the 6 `message` strings are in scope.
+- Moving other string constants in core (`PREFERRED_GH_PATH`, tmux setup strings, etc.) out of code. Not prompts, not in scope.
 
 ## Scope — Prompts Being Extracted
 
@@ -30,10 +33,10 @@ Five embedded prompts, identified by audit of `packages/core/src`:
 | # | Source | What it is |
 |---|--------|-----------|
 | 1 | `prompt-builder.ts:21-40` — `BASE_AGENT_PROMPT` | ~20-line worker-agent system prompt (Layer 1 of the 3-layer assembly) |
-| 2 | `orchestrator-prompt.ts:21-255` — `generateOrchestratorPrompt()` body | ~230-line orchestrator system prompt with `${project.*}` / `${config.*}` / `${projectId}` substitutions |
-| 3 | `config.ts:538-602` — 5 default reaction messages | `ci-failed`, `changes-requested`, `bugbot-comments`, `merge-conflicts`, `agent-idle` (currently `.default(...)` values in the Zod schema) |
+| 2 | `orchestrator-prompt.ts:21-256` — `generateOrchestratorPrompt()` body | ~230-line orchestrator system prompt with `${project.*}` / `${config.*}` / `${projectId}` substitutions, plus two optional sections (reactions, project-specific rules) that are conditionally appended |
+| 3 | `config.ts:537-608` — 6 default reaction **messages** | `ci-failed`, `changes-requested`, `bugbot-comments`, `merge-conflicts`, `approved-and-green`, `agent-idle` (the `message` fields only — other defaults like `auto`, `action`, `retries`, `escalateAfter`, `priority`, `threshold` stay in `applyDefaultReactions`) |
 | 4 | `lifecycle-manager.ts:932-947` — CI failure formatter | ~15-line template that formats failed CI checks into a message sent to the agent |
-| 5 | `agent-workspace-hooks.ts:267-278` — `.ao/AGENTS.md` blurb | ~10 lines appended to each workspace's `.ao/AGENTS.md` explaining metadata fallbacks |
+| 5 | `agent-workspace-hooks.ts:267-278` — `.ao/AGENTS.md` blurb | ~10 lines appended to each workspace's `.ao/AGENTS.md` explaining metadata fallbacks; no variables |
 
 ## Architecture
 
@@ -76,7 +79,7 @@ template: |
   ...
 ```
 
-**Reactions file** (`reactions.yaml` only) — a map of short templates, grouped because they are logically one set:
+**Reactions file** (`reactions.yaml` only) — a map of short templates, grouped because they are logically one set. Contains the 6 message-carrying reactions; open-record schema so users may add their own project-specific reaction keys in override files:
 
 ```yaml
 name: reactions
@@ -92,7 +95,7 @@ reactions:
     variables: []
     template: |
       There are review comments on your PR...
-  # bugbot-comments, merge-conflicts, agent-idle
+  # bugbot-comments, merge-conflicts, approved-and-green, agent-idle
 ```
 
 Zod:
@@ -161,16 +164,24 @@ function interpolate(
   vars: Record<string, unknown>,
   declared: string[],
 ): string {
-  // 1. Scan template for ${path.to.key} occurrences.
-  //    Every scanned key must appear in `declared`.
-  // 2. Every key in `declared` must resolve in `vars`.
-  //    Missing values throw with the key name and template name.
-  // 3. Replace each ${path} by walking `vars` via dotted path.
-  //    Values are coerced with String().
+  // 1. For each key in `declared`, resolve it in `vars` by walking the
+  //    dotted path. Missing values throw with the key name and template name.
+  // 2. Replace every `${<declared-key>}` occurrence with the resolved value,
+  //    coerced via String(). Only keys listed in `declared` are substituted.
+  // 3. Every other `${...}` occurrence — including shell examples inside
+  //    fenced code blocks like `${pr_number}` — passes through unchanged.
+  //    This is the escape story: declare a key to substitute it, omit it
+  //    to leave it literal.
 }
 ```
 
+**Declared-only substitution is load-bearing.** The existing orchestrator prompt contains shell-example `${…}` patterns (and so does any future template that shows a command line). A naive "substitute every `${…}`" approach would flag these as undeclared and throw. Restricting substitution to the declared set gives us a natural escape mechanism without introducing `$${}` or backslash escaping.
+
 Dotted-path resolution means existing call sites do not need to reshape their context objects. They pass `{ project, config, projectId }` and the template references `${project.name}` as it does today.
+
+### Sync by Design
+
+Both `render()` and `renderReaction()` are **synchronous**. File I/O uses `fs.readFileSync`, YAML parsing uses `js-yaml`'s synchronous `load`. This matches the existing signatures of `buildPrompt()`, `generateOrchestratorPrompt()`, and `setupPathWrapperWorkspace()` — all synchronous today — and avoids rippling `async` through spawn paths and plugin APIs. The cache test (`loader.test.ts` #12) spies on `fs.readFileSync` to verify subsequent calls for the same file do not re-read from disk.
 
 ### Caching
 
@@ -199,13 +210,19 @@ Each existing embedded prompt is replaced in one place.
 
 **2. `orchestrator-prompt.ts` — `generateOrchestratorPrompt()`**
 - Function signature gains a `loader` param.
-- Body reduces to `return loader.render("orchestrator", { project, config, projectId });`.
-- The ~230-line template moves verbatim into `orchestrator.yaml` — same `${…}` syntax, zero transformation.
+- Body becomes: pre-format the two optional sections into scalar strings, then `return loader.render("orchestrator", { project, config, projectId, reactionsSection, projectRulesSection });`.
+- Most of the ~230-line template moves as-is into `orchestrator.yaml`. The conditional/looping parts do NOT:
+  - **Reactions section** (`orchestrator-prompt.ts:173-195`): the function loops over `project.reactions`, emits per-entry bullet lines with branching on `reaction.action` (`send-to-agent` vs `notify`), wraps them in a `## Automated Reactions` header, and appends the whole block only when at least one reaction exists. This cannot be expressed in scalar-only interpolation. Strategy: the pre-formatting stays in the function, producing either a ready-to-insert markdown blob or an empty string, passed as the declared variable `${reactionsSection}`. The YAML template contains a single `${reactionsSection}` placeholder at the correct position with a leading blank line so the template joins cleanly whether or not the section is present.
+  - **Project-specific rules section** (`orchestrator-prompt.ts:248-252`): similarly, the function builds `"## Project-Specific Rules\n\n" + project.orchestratorRules` when `project.orchestratorRules` is set, else an empty string, and passes it as `${projectRulesSection}`.
+- The function's `sections.join("\n\n")` shape is preserved by authoring `orchestrator.yaml` as one block scalar with the same `\n\n` separators literally present in the YAML, so the `${reactionsSection}` and `${projectRulesSection}` placeholders sit exactly where the conditional `sections.push(...)` calls sat in the original code. A snapshot test (see Testing) asserts byte-identical output for a set of fixture configs that exercise all four combinations (reactions ∈ {none, present} × projectRules ∈ {absent, present}).
+- **No looping or conditionals in templates.** This is the same pattern ci-failure.yaml uses (the caller pre-formats the failed-checks bullet list into a single `${failedChecksList}` scalar). Keeping one interpolation model across all templates is a deliberate simplicity choice.
 
-**3. `config.ts` — 5 default reaction messages**
-- Current state: Zod schema defaults (`.default(...)`) evaluated at module load. The loader does not exist at that point.
-- Change: remove the `.default(...)` values from the schema. After `parseConfig()` returns, a new post-parse step `applyReactionDefaults(config, loader)` fills in any reaction slot the user did not explicitly set, using `loader.renderReaction(key)`.
-- User-override semantics preserved: a user-set `reactions.ci-failed` in `agent-orchestrator.yaml` still wins exactly as today. This refactor only moves the *defaults* out of the schema.
+**3. `config.ts` — 6 default reaction messages**
+- Current state: `applyDefaultReactions(config)` (lines 537-608) holds a `defaults` object with 11 reaction entries. Six of them (`ci-failed`, `changes-requested`, `bugbot-comments`, `merge-conflicts`, `approved-and-green`, `agent-idle`) carry a `message` string. The other five (`agent-stuck`, `agent-needs-input`, `agent-exited`, `all-complete`, plus non-message fields of the message-carrying entries) have no `message`.
+- **Only the `message` fields move to YAML.** All other defaults (`auto`, `action`, `retries`, `escalateAfter`, `priority`, `threshold`, `includeSummary`) stay in `applyDefaultReactions` exactly as they are. This keeps the scope tight and avoids redesigning reaction defaults in this PR.
+- Change: `applyDefaultReactions` gains a `loader: PromptLoader` parameter. For each of the 6 message-carrying entries, the `message` field is no longer a hardcoded string literal — it is `loader.renderReaction(eventKey)`. The non-message fields remain literal in the `defaults` object. The existing "user wins" merge semantics (`{ ...defaults, ...config.reactions }`) are preserved unchanged.
+- The loader is constructed in the config-loading code path (currently `loadConfig` / `parseConfig`) and threaded into `applyDefaultReactions`. The caller that parses `agent-orchestrator.yaml` already has the `projectDir` needed to construct the loader.
+- User-override semantics preserved: a user-set `reactions.ci-failed.message` in `agent-orchestrator.yaml` still wins exactly as today. This refactor only moves the default *message strings* out of code.
 
 **4. `lifecycle-manager.ts:932-947` — Dynamic CI failure formatter**
 - The template literal moves to `ci-failure.yaml`.
@@ -213,7 +230,9 @@ Each existing embedded prompt is replaced in one place.
 
 **5. `agent-workspace-hooks.ts:267-278` — `.ao/AGENTS.md` blurb**
 - Moves to `agent-workspace.yaml`.
-- `setupPathWrapperWorkspace` (and any other caller) gains a `loader` param. The loader is already in scope wherever a session is being set up.
+- `setupPathWrapperWorkspace` is a public core export consumed by **five agent plugins** today (`agent-claude-code`, `agent-codex`, `agent-aider`, `agent-opencode`, `agent-cursor`). Threading a `loader` parameter through it would change a plugin-boundary API and require coordinated updates in every agent plugin for a blurb that takes **no variables** — pure YAGNI.
+- **Alternative adopted:** `agent-workspace-hooks.ts` uses a **module-level lazy default loader** scoped to the bundled templates directory. On first call, it constructs a `PromptLoader` with `projectDir = workspacePath` (so a user's project-local override at `<workspacePath>/.agent-orchestrator/prompts/agent-workspace.yaml` still works if they want it) and caches the parsed blurb for the module's lifetime. No plugin signatures change.
+- Because this blurb has no variables, it bypasses the full lookup-chain dance only in the sense that there is nothing to interpolate — the loader still performs the full project-local → bundled-default lookup. The only thing skipped is a `promptsDir` config lookup, because `agent-workspace-hooks.ts` does not have a config object in scope at call time. This is a deliberate trade-off: project-local `.agent-orchestrator/prompts/agent-workspace.yaml` still overrides the bundled default, but the explicit `promptsDir` override does not apply to this specific template. Documented in the YAML file and in `agent-orchestrator.yaml.example`.
 
 ### New Config Key
 
@@ -230,7 +249,13 @@ Documented in `agent-orchestrator.yaml.example`.
 
 ## Backward Compatibility
 
-No user-visible behavior change when `promptsDir` is unset and no `.agent-orchestrator/prompts/` directory exists. Bundled YAML defaults produce output byte-identical to today's embedded strings. A snapshot-style test (`prompt-builder.test.ts`, `orchestrator-prompt.test.ts`) asserts this for the two large prompts and prevents accidental whitespace drift during the extraction.
+No user-visible behavior change when `promptsDir` is unset and no `.agent-orchestrator/prompts/` directory exists. Bundled YAML defaults produce output byte-identical to today's embedded strings.
+
+**Whitespace is the high-risk area.** `generateOrchestratorPrompt()` builds its output with `sections.join("\n\n")`, each section being a template literal whose leading/trailing whitespace matters. YAML block scalars (`|`, `|-`, `|+`, `>`) have their own rules about trailing newlines, and the YAML parser will normalize them on load. The authoring rule for `orchestrator.yaml` is:
+- Use the `|` block scalar (keeps final newline) and place the entire concatenated body — including the exact `\n\n` section separators that `sections.join("\n\n")` would produce — literally inside.
+- Place `${reactionsSection}` and `${projectRulesSection}` placeholders with a leading `\n\n` inside the placeholder contents themselves (i.e. the function returns `"\n\n## Automated Reactions\n\n..."` or `""`), not in the YAML surroundings. This way the template has no conditional whitespace and the empty-string case produces exactly the same output as the current "section never pushed" path.
+
+Snapshot-style tests (`prompt-builder.test.ts`, `orchestrator-prompt.test.ts`) assert byte-identical output for both prompts across the cartesian product of relevant fixture configs, and prevent accidental whitespace drift during the extraction. The tests run against the current (pre-refactor) golden strings captured from HEAD before any file is edited.
 
 ## Testing
 
@@ -239,22 +264,23 @@ No user-visible behavior change when `promptsDir` is unset and no `.agent-orches
 1. Loads and renders a bundled template with variables.
 2. Project-local override at `<projectDir>/.agent-orchestrator/prompts/foo.yaml` wins over bundled.
 3. Explicit `promptsDir` wins over project-local.
-4. Throws on missing file at all 3 paths.
+4. Throws on missing file at all 3 paths (error message lists all paths checked).
 5. Throws on invalid YAML.
 6. Throws on Zod schema failure (missing `template`, wrong types).
-7. Throws when `template` references `${undeclared.var}`.
-8. Throws when render call omits a declared variable.
-9. Dotted-path interpolation walks nested objects.
+7. Throws when render call omits a declared variable.
+8. Dotted-path interpolation walks nested objects.
+9. **Escape behavior:** `${undeclared.thing}` inside a template body passes through literally when `undeclared.thing` is not in the `variables` list. (This is the shell-example-in-code-fence guarantee.)
 10. `renderReaction("ci-failed")` returns correct string.
 11. `renderReaction` with unknown key throws.
 12. Cache: second render of same file does not re-read disk (spy on `fs.readFileSync`).
+13. `render` and `renderReaction` are synchronous (not `Promise`-returning).
 
 ### Updated Existing Tests
 
-- `prompt-builder.test.ts` — assert `buildPrompt(...)` output matches today's behavior (golden string).
-- `orchestrator-prompt.test.ts` — same, for the orchestrator prompt.
+- `prompt-builder.test.ts` — assert `buildPrompt(...)` output matches today's behavior against a golden string captured from HEAD before the refactor.
+- `orchestrator-prompt.test.ts` — assert byte-identical output for the cartesian product of (reactions ∈ {none, present-send-to-agent, present-notify, mixed}) × (projectRules ∈ {absent, present}) — eight fixture configs total. Golden strings captured from HEAD before the refactor.
 - `session-manager/spawn.test.ts` — pass a real `PromptLoader` (pointed at bundled templates) or a test double.
-- `config.test.ts` — verify reaction defaults are applied when user YAML omits them; verify user-set values still override.
+- `config.test.ts` — verify reaction default *messages* are applied when user YAML omits them; verify user-set messages still override; verify non-message fields (`auto`, `retries`, etc.) are unchanged.
 
 ### No New E2E
 
