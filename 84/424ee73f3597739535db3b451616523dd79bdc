@@ -1,0 +1,95 @@
+packages/web/src/app/api/projects/[id]/route.ts
+  3b3b057bdfd8aeb4 7
+packages/web/src/lib/__tests__/legacy-config-migration.test.ts
+  3b3b057bdfd8aeb4 5
+packages/web/src/app/api/projects/[id]/resources/route.ts
+  3b3b057bdfd8aeb4 4
+packages/web/src/app/settings/page.tsx
+  3b3b057bdfd8aeb4 4
+packages/web/src/app/api/projects/clone/route.ts
+  3b3b057bdfd8aeb4 13
+packages/web/src/app/api/sessions/__tests__/route.test.ts
+  3b3b057bdfd8aeb4 96
+packages/web/src/app/api/projects/__tests__/route.test.ts
+  3b3b057bdfd8aeb4 34,137,182,203,230,251,291,391
+packages/web/src/lib/portfolio-page-data.ts
+  3b3b057bdfd8aeb4 8
+packages/cli/src/commands/project.ts
+  3b3b057bdfd8aeb4 14
+packages/web/src/lib/__tests__/portfolio-services.test.ts
+  3b3b057bdfd8aeb4 9
+packages/web/src/lib/__tests__/project-name.test.ts
+  3b3b057bdfd8aeb4 11
+packages/web/src/app/api/projects/[id]/resources/__tests__/route.test.ts
+  3b3b057bdfd8aeb4 30,55,101,197,218,235,251,278
+packages/plugins/runtime-tmux/src/index.ts
+  3b3b057bdfd8aeb4 15
+packages/cli/__tests__/commands/project.test.ts
+  3b3b057bdfd8aeb4 22
+packages/web/src/lib/__tests__/portfolio-page-data.test.ts
+  3b3b057bdfd8aeb4 18
+packages/web/src/app/api/projects/route.ts
+  3b3b057bdfd8aeb4 15
+packages/cli/src/lib/portfolio-display.ts
+  3b3b057bdfd8aeb4 2
+packages/web/src/lib/__tests__/services.test.ts
+  3b3b057bdfd8aeb4 19
+packages/web/src/lib/home-activity-data.ts
+  3b3b057bdfd8aeb4 1
+packages/web/src/lib/project-registration.ts
+  3b3b057bdfd8aeb4 6
+packages/web/src/app/api/projects/[id]/__tests__/route.test.ts
+  3b3b057bdfd8aeb4 11,37,114
+packages/web/src/lib/__tests__/project-utils.test.ts
+  3b3b057bdfd8aeb4 3
+packages/web/src/app/api/settings/preferences/route.ts
+  3b3b057bdfd8aeb4 2
+packages/cli/__tests__/lib/portfolio-display.test.ts
+  3b3b057bdfd8aeb4 2
+packages/web/src/components/ProjectSessionPageClient.tsx
+  3b3b057bdfd8aeb4 4
+packages/web/src/lib/project-page-data.ts
+  3b3b057bdfd8aeb4 1
+packages/web/src/app/settings/__tests__/page.test.tsx
+  3b3b057bdfd8aeb4 20-21
+packages/web/src/lib/__tests__/project-registration.test.ts
+  3b3b057bdfd8aeb4 9
+packages/web/src/lib/legacy-config-migration.ts
+  3b3b057bdfd8aeb4 10
+packages/web/src/app/api/settings/preferences/__tests__/route.test.ts
+  3b3b057bdfd8aeb4 11,97
+packages/web/src/app/api/projects/clone/__tests__/route.test.ts
+  3b3b057bdfd8aeb4 30,102,113
+packages/web/src/lib/portfolio-services.ts
+  3b3b057bdfd8aeb4 19
+packages/web/src/lib/__tests__/project-page-data.test.ts
+  3b3b057bdfd8aeb4 27
+packages/web/src/lib/__tests__/ensure-project-orchestrator.test.ts
+  3b3b057bdfd8aeb4 6
+packages/web/src/lib/__tests__/home-activity-data.test.ts
+  3b3b057bdfd8aeb4 8
+packages/web/src/components/UnifiedSidebar.tsx
+  3b3b057bdfd8aeb4 20
+packages/web/src/lib/ensure-project-orchestrator.ts
+  3b3b057bdfd8aeb4 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "84424ee73f3597739535db3b451616523dd79bdc",
+  "prompts": {
+    "3b3b057bdfd8aeb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef60a7a6-f160-47e8-bbcb-a3219a8ab2ee",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 236,
+      "total_deletions": 58,
+      "accepted_lines": 4599,
+      "overriden_lines": 0
+    }
+  }
+}
