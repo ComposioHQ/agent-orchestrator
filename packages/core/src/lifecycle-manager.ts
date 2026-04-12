@@ -758,12 +758,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // Comments don't change faster than this in practice, and the SCM calls
     // (getPendingComments + getAutomatedComments) consume API quota on every poll.
     //
-    // Exception: bypass throttle when a transition reaction just fired for
-    // the human review key. The transitionReaction branch records
-    // lastPendingReviewDispatchHash, which requires the current fingerprint
-    // from the API. Throttling here would prevent that write, causing a
-    // duplicate dispatch on the next unthrottled poll.
-    const hasRelevantTransition = transitionReaction?.key === humanReactionKey;
+    // Exception: bypass throttle when a transition reaction just fired for a
+    // review reaction key. The transitionReaction branch records
+    // lastPendingReviewDispatchHash / lastAutomatedReviewDispatchHash, which
+    // requires the current fingerprint from the API. Throttling here would
+    // prevent that metadata write, causing a duplicate dispatch on the next
+    // unthrottled poll.
+    const hasRelevantTransition =
+      transitionReaction?.key === humanReactionKey ||
+      transitionReaction?.key === automatedReactionKey;
     if (!hasRelevantTransition) {
       const lastCheckAt = lastReviewBacklogCheckAt.get(session.id) ?? 0;
       if (Date.now() - lastCheckAt < REVIEW_BACKLOG_THROTTLE_MS) {
