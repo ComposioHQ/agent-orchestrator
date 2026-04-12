@@ -323,6 +323,13 @@ export interface PortfolioActivityItem {
   projectName: string;
 }
 
+/** Global pause state — set by an orchestrator session, read by the dashboard */
+export interface GlobalPauseState {
+  pausedUntil: string;
+  reason: string | null;
+  sourceSessionId: string;
+}
+
 /** Portfolio project summary for the project rail */
 export interface PortfolioProjectSummary {
   id: string;

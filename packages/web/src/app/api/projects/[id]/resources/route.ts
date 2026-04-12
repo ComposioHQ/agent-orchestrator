@@ -204,7 +204,7 @@ export async function GET(
     }
 
     const { registry } = await getServices();
-    const tracker = resolved.project.tracker
+    const tracker = resolved.project.tracker?.plugin
       ? (registry.get<Tracker>("tracker", resolved.project.tracker.plugin) ?? undefined)
       : undefined;
 
