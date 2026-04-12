@@ -137,6 +137,7 @@ function SidebarContent({
   const [removing, setRemoving] = useState(false);
   const [killTarget, setKillTarget] = useState<{ id: string; title: string } | null>(null);
   const [killing, setKilling] = useState(false);
+  const [pendingKillId, setPendingKillId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [spawnMenuProjectId, setSpawnMenuProjectId] = useState<string | null>(null);
   const [projectMenuId, setProjectMenuId] = useState<string | null>(null);
@@ -381,6 +382,21 @@ function SidebarContent({
       setErrorMessage(error instanceof Error ? error.message : "Failed to terminate session");
     } finally {
       setKilling(false);
+    }
+  }
+
+  async function executeKillDirect(sessionId: string) {
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kill`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error || "Failed to terminate session");
+      }
+      router.refresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to terminate session");
     }
   }
 
@@ -718,6 +734,24 @@ function SidebarContent({
                     </Link>
                   </div>
 
+                  {/* Attention count pills — hidden on hover to give room for action buttons */}
+                  <div className="flex shrink-0 items-center gap-0.5 transition-opacity duration-100 group-hover/row:opacity-0 group-focus-within/row:opacity-0">
+                    {(["working", "respond", "review", "merge", "pending"] as const).map((level) => {
+                      const count = project.attentionCounts[level];
+                      if (!count) return null;
+                      const abbrev = level === "working" ? "w" : level === "merge" ? "m" : level === "pending" ? "p" : "r";
+                      return (
+                        <span
+                          key={level}
+                          className="rounded-[3px] px-1 py-px font-[family-name:var(--font-mono)] text-[9px] font-semibold leading-none"
+                          style={{ color: AGENT_DOT_COLORS[level], backgroundColor: `color-mix(in srgb, ${AGENT_DOT_COLORS[level]} 14%, transparent)` }}
+                        >
+                          {count}{abbrev}
+                        </span>
+                      );
+                    })}
+                  </div>
+
                   <div
                     className={cn(
                       "flex shrink-0 items-center gap-0.5 transition-opacity duration-100",
@@ -818,9 +852,14 @@ function SidebarContent({
                                 className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-1.5 pr-1 hover:no-underline"
                               >
                                 <SidebarAgentIcon agentId={session.metadata["agent"]} attention={attention} />
-                                <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium tracking-[-0.011em]">
-                                  {title}
-                                </span>
+                                <div className="min-w-0 flex-1 overflow-hidden">
+                                  <span className="block truncate text-[11.5px] font-medium tracking-[-0.011em]">
+                                    {title}
+                                  </span>
+                                  <span className="block truncate text-[10px] text-[var(--color-text-tertiary)]">
+                                    {formatAgentLabel(session.metadata["agent"])} · {session.id}
+                                  </span>
+                                </div>
                                 <StatusChip attention={attention} />
                               </Link>
                               <div className="pr-1 opacity-0 transition-opacity duration-100 group-hover/session:opacity-100 group-focus-within/session:opacity-100">
@@ -849,6 +888,83 @@ function SidebarContent({
           })}
         </div>
       </nav>
+
+      {/* Active agents section */}
+      {activeAgents.length > 0 ? (
+        <div className="border-t border-[var(--color-border-subtle)] px-1.5 pb-2">
+          <div className="flex items-center justify-between px-2 pb-1.5 pt-2.5">
+            <span className="font-[family-name:var(--font-mono)] text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">
+              Agents
+            </span>
+            <span className="rounded-full bg-[var(--color-bg-elevated)] px-1.5 py-0.5 font-[family-name:var(--font-mono)] text-[10px] font-medium text-[var(--color-text-tertiary)]">
+              {activeAgents.length}
+            </span>
+          </div>
+          <div className="space-y-0.5">
+            {activeAgents.map((session) => {
+              const isSessionActive = activeSessionId === session.id;
+              const attention = getAttentionLevel(session);
+              const title = getSessionTitle(session);
+              const isPendingKill = pendingKillId === session.id;
+              return (
+                <div
+                  key={session.id}
+                  className={cn(
+                    "group/agent relative overflow-hidden rounded-[var(--radius-sm)] border-l-2",
+                    ATTENTION_BORDER_CLASS[attention],
+                  )}
+                  onPointerLeave={() => setPendingKillId(null)}
+                >
+                  {isPendingKill ? (
+                    <div className="flex items-center gap-1 py-1.5 pl-1.5 pr-1">
+                      <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium tracking-[-0.011em] text-[var(--color-text-secondary)]">
+                        {title}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPendingKillId(null);
+                          void executeKillDirect(session.id);
+                        }}
+                        className="shrink-0 rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--color-status-error)] hover:bg-[color-mix(in_srgb,var(--color-status-error)_12%,transparent)]"
+                      >
+                        Confirm
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center">
+                      <Link
+                        href={getProjectSessionHref(session.projectId, session.id)}
+                        draggable={false}
+                        className={cn(
+                          "flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-1.5 pr-1 hover:no-underline",
+                          isSessionActive
+                            ? "bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)]"
+                            : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-elevated-hover)]",
+                        )}
+                      >
+                        <SidebarAgentIcon agentId={session.metadata["agent"]} attention={attention} />
+                        <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium tracking-[-0.011em]">
+                          {title}
+                        </span>
+                        <StatusChip attention={attention} />
+                      </Link>
+                      <div className="pr-1 opacity-0 transition-opacity duration-100 group-hover/agent:opacity-100 group-focus-within/agent:opacity-100">
+                        <SidebarIconButton
+                          label="Terminate session"
+                          onClick={() => setPendingKillId(session.id)}
+                        >
+                          <TrashIcon />
+                        </SidebarIconButton>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       {/* Footer */}
       <div className="border-t border-[var(--color-border-subtle)] px-3 py-2">

@@ -71,7 +71,7 @@ export const getAllProjects = cache((): ProjectInfo[] => {
     return Object.entries(config.projects).map(([id, project]) => ({
       id,
       name: project.name ?? id,
-      sessionPrefix: project.sessionPrefix ?? id,
+      ...(project.sessionPrefix ? { sessionPrefix: project.sessionPrefix } : {}),
     }));
   } catch {
     return [];

@@ -46,6 +46,7 @@ vi.mock("@/lib/portfolio-services", () => ({
     ],
     preferences: { projectOrder: ["proj-1"], defaultProject: "" },
   }),
+  getCachedPortfolioSessions: () => Promise.resolve([]),
 }));
 
 // Mock default-location

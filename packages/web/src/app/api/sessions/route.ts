@@ -12,6 +12,7 @@ import {
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
 import { filterProjectSessions } from "@/lib/project-utils";
 import { settlesWithin } from "@/lib/async-utils";
+import { resolveGlobalPause } from "@/lib/global-pause";
 import { getAttentionLevel, getTriageRank, type PortfolioActionItem, type DashboardSession } from "@/lib/types";
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
@@ -111,6 +112,9 @@ export async function GET(request: Request) {
         ? projectFilter
         : undefined;
     const coreSessions = await sessionManager.list(requestedProjectId);
+    // Fetch all sessions for global pause computation when filtered by project,
+    // since the pause may originate from a different project's orchestrator.
+    const allSessions = requestedProjectId ? await sessionManager.list() : coreSessions;
     const visibleSessions = filterProjectSessions(coreSessions, projectFilter, config.projects);
     const orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
     const orchestratorId = orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null;
@@ -200,6 +204,7 @@ export async function GET(request: Request) {
         stats: computeStats(dashboardSessions),
         orchestratorId,
         orchestrators,
+        globalPause: resolveGlobalPause(allSessions),
       },
       { status: 200 },
       correlationId,

@@ -33,6 +33,7 @@ interface DashboardProps {
   projectName?: string;
   projects?: ProjectInfo[];
   orchestrators?: DashboardOrchestratorLink[];
+  initialGlobalPause?: import("@/lib/types").GlobalPauseState | null;
 }
 
 /** Strip HTML tags and truncate server error text for safe toast display. */
