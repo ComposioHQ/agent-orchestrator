@@ -138,10 +138,10 @@ describe("update-check", () => {
       ).toBe("npm-global");
     });
 
-    it("returns 'npm-global' for pnpm global store path", () => {
+    it("returns 'pnpm-global' for pnpm global store path", () => {
       expect(
         classifyInstallPath("/home/user/.local/share/pnpm/global/5/node_modules/.pnpm/@aoagents+ao-cli@0.2.2/node_modules/@aoagents/ao-cli/dist/lib/update-check.js"),
-      ).toBe("npm-global");
+      ).toBe("pnpm-global");
     });
 
     it("returns 'unknown' for local pnpm node_modules/.pnpm (not global)", () => {
@@ -239,6 +239,10 @@ describe("update-check", () => {
 
     it("returns npm install command for npm-global installs", () => {
       expect(getUpdateCommand("npm-global")).toBe("npm install -g @aoagents/ao@latest");
+    });
+
+    it("returns pnpm add command for pnpm-global installs", () => {
+      expect(getUpdateCommand("pnpm-global")).toBe("pnpm add -g @aoagents/ao@latest");
     });
 
     it("returns npm install command for unknown installs", () => {

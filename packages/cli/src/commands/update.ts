@@ -45,6 +45,7 @@ export function registerUpdate(program: Command): void {
             await handleGitUpdate(opts);
             break;
           case "npm-global":
+          case "pnpm-global":
             await handleNpmUpdate(opts);
             break;
           case "unknown":
@@ -109,7 +110,7 @@ async function handleNpmUpdate(opts: {
   console.log(`Latest version:  ${chalk.green(info.latestVersion)}`);
   console.log();
 
-  const command = "npm install -g @aoagents/ao@latest";
+  const command = info.recommendedCommand;
 
   if (!isTTY()) {
     // Non-interactive: print the command. Exit 0 because this isn't an error,

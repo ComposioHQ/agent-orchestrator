@@ -39,7 +39,7 @@ describe("cli entrypoint", () => {
             rejectionHandler = handler;
             return chainable;
           },
-          finally: (_fn: () => void) => chainable,
+          then: (_fn: () => void) => chainable,
         };
         return chainable as unknown as Promise<void>;
       },
@@ -72,7 +72,7 @@ describe("cli entrypoint", () => {
             rejectionHandler = handler;
             return chainable;
           },
-          finally: (_fn: () => void) => chainable,
+          then: (_fn: () => void) => chainable,
         };
         return chainable as unknown as Promise<void>;
       },

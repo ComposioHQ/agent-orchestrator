@@ -18,7 +18,7 @@ import { getCliVersion } from "../options/version.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export type InstallMethod = "git" | "npm-global" | "unknown";
+export type InstallMethod = "git" | "npm-global" | "pnpm-global" | "unknown";
 
 export interface UpdateInfo {
   currentVersion: string;
@@ -67,13 +67,19 @@ export function classifyInstallPath(resolvedPath: string): InstallMethod {
     // Local project installs have node_modules directly inside a project dir.
     // Note: /.pnpm/ alone is NOT a global signal — pnpm creates node_modules/.pnpm/
     // for local installs too. Only pnpm/global paths indicate a global install.
-    const isLikelyGlobal =
-      resolvedPath.includes("/lib/node_modules/") ||
-      resolvedPath.includes("\\lib\\node_modules\\") ||
+    const isPnpmGlobal =
       resolvedPath.includes("/pnpm/global/") ||
       resolvedPath.includes("\\pnpm\\global\\");
 
-    if (isLikelyGlobal) {
+    if (isPnpmGlobal) {
+      return "pnpm-global";
+    }
+
+    const isNpmGlobal =
+      resolvedPath.includes("/lib/node_modules/") ||
+      resolvedPath.includes("\\lib\\node_modules\\");
+
+    if (isNpmGlobal) {
       return "npm-global";
     }
     // Local node_modules (e.g. npx, project-local install) — treat as unknown
@@ -128,6 +134,8 @@ export function getUpdateCommand(method: InstallMethod): string {
       return "ao update";
     case "npm-global":
       return "npm install -g @aoagents/ao@latest";
+    case "pnpm-global":
+      return "pnpm add -g @aoagents/ao@latest";
     case "unknown":
       return "npm install -g @aoagents/ao@latest";
   }
