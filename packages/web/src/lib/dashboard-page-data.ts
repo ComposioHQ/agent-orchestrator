@@ -43,7 +43,8 @@ export function resolveDashboardProjectFilter(project?: string): string {
   if (project && projects.some((entry) => entry.id === project)) {
     return project;
   }
-  return getPrimaryProjectId();
+  // Multiple projects → show all by default; single project → show that one
+  return projects.length > 1 ? "all" : getPrimaryProjectId();
 }
 
 export const getDashboardPageData = cache(async function getDashboardPageData(project?: string): Promise<DashboardPageData> {

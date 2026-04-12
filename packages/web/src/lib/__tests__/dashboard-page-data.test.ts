@@ -38,11 +38,16 @@ describe("resolveDashboardProjectFilter", () => {
     expect(resolveDashboardProjectFilter("all")).toBe("all");
   });
 
-  it("falls back to primary project for unknown ids", () => {
-    expect(resolveDashboardProjectFilter("mono-orchestrator")).toBe("mono");
+  it("falls back to all projects for unknown ids when multiple projects exist", () => {
+    expect(resolveDashboardProjectFilter("mono-orchestrator")).toBe("all");
   });
 
-  it("falls back to primary project when no project is given", () => {
+  it("defaults to all projects when no project is given and multiple projects exist", () => {
+    expect(resolveDashboardProjectFilter(undefined)).toBe("all");
+  });
+
+  it("defaults to the single project when only one project exists", () => {
+    getAllProjectsMock.mockReturnValue([{ id: "mono", name: "Mono" }]);
     expect(resolveDashboardProjectFilter(undefined)).toBe("mono");
   });
 });
