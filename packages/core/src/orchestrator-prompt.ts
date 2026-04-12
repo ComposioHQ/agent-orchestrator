@@ -5,7 +5,7 @@
  * when the orchestrator agent runs.
  */
 
-import { PromptLoader } from "./prompts/loader.js";
+import type { PromptLoader } from "./prompts/loader.js";
 import type { OrchestratorConfig, ProjectConfig } from "./types.js";
 
 export interface OrchestratorPromptConfig {

@@ -13,7 +13,7 @@ Thanks for your interest in contributing. This guide covers how to report bugs, 
 
 ## Reporting Bugs
 
-Open an issue at [github.com/ComposioHQ/agent-orchestrator/issues](https://github.com/ComposioHQ/agent-orchestrator/issues).
+Open an issue at [github.com/snagnever/agent-orchestrator/issues](https://github.com/snagnever/agent-orchestrator/issues).
 
 Include:
 
@@ -30,7 +30,7 @@ Include:
 **Prerequisites**: Node.js 20+, pnpm 9.15+, Git 2.25+, tmux, gh CLI
 
 ```bash
-git clone https://github.com/ComposioHQ/agent-orchestrator.git
+git clone https://github.com/snagnever/agent-orchestrator.git
 cd agent-orchestrator
 pnpm install
 pnpm build

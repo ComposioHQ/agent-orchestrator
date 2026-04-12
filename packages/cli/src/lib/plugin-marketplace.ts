@@ -19,7 +19,7 @@ export interface MarketplacePluginEntry {
 
 export const BUNDLED_MARKETPLACE_PLUGIN_CATALOG = registryData as MarketplacePluginEntry[];
 export const DEFAULT_REMOTE_MARKETPLACE_REGISTRY_URL =
-  "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/packages/cli/src/assets/plugin-registry.json";
+  "https://raw.githubusercontent.com/snagnever/agent-orchestrator/main/packages/cli/src/assets/plugin-registry.json";
 
 const MARKETPLACE_CACHE_FILE = "plugin-registry.json";
 const MARKETPLACE_FETCH_TIMEOUT_MS = 30_000;

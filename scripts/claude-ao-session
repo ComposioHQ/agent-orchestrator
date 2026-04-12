@@ -7,7 +7,7 @@ MAIN_REPO=~/agent-orchestrator
 WORKTREE_DIR=~/.worktrees/ao
 SESSION_DIR=~/.ao-sessions
 DEFAULT_BRANCH="main"
-GITHUB_REPO="ComposioHQ/agent-orchestrator"
+GITHUB_REPO="snagnever/agent-orchestrator"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

@@ -9,7 +9,7 @@
  *
  * 2. Verifies the prebuilt binary is compatible with the current Node.js version.
  *    If not (common with nvm/fnm/volta), rebuilds from source via npx node-gyp.
- *    See: https://github.com/ComposioHQ/agent-orchestrator/issues/987
+ *    See: https://github.com/snagnever/agent-orchestrator/issues/987
  */
 
 import { chmodSync, existsSync } from "node:fs";
