@@ -47,9 +47,7 @@ import {
 import {
   PopoverField,
   PopoverOption,
-  SidebarIconButton,
   SidebarMenuButton,
-  Tooltip,
 } from "./UnifiedSidebarPrimitives";
 
 interface UnifiedSidebarProps {

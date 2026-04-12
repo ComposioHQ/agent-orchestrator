@@ -1225,6 +1225,9 @@ export interface ProjectConfig {
   /** Session name prefix (e.g. "app" → "app-1", "app-2") */
   sessionPrefix: string;
 
+  /** Whether this project is active in portfolio and dashboard surfaces */
+  enabled?: boolean;
+
   /** Override default runtime */
   runtime?: string;
 

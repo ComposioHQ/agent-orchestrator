@@ -152,7 +152,11 @@ async function labelIssuesForVerification(
 ): Promise<void> {
   const batches = new Map<
     string,
-    { project: ProjectConfig; tracker: Tracker; sessions: Session[] }
+    {
+      project: ProjectConfig;
+      updateIssue: NonNullable<Tracker["updateIssue"]>;
+      sessions: Session[];
+    }
   >();
 
   for (const session of sessions) {
@@ -177,16 +181,20 @@ async function labelIssuesForVerification(
     if (batch) {
       batch.sessions.push(session);
     } else {
-      batches.set(batchKey, { project, tracker, sessions: [session] });
+      batches.set(batchKey, {
+        project,
+        updateIssue: tracker.updateIssue,
+        sessions: [session],
+      });
     }
   }
 
   await Promise.allSettled(
-    [...batches.values()].flatMap(({ project, tracker, sessions: trackerSessions }) =>
+    [...batches.values()].flatMap(({ project, updateIssue, sessions: trackerSessions }) =>
       trackerSessions.map(async (session) => {
         const key = `${session.projectId}:${session.issueId}`;
         try {
-          await tracker.updateIssue(
+          await updateIssue(
             session.issueId!,
             {
               labels: ["merged-unverified"],
@@ -220,13 +228,13 @@ async function listTrackerIssuesByProject(
   trackerProjects: Array<{ projectId: string; project: ProjectConfig; tracker: Tracker }>,
   args: { state: "open"; labels: string[]; limit: number },
 ): Promise<Map<string, Issue[]>> {
-  const entries = await Promise.all(
+  const entries: Array<readonly [string, Issue[]]> = await Promise.all(
     trackerProjects.map(async ({ projectId, tracker, project }) => {
-      if (!tracker.listIssues) return [projectId, []] as const;
+      if (!tracker.listIssues) return [projectId, [] as Issue[]] as const;
       try {
         return [projectId, await tracker.listIssues(args, project)] as const;
       } catch {
-        return [projectId, []] as const;
+        return [projectId, [] as Issue[]] as const;
       }
     }),
   );
@@ -238,7 +246,10 @@ async function relabelReopenedIssues(
   registry: PluginRegistry,
 ): Promise<void> {
   const trackerProjects = getEnabledTrackerProjects(config, registry).filter(
-    ({ tracker }) => tracker.listIssues && tracker.updateIssue,
+    (
+      entry,
+    ): entry is { projectId: string; project: ProjectConfig; tracker: Tracker & Required<Pick<Tracker, "listIssues" | "updateIssue">> } =>
+      Boolean(entry.tracker.listIssues && entry.tracker.updateIssue),
   );
   const reopenedByProject = await listTrackerIssuesByProject(trackerProjects, {
     state: "open",
@@ -250,7 +261,7 @@ async function relabelReopenedIssues(
     trackerProjects.flatMap(({ project, tracker, projectId }) =>
       (reopenedByProject.get(projectId) ?? []).map(async (issue) => {
         try {
-          await tracker.updateIssue!(
+          await tracker.updateIssue(
             issue.id,
             {
               labels: [BACKLOG_LABEL],
