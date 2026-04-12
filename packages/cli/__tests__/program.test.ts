@@ -6,4 +6,8 @@ describe("createProgram", () => {
   it("uses the CLI package version", () => {
     expect(createProgram().version()).toBe(packageJson.version);
   });
+
+  it("registers the hello command", () => {
+    expect(createProgram().commands.some((command) => command.name() === "hello")).toBe(true);
+  });
 });
