@@ -38,6 +38,7 @@ const {
     spawnOrchestrator: vi.fn(),
     send: vi.fn(),
     claimPR: vi.fn(),
+    restore: vi.fn(),
   },
   mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
   mockSpawn: vi.fn(),
@@ -110,8 +111,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
 });
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
-  getSessionManager: async (): Promise<SessionManager> =>
-    mockSessionManager as unknown as SessionManager,
+  getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
 }));
 
 vi.mock("../../src/lib/lifecycle-service.js", () => ({
