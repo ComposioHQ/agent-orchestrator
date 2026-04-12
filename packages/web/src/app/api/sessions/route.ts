@@ -58,17 +58,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const allSessionPrefixes = Object.entries(config.projects).map(
-      ([projectId, p]) => p.sessionPrefix ?? projectId,
-    );
-    let workerSessions = visibleSessions.filter(
-      (session) =>
-        !isOrchestratorSession(
-          session,
-          config.projects[session.projectId]?.sessionPrefix ?? session.projectId,
-          allSessionPrefixes,
-        ),
-    );
+    let workerSessions = visibleSessions.filter((session) => !isOrchestratorSession(session));
 
     // Convert to dashboard format
     let dashboardSessions = workerSessions.map(sessionToDashboard);

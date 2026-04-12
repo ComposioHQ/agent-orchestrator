@@ -44,16 +44,6 @@ export function filterWorkerSessions<T extends SessionLike>(
   projectFilter: string | null | undefined,
   projects: Record<string, ProjectWithPrefix>,
 ): T[] {
-  const allSessionPrefixes = Object.entries(projects).map(
-    ([projectId, p]) => p.sessionPrefix ?? projectId,
-  );
-  const workers = sessions.filter(
-    (s) =>
-      !isOrchestratorSession(
-        s,
-        projects[s.projectId]?.sessionPrefix ?? s.projectId,
-        allSessionPrefixes,
-      ),
-  );
+  const workers = sessions.filter((s) => !isOrchestratorSession(s));
   return filterProjectSessions(workers, projectFilter, projects);
 }

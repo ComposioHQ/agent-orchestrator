@@ -74,11 +74,7 @@ async function gatherSessionInfo(
   scm: SCM,
   projectConfig: ReturnType<typeof loadConfig>,
 ): Promise<SessionInfo> {
-  const sessionPrefix = projectConfig.projects[session.projectId]?.sessionPrefix ?? session.projectId;
-  const allSessionPrefixes = Object.entries(projectConfig.projects).map(
-    ([id, p]) => p.sessionPrefix ?? id,
-  );
-  const suppressPROwnership = isOrchestratorSession(session, sessionPrefix, allSessionPrefixes);
+  const suppressPROwnership = isOrchestratorSession(session);
   let branch = session.branch;
   const status = session.status;
   const summary = session.metadata["summary"] ?? null;
@@ -148,7 +144,7 @@ async function gatherSessionInfo(
 
   return {
     name: session.id,
-    role: isOrchestratorSession(session, sessionPrefix, allSessionPrefixes) ? "orchestrator" : "worker",
+    role: isOrchestratorSession(session) ? "orchestrator" : "worker",
     branch,
     status,
     summary,

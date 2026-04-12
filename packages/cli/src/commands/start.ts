@@ -1029,12 +1029,9 @@ async function runStartup(
         { cause: err },
       );
     }
-    const allSessionPrefixes = Object.entries(config.projects).map(
-      ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
-    );
     const existingOrchestrators = allSessions.filter(
       (s) =>
-        isOrchestratorSession(s, project.sessionPrefix ?? projectId, allSessionPrefixes) &&
+        isOrchestratorSession(s) &&
         !isTerminalSession(s),
     );
 

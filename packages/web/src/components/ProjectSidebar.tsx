@@ -21,14 +21,8 @@ interface ProjectSidebarProps {
 
 type ProjectHealth = "red" | "yellow" | "green" | "gray";
 
-function computeProjectHealth(
-  sessions: DashboardSession[],
-  prefixByProject: Map<string, string>,
-  allPrefixes: string[],
-): ProjectHealth {
-  const workers = sessions.filter(
-    (s) => !isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes),
-  );
+function computeProjectHealth(sessions: DashboardSession[]): ProjectHealth {
+  const workers = sessions.filter((s) => !isOrchestratorSession(s));
   if (workers.length === 0) return "gray";
   for (const s of workers) {
     if (getAttentionLevel(s) === "respond") return "red";
@@ -137,16 +131,6 @@ function ProjectSidebarInner({
     router.push(pathname + `?project=${encodeURIComponent(projectId)}`);
   };
 
-  const prefixByProject = useMemo(
-    () => new Map(projects.map((p) => [p.id, p.sessionPrefix ?? p.id])),
-    [projects],
-  );
-
-  const allPrefixes = useMemo(
-    () => projects.map((p) => p.sessionPrefix ?? p.id),
-    [projects],
-  );
-
   const sessionsByProject = useMemo(() => {
     const map = new Map<string, { all: DashboardSession[]; workers: DashboardSession[] }>();
     let totalWorkers = 0;
@@ -160,7 +144,7 @@ function ProjectSidebarInner({
         map.set(s.projectId, entry);
       }
       entry.all.push(s);
-      if (!isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes)) {
+      if (!isOrchestratorSession(s)) {
         entry.workers.push(s);
         totalWorkers++;
       }
@@ -170,7 +154,7 @@ function ProjectSidebarInner({
     }
 
     return { map, totalWorkers, needsInput, reviewLoad };
-  }, [sessions, prefixByProject, allPrefixes]);
+  }, [sessions]);
 
   const { totalWorkers: totalWorkerSessions, needsInput: needsInputCount, reviewLoad: reviewLoadCount } = sessionsByProject;
 
@@ -184,7 +168,7 @@ function ProjectSidebarInner({
           <div className="flex flex-1 flex-col items-center gap-2">
             {projects.map((project) => {
               const entry = sessionsByProject.map.get(project.id);
-              const health = entry ? computeProjectHealth(entry.all, prefixByProject, allPrefixes) : ("gray" as ProjectHealth);
+              const health = entry ? computeProjectHealth(entry.all) : ("gray" as ProjectHealth);
               const isActive = activeProjectId === project.id;
               const initial = project.name.charAt(0).toUpperCase();
               return (
@@ -303,7 +287,7 @@ function ProjectSidebarInner({
           const entry = sessionsByProject.map.get(project.id);
           const projectSessions = entry?.all ?? [];
           const workerSessions = entry?.workers ?? [];
-          const health = computeProjectHealth(projectSessions, prefixByProject, allPrefixes);
+          const health = computeProjectHealth(projectSessions);
           const isExpanded = expandedProjects.has(project.id);
           const isActive = activeProjectId === project.id;
 

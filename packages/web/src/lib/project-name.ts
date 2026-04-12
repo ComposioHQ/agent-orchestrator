@@ -6,7 +6,6 @@ import { loadConfig } from "@composio/ao-core";
 export interface ProjectInfo {
   id: string;
   name: string;
-  sessionPrefix?: string;
 }
 
 export const getProjectName = cache((): string => {
@@ -40,7 +39,6 @@ export const getAllProjects = cache((): ProjectInfo[] => {
     return Object.entries(config.projects).map(([id, project]) => ({
       id,
       name: project.name ?? id,
-      sessionPrefix: project.sessionPrefix ?? id,
     }));
   } catch {
     return [];
