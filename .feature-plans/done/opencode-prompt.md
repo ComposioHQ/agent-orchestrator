@@ -10,57 +10,52 @@
 
 - Initial prompt is not submitted to the LLM when using OpenCode as an agent
 - The two-step launch sequence creates the session correctly but silently swallows the prompt
-- OpenCode's TUI `--prompt` flag only pre-fills the input box; it does not auto-submit
 
 ## Research
 
-### getLaunchCommand — new session path
+### Why post-launch delivery fails for OpenCode
 
-- **File:** `packages/plugins/agent-opencode/src/index.ts:250-271`
-- **Trigger:** Every new OpenCode session spawn (no existing `opencodeSessionId`)
-- **Risk:** HIGH — prompt completely lost for all new sessions
+- **File:** `packages/core/src/session-manager.ts:1303-1333`
+- Post-launch `sendMessage` (used by Claude Code) types text into tmux via `send-keys`/`paste-buffer`
+- Claude Code's launch is a single fast command (`claude`), so the TUI is ready when sendMessage fires
+- OpenCode's launch is a multi-step shell script (5-10s): `opencode run | node` → fallback discovery → `exec opencode --session`
+- sendMessage fires while the shell script is still running — the text goes to the shell, not the TUI
+- All 3 retry attempts (3s, 9s, 18s) can fire before or during the launch script
 
-Two-step sequence:
-1. `opencode run --format json --title "AO:..." --command true` — creates session, captures SES_ID, sends **no message**
-2. `exec opencode --session "$SES_ID" --prompt "..."` — resumes in TUI mode
+### Capture script bottleneck
 
-The bug is in step 2. `opencode` TUI's `--prompt` option pre-fills the text input, it does not auto-submit.
-
-Confirmed via `opencode --help`: the flag says "prompt to use" (ambiguous). Testing shows TUI pre-fill behavior.
-
-### opencode run positional arg
-
-- **File:** `packages/plugins/agent-opencode/src/index.ts:261`
-- `opencode run [message..]` — message is a positional array; passed to the LLM immediately
-- Session JSON events include `session_id` — captured by existing `buildSessionIdCaptureScript`
+- **File:** `packages/plugins/agent-opencode/src/index.ts:80-118`
+- Original capture script waited for `opencode run` to finish (stdin EOF) before outputting session_id
+- With a prompt, `opencode run` blocks until the LLM responds (30s+), causing a blank tmux pane
+- Fix: exit immediately after finding session_id — `opencode run` gets SIGPIPE, but the session is already created and prompt submitted
 
 ## Root Cause
 
-- Prompt is passed to TUI mode via `--prompt` which only pre-fills the input box
-- Should be passed to `opencode run` as a positional message arg, which submits it to the LLM
-- The `--command true` approach (used when no prompt) is fine for session creation only
+- Post-launch `sendMessage` has a fundamental timing incompatibility with OpenCode's multi-step launch script
+- The prompt text gets pasted into the terminal and consumed by the shell pipeline, not the OpenCode TUI
 
 ## Approach
 
-### Fix: Pass prompt as positional arg to `opencode run`
+### Fix: Inline prompt delivery via `opencode run`
 
-- Change `runCommandParts`: if `promptValue` exists, append it as positional arg; else keep `--command true`
-- Remove `promptValue` from `resumeOptions` (already consumed by `opencode run`)
-- `sharedOptions` (model, agent) still passed to both run and TUI resume
+- Remove `promptDelivery: "post-launch"` — use inline delivery (default)
+- Pass `config.prompt` as positional arg to `opencode run`: `opencode run --format json --title "AO:..." 'the prompt'`
+- Modify capture script to exit immediately after finding session_id (no wait for stdin EOF)
+- Priority chain for message value: `systemPromptFile > systemPrompt > config.prompt > --command true`
 
 **Behavioral difference:**
-- Before: prompt pre-filled in TUI input box (not submitted)
-- After: prompt submitted to LLM via `opencode run` before TUI opens; session continues in TUI
+- Before: session created without a message, sendMessage fires into shell pipeline → prompt lost
+- After: prompt submitted to LLM via `opencode run`, capture script exits early (SIGPIPE), TUI opens on existing session
 
 ## Files Modified
 
 | File | Change |
 |------|--------|
-| `packages/plugins/agent-opencode/src/index.ts` | Prompt as positional arg in `opencode run`, removed from TUI resume |
-| `packages/plugins/agent-opencode/src/index.test.ts` | Updated 15+ tests to match new command structure |
+| `packages/plugins/agent-opencode/src/index.ts` | Inline prompt delivery, capture script exits early |
+| `packages/plugins/agent-opencode/src/index.test.ts` | Updated tests to match inline prompt behavior |
 
 ## Validation
 
-- All 93 tests pass
+- All 94 tests pass
 - Typecheck clean on opencode plugin
 - Build succeeds
