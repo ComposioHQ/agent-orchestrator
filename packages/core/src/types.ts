@@ -27,6 +27,8 @@ export type SessionId = string;
 /** Session lifecycle states */
 export type SessionStatus =
   | "spawning"
+  | "planning"
+  | "reviewing"
   | "working"
   | "pr_open"
   | "ci_failed"
@@ -91,6 +93,8 @@ export const DEFAULT_ACTIVE_WINDOW_MS = 30_000; // 30 seconds
 /** Session status constants */
 export const SESSION_STATUS = {
   SPAWNING: "spawning" as const,
+  PLANNING: "planning" as const,
+  REVIEWING: "reviewing" as const,
   WORKING: "working" as const,
   PR_OPEN: "pr_open" as const,
   CI_FAILED: "ci_failed" as const,
@@ -1380,6 +1384,15 @@ export interface SessionMetadata {
   opencodeSessionId?: string;
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
+  // Adversarial validation fields
+  adversarialEnabled?: string;
+  adversarialPrimary?: string;
+  adversarialCritic?: string;
+  adversarialPhase?: string;
+  adversarialRound?: string;
+  adversarialPlanMaxRounds?: string;
+  adversarialCodeMaxRounds?: string;
+  adversarialCodeReviewDone?: string;
 }
 
 // =============================================================================
@@ -1397,6 +1410,10 @@ export interface SessionManager {
   cleanup(
     projectId?: string,
     options?: { dryRun?: boolean; purgeOpenCode?: boolean },
+  ): Promise<CleanupResult>;
+  killAll(
+    projectId?: string,
+    options?: { purgeOpenCode?: boolean; includeOrchestrators?: boolean },
   ): Promise<CleanupResult>;
   send(sessionId: SessionId, message: string): Promise<void>;
   claimPR(sessionId: SessionId, prRef: string, options?: ClaimPROptions): Promise<ClaimPRResult>;
