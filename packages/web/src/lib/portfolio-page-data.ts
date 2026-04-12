@@ -5,7 +5,7 @@
  * to populate the UnifiedSidebar with project summaries.
  */
 
-import { isOrchestratorSession } from "@composio/ao-core";
+import { isOrchestratorSession } from "@aoagents/ao-core";
 import { getCachedPortfolioSessions, getPortfolioServices } from "@/lib/portfolio-services";
 import { sessionToDashboard } from "@/lib/serialize";
 import {

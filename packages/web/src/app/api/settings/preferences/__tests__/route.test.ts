@@ -8,7 +8,7 @@ const mockPortfolio = [
 
 let storedPreferences: Record<string, unknown> = {};
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   getPortfolio: vi.fn(() => mockPortfolio),
   loadPreferences: vi.fn(() => storedPreferences),
   updatePreferences: vi.fn((updater: (prefs: Record<string, unknown>) => void) => {
@@ -94,7 +94,7 @@ describe("PUT /api/settings/preferences", () => {
   });
 
   it("returns 500 when updatePreferences throws", async () => {
-    const { updatePreferences } = await import("@composio/ao-core");
+    const { updatePreferences } = await import("@aoagents/ao-core");
     (updatePreferences as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
       throw new Error("disk full");
     });

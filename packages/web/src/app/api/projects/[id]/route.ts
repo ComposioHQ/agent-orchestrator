@@ -4,7 +4,7 @@ import {
   loadPreferences,
   updatePreferences,
   unregisterProject,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { UpdateProjectPrefsSchema } from "@/lib/api-schemas";
 import { invalidateProjectCaches } from "@/lib/project-registration";
 

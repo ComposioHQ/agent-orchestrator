@@ -17,7 +17,7 @@ import { cn } from "@/lib/cn";
 import { getAttentionLevel, type AttentionLevel, type DashboardSession, type PortfolioProjectSummary } from "@/lib/types";
 import { getProjectSessionHref } from "@/lib/project-utils";
 import { getSessionTitle } from "@/lib/format";
-import { isOrchestratorSession } from "@composio/ao-core/types";
+import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { Modal } from "./Modal";
 import { ThemeToggle } from "./ThemeToggle";
 import { WorkspaceResourcesModal } from "./WorkspaceResourcesModal";

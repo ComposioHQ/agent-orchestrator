@@ -15,7 +15,7 @@ vi.mock("@/lib/serialize", () => ({
   sessionToDashboard: (...args: unknown[]) => mockSessionToDashboard(...args),
 }));
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   isOrchestratorSession: (...args: unknown[]) => mockIsOrchestratorSession(...args),
 }));
 

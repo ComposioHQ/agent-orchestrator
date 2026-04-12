@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isOrchestratorSession } from "@composio/ao-core/types";
+import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
 import { activityIcon } from "@/lib/activity-icons";
 import { getAttentionLevel, type AttentionLevel, type DashboardSession } from "@/lib/types";

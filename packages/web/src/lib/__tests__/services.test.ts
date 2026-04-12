@@ -16,7 +16,7 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
   getGlobalConfigPath: () => mockGetGlobalConfigPath(),
   createPluginRegistry: () => mockCreatePluginRegistry(),

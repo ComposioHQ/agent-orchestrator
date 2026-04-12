@@ -3,7 +3,7 @@ import {
   getPortfolio,
   registerProject,
   updatePreferences,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { stopPortfolioBackgroundRefresh } from "./portfolio-services";
 import { invalidateServicesCache } from "./services";
 

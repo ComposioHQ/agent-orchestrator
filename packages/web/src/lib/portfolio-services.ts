@@ -16,7 +16,7 @@ import {
   type PortfolioPreferences,
   type PortfolioSession,
   loadPreferences,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 
 export interface PortfolioServices {
   portfolio: PortfolioProject[];

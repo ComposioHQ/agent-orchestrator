@@ -7,7 +7,7 @@ import {
   loadLocalProjectConfig,
   registerProjectInGlobalConfig,
   saveGlobalConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 interface LegacyProjectEntry {

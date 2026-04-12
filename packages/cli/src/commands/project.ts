@@ -11,7 +11,7 @@ import {
   savePreferences,
   loadLocalProjectConfig,
   loadConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import {
   formatPortfolioDegradedReason,
   formatPortfolioProjectName,

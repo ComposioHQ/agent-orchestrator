@@ -19,7 +19,7 @@ const {
   mockLoadLocalProjectConfig: vi.fn(),
 }));
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   getPortfolio: mockGetPortfolio,
   getPortfolioSessionCounts: mockGetPortfolioSessionCounts,
   registerProject: mockRegisterProject,

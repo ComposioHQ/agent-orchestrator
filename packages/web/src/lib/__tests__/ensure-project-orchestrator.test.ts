@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockGetServices = vi.fn();
 const mockListDashboardOrchestrators = vi.fn();
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   generateOrchestratorPrompt: vi.fn(() => "system prompt"),
   isOrchestratorSession: vi.fn(() => true),
 }));

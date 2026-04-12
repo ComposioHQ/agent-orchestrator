@@ -93,7 +93,7 @@ const mockGetSCM = vi.hoisted(() => vi.fn(() => null));
 /*  vi.mock calls                                                      */
 /* ------------------------------------------------------------------ */
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   ACTIVITY_STATE: { EXITED: "exited", ACTIVE: "active", IDLE: "idle" },
   isOrchestratorSession: mockIsOrchestratorSession,
   resolveProjectConfig: mockResolveProjectConfig,

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getPortfolio, loadPreferences, updatePreferences } from "@composio/ao-core";
+import { getPortfolio, loadPreferences, updatePreferences } from "@aoagents/ao-core";
 import { UpdatePreferencesSchema } from "@/lib/api-schemas";
 import { invalidateProjectCaches } from "@/lib/project-registration";
 

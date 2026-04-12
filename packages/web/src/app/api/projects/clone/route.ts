@@ -10,7 +10,7 @@ import {
   loadConfig,
   parseRepoUrl,
   sanitizeProjectId,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { CloneProjectSchema } from "@/lib/api-schemas";
 import { extractFlatLocalConfig } from "@/lib/local-project-config";
 import { assertPathWithinHome } from "@/lib/path-security";
