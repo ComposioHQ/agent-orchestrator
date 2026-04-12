@@ -1,0 +1,27 @@
+packages/cli/src/index.ts
+  fe86f0b8794a6d4a 8-11
+packages/cli/__tests__/lib/update-check.test.ts
+  fe86f0b8794a6d4a 123,129,131,135-151
+packages/cli/src/lib/update-check.ts
+  fe86f0b8794a6d4a 54-58,61-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "6e01bab8f67de564880b187522936e3106d3a77f",
+  "prompts": {
+    "fe86f0b8794a6d4a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02fdcf41-8be9-41c4-a512-5262e8209203",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 50,
+      "total_deletions": 10,
+      "accepted_lines": 1388,
+      "overriden_lines": 0
+    }
+  }
+}
