@@ -1,0 +1,33 @@
+packages/web/src/components/__tests__/Dashboard.emptyState.test.tsx
+  3b3b057bdfd8aeb4 29-30,57,85,98
+packages/web/src/components/Dashboard.tsx
+  3b3b057bdfd8aeb4 11
+packages/web/src/components/__tests__/SessionDetail.desktop.test.tsx
+  3b3b057bdfd8aeb4 111
+packages/web/src/app/api/spawn/route.ts
+  3b3b057bdfd8aeb4 36
+packages/web/vitest.config.ts
+  3b3b057bdfd8aeb4 22-24
+packages/web/src/components/__tests__/Dashboard.mobile.test.tsx
+  3b3b057bdfd8aeb4 83-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "79d049d42c31b905a068ea66d079c6fbf3238432",
+  "prompts": {
+    "3b3b057bdfd8aeb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef60a7a6-f160-47e8-bbcb-a3219a8ab2ee",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 21,
+      "total_deletions": 11,
+      "accepted_lines": 3161,
+      "overriden_lines": 0
+    }
+  }
+}
