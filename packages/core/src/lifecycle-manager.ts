@@ -1401,9 +1401,25 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     async check(sessionId: SessionId): Promise<void> {
       const session = await sessionManager.get(sessionId);
       if (!session) throw new Error(`Session ${sessionId} not found`);
-      // Populate enrichment cache for this single session so determineStatus()
-      // can use batch data even when called outside pollAll().
-      await populatePREnrichmentCache([session]);
+      // Populate enrichment cache for this single session's PR without clearing
+      // the shared cache — a concurrent pollAll() may be using it.
+      if (session.pr) {
+        const project = config.projects[session.projectId];
+        const scmPlugin = project?.scm?.plugin;
+        if (scmPlugin) {
+          const scm = registry.get<SCM>("scm", scmPlugin);
+          if (scm?.enrichSessionsPRBatch) {
+            try {
+              const data = await scm.enrichSessionsPRBatch([session.pr]);
+              for (const [key, value] of data) {
+                prEnrichmentCache.set(key, value);
+              }
+            } catch {
+              // Batch failed — checkSession will use whatever's in the cache
+            }
+          }
+        }
+      }
       await checkSession(session);
     },
   };
