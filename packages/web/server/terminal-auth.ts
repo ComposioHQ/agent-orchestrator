@@ -8,7 +8,7 @@ import {
   loadConfig,
   readMetadataRaw,
   resolveProjectIdForSessionId,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 
 // Keep this in sync with server/tmux-utils.ts. terminal-auth is also imported
 // through Next.js route bundling, where depending on the Node-targeted server
