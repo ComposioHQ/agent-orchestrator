@@ -47,6 +47,9 @@ describe("restore", () => {
     const wsPath = join(tmpDir, "ws-app-1");
     mkdirSync(wsPath, { recursive: true });
 
+    // Old runtime is dead (killed session)
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
     writeMetadata(sessionsDir, "app-1", {
       worktree: wsPath,
       branch: "feat/TEST-1",
@@ -89,6 +92,7 @@ describe("restore", () => {
     // Make destroy throw — should not block restore
     const failingRuntime = {
       ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
       destroy: vi.fn().mockRejectedValue(new Error("session not found")),
       create: vi.fn().mockResolvedValue(makeHandle("rt-new")),
     };
@@ -122,6 +126,9 @@ describe("restore", () => {
   it("recreates workspace when missing and plugin supports restore", async () => {
     const wsPath = join(tmpDir, "ws-app-1");
     // DO NOT create the directory — it's missing
+
+    // Old runtime is dead
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
 
     const mockWorkspaceWithRestore: Workspace = {
       ...mockWorkspace,
@@ -442,6 +449,9 @@ describe("restore", () => {
     const wsPath = join(tmpDir, "ws-app-1");
     mkdirSync(wsPath, { recursive: true });
 
+    // Old runtime is dead
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
     const mockAgentWithRestore: Agent = {
       ...mockAgent,
       getRestoreCommand: vi.fn().mockResolvedValue("claude --resume abc123"),
@@ -477,6 +487,9 @@ describe("restore", () => {
   it("falls back to getLaunchCommand when getRestoreCommand returns null", async () => {
     const wsPath = join(tmpDir, "ws-app-1");
     mkdirSync(wsPath, { recursive: true });
+
+    // Old runtime is dead
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
 
     const mockAgentWithNullRestore: Agent = {
       ...mockAgent,
@@ -542,6 +555,9 @@ describe("restore", () => {
     const wsPath = join(tmpDir, "ws-app-post-launch-noop");
     mkdirSync(wsPath, { recursive: true });
 
+    // Old runtime is dead
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
     const agentWithNoopPostLaunch: Agent = {
       ...mockAgent,
       postLaunchSetup: vi.fn().mockResolvedValue(undefined),
@@ -578,6 +594,9 @@ describe("restore", () => {
     const wsPath = join(tmpDir, "ws-app-post-launch-metadata");
     mkdirSync(wsPath, { recursive: true });
 
+    // Old runtime is dead
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
     const agentWithMetadataUpdate: Agent = {
       ...mockAgent,
       postLaunchSetup: vi.fn().mockImplementation(async (session) => {
@@ -613,5 +632,37 @@ describe("restore", () => {
     expect(meta!["status"]).toBe("spawning");
     expect(meta!["runtimeHandle"]).toBe(JSON.stringify(makeHandle("rt-1")));
     expect(meta!["opencodeSessionId"]).toBe("ses_from_post_launch");
+  });
+
+  it("reuses live runtime instead of destroying it to preserve terminal attachment", async () => {
+    const wsPath = join(tmpDir, "ws-app-reuse-runtime");
+    mkdirSync(wsPath, { recursive: true });
+
+    // Old runtime is ALIVE (agent exited but shell/tmux session still running)
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(true);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const restored = await sm.restore("app-1");
+
+    // Runtime should NOT be destroyed — it's still alive and the terminal is attached
+    expect(mockRuntime.destroy).not.toHaveBeenCalled();
+    // Runtime should NOT be recreated — reuse existing
+    expect(mockRuntime.create).not.toHaveBeenCalled();
+    // Launch command should be sent via sendMessage into the existing session
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-old"),
+      expect.any(String),
+    );
+    // Session should keep the old runtime handle
+    expect(restored.runtimeHandle).toEqual(makeHandle("rt-old"));
+    expect(restored.status).toBe("spawning");
   });
 });

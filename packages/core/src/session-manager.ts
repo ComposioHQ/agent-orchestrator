@@ -2413,12 +2413,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    // 6. Destroy old runtime if still alive (e.g. tmux session survives agent crash)
+    // 6. Check if old runtime is still alive — reuse it to avoid killing
+    //    the web terminal attachment. Destroying a live tmux session while a
+    //    PTY is attached causes the terminal to disconnect and enter a
+    //    re-attach loop that races against the new session creation.
+    let oldRuntimeAlive = false;
     if (session.runtimeHandle) {
-      try {
-        await plugins.runtime.destroy(session.runtimeHandle);
-      } catch {
-        // Best effort — may already be gone
+      oldRuntimeAlive = await plugins.runtime.isAlive(session.runtimeHandle).catch(() => false);
+      if (!oldRuntimeAlive) {
+        try {
+          await plugins.runtime.destroy(session.runtimeHandle);
+        } catch {
+          // Best effort — may already be gone
+        }
       }
     }
 
@@ -2451,24 +2458,34 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     const environment = plugins.agent.getEnvironment(agentLaunchConfig);
 
-    // 8. Create runtime (reuse tmuxName from metadata)
+    // 8. Create or reuse runtime
     const tmuxName = raw["tmuxName"];
-    const handle = await plugins.runtime.create({
-      sessionId: tmuxName ?? sessionId,
-      workspacePath,
-      launchCommand,
-      environment: {
-        ...environment,
-        AO_SESSION: sessionId,
-        AO_DATA_DIR: sessionsDir,
-        AO_SESSION_NAME: sessionId,
-        ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
-        AO_CALLER_TYPE: "agent",
-        ...(projectId && { AO_PROJECT_ID: projectId }),
-        AO_CONFIG_PATH: config.configPath,
-        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
-      },
-    });
+    let handle: RuntimeHandle;
+
+    if (oldRuntimeAlive && session.runtimeHandle) {
+      // Reuse existing runtime — send the launch command into the live session.
+      // This keeps the web terminal PTY attached without interruption.
+      handle = session.runtimeHandle;
+      await plugins.runtime.sendMessage(handle, launchCommand);
+    } else {
+      // Runtime is dead — create a fresh one
+      handle = await plugins.runtime.create({
+        sessionId: tmuxName ?? sessionId,
+        workspacePath,
+        launchCommand,
+        environment: {
+          ...environment,
+          AO_SESSION: sessionId,
+          AO_DATA_DIR: sessionsDir,
+          AO_SESSION_NAME: sessionId,
+          ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
+          AO_CALLER_TYPE: "agent",
+          ...(projectId && { AO_PROJECT_ID: projectId }),
+          AO_CONFIG_PATH: config.configPath,
+          ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+        },
+      });
+    }
 
     // 9. Update metadata — merge updates, preserving existing fields
     const now = new Date().toISOString();
