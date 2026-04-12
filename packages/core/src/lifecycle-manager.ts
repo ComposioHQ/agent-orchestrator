@@ -13,6 +13,7 @@
 import { randomUUID } from "node:crypto";
 import {
   SESSION_STATUS,
+  TERMINAL_STATUSES,
   PR_STATE,
   CI_STATUS,
   TERMINAL_STATUSES,
