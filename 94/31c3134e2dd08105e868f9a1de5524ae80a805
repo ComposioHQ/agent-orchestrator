@@ -1,0 +1,27 @@
+packages/core/src/lifecycle-manager.ts
+  3b3b057bdfd8aeb4 236
+packages/web/src/app/projects/[projectId]/sessions/[sessionId]/page.tsx
+  3b3b057bdfd8aeb4 21
+packages/plugins/agent-opencode/src/index.test.ts
+  3b3b057bdfd8aeb4 845,849-851,872,876-878
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "9431c3134e2dd08105e868f9a1de5524ae80a805",
+  "prompts": {
+    "3b3b057bdfd8aeb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef60a7a6-f160-47e8-bbcb-a3219a8ab2ee",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 10,
+      "total_deletions": 34,
+      "accepted_lines": 4373,
+      "overriden_lines": 1
+    }
+  }
+}
