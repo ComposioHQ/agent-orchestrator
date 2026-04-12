@@ -100,6 +100,10 @@ async function spawnSession(
     if (sanitizedPrompt && sanitizedPrompt.length === 0) {
       sanitizedPrompt = undefined;
     }
+    const sanitizedPrompt = prompt?.replace(/[\r\n]/g, " ").trim() || undefined;
+    if (sanitizedPrompt && sanitizedPrompt.length > 4096) {
+      throw new Error("Prompt must be at most 4096 characters");
+    }
 
     const session = await sm.spawn({
       projectId,
@@ -173,12 +177,12 @@ export function registerSpawn(program: Command): void {
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
-<<<<<<< HEAD
     .option("--decompose", "Decompose issue into subtasks before spawning")
     .option("--max-depth <n>", "Max decomposition depth (default: 3)")
     .option("--prompt <text>", "Initial prompt/instructions for the agent (use instead of an issue)")
-=======
->>>>>>> 3fb2ddf0 (refactor: remove --decompose feature entirely)
+
+    .option("--prompt <text>", "Initial prompt/instructions for the agent (use instead of an issue)")
+  main
     .action(
       async (
         first: string | undefined,
@@ -188,12 +192,12 @@ export function registerSpawn(program: Command): void {
           agent?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
-<<<<<<< HEAD
           decompose?: boolean;
           maxDepth?: string;
           prompt?: string;
-=======
->>>>>>> 3fb2ddf0 (refactor: remove --decompose feature entirely)
+
+          prompt?: string;
+
         },
       ) => {
         // Catch old two-arg usage: ao spawn <project> <issue>
@@ -245,7 +249,6 @@ export function registerSpawn(program: Command): void {
           await runSpawnPreflight(config, projectId, claimOptions);
           await ensureLifecycleWorker(config, projectId);
 
-<<<<<<< HEAD
           if (opts.decompose && issueId) {
             // Decompose the issue before spawning
             const project = config.projects[projectId];
@@ -299,9 +302,10 @@ export function registerSpawn(program: Command): void {
           } else {
             await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt);
           }
-=======
           await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
->>>>>>> 3fb2ddf0 (refactor: remove --decompose feature entirely)
+
+          await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt);
+
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
           process.exit(1);

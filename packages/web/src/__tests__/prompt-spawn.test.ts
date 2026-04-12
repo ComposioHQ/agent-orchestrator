@@ -21,6 +21,7 @@ import type {
   PluginRegistry,
   SCM,
 } from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { sessionToDashboard } from "@/lib/serialize";
 
 // ── Shared test fixtures ──────────────────────────────────────────────

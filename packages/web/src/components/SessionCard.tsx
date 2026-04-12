@@ -700,16 +700,14 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           </div>
         )}
 
-<<<<<<< HEAD
         <div className="session-card__footer mt-auto flex items-center justify-between gap-2 border-t border-[var(--color-border-subtle)] px-4 py-2.5">
           {session.issueUrl ? (
             <a
-              href={session.issueUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="min-w-0 truncate text-[11px] text-[var(--color-accent)] hover:underline"
+              href={`/sessions/${encodeURIComponent(session.id)}`}
+              onClick={(e) => e.stopPropagation()}
+              className="card__view-context"
             >
-              {session.issueLabel || session.issueUrl}
+              View current context →
             </a>
           ) : session.userPrompt ? (
             <span
@@ -725,12 +723,68 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               {session.activity ?? session.status}
             </span>
           )}
-=======
+
+            <div className="card__presets">
+              <button
+                className="card__preset"
+                onClick={() => void handleQuickReply("continue")}
+                disabled={sendingQuickReply !== null}
+              >
+                {sendingQuickReply === "continue"
+                  ? "Sending..."
+                  : sentQuickReply === "continue"
+                    ? "Sent"
+                    : "Continue"}
+              </button>
+              <button
+                className="card__preset"
+                onClick={() => void handleQuickReply("abort")}
+                disabled={sendingQuickReply !== null}
+              >
+                {sendingQuickReply === "abort"
+                  ? "Sending..."
+                  : sentQuickReply === "abort"
+                    ? "Sent"
+                    : "Abort"}
+              </button>
+              <button
+                className="card__preset"
+                onClick={() => void handleQuickReply("skip")}
+                disabled={sendingQuickReply !== null}
+              >
+                {sendingQuickReply === "skip"
+                  ? "Sending..."
+                  : sentQuickReply === "skip"
+                    ? "Sent"
+                    : "Skip"}
+              </button>
+            </div>
+            <div className="card__reply-wrap">
+              <textarea
+                className="card__reply"
+                placeholder={sendingQuickReply !== null ? "Sending..." : "Type a reply... (Enter to send)"}
+                aria-label="Type a reply to the agent"
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                onKeyDown={(e) => {
+                  void handleReplyKeyDown(e);
+                }}
+                rows={1}
+                disabled={sendingQuickReply !== null}
+              />
+            </div>
+          </div>
+        )}
+
         <div className="session-card__footer">
-          <span className="card__status min-w-0 truncate">
-            {footerStatus}
+          <span className="card__status min-w-0 truncate" title={session.userPrompt ?? undefined}>
+            {!session.issueUrl && session.userPrompt
+              ? session.userPrompt.length > 60
+                ? session.userPrompt.slice(0, 60) + "…"
+                : session.userPrompt
+              : footerStatus}
           </span>
->>>>>>> af2af115 (style(design): design review fixes + fresh Warm Terminal design system (#927))
+
 
           {isReadyToMerge && pr ? (
             <button

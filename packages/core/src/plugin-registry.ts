@@ -129,6 +129,26 @@ function extractPluginConfig(
     return undefined;
   }
   return undefined;
+  }
+
+  for (const [notifierId, notifierConfig] of notifierEntries) {
+    if (!notifierConfig || typeof notifierConfig !== "object") continue;
+    if (matchesNotifierPlugin(pluginName, notifierId, notifierConfig)) {
+      orderedMatches.set(notifierId, notifierConfig);
+    }
+  }
+
+  return [...orderedMatches.entries()].map(([registrationName, rawConfig]) => ({
+    registrationName,
+    config: prepareConfig(
+      "notifier",
+      pluginName,
+      registrationName,
+      rawConfig,
+      config.configPath,
+      isExternalLoad,
+    ),
+  }));
 }
 
 /**
@@ -478,6 +498,7 @@ export function createPluginRegistry(): PluginRegistry {
                 ? extractPluginConfig(builtin.slot, builtin.name, orchestratorConfig)
                 : undefined;
               this.register(mod, pluginConfig);
+              this.register(mod);
             }
           } catch (error) {
             process.stderr.write(
@@ -538,6 +559,7 @@ export function createPluginRegistry(): PluginRegistry {
           } else {
             const pluginConfig = extractPluginConfig(mod.manifest.slot, mod.manifest.name, config, true);
             this.register(mod, pluginConfig);
+            this.register(mod);
           }
         } catch (error) {
           process.stderr.write(`[plugin-registry] Failed to load plugin "${specifier}": ${error}\n`);
