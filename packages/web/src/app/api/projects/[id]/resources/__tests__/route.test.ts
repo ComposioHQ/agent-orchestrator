@@ -27,7 +27,7 @@ vi.mock("@/lib/services", () => ({
   getServices: vi.fn(async () => ({ registry: { get: vi.fn(() => undefined) } })),
 }));
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   resolveProjectConfig: vi.fn((project: { id: string }) => {
     if (project.id === "proj-a") return { project: { name: "Project A", tracker: null } };
     return null;
@@ -52,7 +52,7 @@ describe("GET /api/projects/[id]/resources", () => {
   });
 
   it("returns 422 when config cannot be resolved", async () => {
-    const { resolveProjectConfig } = await import("@composio/ao-core");
+    const { resolveProjectConfig } = await import("@aoagents/ao-core");
     (resolveProjectConfig as ReturnType<typeof vi.fn>).mockReturnValueOnce(null);
     const res = await GET(makeRequest("proj-a"), makeContext("proj-a"));
     expect(res.status).toBe(422);
@@ -98,7 +98,7 @@ describe("GET /api/projects/[id]/resources", () => {
   });
 
   it("returns 500 on unexpected error", async () => {
-    const { resolveProjectConfig } = await import("@composio/ao-core");
+    const { resolveProjectConfig } = await import("@aoagents/ao-core");
     (resolveProjectConfig as ReturnType<typeof vi.fn>).mockImplementationOnce(() => { throw new Error("crash"); });
     const res = await GET(makeRequest("proj-a"), makeContext("proj-a"));
     expect(res.status).toBe(500);
@@ -194,7 +194,7 @@ describe("GET /api/projects/[id]/resources", () => {
       { id: "ISS-1", title: "Fix bug", url: "https://github.com/acme/proj-a/issues/1", state: "open", assignee: "alice" },
       { id: "ISS-2", title: "Add feature", url: "https://github.com/acme/proj-a/issues/2", state: "open", assignee: undefined },
     ]);
-    const { resolveProjectConfig } = await import("@composio/ao-core");
+    const { resolveProjectConfig } = await import("@aoagents/ao-core");
     (resolveProjectConfig as ReturnType<typeof vi.fn>).mockReturnValueOnce({
       project: { name: "Project A", tracker: { plugin: "github" } },
     });
@@ -215,7 +215,7 @@ describe("GET /api/projects/[id]/resources", () => {
       { id: "ISS-1", title: "Fix login bug", url: "https://github.com/acme/proj-a/issues/1", state: "open" },
       { id: "ISS-2", title: "Add search feature", url: "https://github.com/acme/proj-a/issues/2", state: "open" },
     ]);
-    const { resolveProjectConfig } = await import("@composio/ao-core");
+    const { resolveProjectConfig } = await import("@aoagents/ao-core");
     (resolveProjectConfig as ReturnType<typeof vi.fn>).mockReturnValueOnce({
       project: { name: "Project A", tracker: { plugin: "github" } },
     });
@@ -232,7 +232,7 @@ describe("GET /api/projects/[id]/resources", () => {
 
   it("returns empty issues when tracker listIssues throws", async () => {
     const mockListIssues = vi.fn(async () => { throw new Error("tracker error"); });
-    const { resolveProjectConfig } = await import("@composio/ao-core");
+    const { resolveProjectConfig } = await import("@aoagents/ao-core");
     (resolveProjectConfig as ReturnType<typeof vi.fn>).mockReturnValueOnce({
       project: { name: "Project A", tracker: { plugin: "github" } },
     });
@@ -248,7 +248,7 @@ describe("GET /api/projects/[id]/resources", () => {
   });
 
   it("returns empty issues when tracker has no listIssues method", async () => {
-    const { resolveProjectConfig } = await import("@composio/ao-core");
+    const { resolveProjectConfig } = await import("@aoagents/ao-core");
     (resolveProjectConfig as ReturnType<typeof vi.fn>).mockReturnValueOnce({
       project: { name: "Project A", tracker: { plugin: "github" } },
     });
@@ -275,7 +275,7 @@ describe("GET /api/projects/[id]/resources", () => {
   });
 
   it("returns 500 with generic message for non-Error throws", async () => {
-    const { resolveProjectConfig } = await import("@composio/ao-core");
+    const { resolveProjectConfig } = await import("@aoagents/ao-core");
     (resolveProjectConfig as ReturnType<typeof vi.fn>).mockImplementationOnce(() => { throw "string error"; });
     const res = await GET(makeRequest("proj-a"), makeContext("proj-a"));
     expect(res.status).toBe(500);

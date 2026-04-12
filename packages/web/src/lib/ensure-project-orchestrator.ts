@@ -1,4 +1,4 @@
-import { generateOrchestratorPrompt, isOrchestratorSession } from "@composio/ao-core";
+import { generateOrchestratorPrompt, isOrchestratorSession } from "@aoagents/ao-core";
 import type { DashboardOrchestratorLink } from "@/lib/types";
 import { getServices } from "@/lib/services";
 import { listDashboardOrchestrators } from "@/lib/serialize";

@@ -8,7 +8,7 @@ const mockPortfolio = [
 
 let storedPreferences: Record<string, unknown> = {};
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   getPortfolio: vi.fn(() => mockPortfolio),
   loadPreferences: vi.fn(() => storedPreferences),
   updatePreferences: vi.fn((updater: (prefs: Record<string, unknown>) => void) => {
@@ -34,7 +34,7 @@ vi.mock("@/lib/api-schemas", async () => {
 
 // ── Import route after mocks ──────────────────────────────────────────
 import { PUT, DELETE } from "../route";
-import { unregisterProject } from "@composio/ao-core";
+import { unregisterProject } from "@aoagents/ao-core";
 
 function makeContext(id: string) {
   return { params: Promise.resolve({ id }) };
@@ -111,7 +111,7 @@ describe("PUT /api/projects/[id]", () => {
   });
 
   it("returns 500 when updatePreferences throws", async () => {
-    const { updatePreferences } = await import("@composio/ao-core");
+    const { updatePreferences } = await import("@aoagents/ao-core");
     (updatePreferences as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
       throw new Error("write failed");
     });

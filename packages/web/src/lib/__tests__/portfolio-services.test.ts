@@ -6,7 +6,7 @@ const mockLoadPreferences = vi.fn(() => ({ version: 1 }));
 const mockListPortfolioSessions = vi.fn();
 const mockGenerateSessionPrefix = vi.fn((id: string) => `${id}-`);
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   getPortfolio: () => mockGetPortfolio(),
   loadConfig: () => mockLoadConfig(),
   loadPreferences: () => mockLoadPreferences(),

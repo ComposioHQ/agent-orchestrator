@@ -1,4 +1,4 @@
-import { isOrchestratorSession } from "@composio/ao-core";
+import { isOrchestratorSession } from "@aoagents/ao-core";
 import type { DashboardSession, GlobalPauseState } from "@/lib/types";
 import { getServices, getSCM } from "@/lib/services";
 import {

@@ -17,8 +17,8 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-// Mock @composio/ao-core
-vi.mock("@composio/ao-core", () => ({
+// Mock @aoagents/ao-core
+vi.mock("@aoagents/ao-core", () => ({
   loadConfig: () => ({
     defaults: {
       agent: "claude-code",

@@ -6,7 +6,7 @@ const mockUpdatePreferences = vi.fn();
 const mockStopPortfolioBackgroundRefresh = vi.fn();
 const mockInvalidateServicesCache = vi.fn();
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   getPortfolio: (...args: unknown[]) => mockGetPortfolio(...args),
   registerProject: (...args: unknown[]) => mockRegisterProject(...args),
   updatePreferences: (...args: unknown[]) => mockUpdatePreferences(...args),

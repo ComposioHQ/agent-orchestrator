@@ -12,7 +12,7 @@ import {
   configToYaml,
   sanitizeProjectId,
   generateOrchestratorPrompt,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { getAllProjects } from "@/lib/project-name";
 import { RegisterProjectSchema } from "@/lib/api-schemas";
 import { getPortfolioServices } from "@/lib/portfolio-services";

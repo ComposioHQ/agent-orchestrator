@@ -8,7 +8,7 @@ vi.mock("react", () => ({
   cache: (fn: (...args: unknown[]) => unknown) => fn,
 }));
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   loadConfig: () => mockLoadConfig(),
   loadPreferences: () => mockLoadPreferences(),
   getPortfolio: () => mockGetPortfolio(),

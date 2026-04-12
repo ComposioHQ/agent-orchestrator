@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 export const dynamic = "force-dynamic";
 
-import { loadConfig } from "@composio/ao-core";
+import { loadConfig } from "@aoagents/ao-core";
 import { DashboardShell } from "@/components/DashboardShell";
 import { AgentSettings } from "@/components/settings/AgentSettings";
 import { IntegrationSettings } from "@/components/settings/IntegrationSettings";

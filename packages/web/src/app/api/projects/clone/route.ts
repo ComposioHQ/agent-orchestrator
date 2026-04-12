@@ -10,7 +10,7 @@ import {
   loadConfig,
   parseRepoUrl,
   sanitizeProjectId,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { CloneProjectSchema } from "@/lib/api-schemas";
 import { assertWorkspacePathAllowed } from "@/lib/filesystem-access";
 import { registerAndResolveProject } from "@/lib/project-registration";

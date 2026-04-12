@@ -24,7 +24,7 @@ const {
   mockResolveGlobalPause: vi.fn(),
 }));
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   isOrchestratorSession: vi.fn((s: { id: string }) => s.id.startsWith("orch-")),
 }));
 

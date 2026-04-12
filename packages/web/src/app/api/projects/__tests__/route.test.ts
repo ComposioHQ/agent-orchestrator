@@ -31,7 +31,7 @@ vi.mock("node:fs/promises", () => ({
 const mockGetAllProjects = vi.fn(() => [{ id: "proj-a", name: "Project A" }, { id: "proj-b", name: "Project B" }]);
 vi.mock("@/lib/project-name", () => ({ getAllProjects: () => mockGetAllProjects() }));
 vi.mock("@/lib/portfolio-services", () => ({ getPortfolioServices: vi.fn(() => ({ portfolio: [{ id: "proj-a", name: "Project A", repo: "acme/proj-a", defaultBranch: "main", sessionPrefix: "proj-a", source: "config", enabled: true, pinned: false, lastSeenAt: null, degraded: false, degradedReason: null }] })) }));
-vi.mock("@composio/ao-core", () => ({ findConfigFile: vi.fn(() => null), readOriginRemoteUrl: vi.fn(() => null), parseRepoUrl: vi.fn(() => ({ owner: "acme", repo: "my-repo", cloneUrl: "https://github.com/acme/my-repo.git" })), generateConfigFromUrl: vi.fn(() => ({ projects: { "my-repo": {} } })), configToYaml: vi.fn(() => "yaml"), sanitizeProjectId: vi.fn((n: string) => n.toLowerCase().replace(/\s+/g, "-")), generateOrchestratorPrompt: vi.fn(() => "prompt") }));
+vi.mock("@aoagents/ao-core", () => ({ findConfigFile: vi.fn(() => null), readOriginRemoteUrl: vi.fn(() => null), parseRepoUrl: vi.fn(() => ({ owner: "acme", repo: "my-repo", cloneUrl: "https://github.com/acme/my-repo.git" })), generateConfigFromUrl: vi.fn(() => ({ projects: { "my-repo": {} } })), configToYaml: vi.fn(() => "yaml"), sanitizeProjectId: vi.fn((n: string) => n.toLowerCase().replace(/\s+/g, "-")), generateOrchestratorPrompt: vi.fn(() => "prompt") }));
 vi.mock("@/lib/api-schemas", async () => { const { z } = await import("zod"); return { RegisterProjectSchema: z.object({ path: z.string().min(1), name: z.string().optional(), configProjectKey: z.string().optional() }) }; });
 vi.mock("@/lib/local-project-config", () => ({ buildFlatLocalConfig: vi.fn(() => ({})), extractFlatLocalConfig: vi.fn(() => ({})) }));
 vi.mock("@/lib/path-security", () => ({ assertPathWithinHome: vi.fn(async (p: string) => p) }));
@@ -134,7 +134,7 @@ describe("POST /api/projects", () => {
     mockExistsSync.mockReturnValue(false);
 
     const { buildFlatLocalConfig } = await import("@/lib/local-project-config");
-    const { configToYaml } = await import("@composio/ao-core");
+    const { configToYaml } = await import("@aoagents/ao-core");
 
     const res = await POST(makeRequest("/api/projects", {
       method: "POST",
@@ -179,7 +179,7 @@ describe("POST /api/projects", () => {
       return false;
     });
 
-    const { readOriginRemoteUrl } = await import("@composio/ao-core");
+    const { readOriginRemoteUrl } = await import("@aoagents/ao-core");
     (readOriginRemoteUrl as ReturnType<typeof vi.fn>).mockReturnValueOnce(null);
 
     const res = await POST(makeRequest("/api/projects", {
@@ -200,7 +200,7 @@ describe("POST /api/projects", () => {
       return false;
     });
 
-    const { readOriginRemoteUrl, parseRepoUrl, generateConfigFromUrl } = await import("@composio/ao-core");
+    const { readOriginRemoteUrl, parseRepoUrl, generateConfigFromUrl } = await import("@aoagents/ao-core");
     (readOriginRemoteUrl as ReturnType<typeof vi.fn>).mockReturnValueOnce("https://github.com/acme/my-repo.git");
     (parseRepoUrl as ReturnType<typeof vi.fn>).mockReturnValueOnce({ owner: "acme", repo: "my-repo", cloneUrl: "https://github.com/acme/my-repo.git" });
     (generateConfigFromUrl as ReturnType<typeof vi.fn>).mockReturnValueOnce({ projects: { "my-repo": {} } });
@@ -227,7 +227,7 @@ describe("POST /api/projects", () => {
       return false;
     });
 
-    const { readOriginRemoteUrl, parseRepoUrl } = await import("@composio/ao-core");
+    const { readOriginRemoteUrl, parseRepoUrl } = await import("@aoagents/ao-core");
     (readOriginRemoteUrl as ReturnType<typeof vi.fn>).mockReturnValueOnce("not-a-valid-url");
     (parseRepoUrl as ReturnType<typeof vi.fn>).mockImplementationOnce(() => { throw new Error("bad url"); });
 
@@ -248,7 +248,7 @@ describe("POST /api/projects", () => {
       return false;
     });
 
-    const { readOriginRemoteUrl, parseRepoUrl, generateConfigFromUrl } = await import("@composio/ao-core");
+    const { readOriginRemoteUrl, parseRepoUrl, generateConfigFromUrl } = await import("@aoagents/ao-core");
     (readOriginRemoteUrl as ReturnType<typeof vi.fn>).mockReturnValueOnce("https://github.com/acme/my-repo.git");
     (parseRepoUrl as ReturnType<typeof vi.fn>).mockReturnValueOnce({ owner: "acme", repo: "my-repo", cloneUrl: "https://github.com/acme/my-repo.git" });
     (generateConfigFromUrl as ReturnType<typeof vi.fn>).mockReturnValueOnce({ projects: { "my-repo": {} } });
@@ -288,7 +288,7 @@ describe("POST /api/projects", () => {
     const { getServices } = await import("@/lib/services");
     expect(getServices).toHaveBeenCalled();
 
-    const { generateOrchestratorPrompt } = await import("@composio/ao-core");
+    const { generateOrchestratorPrompt } = await import("@aoagents/ao-core");
     expect(generateOrchestratorPrompt).toHaveBeenCalled();
   });
 
@@ -388,7 +388,7 @@ describe("POST /api/projects", () => {
       return false;
     });
 
-    const { findConfigFile, readOriginRemoteUrl } = await import("@composio/ao-core");
+    const { findConfigFile, readOriginRemoteUrl } = await import("@aoagents/ao-core");
     (findConfigFile as ReturnType<typeof vi.fn>).mockReturnValueOnce("/parent/agent-orchestrator.yaml");
     (readOriginRemoteUrl as ReturnType<typeof vi.fn>).mockReturnValueOnce(null);
 

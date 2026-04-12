@@ -27,7 +27,7 @@ vi.mock("node:path", async (importOriginal) => {
   return { ...actual };
 });
 
-vi.mock("@composio/ao-core", () => ({ configToYaml: vi.fn(() => "yaml"), findConfigFile: vi.fn(() => null), generateConfigFromUrl: vi.fn(() => ({ projects: { "my-repo": {} } })), loadConfig: vi.fn(() => ({ projects: { "existing-key": {} } })), parseRepoUrl: vi.fn(() => ({ owner: "acme", repo: "my-repo", cloneUrl: "https://github.com/acme/my-repo.git" })), sanitizeProjectId: vi.fn((n: string) => n.toLowerCase()) }));
+vi.mock("@aoagents/ao-core", () => ({ configToYaml: vi.fn(() => "yaml"), findConfigFile: vi.fn(() => null), generateConfigFromUrl: vi.fn(() => ({ projects: { "my-repo": {} } })), loadConfig: vi.fn(() => ({ projects: { "existing-key": {} } })), parseRepoUrl: vi.fn(() => ({ owner: "acme", repo: "my-repo", cloneUrl: "https://github.com/acme/my-repo.git" })), sanitizeProjectId: vi.fn((n: string) => n.toLowerCase()) }));
 vi.mock("@/lib/api-schemas", async () => { const { z } = await import("zod"); return { CloneProjectSchema: z.object({ url: z.string().url("A valid Git URL is required"), location: z.string().min(1, "Location is required") }) }; });
 vi.mock("@/lib/local-project-config", () => ({ extractFlatLocalConfig: vi.fn(() => ({})) }));
 vi.mock("@/lib/path-security", () => ({ assertPathWithinHome: vi.fn(async (p: string) => p) }));
@@ -99,7 +99,7 @@ describe("POST /api/projects/clone", () => {
   });
 
   it("generates config when no config file found", async () => {
-    const { findConfigFile } = await import("@composio/ao-core");
+    const { findConfigFile } = await import("@aoagents/ao-core");
     (findConfigFile as ReturnType<typeof vi.fn>).mockReturnValueOnce(null);
     const res = await POST(new Request("http://localhost/api/projects/clone", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: "https://github.com/acme/my-repo", location: "/tmp/projects" }) }));
     expect(res.status).toBe(200);
@@ -110,7 +110,7 @@ describe("POST /api/projects/clone", () => {
   });
 
   it("uses existing config when config file found", async () => {
-    const { findConfigFile } = await import("@composio/ao-core");
+    const { findConfigFile } = await import("@aoagents/ao-core");
     (findConfigFile as ReturnType<typeof vi.fn>).mockReturnValueOnce("/tmp/projects/my-repo/agent-orchestrator.yaml");
     const res = await POST(new Request("http://localhost/api/projects/clone", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: "https://github.com/acme/my-repo", location: "/tmp/projects" }) }));
     expect(res.status).toBe(200);

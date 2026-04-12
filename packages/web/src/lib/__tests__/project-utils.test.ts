@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-vi.mock("@composio/ao-core/types", () => ({
+vi.mock("@aoagents/ao-core/types", () => ({
   isOrchestratorSession: vi.fn((s: { id: string }) => s.id.startsWith("orch-")),
 }));
 

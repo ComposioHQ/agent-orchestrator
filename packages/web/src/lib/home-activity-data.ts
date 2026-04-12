@@ -1,4 +1,4 @@
-import { isOrchestratorSession } from "@composio/ao-core";
+import { isOrchestratorSession } from "@aoagents/ao-core";
 import { getCachedPortfolioSessions } from "@/lib/portfolio-services";
 import { enrichSessionsMetadata, sessionToDashboard } from "@/lib/serialize";
 import { getServices } from "@/lib/services";

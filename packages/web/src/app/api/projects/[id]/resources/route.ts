@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { NextResponse } from "next/server";
-import { resolveProjectConfig, type Tracker } from "@composio/ao-core";
+import { resolveProjectConfig, type Tracker } from "@aoagents/ao-core";
 import { getPortfolioServices } from "@/lib/portfolio-services";
 import { getServices } from "@/lib/services";
 

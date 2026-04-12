@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { PortfolioProject } from "@composio/ao-core";
+import type { PortfolioProject } from "@aoagents/ao-core";
 import {
   formatPortfolioProjectStatus,
   formatPortfolioProjectName,
