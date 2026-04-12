@@ -720,7 +720,17 @@ function createClaudeCodeAgent(): Agent {
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return { state: "exited", timestamp: exitedAt };
+      if (!running) {
+        // Grace period: don't report "exited" for freshly created sessions
+        // where the agent process may not have launched yet (race between
+        // tmux session creation and the agent binary starting).
+        const STARTUP_GRACE_MS = 60_000;
+        const ageMs = Date.now() - session.createdAt.getTime();
+        if (ageMs < STARTUP_GRACE_MS) {
+          return { state: "idle", timestamp: session.createdAt };
+        }
+        return { state: "exited", timestamp: exitedAt };
+      }
 
       // Process is running - check JSONL session file for activity
       if (!session.workspacePath) {

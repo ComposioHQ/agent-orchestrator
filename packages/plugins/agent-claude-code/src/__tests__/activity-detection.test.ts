@@ -116,10 +116,19 @@ describe("Claude Code Activity Detection", () => {
     // Process / handle edge cases
     // -----------------------------------------------------------------------
 
-    it("returns 'exited' when process is not running", async () => {
+    it("returns 'idle' during startup grace period when process is not yet running", async () => {
       vi.spyOn(agent, "isProcessRunning").mockResolvedValue(false);
       writeJsonl([{ type: "assistant" }]);
-      expect((await agent.getActivityState(makeSession()))?.state).toBe("exited");
+      // Session just created — within 60s grace period, so agent may still be starting
+      expect((await agent.getActivityState(makeSession()))?.state).toBe("idle");
+    });
+
+    it("returns 'exited' when process is not running and session is old", async () => {
+      vi.spyOn(agent, "isProcessRunning").mockResolvedValue(false);
+      writeJsonl([{ type: "assistant" }]);
+      // Session created 2 minutes ago — well past grace period
+      const oldSession = makeSession({ createdAt: new Date(Date.now() - 120_000) });
+      expect((await agent.getActivityState(oldSession))?.state).toBe("exited");
     });
 
     it("returns 'exited' when no runtimeHandle", async () => {

@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao",
-  "version": "0.2.2",
+  "version": "0.2.5",
   "description": "Orchestrate parallel AI coding agents — global CLI wrapper",
   "license": "MIT",
   "type": "module",
