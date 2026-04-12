@@ -164,6 +164,31 @@ const RoleAgentConfigSchema = z
   })
   .optional();
 
+const AdversarialCriticConfigSchema = z.object({
+  agent: z.string(),
+  agentConfig: AgentSpecificConfigSchema.optional(),
+});
+
+const AdversarialPhaseConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  maxRounds: z.number().int().min(1).default(2),
+});
+
+const AdversarialCodePhaseConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  maxRounds: z.number().int().min(1).default(1),
+});
+
+const AdversarialReviewConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  critic: AdversarialCriticConfigSchema,
+  plan: AdversarialPhaseConfigSchema.optional(),
+  code: AdversarialCodePhaseConfigSchema.optional(),
+});
+
+/** @internal — exported for testing only */
+export { AdversarialReviewConfigSchema as _AdversarialReviewConfigSchema };
+
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
   repo: z.string(),
@@ -191,6 +216,7 @@ const ProjectConfigSchema = z.object({
     .enum(["reuse", "delete", "ignore", "delete-new", "ignore-new", "kill-previous"])
     .optional(),
   opencodeIssueSessionStrategy: z.enum(["reuse", "delete", "ignore"]).optional(),
+  adversarialReview: AdversarialReviewConfigSchema.optional(),
 });
 
 const DefaultPluginsSchema = z.object({

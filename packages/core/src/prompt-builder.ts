@@ -144,3 +144,145 @@ export function buildPrompt(config: PromptBuildConfig): string {
 
   return sections.join("\n\n");
 }
+
+// =============================================================================
+// ADVERSARIAL PHASE PROMPTS
+// =============================================================================
+
+/** Discriminated phase for adversarial prompt generation. */
+export type AdversarialPhase =
+  | "planning"
+  | "plan_review"
+  | "working"
+  | "working_after_code_review"
+  | "code_review";
+
+export interface AdversarialPhaseContext {
+  phase: AdversarialPhase;
+  round: number;
+  maxRounds: number;
+}
+
+const ADVERSARIAL_DIR = ".ao/adversarial";
+
+/**
+ * Build a phase-specific prompt fragment for adversarial validation.
+ * This is appended on top of the existing 3-layer prompt.
+ */
+export function buildPhasePrompt(ctx: AdversarialPhaseContext): string {
+  const { phase, round } = ctx;
+
+  switch (phase) {
+    case "planning": {
+      const lines = [
+        "## Adversarial Validation — Planning Phase",
+        "",
+        `You are in planning round ${round + 1}/${ctx.maxRounds}.`,
+        "",
+      ];
+      if (round === 0) {
+        lines.push(
+          "Draft a detailed implementation plan for the task assigned to you.",
+          `Write it to \`${ADVERSARIAL_DIR}/plan.md\`.`,
+          "The plan should cover: approach, files to modify, edge cases, test strategy.",
+          "Do not write any code yet — only the plan.",
+          `Update \`${ADVERSARIAL_DIR}/progress.md\` with what you accomplished this phase.`,
+          "Exit when the plan is complete.",
+        );
+      } else {
+        lines.push(
+          `A critique of your previous plan has been written to \`${ADVERSARIAL_DIR}/plan.critique.md\`.`,
+          "Read it carefully and produce a revised plan that addresses the feedback.",
+          `Write the revised plan to \`${ADVERSARIAL_DIR}/plan.md\` (overwrite the previous version).`,
+          "Do not write any code yet — only the revised plan.",
+          `Update \`${ADVERSARIAL_DIR}/progress.md\` with what you changed and why.`,
+          "Exit when the revised plan is complete.",
+        );
+      }
+      return lines.join("\n");
+    }
+
+    case "plan_review": {
+      return [
+        "## Adversarial Validation — Plan Review",
+        "",
+        "You are an adversarial reviewer. Your job is to find problems before code is written.",
+        "",
+        "**Startup: orient yourself before reviewing.**",
+        "1. Run `git log --oneline -20` to understand recent history.",
+        `2. Read \`${ADVERSARIAL_DIR}/plan.md\` thoroughly.`,
+        "3. If an issue description exists, read it for requirements context.",
+        "",
+        "**Then write your critique:**",
+        `Write a structured critique to \`${ADVERSARIAL_DIR}/plan.critique.md\` covering:`,
+        "- Missing requirements or acceptance criteria",
+        "- Risky assumptions",
+        "- Simpler alternatives the author may have overlooked",
+        "- Test gaps",
+        "- Potential integration issues",
+        "",
+        "Be concrete and actionable — cite specific sections of the plan.",
+        `Do not modify \`${ADVERSARIAL_DIR}/plan.md\` or any source files.`,
+        `Update \`${ADVERSARIAL_DIR}/progress.md\` with a one-line summary of your review.`,
+        "Exit when your critique is complete.",
+      ].join("\n");
+    }
+
+    case "working": {
+      return [
+        "## Adversarial Validation — Implementation Phase",
+        "",
+        `Follow the plan in \`${ADVERSARIAL_DIR}/plan.md\`.`,
+        "",
+        "**Before writing code, run the existing test suite** to establish a baseline.",
+        "Note any pre-existing failures so you don't waste time on them.",
+        "",
+        "Implement the plan incrementally — commit after each logical unit of work.",
+        `Update \`${ADVERSARIAL_DIR}/progress.md\` as you complete each section.`,
+        "When implementation is complete, open a PR (or let the orchestrator detect your commits).",
+      ].join("\n");
+    }
+
+    case "working_after_code_review": {
+      return [
+        "## Adversarial Validation — Post-Review Refinement",
+        "",
+        `A code review has been written to \`${ADVERSARIAL_DIR}/code.critique.md\`.`,
+        "Read it carefully and apply the fixes.",
+        "",
+        "**Before making changes, run the existing test suite** to confirm current state.",
+        "",
+        "Address each item in the critique. Skip items you disagree with, but document why",
+        `in \`${ADVERSARIAL_DIR}/progress.md\`.`,
+        "Commit after each fix.",
+      ].join("\n");
+    }
+
+    case "code_review": {
+      return [
+        "## Adversarial Validation — Code Review",
+        "",
+        "You are an adversarial code reviewer. Find bugs before they ship.",
+        "",
+        "**Startup: orient yourself before reviewing.**",
+        "1. Run `git log --oneline -20` to understand what was done.",
+        "2. Run `git diff main...HEAD` to see all changes.",
+        `3. Read \`${ADVERSARIAL_DIR}/plan.md\` for intended design.`,
+        `4. Read \`${ADVERSARIAL_DIR}/progress.md\` for implementation notes.`,
+        "",
+        "**Then write your critique:**",
+        `Write to \`${ADVERSARIAL_DIR}/code.critique.md\` covering:`,
+        "- Bugs and logic errors",
+        "- Security issues (injection, XSS, auth bypass)",
+        "- Test coverage gaps",
+        `- Deviations from \`${ADVERSARIAL_DIR}/plan.md\``,
+        "- Performance concerns",
+        "",
+        "Be concrete — cite file paths and line numbers.",
+        "Do not modify any source files.",
+        `Update \`${ADVERSARIAL_DIR}/progress.md\` with a one-line summary of your review.`,
+        "Exit when your review is complete.",
+      ].join("\n");
+    }
+  }
+}

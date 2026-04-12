@@ -62,8 +62,8 @@ export { PromptLoader } from "./prompts/loader.js";
 export type { PromptLoaderOptions, SingleTemplate, ReactionsFile } from "./prompts/loader.js";
 
 // Prompt builder — layered prompt composition
-export { buildPrompt } from "./prompt-builder.js";
-export type { PromptBuildConfig } from "./prompt-builder.js";
+export { buildPrompt, buildPhasePrompt } from "./prompt-builder.js";
+export type { PromptBuildConfig, AdversarialPhase, AdversarialPhaseContext } from "./prompt-builder.js";
 
 // Orchestrator prompt — generates orchestrator context for `ao start`
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
