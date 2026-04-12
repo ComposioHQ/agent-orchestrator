@@ -1,0 +1,41 @@
+packages/cli/src/lib/lifecycle-service.ts
+  3b3b057bdfd8aeb4 31
+packages/core/src/portfolio-registry.ts
+  3b3b057bdfd8aeb4 239,262
+packages/core/src/session-manager.ts
+  3b3b057bdfd8aeb4 279,293,667,729,983,1297,1377
+packages/core/src/paths.ts
+  3b3b057bdfd8aeb4 79-80,123-124,141-142,149-150,157-158,165-166,173-174,198-199,261-262,278
+packages/core/src/global-config.ts
+  3b3b057bdfd8aeb4 36,43,96-97,383-388,393,422-423,432-446,451,454,460,473
+packages/core/src/lifecycle-manager.ts
+  3b3b057bdfd8aeb4 445,663
+packages/core/src/recovery/actions.ts
+  3b3b057bdfd8aeb4 42,138,183
+packages/core/src/portfolio-session-service.ts
+  3b3b057bdfd8aeb4 49,153
+packages/core/src/recovery/scanner.ts
+  3b3b057bdfd8aeb4 25
+packages/core/src/types.ts
+  3b3b057bdfd8aeb4 1132-1134,1555
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "618aa4e560e28349e726d8245786cb64683ce927",
+  "prompts": {
+    "3b3b057bdfd8aeb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef60a7a6-f160-47e8-bbcb-a3219a8ab2ee",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 73,
+      "total_deletions": 39,
+      "accepted_lines": 4615,
+      "overriden_lines": 0
+    }
+  }
+}
