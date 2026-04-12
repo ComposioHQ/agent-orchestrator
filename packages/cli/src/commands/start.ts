@@ -51,6 +51,7 @@ import {
 import { rebuildDashboardProductionArtifacts } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
 import { register, unregister, isAlreadyRunning, getRunning, waitForExit } from "../lib/running-state.js";
+import { getCliVersion } from "../options/version.js";
 import { isHumanCaller } from "../lib/caller-context.js";
 import { detectEnvironment } from "../lib/detect-env.js";
 import { detectAgentRuntime, detectAvailableAgents, type DetectedAgent } from "../lib/detect-agent.js";
@@ -1276,21 +1277,43 @@ export function registerStart(program: Command): void {
           // ── Already-running detection (Step 9) ──
           const running = await isAlreadyRunning();
           if (running) {
+            const currentVersion = getCliVersion();
+            const daemonVersion = running.version ?? "unknown";
+            const versionMismatch = daemonVersion !== "unknown" && daemonVersion !== currentVersion;
+
             if (isHumanCaller()) {
               console.log(chalk.cyan(`\nℹ AO is already running.`));
               console.log(`  Dashboard: ${chalk.cyan(`http://localhost:${running.port}`)}`);
               console.log(`  PID: ${running.pid} | Up since: ${running.startedAt}`);
-              console.log(`  Projects: ${running.projects.join(", ")}\n`);
+              console.log(`  Projects: ${running.projects.join(", ")}`);
+
+              if (versionMismatch) {
+                console.log(chalk.yellow(`\n  ⚠ Version mismatch: daemon is ${daemonVersion}, CLI is ${currentVersion}`));
+                console.log(chalk.yellow(`  The running dashboard is on the old version. Consider restarting.`));
+              }
+
+              const options = [
+                { value: "open", label: "Open dashboard", hint: "Keep the current instance" },
+                { value: "new", label: "Start new orchestrator", hint: "Add a new session for this project" },
+                { value: "restart", label: "Restart everything", hint: "Stop the current instance first" },
+                { value: "quit", label: "Quit" },
+              ];
+
+              // If version mismatch, offer restart-on-new-version as first option
+              if (versionMismatch) {
+                options.unshift({
+                  value: "restart-new-version",
+                  label: `Restart on new version (${currentVersion})`,
+                  hint: `Stop daemon (${daemonVersion}) and start fresh`,
+                });
+              }
 
               const choice = await promptSelect(
-                "AO is already running. What do you want to do?",
-                [
-                  { value: "open", label: "Open dashboard", hint: "Keep the current instance" },
-                  { value: "new", label: "Start new orchestrator", hint: "Add a new session for this project" },
-                  { value: "restart", label: "Restart everything", hint: "Stop the current instance first" },
-                  { value: "quit", label: "Quit" },
-                ],
-                "open",
+                versionMismatch
+                  ? `AO is already running but on a different version. What do you want to do?`
+                  : `AO is already running. What do you want to do?`,
+                options,
+                versionMismatch ? "restart-new-version" : "open",
               );
 
               if (choice === "open") {
@@ -1327,14 +1350,18 @@ export function registerStart(program: Command): void {
                 projectId = newId;
                 project = config.projects[newId];
                 // Continue to startup below
-              } else if (choice === "restart") {
+              } else if (choice === "restart-new-version" || choice === "restart") {
                 try { process.kill(running.pid, "SIGTERM"); } catch { /* already dead */ }
                 if (!(await waitForExit(running.pid, 5000))) {
                   console.log(chalk.yellow("  Process didn't exit cleanly, sending SIGKILL..."));
                   try { process.kill(running.pid, "SIGKILL"); } catch { /* already dead */ }
                 }
                 await unregister();
-                console.log(chalk.yellow("\n  Stopped existing instance. Restarting...\n"));
+                if (choice === "restart-new-version") {
+                  console.log(chalk.green(`\n  Stopped daemon (${daemonVersion}). Starting on ${currentVersion}...\n`));
+                } else {
+                  console.log(chalk.yellow("\n  Stopped existing instance. Restarting...\n"));
+                }
                 // Continue to startup below
               } else {
                 process.exit(0);
@@ -1344,6 +1371,9 @@ export function registerStart(program: Command): void {
               console.log(`AO is already running.`);
               console.log(`Dashboard: http://localhost:${running.port}`);
               console.log(`PID: ${running.pid}`);
+              if (daemonVersion !== "unknown") {
+                console.log(`Version: ${daemonVersion}${versionMismatch ? ` (CLI: ${currentVersion} — mismatch!)` : ""}`);
+              }
               console.log(`Projects: ${running.projects.join(", ")}`);
               console.log(`To restart: ao stop && ao start`);
               process.exit(0);
@@ -1376,6 +1406,7 @@ export function registerStart(program: Command): void {
             port: actualPort,
             startedAt: new Date().toISOString(),
             projects: Object.keys(config.projects),
+            version: getCliVersion(),
           });
         } catch (err) {
           if (err instanceof Error) {
