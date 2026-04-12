@@ -50,7 +50,7 @@ const { mockDetectOpenClawInstallation } = vi.hoisted(() => ({
 }));
 
 const { mockProcessCwd } = vi.hoisted(() => ({
-  mockProcessCwd: vi.fn<[], string>(),
+  mockProcessCwd: vi.fn<() => string | undefined>(),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -110,7 +110,8 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
 });
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
-  getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
+  getSessionManager: async (): Promise<SessionManager> =>
+    mockSessionManager as unknown as SessionManager,
 }));
 
 vi.mock("../../src/lib/lifecycle-service.js", () => ({
@@ -1141,6 +1142,42 @@ describe("stop command", () => {
       "my-app",
     );
   });
+
+  it("continues killing remaining sessions when one sm.kill throws", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.list.mockResolvedValue([
+      { id: "app-orchestrator-1", status: "running" },
+      { id: "ao-155", status: "running" },
+      { id: "ao-156", status: "running" },
+    ]);
+    let call = 0;
+    mockSessionManager.kill.mockImplementation(async (_id: string) => {
+      call += 1;
+      if (call === 2) {
+        throw new Error("SessionNotFoundError");
+      }
+    });
+    mockExec.mockResolvedValue({ stdout: "12345", stderr: "" });
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    expect(mockSessionManager.kill).toHaveBeenCalledTimes(3);
+    expect(mockStopLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: expect.any(String) }),
+      "my-app",
+    );
+    const logged = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(logged).toContain("Stopped 2 of 3 session(s)");
+    const warnings = vi
+      .mocked(console.warn)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(warnings).toContain("ao-155");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1164,7 +1201,11 @@ describe("start command — autoCreateConfig", () => {
     });
 
     const { detectProjectType } = await import("../../src/lib/project-detection.js");
-    vi.mocked(detectProjectType).mockReturnValue({ languages: [], frameworks: [] });
+    vi.mocked(detectProjectType).mockReturnValue({
+      languages: [],
+      frameworks: [],
+      tools: [],
+    });
 
     const { detectAvailableAgents, detectAgentRuntime } = await import("../../src/lib/detect-agent.js");
     vi.mocked(detectAvailableAgents).mockResolvedValue([]);

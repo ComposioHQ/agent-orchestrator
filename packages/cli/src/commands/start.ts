@@ -1444,10 +1444,35 @@ export function registerStop(program: Command): void {
 
           if (allSessions.length > 0) {
             const spinner = ora(`Stopping ${allSessions.length} session(s)`).start();
+            const killErrors: { id: string; message: string }[] = [];
             for (const session of allSessions) {
-              await sm.kill(session.id, { purgeOpenCode });
+              try {
+                await sm.kill(session.id, { purgeOpenCode });
+              } catch (err) {
+                killErrors.push({
+                  id: session.id,
+                  message: err instanceof Error ? err.message : String(err),
+                });
+              }
             }
-            spinner.succeed(`Stopped ${allSessions.length} session(s)`);
+            if (killErrors.length === 0) {
+              spinner.succeed(`Stopped ${allSessions.length} session(s)`);
+            } else {
+              spinner.stop();
+              const ok = allSessions.length - killErrors.length;
+              if (ok > 0) {
+                console.log(
+                  chalk.green(`Stopped ${ok} of ${allSessions.length} session(s)`),
+                );
+              } else {
+                console.log(
+                  chalk.yellow(`Failed to stop ${killErrors.length} session(s)`),
+                );
+              }
+              for (const e of killErrors) {
+                console.warn(chalk.yellow(`  ${e.id}: ${e.message}`));
+              }
+            }
           } else {
             console.log(chalk.yellow("No running sessions found"));
           }
