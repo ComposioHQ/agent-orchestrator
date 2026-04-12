@@ -10,7 +10,8 @@
  * Reference: scripts/claude-session-status, scripts/claude-review-check
  */
 
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   SESSION_STATUS,
@@ -43,6 +44,92 @@ import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveNotifierTarget } from "./notifier-resolution.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 import { PromptLoader } from "./prompts/loader.js";
+import { buildPhasePrompt, type AdversarialPhase } from "./prompt-builder.js";
+
+// =============================================================================
+// ADVERSARIAL VALIDATION — PHASE TRANSITIONS
+// =============================================================================
+
+export interface AdversarialTransition {
+  nextStatus: SessionStatus;
+  nextPhase?: string;
+  swapTo: "primary" | "critic";
+  resume: boolean;
+  bumpRound: boolean;
+  promptPhase: AdversarialPhase;
+}
+
+export function computeAdversarialTransition(
+  status: SessionStatus,
+  phase: string | undefined,
+  round: number,
+  maxPlanRounds: number,
+  maxCodeRounds: number,
+  artifactExists: boolean,
+): AdversarialTransition | "stuck" | null {
+  if (status === "planning") {
+    if (!artifactExists) return "stuck";
+    if (round + 1 < maxPlanRounds) {
+      return {
+        nextStatus: "reviewing",
+        nextPhase: "plan_review",
+        swapTo: "critic",
+        resume: false,
+        bumpRound: false,
+        promptPhase: "plan_review",
+      };
+    }
+    return {
+      nextStatus: "working",
+      swapTo: "primary",
+      resume: true,
+      bumpRound: false,
+      promptPhase: "working",
+    };
+  }
+
+  if (status === "reviewing" && phase === "plan_review") {
+    if (!artifactExists) return "stuck";
+    if (round + 1 < maxPlanRounds) {
+      return {
+        nextStatus: "planning",
+        swapTo: "primary",
+        resume: true,
+        bumpRound: true,
+        promptPhase: "planning",
+      };
+    }
+    return {
+      nextStatus: "working",
+      swapTo: "primary",
+      resume: true,
+      bumpRound: false,
+      promptPhase: "working",
+    };
+  }
+
+  if (status === "reviewing" && phase === "code_review") {
+    if (!artifactExists) return "stuck";
+    if (round + 1 < maxCodeRounds) {
+      return {
+        nextStatus: "working",
+        swapTo: "primary",
+        resume: true,
+        bumpRound: true,
+        promptPhase: "working_after_code_review",
+      };
+    }
+    return {
+      nextStatus: "working",
+      swapTo: "primary",
+      resume: true,
+      bumpRound: false,
+      promptPhase: "working_after_code_review",
+    };
+  }
+
+  return null;
+}
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -398,6 +485,76 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
+    // 1b. Adversarial phase advancement — planning/reviewing sessions
+    if (
+      (session.status === SESSION_STATUS.PLANNING || session.status === SESSION_STATUS.REVIEWING) &&
+      session.metadata["adversarialEnabled"] === "true"
+    ) {
+      if (agent) {
+        const activityState = await agent.getActivityState(session, config.readyThresholdMs);
+
+        // Agent still working — return current status early (no PR checks needed)
+        if (!activityState || activityState.state === "active") {
+          return session.status;
+        }
+        if (activityState.state === "waiting_input") return "needs_input";
+        if (activityState.state === "exited") return "killed";
+
+        if (activityState.state === "idle" || activityState.state === "ready") {
+          const adversarialDir = join(session.workspacePath ?? "", ".ao", "adversarial");
+          const phase = session.metadata["adversarialPhase"];
+          let artifactExists = false;
+
+          if (session.status === SESSION_STATUS.PLANNING) {
+            artifactExists = existsSync(join(adversarialDir, "plan.md"));
+          } else if (phase === "plan_review") {
+            artifactExists = existsSync(join(adversarialDir, "plan.critique.md"));
+          } else if (phase === "code_review") {
+            artifactExists = existsSync(join(adversarialDir, "code.critique.md"));
+          }
+
+          const round = parseInt(session.metadata["adversarialRound"] ?? "0", 10);
+          const maxPlanRounds = parseInt(session.metadata["adversarialPlanMaxRounds"] ?? "2", 10);
+          const maxCodeRounds = parseInt(session.metadata["adversarialCodeMaxRounds"] ?? "1", 10);
+
+          const transition = computeAdversarialTransition(
+            session.status, phase, round, maxPlanRounds, maxCodeRounds, artifactExists,
+          );
+
+          if (transition === "stuck") return "stuck";
+
+          if (transition) {
+            const primaryAgent = session.metadata["adversarialPrimary"] ?? "";
+            const criticAgent = session.metadata["adversarialCritic"] ?? "";
+            const nextAgent = transition.swapTo === "primary" ? primaryAgent : criticAgent;
+            const newRound = transition.bumpRound ? round + 1 : round;
+
+            try {
+              await sessionManager.swapAgent(session.id, session.projectId, nextAgent, {
+                resume: transition.resume,
+                phasePrompt: buildPhasePrompt({
+                  phase: transition.promptPhase,
+                  round: newRound,
+                  maxRounds: transition.promptPhase.includes("code") ? maxCodeRounds : maxPlanRounds,
+                }),
+                newStatus: transition.nextStatus,
+                metadataUpdates: {
+                  adversarialRound: String(newRound),
+                  ...(transition.nextPhase ? { adversarialPhase: transition.nextPhase } : {}),
+                },
+              });
+              return transition.nextStatus;
+            } catch {
+              return "stuck";
+            }
+          }
+        }
+
+        return session.status; // idle/ready but no transition — preserve
+      }
+      return session.status; // no agent plugin
+    }
+
     // 2. Check agent activity.
     // JSONL-based activity detection is runtime-agnostic, but terminal probing
     // and process checks should only run once a real runtime identity has been
@@ -465,6 +622,35 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           session.status === SESSION_STATUS.NEEDS_INPUT
         ) {
           return session.status;
+        }
+      }
+    }
+
+    // 2b. Adversarial code review trigger: working + adversarial + idle + no PR yet
+    if (
+      session.status === SESSION_STATUS.WORKING &&
+      session.metadata["adversarialEnabled"] === "true" &&
+      session.metadata["adversarialCodeReviewDone"] !== "true" &&
+      detectedIdleTimestamp
+    ) {
+      const codeReviewEnabled = session.metadata["adversarialCodeMaxRounds"] !== "0";
+      if (codeReviewEnabled && !session.pr) {
+        const criticAgent = session.metadata["adversarialCritic"] ?? "";
+        const codeMaxRounds = parseInt(session.metadata["adversarialCodeMaxRounds"] ?? "1", 10);
+        try {
+          await sessionManager.swapAgent(session.id, session.projectId, criticAgent, {
+            resume: false,
+            phasePrompt: buildPhasePrompt({ phase: "code_review", round: 0, maxRounds: codeMaxRounds }),
+            newStatus: "reviewing",
+            metadataUpdates: {
+              adversarialPhase: "code_review",
+              adversarialRound: "0",
+              adversarialCodeReviewDone: "true",
+            },
+          });
+          return "reviewing";
+        } catch {
+          // Non-fatal — continue normal flow
         }
       }
     }

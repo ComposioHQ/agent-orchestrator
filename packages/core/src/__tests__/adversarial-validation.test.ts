@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { SessionStatus } from "../types.js";
 import { _AdversarialReviewConfigSchema as AdversarialReviewConfigSchema } from "../config.js";
 import { buildPhasePrompt } from "../prompt-builder.js";
+import { computeAdversarialTransition } from "../lifecycle-manager.js";
 
 describe("Adversarial Validation — Types", () => {
   it("SessionStatus includes planning and reviewing", () => {
@@ -102,5 +103,90 @@ describe("Adversarial Validation — Phase Prompts", () => {
     expect(prompt).toContain("code.critique.md");
     expect(prompt).toContain("Do not modify any source");
     expect(prompt).toContain("Exit");
+  });
+});
+
+describe("Adversarial Validation — computeAdversarialTransition", () => {
+  it("planning + artifact → reviewing (plan_review) when rounds remain", () => {
+    const result = computeAdversarialTransition("planning", undefined, 0, 2, 1, true);
+    expect(result).not.toBe("stuck");
+    expect(result).not.toBeNull();
+    if (result && result !== "stuck") {
+      expect(result.nextStatus).toBe("reviewing");
+      expect(result.nextPhase).toBe("plan_review");
+      expect(result.swapTo).toBe("critic");
+    }
+  });
+
+  it("planning + no artifact → stuck", () => {
+    expect(computeAdversarialTransition("planning", undefined, 0, 2, 1, false)).toBe("stuck");
+  });
+
+  it("planning + artifact + last round → working (skip review)", () => {
+    const result = computeAdversarialTransition("planning", undefined, 1, 2, 1, true);
+    expect(result).not.toBe("stuck");
+    expect(result).not.toBeNull();
+    if (result && result !== "stuck") {
+      expect(result.nextStatus).toBe("working");
+      expect(result.swapTo).toBe("primary");
+      expect(result.resume).toBe(true);
+    }
+  });
+
+  it("reviewing (plan_review) + artifact + rounds remain → planning (bump round)", () => {
+    const result = computeAdversarialTransition("reviewing", "plan_review", 0, 2, 1, true);
+    expect(result).not.toBe("stuck");
+    expect(result).not.toBeNull();
+    if (result && result !== "stuck") {
+      expect(result.nextStatus).toBe("planning");
+      expect(result.swapTo).toBe("primary");
+      expect(result.bumpRound).toBe(true);
+    }
+  });
+
+  it("reviewing (plan_review) + artifact + last round → working", () => {
+    const result = computeAdversarialTransition("reviewing", "plan_review", 1, 2, 1, true);
+    expect(result).not.toBe("stuck");
+    expect(result).not.toBeNull();
+    if (result && result !== "stuck") {
+      expect(result.nextStatus).toBe("working");
+      expect(result.swapTo).toBe("primary");
+      expect(result.resume).toBe(true);
+    }
+  });
+
+  it("reviewing (code_review) + artifact → working (primary resumes)", () => {
+    const result = computeAdversarialTransition("reviewing", "code_review", 0, 2, 1, true);
+    expect(result).not.toBe("stuck");
+    expect(result).not.toBeNull();
+    if (result && result !== "stuck") {
+      expect(result.nextStatus).toBe("working");
+      expect(result.swapTo).toBe("primary");
+      expect(result.promptPhase).toBe("working_after_code_review");
+    }
+  });
+
+  it("reviewing (plan_review) + no artifact → stuck", () => {
+    expect(computeAdversarialTransition("reviewing", "plan_review", 0, 2, 1, false)).toBe("stuck");
+  });
+
+  it("reviewing (code_review) + no artifact → stuck", () => {
+    expect(computeAdversarialTransition("reviewing", "code_review", 0, 2, 1, false)).toBe("stuck");
+  });
+
+  it("reviewing (code_review) + artifact + rounds remain → working (bump round)", () => {
+    const result = computeAdversarialTransition("reviewing", "code_review", 0, 2, 2, true);
+    expect(result).not.toBe("stuck");
+    expect(result).not.toBeNull();
+    if (result && result !== "stuck") {
+      expect(result.nextStatus).toBe("working");
+      expect(result.swapTo).toBe("primary");
+      expect(result.bumpRound).toBe(true);
+      expect(result.promptPhase).toBe("working_after_code_review");
+    }
+  });
+
+  it("non-adversarial status returns null", () => {
+    expect(computeAdversarialTransition("working", undefined, 0, 2, 1, true)).toBeNull();
   });
 });
