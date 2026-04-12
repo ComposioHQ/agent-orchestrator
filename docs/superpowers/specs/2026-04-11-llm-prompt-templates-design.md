@@ -33,7 +33,7 @@ Five embedded prompts, identified by audit of `packages/core/src`:
 | # | Source | What it is |
 |---|--------|-----------|
 | 1 | `prompt-builder.ts:21-40` — `BASE_AGENT_PROMPT` | ~20-line worker-agent system prompt (Layer 1 of the 3-layer assembly) |
-| 2 | `orchestrator-prompt.ts:21-256` — `generateOrchestratorPrompt()` body | ~230-line orchestrator system prompt with `${project.*}` / `${config.*}` / `${projectId}` substitutions, plus two optional sections (reactions, project-specific rules) that are conditionally appended |
+| 2 | `orchestrator-prompt.ts:21-255` — `generateOrchestratorPrompt()` body | ~230-line orchestrator system prompt with `${project.*}` / `${config.*}` / `${projectId}` substitutions, plus two optional sections (reactions, project-specific rules) that are conditionally appended |
 | 3 | `config.ts:537-608` — 6 default reaction **messages** | `ci-failed`, `changes-requested`, `bugbot-comments`, `merge-conflicts`, `approved-and-green`, `agent-idle` (the `message` fields only — other defaults like `auto`, `action`, `retries`, `escalateAfter`, `priority`, `threshold` stay in `applyDefaultReactions`) |
 | 4 | `lifecycle-manager.ts:932-947` — CI failure formatter | ~15-line template that formats failed CI checks into a message sent to the agent |
 | 5 | `agent-workspace-hooks.ts:267-278` — `.ao/AGENTS.md` blurb | ~10 lines appended to each workspace's `.ao/AGENTS.md` explaining metadata fallbacks; no variables |
@@ -181,7 +181,7 @@ Dotted-path resolution means existing call sites do not need to reshape their co
 
 ### Sync by Design
 
-Both `render()` and `renderReaction()` are **synchronous**. File I/O uses `fs.readFileSync`, YAML parsing uses `js-yaml`'s synchronous `load`. This matches the existing signatures of `buildPrompt()`, `generateOrchestratorPrompt()`, and `setupPathWrapperWorkspace()` — all synchronous today — and avoids rippling `async` through spawn paths and plugin APIs. The cache test (`loader.test.ts` #12) spies on `fs.readFileSync` to verify subsequent calls for the same file do not re-read from disk.
+Both `render()` and `renderReaction()` are **synchronous**. File I/O uses `fs.readFileSync`, YAML parsing uses `js-yaml`'s synchronous `load` (pinning the parser choice here so the implementation does not have to re-decide). This matches the existing signatures of `buildPrompt()`, `generateOrchestratorPrompt()`, and `setupPathWrapperWorkspace()` — all synchronous today — and avoids rippling `async` through spawn paths and plugin APIs. The cache test (`loader.test.ts` #12) spies on `fs.readFileSync` to verify subsequent calls for the same file do not re-read from disk.
 
 ### Caching
 
@@ -216,6 +216,7 @@ Each existing embedded prompt is replaced in one place.
   - **Project-specific rules section** (`orchestrator-prompt.ts:248-252`): similarly, the function builds `"## Project-Specific Rules\n\n" + project.orchestratorRules` when `project.orchestratorRules` is set, else an empty string, and passes it as `${projectRulesSection}`.
 - The function's `sections.join("\n\n")` shape is preserved by authoring `orchestrator.yaml` as one block scalar with the same `\n\n` separators literally present in the YAML, so the `${reactionsSection}` and `${projectRulesSection}` placeholders sit exactly where the conditional `sections.push(...)` calls sat in the original code. A snapshot test (see Testing) asserts byte-identical output for a set of fixture configs that exercise all four combinations (reactions ∈ {none, present} × projectRules ∈ {absent, present}).
 - **No looping or conditionals in templates.** This is the same pattern ci-failure.yaml uses (the caller pre-formats the failed-checks bullet list into a single `${failedChecksList}` scalar). Keeping one interpolation model across all templates is a deliberate simplicity choice.
+- **The function, not the template, owns the leading whitespace for optional sections.** `reactionsSection` and `projectRulesSection` return values include their own leading `\n\n` when non-empty, and the empty string when absent. The YAML template has `${reactionsSection}` and `${projectRulesSection}` sitting flush against the adjacent content (no YAML-level whitespace). This invariant must be preserved or byte-identity breaks — worth a one-line code comment in the refactored function.
 
 **3. `config.ts` — 6 default reaction messages**
 - Current state: `applyDefaultReactions(config)` (lines 537-608) holds a `defaults` object with 11 reaction entries. Six of them (`ci-failed`, `changes-requested`, `bugbot-comments`, `merge-conflicts`, `approved-and-green`, `agent-idle`) carry a `message` string. The other five (`agent-stuck`, `agent-needs-input`, `agent-exited`, `all-complete`, plus non-message fields of the message-carrying entries) have no `message`.
@@ -230,7 +231,7 @@ Each existing embedded prompt is replaced in one place.
 
 **5. `agent-workspace-hooks.ts:267-278` — `.ao/AGENTS.md` blurb**
 - Moves to `agent-workspace.yaml`.
-- `setupPathWrapperWorkspace` is a public core export consumed by **five agent plugins** today (`agent-claude-code`, `agent-codex`, `agent-aider`, `agent-opencode`, `agent-cursor`). Threading a `loader` parameter through it would change a plugin-boundary API and require coordinated updates in every agent plugin for a blurb that takes **no variables** — pure YAGNI.
+- `setupPathWrapperWorkspace` is a public core export consumed by **four agent plugins** today (`agent-codex`, `agent-aider`, `agent-opencode`, `agent-cursor`). The `agent-claude-code` plugin uses native `.claude/settings.json` PostToolUse hooks and does not call `setupPathWrapperWorkspace`. Threading a `loader` parameter through it would still change a plugin-boundary API and require coordinated updates in every PATH-wrapper agent plugin for a blurb that takes **no variables** — pure YAGNI.
 - **Alternative adopted:** `agent-workspace-hooks.ts` uses a **module-level lazy default loader** scoped to the bundled templates directory. On first call, it constructs a `PromptLoader` with `projectDir = workspacePath` (so a user's project-local override at `<workspacePath>/.agent-orchestrator/prompts/agent-workspace.yaml` still works if they want it) and caches the parsed blurb for the module's lifetime. No plugin signatures change.
 - Because this blurb has no variables, it bypasses the full lookup-chain dance only in the sense that there is nothing to interpolate — the loader still performs the full project-local → bundled-default lookup. The only thing skipped is a `promptsDir` config lookup, because `agent-workspace-hooks.ts` does not have a config object in scope at call time. This is a deliberate trade-off: project-local `.agent-orchestrator/prompts/agent-workspace.yaml` still overrides the bundled default, but the explicit `promptsDir` override does not apply to this specific template. Documented in the YAML file and in `agent-orchestrator.yaml.example`.
 
@@ -279,7 +280,7 @@ Snapshot-style tests (`prompt-builder.test.ts`, `orchestrator-prompt.test.ts`) a
 
 - `prompt-builder.test.ts` — assert `buildPrompt(...)` output matches today's behavior against a golden string captured from HEAD before the refactor.
 - `orchestrator-prompt.test.ts` — assert byte-identical output for the cartesian product of (reactions ∈ {none, present-send-to-agent, present-notify, mixed}) × (projectRules ∈ {absent, present}) — eight fixture configs total. Golden strings captured from HEAD before the refactor.
-- `session-manager/spawn.test.ts` — pass a real `PromptLoader` (pointed at bundled templates) or a test double.
+- `session-manager/spawn.test.ts` — pass a real `PromptLoader` (pointed at bundled templates) via a shared `createTestPromptLoader()` helper in a `__tests__/prompts/fixtures.ts` or equivalent test-utils module, so every test file gets the same bundled-templates loader without re-wiring.
 - `config.test.ts` — verify reaction default *messages* are applied when user YAML omits them; verify user-set messages still override; verify non-message fields (`auto`, `retries`, etc.) are unchanged.
 
 ### No New E2E
