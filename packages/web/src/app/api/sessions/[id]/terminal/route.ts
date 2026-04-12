@@ -29,10 +29,11 @@ export async function GET(
     const terminalPort = normalizePort(process.env.TERMINAL_PORT, 14800);
     const protocol = getRequestProtocol(request);
     const hostname = getRequestHostname(request);
+    // ttyd entry URL without the secret: token is returned only in this JSON body so
+    // reverse proxies do not log it in request URIs. The browser appends `token` client-side.
     const url =
       `${protocol}://${hostname}:${terminalPort}/terminal` +
-      `?session=${encodeURIComponent(grant.sessionId)}` +
-      `&token=${encodeURIComponent(grant.token)}`;
+      `?session=${encodeURIComponent(grant.sessionId)}`;
 
     return NextResponse.json(
       {

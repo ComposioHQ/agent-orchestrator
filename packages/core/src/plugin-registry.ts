@@ -28,11 +28,6 @@ interface NotifierRegistration {
   config?: Record<string, unknown>;
 }
 
-interface NotifierRegistration {
-  registrationName: string;
-  config?: Record<string, unknown>;
-}
-
 const LOCAL_PLUGIN_ENTRY_CANDIDATES = ["dist/index.js", "index.js"] as const;
 
 function makeKey(slot: PluginSlot, name: string): string {
@@ -119,44 +114,21 @@ function collectNotifierRegistrations(
   }));
 }
 
-function collectNotifierRegistrations(
-  pluginName: string,
-  config: OrchestratorConfig,
-): NotifierRegistration[] {
-  const registrations: NotifierRegistration[] = [];
-  const seen = new Set<string>();
-  const notifierEntries = Object.entries(config.notifiers ?? {});
-
-  const addRegistration = (registrationName: string, rawConfig: Record<string, unknown>): void => {
-    if (seen.has(registrationName)) return;
-    seen.add(registrationName);
-    registrations.push({
-      registrationName,
-      config: prepareConfig("notifier", pluginName, registrationName, rawConfig, config.configPath),
-    });
-  };
-
-  const exactMatch = config.notifiers?.[pluginName];
-  if (exactMatch && typeof exactMatch === "object") {
-    const configuredPlugin = exactMatch["plugin"];
-    const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
-    if (!hasExplicitPlugin || configuredPlugin === pluginName) {
-      addRegistration(pluginName, exactMatch);
-    }
+function extractPluginConfig(
+  slot: PluginSlot,
+  _name: string,
+  _config: OrchestratorConfig,
+  _isExternalLoad = false,
+): Record<string, unknown> | undefined {
+  // Notifiers register via registerNotifier + collectNotifierRegistrations (multi-alias).
+  if (slot === "notifier") {
+    return undefined;
   }
-
-  for (const [notifierId, notifierConfig] of notifierEntries) {
-    if (!notifierConfig || typeof notifierConfig !== "object") continue;
-    const configuredPlugin = (notifierConfig as Record<string, unknown>)["plugin"];
-    const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
-    const matches = hasExplicitPlugin ? configuredPlugin === pluginName : notifierId === pluginName;
-
-    if (matches) {
-      addRegistration(notifierId, notifierConfig);
-    }
+  // Tracker and SCM plugins receive project config per-call, not at create() time.
+  if (slot === "tracker" || slot === "scm") {
+    return undefined;
   }
-
-  return registrations;
+  return undefined;
 }
 
 /**
@@ -169,7 +141,6 @@ function prepareConfig(
   sourceId: string,
   rawConfig: Record<string, unknown>,
   configPath?: string,
-  isExternalLoad = false,
   isExternalLoad = false,
 ): Record<string, unknown> {
   // Explicitly check for reserved fields to prevent silent stripping/collision.
@@ -184,10 +155,6 @@ function prepareConfig(
   // If loading via built-in name or npm package, having a 'path' field is ambiguous:
   // it could be a local plugin path (for loading) or a plugin config value.
   // We reject this to avoid silently stripping a config value the user intended to pass.
-  // Skip the built-in guard for external loads: when loading via `path`, the manifest.name
-  // may legitimately collide with a built-in (e.g. a forked "slack"), and the path field
-  // here IS the loading path, not a stray user config value.
-  const isBuiltin = !isExternalLoad && BUILTIN_PLUGINS.some((b) => b.slot === slot && b.name === name);
   // Skip the built-in guard for external loads: when loading via `path`, the manifest.name
   // may legitimately collide with a built-in (e.g. a forked "slack"), and the path field
   // here IS the loading path, not a stray user config value.
@@ -471,7 +438,6 @@ export function createPluginRegistry(): PluginRegistry {
       const { manifest } = plugin;
       const instance = plugin.create(config);
       registerInstance(manifest.slot, manifest.name, manifest, instance);
-      registerInstance(manifest.slot, manifest.name, manifest, instance);
     },
 
     get<T>(slot: PluginSlot, name: string): T | null {
@@ -481,15 +447,11 @@ export function createPluginRegistry(): PluginRegistry {
 
     list(slot: PluginSlot): PluginManifest[] {
       const result = new Map<string, PluginManifest>();
-      const result = new Map<string, PluginManifest>();
       for (const [key, entry] of plugins) {
-        if (key.startsWith(`${slot}:`) && !result.has(entry.manifest.name)) {
-          result.set(entry.manifest.name, entry.manifest);
         if (key.startsWith(`${slot}:`) && !result.has(entry.manifest.name)) {
           result.set(entry.manifest.name, entry.manifest);
         }
       }
-      return [...result.values()];
       return [...result.values()];
     },
 
@@ -512,7 +474,10 @@ export function createPluginRegistry(): PluginRegistry {
             if (orchestratorConfig && mod.manifest.slot === "notifier") {
               registerNotifier(mod, orchestratorConfig);
             } else {
-              this.register(mod);
+              const pluginConfig = orchestratorConfig
+                ? extractPluginConfig(builtin.slot, builtin.name, orchestratorConfig)
+                : undefined;
+              this.register(mod, pluginConfig);
             }
           } catch (error) {
             process.stderr.write(
@@ -571,7 +536,8 @@ export function createPluginRegistry(): PluginRegistry {
           if (mod.manifest.slot === "notifier") {
             registerNotifier(mod, config, true);
           } else {
-            this.register(mod);
+            const pluginConfig = extractPluginConfig(mod.manifest.slot, mod.manifest.name, config, true);
+            this.register(mod, pluginConfig);
           }
         } catch (error) {
           process.stderr.write(`[plugin-registry] Failed to load plugin "${specifier}": ${error}\n`);

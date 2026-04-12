@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import {
@@ -70,6 +70,7 @@ const ISSUE_LIMIT = 20;
 const VERIFY_LIMIT = 40;
 
 const rateLimits = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_MAX_KEYS = 10_000;
 
 let cachedContext:
   | {
@@ -92,8 +93,16 @@ function getLocalOwnerId(): string {
   }
 }
 
+function pruneExpiredRateLimitEntries(now: number): void {
+  if (rateLimits.size <= RATE_LIMIT_MAX_KEYS) return;
+  for (const [k, v] of rateLimits) {
+    if (v.resetAt <= now) rateLimits.delete(k);
+  }
+}
+
 function enforceRateLimit(key: string, limit: number): void {
   const now = Date.now();
+  pruneExpiredRateLimitEntries(now);
   const current = rateLimits.get(key);
 
   if (!current || current.resetAt <= now) {
@@ -129,9 +138,14 @@ function getContext() {
     try {
       secret = Buffer.from(readFileSync(secretPath, "utf-8").trim(), "utf-8");
       if (secret.length === 0) throw new Error("empty secret");
+      try {
+        chmodSync(secretPath, 0o600);
+      } catch {
+        // best-effort: tighten perms on legacy installs
+      }
     } catch {
       const generated = randomBytes(32).toString("hex");
-      writeFileSync(secretPath, `${generated}\n`, "utf-8");
+      writeFileSync(secretPath, `${generated}\n`, { encoding: "utf-8", mode: 0o600 });
       secret = Buffer.from(generated, "utf-8");
     }
 
@@ -207,9 +221,9 @@ function decodePayload(token: string | undefined, secret: Buffer): TerminalToken
 }
 
 export function issueTerminalAccess(sessionId: string): TerminalAccessGrant {
+  const record = getSessionRecord(sessionId);
   enforceRateLimit(`issue:${sessionId}`, ISSUE_LIMIT);
 
-  const record = getSessionRecord(sessionId);
   const { secret } = getContext();
   const now = Date.now();
   const expiresAt = new Date(now + TOKEN_TTL_MS);
@@ -237,11 +251,8 @@ export function issueTerminalAccess(sessionId: string): TerminalAccessGrant {
 }
 
 export function verifyTerminalAccess(sessionId: string, token: string | undefined): TerminalSessionRecord {
-  enforceRateLimit(`verify:${sessionId}`, VERIFY_LIMIT);
-
   const { secret } = getContext();
   const payload = decodePayload(token, secret);
-  const record = getSessionRecord(sessionId);
 
   if (payload.purpose !== "terminal_access" || payload.v !== 1) {
     throw new TerminalAuthError("Invalid terminal token", 401, "token_invalid");
@@ -249,14 +260,16 @@ export function verifyTerminalAccess(sessionId: string, token: string | undefine
   if (payload.exp <= Date.now()) {
     throw new TerminalAuthError("Terminal token expired", 401, "token_expired");
   }
-  if (payload.sessionId !== sessionId || payload.sessionId !== record.sessionId) {
+  if (payload.sessionId !== sessionId) {
     throw new TerminalAuthError("Terminal token does not match this session", 403, "ownership_denied");
   }
-  if (
-    payload.projectId !== record.projectId ||
-    payload.tmuxSessionName !== record.tmuxSessionName ||
-    payload.ownerId !== record.ownerId
-  ) {
+
+  const record = getSessionRecord(sessionId);
+  enforceRateLimit(`verify:${sessionId}`, VERIFY_LIMIT);
+
+  // Bind to project only. tmux name / owner can change between issue and verify;
+  // attach uses the current record from disk to avoid spurious denials (TOCTOU with metadata writes).
+  if (payload.projectId !== record.projectId) {
     throw new TerminalAuthError("Terminal access denied", 403, "ownership_denied");
   }
 

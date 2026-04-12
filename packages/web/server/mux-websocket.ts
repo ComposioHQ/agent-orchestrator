@@ -431,6 +431,9 @@ class TerminalManager {
  * Create a mux WebSocket server (noServer mode).
  * Returns the WebSocketServer instance for manual upgrade routing.
  */
+/** Hard cap on concurrent mux WebSocket clients (session subscribe + terminal multiplex). */
+const MAX_MUX_WEBSOCKET_CLIENTS = 512;
+
 export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
   if (!ptySpawn) {
     console.warn("[MuxServer] node-pty not available — mux WebSocket will be disabled");
@@ -444,6 +447,11 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
   const wss = new WebSocketServer({ noServer: true });
 
   wss.on("connection", (ws) => {
+    if (wss.clients.size > MAX_MUX_WEBSOCKET_CLIENTS) {
+      ws.close(1013, "Too many connections");
+      return;
+    }
+
     console.log("[MuxServer] New mux connection");
 
     const subscriptions = new Map<string, () => void>();
@@ -536,9 +544,13 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
                 subscriptions.set(id, unsub);
               }
             } else if (type === "data" && "data" in msg) {
-              terminalManager.write(id, msg.data);
+              if (subscriptions.has(id)) {
+                terminalManager.write(id, msg.data);
+              }
             } else if (type === "resize" && "cols" in msg && "rows" in msg) {
-              terminalManager.resize(id, msg.cols, msg.rows);
+              if (subscriptions.has(id)) {
+                terminalManager.resize(id, msg.cols, msg.rows);
+              }
             } else if (type === "close") {
               // Unsubscribe this client only — TerminalManager is shared across
               // all mux connections so we must not kill the PTY here.

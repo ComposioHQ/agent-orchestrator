@@ -23,8 +23,10 @@ export function Terminal({ sessionId }: TerminalProps) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<{ url: string }>;
       })
-      .then((data) => {
-        setTerminalUrl(data.url);
+      .then((data: { url: string; token: string }) => {
+        const u = new URL(data.url);
+        u.searchParams.set("token", data.token);
+        setTerminalUrl(u.toString());
       })
       .catch((err) => {
         console.error("[Terminal] Failed to get terminal URL:", err);
@@ -75,6 +77,7 @@ export function Terminal({ sessionId }: TerminalProps) {
             className="h-full w-full border-0"
             title={`Terminal: ${sessionId}`}
             allow="clipboard-read; clipboard-write"
+            referrerPolicy="no-referrer"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
           />
         ) : (

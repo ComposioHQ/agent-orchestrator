@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getSessionsDir, updateMetadata, writeMetadata } from "@aoagents/ao-core";
+import { getObservabilityBaseDir, getSessionsDir, updateMetadata, writeMetadata } from "@aoagents/ao-core";
 import {
   TerminalAuthError,
   issueTerminalAccess,
@@ -114,6 +114,51 @@ describe("terminal-auth", () => {
     );
   });
 
+  it("does not count failed issuance (missing session) toward the per-session issue rate limit", () => {
+    for (let i = 0; i < 50; i += 1) {
+      expect(() => issueTerminalAccess("ao-404")).toThrowError(
+        expect.objectContaining({ code: "session_not_found" }),
+      );
+    }
+    for (let j = 0; j < 20; j += 1) {
+      issueTerminalAccess("ao-1");
+    }
+    expect(() => issueTerminalAccess("ao-1")).toThrowError(
+      expect.objectContaining({ code: "rate_limited", statusCode: 429 }),
+    );
+  });
+
+  it("does not count invalid-token verify attempts toward the per-session verify rate limit", () => {
+    const grant = issueTerminalAccess("ao-1");
+    for (let i = 0; i < 60; i += 1) {
+      expect(() => verifyTerminalAccess("ao-1", "not.valid.token")).toThrow(TerminalAuthError);
+    }
+    for (let j = 0; j < 40; j += 1) {
+      verifyTerminalAccess("ao-1", grant.token);
+    }
+    expect(() => verifyTerminalAccess("ao-1", grant.token)).toThrowError(
+      expect.objectContaining({ code: "rate_limited", statusCode: 429 }),
+    );
+  });
+
+  it("still verifies after tmux session name changes in metadata (project binding only)", () => {
+    const grant = issueTerminalAccess("ao-1");
+    updateMetadata(sessionsDir, "ao-1", { tmuxName: "new-tmux-name" });
+
+    const verified = verifyTerminalAccess("ao-1", grant.token);
+    expect(verified.tmuxSessionName).toBe("new-tmux-name");
+  });
+
+  it("writes the HMAC secret file with 0600 permissions on POSIX", () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    issueTerminalAccess("ao-1");
+    const secretPath = join(getObservabilityBaseDir(configPath), "terminal-auth-secret");
+    const mode = statSync(secretPath).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
   it("rate limits repeated terminal grant issuance", () => {
     for (let i = 0; i < 20; i += 1) {
       issueTerminalAccess("ao-1");
@@ -171,13 +216,12 @@ describe("terminal-auth", () => {
     }
   });
 
-  it("rejects tokens with mismatched owner metadata", () => {
+  it("still verifies after owner metadata changes (project binding only; current record wins)", () => {
     const grant = issueTerminalAccess("ao-1");
     updateMetadata(sessionsDir, "ao-1", { ownerId: "another-owner" });
 
-    expect(() => verifyTerminalAccess("ao-1", grant.token)).toThrowError(
-      expect.objectContaining({ code: "ownership_denied", statusCode: 403 }),
-    );
+    const verified = verifyTerminalAccess("ao-1", grant.token);
+    expect(verified.ownerId).toBe("another-owner");
   });
 
   it("wraps config load failures as config_unavailable", () => {

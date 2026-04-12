@@ -299,6 +299,42 @@ describe("mux terminal open", () => {
 // =============================================================================
 
 describe("mux terminal I/O", () => {
+  it("ignores data from a WebSocket that did not authenticate open for that terminal", async () => {
+    const wsA = await connectMux();
+    const wsB = await connectMux();
+    const { token } = issueTerminalAccess(TEST_SESSION);
+
+    wsA.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open", token }));
+    await waitForMessage(wsA, (m) => m.ch === "terminal" && m.type === "opened");
+
+    const marker = `UNAUTH_MUX_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    wsB.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "data", data: `echo ${marker}\n` }));
+
+    let sawMarkerOnA = false;
+    await new Promise<void>((resolve) => {
+      const handler = (raw: Buffer | string) => {
+        try {
+          const msg = JSON.parse(raw.toString()) as MuxMessage;
+          if (msg.ch === "terminal" && msg.type === "data" && String(msg.data).includes(marker)) {
+            sawMarkerOnA = true;
+          }
+        } catch {
+          /* ignore */
+        }
+      };
+      wsA.on("message", handler);
+      setTimeout(() => {
+        wsA.off("message", handler);
+        resolve();
+      }, 1500);
+    });
+
+    expect(sawMarkerOnA).toBe(false);
+
+    wsA.close();
+    wsB.close();
+  });
+
   it("receives terminal data after open", async () => {
     const ws = await connectMux();
     const { token } = issueTerminalAccess(TEST_SESSION);
