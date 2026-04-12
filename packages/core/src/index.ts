@@ -76,6 +76,7 @@ export {
   readLastJsonlEntry,
   resolveProjectIdForSessionId,
 } from "./utils.js";
+export { helloWorld } from "./hello-world.js";
 export {
   getWebhookHeader,
   parseWebhookJsonObject,
