@@ -18,6 +18,7 @@ import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 
 import type { ProjectInfo } from "@/lib/project-name";
+import type { GlobalPauseState } from "@/lib/types";
 import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
 import { BottomSheet } from "./BottomSheet";
@@ -31,7 +32,7 @@ interface DashboardProps {
   projects?: ProjectInfo[];
   initialGlobalPause?: GlobalPauseState | null;
   orchestrators?: DashboardOrchestratorLink[];
-  initialGlobalPause?: import("@/lib/types").GlobalPauseState | null;
+  initialGlobalPause?: GlobalPauseState | null;
 }
 
 /** Strip HTML tags and truncate server error text for safe toast display. */

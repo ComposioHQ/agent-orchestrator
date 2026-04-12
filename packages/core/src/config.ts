@@ -663,13 +663,18 @@ export function findConfigFile(startDir?: string): string | null {
     }
   };
 
-  // 1. Check environment variable override — always honour it when the file exists.
-  //    Return the path unconditionally so loadConfig can validate the shape and surface
-  //    a meaningful error. Only skip parse errors if the file doesn't exist at all.
+  // 1. Check environment variable override
   if (process.env["AO_CONFIG_PATH"]) {
     const envPath = resolve(process.env["AO_CONFIG_PATH"]);
-    if (existsSync(envPath)) {
-      return envPath;
+    try {
+      const shape = classifyConfigShape(envPath);
+      if (shape === "wrapped") {
+        return envPath;
+      }
+    } catch {
+      if (existsSync(envPath)) {
+        return envPath;
+      }
     }
   }
 
