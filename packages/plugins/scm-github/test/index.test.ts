@@ -15,6 +15,7 @@ vi.mock("node:child_process", () => {
 });
 
 import { create, manifest } from "../src/index.js";
+import { resetGhClient } from "@aoagents/ao-core";
 import type { PRInfo, SCMWebhookRequest, Session, ProjectConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
@@ -96,6 +97,7 @@ describe("scm-github plugin", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    resetGhClient(); // Reset singleton to clear circuit breaker state between tests
     scm = create();
     delete process.env["GITHUB_WEBHOOK_SECRET"];
   });
