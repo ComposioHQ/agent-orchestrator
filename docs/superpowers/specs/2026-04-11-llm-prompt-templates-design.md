@@ -181,7 +181,7 @@ Dotted-path resolution means existing call sites do not need to reshape their co
 
 ### Sync by Design
 
-Both `render()` and `renderReaction()` are **synchronous**. File I/O uses `fs.readFileSync`, YAML parsing uses `js-yaml`'s synchronous `load` (pinning the parser choice here so the implementation does not have to re-decide). This matches the existing signatures of `buildPrompt()`, `generateOrchestratorPrompt()`, and `setupPathWrapperWorkspace()` — all synchronous today — and avoids rippling `async` through spawn paths and plugin APIs. The cache test (`loader.test.ts` #12) spies on `fs.readFileSync` to verify subsequent calls for the same file do not re-read from disk.
+Both `render()` and `renderReaction()` are **synchronous**. File I/O uses `fs.readFileSync`, YAML parsing uses `yaml (the `yaml` npm package, v2.x)`'s synchronous `load` (pinning the parser choice here so the implementation does not have to re-decide). This matches the existing signatures of `buildPrompt()`, `generateOrchestratorPrompt()`, and `setupPathWrapperWorkspace()` — all synchronous today — and avoids rippling `async` through spawn paths and plugin APIs. The cache test (`loader.test.ts` #12) spies on `fs.readFileSync` to verify subsequent calls for the same file do not re-read from disk.
 
 ### Caching
 
@@ -291,7 +291,7 @@ This is a pure refactor behind a stable interface. Existing integration tests ex
 
 ### YAML Parser
 
-Use whichever parser `@aoagents/ao-core` already depends on. If neither `js-yaml` nor `yaml` is in the dependency tree, add `js-yaml` — it is the smallest trustworthy option.
+Use whichever parser `@aoagents/ao-core` already depends on. If neither `yaml (the `yaml` npm package, v2.x)` nor `yaml` is in the dependency tree, add `yaml (the `yaml` npm package, v2.x)` — it is the smallest trustworthy option.
 
 ### Build / Asset Copy
 
