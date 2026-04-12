@@ -29,30 +29,39 @@ export function humanizeBranch(branch: string): string {
  *
  * Fallback chain (ordered by signal quality):
  *   1. PR title         — human-visible deliverable name
- *   2. Quality summary   — real agent-generated summary (not a fallback)
- *   3. Issue title       — human-written task description
- *   4. Any summary       — even a fallback excerpt is better than nothing
- *   5. Humanized branch  — last resort with semantic content
- *   6. Status text       — absolute fallback
+ *   2. Issue title       — human-written task description
+ *   3. User prompt       — freeform spawn instructions (prompt-only sessions)
+ *   4. Humanized branch  — stable task identifier when no explicit title exists
+ *   5. Pinned summary    — first quality summary, stable across agent updates
+ *   6. Quality summary   — live summary, but can drift as the session evolves
+ *   7. Any summary       — even a fallback excerpt is better than nothing
+ *   8. Status text       — absolute fallback
  */
 export function getSessionTitle(session: DashboardSession): string {
   // 1. PR title — always best
   if (session.pr?.title) return session.pr.title;
 
-  // 2. Quality summary — skip fallback summaries (truncated spawn prompts)
+  // 2. Issue title — human-written task description
+  if (session.issueTitle) return session.issueTitle;
+
+  // 3. User prompt — freeform spawn instructions (prompt-only sessions have no issue)
+  if (session.userPrompt) return session.userPrompt;
+
+  // 4. Humanized branch — stable semantic fallback
+  if (session.branch) return humanizeBranch(session.branch);
+
+  // 5. Pinned summary — first quality summary, stable across agent updates
+  const pinnedSummary = session.metadata["pinnedSummary"];
+  if (pinnedSummary) return pinnedSummary;
+
+  // 6. Quality summary — skip fallback summaries (truncated spawn prompts)
   if (session.summary && !session.summaryIsFallback) {
     return session.summary;
   }
 
-  // 3. Issue title — human-written task description
-  if (session.issueTitle) return session.issueTitle;
-
-  // 4. Any summary — even fallback excerpts beat branch names
+  // 7. Any summary — even fallback excerpts beat raw status text
   if (session.summary) return session.summary;
 
-  // 5. Humanized branch
-  if (session.branch) return humanizeBranch(session.branch);
-
-  // 6. Status
+  // 8. Status
   return session.status;
 }

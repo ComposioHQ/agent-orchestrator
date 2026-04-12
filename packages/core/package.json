@@ -1,5 +1,5 @@
 {
-  "name": "@composio/ao-core",
+  "name": "@aoagents/ao-core",
   "version": "0.2.0",
   "description": "Core library — types, config, session manager, lifecycle manager, event bus",
   "license": "MIT",
@@ -10,6 +10,42 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./activity-log": {
+      "types": "./dist/activity-log.d.ts",
+      "import": "./dist/activity-log.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js"
+    },
+    "./decomposer": {
+      "types": "./dist/decomposer.d.ts",
+      "import": "./dist/decomposer.js"
+    },
+    "./lifecycle-manager": {
+      "types": "./dist/lifecycle-manager.d.ts",
+      "import": "./dist/lifecycle-manager.js"
+    },
+    "./metadata": {
+      "types": "./dist/metadata.d.ts",
+      "import": "./dist/metadata.js"
+    },
+    "./observability": {
+      "types": "./dist/observability.d.ts",
+      "import": "./dist/observability.js"
+    },
+    "./orchestrator-prompt": {
+      "types": "./dist/orchestrator-prompt.d.ts",
+      "import": "./dist/orchestrator-prompt.js"
+    },
+    "./paths": {
+      "types": "./dist/paths.d.ts",
+      "import": "./dist/paths.js"
+    },
+    "./plugin-registry": {
+      "types": "./dist/plugin-registry.d.ts",
+      "import": "./dist/plugin-registry.js"
     },
     "./types": {
       "types": "./dist/types.d.ts",
@@ -22,6 +58,10 @@
     "./scm-webhook-utils": {
       "types": "./dist/scm-webhook-utils.d.ts",
       "import": "./dist/scm-webhook-utils.js"
+    },
+    "./session-manager": {
+      "types": "./dist/session-manager.d.ts",
+      "import": "./dist/session-manager.js"
     }
   },
   "files": [
@@ -47,7 +87,6 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.52.0",
     "yaml": "^2.7.0",
     "zod": "^3.24.0"
   },

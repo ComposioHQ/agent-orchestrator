@@ -15,7 +15,7 @@ import {
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -270,7 +270,7 @@ interface JsonlLine {
  * Read only the last chunk of a JSONL file to extract the last entry's type
  * and the file's modification time. This is optimized for polling — it avoids
  * reading the entire file (which `getSessionInfo()` does for full cost/summary).
- * Now uses the shared readLastJsonlEntry utility from @composio/ao-core.
+ * Now uses the shared readLastJsonlEntry utility from @aoagents/ao-core.
  */
 
 /**
@@ -733,8 +733,9 @@ function createClaudeCodeAgent(): Agent {
 
       const sessionFile = await findLatestSessionFile(projectDir);
       if (!sessionFile) {
-        // No session file found — cannot determine activity
-        return null;
+        // No session file yet — process is running but no conversation started.
+        // Treat as idle (waiting for first task).
+        return { state: "idle", timestamp: session.createdAt };
       }
 
       const entry = await readLastJsonlEntry(sessionFile);

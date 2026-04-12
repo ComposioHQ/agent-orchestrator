@@ -16,7 +16,7 @@ import {
   TERMINAL_STATUSES as CORE_TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES as CORE_TERMINAL_ACTIVITIES,
   NON_RESTORABLE_STATUSES as CORE_NON_RESTORABLE_STATUSES,
-} from "@composio/ao-core/types";
+} from "@aoagents/ao-core/types";
 
 // Helper to create a minimal DashboardSession for testing
 function createSession(overrides?: Partial<DashboardSession>): DashboardSession {
@@ -130,6 +130,14 @@ describe("getAttentionLevel", () => {
       });
       expect(getAttentionLevel(session)).toBe("done");
     });
+
+    it("should ignore metadata attention overrides for terminal sessions", () => {
+      const session = createSession({
+        status: "terminated",
+        metadata: { attentionLevel: "working" },
+      });
+      expect(getAttentionLevel(session)).toBe("done");
+    });
   });
 
   describe("merge state", () => {
@@ -171,6 +179,14 @@ describe("getAttentionLevel", () => {
           unresolvedThreads: 0,
           unresolvedComments: [],
         },
+      });
+      expect(getAttentionLevel(session)).toBe("merge");
+    });
+
+    it("should ignore metadata attention overrides when merge criteria are met", () => {
+      const session = createSession({
+        status: "mergeable",
+        metadata: { attentionLevel: "working" },
       });
       expect(getAttentionLevel(session)).toBe("merge");
     });

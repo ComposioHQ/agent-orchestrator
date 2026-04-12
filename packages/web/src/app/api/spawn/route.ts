@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
+
   try {
     const { config, sessionManager } = await getServices();
     const projectId = body.projectId as string;

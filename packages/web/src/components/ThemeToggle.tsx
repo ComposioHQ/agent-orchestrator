@@ -7,9 +7,10 @@ import { cn } from "@/lib/cn";
 interface ThemeToggleProps {
   compact?: boolean;
   className?: string;
+  label?: string;
 }
 
-export function ThemeToggle({ compact = false, className }: ThemeToggleProps) {
+export function ThemeToggle({ compact = false, className, label }: ThemeToggleProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
@@ -56,6 +57,7 @@ export function ThemeToggle({ compact = false, className }: ThemeToggleProps) {
           <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
         </svg>
       )}
+      {label ? <span>{label}</span> : null}
     </button>
   );
 }

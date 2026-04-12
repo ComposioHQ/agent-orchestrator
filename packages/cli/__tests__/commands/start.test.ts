@@ -6,10 +6,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { SessionManager } from "@composio/ao-core";
+import { parse as parseYaml } from "yaml";
+import type { SessionManager } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -48,6 +49,10 @@ const { mockDetectOpenClawInstallation } = vi.hoisted(() => ({
   mockDetectOpenClawInstallation: vi.fn(),
 }));
 
+const { mockProcessCwd } = vi.hoisted(() => ({
+  mockProcessCwd: vi.fn<[], string>(),
+}));
+
 vi.mock("../../src/lib/shell.js", () => ({
   tmux: vi.fn(),
   exec: mockExec,
@@ -64,13 +69,14 @@ vi.mock("ora", () => ({
     stop: vi.fn().mockReturnThis(),
     succeed: vi.fn().mockReturnThis(),
     fail: vi.fn().mockReturnThis(),
+    info: vi.fn().mockReturnThis(),
     text: "",
   }),
 }));
 
-vi.mock("@composio/ao-core", async (importOriginal) => {
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = await importOriginal<typeof import("@composio/ao-core")>();
+  const actual = await importOriginal<typeof import("@aoagents/ao-core")>();
   const normalizeOrchestratorSessionStrategy =
     actual.normalizeOrchestratorSessionStrategy ??
     ((strategy: string | undefined) => {
@@ -107,9 +113,8 @@ vi.mock("../../src/lib/web-dir.js", () => ({
 }));
 
 vi.mock("../../src/lib/dashboard-rebuild.js", () => ({
-  cleanNextCache: vi.fn(),
   findRunningDashboardPid: vi.fn().mockResolvedValue(null),
-  findProcessWebDir: vi.fn().mockResolvedValue(null),
+  rebuildDashboardProductionArtifacts: vi.fn().mockResolvedValue(undefined),
   waitForPortFree: vi.fn(),
 }));
 
@@ -148,7 +153,7 @@ vi.mock("../../src/lib/detect-agent.js", () => ({
 }));
 
 vi.mock("../../src/lib/project-detection.js", () => ({
-  detectProjectType: vi.fn().mockReturnValue(null),
+  detectProjectType: vi.fn().mockReturnValue({ languages: [], frameworks: [] }),
   generateRulesFromTemplates: vi.fn().mockReturnValue(null),
   formatProjectTypeForDisplay: vi.fn().mockReturnValue(""),
 }));
@@ -167,12 +172,26 @@ vi.mock("node:child_process", async (importOriginal) => {
   };
 });
 
+// Mock node:process so that `import { cwd } from "node:process"` in start.ts
+// can be intercepted per-test via mockProcessCwd.
+vi.mock("node:process", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import("node:process")>();
+  return {
+    ...actual,
+    cwd: () => {
+      const override = mockProcessCwd();
+      return override ?? actual.cwd();
+    },
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
 
 import { Command } from "commander";
-import { registerStart, registerStop } from "../../src/commands/start.js";
+import { registerStart, registerStop, createConfigOnly } from "../../src/commands/start.js";
 
 let tmpDir: string;
 let program: Command;
@@ -199,6 +218,8 @@ beforeEach(() => {
   const fakeChild = { on: vi.fn(), kill: vi.fn(), emit: vi.fn(), stdout: null, stderr: null };
   mockSpawn.mockReturnValue(fakeChild);
 
+  mockSessionManager.list.mockReset();
+  mockSessionManager.list.mockResolvedValue([]);
   mockSessionManager.get.mockReset();
   mockSessionManager.spawnOrchestrator.mockReset();
   mockSessionManager.kill.mockReset();
@@ -233,6 +254,7 @@ beforeEach(() => {
     probe: { reachable: false, error: "not running" },
   });
   mockSpawn.mockClear();
+  mockProcessCwd.mockReset();
 });
 
 afterEach(() => {
@@ -258,7 +280,7 @@ function makeConfig(projects: Record<string, Record<string, unknown>>): Record<s
       runtime: "tmux",
       agent: "claude-code",
       workspace: "worktree",
-      notifiers: ["desktop"],
+      notifiers: [],
     },
     projects,
     notifiers: {},
@@ -839,12 +861,12 @@ describe("start command — orchestrator session strategy display", () => {
     await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
 
     const output = getLoggedOutput();
-    expect(output).toContain("tmux attach -t tmux-session-1");
+    expect(output).toContain("ao session attach app-orchestrator");
     expect(output).not.toContain("reused existing session");
   });
 
   it.each(["delete", "ignore", "delete-new", "ignore-new", "kill-previous"] as const)(
-    "uses attach messaging when strategy is %s",
+    "uses ao session attach when strategy is %s and --no-dashboard",
     async (orchestratorSessionStrategy) => {
       mockConfigRef.current = makeConfig({
         "my-app": makeProject({ orchestratorSessionStrategy }),
@@ -863,10 +885,150 @@ describe("start command — orchestrator session strategy display", () => {
       await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
 
       const output = getLoggedOutput();
-      expect(output).toContain("tmux attach -t tmux-session-1");
+      expect(output).toContain("ao session attach app-orchestrator");
       expect(output).not.toContain("reused existing session");
     },
   );
+
+  it("handles existing orchestrator sessions by auto-selecting when --no-dashboard", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Return an existing orchestrator session
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-session-existing" },
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    const output = getLoggedOutput();
+    // When --no-dashboard is used, auto-selects the most recent orchestrator
+    // and shows ao session attach (not the dashboard selection message)
+    expect(output).toContain("ao session attach app-orchestrator");
+    expect(output).not.toContain("existing sessions found — select one in the dashboard");
+
+    // Should NOT spawn a new orchestrator when existing ones exist
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("navigates directly to session page when one existing orchestrator found with dashboard enabled", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Mock findWebDir and port availability for dashboard-enabled test
+    const webDir = await import("../../src/lib/web-dir.js");
+    vi.mocked(webDir.findWebDir).mockReturnValue(tmpDir);
+    vi.mocked(webDir.isPortAvailable).mockResolvedValue(true);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = {
+      on: vi.fn(),
+      kill: vi.fn(),
+      emit: vi.fn(),
+    };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    // Return a single existing orchestrator session
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-session-existing" },
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start"]);
+
+    const output = getLoggedOutput();
+    // With one orchestrator and dashboard enabled, shows the session URL instead of tmux attach
+    expect(output).toContain("http://localhost:3000/sessions/app-orchestrator");
+    expect(output).not.toContain("tmux attach");
+    expect(output).not.toContain("multiple sessions found");
+    expect(output).not.toContain("select one in the dashboard");
+
+    // Should NOT spawn a new orchestrator when existing one exists
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("opens orchestrator selection page when multiple existing orchestrators found with dashboard enabled", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Mock findWebDir
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = {
+      on: vi.fn(),
+      kill: vi.fn(),
+      emit: vi.fn(),
+    };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    const now = new Date();
+    // Return two existing orchestrator sessions
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-1",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now.getTime() - 1000),
+        runtimeHandle: { id: "tmux-session-1" },
+      },
+      {
+        id: "app-orchestrator-2",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: now,
+        runtimeHandle: { id: "tmux-session-2" },
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start"]);
+
+    const output = getLoggedOutput();
+    // With multiple orchestrators, shows selection message so user can choose or spawn a new one
+    expect(output).toContain("multiple sessions found — select one in the dashboard");
+
+    // Should NOT spawn a new orchestrator when existing ones exist
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("fails and cleans up dashboard when orchestrator setup throws", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Mock findWebDir
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = {
+      on: vi.fn(),
+      kill: vi.fn(),
+      emit: vi.fn(),
+    };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    mockSessionManager.list.mockResolvedValue([]);
+    mockSessionManager.spawnOrchestrator.mockRejectedValue(new Error("Spawn failed"));
+
+    await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(errors).toContain("Failed to setup orchestrator: Spawn failed");
+
+    // Should have killed the dashboard
+    expect(fakeDashboard.kill).toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -883,7 +1045,7 @@ describe("stop command", () => {
     await program.parseAsync(["node", "test", "stop"]);
 
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
-      purgeOpenCode: true,
+      purgeOpenCode: false,
     });
     expect(mockStopLifecycleWorker).toHaveBeenCalledWith(
       expect.objectContaining({ configPath: expect.any(String) }),
@@ -915,30 +1077,6 @@ describe("stop command", () => {
     expect(output).toContain("is not running");
   });
 
-  it("defaults to purge OpenCode session when stopping orchestrator", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
-    mockSessionManager.kill.mockResolvedValue(undefined);
-
-    await program.parseAsync(["node", "test", "stop"]);
-
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
-      purgeOpenCode: true,
-    });
-  });
-
-  it("keeps OpenCode session when stopping with --keep-session", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
-    mockSessionManager.kill.mockResolvedValue(undefined);
-
-    await program.parseAsync(["node", "test", "stop", "--keep-session"]);
-
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
-      purgeOpenCode: false,
-    });
-  });
-
   it("passes purge flag when stopping orchestrator with --purge-session", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
     mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
@@ -949,5 +1087,50 @@ describe("stop command", () => {
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
       purgeOpenCode: true,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// autoCreateConfig — config generation defaults
+// ---------------------------------------------------------------------------
+
+describe("start command — autoCreateConfig", () => {
+  it("generates config with empty notifiers array (no desktop notifier added by default)", async () => {
+    const { detectEnvironment } = await import("../../src/lib/detect-env.js");
+    vi.mocked(detectEnvironment).mockResolvedValue({
+      isGitRepo: false,
+      gitRemote: null,
+      ownerRepo: null,
+      currentBranch: null,
+      defaultBranch: null,
+      hasTmux: true,
+      hasGh: false,
+      ghAuthed: false,
+      hasLinearKey: false,
+      hasSlackWebhook: false,
+    });
+
+    const { detectProjectType } = await import("../../src/lib/project-detection.js");
+    vi.mocked(detectProjectType).mockReturnValue({ languages: [], frameworks: [] });
+
+    const { detectAvailableAgents, detectAgentRuntime } = await import("../../src/lib/detect-agent.js");
+    vi.mocked(detectAvailableAgents).mockResolvedValue([]);
+    vi.mocked(detectAgentRuntime).mockResolvedValue("claude-code");
+
+    const { findFreePort } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findFreePort).mockResolvedValue(3000);
+
+    // start.ts uses `import { cwd } from "node:process"` which is intercepted
+    // by the node:process mock defined at the top of this file.
+    mockProcessCwd.mockReturnValue(tmpDir);
+
+    await createConfigOnly();
+
+    const configPath = join(tmpDir, "agent-orchestrator.yaml");
+    expect(existsSync(configPath)).toBe(true);
+
+    const content = readFileSync(configPath, "utf-8");
+    const parsed = parseYaml(content) as { defaults?: { notifiers?: unknown[] } };
+    expect(parsed.defaults?.notifiers).toEqual([]);
   });
 });

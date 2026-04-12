@@ -243,7 +243,7 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
       runtime: "tmux",
       agent: "claude-code",
       workspace: "worktree",
-      notifiers: ["desktop"],
+      notifiers: [],
     },
     projects: {
       [projectId]: projectConfig,

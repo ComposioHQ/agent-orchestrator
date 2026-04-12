@@ -1,5 +1,5 @@
 /**
- * @composio/ao-core
+ * @aoagents/ao-core
  *
  * Core library for the Agent Orchestrator.
  * Exports all types, config loader, and service implementations.
@@ -61,43 +61,16 @@ export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
 export type { PromptBuildConfig } from "./prompt-builder.js";
 
-// Decomposer — LLM-driven task decomposition
-export {
-  decompose,
-  getLeaves,
-  getSiblings,
-  formatPlanTree,
-  formatLineage,
-  formatSiblings,
-  propagateStatus,
-  DEFAULT_DECOMPOSER_CONFIG,
-} from "./decomposer.js";
-export type {
-  TaskNode,
-  TaskKind,
-  TaskStatus,
-  DecompositionPlan,
-  DecomposerConfig,
-} from "./decomposer.js";
-
 // Orchestrator prompt — generates orchestrator context for `ao start`
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
-
-
-// Global pause constants and utilities
-export {
-  GLOBAL_PAUSE_UNTIL_KEY,
-  GLOBAL_PAUSE_REASON_KEY,
-  GLOBAL_PAUSE_SOURCE_KEY,
-  parsePauseUntil,
-} from "./global-pause.js";
 
 // Shared utilities
 export {
   shellEscape,
   escapeAppleScript,
   validateUrl,
+  isGitBranchNameSafe,
   isRetryableHttpStatus,
   normalizeRetryConfig,
   readLastJsonlEntry,
@@ -135,6 +108,7 @@ export {
   createProjectObserver,
   readObservabilitySummary,
 } from "./observability.js";
+export { resolveNotifierTarget } from "./notifier-resolution.js";
 export type {
   ObservabilityLevel,
   ObservabilityMetricName,

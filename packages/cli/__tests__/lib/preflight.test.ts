@@ -18,6 +18,11 @@ vi.mock("node:fs", () => ({
   existsSync: mockExistsSync,
 }));
 
+vi.mock("../../src/lib/dashboard-rebuild.js", () => ({
+  isInstalledUnderNodeModules: (path: string) =>
+    path.includes("/node_modules/") || path.includes("\\node_modules\\"),
+}));
+
 import { preflight } from "../../src/lib/preflight.js";
 
 beforeEach(() => {
@@ -55,11 +60,14 @@ describe("preflight.checkBuilt", () => {
   });
 
   it("finds ao-core when hoisted one level up (npm global install layout)", async () => {
-    // /web/node_modules/@composio/ao-core     — miss
-    // /node_modules/@composio/ao-core         — hit
-    // /node_modules/@composio/ao-core/dist/index.js — exists
+    // /web/node_modules/@aoagents/ao-core     — miss
+    // /node_modules/@aoagents/ao-core         — hit
+    // /node_modules/@aoagents/ao-core/dist/index.js — exists
+    // /web/.next/BUILD_ID and /web/dist-server/start-all.js — exist
     mockExistsSync
       .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true);
     await expect(preflight.checkBuilt("/web")).resolves.toBeUndefined();
@@ -68,8 +76,8 @@ describe("preflight.checkBuilt", () => {
   it("throws npm hint when ao-core not found in global install", async () => {
     mockExistsSync.mockReturnValue(false);
     await expect(
-      preflight.checkBuilt("/usr/local/lib/node_modules/@composio/ao-web"),
-    ).rejects.toThrow("npm install -g @composio/ao@latest");
+      preflight.checkBuilt("/usr/local/lib/node_modules/@aoagents/ao-web"),
+    ).rejects.toThrow("npm install -g @aoagents/ao@latest");
   });
 
   it("throws pnpm hint when ao-core not found in monorepo", async () => {
@@ -87,6 +95,38 @@ describe("preflight.checkBuilt", () => {
     await expect(preflight.checkBuilt("/web")).rejects.toThrow(
       "Packages not built",
     );
+  });
+
+  it("throws when web production artifacts are missing", async () => {
+    // findPackageUp finds ao-core, dist/index.js exists, but .next/BUILD_ID missing
+    mockExistsSync
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    await expect(preflight.checkBuilt("/web")).rejects.toThrow(
+      "Packages not built",
+    );
+  });
+
+  it("throws npm hint when web artifacts missing in global install", async () => {
+    // ao-core found at first check, dist exists, but .next/BUILD_ID missing
+    mockExistsSync
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    await expect(
+      preflight.checkBuilt("/usr/local/lib/node_modules/@aoagents/ao-web"),
+    ).rejects.toThrow("npm install -g @aoagents/ao@latest");
+  });
+
+  it("throws npm hint when ao-core dist is missing in global install", async () => {
+    // ao-core found, but dist/index.js missing
+    mockExistsSync
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    await expect(
+      preflight.checkBuilt("/usr/local/lib/node_modules/@aoagents/ao-web"),
+    ).rejects.toThrow("npm install -g @aoagents/ao@latest");
   });
 });
 

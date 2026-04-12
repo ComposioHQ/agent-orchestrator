@@ -58,7 +58,7 @@ describe("Dashboard project overview cards", () => {
     expect(screen.getAllByRole("button", { name: "Spawn Orchestrator" })).toHaveLength(2);
   });
 
-  it("shows a desktop PRs link for project-scoped dashboards", () => {
+  it("omits the desktop PRs link for project-scoped dashboards in the current layout", () => {
     render(
       <Dashboard
         initialSessions={[makeSession({ projectId: "my-app" })]}
@@ -67,13 +67,10 @@ describe("Dashboard project overview cards", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute(
-      "href",
-      "/prs?project=my-app",
-    );
+    expect(screen.queryByRole("link", { name: "PRs" })).not.toBeInTheDocument();
   });
 
-  it("shows a desktop PRs link for all-projects dashboards", () => {
+  it("omits the desktop PRs link for all-projects dashboards", () => {
     render(
       <Dashboard
         initialSessions={[makeSession({ projectId: "my-app" })]}
@@ -84,7 +81,7 @@ describe("Dashboard project overview cards", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=all");
+    expect(screen.queryByRole("link", { name: "PRs" })).not.toBeInTheDocument();
   });
 
   it("updates the card after spawning an orchestrator", async () => {

@@ -39,6 +39,7 @@ import {
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
+import { resolveNotifierTarget } from "./notifier-resolution.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
@@ -206,6 +207,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return `${pr.owner}/${pr.repo}#${pr.number}`;
   }
 
+  /**
+   * Per-session timestamp of last review backlog API check.
+   * Used to throttle getPendingComments/getAutomatedComments to at most once per 2 minutes.
+   * In-memory only — resets on restart (acceptable since it's a rate-limit hint, not state).
+   */
+  const lastReviewBacklogCheckAt = new Map<SessionId, number>();
+
+  /** Throttle interval for review backlog API calls (2 minutes). */
+  const REVIEW_BACKLOG_THROTTLE_MS = 2 * 60 * 1000;
+
   async function preloadPREnrichment(
     sessions: Session[],
   ): Promise<Map<SessionId, PREnrichmentData>> {
@@ -310,19 +321,29 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (!project) return session.status;
 
     const agentName = resolveAgentSelection({
-      role: resolveSessionRole(session.id, session.metadata),
+      role: resolveSessionRole(
+        session.id,
+        session.metadata,
+        project.sessionPrefix,
+        Object.values(config.projects).map((p) => p.sessionPrefix),
+      ),
       project,
       defaults: config.defaults,
       persistedAgent: session.metadata["agent"],
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
+    const hasPersistedRuntimeIdentity =
+      typeof session.metadata["runtimeHandle"] === "string" ||
+      typeof session.metadata["tmuxName"] === "string";
+    const canProbeRuntimeIdentity =
+      hasPersistedRuntimeIdentity || session.status !== SESSION_STATUS.SPAWNING;
 
     // 1. Check if runtime is alive
-    if (session.runtimeHandle) {
+    if (session.runtimeHandle && canProbeRuntimeIdentity) {
       const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
       if (runtime) {
         const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
@@ -330,12 +351,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    // 2. Check agent activity — prefer JSONL-based detection (runtime-agnostic)
-    if (agent && session.runtimeHandle) {
+    // 2. Check agent activity.
+    // JSONL-based activity detection is runtime-agnostic, but terminal probing
+    // and process checks should only run once a real runtime identity has been
+    // persisted. During spawn, sessionManager may fabricate a temporary handle
+    // to keep the object shape stable; treating that as a real tmux target can
+    // falsely mark a just-reserved session as killed before launch completes.
+    if (agent && (session.runtimeHandle || session.workspacePath)) {
       try {
         // If the agent implements recordActivity, capture terminal output and record
         // BEFORE calling getActivityState so the JSONL has fresh data to read.
-        if (agent.recordActivity && session.workspacePath) {
+        if (agent.recordActivity && session.workspacePath && session.runtimeHandle && canProbeRuntimeIdentity) {
           try {
             const runtime = registry.get<Runtime>(
               "runtime",
@@ -369,17 +395,19 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           // proceed to PR checks below
         } else {
           // getActivityState returned null — fall back to terminal output parsing
-          const runtime = registry.get<Runtime>(
-            "runtime",
-            project.runtime ?? config.defaults.runtime,
-          );
-          const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
-          if (terminalOutput) {
-            const activity = agent.detectActivity(terminalOutput);
-            if (activity === "waiting_input") return "needs_input";
+          if (session.runtimeHandle && canProbeRuntimeIdentity) {
+            const runtime = registry.get<Runtime>(
+              "runtime",
+              project.runtime ?? config.defaults.runtime,
+            );
+            const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
+            if (terminalOutput) {
+              const activity = agent.detectActivity(terminalOutput);
+              if (activity === "waiting_input") return "needs_input";
 
-            const processAlive = await agent.isProcessRunning(session.runtimeHandle);
-            if (!processAlive) return "killed";
+              const processAlive = await agent.isProcessRunning(session.runtimeHandle);
+              if (!processAlive) return "killed";
+            }
           }
         }
       } catch {
@@ -625,7 +653,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return reactionConfig ? (reactionConfig as ReactionConfig) : null;
   }
 
-  function updateSessionMetadata(session: Session, updates: Partial<Record<string, string>>): void {
+  function updateSessionMetadata(
+    session: Session,
+    updates: Partial<Record<string, string>>,
+  ): void {
     const project = config.projects[session.projectId];
     if (!project) return;
 
@@ -658,7 +689,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
 
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
     const humanReactionKey = "changes-requested";
@@ -667,6 +698,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (TERMINAL_STATUSES.has(newStatus)) {
       clearReactionTracker(session.id, humanReactionKey);
       clearReactionTracker(session.id, automatedReactionKey);
+      lastReviewBacklogCheckAt.delete(session.id);
       updateSessionMetadata(session, {
         lastPendingReviewFingerprint: "",
         lastPendingReviewDispatchHash: "",
@@ -677,6 +709,27 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
       return;
     }
+
+    // Throttle review backlog API calls to at most once per 2 minutes.
+    // Comments don't change faster than this in practice, and the SCM calls
+    // (getPendingComments + getAutomatedComments) consume API quota on every poll.
+    //
+    // Exception: bypass throttle when a transition reaction just fired for a
+    // review reaction key. The transitionReaction branch records
+    // lastPendingReviewDispatchHash, which requires the current fingerprint from
+    // the API. If we throttle here, that metadata never gets written and the
+    // next unthrottled poll sees a "new" fingerprint, clears the reaction tracker,
+    // and fires a duplicate dispatch.
+    const hasRelevantTransition =
+      transitionReaction?.key === humanReactionKey ||
+      transitionReaction?.key === automatedReactionKey;
+    if (!hasRelevantTransition) {
+      const lastCheckAt = lastReviewBacklogCheckAt.get(session.id) ?? 0;
+      if (Date.now() - lastCheckAt < REVIEW_BACKLOG_THROTTLE_MS) {
+        return;
+      }
+    }
+    lastReviewBacklogCheckAt.set(session.id, Date.now());
 
     const [pendingResult, automatedResult] = await Promise.allSettled([
       scm.getPendingComments(session.pr),
@@ -758,9 +811,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // --- Automated (bot) review comments ---
     if (automatedComments !== null) {
-      const automatedFingerprint = makeFingerprint(automatedComments.map((comment) => comment.id));
+      const automatedFingerprint = makeFingerprint(
+        automatedComments.map((comment) => comment.id),
+      );
       const lastAutomatedFingerprint = session.metadata["lastAutomatedReviewFingerprint"] ?? "";
-      const lastAutomatedDispatchHash = session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
+      const lastAutomatedDispatchHash =
+        session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
 
       if (automatedFingerprint !== lastAutomatedFingerprint) {
         clearReactionTracker(session.id, automatedReactionKey);
@@ -831,11 +887,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     _oldStatus: SessionStatus,
     newStatus: SessionStatus,
     transitionReaction?: { key: string; result: ReactionResult | null },
+    prEnrichment?: PREnrichmentData,
   ): Promise<void> {
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
 
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
     const ciReactionKey = "ci-failed";
@@ -866,13 +923,19 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       return;
     }
 
-    // Fetch individual CI checks for failure details
+    // Fetch individual CI checks for failure details.
+    // Use batch enrichment data when available to avoid an extra REST call;
+    // fall back to getCIChecks() when the batch didn't run this cycle.
     let checks: CICheck[];
-    try {
-      checks = await scm.getCIChecks(session.pr);
-    } catch {
-      // Failed to fetch checks — skip this cycle
-      return;
+    if (prEnrichment?.ciChecks !== undefined) {
+      checks = prEnrichment.ciChecks;
+    } else {
+      try {
+        checks = await scm.getCIChecks(session.pr);
+      } catch {
+        // Failed to fetch checks — skip this cycle
+        return;
+      }
     }
 
     const failedChecks = checks.filter(
@@ -958,7 +1021,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
 
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
     const conflictReactionKey = "merge-conflicts";
@@ -984,13 +1047,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       return;
     }
 
-    // Check for conflicts using enrichment data or fallback to individual call
+    // Check for conflicts using cached enrichment data or fallback to individual call.
+    // When batch enrichment ran (cachedData is present), use its hasConflicts value
+    // to avoid 3 redundant REST calls from getMergeability() — the batch already
+    // fetched the mergeable/mergeStateStatus fields via GraphQL.
     const cachedData = prEnrichment;
 
     let hasConflicts: boolean;
-    if (cachedData && cachedData.hasConflicts !== undefined) {
-      hasConflicts = cachedData.hasConflicts;
+    if (cachedData) {
+      // Batch ran — trust its data (undefined means CONFLICTING wasn't set → no conflicts)
+      hasConflicts = cachedData.hasConflicts ?? false;
     } else {
+      // Batch didn't run this cycle — fall back to individual API call
       try {
         const mergeReadiness = await scm.getMergeability(session.pr);
         hasConflicts = !mergeReadiness.noConflicts;
@@ -1048,7 +1116,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const notifierNames = config.notificationRouting[priority] ?? config.defaults.notifiers;
 
     for (const name of notifierNames) {
-      const notifier = registry.get<Notifier>("notifier", name);
+      const target = resolveNotifierTarget(config, name);
+      const notifier =
+        registry.get<Notifier>("notifier", target.reference) ??
+        registry.get<Notifier>("notifier", target.pluginName);
       if (notifier) {
         try {
           await notifier.notify(eventWithPriority);
@@ -1150,9 +1221,25 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       states.set(session.id, newStatus);
     }
 
+    // Pin first quality summary for title stability
+    if (
+      session.agentInfo?.summary &&
+      !session.agentInfo.summaryIsFallback &&
+      !session.metadata["pinnedSummary"]
+    ) {
+      const trimmed = session.agentInfo.summary.replace(/[\n\r]/g, " ").trim();
+      if (trimmed.length >= 5) {
+        try {
+          updateSessionMetadata(session, { pinnedSummary: trimmed });
+        } catch {
+          // Non-critical: title just won't be pinned this cycle
+        }
+      }
+    }
+
     await Promise.allSettled([
       maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
-      maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
+      maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction, prEnrichment),
       maybeDispatchMergeConflicts(session, newStatus, prEnrichment),
     ]);
   }
@@ -1184,8 +1271,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         sessionsToCheck.map((s) => checkSession(s, prEnrichment.get(s.id))),
       );
 
-      // Prune stale entries from states and reactionTrackers for sessions
-      // that no longer appear in the session list (e.g., after kill/cleanup)
+      // Prune stale entries from states, reactionTrackers, and lastReviewBacklogCheckAt
+      // for sessions that no longer appear in the session list (e.g., after kill/cleanup)
       const currentSessionIds = new Set(sessions.map((s) => s.id));
       for (const trackedId of states.keys()) {
         if (!currentSessionIds.has(trackedId)) {
@@ -1196,6 +1283,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const sessionId = trackerKey.split(":")[0];
         if (sessionId && !currentSessionIds.has(sessionId)) {
           reactionTrackers.delete(trackerKey);
+        }
+      }
+      for (const sessionId of lastReviewBacklogCheckAt.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          lastReviewBacklogCheckAt.delete(sessionId);
         }
       }
 

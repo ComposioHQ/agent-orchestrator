@@ -106,13 +106,13 @@ if [ "$SMOKE_ONLY" = false ]; then
   run_cmd git pull --ff-only origin "$TARGET_BRANCH"
   run_cmd pnpm install
 
-  run_cmd pnpm --filter @composio/ao-core clean
-  run_cmd pnpm --filter @composio/ao-cli clean
-  run_cmd pnpm --filter @composio/ao-web clean
+  run_cmd pnpm --filter @aoagents/ao-core clean
+  run_cmd pnpm --filter @aoagents/ao-cli clean
+  run_cmd pnpm --filter @aoagents/ao-web clean
 
-  run_cmd pnpm --filter @composio/ao-core build
-  run_cmd pnpm --filter @composio/ao-cli build
-  run_cmd pnpm --filter @composio/ao-web build
+  run_cmd pnpm --filter @aoagents/ao-core build
+  run_cmd pnpm --filter @aoagents/ao-cli build
+  run_cmd pnpm --filter @aoagents/ao-web build
 
   printf '\nRefreshing ao launcher...\n'
   (

@@ -14,7 +14,7 @@ import { join } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { parse as yamlParse, parseDocument } from "yaml";
-import { findConfigFile } from "@composio/ao-core";
+import { findConfigFile } from "@aoagents/ao-core";
 import {
   probeGateway,
   validateToken,
@@ -290,7 +290,7 @@ function writeOpenClawConfig(
 
   // Add "openclaw" to defaults.notifiers if not already present
   if (!rawConfig.defaults) rawConfig.defaults = {};
-  if (!rawConfig.defaults.notifiers) rawConfig.defaults.notifiers = ["desktop"];
+  if (!rawConfig.defaults.notifiers) rawConfig.defaults.notifiers = [];
   if (!Array.isArray(rawConfig.defaults.notifiers)) {
     rawConfig.defaults.notifiers = [rawConfig.defaults.notifiers];
   }

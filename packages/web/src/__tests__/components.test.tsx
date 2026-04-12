@@ -184,8 +184,8 @@ describe("PRStatus", () => {
 // ── SessionCard ──────────────────────────────────────────────────────
 
 describe("SessionCard", () => {
-  it("renders session id and summary", () => {
-    const session = makeSession({ id: "backend-1", summary: "Fixing auth" });
+  it("renders summary when no PR, issue title, or branch title exists", () => {
+    const session = makeSession({ id: "backend-1", summary: "Fixing auth", branch: null });
     render(<SessionCard session={session} />);
     expect(screen.getByText("backend-1")).toBeInTheDocument();
     expect(screen.getByText("Fixing auth")).toBeInTheDocument();
@@ -288,7 +288,7 @@ describe("SessionCard", () => {
     });
     const session = makeSession({ status: "ci_failed", activity: "idle", pr });
     render(<SessionCard session={session} />);
-    expect(screen.getByText("1 CI check failing")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "1 check failing" })).toBeInTheDocument();
   });
 
   it("shows CI status unknown when ciStatus is failing but no failed checks", () => {
@@ -393,7 +393,7 @@ describe("SessionCard", () => {
     });
     const session = makeSession({ activity: "idle", pr });
     render(<SessionCard session={session} />);
-    expect(screen.getByText("ask to fix")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask to fix" })).toBeInTheDocument();
   });
 
   it("shows action buttons even when agent is active", () => {
@@ -412,13 +412,13 @@ describe("SessionCard", () => {
     });
     const session = makeSession({ activity: "active", pr });
     render(<SessionCard session={session} />);
-    expect(screen.getByText("ask to fix")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask to fix" })).toBeInTheDocument();
   });
 
   it("shows issue details in the compact card footer", () => {
     const session = makeSession({ id: "test-1", issueId: "INT-100", pr: null });
     render(<SessionCard session={session} />);
-    expect(screen.getAllByText("INT-100")).toHaveLength(2);
+    expect(screen.getAllByText("INT-100")).toHaveLength(1);
   });
 
   it("shows icon-only terminate button in the footer", () => {
@@ -548,7 +548,7 @@ describe("SessionCard", () => {
 
     render(<SessionCard session={session} onSend={onSend} />);
 
-    const actionButton = screen.getByRole("button", { name: "ask to fix" });
+    const actionButton = screen.getByRole("button", { name: "Ask to fix" });
     fireEvent.click(actionButton);
 
     await waitFor(() => {
@@ -558,7 +558,7 @@ describe("SessionCard", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "failed" })).toBeInTheDocument();
     });
-    expect(screen.queryByRole("button", { name: "sent!" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sent!" })).not.toBeInTheDocument();
   });
 });
 
@@ -575,7 +575,26 @@ describe("AttentionZone", () => {
 
   it("renders empty state when sessions array is empty", () => {
     render(<AttentionZone level="respond" sessions={[]} />);
-    expect(screen.getByText("No sessions")).toBeInTheDocument();
+    expect(screen.getByText("Respond")).toBeInTheDocument();
+    expect(screen.getByText("0")).toBeInTheDocument();
+    expect(screen.queryByText("No agents need your input.")).not.toBeInTheDocument();
+  });
+
+  it("renders zone-specific empty messages for all attention zones", () => {
+    const cases: Array<[string, string]> = [
+      ["review", "Review"],
+      ["pending", "Pending"],
+      ["working", "Working"],
+      ["done", "Done"],
+    ];
+    for (const [level, expectedLabel] of cases) {
+      const { unmount } = render(
+        <AttentionZone level={level as "review" | "pending" | "working" | "done"} sessions={[]} />,
+      );
+      expect(screen.getByText(expectedLabel)).toBeInTheDocument();
+      expect(screen.getByText("0")).toBeInTheDocument();
+      unmount();
+    }
   });
 
   it("shows session cards when not collapsed", () => {
@@ -605,5 +624,48 @@ describe("AttentionZone", () => {
     render(<AttentionZone level="respond" sessions={sessions} onRestore={onRestore} />);
     fireEvent.click(screen.getByText("restore"));
     expect(onRestore).toHaveBeenCalledWith("s1");
+  });
+});
+
+// ── Unenriched PR shimmer ─────────────────────────────────────────────
+
+describe("Unenriched PR shimmer", () => {
+  it("SessionCard shows shimmer for unenriched PR size", () => {
+    const pr = makePR({ enriched: false });
+    const session = makeSession({ pr });
+    const { container } = render(<SessionCard session={session} />);
+    const shimmers = container.querySelectorAll(".animate-pulse");
+    expect(shimmers.length).toBeGreaterThan(0);
+  });
+
+  it("SessionCard shows actual size for enriched PR", () => {
+    const pr = makePR({ enriched: true, additions: 50, deletions: 10 });
+    const session = makeSession({ pr });
+    render(<SessionCard session={session} />);
+    expect(screen.getByText("+50 -10 S")).toBeInTheDocument();
+  });
+
+  it("SessionCard suppresses alerts for unenriched PR", () => {
+    const pr = makePR({
+      enriched: false,
+      ciStatus: "failing",
+      ciChecks: [{ name: "build", status: "failed" }],
+    });
+    const session = makeSession({ pr });
+    const { container } = render(<SessionCard session={session} />);
+    expect(container.querySelector(".session-card__alert-pill")).toBeNull();
+  });
+
+  it("PRStatus shows shimmer for unenriched PR", () => {
+    const pr = makePR({ enriched: false });
+    const { container } = render(<PRStatus pr={pr} />);
+    const shimmers = container.querySelectorAll(".animate-pulse");
+    expect(shimmers.length).toBeGreaterThan(0);
+  });
+
+  it("PRStatus shows actual data for enriched PR", () => {
+    const pr = makePR({ enriched: true, additions: 50, deletions: 10 });
+    render(<PRStatus pr={pr} />);
+    expect(screen.getByText("+50 -10 S")).toBeInTheDocument();
   });
 });

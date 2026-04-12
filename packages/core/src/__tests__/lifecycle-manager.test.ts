@@ -53,15 +53,31 @@ function setupCheck(
     configOverride?: OrchestratorConfig;
   },
 ) {
-  vi.mocked(mockSessionManager.get).mockResolvedValue(opts.session);
-
-  writeMetadata(env.sessionsDir, sessionId, {
+  const persistedMetadata = {
     worktree: "/tmp",
     branch: opts.session.branch ?? "main",
     status: opts.session.status,
     project: "my-app",
+    runtimeHandle: opts.session.runtimeHandle
+      ? JSON.stringify(opts.session.runtimeHandle)
+      : undefined,
     ...opts.metaOverrides,
+  };
+  const persistedStringMetadata = Object.fromEntries(
+    Object.entries(persistedMetadata).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+
+  vi.mocked(mockSessionManager.get).mockResolvedValue({
+    ...opts.session,
+    metadata: {
+      ...opts.session.metadata,
+      ...persistedStringMetadata,
+    },
   });
+
+  writeMetadata(env.sessionsDir, sessionId, persistedMetadata);
 
   return createLifecycleManager({
     config: opts.configOverride ?? config,
@@ -193,6 +209,52 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("working");
     const meta = readMetadataRaw(env.sessionsDir, "app-1");
     expect(meta!["status"]).toBe("working");
+  });
+
+  it("does not kill a spawning session when its runtime handle has not been persisted yet", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "spawning",
+        runtimeHandle: { id: "app-1", runtimeName: "mock", data: {} },
+        metadata: {},
+      }),
+      metaOverrides: {
+        runtimeHandle: undefined,
+        tmuxName: undefined,
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("working");
+    expect(plugins.runtime.isAlive).not.toHaveBeenCalled();
+  });
+
+  it("still probes a working session when it relies on a synthesized runtime handle", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "working",
+        runtimeHandle: { id: "app-1", runtimeName: "mock", data: {} },
+        metadata: {},
+      }),
+      metaOverrides: {
+        runtimeHandle: undefined,
+        tmuxName: undefined,
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(plugins.runtime.isAlive).toHaveBeenCalledWith({
+      id: "app-1",
+      runtimeName: "mock",
+      data: {},
+    });
+    expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
   it("uses worker-specific agent fallback when metadata does not persist an agent", async () => {
@@ -1425,6 +1487,140 @@ describe("reactions", () => {
       expect.objectContaining({ type: "merge.completed" }),
     );
   });
+
+  it("resolves notifier aliases from notificationRouting before dispatch", async () => {
+    const notifier = createMockNotifier();
+    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+
+    const configWithAliasRouting: OrchestratorConfig = {
+      ...config,
+      notifiers: {
+        alerts: {
+          plugin: "desktop",
+        },
+      },
+      notificationRouting: {
+        ...config.notificationRouting,
+        action: ["alerts"],
+      },
+    };
+
+    const registry: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return plugins.runtime;
+        if (slot === "agent") return plugins.agent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return notifier;
+        return null;
+      }),
+    };
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "approved", pr: makePR() }),
+      registry,
+      configOverride: configWithAliasRouting,
+    });
+
+    await lm.check("app-1");
+
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "merge.completed" }),
+    );
+  });
+
+  it("resolves notifier aliases from defaults.notifiers when routing falls back", async () => {
+    const notifier = createMockNotifier();
+    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+
+    const configWithAliasDefaults: OrchestratorConfig = {
+      ...config,
+      defaults: {
+        ...config.defaults,
+        notifiers: ["alerts"],
+      },
+      notifiers: {
+        alerts: {
+          plugin: "desktop",
+        },
+      },
+      notificationRouting: {
+        urgent: ["desktop"],
+        warning: ["desktop"],
+        info: ["desktop"],
+      } as OrchestratorConfig["notificationRouting"],
+    };
+
+    const registry: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return plugins.runtime;
+        if (slot === "agent") return plugins.agent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return notifier;
+        return null;
+      }),
+    };
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "approved", pr: makePR() }),
+      registry,
+      configOverride: configWithAliasDefaults,
+    });
+
+    await lm.check("app-1");
+
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "merge.completed" }),
+    );
+  });
+
+  it("prefers alias-specific notifier instances over shared plugin instances", async () => {
+    const alertsNotifier = createMockNotifier();
+    const opsNotifier = createMockNotifier();
+    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+
+    const configWithSharedPluginAliases: OrchestratorConfig = {
+      ...config,
+      notifiers: {
+        alerts: {
+          plugin: "desktop",
+        },
+        ops: {
+          plugin: "desktop",
+        },
+      },
+      notificationRouting: {
+        ...config.notificationRouting,
+        action: ["ops"],
+      },
+    };
+
+    const registry: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return plugins.runtime;
+        if (slot === "agent") return plugins.agent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "ops") return opsNotifier;
+        if (slot === "notifier" && name === "desktop") return alertsNotifier;
+        return null;
+      }),
+    };
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "approved", pr: makePR() }),
+      registry,
+      configOverride: configWithSharedPluginAliases,
+    });
+
+    await lm.check("app-1");
+
+    expect(opsNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "merge.completed" }),
+    );
+    expect(alertsNotifier.notify).not.toHaveBeenCalled();
+  });
 });
 
 describe("pollAll terminal status accounting", () => {
@@ -1572,5 +1768,302 @@ describe("getStates", () => {
     // Modifying returned map shouldn't affect internal state
     states.set("app-1", "killed");
     expect(lm.getStates().get("app-1")).toBe("working");
+  });
+});
+
+describe("rate limiting optimizations", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // PR with owner/repo that matches the test config's "org/my-app"
+  function makeMatchingPR() {
+    return makePR({ owner: "org", repo: "my-app" });
+  }
+
+  it("skips getMergeability() when batch enrichment has hasConflicts data", async () => {
+    config.reactions = {
+      "merge-conflicts": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Resolve conflicts.",
+      },
+    };
+
+    const pr = makeMatchingPR();
+    const getMergeabilityMock = vi.fn();
+    const mockSCM = createMockSCM({
+      getMergeability: getMergeabilityMock,
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      enrichSessionsPRBatch: vi.fn().mockResolvedValue(
+        new Map([
+          [
+            `${pr.owner}/${pr.repo}#${pr.number}`,
+            {
+              state: "open" as const,
+              ciStatus: "passing" as const,
+              reviewDecision: "none" as const,
+              mergeable: false,
+              hasConflicts: true,
+            },
+          ],
+        ]),
+      ),
+    });
+
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const session = makeSession({ id: "s-1", status: "pr_open", pr });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    const lm = createLifecycleManager({ config, registry, sessionManager: mockSessionManager });
+    lm.start(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    lm.stop();
+
+    // getMergeability() should NOT be called — batch enrichment has the data
+    expect(getMergeabilityMock).not.toHaveBeenCalled();
+    // Conflict notification should have been sent
+    expect(mockSessionManager.send).toHaveBeenCalledWith("s-1", "Resolve conflicts.");
+  });
+
+  it("skips getCIChecks() when batch enrichment has ciChecks data", async () => {
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        message: "CI failing.",
+        retries: 3,
+        escalateAfter: 3,
+      },
+    };
+
+    const pr = makeMatchingPR();
+    const getCIChecksMock = vi.fn();
+    const mockSCM = createMockSCM({
+      getCIChecks: getCIChecksMock,
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      enrichSessionsPRBatch: vi.fn().mockResolvedValue(
+        new Map([
+          [
+            `${pr.owner}/${pr.repo}#${pr.number}`,
+            {
+              state: "open" as const,
+              ciStatus: "failing" as const,
+              reviewDecision: "none" as const,
+              mergeable: false,
+              hasConflicts: false,
+              ciChecks: [
+                { name: "lint", status: "failed" as const, conclusion: "FAILURE", url: "https://example.com/lint" },
+                { name: "test", status: "passed" as const, conclusion: "SUCCESS" },
+              ],
+            },
+          ],
+        ]),
+      ),
+    });
+
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    // Start with pr_open state so that ci_failed transition happens on first poll
+    const session = makeSession({ id: "s-2", status: "pr_open", pr });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    const lm = createLifecycleManager({ config, registry, sessionManager: mockSessionManager });
+    lm.start(60_000);
+    // First poll: transitions to ci_failed, sends reaction message
+    await vi.advanceTimersByTimeAsync(0);
+
+    vi.mocked(mockSessionManager.send).mockClear();
+
+    // Second poll: dispatches detailed CI failure info
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // getCIChecks() should NOT be called — batch enrichment has ciChecks
+    expect(getCIChecksMock).not.toHaveBeenCalled();
+    // Detailed message with lint check name/URL should be sent
+    const calls = vi.mocked(mockSessionManager.send).mock.calls;
+    const sentMessages = calls.map((c) => c[1] as string);
+    const detailMessage = sentMessages.find((m) => m.includes("lint"));
+    expect(detailMessage).toBeDefined();
+    expect(detailMessage).toContain("https://example.com/lint");
+    // Passing check should not be included
+    expect(detailMessage).not.toContain("test");
+
+    lm.stop();
+  });
+
+  it("throttles review backlog API calls to at most once per 2 minutes", async () => {
+    config.reactions = {
+      "changes-requested": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Handle review comments.",
+      },
+    };
+
+    const getPendingMock = vi.fn().mockResolvedValue([
+      {
+        id: "c1",
+        author: "reviewer",
+        body: "Please fix this",
+        path: "src/index.ts",
+        line: 10,
+        isResolved: false,
+        createdAt: new Date(),
+        url: "https://example.com/comment/1",
+      },
+    ]);
+    const getAutomatedMock = vi.fn().mockResolvedValue([]);
+    const mockSCM = createMockSCM({
+      getPendingComments: getPendingMock,
+      getAutomatedComments: getAutomatedMock,
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    // First check: API called, dispatch happens
+    await lm.check("app-1");
+    expect(getPendingMock).toHaveBeenCalledTimes(1);
+    vi.mocked(mockSessionManager.send).mockClear();
+    getPendingMock.mockClear();
+
+    // Second check immediately after: throttled — API NOT called
+    await lm.check("app-1");
+    expect(getPendingMock).not.toHaveBeenCalled();
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+
+    // Advance time past the 2-minute throttle window
+    await vi.advanceTimersByTimeAsync(2 * 60 * 1000 + 100);
+
+    // Third check: throttle expired — API called again
+    await lm.check("app-1");
+    expect(getPendingMock).toHaveBeenCalledTimes(1);
+  });
+});
+describe("summary pinning", () => {
+  it("pins first quality summary when pinnedSummary not set", async () => {
+    const session = makeSession({
+      status: "working",
+      agentInfo: {
+        summary: "Implementing authentication flow",
+        summaryIsFallback: false,
+        agentSessionId: "abc",
+      },
+      metadata: {},
+    });
+    const lm = setupCheck("app-1", { session });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta!["pinnedSummary"]).toBe("Implementing authentication flow");
+  });
+
+  it("skips pinning when summaryIsFallback is true", async () => {
+    const session = makeSession({
+      status: "working",
+      agentInfo: {
+        summary: "You are working on issue #42...",
+        summaryIsFallback: true,
+        agentSessionId: "abc",
+      },
+      metadata: {},
+    });
+    const lm = setupCheck("app-1", { session });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta!["pinnedSummary"]).toBeUndefined();
+  });
+
+  it("skips pinning when pinnedSummary already exists", async () => {
+    const session = makeSession({
+      status: "working",
+      agentInfo: {
+        summary: "New summary that should not overwrite",
+        summaryIsFallback: false,
+        agentSessionId: "abc",
+      },
+      metadata: { pinnedSummary: "Original pinned summary" },
+    });
+    const lm = setupCheck("app-1", {
+      session,
+      metaOverrides: { pinnedSummary: "Original pinned summary" },
+    });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta!["pinnedSummary"]).toBe("Original pinned summary");
+  });
+
+  it("skips pinning when trimmed summary is shorter than 5 chars", async () => {
+    const session = makeSession({
+      status: "working",
+      agentInfo: {
+        summary: "  Hi ",
+        summaryIsFallback: false,
+        agentSessionId: "abc",
+      },
+      metadata: {},
+    });
+    const lm = setupCheck("app-1", { session });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta!["pinnedSummary"]).toBeUndefined();
+  });
+
+  it("does not throw when metadata write fails", async () => {
+    const session = makeSession({
+      status: "working",
+      agentInfo: {
+        summary: "Valid summary for pinning",
+        summaryIsFallback: false,
+        agentSessionId: "abc",
+      },
+      metadata: {},
+    });
+    // Use a config with invalid path to trigger write failure
+    const badConfig = {
+      ...config,
+      projects: {
+        "my-app": {
+          ...config.projects["my-app"],
+          path: "/nonexistent/path/that/does/not/exist",
+        },
+      },
+    };
+    const lm = setupCheck("app-1", { session, configOverride: badConfig });
+
+    // Should not throw — error is swallowed
+    await expect(lm.check("app-1")).resolves.not.toThrow();
   });
 });

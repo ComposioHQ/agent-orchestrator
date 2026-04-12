@@ -8,7 +8,7 @@ import {
   type OrchestratorConfig,
   type PluginRegistry,
   type SCM,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
 
@@ -196,7 +196,7 @@ vi.mock("@/lib/services", () => ({
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
 import { GET as agentsGET } from "@/app/api/agents/route";
-import { POST as orchestratorsPOST } from "@/app/api/orchestrators/route";
+import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
 import { POST as messagePOST } from "@/app/api/sessions/[id]/message/route";
@@ -208,6 +208,7 @@ import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
 import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
 import { GET as verifyGET, POST as verifyPOST } from "@/app/api/verify/route";
+import { GET as patchesGET } from "@/app/api/sessions/patches/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -414,6 +415,55 @@ describe("API Routes", () => {
         reason: "Rate limit hit",
         sourceSessionId: "docs-orchestrator",
       });
+    });
+
+    it("enriches all PRs concurrently, not sequentially", async () => {
+      vi.useFakeTimers();
+
+      const sessionsWithPRs = Array.from({ length: 6 }, (_, i) =>
+        makeSession({
+          id: `worker-${i}`,
+          status: "pr_open",
+          activity: "idle",
+          pr: {
+            number: 100 + i,
+            url: `https://github.com/acme/my-app/pull/${100 + i}`,
+            title: `PR ${i}`,
+            owner: "acme",
+            repo: "my-app",
+            branch: `feat/pr-${i}`,
+            baseBranch: "main",
+            isDraft: false,
+          },
+        }),
+      );
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue(sessionsWithPRs);
+
+      const metadataSpy = vi
+        .spyOn(serialize, "enrichSessionsMetadata")
+        .mockResolvedValue(undefined);
+
+      const enrichSpy = vi
+        .spyOn(serialize, "enrichSessionPR")
+        .mockImplementation(
+          () => new Promise<void>((resolve) => { setTimeout(resolve, 1_000); }),
+        );
+
+      const responsePromise = sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
+
+      // Flush microtasks so the handler reaches the PR enrichment loop
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Sequential would only have 1 call pending; parallel fires all 6 immediately
+      expect(enrichSpy.mock.calls.length).toBe(6);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      const res = await responsePromise;
+      expect(res.status).toBe(200);
+
+      metadataSpy.mockRestore();
+      enrichSpy.mockRestore();
+      vi.useRealTimers();
     });
   });
 
@@ -751,6 +801,52 @@ describe("API Routes", () => {
     });
   });
 
+  describe("GET /api/orchestrators", () => {
+    it("returns orchestrators for a project", async () => {
+      const orchestrator = makeSession({
+        id: "my-app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+      });
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([orchestrator]);
+
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.orchestrators).toHaveLength(1);
+      expect(data.orchestrators[0].id).toBe("my-app-orchestrator");
+      expect(data.projectName).toBe("My App");
+    });
+
+    it("returns 400 when project parameter is missing", async () => {
+      const res = await orchestratorsGET(makeRequest("http://localhost:3000/api/orchestrators"));
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/Missing project query parameter/);
+    });
+
+    it("returns 404 for unknown project", async () => {
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=unknown-app"),
+      );
+      expect(res.status).toBe(404);
+      const data = await res.json();
+      expect(data.error).toMatch(/Unknown project/);
+    });
+
+    it("returns 500 when list fails", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("boom"));
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
+      );
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toBe("boom");
+    });
+  });
+
   // ── POST /api/sessions/:id/send ────────────────────────────────────
 
   describe("POST /api/sessions/:id/send", () => {
@@ -1073,6 +1169,47 @@ describe("API Routes", () => {
       expect(res.status).toBe(400);
       const data = await res.json();
       expect(data.error).toMatch(/Invalid JSON body/);
+    });
+  });
+  // ── GET /api/sessions/patches ──────────────────────────────────────────
+
+  describe("GET /api/sessions/patches", () => {
+    it("returns patches array with lightweight fields", async () => {
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(Array.isArray(data.sessions)).toBe(true);
+      expect(data.sessions.length).toBe(testSessions.length);
+    });
+
+    it("each patch contains id, status, activity, attentionLevel, lastActivityAt", async () => {
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      const data = await res.json();
+      for (const patch of data.sessions) {
+        expect(patch).toHaveProperty("id");
+        expect(patch).toHaveProperty("status");
+        expect(patch).toHaveProperty("activity");
+        expect(patch).toHaveProperty("attentionLevel");
+        expect(patch).toHaveProperty("lastActivityAt");
+      }
+    });
+
+    it("filters by project query param", async () => {
+      const res = await patchesGET(
+        makeRequest("http://localhost:3000/api/sessions/patches?project=my-app"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(Array.isArray(data.sessions)).toBe(true);
+    });
+
+    it("returns 500 when getServices throws", async () => {
+      const { getServices } = await import("@/lib/services");
+      vi.mocked(getServices).mockRejectedValueOnce(new Error("db down"));
+      const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toBe("db down");
     });
   });
 });

@@ -1,9 +1,12 @@
+import "server-only";
+
 import { cache } from "react";
-import { loadConfig, loadPreferences, getPortfolio } from "@composio/ao-core";
+import { loadConfig, loadPreferences, getPortfolio } from "@aoagents/ao-core";
 
 export interface ProjectInfo {
   id: string;
   name: string;
+  sessionPrefix?: string;
 }
 
 export const getPrimaryProjectId = cache((): string => {
@@ -68,6 +71,7 @@ export const getAllProjects = cache((): ProjectInfo[] => {
     return Object.entries(config.projects).map(([id, project]) => ({
       id,
       name: project.name ?? id,
+      sessionPrefix: project.sessionPrefix ?? id,
     }));
   } catch {
     return [];
