@@ -210,6 +210,12 @@ function createOpenCodeAgent(): Agent {
   return {
     name: "opencode",
     processName: "opencode",
+    // Prompt is delivered post-launch via runtime.sendMessage() after the TUI starts.
+    // Passing it inline in the `opencode run` step causes that step to block until the
+    // LLM responds (one-shot mode), leaving the tmux pane blank. The `--prompt` flag on
+    // the TUI resumption only pre-fills the input box without auto-submitting. Post-launch
+    // delivery keeps the session opening fast and interactive from the start.
+    promptDelivery: "post-launch" as const,
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const options: string[] = [];
@@ -228,19 +234,15 @@ function createOpenCodeAgent(): Agent {
         sharedOptions.push("--agent", shellEscape(config.subagent));
       }
 
-      let promptValue: string | undefined;
-      if (config.prompt) {
-        if (config.systemPromptFile) {
-          promptValue = `"$(cat ${shellEscape(config.systemPromptFile)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt)})"`;
-        } else if (config.systemPrompt) {
-          promptValue = shellEscape(`${config.systemPrompt}\n\n${config.prompt}`);
-        } else {
-          promptValue = shellEscape(config.prompt);
-        }
-      } else if (config.systemPromptFile) {
-        promptValue = `"$(cat ${shellEscape(config.systemPromptFile)})"`;
+      // System-level context only — NOT the task prompt.
+      // The task prompt (config.prompt) is delivered post-launch via runtime.sendMessage().
+      // System context (orchestrator instructions) is passed to `opencode run` as the first
+      // message so it is established before the TUI opens.
+      let systemContextValue: string | undefined;
+      if (config.systemPromptFile) {
+        systemContextValue = `"$(cat ${shellEscape(config.systemPromptFile)})"`;
       } else if (config.systemPrompt) {
-        promptValue = shellEscape(config.systemPrompt);
+        systemContextValue = shellEscape(config.systemPrompt);
       }
 
       if (config.model) {
@@ -257,18 +259,16 @@ function createOpenCodeAgent(): Agent {
         ];
         const captureScript = buildSessionIdCaptureScript();
         const fallbackScript = buildSessionLookupScript();
-        // Pass prompt as positional message arg to `opencode run` so it is actually submitted
-        // to the LLM. Using --prompt on the TUI resumption only pre-fills the input box and
-        // does not auto-send the message.
         const runCommandParts = ["opencode", "run", ...runOptions];
-        if (promptValue) {
-          runCommandParts.push(promptValue);
+        if (systemContextValue) {
+          // Orchestrator case: send system context before TUI opens.
+          runCommandParts.push(systemContextValue);
         } else {
-          // No prompt: use --command true to create the session without sending a message.
+          // Regular agent: session created without a message; task prompt is sent post-launch.
           runCommandParts.push("--command", "true");
         }
         const runCommand = runCommandParts.join(" ");
-        // Prompt already sent via `opencode run`; only pass shared options on resume.
+        // Resume with shared options only — no prompt (sent post-launch by session-manager).
         const resumeOptions = [...sharedOptions];
         const resumeOptionsSuffix = resumeOptions.length > 0 ? ` ${resumeOptions.join(" ")}` : "";
         const missingSessionError = shellEscape(
@@ -281,10 +281,7 @@ function createOpenCodeAgent(): Agent {
         ].join("; ");
       }
 
-      if (promptValue) {
-        options.push("--prompt", promptValue);
-      }
-
+      // Existing session resume: no prompt needed (session-manager handles post-launch delivery).
       options.push(...sharedOptions);
 
       return ["opencode", ...options].join(" ");
