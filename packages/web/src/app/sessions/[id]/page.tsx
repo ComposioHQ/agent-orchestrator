@@ -157,10 +157,7 @@ export default function SessionPage() {
       if (!res.ok) return;
       const body = (await res.json()) as ProjectSessionsBody;
       const sessions = body.sessions ?? [];
-      const orchestratorId =
-        body.orchestratorId ??
-        body.orchestrators?.find((orchestrator) => orchestrator.projectId === projectId)?.id ??
-        null;
+      const orchestratorId = body.orchestratorId ?? null;
       setProjectOrchestratorId((current) => (current === orchestratorId ? current : orchestratorId));
 
       if (!isOrchestrator) {

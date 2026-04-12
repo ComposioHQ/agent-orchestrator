@@ -86,6 +86,29 @@ const multiProjectSessions: Session[] = [
   }),
 ];
 
+const multiOrchestratorProjectSessions: Session[] = [
+  makeSession({
+    id: "ao-orchestrator-1",
+    projectId: "my-app",
+    metadata: { role: "orchestrator" },
+    createdAt: new Date("2026-04-12T09:00:00Z"),
+    lastActivityAt: new Date("2026-04-12T09:15:00Z"),
+  }),
+  makeSession({
+    id: "ao-orchestrator-5",
+    projectId: "my-app",
+    metadata: { role: "orchestrator" },
+    createdAt: new Date("2026-04-12T10:00:00Z"),
+    lastActivityAt: new Date("2026-04-12T10:30:00Z"),
+  }),
+  makeSession({
+    id: "worker-1",
+    projectId: "my-app",
+    status: "working",
+    activity: "active",
+  }),
+];
+
 // ── Mock Services ─────────────────────────────────────────────────────
 
 const mockSessionManager: SessionManager = {
@@ -317,6 +340,29 @@ describe("API Routes", () => {
       ]);
       expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
       expect(mockSessionManager.list).toHaveBeenCalledWith("docs-app");
+    });
+
+    it("returns the current project orchestrator when multiple orchestrators exist", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        async (projectId?: string) =>
+          multiOrchestratorProjectSessions.filter(
+            (session) => !projectId || session.projectId === projectId,
+          ),
+      );
+
+      const res = await sessionsGET(
+        makeRequest("http://localhost:3000/api/sessions?project=my-app&orchestratorOnly=true"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.orchestratorId).toBe("ao-orchestrator-5");
+      expect(data.orchestrators).toEqual([
+        { id: "ao-orchestrator-1", projectId: "my-app", projectName: "My App" },
+        { id: "ao-orchestrator-5", projectId: "my-app", projectName: "My App" },
+      ]);
+      expect(data.sessions).toEqual([]);
+      expect(mockSessionManager.list).toHaveBeenCalledWith("my-app");
     });
 
     it("enriches all PRs concurrently, not sequentially", async () => {

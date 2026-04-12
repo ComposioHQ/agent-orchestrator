@@ -7,6 +7,7 @@ import {
   enrichSessionsMetadata,
   computeStats,
   listDashboardOrchestrators,
+  resolveCurrentProjectOrchestratorId,
 } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
 import { filterProjectSessions } from "@/lib/project-utils";
@@ -33,7 +34,9 @@ export async function GET(request: Request) {
     const coreSessions = await sessionManager.list(requestedProjectId);
     const visibleSessions = filterProjectSessions(coreSessions, projectFilter, config.projects);
     const orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
-    const orchestratorId = orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null;
+    const orchestratorId = requestedProjectId
+      ? resolveCurrentProjectOrchestratorId(visibleSessions, requestedProjectId, config.projects)
+      : (orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null);
 
     if (orchestratorOnly) {
       recordApiObservation({
