@@ -480,29 +480,29 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
 
 /** Validate project uniqueness and session prefix collisions */
 function validateProjectUniqueness(config: OrchestratorConfig): void {
-  // Check for duplicate project IDs (basenames)
-  const projectIds = new Set<string>();
-  const projectIdToPaths: Record<string, string[]> = {};
+  // Check for duplicate project IDs (basenames) across different paths.
+  // Multiple config entries sharing the same path is valid (multi-orchestrator),
+  // but different paths that resolve to the same basename would collide in storage.
+  const projectIdToPaths: Record<string, Set<string>> = {};
 
   for (const [_configKey, project] of Object.entries(config.projects)) {
     const projectId = basename(project.path);
 
     if (!projectIdToPaths[projectId]) {
-      projectIdToPaths[projectId] = [];
+      projectIdToPaths[projectId] = new Set();
     }
-    projectIdToPaths[projectId].push(project.path);
+    projectIdToPaths[projectId].add(project.path);
 
-    if (projectIds.has(projectId)) {
-      const paths = projectIdToPaths[projectId].join(", ");
+    if (projectIdToPaths[projectId].size > 1) {
+      const paths = [...projectIdToPaths[projectId]].join(", ");
       throw new Error(
         `Duplicate project ID detected: "${projectId}"\n` +
-          `Multiple projects have the same directory basename:\n` +
+          `Multiple projects have the same directory basename but different paths:\n` +
           `  ${paths}\n\n` +
           `To fix this, ensure each project path has a unique directory name.\n` +
           `Alternatively, you can use the config key as a unique identifier.`,
       );
     }
-    projectIds.add(projectId);
   }
 
   // Check for duplicate session prefixes
