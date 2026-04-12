@@ -52,6 +52,27 @@ describe("Config Validation - Project Uniqueness", () => {
     }
   });
 
+  it("accepts multiple entries with same path (multi-orchestrator)", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/integrator",
+          repo: "org/integrator",
+          defaultBranch: "main",
+          sessionPrefix: "int",
+        },
+        "proj1-ab12": {
+          path: "/repos/integrator", // Same path — multi-orchestrator
+          repo: "org/integrator",
+          defaultBranch: "main",
+          sessionPrefix: "int2",
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).not.toThrow();
+  });
+
   it("accepts unique basenames", () => {
     const config = {
       projects: {
