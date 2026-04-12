@@ -1,0 +1,10 @@
+name: ci-failure
+description: Detailed CI failure message sent to an agent with failed check details.
+variables:
+  - failedChecksList
+template: |-
+  CI checks are failing on your PR. Here are the failed checks:
+  
+  ${failedChecksList}
+  
+  Investigate the failures, fix the issues, and push again.

@@ -294,8 +294,8 @@ function createAiderAgent(): Agent {
       return null;
     },
 
-    async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      await setupPathWrapperWorkspace(workspacePath);
+    async setupWorkspaceHooks(workspacePath: string, config: WorkspaceHooksConfig): Promise<void> {
+      await setupPathWrapperWorkspace(workspacePath, { promptsDir: config.promptsDir });
     },
 
     async postLaunchSetup(session: Session): Promise<void> {

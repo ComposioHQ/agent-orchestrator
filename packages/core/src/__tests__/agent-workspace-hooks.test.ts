@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { buildAgentPath, setupPathWrapperWorkspace } from "../agent-workspace-hooks.js";
 
 const { mockWriteFile, mockMkdir, mockReadFile, mockRename } = vi.hoisted(() => ({
@@ -96,5 +98,31 @@ describe("setupPathWrapperWorkspace", () => {
     );
     expect(agentsMdWrites).toHaveLength(1);
     expect(String(agentsMdWrites[0][1])).toContain("Agent Orchestrator");
+  });
+
+  it("uses promptsDir override when provided", async () => {
+    const customRoot = join("/tmp", "ao-agent-hooks-custom");
+    const customPromptsDir = join(customRoot, "prompts");
+    mkdirSync(customPromptsDir, { recursive: true });
+    writeFileSync(
+      join(customPromptsDir, "agent-workspace.yaml"),
+      `name: agent-workspace
+description: custom
+variables: []
+template: |-
+  CUSTOM AGENTS SECTION`,
+    );
+
+    try {
+      await setupPathWrapperWorkspace("/workspace", { promptsDir: customPromptsDir });
+
+      const agentsMdWrites = mockWriteFile.mock.calls.filter(
+        (c: unknown[]) => String(c[0]).includes(".ao/AGENTS.md"),
+      );
+      expect(agentsMdWrites).toHaveLength(1);
+      expect(String(agentsMdWrites[0][1])).toContain("CUSTOM AGENTS SECTION");
+    } finally {
+      rmSync(customRoot, { recursive: true, force: true });
+    }
   });
 });
