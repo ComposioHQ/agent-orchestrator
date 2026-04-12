@@ -108,7 +108,7 @@ describe("SessionDetail desktop layout", () => {
     expect(screen.getAllByText("My App").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("link", { name: "Orchestrator" })).toHaveAttribute(
       "href",
-      "/sessions/my-app-orchestrator",
+      "/projects/my-app/sessions/my-app-orchestrator",
     );
     expect(screen.getByRole("link", { name: "feat/desktop-detail" })).toHaveAttribute(
       "href",

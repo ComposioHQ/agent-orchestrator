@@ -80,12 +80,18 @@ describe("Dashboard mobile layout", () => {
 
     render(<Dashboard initialSessions={[session]} />);
 
-    expect(screen.getByRole("link", { name: /go to need approval to proceed/i })).toHaveAttribute(
+    const feedCard = screen.getByRole("button", { name: /respond-1/i });
+    expect(feedCard).toBeInTheDocument();
+    expect(screen.getByText("feat/mobile-density")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(feedCard);
+    });
+
+    expect(screen.getByRole("link", { name: "Open session" })).toHaveAttribute(
       "href",
       "/projects/my-app/sessions/respond-1",
     );
-
-    expect(screen.getByRole("link", { name: "Open session" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Terminate" })).toBeInTheDocument();
   });
 

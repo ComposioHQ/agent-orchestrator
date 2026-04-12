@@ -19,6 +19,10 @@ export default defineConfig({
     alias: [
       { find: "@aoagents/ao-core/types", replacement: resolve(__dirname, "../core/src/types.ts") },
       {
+        find: "@aoagents/ao-core/scm-webhook-utils",
+        replacement: resolve(__dirname, "../core/src/scm-webhook-utils.ts"),
+      },
+      {
         find: "@aoagents/ao-core",
         replacement: resolve(__dirname, "../core/src/index.ts"),
       },

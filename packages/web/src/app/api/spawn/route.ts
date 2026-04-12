@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (body.prompt !== undefined && body.prompt !== null) {
-    const promptErr = validateString(body.prompt, "prompt", 20_000);
+    const promptErr = validateString(body.prompt, "prompt", 4096);
     if (promptErr) {
       return jsonWithCorrelation({ error: promptErr }, { status: 400 }, correlationId);
     }

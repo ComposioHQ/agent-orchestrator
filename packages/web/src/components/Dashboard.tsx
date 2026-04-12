@@ -8,6 +8,7 @@ import {
   type DashboardPR,
   type AttentionLevel,
   type DashboardOrchestratorLink,
+  type GlobalPauseState,
   getAttentionLevel,
   isPRRateLimited,
   isPRMergeReady,
@@ -20,7 +21,6 @@ import { useMuxOptional } from "@/providers/MuxProvider";
 import { ProjectSidebar } from "./ProjectSidebar";
 
 import type { ProjectInfo } from "@/lib/project-name";
-import type { GlobalPauseState } from "@/lib/types";
 import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
 import { BottomSheet } from "./BottomSheet";

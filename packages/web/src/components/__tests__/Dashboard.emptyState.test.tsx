@@ -26,8 +26,8 @@ beforeEach(() => {
 describe("Dashboard empty state", () => {
   it("shows empty state when there are no sessions (single-project view)", () => {
     render(<Dashboard initialSessions={[]} />);
-    expect(screen.getByText(/No active worker sessions right now/i)).toBeInTheDocument();
-    expect(screen.getByText(/main orchestrator button in the header/i)).toBeInTheDocument();
+    expect(screen.getByText(/Ready to orchestrate/i)).toBeInTheDocument();
+    expect(screen.getByText(/Open the main orchestrator/i)).toBeInTheDocument();
   });
 
   it("does not show empty state when sessions exist", () => {
@@ -54,7 +54,7 @@ describe("Dashboard empty state", () => {
         ]}
       />,
     );
-    expect(queryByText(/No active worker sessions right now/i)).not.toBeInTheDocument();
+    expect(queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
   });
 
   it("shows empty state when all sessions are done", () => {
@@ -82,7 +82,7 @@ describe("Dashboard empty state", () => {
       />,
     );
 
-    expect(screen.getByText(/No active worker sessions right now/i)).toBeInTheDocument();
+    expect(screen.getByText(/Ready to orchestrate/i)).toBeInTheDocument();
     expect(screen.queryByText(/Attention Board/i)).not.toBeInTheDocument();
   });
 
@@ -95,7 +95,7 @@ describe("Dashboard empty state", () => {
       />,
     );
 
-    expect(screen.getByText(/No active worker sessions right now/i)).toBeInTheDocument();
+    expect(screen.getByText(/Ready to orchestrate/i)).toBeInTheDocument();
     expect(screen.queryByText(/Attention Board/i)).not.toBeInTheDocument();
   });
 });
