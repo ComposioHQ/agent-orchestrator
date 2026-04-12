@@ -257,8 +257,19 @@ function createOpenCodeAgent(): Agent {
         ];
         const captureScript = buildSessionIdCaptureScript();
         const fallbackScript = buildSessionLookupScript();
-        const runCommand = ["opencode", "run", ...runOptions, "--command", "true"].join(" ");
-        const resumeOptions = [...(promptValue ? ["--prompt", promptValue] : []), ...sharedOptions];
+        // Pass prompt as positional message arg to `opencode run` so it is actually submitted
+        // to the LLM. Using --prompt on the TUI resumption only pre-fills the input box and
+        // does not auto-send the message.
+        const runCommandParts = ["opencode", "run", ...runOptions];
+        if (promptValue) {
+          runCommandParts.push(promptValue);
+        } else {
+          // No prompt: use --command true to create the session without sending a message.
+          runCommandParts.push("--command", "true");
+        }
+        const runCommand = runCommandParts.join(" ");
+        // Prompt already sent via `opencode run`; only pass shared options on resume.
+        const resumeOptions = [...sharedOptions];
         const resumeOptionsSuffix = resumeOptions.length > 0 ? ` ${resumeOptions.join(" ")}` : "";
         const missingSessionError = shellEscape(
           `failed to discover OpenCode session ID for AO:${config.sessionId}`,
