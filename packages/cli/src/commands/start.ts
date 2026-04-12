@@ -73,16 +73,24 @@ const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 // HELPERS
 // =============================================================================
 
+const REGISTER_CWD_CHOICE = "__register_cwd__";
+
 /**
  * Resolve project from config.
  * If projectArg is provided, use it. If only one project exists, use that.
  * Otherwise, error with helpful message.
+ *
+ * When multiple projects are configured and cwd doesn't match any of them,
+ * interactive callers also see a "Register current directory" option at the
+ * top of the prompt (if cwd is a git repo). Selecting it appends a new
+ * project entry to the yaml via `addProjectToConfig` and returns a reloaded
+ * config so the caller picks up the new entry.
  */
 async function resolveProject(
   config: OrchestratorConfig,
   projectArg?: string,
   action = "start",
-): Promise<{ projectId: string; project: ProjectConfig }> {
+): Promise<{ projectId: string; project: ProjectConfig; config: OrchestratorConfig }> {
   const projectIds = Object.keys(config.projects);
 
   if (projectIds.length === 0) {
@@ -97,13 +105,13 @@ async function resolveProject(
         `Project "${projectArg}" not found. Available projects:\n  ${projectIds.join(", ")}`,
       );
     }
-    return { projectId: projectArg, project };
+    return { projectId: projectArg, project, config };
   }
 
   // Only one project — use it
   if (projectIds.length === 1) {
     const projectId = projectIds[0];
-    return { projectId, project: config.projects[projectId] };
+    return { projectId, project: config.projects[projectId], config };
   }
 
   // Multiple projects — try matching cwd to a project path
@@ -111,20 +119,52 @@ async function resolveProject(
   const currentDir = resolve(cwd());
   const matchedProjectId = findProjectForDirectory(config.projects, currentDir);
   if (matchedProjectId) {
-    return { projectId: matchedProjectId, project: config.projects[matchedProjectId] };
+    return {
+      projectId: matchedProjectId,
+      project: config.projects[matchedProjectId],
+      config,
+    };
   }
 
   // No match — prompt if interactive, otherwise error
   if (isHumanCaller()) {
-    const projectId = await promptSelect(
-      `Choose project to ${action}:`,
-      projectIds.map((id) => ({
+    // If cwd is a git repo, let the user register it as a new project inline
+    // rather than forcing them to pick one of the existing (wrong) projects.
+    const cwdIsGitRepo = (await git(["rev-parse", "--git-dir"], currentDir)) !== null;
+
+    const options: Array<{ value: string; label: string; hint?: string }> = [];
+    if (cwdIsGitRepo) {
+      options.push({
+        value: REGISTER_CWD_CHOICE,
+        label: "Register current directory as a new project",
+        hint: currentDir,
+      });
+    }
+    for (const id of projectIds) {
+      options.push({
         value: id,
         label: config.projects[id].name ?? id,
         hint: id,
-      })),
-    );
-    return { projectId, project: config.projects[projectId] };
+      });
+    }
+
+    const message = cwdIsGitRepo
+      ? `Choose a project to ${action} (or register the current directory):`
+      : `Choose project to ${action}:`;
+
+    const choice = await promptSelect(message, options);
+
+    if (choice === REGISTER_CWD_CHOICE) {
+      const addedId = await addProjectToConfig(config, currentDir);
+      const reloaded = loadConfig(config.configPath);
+      return {
+        projectId: addedId,
+        project: reloaded.projects[addedId],
+        config: reloaded,
+      };
+    }
+
+    return { projectId: choice, project: config.projects[choice], config };
   } else {
     throw new Error(
       `Multiple projects configured. Specify which one to ${action}:\n  ${projectIds.map((id) => `ao ${action} ${id}`).join("\n  ")}`,
@@ -143,14 +183,14 @@ async function resolveProject(
 async function resolveProjectByRepo(
   config: OrchestratorConfig,
   parsed: ParsedRepoUrl,
-): Promise<{ projectId: string; project: ProjectConfig }> {
+): Promise<{ projectId: string; project: ProjectConfig; config: OrchestratorConfig }> {
   const projectIds = Object.keys(config.projects);
 
   // Try to match by repo field (e.g. "owner/repo")
   for (const id of projectIds) {
     const project = config.projects[id];
     if (project.repo === parsed.ownerRepo) {
-      return { projectId: id, project };
+      return { projectId: id, project, config };
     }
   }
 
@@ -1211,7 +1251,7 @@ export function registerStart(program: Command): void {
             console.log(chalk.bold.cyan("\n  Agent Orchestrator — Quick Start\n"));
             const result = await handleUrlStart(projectArg);
             config = result.config;
-            ({ projectId, project } = await resolveProjectByRepo(config, result.parsed));
+            ({ projectId, project, config } = await resolveProjectByRepo(config, result.parsed));
           } else if (projectArg && isLocalPath(projectArg)) {
             // ── Path argument: add project if new, then start ──
             const resolvedPath = resolve(projectArg.replace(/^~/, process.env["HOME"] || ""));
@@ -1234,7 +1274,7 @@ export function registerStart(program: Command): void {
                 projectId = addedId;
                 project = config.projects[projectId];
               } else {
-                ({ projectId, project } = await resolveProject(config));
+                ({ projectId, project, config } = await resolveProject(config));
               }
             } else {
               config = loadConfig(configPath);
@@ -1270,7 +1310,7 @@ export function registerStart(program: Command): void {
               }
             }
             config = loadedConfig;
-            ({ projectId, project } = await resolveProject(config, projectArg));
+            ({ projectId, project, config } = await resolveProject(config, projectArg));
           }
 
           // ── Already-running detection (Step 9) ──
