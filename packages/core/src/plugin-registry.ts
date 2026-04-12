@@ -114,8 +114,6 @@ function collectNotifierRegistrations(
   }));
 }
 
-<<<<<<< HEAD
-=======
 function extractPluginConfig(
   slot: PluginSlot,
   _name: string,
@@ -133,7 +131,6 @@ function extractPluginConfig(
   return undefined;
 }
 
->>>>>>> 6ab33b41 (minor fixes of auth)
 /**
  * Internal helper to validate and strip loading metadata from a plugin configuration.
  * Reserved fields (plugin, package, path) are used for plugin resolution and stripped.

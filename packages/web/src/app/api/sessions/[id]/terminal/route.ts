@@ -29,8 +29,8 @@ export async function GET(
     const terminalPort = normalizePort(process.env.TERMINAL_PORT, 14800);
     const protocol = getRequestProtocol(request);
     const hostname = getRequestHostname(request);
-    // ttyd entry URL without the secret: token is returned only in this JSON body so
-    // reverse proxies do not log it in request URIs. The browser appends `token` client-side.
+    // ttyd base URL only (no token in query). Clients append `token` when building the
+    // iframe src so reverse-proxy access logs for this JSON response do not embed secrets.
     const url =
       `${protocol}://${hostname}:${terminalPort}/terminal` +
       `?session=${encodeURIComponent(grant.sessionId)}`;

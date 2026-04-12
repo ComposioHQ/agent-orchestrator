@@ -431,8 +431,14 @@ class TerminalManager {
  * Create a mux WebSocket server (noServer mode).
  * Returns the WebSocketServer instance for manual upgrade routing.
  */
-/** Hard cap on concurrent mux WebSocket clients (session subscribe + terminal multiplex). */
-const MAX_MUX_WEBSOCKET_CLIENTS = 512;
+const DEFAULT_MUX_MAX_CONNECTIONS = 200;
+
+function getMuxMaxConnections(): number {
+  const raw = process.env["AO_MUX_MAX_CONNECTIONS"];
+  if (raw === undefined || raw === "") return DEFAULT_MUX_MAX_CONNECTIONS;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MUX_MAX_CONNECTIONS;
+}
 
 export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
   if (!ptySpawn) {
@@ -445,9 +451,12 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
   const broadcaster = new SessionBroadcaster(nextPort);
 
   const wss = new WebSocketServer({ noServer: true });
+  const maxMuxConnections = getMuxMaxConnections();
 
   wss.on("connection", (ws) => {
-    if (wss.clients.size > MAX_MUX_WEBSOCKET_CLIENTS) {
+    // New socket is already counted in wss.clients; close excess connections.
+    if (wss.clients.size > maxMuxConnections) {
+      console.warn("[MuxServer] Rejecting mux connection: max clients reached");
       ws.close(1013, "Too many connections");
       return;
     }
@@ -544,13 +553,15 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
                 subscriptions.set(id, unsub);
               }
             } else if (type === "data" && "data" in msg) {
-              if (subscriptions.has(id)) {
-                terminalManager.write(id, msg.data);
+              if (!subscriptions.has(id)) {
+                throw new Error("Terminal not opened on this connection");
               }
+              terminalManager.write(id, msg.data);
             } else if (type === "resize" && "cols" in msg && "rows" in msg) {
-              if (subscriptions.has(id)) {
-                terminalManager.resize(id, msg.cols, msg.rows);
+              if (!subscriptions.has(id)) {
+                throw new Error("Terminal not opened on this connection");
               }
+              terminalManager.resize(id, msg.cols, msg.rows);
             } else if (type === "close") {
               // Unsubscribe this client only — TerminalManager is shared across
               // all mux connections so we must not kill the PTY here.

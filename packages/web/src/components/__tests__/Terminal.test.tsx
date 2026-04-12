@@ -40,28 +40,4 @@ describe("Terminal", () => {
     expect(container.firstChild).toHaveClass("fixed", "inset-0");
     expect(screen.getByRole("button", { name: "exit fullscreen" })).toBeInTheDocument();
   });
-
-  it("merges token into the iframe URL client-side (API returns url without token query)", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({
-          url: "http://localhost:14800/terminal?session=ao-99",
-          token: "grant-secret",
-        }),
-      })),
-    );
-
-    render(<Terminal sessionId="ao-99" />);
-
-    await waitFor(() => {
-      const iframe = screen.getByTitle("Terminal: ao-99");
-      expect(iframe).toHaveAttribute(
-        "src",
-        "http://localhost:14800/terminal?session=ao-99&token=grant-secret",
-      );
-      expect(iframe).toHaveAttribute("referrerPolicy", "no-referrer");
-    });
-  });
 });

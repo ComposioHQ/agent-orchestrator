@@ -68,9 +68,11 @@ const SECRET_FILE_NAME = "terminal-auth-secret";
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const ISSUE_LIMIT = 20;
 const VERIFY_LIMIT = 40;
+/** Budget for failed verify attempts (bad signature, wrong session) — separate from per-session success verify. */
+const VERIFY_FAIL_LIMIT = 500;
+const RATE_LIMIT_MAX_ENTRIES = 10_000;
 
 const rateLimits = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_MAX_KEYS = 10_000;
 
 let cachedContext:
   | {
@@ -93,16 +95,18 @@ function getLocalOwnerId(): string {
   }
 }
 
-function pruneExpiredRateLimitEntries(now: number): void {
-  if (rateLimits.size <= RATE_LIMIT_MAX_KEYS) return;
+function pruneExpiredRateLimits(now: number): void {
+  if (rateLimits.size <= RATE_LIMIT_MAX_ENTRIES) return;
   for (const [k, v] of rateLimits) {
-    if (v.resetAt <= now) rateLimits.delete(k);
+    if (v.resetAt <= now) {
+      rateLimits.delete(k);
+    }
   }
 }
 
 function enforceRateLimit(key: string, limit: number): void {
   const now = Date.now();
-  pruneExpiredRateLimitEntries(now);
+  pruneExpiredRateLimits(now);
   const current = rateLimits.get(key);
 
   if (!current || current.resetAt <= now) {
@@ -138,14 +142,14 @@ function getContext() {
     try {
       secret = Buffer.from(readFileSync(secretPath, "utf-8").trim(), "utf-8");
       if (secret.length === 0) throw new Error("empty secret");
-      try {
-        chmodSync(secretPath, 0o600);
-      } catch {
-        // best-effort: tighten perms on legacy installs
-      }
     } catch {
       const generated = randomBytes(32).toString("hex");
       writeFileSync(secretPath, `${generated}\n`, { encoding: "utf-8", mode: 0o600 });
+      try {
+        chmodSync(secretPath, 0o600);
+      } catch {
+        /* best-effort — mode flag is primary */
+      }
       secret = Buffer.from(generated, "utf-8");
     }
 
@@ -252,26 +256,38 @@ export function issueTerminalAccess(sessionId: string): TerminalAccessGrant {
 
 export function verifyTerminalAccess(sessionId: string, token: string | undefined): TerminalSessionRecord {
   const { secret } = getContext();
-  const payload = decodePayload(token, secret);
+
+  let payload: TerminalTokenPayload;
+  try {
+    payload = decodePayload(token, secret);
+  } catch (e) {
+    enforceRateLimit("verify-fail", VERIFY_FAIL_LIMIT);
+    throw e;
+  }
 
   if (payload.purpose !== "terminal_access" || payload.v !== 1) {
+    enforceRateLimit("verify-fail", VERIFY_FAIL_LIMIT);
     throw new TerminalAuthError("Invalid terminal token", 401, "token_invalid");
   }
   if (payload.exp <= Date.now()) {
+    enforceRateLimit("verify-fail", VERIFY_FAIL_LIMIT);
     throw new TerminalAuthError("Terminal token expired", 401, "token_expired");
   }
   if (payload.sessionId !== sessionId) {
+    enforceRateLimit("verify-fail", VERIFY_FAIL_LIMIT);
     throw new TerminalAuthError("Terminal token does not match this session", 403, "ownership_denied");
   }
 
   const record = getSessionRecord(sessionId);
-  enforceRateLimit(`verify:${sessionId}`, VERIFY_LIMIT);
 
-  // Bind to project only. tmux name / owner can change between issue and verify;
-  // attach uses the current record from disk to avoid spurious denials (TOCTOU with metadata writes).
   if (payload.projectId !== record.projectId) {
+    enforceRateLimit("verify-fail", VERIFY_FAIL_LIMIT);
     throw new TerminalAuthError("Terminal access denied", 403, "ownership_denied");
   }
+
+  // Token binds sessionId + projectId at issuance. Live metadata (tmux name, owner) may
+  // change during the TTL; always attach using the current record to avoid flaky denials.
+  enforceRateLimit(`verify:${sessionId}`, VERIFY_LIMIT);
 
   return record;
 }

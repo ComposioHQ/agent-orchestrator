@@ -21,10 +21,10 @@ export function Terminal({ sessionId }: TerminalProps) {
     fetch(`/api/sessions/${encodeURIComponent(sessionId)}/terminal`, { cache: "no-store" })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<{ url: string }>;
+        return res.json() as Promise<{ url: string; token: string }>;
       })
-      .then((data: { url: string; token: string }) => {
-        const u = new URL(data.url);
+      .then((data) => {
+        const u = new URL(data.url, typeof window !== "undefined" ? window.location.origin : "http://localhost");
         u.searchParams.set("token", data.token);
         setTerminalUrl(u.toString());
       })
