@@ -1433,22 +1433,23 @@ export function registerStop(program: Command): void {
 
           const config = loadConfig();
           const { projectId: _projectId, project } = await resolveProject(config, projectArg, "stop");
-          const sessionId = `${project.sessionPrefix}-orchestrator`;
           const port = config.port ?? DEFAULT_PORT;
 
           console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(project.name)}\n`));
 
-          // Kill orchestrator session via SessionManager
+          // Kill ALL sessions for this project (orchestrator + workers)
           const sm = await getSessionManager(config);
-          const existing = await sm.get(sessionId);
+          const allSessions = await sm.list(_projectId);
+          const purgeOpenCode = opts?.purgeSession === true;
 
-          if (existing) {
-            const spinner = ora("Stopping orchestrator session").start();
-            const purgeOpenCode = opts?.purgeSession === true;
-            await sm.kill(sessionId, { purgeOpenCode });
-            spinner.succeed("Orchestrator session stopped");
+          if (allSessions.length > 0) {
+            const spinner = ora(`Stopping ${allSessions.length} session(s)`).start();
+            for (const session of allSessions) {
+              await sm.kill(session.id, { purgeOpenCode });
+            }
+            spinner.succeed(`Stopped ${allSessions.length} session(s)`);
           } else {
-            console.log(chalk.yellow(`Orchestrator session "${sessionId}" is not running`));
+            console.log(chalk.yellow("No running sessions found"));
           }
 
           const lifecycleStopped = await stopLifecycleWorker(config, _projectId);
