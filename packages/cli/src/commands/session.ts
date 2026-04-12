@@ -191,20 +191,84 @@ export function registerSession(program: Command): void {
   session
     .command("kill")
     .description("Kill a session and remove its worktree")
-    .argument("<session>", "Session name to kill")
+    .argument("[session]", "Session name to kill")
+    .option("--all", "Kill all sessions")
+    .option("--project <id>", "Filter by project ID (used with --all)")
+    .option("--include-orchestrators", "Include orchestrator sessions (used with --all)")
     .option("--purge-session", "Delete mapped OpenCode session during kill")
-    .action(async (sessionName: string, opts: { purgeSession?: boolean }) => {
-      const config = loadConfig();
-      const sm = await getSessionManager(config);
+    .option("-y, --yes", "Skip confirmation prompt")
+    .action(
+      async (
+        sessionName: string | undefined,
+        opts: {
+          all?: boolean;
+          project?: string;
+          includeOrchestrators?: boolean;
+          purgeSession?: boolean;
+          yes?: boolean;
+        },
+      ) => {
+        if (opts.all && sessionName) {
+          console.error(chalk.red("Cannot use --all with a session name argument."));
+          process.exit(1);
+        }
+        if (!opts.all && !sessionName) {
+          console.error(chalk.red("Provide a session name or use --all."));
+          process.exit(1);
+        }
 
-      try {
-        await sm.kill(sessionName, { purgeOpenCode: opts.purgeSession === true });
-        console.log(chalk.green(`\nSession ${sessionName} killed.`));
-      } catch (err) {
-        console.error(chalk.red(`Failed to kill session ${sessionName}: ${err}`));
-        process.exit(1);
-      }
-    });
+        const config = loadConfig();
+        const sm = await getSessionManager(config);
+
+        if (opts.all) {
+          const sessions = await sm.list(opts.project);
+          if (sessions.length === 0) {
+            console.log(chalk.dim("No sessions to kill."));
+            return;
+          }
+
+          console.log(chalk.bold(`\nAbout to kill ${sessions.length} session(s).`));
+
+          if (!opts.yes) {
+            const { promptConfirm } = await import("../lib/prompts.js");
+            const confirmed = await promptConfirm("Proceed?", false);
+            if (!confirmed) return;
+          }
+
+          const result = await sm.killAll(opts.project, {
+            purgeOpenCode: opts.purgeSession === true,
+            includeOrchestrators: opts.includeOrchestrators === true,
+          });
+
+          if (result.killed.length > 0) {
+            for (const id of result.killed) {
+              console.log(chalk.green(`  Killed: ${id}`));
+            }
+          }
+          if (result.skipped.length > 0) {
+            for (const id of result.skipped) {
+              console.log(chalk.dim(`  Skipped: ${id}`));
+            }
+          }
+          if (result.errors.length > 0) {
+            for (const { sessionId, error } of result.errors) {
+              console.error(chalk.red(`  Error killing ${sessionId}: ${error}`));
+            }
+          }
+          console.log(
+            chalk.green(`\nDone. ${result.killed.length} killed, ${result.skipped.length} skipped.`),
+          );
+        } else if (sessionName) {
+          try {
+            await sm.kill(sessionName, { purgeOpenCode: opts.purgeSession === true });
+            console.log(chalk.green(`\nSession ${sessionName} killed.`));
+          } catch (err) {
+            console.error(chalk.red(`Failed to kill session ${sessionName}: ${err}`));
+            process.exit(1);
+          }
+        }
+      },
+    );
 
   session
     .command("cleanup")

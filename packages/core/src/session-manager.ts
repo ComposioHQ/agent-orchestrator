@@ -1874,6 +1874,62 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return result;
   }
 
+  async function killAll(
+    projectId?: string,
+    options?: { purgeOpenCode?: boolean; includeOrchestrators?: boolean },
+  ): Promise<CleanupResult> {
+    const result: CleanupResult = { killed: [], skipped: [], errors: [] };
+    const sessions = await list(projectId);
+
+    if (sessions.length === 0) return result;
+
+    const includeOrchestrators = options?.includeOrchestrators === true;
+    const purgeOpenCode = options?.purgeOpenCode === true;
+
+    // Partition into workers and orchestrators
+    const workers: Session[] = [];
+    const orchestrators: Session[] = [];
+
+    for (const session of sessions) {
+      const project = config.projects[session.projectId];
+      if (!project) {
+        result.skipped.push(session.id);
+        continue;
+      }
+      if (isCleanupProtectedSession(project, session.id, session.metadata)) {
+        if (includeOrchestrators) {
+          orchestrators.push(session);
+        } else {
+          result.skipped.push(session.id);
+        }
+      } else {
+        workers.push(session);
+      }
+    }
+
+    // Kill workers first (parallel)
+    const killSession = async (session: Session): Promise<void> => {
+      try {
+        await kill(session.id, { purgeOpenCode });
+        result.killed.push(session.id);
+      } catch (err) {
+        result.errors.push({
+          sessionId: session.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    };
+
+    await Promise.allSettled(workers.map(killSession));
+
+    // Kill orchestrators after workers
+    if (includeOrchestrators) {
+      await Promise.allSettled(orchestrators.map(killSession));
+    }
+
+    return result;
+  }
+
   async function send(sessionId: SessionId, message: string): Promise<void> {
     const { raw, sessionsDir, project } = requireSessionRecord(sessionId);
 
@@ -2528,5 +2584,5 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR, remap };
+  return { spawn, spawnOrchestrator, restore, list, get, kill, killAll, cleanup, send, claimPR, remap };
 }

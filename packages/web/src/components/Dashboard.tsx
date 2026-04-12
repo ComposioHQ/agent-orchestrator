@@ -25,6 +25,7 @@ import { BottomSheet } from "./BottomSheet";
 import { ConnectionBar } from "./ConnectionBar";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { DesktopAppMenu } from "./DesktopAppMenu";
+import { StopAllButton } from "./StopAllButton";
 import { getProjectScopedHref } from "@/lib/project-utils";
 
 interface DashboardProps {
@@ -683,6 +684,7 @@ function DashboardInner({
             ) : null}
             <div className="dashboard-app-header__spacer" />
             <div className="dashboard-app-header__actions">
+              <StopAllButton sessionCount={sessions.length} />
               {!allProjectsView && orchestratorHref ? (
                 <a
                   href={orchestratorHref}

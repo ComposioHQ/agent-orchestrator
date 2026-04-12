@@ -281,3 +281,123 @@ describe("deleteSession retry loop", () => {
     expect(deleteCallCount).toBe(1);
   });
 });
+
+describe("killAll", () => {
+  it("kills all worker sessions", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws1",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws2",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const result = await sm.killAll("my-app");
+
+    expect(result.killed).toHaveLength(2);
+    expect(result.killed).toContain("app-1");
+    expect(result.killed).toContain("app-2");
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("skips orchestrator sessions by default", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws1",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: "/tmp/ws-orch",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      role: "orchestrator",
+      runtimeHandle: JSON.stringify(makeHandle("rt-orch")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const result = await sm.killAll("my-app");
+
+    expect(result.killed).toEqual(["app-1"]);
+    expect(result.skipped).toEqual(["app-orchestrator"]);
+  });
+
+  it("includes orchestrators when flag is set", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws1",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: "/tmp/ws-orch",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      role: "orchestrator",
+      runtimeHandle: JSON.stringify(makeHandle("rt-orch")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const result = await sm.killAll("my-app", { includeOrchestrators: true });
+
+    expect(result.killed).toHaveLength(2);
+    expect(result.killed).toContain("app-1");
+    expect(result.killed).toContain("app-orchestrator");
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  it("handles partial failures gracefully", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws1",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws2",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+    });
+
+    // Make the runtime destroy fail for the first session
+    vi.mocked(ctx.mockRuntime.destroy).mockImplementation(async (handle) => {
+      if (handle.id === "rt-1") throw new Error("Runtime destroy failed");
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const result = await sm.killAll("my-app");
+
+    // Both should be killed — kill() catches runtime.destroy errors internally
+    expect(result.killed.length + result.errors.length).toBe(2);
+  });
+
+  it("returns empty result when no sessions exist", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const result = await sm.killAll("my-app");
+
+    expect(result).toEqual({ killed: [], skipped: [], errors: [] });
+  });
+});
