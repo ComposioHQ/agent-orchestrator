@@ -55,7 +55,7 @@ packages/core/src/__tests__/prompts/
   loader.test.ts
 ```
 
-The templates live under `src/` so the build pipeline ships them with the package. Runtime path resolution uses `path.join(__dirname, "prompts", "templates", ...)` which works for both `src/` (vitest via tsx) and `dist/` (published package), assuming the build copies `*.yaml` to `dist/`. The implementation step verifies the current build tooling and adds a minimal asset-copy step if needed.
+The templates live under `src/` so the build pipeline ships them with the package. Runtime path resolution uses `path.join(path.dirname(fileURLToPath(import.meta.url)), "templates", ...)` — **not** `__dirname`, because `@aoagents/ao-core` is an ESM package (`"type": "module"` in `package.json`) where `__dirname` is not defined. This resolution works uniformly for both `src/` (vitest via tsx) and `dist/` (published package), assuming the build copies `*.yaml` to `dist/`. The implementation step verifies the current build tooling and adds a minimal asset-copy step if needed.
 
 ### YAML Schema
 
@@ -256,7 +256,7 @@ No user-visible behavior change when `promptsDir` is unset and no `.agent-orches
 - Use the `|` block scalar (keeps final newline) and place the entire concatenated body — including the exact `\n\n` section separators that `sections.join("\n\n")` would produce — literally inside.
 - Place `${reactionsSection}` and `${projectRulesSection}` placeholders with a leading `\n\n` inside the placeholder contents themselves (i.e. the function returns `"\n\n## Automated Reactions\n\n..."` or `""`), not in the YAML surroundings. This way the template has no conditional whitespace and the empty-string case produces exactly the same output as the current "section never pushed" path.
 
-Snapshot-style tests (`prompt-builder.test.ts`, `orchestrator-prompt.test.ts`) assert byte-identical output for both prompts across the cartesian product of relevant fixture configs, and prevent accidental whitespace drift during the extraction. The tests run against the current (pre-refactor) golden strings captured from HEAD before any file is edited.
+Snapshot-style tests (`prompt-builder.test.ts`, `orchestrator-prompt.test.ts`) assert byte-identical output for both prompts across the cartesian product of relevant fixture configs — eight orchestrator fixtures (see Testing) — and prevent accidental whitespace drift during the extraction. The tests run against the current (pre-refactor) golden strings captured from HEAD before any file is edited.
 
 ## Testing
 
