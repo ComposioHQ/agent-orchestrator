@@ -1,0 +1,25 @@
+packages/cli/__tests__/lib/update-check.test.ts
+  fe86f0b8794a6d4a 49-50,68-100,125-127,184,189,196-197,202,207,214-225,234,246-256,260-261,285-294,302-303,312-314,335-339,354,370,372,377,388-406,423-454,482-498,508-511,515-575,597,599-637
+packages/cli/__tests__/commands/update.test.ts
+  fe86f0b8794a6d4a 34-37,48-51,53,68-79,92,110-124,126-137,141,144-146,149-167,170-184,187-190,192-252,259-261,264-272,274-281,283-332
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "3c733325a50c94ce12fd739f50b6daf46e56c5b7",
+  "prompts": {
+    "fe86f0b8794a6d4a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02fdcf41-8be9-41c4-a512-5262e8209203",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 516,
+      "total_deletions": 107,
+      "accepted_lines": 1854,
+      "overriden_lines": 0
+    }
+  }
+}
