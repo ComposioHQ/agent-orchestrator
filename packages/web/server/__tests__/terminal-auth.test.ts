@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getSessionsDir, updateMetadata, writeMetadata } from "@composio/ao-core";
+import { getSessionsDir, updateMetadata, writeMetadata } from "@aoagents/ao-core";
 import {
   TerminalAuthError,
   issueTerminalAccess,

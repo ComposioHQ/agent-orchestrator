@@ -14,7 +14,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { WebSocket } from "ws";
-import { getSessionsDir, writeMetadata } from "@composio/ao-core";
+import { getSessionsDir, writeMetadata } from "@aoagents/ao-core";
 import { findTmux } from "../tmux-utils.js";
 import { createDirectTerminalServer, type DirectTerminalServer } from "../direct-terminal-ws.js";
 import { issueTerminalAccess, resetTerminalAuthStateForTests } from "../terminal-auth.js";
