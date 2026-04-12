@@ -307,21 +307,21 @@
   line-height: 1.6;
 }
 
-/* Headings — accent-blue throughout, size + weight differentiate */
+/* Headings — 100gb-minimalist: monochrome grey ladder, size + weight */
 .workspace-markdown-preview h1 {
   font-size: 30px;
   font-weight: 700;
-  color: color-mix(in srgb, var(--color-accent-violet) 82%, var(--color-text-primary));
+  color: var(--color-text-primary);
   margin: 24px 0 14px;
   padding-bottom: 8px;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-accent-violet) 24%, var(--color-border-default));
-  letter-spacing: -0.01em;
+  border-bottom: 1px solid var(--color-border-default);
+  letter-spacing: -0.015em;
 }
 
 .workspace-markdown-preview h2 {
   font-size: 22px;
   font-weight: 650;
-  color: color-mix(in srgb, var(--color-accent) 86%, var(--color-text-primary));
+  color: color-mix(in srgb, var(--color-text-primary) 88%, var(--color-text-secondary));
   margin: 20px 0 10px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--color-border-subtle);
@@ -330,14 +330,14 @@
 .workspace-markdown-preview h3 {
   font-size: 18px;
   font-weight: 600;
-  color: var(--color-accent);
+  color: color-mix(in srgb, var(--color-text-primary) 70%, var(--color-text-secondary));
   margin: 16px 0 8px;
 }
 
 .workspace-markdown-preview h4 {
   font-size: 15px;
   font-weight: 600;
-  color: var(--color-accent);
+  color: color-mix(in srgb, var(--color-text-primary) 50%, var(--color-text-secondary));
   margin: 14px 0 6px;
 }
 
@@ -345,7 +345,7 @@
 .workspace-markdown-preview h6 {
   font-size: 12px;
   font-weight: 600;
-  color: color-mix(in srgb, var(--color-accent) 70%, var(--color-text-tertiary));
+  color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin: 12px 0 6px;
@@ -368,10 +368,14 @@
   text-decoration: underline;
 }
 
-/* Bold & italic */
+/* Bold & italic — monochrome: weight + subtle highlight strip for distinction */
 .workspace-markdown-preview strong {
-  color: color-mix(in srgb, var(--color-accent-yellow) 72%, var(--color-text-primary));
-  font-weight: 650;
+  color: var(--color-text-primary);
+  font-weight: 700;
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  padding: 0 3px;
+  margin: 0 -1px;
+  border-radius: 2px;
 }
 
 .workspace-markdown-preview em {
@@ -379,15 +383,15 @@
   font-style: italic;
 }
 
-/* Inline code — subtle accent tint */
+/* Inline code — 100gb-minimalist: flat mono surface on bg-elevated */
 .workspace-markdown-preview :not(pre) > code {
-  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-elevated));
+  background: var(--color-bg-elevated);
   padding: 2px 6px;
   border-radius: 4px;
-  border: 1px solid color-mix(in srgb, var(--color-accent) 15%, var(--color-border-subtle));
+  border: 1px solid var(--color-border-subtle);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 0.9em;
-  color: color-mix(in srgb, var(--color-accent) 30%, var(--color-text-primary));
+  color: var(--color-text-primary);
 }
 
 /* Code blocks — flat surface, subtle border */
@@ -556,6 +560,24 @@
 .workspace-markdown-preview img {
   max-width: 100%;
   border-radius: 4px;
+}
+
+/* Dark-mode only: dim body prose so headings, bold and inline code
+   (all at text-primary) visibly pop above the surrounding paragraphs.
+   Light mode already has strong contrast between primary/secondary
+   so no override there. */
+.dark .workspace-markdown-preview,
+.dark .workspace-markdown-preview p,
+.dark .workspace-markdown-preview li,
+.dark .workspace-markdown-preview table td {
+  color: var(--color-text-secondary);
+}
+
+/* Keep h5/h6 one step brighter than the newly-dimmed body so the
+   smallest headings stay distinguishable from prose. */
+.dark .workspace-markdown-preview h5,
+.dark .workspace-markdown-preview h6 {
+  color: color-mix(in srgb, var(--color-text-primary) 38%, var(--color-text-secondary));
 }
 
 /* ── highlight.js overrides — IDE-style multi-hue from accent tokens ─ */
