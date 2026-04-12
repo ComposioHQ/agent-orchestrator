@@ -12,7 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { PromptLoader } from "./prompts/loader.js";
+import type { PromptLoader } from "./prompts/loader.js";
 import type { ProjectConfig } from "./types.js";
 
 // =============================================================================

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as NodeFs from "node:fs";
 import type { Session, RuntimeHandle, AgentLaunchConfig, AgentSpecificConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
@@ -55,7 +56,7 @@ vi.mock("node:crypto", () => ({
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
+  const actual = (await importOriginal()) as typeof NodeFs;
   return {
     ...actual,
     existsSync: vi.fn((path: Parameters<typeof actual.existsSync>[0]) =>

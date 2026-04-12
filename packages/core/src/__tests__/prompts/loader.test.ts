@@ -144,6 +144,7 @@ template: |
     expect(loader.render("nested", { a: { b: { c: 42 } } }).trim()).toBe("Value: 42");
   });
 
+  // eslint-disable-next-line no-useless-escape
   it("9. undeclared \${...} patterns pass through literally (escape behavior)", () => {
     const promptsDir = join(tmp, ".agent-orchestrator", "prompts");
     mkdirSync(promptsDir, { recursive: true });
@@ -159,6 +160,7 @@ template: |
     );
     const loader = new PromptLoader({ projectDir: tmp });
     const out = loader.render("shell", { session: "ao-1" });
+    // eslint-disable-next-line no-useless-escape
     expect(out).toContain("gh pr view \${pr_number}");
     expect(out).toContain("Session: ao-1");
   });
