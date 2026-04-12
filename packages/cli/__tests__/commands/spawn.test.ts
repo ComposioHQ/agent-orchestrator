@@ -125,9 +125,6 @@ beforeEach(() => {
   mockEnsureLifecycleWorker.mockResolvedValue({
     running: true,
     started: true,
-    pid: 12345,
-    pidFile: "/tmp/lifecycle-worker.pid",
-    logFile: "/tmp/lifecycle-worker.log",
   });
 });
 

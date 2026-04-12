@@ -993,8 +993,8 @@ async function runStartup(
       lifecycleStatus = await ensureLifecycleWorker(config, projectId);
       spinner.succeed(
         lifecycleStatus.started
-          ? `Lifecycle worker started${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`
-          : `Lifecycle worker already running${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`,
+          ? "Lifecycle polling started"
+          : "Lifecycle polling already running",
       );
     } catch (err) {
       spinner.fail("Lifecycle worker failed to start");
@@ -1090,10 +1090,7 @@ async function runStartup(
 
   if (shouldStartLifecycle && lifecycleStatus) {
     const lifecycleLabel = lifecycleStatus.started ? "started" : "already running";
-    const lifecycleTarget = lifecycleStatus.pid
-      ? `${lifecycleLabel} (PID ${lifecycleStatus.pid})`
-      : lifecycleLabel;
-    console.log(chalk.cyan("Lifecycle:"), lifecycleTarget);
+    console.log(chalk.cyan("Lifecycle:"), lifecycleLabel);
   }
 
   if (hasExistingOrchestrators) {

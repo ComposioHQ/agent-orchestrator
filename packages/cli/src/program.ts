@@ -8,7 +8,6 @@ import { registerReviewCheck } from "./commands/review-check.js";
 import { registerDashboard } from "./commands/dashboard.js";
 import { registerOpen } from "./commands/open.js";
 import { registerStart, registerStop } from "./commands/start.js";
-import { registerLifecycleWorker } from "./commands/lifecycle-worker.js";
 import { registerVerify } from "./commands/verify.js";
 import { registerDoctor } from "./commands/doctor.js";
 import { registerUpdate } from "./commands/update.js";
@@ -36,7 +35,6 @@ export function createProgram(): Command {
   registerReviewCheck(program);
   registerDashboard(program);
   registerOpen(program);
-  registerLifecycleWorker(program);
   registerVerify(program);
   registerDoctor(program);
   registerUpdate(program);
