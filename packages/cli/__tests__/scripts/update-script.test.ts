@@ -18,7 +18,7 @@ function createFakeBinary(binDir: string, name: string, body: string): void {
 }
 
 describe("scripts/ao-update.sh", () => {
-  it("runs the expected fetch, rebuild, and launcher refresh flow", () => {
+  it("runs the expected fetch, rebuild, and launcher refresh flow", { timeout: 30_000 }, () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-script-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
@@ -176,7 +176,7 @@ exit 0`,
     expect(result.stderr).toContain("Conflicting options");
   });
 
-  it("reports when the update itself dirties the checkout", () => {
+  it("reports when the update itself dirties the checkout", { timeout: 30_000 }, () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-post-dirty-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });

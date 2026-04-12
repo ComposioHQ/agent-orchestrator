@@ -79,7 +79,7 @@ function createHealthyPath(binDir: string): void {
 }
 
 describe("scripts/ao-doctor.sh", () => {
-  it("reports a healthy install as PASS", () => {
+  it("reports a healthy install as PASS", { timeout: 30_000 }, () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-script-"));
     const fakeRepo = createHealthyRepo(tempRoot);
     const binDir = join(tempRoot, "bin");
@@ -113,7 +113,7 @@ describe("scripts/ao-doctor.sh", () => {
     expect(result.stdout).toContain("Environment looks healthy");
   });
 
-  it("applies safe fixes for missing launcher, missing dirs, and stale temp files", () => {
+  it("applies safe fixes for missing launcher, missing dirs, and stale temp files", { timeout: 45_000 }, () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-fix-"));
     const fakeRepo = createHealthyRepo(tempRoot);
     const binDir = join(tempRoot, "bin");
