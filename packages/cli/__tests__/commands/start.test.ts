@@ -53,6 +53,16 @@ const { mockProcessCwd } = vi.hoisted(() => ({
   mockProcessCwd: vi.fn<[], string>(),
 }));
 
+const { mockPromptSelect, mockPromptConfirm } = vi.hoisted(() => ({
+  mockPromptSelect: vi.fn(),
+  mockPromptConfirm: vi.fn(),
+}));
+
+vi.mock("../../src/lib/prompts.js", () => ({
+  promptSelect: mockPromptSelect,
+  promptConfirm: mockPromptConfirm,
+}));
+
 vi.mock("../../src/lib/shell.js", () => ({
   tmux: vi.fn(),
   exec: mockExec,
@@ -192,6 +202,7 @@ vi.mock("node:process", async (importOriginal) => {
 
 import { Command } from "commander";
 import { registerStart, registerStop, createConfigOnly } from "../../src/commands/start.js";
+import { isHumanCaller } from "../../src/lib/caller-context.js";
 
 let tmpDir: string;
 let program: Command;
@@ -252,6 +263,17 @@ beforeEach(() => {
   });
   mockSpawn.mockClear();
   mockProcessCwd.mockReset();
+
+  mockPromptSelect.mockReset();
+  mockPromptConfirm.mockReset();
+  // Default: return the first option's value (picks first project in multi-project prompts).
+  mockPromptSelect.mockImplementation(
+    async (_message: string, options: Array<{ value: string }>) => options[0]?.value,
+  );
+  mockPromptConfirm.mockResolvedValue(false);
+
+  // Reset isHumanCaller to its module-level default — tests can override locally.
+  vi.mocked(isHumanCaller).mockReturnValue(true);
 });
 
 afterEach(() => {
@@ -371,11 +393,14 @@ describe("start command — project resolution", () => {
     expect(errors).toContain("not found");
   });
 
-  it("errors when multiple projects and no arg", async () => {
+  it("errors when multiple projects and no arg in non-interactive mode", async () => {
     mockConfigRef.current = makeConfig({
       frontend: makeProject({ name: "Frontend" }),
       backend: makeProject({ name: "Backend" }),
     });
+
+    // Non-interactive caller (CI, agent) — no prompt, just fail with guidance.
+    vi.mocked(isHumanCaller).mockReturnValue(false);
 
     await expect(
       program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
@@ -400,6 +425,150 @@ describe("start command — project resolution", () => {
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
     expect(errors).toContain("No projects configured");
+  });
+
+  it("offers register-cwd option when cwd is a git repo and no project matches", async () => {
+    // Create a real git repo on disk so addProjectToConfig can detect it.
+    const cwdRepo = join(tmpDir, "agent-orchestrator");
+    createFakeRepo(cwdRepo, "https://github.com/ComposioHQ/agent-orchestrator.git");
+    mockCwd(cwdRepo);
+    mockProcessCwd.mockReturnValue(cwdRepo);
+
+    // Write a real yaml to disk so loadConfig() can re-read after the append.
+    const configPath = join(tmpDir, "agent-orchestrator.yaml");
+    writeFileSync(
+      configPath,
+      [
+        "port: 3000",
+        "defaults:",
+        "  runtime: tmux",
+        "  agent: claude-code",
+        "  workspace: worktree",
+        "  notifiers: []",
+        "projects:",
+        "  frontend:",
+        "    name: Frontend",
+        "    repo: org/frontend",
+        "    path: /some/other/frontend",
+        "    defaultBranch: main",
+        "    sessionPrefix: fe",
+        "  backend:",
+        "    name: Backend",
+        "    repo: org/backend",
+        "    path: /some/other/backend",
+        "    defaultBranch: main",
+        "    sessionPrefix: be",
+      ].join("\n"),
+    );
+    mockConfigRef.current = {
+      configPath,
+      port: 3000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      projects: {
+        frontend: {
+          name: "Frontend",
+          repo: "org/frontend",
+          path: "/some/other/frontend",
+          defaultBranch: "main",
+          sessionPrefix: "fe",
+        },
+        backend: {
+          name: "Backend",
+          repo: "org/backend",
+          path: "/some/other/backend",
+          defaultBranch: "main",
+          sessionPrefix: "be",
+        },
+      },
+      notifiers: {},
+      notificationRouting: {},
+      reactions: {},
+    };
+
+    // Mock shell `git` to report cwd as a git repo and surface the origin remote.
+    const { git } = await import("../../src/lib/shell.js");
+    vi.mocked(git).mockImplementation(async (args: string[]) => {
+      if (args[0] === "rev-parse" && args[1] === "--git-dir") return ".git";
+      if (args[0] === "remote" && args[1] === "get-url") {
+        return "https://github.com/ComposioHQ/agent-orchestrator.git";
+      }
+      return null;
+    });
+
+    // vi.restoreAllMocks() in afterEach wipes vi.fn() return values — re-establish.
+    const { detectProjectType, generateRulesFromTemplates, formatProjectTypeForDisplay } =
+      await import("../../src/lib/project-detection.js");
+    vi.mocked(detectProjectType).mockReturnValue({ languages: [], frameworks: [] });
+    vi.mocked(generateRulesFromTemplates).mockReturnValue(null);
+    vi.mocked(formatProjectTypeForDisplay).mockReturnValue("");
+
+    // Capture the options passed to promptSelect, then pick the register option.
+    let capturedOptions: Array<{ value: string; label: string; hint?: string }> | null = null;
+    mockPromptSelect.mockImplementationOnce(
+      async (_message: string, options: Array<{ value: string; label: string; hint?: string }>) => {
+        capturedOptions = options;
+        return "__register_cwd__";
+      },
+    );
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+
+    // Register option should be offered as the first choice, with cwd as hint.
+    expect(capturedOptions).not.toBeNull();
+    expect(capturedOptions![0]).toMatchObject({
+      value: "__register_cwd__",
+      hint: cwdRepo,
+    });
+    // Existing projects still shown after register.
+    expect(capturedOptions!.slice(1).map((o) => o.value)).toEqual(["frontend", "backend"]);
+
+    // Yaml should now contain the new project pointing at cwdRepo.
+    const updated = parseYaml(readFileSync(configPath, "utf-8")) as {
+      projects: Record<string, { path: string; repo: string; defaultBranch: string }>;
+    };
+    expect(updated.projects).toHaveProperty("agent-orchestrator");
+    expect(updated.projects["agent-orchestrator"].path).toBe(cwdRepo);
+    expect(updated.projects["agent-orchestrator"].repo).toBe("ComposioHQ/agent-orchestrator");
+    // frontend/backend untouched.
+    expect(updated.projects).toHaveProperty("frontend");
+    expect(updated.projects).toHaveProperty("backend");
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain(`Added "agent-orchestrator"`);
+    expect(output).toContain("Startup complete");
+  });
+
+  it("does not offer register-cwd option when cwd is not a git repo", async () => {
+    const nonRepo = join(tmpDir, "not-a-repo");
+    mkdirSync(nonRepo, { recursive: true });
+    mockCwd(nonRepo);
+    mockProcessCwd.mockReturnValue(nonRepo);
+
+    mockConfigRef.current = makeConfig({
+      frontend: makeProject({ name: "Frontend" }),
+      backend: makeProject({ name: "Backend", sessionPrefix: "be" }),
+    });
+
+    // Mock shell `git` — `rev-parse --git-dir` fails (not a git repo).
+    const { git } = await import("../../src/lib/shell.js");
+    vi.mocked(git).mockResolvedValue(null);
+
+    let capturedOptions: Array<{ value: string }> | null = null;
+    mockPromptSelect.mockImplementationOnce(
+      async (_message: string, options: Array<{ value: string }>) => {
+        capturedOptions = options;
+        return "frontend";
+      },
+    );
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+
+    expect(capturedOptions).not.toBeNull();
+    expect(capturedOptions!.map((o) => o.value)).toEqual(["frontend", "backend"]);
+    expect(capturedOptions!.some((o) => o.value === "__register_cwd__")).toBe(false);
   });
 });
 
