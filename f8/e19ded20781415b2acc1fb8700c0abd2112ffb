@@ -1,0 +1,23 @@
+packages/core/src/config.ts
+  3b3b057bdfd8aeb4 649-651,654-655
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "f8e19ded20781415b2acc1fb8700c0abd2112ffb",
+  "prompts": {
+    "3b3b057bdfd8aeb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef60a7a6-f160-47e8-bbcb-a3219a8ab2ee",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 10,
+      "accepted_lines": 3145,
+      "overriden_lines": 0
+    }
+  }
+}
