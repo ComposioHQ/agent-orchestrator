@@ -160,8 +160,8 @@ Minimal journal schema example:
   "status": "failed",
   "attempt": 2,
   "operationKey": "create_pr:f4d7dbe5b0f8:upstream",
-  "targetRepo": "ComposioHQ/agent-orchestrator",
-  "issueUrl": "https://github.com/ComposioHQ/agent-orchestrator/issues/399",
+  "targetRepo": "snagnever/agent-orchestrator",
+  "issueUrl": "https://github.com/snagnever/agent-orchestrator/issues/399",
   "prUrl": null,
   "consent": {
     "createFork": "approved",
