@@ -857,7 +857,7 @@ describe("start command — orchestrator session strategy display", () => {
     expect(output).not.toContain("reused existing session");
   });
 
-  it.each(["delete", "ignore", "delete-new", "ignore-new", "kill-previous"] as const)(
+  it.each(["delete", "ignore", "new"] as const)(
     "uses ao session attach when strategy is %s and --no-dashboard",
     async (orchestratorSessionStrategy) => {
       mockConfigRef.current = makeConfig({

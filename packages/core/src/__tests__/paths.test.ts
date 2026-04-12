@@ -81,6 +81,16 @@ describe("Hash Generation", () => {
     expect(hash1).not.toBe(hash2);
   });
 
+  it("falls back to resolve() when path does not exist", () => {
+    const nonExistent = join(tmpDir, "does-not-exist", "agent-orchestrator.yaml");
+
+    // Should not throw — falls back to path.resolve()
+    const hash = generateConfigHash(nonExistent);
+
+    expect(hash).toHaveLength(12);
+    expect(hash).toMatch(/^[a-f0-9]{12}$/);
+  });
+
   it("resolves symlinks before hashing", () => {
     const realDir = join(tmpDir, "real");
     const symlinkDir = join(tmpDir, "symlink");
@@ -225,6 +235,10 @@ describe("Session Prefix Generation", () => {
   });
 
   describe("edge cases", () => {
+    it("returns fallback for empty string", () => {
+      expect(generateSessionPrefix("")).toBe("ao");
+    });
+
     it("handles single character", () => {
       expect(generateSessionPrefix("a")).toBe("a");
     });

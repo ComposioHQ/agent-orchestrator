@@ -201,8 +201,13 @@ const ProjectConfigSchema = z.object({
   agentRulesFile: z.string().optional(),
   orchestratorRules: z.string().optional(),
   orchestratorSessionStrategy: z
-    .enum(["reuse", "delete", "ignore", "delete-new", "ignore-new", "kill-previous"])
-    .optional(),
+    .enum(["reuse", "delete", "ignore", "delete-new", "ignore-new", "kill-previous", "new"])
+    .optional()
+    .transform((v) => {
+      if (v === "kill-previous" || v === "delete-new") return "delete" as const;
+      if (v === "ignore-new") return "ignore" as const;
+      return v;
+    }),
   opencodeIssueSessionStrategy: z.enum(["reuse", "delete", "ignore"]).optional(),
   decomposer: DecomposerConfigSchema.optional(),
 });
@@ -271,19 +276,20 @@ function expandHome(filepath: string): string {
   return filepath;
 }
 
-/** Expand all path fields in the config */
+/** Expand all path fields in the config (returns a new object, never mutates) */
 function expandPaths(config: OrchestratorConfig): OrchestratorConfig {
-  for (const project of Object.values(config.projects)) {
-    project.path = expandHome(project.path);
-  }
+  const projects = Object.fromEntries(
+    Object.entries(config.projects).map(([id, project]) => [
+      id,
+      { ...project, path: expandHome(project.path) },
+    ]),
+  );
 
-  for (const plugin of config.plugins ?? []) {
-    if (plugin.path) {
-      plugin.path = expandHome(plugin.path);
-    }
-  }
+  const plugins = (config.plugins ?? []).map((plugin) =>
+    plugin.path ? { ...plugin, path: expandHome(plugin.path) } : plugin,
+  );
 
-  return config;
+  return { ...config, projects, plugins };
 }
 
 /**
@@ -461,34 +467,25 @@ function mergeExternalPlugins(
   return plugins;
 }
 
-/** Apply defaults to project configs */
+/** Apply defaults to project configs (returns a new object, never mutates) */
 function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
-  for (const [id, project] of Object.entries(config.projects)) {
-    // Derive name from project ID if not set
-    if (!project.name) {
-      project.name = id;
-    }
+  const projects = Object.fromEntries(
+    Object.entries(config.projects).map(([id, project]) => {
+      const inferredPlugin = inferScmPlugin(project);
+      return [
+        id,
+        {
+          ...project,
+          name: project.name || id,
+          sessionPrefix: project.sessionPrefix || generateSessionPrefix(basename(project.path)),
+          scm: project.scm || (project.repo.includes("/") ? { plugin: inferredPlugin } : undefined),
+          tracker: project.tracker || { plugin: inferredPlugin },
+        },
+      ];
+    }),
+  );
 
-    // Derive session prefix from project path basename if not set
-    if (!project.sessionPrefix) {
-      const projectId = basename(project.path);
-      project.sessionPrefix = generateSessionPrefix(projectId);
-    }
-
-    const inferredPlugin = inferScmPlugin(project);
-
-    // Infer SCM from repo if not set
-    if (!project.scm && project.repo.includes("/")) {
-      project.scm = { plugin: inferredPlugin };
-    }
-
-    // Infer tracker from repo if not set (default to github issues)
-    if (!project.tracker) {
-      project.tracker = { plugin: inferredPlugin };
-    }
-  }
-
-  return config;
+  return { ...config, projects };
 }
 
 /** Validate project uniqueness and session prefix collisions */
@@ -617,9 +614,7 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
   };
 
   // Merge defaults with user-specified reactions (user wins)
-  config.reactions = { ...defaults, ...config.reactions };
-
-  return config;
+  return { ...config, reactions: { ...defaults, ...config.reactions } };
 }
 
 /**

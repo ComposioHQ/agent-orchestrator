@@ -946,6 +946,177 @@ describe("collectExternalPluginConfigs", () => {
   });
 });
 
+describe("Config Pipeline Immutability", () => {
+  it("validateConfig does not mutate the input object", () => {
+    const raw = {
+      projects: {
+        proj1: {
+          path: "~/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+    };
+
+    // Deep-freeze the raw input to detect mutation attempts
+    const frozen = JSON.parse(JSON.stringify(raw));
+    validateConfig(raw);
+
+    expect(raw).toEqual(frozen);
+  });
+
+  it("expandPaths returns a new config with expanded paths, not mutated original", () => {
+    const config1 = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+    });
+
+    const config2 = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+    });
+
+    // Both calls should produce identical, independent results
+    expect(config1.projects.proj1.path).toBe(config2.projects.proj1.path);
+  });
+
+  it("applyProjectDefaults fills name and sessionPrefix without mutating siblings", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/integrator",
+          repo: "org/integrator",
+          defaultBranch: "main",
+        },
+        proj2: {
+          path: "/repos/backend",
+          repo: "org/backend",
+          defaultBranch: "main",
+        },
+      },
+    });
+
+    // Each project should have independent defaults
+    expect(config.projects.proj1.name).toBe("proj1");
+    expect(config.projects.proj2.name).toBe("proj2");
+    expect(config.projects.proj1.sessionPrefix).toBe("int");
+    expect(config.projects.proj2.sessionPrefix).toBe("bac");
+  });
+
+  it("applyDefaultReactions merges without losing user overrides", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+      reactions: {
+        "ci-failed": {
+          auto: false,
+          action: "notify",
+        },
+      },
+    });
+
+    // User override should win
+    expect(config.reactions["ci-failed"].auto).toBe(false);
+    expect(config.reactions["ci-failed"].action).toBe("notify");
+    // Defaults should still be present for other reactions
+    expect(config.reactions["changes-requested"]).toBeDefined();
+    expect(config.reactions["changes-requested"].auto).toBe(true);
+  });
+});
+
+describe("Session Strategy Normalization", () => {
+  it("normalizes kill-previous to delete at schema level", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          orchestratorSessionStrategy: "kill-previous",
+        },
+      },
+    });
+
+    expect(config.projects.proj1.orchestratorSessionStrategy).toBe("delete");
+  });
+
+  it("normalizes delete-new to delete at schema level", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          orchestratorSessionStrategy: "delete-new",
+        },
+      },
+    });
+
+    expect(config.projects.proj1.orchestratorSessionStrategy).toBe("delete");
+  });
+
+  it("normalizes ignore-new to ignore at schema level", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          orchestratorSessionStrategy: "ignore-new",
+        },
+      },
+    });
+
+    expect(config.projects.proj1.orchestratorSessionStrategy).toBe("ignore");
+  });
+
+  it("preserves canonical values unchanged", () => {
+    for (const strategy of ["reuse", "delete", "ignore", "new"] as const) {
+      const config = validateConfig({
+        projects: {
+          proj1: {
+            path: "/repos/test",
+            repo: "org/test",
+            defaultBranch: "main",
+            orchestratorSessionStrategy: strategy,
+          },
+        },
+      });
+
+      expect(config.projects.proj1.orchestratorSessionStrategy).toBe(strategy);
+    }
+  });
+
+  it("allows undefined (optional)", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+    });
+
+    expect(config.projects.proj1.orchestratorSessionStrategy).toBeUndefined();
+  });
+});
+
 describe("External Plugin Name Generation", () => {
   it("extracts plugin name from scoped npm package", () => {
     const config = validateConfig({

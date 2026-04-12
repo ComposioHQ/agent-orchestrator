@@ -9,16 +9,22 @@
  */
 
 import { createHash } from "node:crypto";
-import { dirname, basename, join } from "node:path";
+import { dirname, basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { realpathSync, existsSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 
 /**
  * Generate a 12-character hash from a config directory path.
- * Always resolves symlinks before hashing to ensure consistency.
+ * Resolves symlinks before hashing when possible; falls back to
+ * path.resolve() when the path doesn't exist yet (e.g. pending registration).
  */
 export function generateConfigHash(configPath: string): string {
-  const resolved = realpathSync(configPath);
+  let resolved: string;
+  try {
+    resolved = realpathSync(configPath);
+  } catch {
+    resolved = resolve(configPath);
+  }
   const configDir = dirname(resolved);
   const hash = createHash("sha256").update(configDir).digest("hex");
   return hash.slice(0, 12);
@@ -53,6 +59,10 @@ export function generateInstanceId(configPath: string, projectPath: string): str
  * 4. Single word: first 3 chars (integrator → int)
  */
 export function generateSessionPrefix(projectId: string): string {
+  if (!projectId) {
+    return "ao";
+  }
+
   if (projectId.length <= 4) {
     return projectId.toLowerCase();
   }
@@ -189,7 +199,12 @@ export function expandHome(filepath: string): string {
  */
 export function validateAndStoreOrigin(configPath: string, projectPath: string): void {
   const originPath = getOriginFilePath(configPath, projectPath);
-  const resolvedConfigPath = realpathSync(configPath);
+  let resolvedConfigPath: string;
+  try {
+    resolvedConfigPath = realpathSync(configPath);
+  } catch {
+    resolvedConfigPath = resolve(configPath);
+  }
 
   if (existsSync(originPath)) {
     const stored = readFileSync(originPath, "utf-8").trim();

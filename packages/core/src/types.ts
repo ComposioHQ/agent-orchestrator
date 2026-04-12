@@ -1154,9 +1154,7 @@ export interface ProjectConfig {
     | "reuse"
     | "delete"
     | "ignore"
-    | "delete-new"
-    | "ignore-new"
-    | "kill-previous";
+    | "new";
 
   opencodeIssueSessionStrategy?: "reuse" | "delete" | "ignore";
 
