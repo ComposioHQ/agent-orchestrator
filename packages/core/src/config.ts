@@ -175,6 +175,8 @@ const ProjectConfigSchema = z.object({
     .optional(),
   /** Unix timestamp of last shadow sync from local config (set by global config, read-only here). */
   _shadowSyncedAt: z.number().optional(),
+  /** Stable storage identity hash — set once at registration, never recomputed. */
+  storageKey: z.string().optional(),
   runtime: z.string().optional(),
   agent: z.string().optional(),
   workspace: z.string().optional(),

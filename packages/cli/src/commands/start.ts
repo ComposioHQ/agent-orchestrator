@@ -1356,15 +1356,16 @@ export function registerStart(program: Command): void {
                 ],
                 "open",
               );
+              const normalizedChoice = choice || "open";
 
-              if (choice === "open") {
+              if (normalizedChoice === "open") {
                 const url = `http://localhost:${running.port}`;
                 openUrl(url);
                 process.exit(0);
-              } else if (choice === "new") {
+              } else if (normalizedChoice === "new") {
                 // Defer config mutation until after config is loaded below
                 startNewOrchestrator = true;
-              } else if (choice === "restart") {
+              } else if (normalizedChoice === "restart") {
                 try { process.kill(running.pid, "SIGTERM"); } catch { /* already dead */ }
                 if (!(await waitForExit(running.pid, 5000))) {
                   console.log(chalk.yellow("  Process didn't exit cleanly, sending SIGKILL..."));
