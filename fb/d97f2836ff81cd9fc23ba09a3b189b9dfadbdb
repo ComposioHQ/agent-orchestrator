@@ -1,0 +1,23 @@
+packages/cli/src/commands/update.ts
+  fe86f0b8794a6d4a 141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "fbd97f2836ff81cd9fc23ba09a3b189b9dfadbdb",
+  "prompts": {
+    "fe86f0b8794a6d4a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02fdcf41-8be9-41c4-a512-5262e8209203",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1339,
+      "overriden_lines": 0
+    }
+  }
+}
