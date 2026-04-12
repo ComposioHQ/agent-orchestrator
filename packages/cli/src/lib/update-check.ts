@@ -47,18 +47,20 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 // Install detection
 // ---------------------------------------------------------------------------
 
-/** Detect how the running `ao` binary was installed based on its file location. */
-export function detectInstallMethod(): InstallMethod {
-  const thisFile = fileURLToPath(import.meta.url);
-
+/**
+ * Classify a resolved file path as npm-global, git source, or unknown.
+ * Extracted for testability — `detectInstallMethod` calls this with
+ * the resolved `import.meta.url` path.
+ */
+export function classifyInstallPath(resolvedPath: string): InstallMethod {
   // Running from inside node_modules → npm/yarn/pnpm global install
-  if (thisFile.includes("/node_modules/") || thisFile.includes("\\node_modules\\")) {
+  if (resolvedPath.includes("/node_modules/") || resolvedPath.includes("\\node_modules\\")) {
     return "npm-global";
   }
 
   // Running from a source checkout → git install
   // Walk up from packages/cli/dist/lib/ (or src/lib/) to repo root
-  const repoRoot = resolve(dirname(thisFile), "../../../../");
+  const repoRoot = resolve(dirname(resolvedPath), "../../../../");
   if (
     existsSync(resolve(repoRoot, "scripts/ao-update.sh")) &&
     existsSync(resolve(repoRoot, ".git"))
@@ -67,6 +69,11 @@ export function detectInstallMethod(): InstallMethod {
   }
 
   return "unknown";
+}
+
+/** Detect how the running `ao` binary was installed based on its file location. */
+export function detectInstallMethod(): InstallMethod {
+  return classifyInstallPath(fileURLToPath(import.meta.url));
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +114,7 @@ export function getUpdateCommand(method: InstallMethod): string {
 // Cache
 // ---------------------------------------------------------------------------
 
-function getCacheDir(): string {
+export function getCacheDir(): string {
   const xdg = process.env["XDG_CACHE_HOME"];
   const base = xdg || join(homedir(), ".cache");
   return join(base, "ao");
@@ -141,7 +148,7 @@ export function readCachedUpdateInfo(): CacheData | null {
   }
 }
 
-function writeCache(data: CacheData): void {
+export function writeCache(data: CacheData): void {
   try {
     const dir = getCacheDir();
     mkdirSync(dir, { recursive: true });
@@ -253,6 +260,10 @@ export function maybeShowUpdateNotice(): void {
 /**
  * Kick off a background cache refresh. Call after parse() completes.
  * Uses setTimeout with .unref() so the process can exit without waiting.
+ * Note: for short-lived commands, the timer may not fire before exit.
+ * The cache gets seeded reliably by `ao update --check` or any `ao update`
+ * invocation. This is a best-effort bonus for long-running commands like
+ * `ao start`.
  */
 export function scheduleBackgroundRefresh(): void {
   const timer = setTimeout(() => {
@@ -265,13 +276,20 @@ export function scheduleBackgroundRefresh(): void {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Simple semver comparison: returns true if current < latest. */
+/**
+ * Simple semver comparison: returns true if current < latest.
+ * Strips pre-release suffixes (e.g. "0.2.2-beta.1" → "0.2.2") before
+ * comparing, since pre-release ordering is complex and the npm registry
+ * `latest` tag always points to a stable release.
+ */
 export function isVersionOutdated(current: string, latest: string): boolean {
-  const currentParts = current.split(".").map(Number);
-  const latestParts = latest.split(".").map(Number);
+  const stripPrerelease = (v: string) => v.split("-")[0]!;
+  const currentParts = stripPrerelease(current).split(".").map(Number);
+  const latestParts = stripPrerelease(latest).split(".").map(Number);
   for (let i = 0; i < 3; i++) {
     const c = currentParts[i] ?? 0;
     const l = latestParts[i] ?? 0;
+    if (Number.isNaN(c) || Number.isNaN(l)) return false;
     if (c < l) return true;
     if (c > l) return false;
   }

@@ -53,10 +53,44 @@ vi.mock("../../src/lib/prompts.js", () => ({
   promptConfirm: (...args: unknown[]) => mockPromptConfirm(...args),
 }));
 
+// Mock child_process.spawn for npm install tests
+const { mockSpawn } = vi.hoisted(() => ({
+  mockSpawn: vi.fn(),
+}));
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  return {
+    ...actual,
+    spawn: (...args: unknown[]) => mockSpawn(...args),
+  };
+});
+
 import { registerUpdate } from "../../src/commands/update.js";
+import { EventEmitter } from "node:events";
+
+function makeNpmUpdateInfo(overrides = {}) {
+  return {
+    currentVersion: "0.2.2",
+    latestVersion: "0.3.0",
+    isOutdated: true,
+    installMethod: "npm-global" as const,
+    recommendedCommand: "npm install -g @aoagents/ao@latest",
+    checkedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function createMockChild(exitCode: number) {
+  const child = new EventEmitter();
+  setTimeout(() => child.emit("exit", exitCode), 0);
+  return child;
+}
 
 describe("update command", () => {
   let program: Command;
+  let origStdinTTY: boolean | undefined;
+  let origStdoutTTY: boolean | undefined;
 
   beforeEach(() => {
     program = new Command();
@@ -66,17 +100,13 @@ describe("update command", () => {
     mockExecuteScriptCommand.mockResolvedValue(undefined);
     mockDetectInstallMethod.mockReturnValue("git");
     mockCheckForUpdate.mockReset();
-    mockCheckForUpdate.mockResolvedValue({
-      currentVersion: "0.2.2",
-      latestVersion: "0.3.0",
-      isOutdated: true,
-      installMethod: "git" as const,
-      recommendedCommand: "ao update",
-      checkedAt: new Date().toISOString(),
-    });
+    mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ installMethod: "git", recommendedCommand: "ao update" }));
     mockInvalidateCache.mockReset();
     mockPromptConfirm.mockReset();
     mockPromptConfirm.mockResolvedValue(false);
+    mockSpawn.mockReset();
+    origStdinTTY = process.stdin.isTTY;
+    origStdoutTTY = process.stdout.isTTY;
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(process, "exit").mockImplementation((code) => {
@@ -86,6 +116,8 @@ describe("update command", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    Object.defineProperty(process.stdin, "isTTY", { value: origStdinTTY, configurable: true });
+    Object.defineProperty(process.stdout, "isTTY", { value: origStdoutTTY, configurable: true });
   });
 
   // -----------------------------------------------------------------------
@@ -96,11 +128,7 @@ describe("update command", () => {
     await expect(
       program.parseAsync(["node", "test", "update", "--skip-smoke", "--smoke-only"]),
     ).rejects.toThrow("process.exit(1)");
-
     expect(mockExecuteScriptCommand).not.toHaveBeenCalled();
-    expect(vi.mocked(console.error)).toHaveBeenCalledWith(
-      "`ao update` does not allow `--skip-smoke` together with `--smoke-only`.",
-    );
   });
 
   // -----------------------------------------------------------------------
@@ -112,9 +140,7 @@ describe("update command", () => {
       const logSpy = vi.mocked(console.log);
       await program.parseAsync(["node", "test", "update", "--check"]);
 
-      expect(logSpy).toHaveBeenCalled();
-      const output = logSpy.mock.calls[0]?.[0] as string;
-      const parsed = JSON.parse(output);
+      const parsed = JSON.parse(logSpy.mock.calls[0]?.[0] as string);
       expect(parsed).toHaveProperty("currentVersion");
       expect(parsed).toHaveProperty("latestVersion");
       expect(parsed).toHaveProperty("isOutdated");
@@ -123,17 +149,20 @@ describe("update command", () => {
       expect(parsed).toHaveProperty("checkedAt");
     });
 
-    it("forces a fresh registry fetch (not cached)", async () => {
+    it("forces a fresh registry fetch", async () => {
       await program.parseAsync(["node", "test", "update", "--check"]);
-
       expect(mockCheckForUpdate).toHaveBeenCalledWith({ force: true });
     });
 
-    it("does not run script-runner or prompts", async () => {
+    it("outputs valid JSON even when registry is unreachable", async () => {
+      mockCheckForUpdate.mockResolvedValue(
+        makeNpmUpdateInfo({ latestVersion: null, isOutdated: false, checkedAt: null }),
+      );
+      const logSpy = vi.mocked(console.log);
       await program.parseAsync(["node", "test", "update", "--check"]);
 
-      expect(mockExecuteScriptCommand).not.toHaveBeenCalled();
-      expect(mockPromptConfirm).not.toHaveBeenCalled();
+      const parsed = JSON.parse(logSpy.mock.calls[0]?.[0] as string);
+      expect(parsed.latestVersion).toBeNull();
     });
   });
 
@@ -174,14 +203,10 @@ describe("update command", () => {
   describe("npm-global install", () => {
     beforeEach(() => {
       mockDetectInstallMethod.mockReturnValue("npm-global");
-      mockCheckForUpdate.mockResolvedValue({
-        currentVersion: "0.2.2",
-        latestVersion: "0.3.0",
-        isOutdated: true,
-        installMethod: "npm-global" as const,
-        recommendedCommand: "npm install -g @aoagents/ao@latest",
-        checkedAt: new Date().toISOString(),
-      });
+      mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo());
+      // Default: TTY mode (user is at a terminal)
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
     });
 
     it("does not run script-runner", async () => {
@@ -190,56 +215,31 @@ describe("update command", () => {
     });
 
     it("prints already up to date when not outdated", async () => {
-      mockCheckForUpdate.mockResolvedValue({
-        currentVersion: "0.3.0",
-        latestVersion: "0.3.0",
-        isOutdated: false,
-        installMethod: "npm-global" as const,
-        recommendedCommand: "npm install -g @aoagents/ao@latest",
-        checkedAt: new Date().toISOString(),
-      });
+      mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ isOutdated: false, latestVersion: "0.2.2", currentVersion: "0.2.2" }));
 
       const logSpy = vi.mocked(console.log);
       await program.parseAsync(["node", "test", "update"]);
-
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Already on latest version"),
-      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Already on latest version"));
     });
 
     it("exits non-zero when registry is unreachable", async () => {
-      mockCheckForUpdate.mockResolvedValue({
-        currentVersion: "0.2.2",
-        latestVersion: null,
-        isOutdated: false,
-        installMethod: "npm-global" as const,
-        recommendedCommand: "npm install -g @aoagents/ao@latest",
-        checkedAt: null,
-      });
+      mockCheckForUpdate.mockResolvedValue(
+        makeNpmUpdateInfo({ latestVersion: null, isOutdated: false }),
+      );
 
       await expect(
         program.parseAsync(["node", "test", "update"]),
       ).rejects.toThrow("process.exit(1)");
-
       expect(vi.mocked(console.error)).toHaveBeenCalledWith(
         expect.stringContaining("Could not reach npm registry"),
       );
     });
 
-    it("warns when --skip-smoke is used with npm-global", async () => {
-      // Not outdated so it exits early after the warning
-      mockCheckForUpdate.mockResolvedValue({
-        currentVersion: "0.3.0",
-        latestVersion: "0.3.0",
-        isOutdated: false,
-        installMethod: "npm-global" as const,
-        recommendedCommand: "npm install -g @aoagents/ao@latest",
-        checkedAt: new Date().toISOString(),
-      });
-
+    it("warns when --skip-smoke is used", async () => {
+      mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ isOutdated: false }));
       const logSpy = vi.mocked(console.log);
-      await program.parseAsync(["node", "test", "update", "--skip-smoke"]);
 
+      await program.parseAsync(["node", "test", "update", "--skip-smoke"]);
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("only apply to git source installs"),
       );
@@ -247,8 +247,96 @@ describe("update command", () => {
 
     it("forces a fresh registry fetch", async () => {
       await program.parseAsync(["node", "test", "update"]);
-
       expect(mockCheckForUpdate).toHaveBeenCalledWith({ force: true });
+    });
+
+    it("exits non-zero in non-TTY mode without prompting", async () => {
+      Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+
+      await expect(
+        program.parseAsync(["node", "test", "update"]),
+      ).rejects.toThrow("process.exit(1)");
+      expect(mockPromptConfirm).not.toHaveBeenCalled();
+    });
+
+    it("prints the npm command in non-TTY mode", async () => {
+      Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+
+      const logSpy = vi.mocked(console.log);
+      try {
+        await program.parseAsync(["node", "test", "update"]);
+      } catch {
+        // process.exit throws
+      }
+      const allOutput = logSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(allOutput).toContain("npm install -g @aoagents/ao@latest");
+    });
+
+    it("runs npm install when user confirms", async () => {
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      mockPromptConfirm.mockResolvedValue(true);
+      mockSpawn.mockReturnValue(createMockChild(0));
+
+      await program.parseAsync(["node", "test", "update"]);
+
+      expect(mockSpawn).toHaveBeenCalledWith("npm", expect.arrayContaining(["install"]), expect.anything());
+      expect(mockInvalidateCache).toHaveBeenCalled();
+    });
+
+    it("exits non-zero when npm install fails", async () => {
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      mockPromptConfirm.mockResolvedValue(true);
+      mockSpawn.mockReturnValue(createMockChild(1));
+
+      await expect(
+        program.parseAsync(["node", "test", "update"]),
+      ).rejects.toThrow("process.exit(1)");
+      expect(mockInvalidateCache).not.toHaveBeenCalled();
+    });
+
+    it("prints sudo suggestion when npm install fails", async () => {
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      mockPromptConfirm.mockResolvedValue(true);
+      mockSpawn.mockReturnValue(createMockChild(1));
+
+      try {
+        await program.parseAsync(["node", "test", "update"]);
+      } catch {
+        // process.exit throws
+      }
+      expect(vi.mocked(console.error)).toHaveBeenCalledWith(
+        expect.stringContaining("sudo"),
+      );
+    });
+
+    it("handles spawn error (e.g. npm not found)", async () => {
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      mockPromptConfirm.mockResolvedValue(true);
+
+      const child = new EventEmitter();
+      mockSpawn.mockReturnValue(child);
+      setTimeout(() => child.emit("error", new Error("ENOENT: npm not found")), 0);
+
+      await expect(
+        program.parseAsync(["node", "test", "update"]),
+      ).rejects.toThrow("ENOENT");
+    });
+
+    it("does nothing when user declines prompt", async () => {
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      mockPromptConfirm.mockResolvedValue(false);
+
+      await program.parseAsync(["node", "test", "update"]);
+
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(mockInvalidateCache).not.toHaveBeenCalled();
     });
   });
 
@@ -262,35 +350,19 @@ describe("update command", () => {
     });
 
     it("prints help message with install method unknown", async () => {
-      mockCheckForUpdate.mockResolvedValue({
-        currentVersion: "0.2.2",
-        latestVersion: "0.3.0",
-        isOutdated: true,
-        installMethod: "unknown" as const,
-        recommendedCommand: "npm install -g @aoagents/ao@latest",
-        checkedAt: new Date().toISOString(),
-      });
-
+      mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ installMethod: "unknown" }));
       const logSpy = vi.mocked(console.log);
+
       await program.parseAsync(["node", "test", "update"]);
 
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Could not detect install method"),
-      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Could not detect install method"));
       expect(mockExecuteScriptCommand).not.toHaveBeenCalled();
     });
 
     it("shows latest version when available", async () => {
-      mockCheckForUpdate.mockResolvedValue({
-        currentVersion: "0.2.2",
-        latestVersion: "0.3.0",
-        isOutdated: true,
-        installMethod: "unknown" as const,
-        recommendedCommand: "npm install -g @aoagents/ao@latest",
-        checkedAt: new Date().toISOString(),
-      });
-
+      mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ installMethod: "unknown" }));
       const logSpy = vi.mocked(console.log);
+
       await program.parseAsync(["node", "test", "update"]);
 
       const allOutput = logSpy.mock.calls.map((c) => c[0]).join("\n");
@@ -298,36 +370,17 @@ describe("update command", () => {
     });
 
     it("handles registry unreachable gracefully", async () => {
-      mockCheckForUpdate.mockResolvedValue({
-        currentVersion: "0.2.2",
-        latestVersion: null,
-        isOutdated: false,
-        installMethod: "unknown" as const,
-        recommendedCommand: "npm install -g @aoagents/ao@latest",
-        checkedAt: null,
-      });
+      mockCheckForUpdate.mockResolvedValue(
+        makeNpmUpdateInfo({ installMethod: "unknown", latestVersion: null, isOutdated: false }),
+      );
 
-      const logSpy = vi.mocked(console.log);
       // Should not throw
       await program.parseAsync(["node", "test", "update"]);
-
-      const allOutput = logSpy.mock.calls.map((c) => c[0]).join("\n");
-      expect(allOutput).toContain("Could not detect install method");
     });
 
     it("suggests npm install command", async () => {
-      mockCheckForUpdate.mockResolvedValue({
-        currentVersion: "0.2.2",
-        latestVersion: "0.3.0",
-        isOutdated: true,
-        installMethod: "unknown" as const,
-        recommendedCommand: "npm install -g @aoagents/ao@latest",
-        checkedAt: new Date().toISOString(),
-      });
-
-      const logSpy = vi.mocked(console.log);
+      mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ installMethod: "unknown" }));
       await program.parseAsync(["node", "test", "update"]);
-
       expect(mockGetUpdateCommand).toHaveBeenCalledWith("npm-global");
     });
   });

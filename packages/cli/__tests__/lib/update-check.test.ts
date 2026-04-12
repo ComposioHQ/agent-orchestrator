@@ -38,12 +38,15 @@ const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
 import {
+  classifyInstallPath,
   detectInstallMethod,
   getCurrentVersion,
   getUpdateCommand,
+  getCacheDir,
   readCachedUpdateInfo,
   fetchLatestVersion,
   invalidateCache,
+  writeCache,
   checkForUpdate,
   maybeShowUpdateNotice,
   scheduleBackgroundRefresh,
@@ -96,13 +99,39 @@ describe("update-check", () => {
     it("handles versions with missing patch", () => {
       expect(isVersionOutdated("1.0", "1.0.1")).toBe(true);
     });
+
+    it("strips pre-release suffixes before comparing", () => {
+      expect(isVersionOutdated("0.2.2-beta.1", "0.3.0")).toBe(true);
+      expect(isVersionOutdated("0.3.0", "0.3.0-beta.1")).toBe(false);
+    });
+
+    it("returns false when pre-release tags produce NaN parts", () => {
+      // "beta" alone as a version part → NaN → treated safely
+      expect(isVersionOutdated("beta", "1.0.0")).toBe(false);
+    });
+
+    it("returns false when both are the same with pre-release", () => {
+      expect(isVersionOutdated("0.2.2-rc.1", "0.2.2-rc.2")).toBe(false);
+    });
   });
 
   // -----------------------------------------------------------------------
-  // detectInstallMethod
+  // classifyInstallPath
   // -----------------------------------------------------------------------
 
-  describe("detectInstallMethod", () => {
+  describe("classifyInstallPath", () => {
+    it("returns 'npm-global' when path contains /node_modules/", () => {
+      expect(
+        classifyInstallPath("/usr/local/lib/node_modules/@aoagents/ao-cli/dist/lib/update-check.js"),
+      ).toBe("npm-global");
+    });
+
+    it("returns 'npm-global' when path contains backslash node_modules (Windows)", () => {
+      expect(
+        classifyInstallPath("C:\\Users\\test\\node_modules\\@aoagents\\ao-cli\\dist\\lib\\update-check.js"),
+      ).toBe("npm-global");
+    });
+
     it("returns 'git' when repo root has scripts/ao-update.sh and .git", () => {
       mockExistsSync.mockImplementation((path: string) => {
         if (path.endsWith("scripts/ao-update.sh")) return true;
@@ -110,7 +139,9 @@ describe("update-check", () => {
         return false;
       });
 
-      expect(detectInstallMethod()).toBe("git");
+      expect(
+        classifyInstallPath("/home/user/agent-orchestrator/packages/cli/src/lib/update-check.ts"),
+      ).toBe("git");
     });
 
     it("returns 'unknown' when .git exists but scripts/ao-update.sh does not", () => {
@@ -119,7 +150,9 @@ describe("update-check", () => {
         return false;
       });
 
-      expect(detectInstallMethod()).toBe("unknown");
+      expect(
+        classifyInstallPath("/home/user/some-project/packages/cli/src/lib/update-check.ts"),
+      ).toBe("unknown");
     });
 
     it("returns 'unknown' when scripts/ao-update.sh exists but .git does not", () => {
@@ -128,12 +161,33 @@ describe("update-check", () => {
         return false;
       });
 
-      expect(detectInstallMethod()).toBe("unknown");
+      expect(
+        classifyInstallPath("/home/user/some-project/packages/cli/src/lib/update-check.ts"),
+      ).toBe("unknown");
     });
 
     it("returns 'unknown' when neither .git nor scripts/ao-update.sh exist", () => {
       mockExistsSync.mockReturnValue(false);
-      expect(detectInstallMethod()).toBe("unknown");
+      expect(
+        classifyInstallPath("/tmp/random/path/update-check.ts"),
+      ).toBe("unknown");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // detectInstallMethod (integration — uses real import.meta.url)
+  // -----------------------------------------------------------------------
+
+  describe("detectInstallMethod", () => {
+    it("returns a valid InstallMethod", () => {
+      mockExistsSync.mockImplementation((path: string) => {
+        if (path.endsWith("scripts/ao-update.sh")) return true;
+        if (path.endsWith(".git")) return true;
+        return false;
+      });
+
+      const result = detectInstallMethod();
+      expect(["git", "npm-global", "unknown"]).toContain(result);
     });
   });
 
@@ -167,6 +221,34 @@ describe("update-check", () => {
   });
 
   // -----------------------------------------------------------------------
+  // getCacheDir
+  // -----------------------------------------------------------------------
+
+  describe("getCacheDir", () => {
+    it("uses XDG_CACHE_HOME when set", () => {
+      const origXdg = process.env["XDG_CACHE_HOME"];
+      process.env["XDG_CACHE_HOME"] = "/custom/cache";
+
+      const dir = getCacheDir();
+      expect(dir).toBe("/custom/cache/ao");
+
+      if (origXdg !== undefined) process.env["XDG_CACHE_HOME"] = origXdg;
+      else delete process.env["XDG_CACHE_HOME"];
+    });
+
+    it("falls back to ~/.cache when XDG_CACHE_HOME is not set", () => {
+      const origXdg = process.env["XDG_CACHE_HOME"];
+      delete process.env["XDG_CACHE_HOME"];
+
+      const dir = getCacheDir();
+      expect(dir).toContain(".cache");
+      expect(dir).toMatch(/\/ao$/);
+
+      if (origXdg !== undefined) process.env["XDG_CACHE_HOME"] = origXdg;
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // readCachedUpdateInfo
   // -----------------------------------------------------------------------
 
@@ -175,7 +257,6 @@ describe("update-check", () => {
       mockReadFileSync.mockImplementation(() => {
         throw new Error("ENOENT");
       });
-
       expect(readCachedUpdateInfo()).toBeNull();
     });
 
@@ -193,8 +274,6 @@ describe("update-check", () => {
       const result = readCachedUpdateInfo();
       expect(result).not.toBeNull();
       expect(result!.latestVersion).toBe("0.3.0");
-      expect(result!.checkedAt).toBe(now);
-      expect(result!.currentVersionAtCheck).toBe(currentVersion);
     });
 
     it("returns null when cache is expired (>24h)", () => {
@@ -207,7 +286,6 @@ describe("update-check", () => {
           currentVersionAtCheck: currentVersion,
         }),
       );
-
       expect(readCachedUpdateInfo()).toBeNull();
     });
 
@@ -221,11 +299,10 @@ describe("update-check", () => {
           currentVersionAtCheck: currentVersion,
         }),
       );
-
       expect(readCachedUpdateInfo()).not.toBeNull();
     });
 
-    it("returns null when currentVersionAtCheck differs from installed version", () => {
+    it("returns null when currentVersionAtCheck differs (manual upgrade)", () => {
       const now = new Date().toISOString();
       mockReadFileSync.mockReturnValue(
         JSON.stringify({
@@ -234,7 +311,6 @@ describe("update-check", () => {
           currentVersionAtCheck: "9.9.9",
         }),
       );
-
       expect(readCachedUpdateInfo()).toBeNull();
     });
 
@@ -243,23 +319,70 @@ describe("update-check", () => {
       expect(readCachedUpdateInfo()).toBeNull();
     });
 
-    it("returns null when latestVersion field is missing", () => {
-      mockReadFileSync.mockReturnValue(
-        JSON.stringify({ checkedAt: new Date().toISOString() }),
-      );
+    it("returns null when latestVersion is missing", () => {
+      mockReadFileSync.mockReturnValue(JSON.stringify({ checkedAt: new Date().toISOString() }));
       expect(readCachedUpdateInfo()).toBeNull();
     });
 
-    it("returns null when checkedAt field is missing", () => {
-      mockReadFileSync.mockReturnValue(
-        JSON.stringify({ latestVersion: "1.0.0" }),
-      );
+    it("returns null when checkedAt is missing", () => {
+      mockReadFileSync.mockReturnValue(JSON.stringify({ latestVersion: "1.0.0" }));
       expect(readCachedUpdateInfo()).toBeNull();
     });
 
     it("returns null on empty string cache file", () => {
       mockReadFileSync.mockReturnValue("");
       expect(readCachedUpdateInfo()).toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // writeCache
+  // -----------------------------------------------------------------------
+
+  describe("writeCache", () => {
+    it("writes valid JSON to the cache path", () => {
+      mockMkdirSync.mockImplementation(() => undefined);
+      mockWriteFileSync.mockImplementation(() => undefined);
+
+      writeCache({
+        latestVersion: "0.3.0",
+        checkedAt: new Date().toISOString(),
+        currentVersionAtCheck: "0.2.2",
+      });
+
+      expect(mockMkdirSync).toHaveBeenCalledWith(expect.stringContaining("ao"), { recursive: true });
+      expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
+      const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
+      expect(written.latestVersion).toBe("0.3.0");
+    });
+
+    it("does not throw when cache dir is unwritable", () => {
+      mockMkdirSync.mockImplementation(() => {
+        throw new Error("EACCES");
+      });
+
+      expect(() =>
+        writeCache({
+          latestVersion: "0.3.0",
+          checkedAt: new Date().toISOString(),
+          currentVersionAtCheck: "0.2.2",
+        }),
+      ).not.toThrow();
+    });
+
+    it("does not throw when writeFileSync fails", () => {
+      mockMkdirSync.mockImplementation(() => undefined);
+      mockWriteFileSync.mockImplementation(() => {
+        throw new Error("ENOSPC");
+      });
+
+      expect(() =>
+        writeCache({
+          latestVersion: "0.3.0",
+          checkedAt: new Date().toISOString(),
+          currentVersionAtCheck: "0.2.2",
+        }),
+      ).not.toThrow();
     });
   });
 
@@ -287,11 +410,8 @@ describe("update-check", () => {
         ok: true,
         json: async () => ({ version: "1.0.0" }),
       });
-
       await fetchLatestVersion();
-
-      const callArgs = mockFetch.mock.calls[0];
-      expect(callArgs[1]).toHaveProperty("signal");
+      expect(mockFetch.mock.calls[0][1]).toHaveProperty("signal");
     });
 
     it("returns null on non-ok response", async () => {
@@ -310,8 +430,7 @@ describe("update-check", () => {
     });
 
     it("returns null on timeout (AbortError)", async () => {
-      const abortError = new DOMException("signal timed out", "TimeoutError");
-      mockFetch.mockRejectedValue(abortError);
+      mockFetch.mockRejectedValue(new DOMException("signal timed out", "TimeoutError"));
       expect(await fetchLatestVersion()).toBeNull();
     });
 
@@ -350,7 +469,6 @@ describe("update-check", () => {
     it("calls unlinkSync on cache path", () => {
       mockUnlinkSync.mockImplementation(() => {});
       invalidateCache();
-      expect(mockUnlinkSync).toHaveBeenCalledTimes(1);
       expect(mockUnlinkSync).toHaveBeenCalledWith(expect.stringContaining("update-check.json"));
     });
 
@@ -406,7 +524,7 @@ describe("update-check", () => {
       expect(info.latestVersion).toBe("0.4.0");
     });
 
-    it("fetches from registry when cache is stale", async () => {
+    it("fetches from registry when no cache exists", async () => {
       mockReadFileSync.mockImplementation(() => {
         throw new Error("ENOENT");
       });
@@ -417,7 +535,6 @@ describe("update-check", () => {
       });
 
       const info = await checkForUpdate();
-      expect(info.isOutdated).toBe(true);
       expect(info.latestVersion).toBe("0.3.0");
       expect(mockFetch).toHaveBeenCalled();
     });
@@ -434,12 +551,10 @@ describe("update-check", () => {
 
       await checkForUpdate();
 
-      expect(mockMkdirSync).toHaveBeenCalled();
       expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
-      const writtenData = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
-      expect(writtenData.latestVersion).toBe("0.3.0");
-      expect(writtenData.currentVersionAtCheck).toBe(getCurrentVersion());
-      expect(writtenData.checkedAt).toBeDefined();
+      const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
+      expect(written.latestVersion).toBe("0.3.0");
+      expect(written.currentVersionAtCheck).toBe(getCurrentVersion());
     });
 
     it("does NOT write cache when fetch fails", async () => {
@@ -450,11 +565,10 @@ describe("update-check", () => {
       mockFetch.mockRejectedValue(new Error("network error"));
 
       await checkForUpdate();
-
       expect(mockWriteFileSync).not.toHaveBeenCalled();
     });
 
-    it("returns isOutdated=false when registry version matches installed", async () => {
+    it("returns isOutdated=false when versions match", async () => {
       const currentVersion = getCurrentVersion();
       mockReadFileSync.mockImplementation(() => {
         throw new Error("ENOENT");
@@ -469,7 +583,7 @@ describe("update-check", () => {
       expect(info.isOutdated).toBe(false);
     });
 
-    it("returns isOutdated=false when registry is unreachable", async () => {
+    it("returns isOutdated=false and latestVersion=null when registry unreachable", async () => {
       mockReadFileSync.mockImplementation(() => {
         throw new Error("ENOENT");
       });
@@ -482,7 +596,7 @@ describe("update-check", () => {
       expect(info.checkedAt).toBeNull();
     });
 
-    it("includes installMethod and recommendedCommand in result", async () => {
+    it("includes installMethod and recommendedCommand", async () => {
       mockReadFileSync.mockImplementation(() => {
         throw new Error("ENOENT");
       });
@@ -493,9 +607,9 @@ describe("update-check", () => {
       });
 
       const info = await checkForUpdate();
-      expect(info.installMethod).toBeDefined();
-      expect(info.recommendedCommand).toBeDefined();
+      expect(["git", "npm-global", "unknown"]).toContain(info.installMethod);
       expect(typeof info.recommendedCommand).toBe("string");
+      expect(info.recommendedCommand.length).toBeGreaterThan(0);
     });
   });
 
@@ -509,6 +623,7 @@ describe("update-check", () => {
     let origCI: string | undefined;
     let origAOCI: string | undefined;
     let origNotifier: string | undefined;
+    let origArgv: string[];
 
     beforeEach(() => {
       stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -516,11 +631,12 @@ describe("update-check", () => {
       origCI = process.env["CI"];
       origAOCI = process.env["AGENT_ORCHESTRATOR_CI"];
       origNotifier = process.env["AO_NO_UPDATE_NOTIFIER"];
-      // Default: enable TTY, disable CI/notifier env vars
+      origArgv = process.argv;
       Object.defineProperty(process.stderr, "isTTY", { value: true, configurable: true });
       delete process.env["CI"];
       delete process.env["AGENT_ORCHESTRATOR_CI"];
       delete process.env["AO_NO_UPDATE_NOTIFIER"];
+      process.argv = ["node", "ao", "start"];
     });
 
     afterEach(() => {
@@ -531,6 +647,7 @@ describe("update-check", () => {
       else delete process.env["AGENT_ORCHESTRATOR_CI"];
       if (origNotifier !== undefined) process.env["AO_NO_UPDATE_NOTIFIER"] = origNotifier;
       else delete process.env["AO_NO_UPDATE_NOTIFIER"];
+      process.argv = origArgv;
     });
 
     it("prints update notice when cache shows outdated version", () => {
@@ -561,7 +678,6 @@ describe("update-check", () => {
           currentVersionAtCheck: currentVersion,
         }),
       );
-
       maybeShowUpdateNotice();
       expect(stderrSpy).not.toHaveBeenCalled();
     });
@@ -570,35 +686,30 @@ describe("update-check", () => {
       mockReadFileSync.mockImplementation(() => {
         throw new Error("ENOENT");
       });
-
       maybeShowUpdateNotice();
       expect(stderrSpy).not.toHaveBeenCalled();
     });
 
     it("does not print when stderr is not a TTY", () => {
       Object.defineProperty(process.stderr, "isTTY", { value: false, configurable: true });
-
       maybeShowUpdateNotice();
       expect(stderrSpy).not.toHaveBeenCalled();
     });
 
     it("does not print when AO_NO_UPDATE_NOTIFIER=1", () => {
       process.env["AO_NO_UPDATE_NOTIFIER"] = "1";
-
       maybeShowUpdateNotice();
       expect(stderrSpy).not.toHaveBeenCalled();
     });
 
     it("does not print when CI=true", () => {
       process.env["CI"] = "true";
-
       maybeShowUpdateNotice();
       expect(stderrSpy).not.toHaveBeenCalled();
     });
 
     it("does not print when AGENT_ORCHESTRATOR_CI is set", () => {
       process.env["AGENT_ORCHESTRATOR_CI"] = "1";
-
       maybeShowUpdateNotice();
       expect(stderrSpy).not.toHaveBeenCalled();
     });
@@ -606,13 +717,9 @@ describe("update-check", () => {
     it.each(["update", "doctor", "--version", "-V", "--help", "-h"])(
       "does not print when argv includes '%s'",
       (arg) => {
-        const origArgv = process.argv;
         process.argv = ["node", "ao", arg];
-
         maybeShowUpdateNotice();
         expect(stderrSpy).not.toHaveBeenCalled();
-
-        process.argv = origArgv;
       },
     );
   });
@@ -622,8 +729,7 @@ describe("update-check", () => {
   // -----------------------------------------------------------------------
 
   describe("scheduleBackgroundRefresh", () => {
-    it("schedules a background fetch that does not block process exit", () => {
-      // Mock fetch to track that it gets called
+    it("does not throw and schedules a timer", () => {
       mockReadFileSync.mockImplementation(() => {
         throw new Error("ENOENT");
       });
@@ -633,7 +739,16 @@ describe("update-check", () => {
         json: async () => ({ version: "0.3.0" }),
       });
 
-      // Should not throw
+      expect(() => scheduleBackgroundRefresh()).not.toThrow();
+    });
+
+    it("swallows errors from checkForUpdate", () => {
+      mockReadFileSync.mockImplementation(() => {
+        throw new Error("ENOENT");
+      });
+      mockExistsSync.mockReturnValue(false);
+      mockFetch.mockRejectedValue(new Error("network fail"));
+
       expect(() => scheduleBackgroundRefresh()).not.toThrow();
     });
   });

@@ -11,7 +11,10 @@ import {
 } from "../lib/update-check.js";
 import { promptConfirm } from "../lib/prompts.js";
 
-const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+/** Inline check instead of module-level constant so tests can control TTY state. */
+function isTTY(): boolean {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
 
 export function registerUpdate(program: Command): void {
   program
@@ -108,9 +111,10 @@ async function handleNpmUpdate(opts: {
 
   const command = "npm install -g @aoagents/ao@latest";
 
-  if (!IS_TTY) {
+  if (!isTTY()) {
+    // Non-interactive: print command but exit non-zero so scripts know no upgrade happened
     console.log(`Run: ${chalk.cyan(command)}`);
-    return;
+    process.exit(1);
   }
 
   const confirmed = await promptConfirm(`Run ${chalk.cyan(command)}?`);
