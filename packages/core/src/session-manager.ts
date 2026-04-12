@@ -2689,7 +2689,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         agentInfo: null,
         createdAt: new Date(meta.createdAt ?? Date.now()),
         lastActivityAt: new Date(),
-        metadata: { ...meta, ...opts.metadataUpdates },
+        metadata: { ...meta, ...(Object.fromEntries(Object.entries(opts.metadataUpdates).filter((e): e is [string, string] => e[1] !== undefined)) as Record<string, string>) },
       };
       await agent.postLaunchSetup(session);
     }

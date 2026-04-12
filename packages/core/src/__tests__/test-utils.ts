@@ -353,5 +353,6 @@ export function createMockSessionManager(): SessionManager {
       githubAssigned: true,
       takenOverFrom: [],
     }),
+    swapAgent: vi.fn().mockResolvedValue(undefined),
   } as SessionManager;
 }

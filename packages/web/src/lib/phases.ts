@@ -14,7 +14,7 @@ export const PHASE_LANES: readonly PhaseLaneDef[] = [
     id: "prePr",
     label: "Pre-PR",
     description: "Agent is working, no PR yet",
-    statuses: ["spawning", "working"],
+    statuses: ["spawning", "planning", "reviewing", "working"],
   },
   {
     id: "prReview",
@@ -46,6 +46,8 @@ export const DONE_PHASES: readonly SessionStatus[] = [
 
 export const PHASE_LABELS: Record<SessionStatus, string> = {
   spawning: "Spawning",
+  planning: "Planning",
+  reviewing: "Reviewing",
   working: "Working",
   pr_open: "PR Open",
   ci_failed: "CI Failed",
@@ -77,7 +79,10 @@ export function getPhaseLane(status: SessionStatus): PhaseLaneId | "done" {
 export function getPhaseStatusColor(status: string): string {
   switch (status) {
     case "working":
+    case "planning":
       return "var(--color-status-working)";
+    case "reviewing":
+      return "var(--color-status-attention)";
     case "spawning":
       return "var(--color-status-attention)";
     case "pr_open":

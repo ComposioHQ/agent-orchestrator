@@ -1191,6 +1191,13 @@ export interface ProjectConfig {
     | "kill-previous";
 
   opencodeIssueSessionStrategy?: "reuse" | "delete" | "ignore";
+
+  adversarialReview?: {
+    enabled: boolean;
+    critic: { agent: string; agentConfig?: AgentSpecificConfig };
+    plan?: { enabled: boolean; maxRounds: number };
+    code?: { enabled: boolean; maxRounds: number };
+  };
 }
 
 export interface TrackerConfig {

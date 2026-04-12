@@ -708,6 +708,12 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                 : session.userPrompt
               : footerStatus}
           </span>
+          {session.metadata?.["adversarialRound"] && (
+            <span className="inline-flex items-center rounded-full bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 text-xs font-medium text-[var(--color-text-secondary)]">
+              Round {parseInt(session.metadata["adversarialRound"], 10) + 1}
+              /{session.metadata["adversarialPlanMaxRounds"] ?? "?"}
+            </span>
+          )}
 
           {isReadyToMerge && pr ? (
             <button
@@ -787,6 +793,10 @@ function getFooterStatusLabel(
   if (isReadyToMerge || level === "merge") return "mergeable";
   if (level === "respond") return "waiting_input";
   if (session.status === "ci_failed") return "ci_failed";
+  if (session.status === "planning") return "planning";
+  if (session.status === "reviewing") {
+    return session.metadata?.["adversarialPhase"] === "code_review" ? "code review" : "plan review";
+  }
   if (level === "review") return "review_pending";
   if (level === "working") return "working";
   return session.status;
