@@ -288,6 +288,7 @@ function DashboardInner({
   );
   const dashboardHref = getProjectScopedHref("/", projectId);
   const prsHref = getProjectScopedHref("/prs", projectId);
+  const phasesHref = getProjectScopedHref("/phases", projectId);
   const orchestratorHref = currentProjectOrchestrator
     ? `/sessions/${encodeURIComponent(currentProjectOrchestrator.id)}`
     : null;
@@ -743,7 +744,7 @@ function DashboardInner({
               <div className="dashboard-main__subhead">
                 <h1 className="dashboard-main__title">Dashboard</h1>
                 <p className="dashboard-main__subtitle">
-                  Live agent sessions, pull requests, and merge status.
+                  Attention zones — what needs you now.
                 </p>
               </div>
 
@@ -892,7 +893,7 @@ function DashboardInner({
               <div className="dashboard-hero__primary">
                 <div className="dashboard-hero__heading">
                   <div className="dashboard-hero__copy">
-                    <h1 className="dashboard-title">Kanban</h1>
+                    <h1 className="dashboard-title">Dashboard</h1>
                     {projectName ? <p className="dashboard-subtitle">{projectName}</p> : null}
                   </div>
                 </div>
@@ -1071,6 +1072,7 @@ function DashboardInner({
           activeTab="dashboard"
           dashboardHref={dashboardHref}
           prsHref={prsHref}
+          phasesHref={phasesHref}
           showOrchestrator={!allProjectsView}
           orchestratorHref={orchestratorHref}
         />
