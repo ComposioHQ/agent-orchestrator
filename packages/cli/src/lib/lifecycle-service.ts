@@ -20,23 +20,9 @@ function registerSignalsOnce(): void {
   if (signalsRegistered) return;
   signalsRegistered = true;
 
-  const shutdown = (): void => {
-    for (const projectId of Array.from(active.keys())) {
-      const entry = active.get(projectId);
-      if (entry) {
-        try {
-          entry.stop();
-        } catch {
-          // Best-effort shutdown: one project's failure must not block others.
-        }
-      }
-      active.delete(projectId);
-    }
-  };
-
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-  process.on("beforeExit", shutdown);
+  process.on("SIGINT", stopAllLifecycleWorkers);
+  process.on("SIGTERM", stopAllLifecycleWorkers);
+  process.on("beforeExit", stopAllLifecycleWorkers);
 }
 
 export interface LifecycleWorkerStatus {

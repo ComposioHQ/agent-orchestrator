@@ -38,7 +38,7 @@ import {
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { exec, execSilent, git } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
-import { ensureLifecycleWorker, stopLifecycleWorker } from "../lib/lifecycle-service.js";
+import { ensureLifecycleWorker } from "../lib/lifecycle-service.js";
 import {
   findWebDir,
   buildDashboardEnv,
@@ -1448,12 +1448,11 @@ export function registerStop(program: Command): void {
             console.log(chalk.yellow(`Orchestrator session "${sessionId}" is not running`));
           }
 
-          const lifecycleStopped = await stopLifecycleWorker(config, _projectId);
-          if (lifecycleStopped) {
-            console.log(chalk.green("Lifecycle worker stopped"));
-          } else {
-            console.log(chalk.yellow("Lifecycle worker not running"));
-          }
+          // Lifecycle polling runs in-process inside the `ao start` process
+          // (registered via `running.json`). Sending SIGTERM to that PID below
+          // triggers the shared shutdown handler in `lifecycle-service`, which
+          // stops every per-project loop. No explicit stop call needed here —
+          // this CLI invocation is a separate process with an empty active map.
 
           // Stop dashboard — kill parent PID from running.json, then also stop
           // any dashboard child process via lsof (parent SIGTERM may not propagate)

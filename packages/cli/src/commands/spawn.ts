@@ -11,9 +11,9 @@ import { DEFAULT_PORT } from "../lib/constants.js";
 import { exec } from "../lib/shell.js";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
-import { ensureLifecycleWorker } from "../lib/lifecycle-service.js";
 import { preflight } from "../lib/preflight.js";
 import { findProjectForDirectory } from "../lib/project-resolution.js";
+import { getRunning } from "../lib/running-state.js";
 
 /**
  * Auto-detect the project ID from the config.
@@ -52,6 +52,24 @@ function autoDetectProject(config: OrchestratorConfig): string {
 interface SpawnClaimOptions {
   claimPr?: string;
   assignOnGithub?: boolean;
+}
+
+/**
+ * Lifecycle polling runs in-process inside the long-lived `ao start` process.
+ * `ao spawn` is a one-shot CLI — it can't start polling in its own process
+ * (the interval would keep the CLI alive forever and duplicate work). If `ao
+ * start` isn't running, nothing will poll the newly spawned session, so warn
+ * the user.
+ */
+async function warnIfAONotRunning(): Promise<void> {
+  const running = await getRunning();
+  if (!running) {
+    console.log(
+      chalk.yellow(
+        "⚠ AO is not running — lifecycle polling is inactive. Run `ao start` so the new session is tracked.",
+      ),
+    );
+  }
 }
 
 /**
@@ -230,7 +248,7 @@ export function registerSpawn(program: Command): void {
 
         try {
           await runSpawnPreflight(config, projectId, claimOptions);
-          await ensureLifecycleWorker(config, projectId);
+          await warnIfAONotRunning();
 
           await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt);
         } catch (err) {
@@ -276,7 +294,7 @@ export function registerBatchSpawn(program: Command): void {
       // Pre-flight once before the loop so a missing prerequisite fails fast
       try {
         await runSpawnPreflight(config, projectId);
-        await ensureLifecycleWorker(config, projectId);
+        await warnIfAONotRunning();
       } catch (err) {
         console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
         process.exit(1);

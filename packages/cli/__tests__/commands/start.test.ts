@@ -24,7 +24,6 @@ const {
   mockWaitForPortAndOpen,
   mockSpawn,
   mockEnsureLifecycleWorker,
-  mockStopLifecycleWorker,
 } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockExecSilent: vi.fn(),
@@ -42,7 +41,6 @@ const {
   mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
   mockSpawn: vi.fn(),
   mockEnsureLifecycleWorker: vi.fn(),
-  mockStopLifecycleWorker: vi.fn(),
 }));
 
 const { mockDetectOpenClawInstallation } = vi.hoisted(() => ({
@@ -101,7 +99,6 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
 
 vi.mock("../../src/lib/lifecycle-service.js", () => ({
   ensureLifecycleWorker: (...args: unknown[]) => mockEnsureLifecycleWorker(...args),
-  stopLifecycleWorker: (...args: unknown[]) => mockStopLifecycleWorker(...args),
 }));
 
 vi.mock("../../src/lib/web-dir.js", () => ({
@@ -239,8 +236,6 @@ beforeEach(() => {
     running: true,
     started: true,
   });
-  mockStopLifecycleWorker.mockReset();
-  mockStopLifecycleWorker.mockResolvedValue(true);
   mockDetectOpenClawInstallation.mockReset();
   mockDetectOpenClawInstallation.mockResolvedValue({
     state: "missing",
@@ -1036,10 +1031,6 @@ describe("stop command", () => {
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
       purgeOpenCode: false,
     });
-    expect(mockStopLifecycleWorker).toHaveBeenCalledWith(
-      expect.objectContaining({ configPath: expect.any(String) }),
-      "my-app",
-    );
     const output = vi
       .mocked(console.log)
       .mock.calls.map((c) => c.join(" "))
@@ -1055,10 +1046,6 @@ describe("stop command", () => {
     await program.parseAsync(["node", "test", "stop"]);
 
     expect(mockSessionManager.kill).not.toHaveBeenCalled();
-    expect(mockStopLifecycleWorker).toHaveBeenCalledWith(
-      expect.objectContaining({ configPath: expect.any(String) }),
-      "my-app",
-    );
     const output = vi
       .mocked(console.log)
       .mock.calls.map((c) => c.join(" "))
