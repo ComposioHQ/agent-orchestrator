@@ -388,12 +388,15 @@ export function DirectTerminal({
       mounted = false;
       cleanup?.();
     };
+  // NOTE: resolvedTheme and terminalThemes are intentionally excluded —
+  // theme changes are handled reactively by the dedicated effect below
+  // (line ~416). Including them here would destroy and recreate the entire
+  // terminal + PTY connection on every theme change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     appearance,
     sessionId,
     variant,
-    resolvedTheme,
-    terminalThemes,
     subscribeTerminal,
     writeTerminal,
     resizeTerminalMux,
