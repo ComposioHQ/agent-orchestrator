@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+vi.mock("@aoagents/ao-core", () => ({
+  isPortfolioEnabled: () => true,
+}));
+
 vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
 }));

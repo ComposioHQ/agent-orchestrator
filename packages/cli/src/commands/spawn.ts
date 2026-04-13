@@ -9,6 +9,7 @@ import {
   loadGlobalConfig,
   buildEffectiveProjectConfig,
   getGlobalConfigPath,
+  isPortfolioEnabled,
   type OrchestratorConfig,
 } from "@aoagents/ao-core";
 import { DEFAULT_PORT } from "../lib/constants.js";
@@ -253,6 +254,10 @@ export function registerSpawn(program: Command): void {
         const issueId: string | undefined = first;
 
         if (opts.project) {
+          if (!isPortfolioEnabled()) {
+            console.error(chalk.red("Portfolio mode is disabled. Set AO_ENABLE_PORTFOLIO=1 to use --project."));
+            process.exit(1);
+          }
           // ── Remote mode: load shadow from global registry ──
           // Works from any directory — no local config required.
           try {

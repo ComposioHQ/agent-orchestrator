@@ -20,6 +20,7 @@ const {
 }));
 
 vi.mock("@aoagents/ao-core", () => ({
+  isPortfolioEnabled: () => true,
   getPortfolio: mockGetPortfolio,
   getPortfolioSessionCounts: mockGetPortfolioSessionCounts,
   registerProject: mockRegisterProject,

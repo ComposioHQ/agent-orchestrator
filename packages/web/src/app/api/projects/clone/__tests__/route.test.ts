@@ -6,6 +6,7 @@ const { mockExecFileAsync, mockMkdir, mockStat, mockWriteFile } = vi.hoisted(() 
   mockStat: vi.fn(),
   mockWriteFile: vi.fn(),
 }));
+const mockIsPortfolioEnabled = vi.fn(() => true);
 
 vi.mock("node:child_process", () => {
   const f = Object.assign(
@@ -27,7 +28,7 @@ vi.mock("node:path", async (importOriginal) => {
   return { ...actual };
 });
 
-vi.mock("@aoagents/ao-core", () => ({ configToYaml: vi.fn(() => "yaml"), findConfigFile: vi.fn(() => null), generateConfigFromUrl: vi.fn(() => ({ projects: { "my-repo": {} } })), loadConfig: vi.fn(() => ({ projects: { "existing-key": {} } })), parseRepoUrl: vi.fn(() => ({ owner: "acme", repo: "my-repo", cloneUrl: "https://github.com/acme/my-repo.git" })), sanitizeProjectId: vi.fn((n: string) => n.toLowerCase()) }));
+vi.mock("@aoagents/ao-core", () => ({ configToYaml: vi.fn(() => "yaml"), generateConfigFromUrl: vi.fn(() => ({ projects: { "my-repo": {} } })), parseRepoUrl: vi.fn(() => ({ owner: "acme", repo: "my-repo", cloneUrl: "https://github.com/acme/my-repo.git" })), sanitizeProjectId: vi.fn((n: string) => n.toLowerCase()), isPortfolioEnabled: () => mockIsPortfolioEnabled() }));
 vi.mock("@/lib/api-schemas", async () => { const { z } = await import("zod"); return { CloneProjectSchema: z.object({ url: z.string().url("A valid Git URL is required"), location: z.string().min(1, "Location is required") }) }; });
 vi.mock("@/lib/local-project-config", () => ({ extractFlatLocalConfig: vi.fn(() => ({})) }));
 vi.mock("@/lib/path-security", () => ({ assertPathWithinHome: vi.fn(async (p: string) => p) }));
@@ -37,6 +38,7 @@ import { POST } from "../route";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockIsPortfolioEnabled.mockReturnValue(true);
   mockStat.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
   mockMkdir.mockResolvedValue(undefined);
   mockWriteFile.mockResolvedValue(undefined);
@@ -44,6 +46,12 @@ beforeEach(() => {
 });
 
 describe("POST /api/projects/clone", () => {
+  it("returns 404 when portfolio mode is disabled", async () => {
+    mockIsPortfolioEnabled.mockReturnValue(false);
+    const res = await POST(new Request("http://localhost/api/projects/clone", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: "https://github.com/acme/my-repo", location: "/tmp/projects" }) }));
+    expect(res.status).toBe(404);
+  });
+
   it("returns 400 for missing url", async () => {
     const res = await POST(new Request("http://localhost/api/projects/clone", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "/tmp" }) }));
     expect(res.status).toBe(400);
@@ -99,8 +107,6 @@ describe("POST /api/projects/clone", () => {
   });
 
   it("generates config when no config file found", async () => {
-    const { findConfigFile } = await import("@aoagents/ao-core");
-    (findConfigFile as ReturnType<typeof vi.fn>).mockReturnValueOnce(null);
     const res = await POST(new Request("http://localhost/api/projects/clone", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: "https://github.com/acme/my-repo", location: "/tmp/projects" }) }));
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -110,8 +116,8 @@ describe("POST /api/projects/clone", () => {
   });
 
   it("uses existing config when config file found", async () => {
-    const { findConfigFile } = await import("@aoagents/ao-core");
-    (findConfigFile as ReturnType<typeof vi.fn>).mockReturnValueOnce("/tmp/projects/my-repo/agent-orchestrator.yaml");
+    mockStat.mockRejectedValueOnce(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+    mockStat.mockResolvedValueOnce({ isDirectory: () => true });
     const res = await POST(new Request("http://localhost/api/projects/clone", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: "https://github.com/acme/my-repo", location: "/tmp/projects" }) }));
     expect(res.status).toBe(200);
     const data = await res.json();

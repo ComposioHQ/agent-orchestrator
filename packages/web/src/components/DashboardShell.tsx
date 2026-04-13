@@ -27,6 +27,7 @@ interface DashboardShellProps {
   activeProjectId?: string;
   activeSessionId?: string;
   defaultLocation?: string;
+  portfolioEnabled?: boolean;
   children: ReactNode;
 }
 
@@ -42,6 +43,7 @@ export function DashboardShell({
   activeProjectId,
   activeSessionId,
   defaultLocation = "",
+  portfolioEnabled = true,
   children,
 }: DashboardShellProps) {
   const router = useRouter();
@@ -54,10 +56,10 @@ export function DashboardShell({
   const { sessions: liveSessions } = useSessionEvents(sessions ?? []);
   const controls = useMemo<DashboardShellControls>(
     () => ({
-      openAddProject: addProjectModal.open,
-      openCloneFromUrl: cloneModal.open,
+      openAddProject: portfolioEnabled ? addProjectModal.open : () => undefined,
+      openCloneFromUrl: portfolioEnabled ? cloneModal.open : () => undefined,
     }),
-    [addProjectModal.open, cloneModal.open],
+    [addProjectModal.open, cloneModal.open, portfolioEnabled],
   );
 
   return (
@@ -70,7 +72,7 @@ export function DashboardShell({
           activeSessionId={activeSessionId}
           mobileOpen={mobileOpen}
           onMobileClose={() => setMobileOpen(false)}
-          onAddProject={addProjectModal.open}
+          onAddProject={portfolioEnabled ? addProjectModal.open : undefined}
           collapsed={sidebarCollapsed}
           onToggleCollapse={toggleSidebarCollapse}
           width={sidebarWidth}
@@ -92,18 +94,22 @@ export function DashboardShell({
           {children}
         </div>
 
-        <AddProjectModal
-          open={addProjectModal.isOpen}
-          onClose={addProjectModal.close}
-        />
-        <CloneFromUrlModal
-          open={cloneModal.isOpen}
-          onClose={cloneModal.close}
-          defaultLocation={defaultLocation}
-          onProjectCreated={(projectId) => {
-            router.push(`/projects/${encodeURIComponent(projectId)}`);
-          }}
-        />
+        {portfolioEnabled ? (
+          <>
+            <AddProjectModal
+              open={addProjectModal.isOpen}
+              onClose={addProjectModal.close}
+            />
+            <CloneFromUrlModal
+              open={cloneModal.isOpen}
+              onClose={cloneModal.close}
+              defaultLocation={defaultLocation}
+              onProjectCreated={(projectId) => {
+                router.push(`/projects/${encodeURIComponent(projectId)}`);
+              }}
+            />
+          </>
+        ) : null}
       </div>
     </DashboardShellContext.Provider>
   );

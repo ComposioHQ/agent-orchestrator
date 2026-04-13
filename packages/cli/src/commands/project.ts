@@ -5,6 +5,7 @@ import type { Command } from "commander";
 import {
   getPortfolio,
   getPortfolioSessionCounts,
+  isPortfolioEnabled,
   registerProject,
   unregisterProject,
   loadPreferences,
@@ -18,6 +19,12 @@ import {
   formatPortfolioProjectStatus,
 } from "../lib/portfolio-display.js";
 
+function assertPortfolioEnabled(): void {
+  if (isPortfolioEnabled()) return;
+  console.error(chalk.red("Portfolio mode is disabled. Set AO_ENABLE_PORTFOLIO=1 to use `ao project`."));
+  process.exit(1);
+}
+
 export function registerProject_cmd(program: Command): void {
   const project = program
     .command("project")
@@ -28,6 +35,7 @@ export function registerProject_cmd(program: Command): void {
     .command("ls")
     .description("List all portfolio projects")
     .action(async () => {
+      assertPortfolioEnabled();
       const portfolio = getPortfolio();
 
       if (portfolio.length === 0) {
@@ -67,6 +75,7 @@ export function registerProject_cmd(program: Command): void {
     .description("Register a project path in the portfolio")
     .option("-k, --key <key>", "Config project key (for multi-project configs)")
     .action((path: string, opts: { key?: string }) => {
+      assertPortfolioEnabled();
       const resolvedPath = resolve(path);
       const candidatePaths = [
         resolve(resolvedPath, "agent-orchestrator.yaml"),
@@ -107,6 +116,7 @@ export function registerProject_cmd(program: Command): void {
     .command("rm <id>")
     .description("Remove a project from the portfolio")
     .action((id: string) => {
+      assertPortfolioEnabled();
       const portfolio = getPortfolio();
       const found = portfolio.find((p) => p.id === id);
       if (!found) {
@@ -123,6 +133,7 @@ export function registerProject_cmd(program: Command): void {
     .command("set-default <id>")
     .description("Set the default project for the portfolio")
     .action((id: string) => {
+      assertPortfolioEnabled();
       const portfolio = getPortfolio();
       const found = portfolio.find((p) => p.id === id);
       if (!found) {

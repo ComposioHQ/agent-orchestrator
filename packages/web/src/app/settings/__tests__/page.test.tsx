@@ -19,6 +19,7 @@ vi.mock("next/link", () => ({
 
 // Mock @aoagents/ao-core
 vi.mock("@aoagents/ao-core", () => ({
+  isPortfolioEnabled: () => true,
   loadConfig: () => ({
     defaults: {
       agent: "claude-code",

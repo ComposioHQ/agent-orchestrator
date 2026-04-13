@@ -5,6 +5,7 @@ const mockLoadConfig = vi.fn();
 const mockLoadPreferences = vi.fn(() => ({ version: 1 }));
 const mockListPortfolioSessions = vi.fn();
 const mockGenerateSessionPrefix = vi.fn((id: string) => `${id}-`);
+const mockIsPortfolioEnabled = vi.fn(() => true);
 
 vi.mock("@aoagents/ao-core", () => ({
   getPortfolio: () => mockGetPortfolio(),
@@ -12,6 +13,7 @@ vi.mock("@aoagents/ao-core", () => ({
   loadPreferences: () => mockLoadPreferences(),
   listPortfolioSessions: (...args: unknown[]) => mockListPortfolioSessions(...args),
   generateSessionPrefix: (id: string) => mockGenerateSessionPrefix(id),
+  isPortfolioEnabled: () => mockIsPortfolioEnabled(),
 }));
 
 beforeEach(() => {
@@ -24,6 +26,7 @@ beforeEach(() => {
   }
   delete g._aoPortfolioCache;
   delete g._aoPortfolioRefreshTimer;
+  mockIsPortfolioEnabled.mockReturnValue(true);
 });
 
 import {
@@ -82,6 +85,29 @@ describe("getPortfolioServices", () => {
     expect(services.portfolio[0].id).toBe("my-app");
 
     stopPortfolioBackgroundRefresh();
+  });
+
+  it("uses legacy config fallback when portfolio mode is disabled", () => {
+    mockIsPortfolioEnabled.mockReturnValue(false);
+    mockLoadConfig.mockReturnValue({
+      configPath: "/home/user/config.yaml",
+      projects: {
+        "legacy-app": {
+          name: "Legacy App",
+          path: "/home/user/app",
+          repo: "org/app",
+          defaultBranch: "main",
+        },
+      },
+    });
+
+    const services = getPortfolioServices();
+
+    expect(services.portfolio).toEqual([
+      expect.objectContaining({ id: "legacy-app", name: "Legacy App" }),
+    ]);
+    expect(services.preferences).toEqual({ version: 1 });
+    expect(mockGetPortfolio).not.toHaveBeenCalled();
   });
 
   it("returns empty portfolio when both portfolio and config fail", () => {

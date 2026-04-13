@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+vi.mock("@aoagents/ao-core", () => ({
+  isPortfolioEnabled: () => true,
+}));
+
 vi.mock("@/components/ActivityFeedPage", () => ({
   ActivityFeedPage: (props: Record<string, unknown>) => (
     <div

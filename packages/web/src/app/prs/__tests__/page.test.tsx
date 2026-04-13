@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+vi.mock("@aoagents/ao-core", () => ({
+  isPortfolioEnabled: () => true,
+}));
+
 vi.mock("@/components/PullRequestsPage", () => ({
   PullRequestsPage: (props: Record<string, unknown>) => (
     <div data-testid="prs-page" data-project-id={props.projectId} />

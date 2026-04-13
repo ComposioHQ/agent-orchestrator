@@ -48,6 +48,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@aoagents/ao-core")>();
   return {
     ...actual,
+    isPortfolioEnabled: () => true,
     loadConfig: () => mockConfigRef.current,
   };
 });

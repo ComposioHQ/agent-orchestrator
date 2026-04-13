@@ -19,6 +19,7 @@ import {
   createPluginRegistry,
   createSessionManager,
   createLifecycleManager,
+  isPortfolioEnabled,
   type OrchestratorConfig,
   type PluginRegistry,
   type OpenCodeSessionManager,
@@ -83,6 +84,10 @@ export function invalidateServicesCache(): void {
 }
 
 function loadCanonicalConfig(): OrchestratorConfig {
+  if (!isPortfolioEnabled()) {
+    return loadConfig();
+  }
+
   const globalConfigPath = getGlobalConfigPath();
   if (existsSync(globalConfigPath)) {
     return loadConfig(globalConfigPath);

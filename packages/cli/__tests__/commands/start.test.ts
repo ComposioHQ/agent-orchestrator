@@ -87,6 +87,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
 
   return {
     ...actual,
+    isPortfolioEnabled: () => true,
     normalizeOrchestratorSessionStrategy,
     loadConfig: (path?: string) => {
       if (path) return actual.loadConfig(path);

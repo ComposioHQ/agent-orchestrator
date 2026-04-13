@@ -619,30 +619,32 @@ function SidebarContent({
               </div>
             ) : null}
           </div>
-          <div className="relative" ref={addMenuRef}>
-          <Tooltip label="Add repository">
-            <button
-              type="button"
-              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[var(--radius-sm)] transition-colors duration-100 hover:bg-[var(--color-bg-elevated-hover)] hover:text-[var(--color-text-secondary)]"
-              aria-label="Add repository"
-              onClick={() => setShowAddMenu((value) => !value)}
-            >
-              <FolderPlusIcon />
-            </button>
-          </Tooltip>
-          {showAddMenu ? (
-            <div className="absolute right-0 top-8 z-20 min-w-[164px] rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--box-shadow-lg,0_14px_40px_rgba(0,0,0,0.18))]">
-              <SidebarMenuButton
-                icon={<FolderOpenIcon />}
-                label="Open project"
-                onClick={() => {
-                  setShowAddMenu(false);
-                  onAddProject?.();
-                }}
-              />
+          {onAddProject ? (
+            <div className="relative" ref={addMenuRef}>
+              <Tooltip label="Add repository">
+                <button
+                  type="button"
+                  className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[var(--radius-sm)] transition-colors duration-100 hover:bg-[var(--color-bg-elevated-hover)] hover:text-[var(--color-text-secondary)]"
+                  aria-label="Add repository"
+                  onClick={() => setShowAddMenu((value) => !value)}
+                >
+                  <FolderPlusIcon />
+                </button>
+              </Tooltip>
+              {showAddMenu ? (
+                <div className="absolute right-0 top-8 z-20 min-w-[164px] rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--box-shadow-lg,0_14px_40px_rgba(0,0,0,0.18))]">
+                  <SidebarMenuButton
+                    icon={<FolderOpenIcon />}
+                    label="Open project"
+                    onClick={() => {
+                      setShowAddMenu(false);
+                      onAddProject();
+                    }}
+                  />
+                </div>
+              ) : null}
             </div>
           ) : null}
-        </div>
         </div>
       </div>
 

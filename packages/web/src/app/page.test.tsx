@@ -16,6 +16,14 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/",
 }));
 
+vi.mock("@aoagents/ao-core", () => ({
+  isPortfolioEnabled: () => true,
+  loadPreferences: () => ({ version: 1 }),
+  loadGlobalConfig: () => null,
+  isProjectShadowStale: () => false,
+  isOrchestratorSession: () => false,
+}));
+
 vi.mock("@/components/PortfolioPage", () => ({
   PortfolioPage: () => <div>portfolio stub</div>,
 }));

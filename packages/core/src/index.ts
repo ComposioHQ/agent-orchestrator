@@ -17,6 +17,7 @@ export {
   findConfig,
   findConfigFile,
 } from "./config.js";
+export { isPortfolioEnabled } from "./feature-flags.js";
 
 // Plugin registry
 export {

@@ -5,9 +5,8 @@ import { promisify } from "node:util";
 import { NextResponse } from "next/server";
 import {
   configToYaml,
-  findConfigFile,
   generateConfigFromUrl,
-  loadConfig,
+  isPortfolioEnabled,
   parseRepoUrl,
   sanitizeProjectId,
 } from "@aoagents/ao-core";
@@ -39,6 +38,10 @@ async function ensureMissingOrEmptyDirectory(path: string): Promise<void> {
 
 export async function POST(request: Request) {
   try {
+    if (!isPortfolioEnabled()) {
+      return NextResponse.json({ error: "Portfolio mode is disabled" }, { status: 404 });
+    }
+
     const body = await request.json();
     const parsed = CloneProjectSchema.safeParse(body);
     if (!parsed.success) {
@@ -60,21 +63,31 @@ export async function POST(request: Request) {
       timeout: 120_000,
     });
 
-    const configPath = findConfigFile(targetDir);
+    const localConfigPath = [join(targetDir, "agent-orchestrator.yaml"), join(targetDir, "agent-orchestrator.yml")];
+    const existingConfigPath = await (async () => {
+      for (const path of localConfigPath) {
+        try {
+          await stat(path);
+          return path;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw error;
+          }
+        }
+      }
+      return null;
+    })();
 
-    if (!configPath) {
+    if (!existingConfigPath) {
       const config = generateConfigFromUrl({
         parsed: repo,
         repoPath: targetDir,
       });
       await writeFile(
-        join(targetDir, "agent-orchestrator.yaml"),
+        localConfigPath[0],
         configToYaml(extractFlatLocalConfig(config, projectKey)),
         "utf-8",
       );
-    } else {
-      const config = loadConfig(configPath);
-      projectKey = Object.keys(config.projects)[0] ?? projectKey;
     }
 
     const project = registerAndResolveProject(targetDir, {

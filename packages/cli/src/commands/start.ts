@@ -39,6 +39,7 @@ import {
   isOldConfigFormat,
   migrateToGlobalConfig,
   loadPreferences,
+  isPortfolioEnabled,
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
@@ -1298,7 +1299,7 @@ export function registerStart(program: Command): void {
             // New format: global config + flat per-project local configs.
             // Only prompt when the global config doesn't exist yet (first migration).
             const loadedPath = loadedConfig.configPath;
-            if (loadedPath && !existsSync(getGlobalConfigPath())) {
+            if (isPortfolioEnabled() && loadedPath && !existsSync(getGlobalConfigPath())) {
               try {
                 const rawContent = readFileSync(loadedPath, "utf-8");
                 const rawParsed = yamlParse(rawContent);
@@ -1351,40 +1352,42 @@ export function registerStart(program: Command): void {
           //   - The on-disk config is old-format (projects: wrapper) — migration
           //     has not been run yet and the global config IS the single file.
           //   - The local flat config doesn't exist (Docker / remote install).
-          try {
-            const localConfig = loadLocalProjectConfig(project.path);
-            if (localConfig) {
-              // Flat local config found — register in global registry and sync shadow
-              registerProjectInGlobalConfig(
-                projectId,
-                project.name ?? projectId,
-                project.path,
-                localConfig,
-              );
-              console.log(chalk.dim(`  ✓ Shadow synced to ${getGlobalConfigPath()}`));
-            } else {
-              // Check whether existing global config has this project (old-style
-              // or already registered). Register identity if missing.
-              const globalConfig = loadGlobalConfig();
-              if (globalConfig && !globalConfig.projects[projectId]) {
+          if (isPortfolioEnabled()) {
+            try {
+              const localConfig = loadLocalProjectConfig(project.path);
+              if (localConfig) {
+                // Flat local config found — register in global registry and sync shadow
                 registerProjectInGlobalConfig(
                   projectId,
                   project.name ?? projectId,
                   project.path,
+                  localConfig,
                 );
-              } else if (globalConfig && globalConfig.projects[projectId]) {
-                // Warn if shadow is stale (local config mtime > last sync)
-                if (isProjectShadowStale(projectId, globalConfig)) {
-                  console.log(
-                    chalk.yellow(
-                      `  ⚠ local config for "${projectId}" changed since last sync — shadow may be stale.`,
-                    ),
+                console.log(chalk.dim(`  ✓ Shadow synced to ${getGlobalConfigPath()}`));
+              } else {
+                // Check whether existing global config has this project (old-style
+                // or already registered). Register identity if missing.
+                const globalConfig = loadGlobalConfig();
+                if (globalConfig && !globalConfig.projects[projectId]) {
+                  registerProjectInGlobalConfig(
+                    projectId,
+                    project.name ?? projectId,
+                    project.path,
                   );
+                } else if (globalConfig && globalConfig.projects[projectId]) {
+                  // Warn if shadow is stale (local config mtime > last sync)
+                  if (isProjectShadowStale(projectId, globalConfig)) {
+                    console.log(
+                      chalk.yellow(
+                        `  ⚠ local config for "${projectId}" changed since last sync — shadow may be stale.`,
+                      ),
+                    );
+                  }
                 }
               }
+            } catch {
+              // Shadow sync is best-effort — never block startup
             }
-          } catch {
-            // Shadow sync is best-effort — never block startup
           }
 
           // ── Already-running detection (Step 9) ──

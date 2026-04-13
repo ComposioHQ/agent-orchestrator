@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockLoadConfig = vi.fn();
 const mockLoadPreferences = vi.fn(() => ({}));
 const mockGetPortfolio = vi.fn(() => []);
+const mockIsPortfolioEnabled = vi.fn(() => true);
 
 vi.mock("react", () => ({
   cache: (fn: (...args: unknown[]) => unknown) => fn,
@@ -12,10 +13,12 @@ vi.mock("@aoagents/ao-core", () => ({
   loadConfig: () => mockLoadConfig(),
   loadPreferences: () => mockLoadPreferences(),
   getPortfolio: () => mockGetPortfolio(),
+  isPortfolioEnabled: () => mockIsPortfolioEnabled(),
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockIsPortfolioEnabled.mockReturnValue(true);
 });
 
 describe("getPrimaryProjectId", () => {
@@ -128,5 +131,16 @@ describe("getAllProjects", () => {
 
     const { getAllProjects } = await import("../project-name");
     expect(getAllProjects()).toEqual([]);
+  });
+
+  it("uses config-only resolution when portfolio mode is disabled", async () => {
+    mockIsPortfolioEnabled.mockReturnValue(false);
+    mockLoadConfig.mockReturnValue({
+      projects: { "legacy-app": { name: "Legacy App" } },
+    });
+
+    const { getAllProjects } = await import("../project-name");
+    expect(getAllProjects()).toEqual([{ id: "legacy-app", name: "Legacy App" }]);
+    expect(mockGetPortfolio).not.toHaveBeenCalled();
   });
 });

@@ -29,9 +29,10 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 const mockGetAllProjects = vi.fn(() => [{ id: "proj-a", name: "Project A" }, { id: "proj-b", name: "Project B" }]);
+const mockIsPortfolioEnabled = vi.fn(() => true);
 vi.mock("@/lib/project-name", () => ({ getAllProjects: () => mockGetAllProjects() }));
 vi.mock("@/lib/portfolio-services", () => ({ getPortfolioServices: vi.fn(() => ({ portfolio: [{ id: "proj-a", name: "Project A", repo: "acme/proj-a", defaultBranch: "main", sessionPrefix: "proj-a", source: "config", enabled: true, pinned: false, lastSeenAt: null, degraded: false, degradedReason: null }] })) }));
-vi.mock("@aoagents/ao-core", () => ({ findConfigFile: vi.fn(() => null), readOriginRemoteUrl: vi.fn(() => null), parseRepoUrl: vi.fn(() => ({ owner: "acme", repo: "my-repo", cloneUrl: "https://github.com/acme/my-repo.git" })), generateConfigFromUrl: vi.fn(() => ({ projects: { "my-repo": {} } })), configToYaml: vi.fn(() => "yaml"), sanitizeProjectId: vi.fn((n: string) => n.toLowerCase().replace(/\s+/g, "-")), generateOrchestratorPrompt: vi.fn(() => "prompt") }));
+vi.mock("@aoagents/ao-core", () => ({ findConfigFile: vi.fn(() => null), readOriginRemoteUrl: vi.fn(() => null), parseRepoUrl: vi.fn(() => ({ owner: "acme", repo: "my-repo", cloneUrl: "https://github.com/acme/my-repo.git" })), generateConfigFromUrl: vi.fn(() => ({ projects: { "my-repo": {} } })), configToYaml: vi.fn(() => "yaml"), sanitizeProjectId: vi.fn((n: string) => n.toLowerCase().replace(/\s+/g, "-")), generateOrchestratorPrompt: vi.fn(() => "prompt"), isPortfolioEnabled: () => mockIsPortfolioEnabled() }));
 vi.mock("@/lib/api-schemas", async () => { const { z } = await import("zod"); return { RegisterProjectSchema: z.object({ path: z.string().min(1), name: z.string().optional(), configProjectKey: z.string().optional() }) }; });
 vi.mock("@/lib/local-project-config", () => ({ buildFlatLocalConfig: vi.fn(() => ({})), extractFlatLocalConfig: vi.fn(() => ({})) }));
 vi.mock("@/lib/path-security", () => ({ assertPathWithinHome: vi.fn(async (p: string) => p) }));
@@ -42,7 +43,7 @@ vi.mock("@/lib/services", () => ({ getServices: vi.fn(async () => ({ config: { p
 import { GET, POST } from "../route";
 function makeRequest(url: string, init?: RequestInit): NextRequest { return new NextRequest(new URL(url, "http://localhost:3000"), init as ConstructorParameters<typeof NextRequest>[1]); }
 
-beforeEach(() => { vi.clearAllMocks(); mockExistsSync.mockReturnValue(false); mockExecFileAsync.mockResolvedValue({ stdout: "", stderr: "" }); });
+beforeEach(() => { vi.clearAllMocks(); mockExistsSync.mockReturnValue(false); mockExecFileAsync.mockResolvedValue({ stdout: "", stderr: "" }); mockIsPortfolioEnabled.mockReturnValue(true); });
 
 describe("GET /api/projects", () => {
   it("returns projects for default scope", async () => {
@@ -59,6 +60,12 @@ describe("GET /api/projects", () => {
     expect(data.projects[0].id).toBe("proj-a");
   });
 
+  it("returns 404 for portfolio scope when the feature flag is off", async () => {
+    mockIsPortfolioEnabled.mockReturnValue(false);
+    const res = await GET(makeRequest("/api/projects?scope=portfolio"));
+    expect(res.status).toBe(404);
+  });
+
   it("returns 500 on error", async () => {
     mockGetAllProjects.mockImplementationOnce(() => { throw new Error("broken"); });
     const res = await GET(makeRequest("/api/projects"));
@@ -70,6 +77,12 @@ describe("POST /api/projects", () => {
   it("returns 400 for missing path", async () => {
     const res = await POST(makeRequest("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }));
     expect(res.status).toBe(400);
+  });
+
+  it("returns 404 when project registration is disabled", async () => {
+    mockIsPortfolioEnabled.mockReturnValue(false);
+    const res = await POST(makeRequest("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: "/tmp/my-repo" }) }));
+    expect(res.status).toBe(404);
   });
 
   it("returns 500 when path security fails", async () => {

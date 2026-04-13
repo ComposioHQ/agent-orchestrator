@@ -7,9 +7,11 @@ const mockPortfolio = [
 ];
 
 let storedPreferences: Record<string, unknown> = {};
+const mockIsPortfolioEnabled = vi.fn(() => true);
 
 vi.mock("@aoagents/ao-core", () => ({
   getPortfolio: vi.fn(() => mockPortfolio),
+  isPortfolioEnabled: vi.fn(() => mockIsPortfolioEnabled()),
   loadPreferences: vi.fn(() => storedPreferences),
   updatePreferences: vi.fn((updater: (prefs: Record<string, unknown>) => void) => {
     updater(storedPreferences);
@@ -43,6 +45,7 @@ function makeContext(id: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   storedPreferences = {};
+  mockIsPortfolioEnabled.mockReturnValue(true);
 });
 
 describe("PUT /api/projects/[id]", () => {
@@ -57,6 +60,18 @@ describe("PUT /api/projects/[id]", () => {
     expect(res.status).toBe(404);
     const data = await res.json();
     expect(data.error).toContain("not found");
+  });
+
+  it("returns 404 when portfolio mode is disabled", async () => {
+    mockIsPortfolioEnabled.mockReturnValue(false);
+    const request = new Request("http://localhost/api/projects/proj-a", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pinned: true }),
+    });
+
+    const res = await PUT(request, makeContext("proj-a"));
+    expect(res.status).toBe(404);
   });
 
   it("returns 400 for invalid body", async () => {
@@ -139,6 +154,16 @@ describe("DELETE /api/projects/[id]", () => {
     expect(res.status).toBe(404);
     const data = await res.json();
     expect(data.error).toContain("not found");
+  });
+
+  it("returns 404 when portfolio mode is disabled", async () => {
+    mockIsPortfolioEnabled.mockReturnValue(false);
+    const request = new Request("http://localhost/api/projects/proj-a", {
+      method: "DELETE",
+    });
+
+    const res = await DELETE(request, makeContext("proj-a"));
+    expect(res.status).toBe(404);
   });
 
   it("deletes a project and cleans up preferences", async () => {

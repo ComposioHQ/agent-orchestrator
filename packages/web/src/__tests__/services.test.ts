@@ -13,8 +13,10 @@ const {
   scmPlugin,
   trackerGithubPlugin,
   trackerLinearPlugin,
+  mockIsPortfolioEnabled,
 } = vi.hoisted(() => {
   const mockLoadConfig = vi.fn();
+  const mockIsPortfolioEnabled = vi.fn(() => true);
   const mockRegister = vi.fn();
   const mockCreateSessionManager = vi.fn();
   const mockRegistry = {
@@ -27,6 +29,7 @@ const {
 
   return {
     mockLoadConfig,
+    mockIsPortfolioEnabled,
     mockRegister,
     mockCreateSessionManager,
     mockRegistry,
@@ -43,6 +46,7 @@ const {
 
 vi.mock("@aoagents/ao-core", () => ({
   loadConfig: mockLoadConfig,
+  isPortfolioEnabled: () => mockIsPortfolioEnabled(),
   getGlobalConfigPath: vi.fn(() => "/tmp/.agent-orchestrator/config.yaml"),
   createPluginRegistry: () => mockRegistry,
   createSessionManager: mockCreateSessionManager,
@@ -70,6 +74,7 @@ describe("services", () => {
     mockRegister.mockClear();
     mockCreateSessionManager.mockReset();
     mockLoadConfig.mockReset();
+    mockIsPortfolioEnabled.mockReturnValue(true);
     mockLoadConfig.mockReturnValue({
       configPath: "/tmp/agent-orchestrator.yaml",
       port: 3000,
@@ -114,6 +119,15 @@ describe("services", () => {
 
     expect(first).toBe(second);
     expect(mockCreateSessionManager).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to legacy loadConfig() when portfolio mode is disabled", async () => {
+    mockIsPortfolioEnabled.mockReturnValue(false);
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockLoadConfig).toHaveBeenCalledWith();
   });
 });
 

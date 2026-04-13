@@ -12,6 +12,7 @@ import {
   listPortfolioSessions,
   loadConfig,
   generateSessionPrefix,
+  isPortfolioEnabled,
   type PortfolioProject,
   type PortfolioPreferences,
   type PortfolioSession,
@@ -77,11 +78,11 @@ function fallbackPortfolioFromConfig(): PortfolioProject[] {
 function refreshCache(): CachedPortfolio {
   const existingSessions = globalForPortfolio._aoPortfolioCache?.sessions ?? [];
   const existingSessionsLoaded = globalForPortfolio._aoPortfolioCache?.sessionsLoaded ?? false;
-  let portfolio = getPortfolio();
+  let portfolio = isPortfolioEnabled() ? getPortfolio() : [];
   if (portfolio.length === 0) {
     portfolio = fallbackPortfolioFromConfig();
   }
-  const preferences = loadPreferences();
+  const preferences = isPortfolioEnabled() ? loadPreferences() : { version: 1 as const };
   const cached: CachedPortfolio = {
     services: { portfolio, preferences },
     sessions: existingSessions,

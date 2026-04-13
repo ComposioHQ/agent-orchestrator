@@ -1,3 +1,4 @@
+import { isPortfolioEnabled } from "@aoagents/ao-core";
 import { redirect } from "next/navigation";
 import { DashboardShell } from "@/components/DashboardShell";
 import { ProjectSessionPageClient } from "@/components/ProjectSessionPageClient";
@@ -11,6 +12,7 @@ export const dynamic = "force-dynamic";
 export default async function ProjectSessionPage(props: {
   params: Promise<{ projectId: string; sessionId: string }>;
 }) {
+  const portfolioEnabled = isPortfolioEnabled();
   const params = await props.params;
   const project = getAllProjects().find((candidate) => candidate.id === params.projectId);
 
@@ -30,6 +32,7 @@ export default async function ProjectSessionPage(props: {
       activeProjectId={params.projectId}
       activeSessionId={params.sessionId}
       defaultLocation={getDefaultCloneLocation()}
+      portfolioEnabled={portfolioEnabled}
     >
       <ProjectSessionPageClient projectId={params.projectId} sessionId={params.sessionId} />
     </DashboardShell>
