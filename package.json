@@ -29,7 +29,7 @@
   "devDependencies": {
     "@changesets/cli": "^2.29.8",
     "@eslint/js": "^10.0.1",
-    "@next/eslint-plugin-next": "^15.1.0",
+    "@next/eslint-plugin-next": "^15.5.15",
     "@types/node": "^25.2.3",
     "eslint": "^10.0.0",
     "eslint-config-prettier": "^10.1.8",
@@ -39,12 +39,7 @@
   },
   "pnpm": {
     "overrides": {
-      "axios": "^1.15.0",
-      "flatted": "^3.4.2"
-    },
-    "_overrides_rationale": {
-      "axios": "SSRF vulnerability fix — CVE-2023-45857, see PR #1092",
-      "flatted": "prototype-pollution security pin"
+      "axios": "^1.15.0"
     }
   }
 }

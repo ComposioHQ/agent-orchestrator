@@ -6,7 +6,6 @@ settings:
 
 overrides:
   axios: ^1.15.0
-  flatted: ^3.4.2
 
 importers:
 
@@ -19,7 +18,7 @@ importers:
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.2.0(jiti@2.6.1))
       '@next/eslint-plugin-next':
-        specifier: ^15.1.0
+        specifier: ^15.5.15
         version: 15.5.15
       '@types/node':
         specifier: ^25.2.3
@@ -314,19 +313,6 @@ importers:
       vitest:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
-
-  packages/plugins/agent-soma:
-    dependencies:
-      '@aoagents/ao-core':
-        specifier: workspace:*
-        version: link:../../core
-    devDependencies:
-      '@types/node':
-        specifier: ^25.2.3
-        version: 25.6.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
 
   packages/plugins/notifier-composio:
     dependencies:
