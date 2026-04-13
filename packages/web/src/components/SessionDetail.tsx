@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   type DashboardSession,
   type DashboardPR,
   TERMINAL_STATUSES,
+  NON_RESTORABLE_STATUSES,
   isPRMergeReady,
   isPRRateLimited,
   isPRUnenriched,
@@ -136,6 +137,7 @@ function SessionTopStrip({
   crumbLabel,
   rightSlot,
   onKill,
+  onRestore,
 }: {
   headline: string;
   crumbId: string;
@@ -148,6 +150,7 @@ function SessionTopStrip({
   crumbLabel: string;
   rightSlot?: ReactNode;
   onKill?: () => void;
+  onRestore?: () => void;
 }) {
   return (
     <div className="session-detail-top-strip">
@@ -238,7 +241,25 @@ function SessionTopStrip({
           </div>
         ) : (
           <div className="session-detail-identity__actions">
-            {onKill ? (
+            {onRestore ? (
+              <button
+                type="button"
+                className="done-restore-btn"
+                onClick={onRestore}
+              >
+                <svg
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                  className="h-3 w-3"
+                >
+                  <polyline points="1 4 1 10 7 10" />
+                  <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                </svg>
+                Restore
+              </button>
+            ) : onKill ? (
               <button
                 type="button"
                 className="session-detail-action-btn session-detail-action-btn--danger"
@@ -438,6 +459,7 @@ export function SessionDetail({
   const [showTerminal, setShowTerminal] = useState(false);
   const pr = session.pr;
   const terminalEnded = TERMINAL_STATUSES.has(session.status);
+  const isRestorable = terminalEnded && !NON_RESTORABLE_STATUSES.has(session.status);
   const activity = (session.activity && activityMeta[session.activity]) ?? {
     label: session.activity ?? "unknown",
     color: "var(--color-text-muted)",
@@ -463,6 +485,26 @@ export function SessionDetail({
   const prsHref = session.projectId ? `/prs?project=${encodeURIComponent(session.projectId)}` : "/prs";
   const crumbHref = dashboardHref;
   const crumbLabel = "Dashboard";
+
+  const handleKill = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/kill`, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      window.location.reload();
+    } catch (err) {
+      console.error("Failed to kill session:", err);
+    }
+  }, [session.id]);
+
+  const handleRestore = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/restore`, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      window.location.reload();
+    } catch (err) {
+      console.error("Failed to restore session:", err);
+    }
+  }, [session.id]);
   const headerProjectLabel =
     projects.find((project) => project.id === session.projectId)?.name ?? session.projectId;
   const showHeaderProjectLabel =
@@ -573,7 +615,8 @@ export function SessionDetail({
                       isOrchestrator={isOrchestrator}
                       crumbHref={crumbHref}
                       crumbLabel={crumbLabel}
-                      onKill={isOrchestrator ? undefined : () => {}}
+                      onKill={isOrchestrator || terminalEnded ? undefined : handleKill}
+                      onRestore={isOrchestrator || !isRestorable ? undefined : handleRestore}
                     />
                   )}
 
