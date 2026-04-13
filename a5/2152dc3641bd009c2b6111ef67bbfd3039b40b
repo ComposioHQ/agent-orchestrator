@@ -1,0 +1,25 @@
+packages/web/src/lib/__tests__/format.test.ts
+  248bed37439e1739 204-235
+packages/web/src/lib/format.ts
+  248bed37439e1739 55-63,78-84,87-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "a52152dc3641bd009c2b6111ef67bbfd3039b40b",
+  "prompts": {
+    "248bed37439e1739": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "095df2ad-dd05-40fa-b26e-e8e34480b7aa",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 53,
+      "total_deletions": 9,
+      "accepted_lines": 53,
+      "overriden_lines": 0
+    }
+  }
+}
