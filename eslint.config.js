@@ -1,7 +1,6 @@
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 import eslintConfigPrettier from "eslint-config-prettier";
-import nextPlugin from "@next/eslint-plugin-next";
 
 export default tseslint.config(
   // Global ignores
@@ -76,24 +75,6 @@ export default tseslint.config(
   {
     files: ["packages/cli/**/*.ts"],
     rules: {
-      "no-console": "off",
-    },
-  },
-
-  // Register Next.js plugin globally so Next.js build-time detection finds it
-  // (Next.js calls calculateConfigForFile on the config file itself, which is .js
-  // and would not match a packages/web/**/*.tsx scope — plugin must be global)
-  {
-    plugins: { "@next/next": nextPlugin },
-  },
-
-  // Next.js rules scoped to the web package
-  {
-    files: ["packages/web/**/*.tsx", "packages/web/**/*.ts"],
-    settings: { next: { rootDir: "packages/web" } },
-    rules: {
-      ...nextPlugin.configs.recommended.rules,
-      "@next/next/no-html-link-for-pages": "off",
       "no-console": "off",
     },
   },
