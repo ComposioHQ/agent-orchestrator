@@ -1,0 +1,36 @@
+packages/web/next-env.d.ts
+  c55c4a30a154bad4 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "3e923c27414b8bfd868978db1a92a45204e7a5a3",
+  "prompts": {
+    "3b3b057bdfd8aeb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef60a7a6-f160-47e8-bbcb-a3219a8ab2ee",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2760,
+      "overriden_lines": 0
+    },
+    "c55c4a30a154bad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "386eb42a-2d3d-4703-b4d3-cb37ecac06e9",
+        "model": "<synthetic>"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
