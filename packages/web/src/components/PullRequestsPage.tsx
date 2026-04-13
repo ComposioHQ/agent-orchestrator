@@ -62,14 +62,13 @@ export function PullRequestsPage({
     }
     return levels;
   }, [initialSessions, attentionZones]);
-  const { sessions, sseAttentionLevels } = useSessionEvents(
+  const { sessions, sseAttentionLevels } = useSessionEvents({
     initialSessions,
-    projectId,
-    mux?.status === "connected" ? mux.sessions : undefined,
+    project: projectId,
+    muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
     initialAttentionLevels,
-    false,
     attentionZones,
-  );
+  });
   const searchParams = useSearchParams();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);

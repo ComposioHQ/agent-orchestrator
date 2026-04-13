@@ -27,7 +27,14 @@ describe("useSessionEvents - mux", () => {
       { id: "s1", status: "working", activity: "active", attentionLevel: "none", lastActivityAt: now },
       { id: "s2", status: "working", activity: "active", attentionLevel: "none", lastActivityAt: now },
     ];
-    renderHook(() => useSessionEvents(initialSessions, "proj", muxSessions));
+    renderHook(() =>
+      useSessionEvents({
+        initialSessions,
+        project: "proj",
+        muxSessions,
+        attentionZones: "simple",
+      }),
+    );
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
         "/api/sessions?project=proj",

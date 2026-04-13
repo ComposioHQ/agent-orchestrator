@@ -267,14 +267,13 @@ function DashboardInner({
     }
     return levels;
   }, [initialSessions, attentionZones]);
-  const { sessions, connectionStatus, sseAttentionLevels } = useSessionEvents(
+  const { sessions, connectionStatus, sseAttentionLevels } = useSessionEvents({
     initialSessions,
-    projectId,
-    mux?.status === "connected" ? mux.sessions : undefined,
+    project: projectId,
+    muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
     initialAttentionLevels,
-    false,
     attentionZones,
-  );
+  });
   const searchParams = useSearchParams();
   const activeSessionId = searchParams.get("session") ?? undefined;
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);

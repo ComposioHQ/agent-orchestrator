@@ -94,19 +94,35 @@ function createMembershipKey(
     .join("\u0000");
 }
 
-export function useSessionEvents(
-  initialSessions: DashboardSession[],
-  project?: string,
-  muxSessions?: Array<{ id: string; status: string; activity: string | null; attentionLevel: string; lastActivityAt: string }>,
-  initialAttentionLevels?: SSEAttentionMap,
-  disabled = false,
-  // Default matches `getAttentionLevel`'s default so callers that omit a
-  // mode (e.g., PullRequestsPage, which seeds `initialAttentionLevels` with
-  // the function default) stay consistent with their seed after the first
-  // live SSE/refresh snapshot. Dashboard explicitly passes the config's
-  // `attentionZones` to opt into simple-mode collapse.
-  attentionZones: DashboardAttentionZoneMode = "detailed",
-): State {
+export interface UseSessionEventsOptions {
+  initialSessions: DashboardSession[];
+  project?: string;
+  muxSessions?: Array<{ id: string; status: string; activity: string | null; attentionLevel: string; lastActivityAt: string }>;
+  initialAttentionLevels?: SSEAttentionMap;
+  disabled?: boolean;
+  /**
+   * REQUIRED. Callers must explicitly pass the mode that the server SSE
+   * route is using (read from `config.dashboard?.attentionZones` upstream).
+   *
+   * A default here would be a footgun: any default value disagrees with
+   * the server whenever the config is set to the opposite mode, causing
+   * `sseAttentionLevels` to oscillate between modes as server snapshots
+   * and client refreshes interleave. Forcing every caller to pass this
+   * explicitly prevents the next page from silently re-introducing the
+   * bug we already fixed once for `PullRequestsPage`.
+   */
+  attentionZones: DashboardAttentionZoneMode;
+}
+
+export function useSessionEvents(options: UseSessionEventsOptions): State {
+  const {
+    initialSessions,
+    project,
+    muxSessions,
+    initialAttentionLevels,
+    disabled = false,
+    attentionZones,
+  } = options;
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
     connectionStatus: "connected" as ConnectionStatus,
