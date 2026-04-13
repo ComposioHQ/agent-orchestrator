@@ -41,6 +41,11 @@ function SessionDot({ level }: { level: SessionDotLevel }) {
   );
 }
 
+// ProjectSidebar consumes `getAttentionLevel()` without passing a mode,
+// so the function defaults to "detailed" and `action` never appears here
+// in practice. The entry is kept for exhaustiveness — TypeScript requires
+// every `AttentionLevel` variant to be present in this `Record` — and
+// as forward-compat in case the sidebar ever opts into simple mode.
 const LEVEL_LABELS: Record<AttentionLevel, string> = {
   working: "working",
   pending: "pending",

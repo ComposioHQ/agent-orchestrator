@@ -273,6 +273,32 @@ function MobileSessionRow({
   );
 }
 
+/**
+ * Pure label picker for the mobile action chip.
+ *
+ * Exported for unit tests. Returns the most specific human-readable reason
+ * to intervene on a session that has collapsed into the simple-mode `action`
+ * bucket. Status-based signals are checked first — they're authoritative
+ * and shouldn't be masked by stale activity values.
+ */
+export function getActionChipLabel(session: DashboardSession): string {
+  if (session.status === "needs_input") return "needs input";
+  if (session.status === "stuck") return "stuck";
+  if (session.status === "errored") return "errored";
+  if (session.status === "ci_failed") return "ci failed";
+  if (session.status === "changes_requested") return "changes";
+  if (session.activity === "waiting_input") return "waiting";
+  // Exited agent with non-terminal status = the process crashed. The user
+  // needs to investigate or restart it, not send a message — so don't
+  // mislabel this as "needs input".
+  if (session.activity === "exited") return "crashed";
+  if (session.activity === "blocked") return "blocked";
+  if (session.pr?.ciStatus === "failing") return "ci failed";
+  if (session.pr?.reviewDecision === "changes_requested") return "changes";
+  if (session.pr && !session.pr.mergeability.noConflicts) return "conflicts";
+  return "action";
+}
+
 function SessionStateChip({
   session,
   level,
@@ -285,39 +311,7 @@ function SessionStateChip({
   if (level === "merge" && session.pr && isPRMergeReady(session.pr)) {
     label = "ready";
   } else if (level === "action") {
-    // Simple-mode collapsed chip: surface the most specific underlying
-    // cause we can derive so mobile users keep the reason-to-intervene
-    // even though the column header is the generic "Action" bucket.
-    // Check status-based signals first — they're authoritative and
-    // don't get masked by stale activity values.
-    if (session.status === "needs_input") {
-      label = "needs input";
-    } else if (session.status === "stuck") {
-      label = "stuck";
-    } else if (session.status === "errored") {
-      label = "errored";
-    } else if (session.status === "ci_failed") {
-      label = "ci failed";
-    } else if (session.status === "changes_requested") {
-      label = "changes";
-    } else if (session.activity === "waiting_input") {
-      label = "waiting";
-    } else if (session.activity === "exited") {
-      // Exited agent with non-terminal status = the process crashed. The
-      // user needs to investigate or restart it, not send a message — so
-      // don't mislabel this as "needs input".
-      label = "crashed";
-    } else if (session.activity === "blocked") {
-      label = "blocked";
-    } else if (session.pr?.ciStatus === "failing") {
-      label = "ci failed";
-    } else if (session.pr?.reviewDecision === "changes_requested") {
-      label = "changes";
-    } else if (session.pr && !session.pr.mergeability.noConflicts) {
-      label = "conflicts";
-    } else {
-      label = "action";
-    }
+    label = getActionChipLabel(session);
   } else if (level === "respond") {
     label = session.activity === "waiting_input" ? "waiting" : "needs input";
   } else if (level === "review") {
