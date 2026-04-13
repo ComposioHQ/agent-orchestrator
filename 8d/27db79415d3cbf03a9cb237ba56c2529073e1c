@@ -1,0 +1,29 @@
+packages/web/src/hooks/useSessionEvents.ts
+  b84552d18b2b94ca 97-125
+packages/web/src/hooks/__tests__/useSessionEvents.mux.test.ts
+  b84552d18b2b94ca 30-37
+packages/web/src/components/PullRequestsPage.tsx
+  b84552d18b2b94ca 65,67-68,71
+packages/web/src/components/Dashboard.tsx
+  b84552d18b2b94ca 270,272-273,276
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "8d27db79415d3cbf03a9cb237ba56c2529073e1c",
+  "prompts": {
+    "b84552d18b2b94ca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2698ecd1-236f-4275-b64d-de7e1dd89611",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 53,
+      "total_deletions": 2151,
+      "accepted_lines": 45,
+      "overriden_lines": 0
+    }
+  }
+}
