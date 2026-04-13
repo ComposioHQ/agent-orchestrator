@@ -3,7 +3,12 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { buildPrompt, BASE_AGENT_PROMPT } from "../prompt-builder.js";
+import {
+  buildPrompt,
+  buildWorkerSystemInstructions,
+  buildWorkerTaskPrompt,
+  BASE_AGENT_PROMPT,
+} from "../prompt-builder.js";
 import type { ProjectConfig } from "../types.js";
 
 let tmpDir: string;
@@ -215,5 +220,152 @@ describe("BASE_AGENT_PROMPT", () => {
     expect(BASE_AGENT_PROMPT).toContain("Git Workflow");
     expect(BASE_AGENT_PROMPT).toContain("PR Best Practices");
     expect(BASE_AGENT_PROMPT).toContain("ao session claim-pr");
+  });
+});
+
+describe("buildWorkerSystemInstructions", () => {
+  it("includes base prompt", () => {
+    const result = buildWorkerSystemInstructions({ project, projectId: "test-app" });
+    expect(result).toContain(BASE_AGENT_PROMPT);
+  });
+
+  it("includes project context", () => {
+    const result = buildWorkerSystemInstructions({ project, projectId: "test-app" });
+    expect(result).toContain("## Project Context");
+    expect(result).toContain("Project: Test App");
+    expect(result).toContain("org/test-app");
+    expect(result).toContain("main");
+  });
+
+  it("includes tracker info", () => {
+    project.tracker = { plugin: "linear" };
+    const result = buildWorkerSystemInstructions({ project, projectId: "test-app" });
+    expect(result).toContain("Tracker: linear");
+  });
+
+  it("includes project rules from agentRules", () => {
+    project.agentRules = "Always run tests before pushing.";
+    const result = buildWorkerSystemInstructions({ project, projectId: "test-app" });
+    expect(result).toContain("## Project Rules");
+    expect(result).toContain("Always run tests before pushing.");
+  });
+
+  it("includes project rules from agentRulesFile", () => {
+    const rulesPath = join(tmpDir, "agent-rules.md");
+    writeFileSync(rulesPath, "Use conventional commits.");
+    project.agentRulesFile = "agent-rules.md";
+    const result = buildWorkerSystemInstructions({ project, projectId: "test-app" });
+    expect(result).toContain("Use conventional commits.");
+  });
+
+  it("does NOT include issue/task content even when issueId is supplied", () => {
+    const result = buildWorkerSystemInstructions({
+      project,
+      projectId: "test-app",
+      issueId: "INT-999",
+      issueContext: "Some issue details",
+    });
+    expect(result).not.toContain("INT-999");
+    expect(result).not.toContain("Some issue details");
+    expect(result).not.toContain("## Task");
+    expect(result).not.toContain("## Issue Details");
+  });
+
+  it("does NOT include userPrompt even when supplied", () => {
+    const result = buildWorkerSystemInstructions({
+      project,
+      projectId: "test-app",
+      userPrompt: "Focus on the auth layer.",
+    });
+    expect(result).not.toContain("Focus on the auth layer.");
+    expect(result).not.toContain("## Additional Instructions");
+  });
+
+  it("includes automated reaction hints", () => {
+    project.reactions = {
+      "ci-failed": { auto: true, action: "send-to-agent" },
+      "approved-and-green": { auto: false, action: "notify" },
+    };
+    const result = buildWorkerSystemInstructions({ project, projectId: "test-app" });
+    expect(result).toContain("ci-failed");
+    expect(result).not.toContain("approved-and-green");
+  });
+});
+
+describe("buildWorkerTaskPrompt", () => {
+  it("returns empty string when no issue, context, or userPrompt", () => {
+    const result = buildWorkerTaskPrompt({ project, projectId: "test-app" });
+    expect(result).toBe("");
+  });
+
+  it("includes issue task section when issueId supplied", () => {
+    const result = buildWorkerTaskPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-42",
+    });
+    expect(result).toContain("## Task");
+    expect(result).toContain("Work on issue: INT-42");
+    expect(result).toContain("feat/INT-42");
+  });
+
+  it("includes issue context when supplied", () => {
+    const result = buildWorkerTaskPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-42",
+      issueContext: "Title: Fix login\nPriority: High",
+    });
+    expect(result).toContain("## Issue Details");
+    expect(result).toContain("Fix login");
+    expect(result).toContain("Priority: High");
+  });
+
+  it("includes userPrompt as additional instructions", () => {
+    const result = buildWorkerTaskPrompt({
+      project,
+      projectId: "test-app",
+      userPrompt: "Focus on the auth layer.",
+    });
+    expect(result).toContain("## Additional Instructions");
+    expect(result).toContain("Focus on the auth layer.");
+  });
+
+  it("does NOT include base prompt or project context", () => {
+    const result = buildWorkerTaskPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-42",
+      userPrompt: "Some task.",
+    });
+    expect(result).not.toContain(BASE_AGENT_PROMPT);
+    expect(result).not.toContain("## Project Context");
+    expect(result).not.toContain("Project: Test App");
+  });
+
+  it("does NOT include project rules", () => {
+    project.agentRules = "Inline rule.";
+    const result = buildWorkerTaskPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-42",
+    });
+    expect(result).not.toContain("Inline rule.");
+    expect(result).not.toContain("## Project Rules");
+  });
+
+  it("ordering: task before issue details before additional instructions", () => {
+    const result = buildWorkerTaskPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-42",
+      issueContext: "Issue body here",
+      userPrompt: "Do this extra thing.",
+    });
+    const taskIdx = result.indexOf("## Task");
+    const detailsIdx = result.indexOf("## Issue Details");
+    const additionalIdx = result.indexOf("## Additional Instructions");
+    expect(taskIdx).toBeLessThan(detailsIdx);
+    expect(detailsIdx).toBeLessThan(additionalIdx);
   });
 });

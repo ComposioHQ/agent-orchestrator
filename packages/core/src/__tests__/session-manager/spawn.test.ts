@@ -979,8 +979,17 @@ describe("spawn", () => {
     expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("sends AO guidance post-launch even when no explicit prompt is provided", async () => {
+  it("does not send post-launch message when no task content — AO guidance goes to systemPromptFile instead", async () => {
     vi.useFakeTimers();
+    const wsPath = join(tmpDir, "ws-post-launch-no-task");
+    mkdirSync(wsPath, { recursive: true });
+    (mockWorkspace.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      path: wsPath,
+      branch: "session/app-1",
+      sessionId: "app-1",
+      projectId: "my-app",
+    });
+
     const postLaunchAgent = {
       ...mockAgent,
       promptDelivery: "post-launch" as const,
@@ -1000,9 +1009,13 @@ describe("spawn", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await spawnPromise;
 
-    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: expect.any(String) }),
-      expect.stringContaining("ao session claim-pr"),
+    // No sendMessage: task prompt is empty, AO guidance lives in the systemPromptFile
+    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+    // getLaunchCommand should have received systemPromptFile pointing into the worktree
+    expect(postLaunchAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPromptFile: expect.stringContaining("worker-instructions"),
+      }),
     );
     vi.useRealTimers();
   });
@@ -1072,6 +1085,108 @@ describe("spawn", () => {
     expect(mockRuntime.sendMessage).toHaveBeenCalled();
     vi.useRealTimers();
   }, 20_000);
+
+  describe("worker system instructions file", () => {
+    function makeWsRegistry(wsPath: string): PluginRegistry {
+      const ws = {
+        ...mockWorkspace,
+        create: vi.fn().mockResolvedValue({
+          path: wsPath,
+          branch: "session/app-1",
+          sessionId: "app-1",
+          projectId: "my-app",
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined),
+      };
+      return {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return mockAgent;
+          if (slot === "workspace") return ws;
+          return null;
+        }),
+      };
+    }
+
+    it("writes worker instructions to .ao/ inside the worktree", async () => {
+      const wsPath = join(tmpDir, "ws-instr-write");
+      mkdirSync(wsPath, { recursive: true });
+      const sm = createSessionManager({ config, registry: makeWsRegistry(wsPath) });
+
+      await sm.spawn({ projectId: "my-app" });
+
+      const instrFile = join(wsPath, ".ao", "worker-instructions-app-1.md");
+      expect(existsSync(instrFile)).toBe(true);
+      const content = readFileSync(instrFile, "utf-8");
+      expect(content).toContain("ao session claim-pr");
+      expect(content).toContain("## Project Context");
+    });
+
+    it("passes systemPromptFile pointing into the worktree to getLaunchCommand", async () => {
+      const wsPath = join(tmpDir, "ws-sysprompt-pass");
+      mkdirSync(wsPath, { recursive: true });
+      const sm = createSessionManager({ config, registry: makeWsRegistry(wsPath) });
+
+      await sm.spawn({ projectId: "my-app" });
+
+      expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          systemPromptFile: join(wsPath, ".ao", "worker-instructions-app-1.md"),
+        }),
+      );
+    });
+
+    it("task prompt contains only issue/task content — no BASE_AGENT_PROMPT", async () => {
+      const wsPath = join(tmpDir, "ws-task-no-base");
+      mkdirSync(wsPath, { recursive: true });
+      const sm = createSessionManager({ config, registry: makeWsRegistry(wsPath) });
+
+      await sm.spawn({ projectId: "my-app", issueId: "INT-77", prompt: "Do the thing" });
+
+      expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: expect.stringContaining("INT-77"),
+        }),
+      );
+      // Base AO guidance must NOT appear in the task prompt
+      const callArg = (mockAgent.getLaunchCommand as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as { prompt?: string };
+      expect(callArg.prompt).not.toContain("ao session claim-pr");
+      expect(callArg.prompt).not.toContain("## Project Context");
+    });
+
+    it("sets prompt to undefined when no issue or userPrompt so nothing is inlined", async () => {
+      const wsPath = join(tmpDir, "ws-no-prompt");
+      mkdirSync(wsPath, { recursive: true });
+      const sm = createSessionManager({ config, registry: makeWsRegistry(wsPath) });
+
+      await sm.spawn({ projectId: "my-app" });
+
+      expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: undefined,
+          systemPromptFile: expect.stringContaining("worker-instructions"),
+        }),
+      );
+    });
+
+    it("system instructions file contains base guidance and project context but not issue details", async () => {
+      const wsPath = join(tmpDir, "ws-instr-content");
+      mkdirSync(wsPath, { recursive: true });
+      const sm = createSessionManager({ config, registry: makeWsRegistry(wsPath) });
+
+      await sm.spawn({ projectId: "my-app", issueId: "INT-99" });
+
+      const instrFile = join(wsPath, ".ao", "worker-instructions-app-1.md");
+      const content = readFileSync(instrFile, "utf-8");
+      expect(content).toContain("Session Lifecycle");
+      expect(content).toContain("## Project Context");
+      expect(content).not.toContain("INT-99");
+      expect(content).not.toContain("## Task");
+      expect(content).not.toContain("## Issue Details");
+    });
+  });
 
   describe("spawnOrchestrator", () => {
     it("throws when no workspace plugin is configured", async () => {

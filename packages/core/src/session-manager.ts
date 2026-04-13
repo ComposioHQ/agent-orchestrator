@@ -53,7 +53,7 @@ import {
   listMetadata,
   reserveSessionId,
 } from "./metadata.js";
-import { buildPrompt } from "./prompt-builder.js";
+import { buildWorkerSystemInstructions, buildWorkerTaskPrompt } from "./prompt-builder.js";
 import {
   getSessionsDir,
   getWorktreesDir,
@@ -1062,13 +1062,42 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    const composedPrompt = buildPrompt({
+    const promptBuildConfig = {
       project,
       projectId: spawnConfig.projectId,
       issueId: spawnConfig.issueId,
       issueContext,
       userPrompt: spawnConfig.prompt,
-    });
+    };
+
+    // Write worker system instructions (base guidance + project context + rules) to a file
+    // inside the worktree so it is never inlined into the first task message.
+    // The .ao/ path is gitignored by convention (same dir used by PATH-wrapper hooks).
+    let workerSystemInstructionsFile: string | undefined;
+    try {
+      const systemInstructions = buildWorkerSystemInstructions(promptBuildConfig);
+      const aoDir = join(workspacePath, ".ao");
+      mkdirSync(aoDir, { recursive: true });
+      workerSystemInstructionsFile = join(aoDir, `worker-instructions-${sessionId}.md`);
+      writeFileSync(workerSystemInstructionsFile, systemInstructions, "utf-8");
+    } catch (err) {
+      // Clean up workspace, reserved ID, and the partially-written file on failure
+      if (workerSystemInstructionsFile) {
+        try { unlinkSync(workerSystemInstructionsFile); } catch { /* best effort */ }
+      }
+      if (
+        plugins.workspace &&
+        shouldDestroyWorkspacePath(project, spawnConfig.projectId, workspacePath)
+      ) {
+        try { await plugins.workspace.destroy(workspacePath); } catch { /* best effort */ }
+      }
+      try { deleteMetadata(sessionsDir, sessionId, false); } catch { /* best effort */ }
+      throw err;
+    }
+
+    // Task prompt contains only the issue/task-specific content; the system
+    // instructions (base guidance, project context, rules) live in the file above.
+    const taskPrompt = buildWorkerTaskPrompt(promptBuildConfig) || undefined;
 
     // Get agent launch config and create runtime — clean up workspace on failure
     const opencodeIssueSessionStrategy = project.opencodeIssueSessionStrategy ?? "reuse";
@@ -1090,10 +1119,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
       },
       issueId: spawnConfig.issueId,
-      prompt: composedPrompt,
+      prompt: taskPrompt,
       permissions: selection.permissions,
       model: selection.model,
       subagent: spawnConfig.subagent ?? selection.subagent,
+      systemPromptFile: workerSystemInstructionsFile,
     };
 
     let handle: RuntimeHandle;
@@ -1119,7 +1149,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
       });
     } catch (err) {
-      // Clean up workspace and reserved ID if agent config or runtime creation failed
+      // Clean up workspace, reserved ID, and instructions file on failure.
+      // The file lives inside the workspace so workspace.destroy() handles it,
+      // but we also attempt an explicit unlink for the no-workspace-plugin case.
+      if (workerSystemInstructionsFile) {
+        try { unlinkSync(workerSystemInstructionsFile); } catch { /* best effort */ }
+      }
       if (
         plugins.workspace &&
         shouldDestroyWorkspacePath(project, spawnConfig.projectId, workspacePath)
@@ -1200,6 +1235,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         await plugins.runtime.destroy(handle);
       } catch {
         /* best effort */
+      }
+      if (workerSystemInstructionsFile) {
+        try { unlinkSync(workerSystemInstructionsFile); } catch { /* best effort */ }
       }
       if (
         plugins.workspace &&

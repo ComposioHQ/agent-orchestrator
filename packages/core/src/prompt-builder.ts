@@ -166,3 +166,81 @@ export function buildPrompt(config: PromptBuildConfig): string {
 
   return sections.join("\n\n");
 }
+
+/**
+ * Build the system-level instructions for a worker session.
+ *
+ * Contains: BASE_AGENT_PROMPT + project context + project rules.
+ * Does NOT include issue/task-specific content or the user prompt.
+ * This portion is written to a file and passed as systemPromptFile so it
+ * is never inlined into the first task message.
+ */
+export function buildWorkerSystemInstructions(config: PromptBuildConfig): string {
+  const { project, projectId } = config;
+  const userRules = readUserRules(project);
+  const sections: string[] = [];
+
+  // Layer 1: Base prompt
+  sections.push(BASE_AGENT_PROMPT);
+
+  // Layer 2: Project context (no issue/task sections)
+  const ctxLines: string[] = [];
+  ctxLines.push("## Project Context");
+  ctxLines.push(`- Project: ${project.name ?? projectId}`);
+  ctxLines.push(`- Repository: ${project.repo}`);
+  ctxLines.push(`- Default branch: ${project.defaultBranch}`);
+  if (project.tracker) {
+    ctxLines.push(`- Tracker: ${project.tracker.plugin}`);
+  }
+  if (project.reactions) {
+    const reactionHints: string[] = [];
+    for (const [event, reaction] of Object.entries(project.reactions)) {
+      if (reaction.auto && reaction.action === "send-to-agent") {
+        reactionHints.push(`- ${event}: auto-handled (you'll receive instructions)`);
+      }
+    }
+    if (reactionHints.length > 0) {
+      ctxLines.push(`\n## Automated Reactions`);
+      ctxLines.push("The orchestrator will automatically handle these events:");
+      ctxLines.push(...reactionHints);
+    }
+  }
+  sections.push(ctxLines.join("\n"));
+
+  // Layer 3: User rules
+  if (userRules) {
+    sections.push(`## Project Rules\n${userRules}`);
+  }
+
+  return sections.join("\n\n");
+}
+
+/**
+ * Build the task-specific prompt for a worker session.
+ *
+ * Contains: issue/task section + issue details + additional user instructions.
+ * Does NOT include the base prompt or project context — those live in
+ * the system instructions file returned by buildWorkerSystemInstructions().
+ *
+ * Returns an empty string when there is no task-specific content.
+ */
+export function buildWorkerTaskPrompt(config: PromptBuildConfig): string {
+  const { issueId, issueContext, userPrompt } = config;
+  const sections: string[] = [];
+
+  if (issueId) {
+    sections.push(
+      `## Task\nWork on issue: ${issueId}\nCreate a branch named so that it auto-links to the issue tracker (e.g. feat/${issueId}).`,
+    );
+  }
+
+  if (issueContext) {
+    sections.push(`## Issue Details\n${issueContext}`);
+  }
+
+  if (userPrompt) {
+    sections.push(`## Additional Instructions\n${userPrompt}`);
+  }
+
+  return sections.join("\n\n");
+}
