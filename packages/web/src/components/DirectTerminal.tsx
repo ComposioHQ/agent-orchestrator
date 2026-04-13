@@ -217,7 +217,6 @@ export function DirectTerminal({
           minimumContrastRatio: isDark ? 1 : 7,
           scrollback: 10000,
           allowProposedApi: true,
-          fastScrollModifier: "alt",
           fastScrollSensitivity: 3,
           scrollSensitivity: 1,
         });
