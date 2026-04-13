@@ -1,0 +1,31 @@
+packages/web/src/hooks/useSessionEvents.ts
+  b84552d18b2b94ca 103-108
+packages/web/src/components/__tests__/DynamicFavicon.test.tsx
+  b84552d18b2b94ca 20,25-27,29,71-89
+packages/web/src/components/AttentionZone.tsx
+  b84552d18b2b94ca 288-308,311-312
+packages/core/src/config.ts
+  b84552d18b2b94ca 231-233
+packages/web/src/components/DynamicFavicon.tsx
+  b84552d18b2b94ca 19-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "d6bcbfad952497f3970e210165caaddf6217a297",
+  "prompts": {
+    "b84552d18b2b94ca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2698ecd1-236f-4275-b64d-de7e1dd89611",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 65,
+      "total_deletions": 21,
+      "accepted_lines": 65,
+      "overriden_lines": 0
+    }
+  }
+}
