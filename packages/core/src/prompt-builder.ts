@@ -64,8 +64,14 @@ export interface PromptBuildConfig {
 // LAYER 2: CONFIG-DERIVED CONTEXT
 // =============================================================================
 
-function buildConfigLayer(config: PromptBuildConfig): string {
-  const { project, projectId, issueId, issueContext } = config;
+/**
+ * Build the static project-context section (name, repo, branch, tracker,
+ * reactions).  Does NOT include issue/task-specific content.
+ * Shared by buildConfigLayer() and buildWorkerSystemInstructions() so that
+ * adding a new project-context field only requires a single edit.
+ */
+function buildStaticProjectContext(config: PromptBuildConfig): string {
+  const { project, projectId } = config;
   const lines: string[] = [];
 
   lines.push("## Project Context");
@@ -75,19 +81,6 @@ function buildConfigLayer(config: PromptBuildConfig): string {
 
   if (project.tracker) {
     lines.push(`- Tracker: ${project.tracker.plugin}`);
-  }
-
-  if (issueId) {
-    lines.push(`\n## Task`);
-    lines.push(`Work on issue: ${issueId}`);
-    lines.push(
-      `Create a branch named so that it auto-links to the issue tracker (e.g. feat/${issueId}).`,
-    );
-  }
-
-  if (issueContext) {
-    lines.push(`\n## Issue Details`);
-    lines.push(issueContext);
   }
 
   // Include reaction rules so the agent knows what to expect
@@ -103,6 +96,26 @@ function buildConfigLayer(config: PromptBuildConfig): string {
       lines.push("The orchestrator will automatically handle these events:");
       lines.push(...reactionHints);
     }
+  }
+
+  return lines.join("\n");
+}
+
+function buildConfigLayer(config: PromptBuildConfig): string {
+  const { issueId, issueContext } = config;
+  const lines: string[] = [buildStaticProjectContext(config)];
+
+  if (issueId) {
+    lines.push(`\n## Task`);
+    lines.push(`Work on issue: ${issueId}`);
+    lines.push(
+      `Create a branch named so that it auto-links to the issue tracker (e.g. feat/${issueId}).`,
+    );
+  }
+
+  if (issueContext) {
+    lines.push(`\n## Issue Details`);
+    lines.push(issueContext);
   }
 
   return lines.join("\n");
@@ -176,36 +189,14 @@ export function buildPrompt(config: PromptBuildConfig): string {
  * is never inlined into the first task message.
  */
 export function buildWorkerSystemInstructions(config: PromptBuildConfig): string {
-  const { project, projectId } = config;
-  const userRules = readUserRules(project);
+  const userRules = readUserRules(config.project);
   const sections: string[] = [];
 
   // Layer 1: Base prompt
   sections.push(BASE_AGENT_PROMPT);
 
-  // Layer 2: Project context (no issue/task sections)
-  const ctxLines: string[] = [];
-  ctxLines.push("## Project Context");
-  ctxLines.push(`- Project: ${project.name ?? projectId}`);
-  ctxLines.push(`- Repository: ${project.repo}`);
-  ctxLines.push(`- Default branch: ${project.defaultBranch}`);
-  if (project.tracker) {
-    ctxLines.push(`- Tracker: ${project.tracker.plugin}`);
-  }
-  if (project.reactions) {
-    const reactionHints: string[] = [];
-    for (const [event, reaction] of Object.entries(project.reactions)) {
-      if (reaction.auto && reaction.action === "send-to-agent") {
-        reactionHints.push(`- ${event}: auto-handled (you'll receive instructions)`);
-      }
-    }
-    if (reactionHints.length > 0) {
-      ctxLines.push(`\n## Automated Reactions`);
-      ctxLines.push("The orchestrator will automatically handle these events:");
-      ctxLines.push(...reactionHints);
-    }
-  }
-  sections.push(ctxLines.join("\n"));
+  // Layer 2: Static project context (shared with buildConfigLayer)
+  sections.push(buildStaticProjectContext(config));
 
   // Layer 3: User rules
   if (userRules) {
