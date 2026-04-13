@@ -165,7 +165,7 @@ check_node() {
 }
 
 check_git() {
-  if ! check_command "git" "required" "install git 2.25+ and reopen your shell"; then
+  if ! check_command "git" "required" "install git 2.30+ and reopen your shell"; then
     return
   fi
   local version major minor
@@ -173,8 +173,8 @@ check_git() {
   major="${version%%.*}"
   minor="${version#*.}"
   minor="${minor%%.*}"
-  if [ -z "$version" ] || [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 25 ]; }; then
-    fail "git 2.25+ is required, found ${version:-unknown}. Fix: upgrade git"
+  if [ -z "$version" ] || [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 30 ]; }; then
+    fail "git 2.30+ is required, found ${version:-unknown}. Fix: upgrade git"
     return
   fi
   pass "git version ${version} supports worktrees"
@@ -261,12 +261,12 @@ check_install_layout() {
 }
 
 check_runtime_sanity() {
-  if [ ! -f "$REPO_ROOT/packages/agent-orchestrator/bin/ao.js" ]; then
+  if [ ! -f "$REPO_ROOT/packages/ao/bin/ao.js" ]; then
     fail "launcher entrypoint is missing. Fix: reinstall from a clean checkout"
     return
   fi
 
-  if node "$REPO_ROOT/packages/agent-orchestrator/bin/ao.js" --version >/dev/null 2>&1; then
+  if node "$REPO_ROOT/packages/ao/bin/ao.js" --version >/dev/null 2>&1; then
     pass "launcher runtime sanity check passed (ao --version)"
   else
     fail "launcher runtime sanity check failed. Fix: run pnpm build and refresh the launcher"
@@ -274,7 +274,7 @@ check_runtime_sanity() {
 }
 
 check_config_dirs() {
-  local config_path data_dir worktree_dir
+  local config_path support_dir data_dir worktree_dir
   config_path="$(find_config || true)"
   if [ -z "$config_path" ]; then
     warn "No agent-orchestrator config was found. Fix: run ao init --auto in a target repo"
@@ -282,21 +282,20 @@ check_config_dirs() {
   fi
 
   pass "config found at $config_path"
-  data_dir="$(read_config_value dataDir "$config_path")"
-  worktree_dir="$(read_config_value worktreeDir "$config_path")"
+  support_dir="$DEFAULT_CONFIG_HOME/.agent-orchestrator"
+  ensure_dir "$support_dir" "runtime support directory" "mkdir -p $support_dir"
 
-  if [ -z "$data_dir" ]; then
-    data_dir="$DEFAULT_CONFIG_HOME/.agent-orchestrator"
+  data_dir="$(read_config_value "dataDir" "$config_path")"
+  if [ -n "$data_dir" ]; then
+    data_dir="$(expand_home "$data_dir")"
+    ensure_dir "$data_dir" "session metadata directory" "mkdir -p $data_dir"
   fi
-  if [ -z "$worktree_dir" ]; then
-    worktree_dir="$DEFAULT_CONFIG_HOME/.worktrees"
+
+  worktree_dir="$(read_config_value "worktreeDir" "$config_path")"
+  if [ -n "$worktree_dir" ]; then
+    worktree_dir="$(expand_home "$worktree_dir")"
+    ensure_dir "$worktree_dir" "worktree directory" "mkdir -p $worktree_dir"
   fi
-
-  data_dir="$(expand_home "$data_dir")"
-  worktree_dir="$(expand_home "$worktree_dir")"
-
-  ensure_dir "$data_dir" "metadata directory" "mkdir -p $data_dir"
-  ensure_dir "$worktree_dir" "worktree directory" "mkdir -p $worktree_dir"
 }
 
 check_stale_temp_files() {
