@@ -10,7 +10,7 @@ import { useMux } from "@/hooks/useMux";
 import "@xterm/xterm/css/xterm.css";
 
 // Dynamically import xterm types for TypeScript
-import type { ITheme, Terminal as TerminalType } from "xterm";
+import type { ITheme, Terminal as TerminalType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 
 interface DirectTerminalProps {
@@ -194,7 +194,7 @@ export function DirectTerminal({
     let unsubscribe: (() => void) | null = null;
 
     Promise.all([
-      import("xterm").then((mod) => mod.Terminal),
+      import("@xterm/xterm").then((mod) => mod.Terminal),
       import("@xterm/addon-fit").then((mod) => mod.FitAddon),
       import("@xterm/addon-web-links").then((mod) => mod.WebLinksAddon),
       document.fonts.ready,
