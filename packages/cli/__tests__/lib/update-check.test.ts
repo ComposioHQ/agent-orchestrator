@@ -100,7 +100,12 @@ describe("update-check", () => {
       expect(isVersionOutdated("1.0", "1.0.1")).toBe(true);
     });
 
-    it("strips pre-release suffixes before comparing", () => {
+    it("treats prerelease current versions as older than the matching stable release", () => {
+      expect(isVersionOutdated("0.2.2-beta.1", "0.2.2")).toBe(true);
+      expect(isVersionOutdated("0.2.2-rc.1", "0.2.2")).toBe(true);
+    });
+
+    it("still compares prerelease versions by numeric parts first", () => {
       expect(isVersionOutdated("0.2.2-beta.1", "0.3.0")).toBe(true);
       expect(isVersionOutdated("0.3.0", "0.3.0-beta.1")).toBe(false);
     });

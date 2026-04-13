@@ -309,20 +309,30 @@ export function scheduleBackgroundRefresh(): void {
 
 /**
  * Simple semver comparison: returns true if current < latest.
- * Strips pre-release suffixes (e.g. "0.2.2-beta.1" → "0.2.2") before
- * comparing, since pre-release ordering is complex and the npm registry
- * `latest` tag always points to a stable release.
+ *
+ * The npm registry `latest` tag normally points to a stable release, so we
+ * only need one prerelease rule beyond numeric comparison: when the numeric
+ * parts match, a prerelease current version is older than a stable latest
+ * version (for example `0.2.2-beta.1` < `0.2.2`).
  */
 export function isVersionOutdated(current: string, latest: string): boolean {
-  const stripPrerelease = (v: string) => v.split("-")[0]!;
-  const currentParts = stripPrerelease(current).split(".").map(Number);
-  const latestParts = stripPrerelease(latest).split(".").map(Number);
+  const parseVersion = (version: string) => {
+    const [base, prerelease] = version.split("-", 2);
+    return {
+      parts: (base ?? "").split(".").map(Number),
+      hasPrerelease: Boolean(prerelease),
+    };
+  };
+
+  const currentVersion = parseVersion(current);
+  const latestVersion = parseVersion(latest);
   for (let i = 0; i < 3; i++) {
-    const c = currentParts[i] ?? 0;
-    const l = latestParts[i] ?? 0;
+    const c = currentVersion.parts[i] ?? 0;
+    const l = latestVersion.parts[i] ?? 0;
     if (Number.isNaN(c) || Number.isNaN(l)) return false;
     if (c < l) return true;
     if (c > l) return false;
   }
-  return false;
+
+  return currentVersion.hasPrerelease && !latestVersion.hasPrerelease;
 }

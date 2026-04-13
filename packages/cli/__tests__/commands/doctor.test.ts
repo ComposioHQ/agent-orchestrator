@@ -54,13 +54,23 @@ vi.mock("../../src/lib/update-check.js", () => ({
   getCurrentVersion: () => mockGetCurrentVersion(),
   readCachedUpdateInfo: () => mockReadCachedUpdateInfo(),
   isVersionOutdated: (current: string, latest: string) => {
-    const cp = current.split(".").map(Number);
-    const lp = latest.split(".").map(Number);
+    const parseVersion = (version: string) => {
+      const [base, prerelease] = version.split("-", 2);
+      return {
+        parts: (base ?? "").split(".").map(Number),
+        hasPrerelease: Boolean(prerelease),
+      };
+    };
+
+    const currentVersion = parseVersion(current);
+    const latestVersion = parseVersion(latest);
+
     for (let i = 0; i < 3; i++) {
-      if ((cp[i] ?? 0) < (lp[i] ?? 0)) return true;
-      if ((cp[i] ?? 0) > (lp[i] ?? 0)) return false;
+      if ((currentVersion.parts[i] ?? 0) < (latestVersion.parts[i] ?? 0)) return true;
+      if ((currentVersion.parts[i] ?? 0) > (latestVersion.parts[i] ?? 0)) return false;
     }
-    return false;
+
+    return currentVersion.hasPrerelease && !latestVersion.hasPrerelease;
   },
 }));
 
@@ -312,6 +322,22 @@ describe("doctor command", () => {
     expect(output).toContain("WARN");
     expect(output).toContain("outdated");
     expect(output).toContain("0.3.0");
+  });
+
+  it("shows WARN when a prerelease build is behind the matching stable release", async () => {
+    mockGetCurrentVersion.mockReturnValue("0.2.2-beta.1");
+    mockReadCachedUpdateInfo.mockReturnValue({
+      latestVersion: "0.2.2",
+      checkedAt: new Date().toISOString(),
+      currentVersionAtCheck: "0.2.2-beta.1",
+    });
+
+    await program.parseAsync(["node", "test", "doctor"]);
+
+    const output = consoleLogSpy.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).toContain("WARN");
+    expect(output).toContain("0.2.2-beta.1");
+    expect(output).toContain("0.2.2");
   });
 
   it("shows informational PASS when no cache exists", async () => {
