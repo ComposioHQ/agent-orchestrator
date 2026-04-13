@@ -79,6 +79,14 @@ export default tseslint.config(
     },
   },
 
+  // Web package uses console for server-side logging
+  {
+    files: ["packages/web/**/*.ts", "packages/web/**/*.tsx"],
+    rules: {
+      "no-console": "off",
+    },
+  },
+
   // Scripts directory - Node.js environment
   {
     files: ["scripts/**/*.js", "scripts/**/*.mjs"],
