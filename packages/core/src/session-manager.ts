@@ -55,15 +55,7 @@ import {
   listMetadata,
   reserveSessionId,
 } from "./metadata.js";
-import {
-  buildLifecycleMetadataPatch,
-  cloneLifecycle,
-  createInitialCanonicalLifecycle,
-  deriveLegacyStatus,
-  parseCanonicalLifecycle,
-} from "./lifecycle-state.js";
-import { buildPrompt } from "./prompt-builder.js";
-import { classifyActivitySignal, createActivitySignal } from "./activity-signal.js";
+import { buildLayeredPrompt } from "./prompt-builder.js";
 import {
   getSessionsDir,
   getWorktreesDir,
@@ -1263,7 +1255,32 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    const composedPrompt = buildPrompt({
+    const cleanupSpawnWorkspaceAndMetadata = async (promptFile?: string): Promise<void> => {
+      if (
+        plugins.workspace &&
+        shouldDestroyWorkspacePath(project, spawnConfig.projectId, workspacePath)
+      ) {
+        try {
+          await plugins.workspace.destroy(workspacePath);
+        } catch {
+          /* best effort */
+        }
+      }
+      try {
+        deleteMetadata(sessionsDir, sessionId, false);
+      } catch {
+        /* best effort */
+      }
+      if (promptFile) {
+        try {
+          unlinkSync(promptFile);
+        } catch {
+          /* best effort */
+        }
+      }
+    };
+
+    const { systemPrompt, taskPrompt } = buildLayeredPrompt({
       project,
       projectId: spawnConfig.projectId,
       issueId: spawnConfig.issueId,
@@ -1271,16 +1288,33 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       userPrompt: spawnConfig.prompt,
     });
 
+    let systemPromptFile: string | undefined;
+    try {
+      const baseDir = getProjectBaseDir(config.configPath, project.path);
+      mkdirSync(baseDir, { recursive: true });
+      systemPromptFile = join(baseDir, `worker-prompt-${sessionId}.md`);
+      writeFileSync(systemPromptFile, systemPrompt, "utf-8");
+    } catch (err) {
+      await cleanupSpawnWorkspaceAndMetadata(systemPromptFile);
+      throw err;
+    }
+
     // Get agent launch config and create runtime — clean up workspace on failure
     const opencodeIssueSessionStrategy = project.opencodeIssueSessionStrategy ?? "reuse";
-    const reusedOpenCodeSessionId =
-      plugins.agent.name === "opencode" && spawnConfig.issueId
-        ? await resolveOpenCodeSessionReuse({
-            sessionsDir,
-            criteria: { issueId: spawnConfig.issueId },
-            strategy: opencodeIssueSessionStrategy,
-          })
-        : undefined;
+    let reusedOpenCodeSessionId: string | undefined;
+    try {
+      reusedOpenCodeSessionId =
+        plugins.agent.name === "opencode" && spawnConfig.issueId
+          ? await resolveOpenCodeSessionReuse({
+              sessionsDir,
+              criteria: { issueId: spawnConfig.issueId },
+              strategy: opencodeIssueSessionStrategy,
+            })
+          : undefined;
+    } catch (err) {
+      await cleanupSpawnWorkspaceAndMetadata(systemPromptFile);
+      throw err;
+    }
     const agentLaunchConfig = {
       sessionId,
       projectConfig: {
@@ -1291,7 +1325,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
       },
       issueId: spawnConfig.issueId,
-      prompt: composedPrompt,
+      prompt: taskPrompt,
+      systemPromptFile,
       permissions: selection.permissions,
       model: selection.model,
       subagent: spawnConfig.subagent ?? selection.subagent,
@@ -1320,22 +1355,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
       });
     } catch (err) {
-      // Clean up workspace and reserved ID if agent config or runtime creation failed
-      if (
-        plugins.workspace &&
-        shouldDestroyWorkspacePath(project, spawnConfig.projectId, workspacePath)
-      ) {
-        try {
-          await plugins.workspace.destroy(workspacePath);
-        } catch {
-          /* best effort */
-        }
-      }
-      try {
-        deleteMetadata(sessionsDir, sessionId, false);
-      } catch {
-        /* best effort */
-      }
+      // Clean up workspace, prompt file, and reserved ID if agent config or runtime creation failed
+      await cleanupSpawnWorkspaceAndMetadata(systemPromptFile);
       throw err;
     }
 
@@ -1414,26 +1435,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       } catch {
         /* best effort */
       }
-      if (
-        plugins.workspace &&
-        shouldDestroyWorkspacePath(project, spawnConfig.projectId, workspacePath)
-      ) {
-        try {
-          await plugins.workspace.destroy(workspacePath);
-        } catch {
-          /* best effort */
-        }
-      }
-      try {
-        deleteMetadata(sessionsDir, sessionId, false);
-      } catch {
-        /* best effort */
-      }
+      await cleanupSpawnWorkspaceAndMetadata(systemPromptFile);
       throw err;
     }
 
-    // Send initial prompt post-launch for agents that need it (e.g. Claude Code
-    // exits after -p, so we send the prompt after it starts in interactive mode).
+    // Send the task-specific prompt post-launch for agents that need it
+    // (e.g. Claude Code exits after -p, so we send the prompt after it starts
+    // in interactive mode).
     // This is intentionally outside the try/catch above — a prompt delivery failure
     // should NOT destroy the session. The agent is running; user can retry with `ao send`.
     let promptDelivered = false;

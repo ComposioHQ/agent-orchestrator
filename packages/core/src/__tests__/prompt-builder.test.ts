@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { buildPrompt, BASE_AGENT_PROMPT, BASE_AGENT_PROMPT_NO_REPO } from "../prompt-builder.js";
+import { buildPrompt, buildLayeredPrompt, BASE_AGENT_PROMPT } from "../prompt-builder.js";
 import type { ProjectConfig } from "../types.js";
 
 let tmpDir: string;
@@ -24,6 +24,58 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
+});
+
+describe("buildLayeredPrompt", () => {
+  it("splits persistent instructions from task-specific text", () => {
+    project.agentRules = "Always run pnpm test before pushing.";
+
+    const { systemPrompt, taskPrompt } = buildLayeredPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-1343",
+      issueContext: "## Linear Issue INT-1343\nTitle: Layered Prompt System",
+      userPrompt: "Focus on the API layer only.",
+    });
+
+    expect(systemPrompt).toContain(BASE_AGENT_PROMPT);
+    expect(systemPrompt).toContain("## Project Context");
+    expect(systemPrompt).toContain("## Project Rules");
+    expect(systemPrompt).not.toContain("## Task");
+    expect(systemPrompt).not.toContain("## Issue Details");
+    expect(systemPrompt).not.toContain("## Additional Instructions");
+
+    expect(taskPrompt).toContain("Work on issue: INT-1343");
+    expect(taskPrompt).toContain("Layered Prompt System");
+    expect(taskPrompt).toContain("## Additional Instructions");
+    expect(taskPrompt).toContain("Focus on the API layer only.");
+  });
+
+  it("omits taskPrompt for bare spawns", () => {
+    const { taskPrompt } = buildLayeredPrompt({
+      project,
+      projectId: "test-app",
+    });
+
+    expect(taskPrompt).toBeUndefined();
+  });
+
+  it("matches the combined buildPrompt wrapper", () => {
+    project.agentRules = "Project rule.";
+
+    const config = {
+      project,
+      projectId: "test-app",
+      issueId: "INT-1343",
+      issueContext: "Issue context",
+      userPrompt: "Focus on the API layer only.",
+    };
+    const { systemPrompt, taskPrompt } = buildLayeredPrompt(config);
+
+    expect(buildPrompt(config)).toBe(
+      taskPrompt ? `${systemPrompt}\n\n${taskPrompt}` : systemPrompt,
+    );
+  });
 });
 
 describe("buildPrompt", () => {

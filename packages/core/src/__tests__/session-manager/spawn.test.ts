@@ -972,6 +972,39 @@ describe("spawn", () => {
     vi.useRealTimers();
   });
 
+  it("writes worker system prompt to file and passes only task prompt to agent", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await sm.spawn({
+      projectId: "my-app",
+      issueId: "INT-1343",
+      prompt: "Focus on the API layer only.",
+    });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "app-1",
+        systemPromptFile: expect.stringContaining("worker-prompt-app-1.md"),
+        prompt: expect.stringContaining("Work on issue: INT-1343"),
+      }),
+    );
+
+    const callArgs = vi.mocked(mockAgent.getLaunchCommand).mock.calls[0][0];
+    expect(callArgs.prompt).toContain("## Task");
+    expect(callArgs.prompt).toContain("## Additional Instructions");
+    expect(callArgs.prompt).toContain("Focus on the API layer only.");
+    expect(callArgs.prompt).not.toContain("## Project Context");
+    expect(callArgs.prompt).not.toContain("Session Lifecycle");
+
+    const promptFile = callArgs.systemPromptFile!;
+    expect(existsSync(promptFile)).toBe(true);
+    const systemPrompt = readFileSync(promptFile, "utf-8");
+    expect(systemPrompt).toContain("Session Lifecycle");
+    expect(systemPrompt).toContain("## Project Context");
+    expect(systemPrompt).not.toContain("## Task");
+    expect(systemPrompt).not.toContain("## Additional Instructions");
+  });
+
   it("does not send prompt post-launch when agent.promptDelivery is not set", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
     await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
@@ -980,7 +1013,7 @@ describe("spawn", () => {
     expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("sends AO guidance post-launch even when no explicit prompt is provided", async () => {
+  it("does not send a post-launch message when no task prompt is available", async () => {
     vi.useFakeTimers();
     const postLaunchAgent = {
       ...mockAgent,
@@ -999,12 +1032,10 @@ describe("spawn", () => {
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
     const spawnPromise = sm.spawn({ projectId: "my-app" });
     await vi.advanceTimersByTimeAsync(5_000);
-    await spawnPromise;
+    const session = await spawnPromise;
 
-    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: expect.any(String) }),
-      expect.stringContaining("ao session claim-pr"),
-    );
+    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+    expect(session.metadata.promptDelivered).toBeUndefined();
     vi.useRealTimers();
   });
 
