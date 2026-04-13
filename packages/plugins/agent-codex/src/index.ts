@@ -63,6 +63,7 @@ interface CodexJsonlLine {
   model?: string;
   // Thread ID from thread_started notifications
   threadId?: string;
+  thread_id?: string;
   // User message content (from user input events)
   content?: string;
   role?: string;
@@ -74,6 +75,63 @@ interface CodexJsonlLine {
     cached_tokens?: number;
     reasoning_tokens?: number;
   };
+  payload?: {
+    cwd?: string;
+    model?: string;
+    threadId?: string;
+    thread_id?: string;
+    msg?: {
+      type?: string;
+      input_tokens?: number;
+      output_tokens?: number;
+      cached_tokens?: number;
+      reasoning_tokens?: number;
+    };
+    info?: {
+      total_token_usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+      };
+      last_token_usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+      };
+    };
+  };
+}
+
+function getCodexEntryCwd(entry: CodexJsonlLine): string | undefined {
+  return entry.payload?.cwd ?? entry.cwd;
+}
+
+function getCodexEntryModel(entry: CodexJsonlLine): string | null {
+  const model = entry.payload?.model ?? entry.model;
+  return typeof model === "string" && model.trim().length > 0 ? model : null;
+}
+
+function getCodexEntryThreadId(entry: CodexJsonlLine): string | null {
+  const threadId = entry.payload?.threadId ?? entry.payload?.thread_id ?? entry.threadId ?? entry.thread_id;
+  return typeof threadId === "string" && threadId.trim().length > 0 ? threadId : null;
+}
+
+function getCodexTokenUsage(entry: CodexJsonlLine): { inputTokens: number; outputTokens: number } | null {
+  const msg = entry.payload?.msg ?? entry.msg;
+  if (msg?.type === "token_count") {
+    return {
+      inputTokens: msg.input_tokens ?? 0,
+      outputTokens: msg.output_tokens ?? 0,
+    };
+  }
+
+  const usage = entry.payload?.info?.total_token_usage;
+  if (usage) {
+    return {
+      inputTokens: usage.input_tokens ?? 0,
+      outputTokens: usage.output_tokens ?? 0,
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -129,14 +187,32 @@ async function sessionFileMatchesCwd(
   workspacePath: string,
 ): Promise<boolean> {
   try {
-    // Read only the first 4 KB — session_meta is always in the first few lines.
-    // Avoids loading large rollout files (100 MB+) into memory.
+    // Read until we have a complete first line (session_meta) instead of a
+    // fixed 4 KB slice. Orchestrator session_meta lines can exceed 4 KB
+    // because they embed large instruction payloads.
     const handle = await open(filePath, "r");
     let content: string;
     try {
-      const buffer = Buffer.allocUnsafe(4096);
-      const { bytesRead } = await handle.read(buffer, 0, 4096, 0);
-      content = buffer.subarray(0, bytesRead).toString("utf-8");
+      const chunkSize = 4096;
+      const maxBytes = 256 * 1024;
+      const chunks: Buffer[] = [];
+      let position = 0;
+      let bytesAccumulated = 0;
+
+      while (bytesAccumulated < maxBytes) {
+        const buffer = Buffer.allocUnsafe(chunkSize);
+        const { bytesRead } = await handle.read(buffer, 0, chunkSize, position);
+        if (bytesRead <= 0) break;
+
+        const chunk = buffer.subarray(0, bytesRead);
+        chunks.push(chunk);
+        bytesAccumulated += bytesRead;
+        position += bytesRead;
+
+        if (chunk.includes(0x0a)) break;
+      }
+
+      content = Buffer.concat(chunks, bytesAccumulated).toString("utf-8");
     } finally {
       await handle.close();
     }
@@ -151,7 +227,7 @@ async function sessionFileMatchesCwd(
           parsed !== null &&
           !Array.isArray(parsed) &&
           (parsed as CodexJsonlLine).type === "session_meta" &&
-          (parsed as CodexJsonlLine).cwd === workspacePath
+          getCodexEntryCwd(parsed as CodexJsonlLine) === workspacePath
         ) {
           return true;
         }
@@ -222,15 +298,22 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
         const entry = parsed as CodexJsonlLine;
 
-        if (entry.type === "session_meta" && typeof entry.model === "string") {
-          data.model = entry.model;
+        if (entry.type === "session_meta") {
+          const model = getCodexEntryModel(entry);
+          if (model) {
+            data.model = model;
+          }
         }
-        if (typeof entry.threadId === "string" && entry.threadId) {
-          data.threadId = entry.threadId;
+        const threadId = getCodexEntryThreadId(entry);
+        if (threadId) {
+          data.threadId = threadId;
         }
-        if (entry.type === "event_msg" && entry.msg?.type === "token_count") {
-          data.inputTokens += entry.msg.input_tokens ?? 0;
-          data.outputTokens += entry.msg.output_tokens ?? 0;
+        if (entry.type === "event_msg") {
+          const usage = getCodexTokenUsage(entry);
+          if (usage) {
+            data.inputTokens += usage.inputTokens;
+            data.outputTokens += usage.outputTokens;
+          }
         }
       } catch {
         // Skip malformed lines
@@ -397,8 +480,10 @@ function createCodexAgent(): Agent {
       const lines = terminalOutput.trim().split("\n");
       const lastLine = lines[lines.length - 1]?.trim() ?? "";
 
-      // If Codex is showing its input prompt, it's idle
+      // If Codex is showing its input prompt, it's idle. Codex uses both
+      // shell-like bare prompts and its own "› <placeholder>" prompt.
       if (/^[>$#]\s*$/.test(lastLine)) return "idle";
+      if (/^›(?:\s|$)/u.test(lastLine)) return "idle";
 
       // Check last few lines for approval prompts
       const tail = lines.slice(-5).join("\n");

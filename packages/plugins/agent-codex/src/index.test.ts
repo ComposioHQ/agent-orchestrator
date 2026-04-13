@@ -141,9 +141,12 @@ function mockTmuxWithProcess(processName: string, found = true) {
 function makeFakeFileHandle(content: string) {
   const buf = Buffer.from(content, "utf-8");
   return {
-    read: vi.fn().mockImplementation((buffer: Buffer, offset: number, length: number, _position: number) => {
-      const bytesToCopy = Math.min(length, buf.length);
-      buf.copy(buffer, offset, 0, bytesToCopy);
+    read: vi.fn().mockImplementation((buffer: Buffer, offset: number, length: number, position: number) => {
+      const start = typeof position === "number" ? position : 0;
+      const bytesToCopy = Math.max(0, Math.min(length, buf.length - start));
+      if (bytesToCopy > 0) {
+        buf.copy(buffer, offset, start, start + bytesToCopy);
+      }
       return Promise.resolve({ bytesRead: bytesToCopy, buffer });
     }),
     close: vi.fn().mockResolvedValue(undefined),
@@ -567,11 +570,18 @@ describe("detectActivity", () => {
     expect(agent.detectActivity("some output\n# ")).toBe("idle");
   });
 
+  it("returns idle when last line is a Codex interactive prompt", () => {
+    expect(agent.detectActivity("some output\n› Summarize recent commits")).toBe("idle");
+  });
+
   it("returns idle when prompt follows historical activity indicators", () => {
     // Key regression test: historical active output in the buffer
     // should NOT override an idle prompt on the last line.
     expect(agent.detectActivity("✶ Reading files\nDone.\n> ")).toBe("idle");
     expect(agent.detectActivity("Working on task (esc to interrupt)\nFinished.\n$ ")).toBe("idle");
+    expect(
+      agent.detectActivity("• Updated Plan\n  └ Finished work\n\n› Summarize recent commits"),
+    ).toBe("idle");
   });
 
   // -- Waiting input states --
@@ -656,7 +666,7 @@ describe("getActivityState", () => {
 
   it("returns active when session file was recently modified", async () => {
     mockTmuxWithProcess("codex");
-    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    const content = '{"type":"session_meta","payload":{"cwd":"/workspace/test"}}\n';
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
     mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
@@ -672,9 +682,32 @@ describe("getActivityState", () => {
     expect(result?.timestamp).toBeInstanceOf(Date);
   });
 
+  it("matches session files when session_meta exceeds the initial 4 KB read", async () => {
+    mockTmuxWithProcess("codex");
+    const oversizedMeta = JSON.stringify({
+      type: "session_meta",
+      payload: {
+        cwd: "/workspace/test",
+        base_instructions: { text: "x".repeat(5000) },
+      },
+    }) + "\n";
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(oversizedMeta);
+    const staleTime = Date.now() - 600_000;
+    mockStat.mockResolvedValue({ mtimeMs: staleTime, mtime: new Date(staleTime) });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "assistant_message",
+      modifiedAt: new Date(staleTime),
+    });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("idle");
+  });
+
   it("returns idle when session file is stale", async () => {
     mockTmuxWithProcess("codex");
-    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    const content = '{"type":"session_meta","payload":{"cwd":"/workspace/test"}}\n';
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
     const staleTime = Date.now() - 600_000;
@@ -693,7 +726,7 @@ describe("getActivityState", () => {
 
   it("returns waiting_input for approval_request entry type", async () => {
     mockTmuxWithProcess("codex");
-    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    const content = '{"type":"session_meta","payload":{"cwd":"/workspace/test"}}\n';
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
     mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
@@ -709,7 +742,7 @@ describe("getActivityState", () => {
 
   it("returns blocked for error entry type", async () => {
     mockTmuxWithProcess("codex");
-    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    const content = '{"type":"session_meta","payload":{"cwd":"/workspace/test"}}\n';
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
     mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
@@ -725,7 +758,7 @@ describe("getActivityState", () => {
 
   it("returns ready for assistant_message entry type", async () => {
     mockTmuxWithProcess("codex");
-    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    const content = '{"type":"session_meta","payload":{"cwd":"/workspace/test"}}\n';
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
     mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
@@ -782,7 +815,10 @@ describe("getSessionInfo", () => {
 
   it("returns null when no session files match the workspace cwd", async () => {
     mockReaddir.mockResolvedValue(["session-abc.jsonl"]);
-    const content = jsonl({ type: "session_meta", cwd: "/other/workspace", model: "gpt-4o" });
+    const content = jsonl({
+      type: "session_meta",
+      payload: { cwd: "/other/workspace", model: "gpt-4o" },
+    });
     setupMockOpen(content);
     mockReadFile.mockResolvedValue(content);
     expect(await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }))).toBeNull();
@@ -790,9 +826,31 @@ describe("getSessionInfo", () => {
 
   it("returns session info with cost and model when matching session found", async () => {
     const sessionContent = jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
-      { type: "event_msg", msg: { type: "token_count", input_tokens: 1000, output_tokens: 500, cached_tokens: 200, reasoning_tokens: 100 } },
-      { type: "event_msg", msg: { type: "token_count", input_tokens: 2000, output_tokens: 300, cached_tokens: 0, reasoning_tokens: 0 } },
+      { type: "session_meta", payload: { cwd: "/workspace/test", model: "o3-mini" } },
+      {
+        type: "event_msg",
+        payload: {
+          msg: {
+            type: "token_count",
+            input_tokens: 1000,
+            output_tokens: 500,
+            cached_tokens: 200,
+            reasoning_tokens: 100,
+          },
+        },
+      },
+      {
+        type: "event_msg",
+        payload: {
+          msg: {
+            type: "token_count",
+            input_tokens: 2000,
+            output_tokens: 300,
+            cached_tokens: 0,
+            reasoning_tokens: 0,
+          },
+        },
+      },
     );
 
     mockReaddir.mockResolvedValue(["session-123.jsonl"]);
@@ -818,10 +876,10 @@ describe("getSessionInfo", () => {
 
   it("picks the most recently modified matching session file", async () => {
     const oldContent = jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { type: "session_meta", payload: { cwd: "/workspace/test", model: "gpt-4o" } },
     );
     const newContent = jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "o3" },
+      { type: "session_meta", payload: { cwd: "/workspace/test", model: "o3" } },
     );
 
     mockReaddir.mockResolvedValue(["old-session.jsonl", "new-session.jsonl"]);
@@ -854,9 +912,9 @@ describe("getSessionInfo", () => {
   });
 
   it("handles corrupt/malformed JSONL lines gracefully", async () => {
-    const content = '{"type":"session_meta","cwd":"/workspace/test","model":"gpt-4o"}\n' +
+    const content = '{"type":"session_meta","payload":{"cwd":"/workspace/test","model":"gpt-4o"}}\n' +
       "not valid json\n" +
-      '{"type":"event_msg","msg":{"type":"token_count","input_tokens":500,"output_tokens":200}}\n';
+      '{"type":"event_msg","payload":{"msg":{"type":"token_count","input_tokens":500,"output_tokens":200}}}\n';
 
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
@@ -873,8 +931,8 @@ describe("getSessionInfo", () => {
 
   it("returns null summary when no model in session_meta", async () => {
     const content = jsonl(
-      { type: "session_meta", cwd: "/workspace/test" },
-      { type: "event_msg", msg: { type: "token_count", input_tokens: 100, output_tokens: 50 } },
+      { type: "session_meta", payload: { cwd: "/workspace/test" } },
+      { type: "event_msg", payload: { msg: { type: "token_count", input_tokens: 100, output_tokens: 50 } } },
     );
 
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
@@ -894,8 +952,8 @@ describe("getSessionInfo", () => {
 
   it("returns undefined cost when no token_count events", async () => {
     const content = jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
-      { type: "event_msg", msg: { type: "other_event" } },
+      { type: "session_meta", payload: { cwd: "/workspace/test", model: "gpt-4o" } },
+      { type: "event_msg", payload: { msg: { type: "other_event" } } },
     );
 
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
@@ -914,7 +972,7 @@ describe("getSessionInfo", () => {
   it("handles unreadable session files gracefully", async () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     // open() finds matching session_meta, but readFile fails for full parse
-    setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
+    setupMockOpen(jsonl({ type: "session_meta", payload: { cwd: "/workspace/test" } }));
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
     mockReadFile.mockRejectedValue(new Error("EACCES"));
     mockCreateReadStream.mockImplementation(() => { throw new Error("EACCES"); });
@@ -924,7 +982,7 @@ describe("getSessionInfo", () => {
 
   it("skips session files when stat throws", async () => {
     const content = jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { type: "session_meta", payload: { cwd: "/workspace/test", model: "gpt-4o" } },
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
@@ -939,7 +997,7 @@ describe("getSessionInfo", () => {
   it("returns null when session JSONL has only empty/malformed lines", async () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     // open() finds matching session_meta for cwd check
-    setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
+    setupMockOpen(jsonl({ type: "session_meta", payload: { cwd: "/workspace/test" } }));
     // readFile (full parse) returns only garbage
     mockReadFile.mockResolvedValue("not json\n\n   \n");
     setupMockStream("not json\n\n   \n");
@@ -967,7 +1025,7 @@ describe("getSessionInfo", () => {
     // stat is used by findCodexSessionFile to get mtimeMs of matching JSONL files
     mockStat.mockResolvedValue({ mtimeMs: 2000 });
     const content = jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
+      { type: "session_meta", payload: { cwd: "/workspace/test", model: "o3-mini" } },
     );
     setupMockOpen(content);
     setupMockStream(content);
@@ -977,6 +1035,50 @@ describe("getSessionInfo", () => {
     expect(result).not.toBeNull();
     expect(result!.agentSessionId).toBe("rollout-abc");
     expect(result!.summary).toBe("Codex session (o3-mini)");
+  });
+
+  it("matches native JSONL when cwd is nested under payload", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","payload":{"cwd":"/workspace/test"}}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "assistant_message",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("ready");
+  });
+
+  it("parses token usage from nested payload info total_token_usage", async () => {
+    const content = jsonl(
+      { type: "session_meta", payload: { cwd: "/workspace/test", model: "gpt-4o" } },
+      {
+        type: "event_msg",
+        payload: {
+          info: {
+            total_token_usage: {
+              input_tokens: 123,
+              output_tokens: 45,
+            },
+          },
+        },
+      },
+    );
+
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    expect(result).not.toBeNull();
+    expect(result!.cost).toBeDefined();
+    expect(result!.cost!.inputTokens).toBe(123);
+    expect(result!.cost!.outputTokens).toBe(45);
   });
 
   it("ignores non-JSONL files in sessions directory", async () => {
