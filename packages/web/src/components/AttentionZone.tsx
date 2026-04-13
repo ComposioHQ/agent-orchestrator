@@ -285,16 +285,31 @@ function SessionStateChip({
   if (level === "merge" && session.pr && isPRMergeReady(session.pr)) {
     label = "ready";
   } else if (level === "action") {
-    // Simple-mode collapsed chip: prefer the more specific underlying state
-    // when we can derive it from session/activity/PR data.
-    if (
-      session.activity === "waiting_input" ||
-      session.activity === "blocked" ||
-      session.activity === "exited"
-    ) {
-      label = session.activity === "waiting_input" ? "waiting" : "needs input";
+    // Simple-mode collapsed chip: surface the most specific underlying
+    // cause we can derive so mobile users keep the reason-to-intervene
+    // even though the column header is the generic "Action" bucket.
+    // Check status-based signals first — they're authoritative and
+    // don't get masked by stale activity values.
+    if (session.status === "needs_input") {
+      label = "needs input";
+    } else if (session.status === "stuck") {
+      label = "stuck";
+    } else if (session.status === "errored") {
+      label = "errored";
+    } else if (session.status === "ci_failed") {
+      label = "ci failed";
+    } else if (session.status === "changes_requested") {
+      label = "changes";
+    } else if (session.activity === "waiting_input") {
+      label = "waiting";
+    } else if (session.activity === "blocked" || session.activity === "exited") {
+      label = "needs input";
+    } else if (session.pr?.ciStatus === "failing") {
+      label = "ci failed";
     } else if (session.pr?.reviewDecision === "changes_requested") {
       label = "changes";
+    } else if (session.pr && !session.pr.mergeability.noConflicts) {
+      label = "conflicts";
     } else {
       label = "action";
     }

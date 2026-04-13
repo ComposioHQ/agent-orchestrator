@@ -16,9 +16,15 @@ function computeHealthFromLevels(levels: SSEAttentionMap): "green" | "yellow" | 
   let hasYellow = false;
 
   for (const level of entries) {
-    // "respond" (detailed) and "action" (simple) both signal urgent intervention.
-    if (level === "respond" || level === "action") return "red";
-    if (level === "review" || level === "merge") hasYellow = true;
+    // Only "respond" (detailed mode) escalates the favicon to red. "action"
+    // (simple mode) collapses respond + review into one bucket, so it
+    // necessarily includes routine review work (ci_failed, changes_requested)
+    // that used to be yellow. Treating it as red would make every typical
+    // review PR scream critical. Keep it at yellow severity.
+    if (level === "respond") return "red";
+    if (level === "review" || level === "action" || level === "merge") {
+      hasYellow = true;
+    }
   }
 
   return hasYellow ? "yellow" : "green";

@@ -100,7 +100,12 @@ export function useSessionEvents(
   muxSessions?: Array<{ id: string; status: string; activity: string | null; attentionLevel: string; lastActivityAt: string }>,
   initialAttentionLevels?: SSEAttentionMap,
   disabled = false,
-  attentionZones: DashboardAttentionZoneMode = "simple",
+  // Default matches `getAttentionLevel`'s default so callers that omit a
+  // mode (e.g., PullRequestsPage, which seeds `initialAttentionLevels` with
+  // the function default) stay consistent with their seed after the first
+  // live SSE/refresh snapshot. Dashboard explicitly passes the config's
+  // `attentionZones` to opt into simple-mode collapse.
+  attentionZones: DashboardAttentionZoneMode = "detailed",
 ): State {
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
