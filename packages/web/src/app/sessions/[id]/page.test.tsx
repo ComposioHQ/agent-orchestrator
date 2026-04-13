@@ -70,6 +70,7 @@ class TestErrorBoundary extends React.Component<
 describe("SessionPage project polling", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.resetModules();
     sessionDetailSpy.mockClear();
     vi.spyOn(console, "error").mockImplementation(() => {});
 

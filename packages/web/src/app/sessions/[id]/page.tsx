@@ -9,6 +9,8 @@ import { activityIcon } from "@/lib/activity-icons";
 import type { ProjectInfo } from "@/lib/project-name";
 import { getSessionTitle } from "@/lib/format";
 import { useSSESessionActivity } from "@/hooks/useSSESessionActivity";
+import { useMuxOptional } from "@/providers/MuxProvider";
+import type { SessionPatch } from "@/lib/mux-protocol";
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
@@ -52,6 +54,9 @@ interface ProjectSessionsBody {
   orchestrators?: Array<{ id: string; projectId: string; projectName: string }>;
 }
 
+let cachedProjects: ProjectInfo[] | null = null;
+let cachedSidebarSessions: DashboardSession[] | null = null;
+
 function areSidebarSessionsEqual(
   previous: DashboardSession[] | null,
   next: DashboardSession[],
@@ -71,15 +76,51 @@ function areSidebarSessionsEqual(
   });
 }
 
+function applyMuxSessionPatches(current: DashboardSession[] | null, patches: SessionPatch[]): DashboardSession[] | null {
+  if (!current || patches.length === 0) {
+    return current;
+  }
+
+  const patchById = new Map(patches.map((patch) => [patch.id, patch]));
+  let changed = false;
+
+  const next = current.map((session) => {
+    const patch = patchById.get(session.id);
+    if (!patch) {
+      return session;
+    }
+
+    if (
+      session.status === patch.status &&
+      session.activity === patch.activity &&
+      session.lastActivityAt === patch.lastActivityAt
+    ) {
+      return session;
+    }
+
+    changed = true;
+    const nextSession: DashboardSession = {
+      ...session,
+      status: patch.status as DashboardSession["status"],
+      activity: patch.activity as ActivityState | null,
+      lastActivityAt: patch.lastActivityAt,
+    };
+    return nextSession;
+  });
+
+  return changed ? next : current;
+}
+
 export default function SessionPage() {
   const params = useParams();
   const id = params.id as string;
+  const mux = useMuxOptional();
 
   const [session, setSession] = useState<DashboardSession | null>(null);
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(undefined);
-  const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[] | null>(null);
+  const [projects, setProjects] = useState<ProjectInfo[]>(() => cachedProjects ?? []);
+  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[] | null>(() => cachedSidebarSessions);
   const [loading, setLoading] = useState(true);
   const [routeError, setRouteError] = useState<Error | null>(null);
   const [sessionMissing, setSessionMissing] = useState(false);
@@ -102,11 +143,20 @@ export default function SessionPage() {
 
   // Fetch project prefix map once on mount so isOrchestratorSession can use the correct prefix
   const fetchProjects = useCallback(async () => {
+    if (cachedProjects) {
+      setProjects(cachedProjects);
+      setPrefixByProject(
+        new Map(cachedProjects.map((p) => [p.id, p.sessionPrefix ?? p.id])),
+      );
+      return;
+    }
+
     try {
       const res = await fetch("/api/projects");
       if (!res.ok) return;
       const data = (await res.json()) as { projects?: ProjectInfo[] } | null;
       if (!data?.projects) return;
+      cachedProjects = data.projects;
       setProjects(data.projects);
       setPrefixByProject(
         new Map(data.projects.map((p) => [p.id, p.sessionPrefix ?? p.id])),
@@ -214,6 +264,7 @@ export default function SessionPage() {
       if (!res.ok) return;
       const body = (await res.json()) as { sessions?: DashboardSession[] } | null;
       const nextSessions = body?.sessions ?? [];
+      cachedSidebarSessions = nextSessions;
       setSidebarSessions((current) => (
         areSidebarSessionsEqual(current, nextSessions) ? current : nextSessions
       ));
@@ -221,6 +272,36 @@ export default function SessionPage() {
       // non-critical
     }
   }, []);
+
+  useEffect(() => {
+    if (!mux?.sessions) return;
+
+    setSidebarSessions((current) => {
+      const next = applyMuxSessionPatches(current, mux.sessions);
+      if (next !== current) {
+        cachedSidebarSessions = next;
+      }
+      return next;
+    });
+
+    if (mux.sessions.length === 0 || !cachedSidebarSessions) {
+      return;
+    }
+
+    const cachedIds = new Set(cachedSidebarSessions.map((sidebarSession) => sidebarSession.id));
+    const muxIds = new Set(mux.sessions.map((muxSession) => muxSession.id));
+    if (cachedIds.size !== muxIds.size) {
+      void fetchSidebarSessions();
+      return;
+    }
+
+    for (const muxId of muxIds) {
+      if (!cachedIds.has(muxId)) {
+        void fetchSidebarSessions();
+        return;
+      }
+    }
+  }, [fetchSidebarSessions, mux?.sessions]);
 
   useEffect(() => {
     if (!sessionIsOrchestrator) {
@@ -233,9 +314,9 @@ export default function SessionPage() {
     void Promise.all([
       fetchProjects(),
       fetchSession(),
-      fetchSidebarSessions(),
+      sidebarSessions === null ? fetchSidebarSessions() : Promise.resolve(),
     ]);
-  }, [fetchProjects, fetchSession, fetchSidebarSessions]);
+  }, [fetchProjects, fetchSession, fetchSidebarSessions, sidebarSessions]);
 
   useEffect(() => {
     if (!sessionProjectId) return;
