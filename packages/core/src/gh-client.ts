@@ -225,20 +225,10 @@ export class GhClient {
     // 2. Circuit breaker check
     this._checkCircuit();
 
-    // 3. Semaphore acquire
-    await this._acquireSemaphore();
-
-    try {
-      // 4. Retry loop
-      const result = await this._retryExec(args, opts);
-      this._recordSuccess();
-      return result;
-    } catch (err) {
-      this._recordFailure(err);
-      throw err;
-    } finally {
-      this._releaseSemaphore();
-    }
+    // 3 + 4. Retry loop with per-attempt semaphore acquisition.
+    // The semaphore is released before backoff sleep so sleeping retries
+    // don't block concurrency slots for other requests.
+    return this._retryExec(args, opts);
   }
 
   // -- Circuit breaker --
@@ -356,9 +346,14 @@ export class GhClient {
     const maxAttempts = opts?.noRetry ? 1 : MAX_RETRIES + 1;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Acquire semaphore per attempt so backoff sleep doesn't hold a slot
+      await this._acquireSemaphore();
       try {
-        return await this._rawExec(args, opts);
+        const result = await this._rawExec(args, opts);
+        this._recordSuccess();
+        return result;
       } catch (err) {
+        this._recordFailure(err);
         const msg = getErrorMessage(err);
 
         // Last attempt or non-retryable — throw
@@ -370,7 +365,7 @@ export class GhClient {
           throw this._wrapError(err);
         }
 
-        // Backoff
+        // Backoff — semaphore is released, slot is free for other requests
         const retryAfter = parseRetryAfter(msg);
         const baseDelay = retryAfter
           ? retryAfter * 1000
@@ -379,6 +374,8 @@ export class GhClient {
         this.stats.retries++;
 
         await sleep(baseDelay + jitter);
+      } finally {
+        this._releaseSemaphore();
       }
     }
 

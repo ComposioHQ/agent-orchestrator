@@ -1414,26 +1414,33 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (scmPlugin) {
           const scm = registry.get<SCM>("scm", scmPlugin);
           if (scm) {
-            try {
-              const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
-              const [prState, ciStatus, reviewDecision, mergeReady, ciChecks] = await Promise.all([
-                scm.getPRState(session.pr),
-                scm.getCISummary(session.pr),
-                scm.getReviewDecision(session.pr),
-                scm.getMergeability(session.pr),
-                scm.getCIChecks(session.pr).catch(() => undefined),
-              ]);
+            // Use allSettled so partial results still populate the cache.
+            // A transient failure in e.g. getMergeability shouldn't prevent
+            // detection of "merged" from getPRState.
+            const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+            const [prStateR, ciStatusR, reviewR, mergeR, checksR] = await Promise.allSettled([
+              scm.getPRState(session.pr),
+              scm.getCISummary(session.pr),
+              scm.getReviewDecision(session.pr),
+              scm.getMergeability(session.pr),
+              scm.getCIChecks(session.pr),
+            ]);
+            const prState = prStateR.status === "fulfilled" ? prStateR.value : undefined;
+            const ciStatus = ciStatusR.status === "fulfilled" ? ciStatusR.value : undefined;
+            const reviewDecision = reviewR.status === "fulfilled" ? reviewR.value : undefined;
+            const mergeReady = mergeR.status === "fulfilled" ? mergeR.value : undefined;
+            const ciChecks = checksR.status === "fulfilled" ? checksR.value : undefined;
+            // Only populate cache if we got at least the PR state
+            if (prState !== undefined) {
               prEnrichmentCache.set(prKey, {
                 state: prState,
-                ciStatus,
-                reviewDecision,
-                mergeable: mergeReady.mergeable,
-                hasConflicts: !mergeReady.noConflicts,
-                blockers: mergeReady.blockers,
+                ciStatus: ciStatus ?? "none",
+                reviewDecision: reviewDecision ?? "none",
+                mergeable: mergeReady?.mergeable ?? false,
+                hasConflicts: mergeReady ? !mergeReady.noConflicts : undefined,
+                blockers: mergeReady?.blockers,
                 ...(ciChecks !== undefined ? { ciChecks } : {}),
               });
-            } catch {
-              // SCM calls failed — checkSession will use whatever's in the cache
             }
           }
         }
