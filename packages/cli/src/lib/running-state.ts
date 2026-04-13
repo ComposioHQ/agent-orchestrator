@@ -9,6 +9,7 @@ export interface RunningState {
   port: number;
   startedAt: string;
   projects: string[];
+  version?: string;
 }
 
 const STATE_DIR = join(homedir(), ".agent-orchestrator");
