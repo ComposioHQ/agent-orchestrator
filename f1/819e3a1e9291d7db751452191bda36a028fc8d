@@ -1,0 +1,51 @@
+packages/web/src/app/api/events/route.ts
+  b84552d18b2b94ca 84,93,159,168
+packages/web/src/app/globals.css
+  b84552d18b2b94ca 1409-1411,1460-1462,4119-4121,4132,4599-4601,4618,4816-4818,5450-5453
+packages/web/src/lib/types.ts
+  b84552d18b2b94ca 18,34,41,43,50-53,55-62,208-232
+packages/web/src/app/sessions/[id]/page.tsx
+  b84552d18b2b94ca 42,174
+packages/web/src/components/DynamicFavicon.tsx
+  b84552d18b2b94ca 19-20,42,46-51
+packages/core/src/types.ts
+  b84552d18b2b94ca 1033-1035,1083-1098
+packages/web/src/app/api/sessions/patches/route.ts
+  b84552d18b2b94ca 25-26,32
+packages/web/src/__tests__/get-attention-level.test.ts
+  b84552d18b2b94ca 274-405
+packages/core/src/config.ts
+  b84552d18b2b94ca 231-236,244
+packages/web/src/components/Dashboard.tsx
+  b84552d18b2b94ca 11,36-37,40-41,43-45,47-52,61-63,255,259-262,266,269,276,383,385,418,426,429,457,466,478,490-493,501,668,814,821,957-961,967,1021,1044,1135,1147,1176-1183,1240-1244,1253,1257,1259-1263
+packages/web/src/app/page.tsx
+  b84552d18b2b94ca 32
+packages/web/src/lib/dashboard-page-data.ts
+  b84552d18b2b94ca 4-9,31,34-35,66,71
+packages/web/src/hooks/useSessionEvents.ts
+  b84552d18b2b94ca 7,103,166,207
+packages/web/src/components/ProjectSidebar.tsx
+  b84552d18b2b94ca 23-30,49
+packages/web/src/components/AttentionZone.tsx
+  b84552d18b2b94ca 42-45,287-300
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "f1819e3a1e9291d7db751452191bda36a028fc8d",
+  "prompts": {
+    "b84552d18b2b94ca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2698ecd1-236f-4275-b64d-de7e1dd89611",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 359,
+      "total_deletions": 40,
+      "accepted_lines": 358,
+      "overriden_lines": 0
+    }
+  }
+}
