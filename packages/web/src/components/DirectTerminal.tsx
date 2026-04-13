@@ -573,9 +573,9 @@ export function DirectTerminal({
   return (
     <div
       className={cn(
-        "relative overflow-hidden border border-[var(--color-border-default)]",
+        "overflow-hidden border border-[var(--color-border-default)]",
+        fullscreen ? "fixed inset-0 z-50 rounded-none border-0" : "relative",
         isDarkChrome ? "bg-[#0a0a0f]" : "bg-[#fafafa]",
-        fullscreen && "fixed inset-0 z-50 rounded-none border-0",
         chromeless && "border-0",
       )}
     >

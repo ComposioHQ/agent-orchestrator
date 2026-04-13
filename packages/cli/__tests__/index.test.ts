@@ -14,6 +14,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+vi.mock("../src/lib/update-check.js", () => ({
+  maybeShowUpdateNotice: vi.fn(),
+  scheduleBackgroundRefresh: vi.fn(),
+}));
+
 describe("cli entrypoint", () => {
   it("parses the created program", async () => {
     await import("../src/index.js");
@@ -28,12 +33,16 @@ describe("cli entrypoint", () => {
       | undefined;
 
     parseAsync.mockImplementation(
-      () =>
-        ({
+      () => {
+        const chainable = {
           catch: (handler: (reason: unknown) => unknown) => {
             rejectionHandler = handler;
+            return chainable;
           },
-        }) as Promise<void>,
+          then: (_fn: () => void) => chainable,
+        };
+        return chainable as unknown as Promise<void>;
+      },
     );
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -57,12 +66,16 @@ describe("cli entrypoint", () => {
       | undefined;
 
     parseAsync.mockImplementation(
-      () =>
-        ({
+      () => {
+        const chainable = {
           catch: (handler: (reason: unknown) => unknown) => {
             rejectionHandler = handler;
+            return chainable;
           },
-        }) as Promise<void>,
+          then: (_fn: () => void) => chainable,
+        };
+        return chainable as unknown as Promise<void>;
+      },
     );
 
     await import("../src/index.js");

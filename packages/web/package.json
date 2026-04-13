@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-web",
-  "version": "0.2.2",
+  "version": "0.2.5",
   "description": "Web dashboard for agent-orchestrator",
   "type": "module",
   "files": [
