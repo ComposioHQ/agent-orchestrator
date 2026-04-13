@@ -156,6 +156,13 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+export {
+  createStateStore,
+  getEventsFilePath,
+  type SessionEvent,
+  type SessionState,
+} from "./state-store.js";
+
 // Config generator — auto-generate config from repo URL
 export {
   isRepoUrl,

@@ -39,7 +39,13 @@ import { writeMetadata } from "../metadata.js";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import trackerGithub from "@aoagents/ao-plugin-tracker-github";
 import scmGithub from "@aoagents/ao-plugin-scm-github";
-import { createMockPlugins, makeHandle, makeSession as makeSessionBase, makePR, type TestEnvironment } from "./test-utils.js";
+import {
+  createMockPlugins,
+  makeHandle,
+  makeSession as makeSessionBase,
+  makePR,
+  type TestEnvironment,
+} from "./test-utils.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -483,10 +489,11 @@ describe("plugin integration", () => {
         spawnOrchestrator: vi.fn(),
       };
 
-      const lm = createLifecycleManager({
+      const lm = await createLifecycleManager({
         config,
         registry,
         sessionManager: mockSM,
+        projectId: "my-app",
       });
 
       // gh calls for determineStatus:
@@ -514,10 +521,11 @@ describe("plugin integration", () => {
         spawnOrchestrator: vi.fn(),
       };
 
-      const lm = createLifecycleManager({
+      const lm = await createLifecycleManager({
         config,
         registry,
         sessionManager: mockSM,
+        projectId: "my-app",
       });
 
       // getPRState → merged
@@ -542,10 +550,11 @@ describe("plugin integration", () => {
         spawnOrchestrator: vi.fn(),
       };
 
-      const lm = createLifecycleManager({
+      const lm = await createLifecycleManager({
         config,
         registry,
         sessionManager: mockSM,
+        projectId: "my-app",
       });
 
       // 1. getPRState → open

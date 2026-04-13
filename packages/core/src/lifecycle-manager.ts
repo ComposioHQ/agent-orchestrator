@@ -38,9 +38,14 @@ import {
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
-import { createCorrelationId, createProjectObserver } from "./observability.js";
+import {
+  createCorrelationId,
+  createProjectObserver,
+  type ProjectObserver,
+} from "./observability.js";
 import { resolveNotifierTarget } from "./notifier-resolution.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { createStateStore, type SessionEvent } from "./state-store.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -57,6 +62,11 @@ function parseDuration(str: string): number {
     default:
       return 0;
   }
+}
+
+/** Generate a normalized PR cache key (lowercase, no spaces). */
+function getPRKey(pr: { owner: string; repo: string; number: number }): string {
+  return `${pr.owner}/${pr.repo}#${pr.number}`.toLowerCase();
 }
 
 /** Infer a reasonable priority from event type. */
@@ -79,6 +89,45 @@ function inferPriority(type: EventType): EventPriority {
     return "warning";
   }
   return "info";
+}
+
+export async function runCompactLog(
+  store: { compactLog: () => Promise<void> },
+  observer: ProjectObserver | undefined,
+  projectId: string | undefined,
+): Promise<void> {
+  const compactCorrelationId = createCorrelationId("compact-log");
+  try {
+    await store.compactLog();
+    observer?.recordOperation?.({
+      metric: "lifecycle_poll",
+      operation: "compact_log",
+      outcome: "success",
+      projectId,
+      level: "info",
+      correlationId: compactCorrelationId,
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    observer?.recordOperation?.({
+      metric: "lifecycle_poll",
+      operation: "compact_log",
+      outcome: "failure",
+      reason: errorMsg,
+      projectId,
+      level: "warn",
+      correlationId: compactCorrelationId,
+    });
+    process.stderr.write(
+      JSON.stringify({
+        source: "lifecycle-manager",
+        operation: "compact_log",
+        level: "warn",
+        message: errorMsg,
+        timestamp: new Date().toISOString(),
+      }) + "\n",
+    );
+  }
 }
 
 /** Create an OrchestratorEvent with defaults filled in. */
@@ -192,15 +241,97 @@ interface ReactionTracker {
 }
 
 /** Create a LifecycleManager instance. */
-export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
+export async function createLifecycleManager(
+  deps: LifecycleManagerDeps,
+): Promise<LifecycleManager> {
   const { config, registry, sessionManager, projectId: scopedProjectId } = deps;
   const observer = createProjectObserver(config, "lifecycle-manager");
 
-  const states = new Map<SessionId, SessionStatus>();
+  // Initialize StateStore for single-source-of-truth state management
+  // Note: When scopedProjectId is provided, we use that project's path for state storage
+  // When not provided (global dashboard), use the config's base directory for multi-project tracking
+  const projectPath = scopedProjectId
+    ? (config.projects[scopedProjectId]?.path ?? "")
+    : config.configPath;
+
+  if (!projectPath) {
+    /* v8 ignore next */
+    throw new Error("Cannot initialize StateStore: project path is required.");
+  }
+
+  const stateStore = createStateStore(config.configPath, projectPath);
+  await stateStore.init();
+
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
+  let pollCycleCount = 0; // Track cycles for periodic compaction
+
+  /**
+   * Get current status of a session from StateStore
+   */
+  function getSessionStatus(sessionId: SessionId): SessionStatus | undefined {
+    return stateStore.getSessionState(sessionId)?.status;
+  }
+
+  /**
+   * Get all current states as a Map (for getStates() API)
+   */
+  function getStatesMap(): Map<SessionId, SessionStatus> {
+    const stateMap = new Map<SessionId, SessionStatus>();
+    for (const [sessionId, sessionState] of stateStore.getState()) {
+      stateMap.set(sessionId, sessionState.status);
+    }
+    return stateMap;
+  }
+
+  // Track terminal PR sessions that have been processed for sidecar dispatches
+  const dispatchedTerminalPRs = new Set<SessionId>();
+
+  /**
+   * Check if a terminal PR session has already been dispatched
+   */
+  function isTerminalDispatched(sessionId: SessionId): boolean {
+    return dispatchedTerminalPRs.has(sessionId);
+  }
+
+  /**
+   * Mark a terminal PR session as dispatched
+   */
+  function markTerminalDispatched(sessionId: SessionId): void {
+    dispatchedTerminalPRs.add(sessionId);
+  }
+
+  /**
+   * Record a state transition event to the StateStore
+   */
+  async function recordStateTransition(
+    sessionId: SessionId,
+    projectId: string,
+    status: SessionStatus,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
+    const event: SessionEvent = {
+      timestamp: Math.floor(Date.now() / 1000),
+      sessionId,
+      projectId,
+      status,
+      metadata,
+    };
+    await stateStore.appendEvent(event);
+  }
+
+  /**
+   * Compact the state log periodically (every 10 poll cycles)
+   */
+  async function maybeCompactLog(): Promise<void> {
+    pollCycleCount++;
+    if (pollCycleCount >= 10) {
+      pollCycleCount = 0;
+      await runCompactLog(stateStore, observer, scopedProjectId);
+    }
+  }
 
   /**
    * Cache for PR enrichment data within a single poll cycle.
@@ -228,13 +359,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     prEnrichmentCache.clear();
 
     // Collect all unique PRs
-    const prs = sessions
-      .map((s) => s.pr)
-      .filter((pr): pr is NonNullable<typeof pr> => pr !== null);
+    const prs = sessions.map((s) => s.pr).filter((pr): pr is NonNullable<typeof pr> => pr !== null);
 
-    // Deduplicate by key
+    // Deduplicate by key (case-insensitive)
     const uniquePRs = Array.from(
-      new Map(prs.map((pr) => [`${pr.owner}/${pr.repo}#${pr.number}`, pr])).values(),
+      new Map(prs.map((pr) => [`${pr.owner}/${pr.repo}#${pr.number}`.toLowerCase(), pr])).values(),
     );
 
     if (uniquePRs.length === 0) return;
@@ -242,10 +371,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // Group by SCM plugin and batch fetch for each group
     const prsByPlugin = new Map<string, typeof uniquePRs>();
     for (const pr of uniquePRs) {
-      // Find the project for this PR
+      // Find the project for this PR (case-insensitive matching)
       const project = Object.values(config.projects).find((p) => {
         const [owner, repo] = p.repo.split("/");
-        return owner === pr.owner && repo === pr.repo;
+        return (
+          owner?.toLowerCase() === pr.owner.toLowerCase() &&
+          repo?.toLowerCase() === pr.repo.toLowerCase()
+        );
       });
       if (!project?.scm?.plugin) continue;
 
@@ -266,61 +398,58 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
       const batchStartTime = Date.now();
       try {
-        const enrichmentData = await scm.enrichSessionsPRBatch(
-          pluginPRs,
-          {
-            recordSuccess(_data) {
-              const batchDuration = Date.now() - batchStartTime;
-              observer?.recordOperation({
-                metric: "graphql_batch",
-                operation: "batch_enrichment",
-                correlationId: createCorrelationId("graphql-batch"),
-                outcome: "success",
-                projectId: scopedProjectId,
-                durationMs: batchDuration,
-                data: {
-                  plugin: pluginKey,
-                  prCount: pluginPRs.length,
-                  prKeys: pluginPRs.map((pr) => `${pr.owner}/${pr.repo}#${pr.number}`),
-                },
-                level: "info",
-              });
-            },
-            recordFailure(data) {
-              const batchDuration = Date.now() - batchStartTime;
-              observer?.recordOperation({
-                metric: "graphql_batch",
-                operation: "batch_enrichment",
-                correlationId: createCorrelationId("graphql-batch"),
-                outcome: "failure",
-                reason: data.error,
-                level: "warn",
-                data: {
-                  plugin: pluginKey,
-                  prCount: pluginPRs.length,
-                  error: data.error,
-                  durationMs: batchDuration,
-                },
-              });
-            },
-            log(level, message) {
-              // Log to stderr for observability
-              process.stderr.write(
-                JSON.stringify({
-                  source: "ao-graphql-batch",
-                  level,
-                  message,
-                  plugin: pluginKey,
-                  timestamp: new Date().toISOString(),
-                }) + "\n"
-              );
-            },
+        const enrichmentData = await scm.enrichSessionsPRBatch(pluginPRs, {
+          recordSuccess(_data) {
+            const batchDuration = Date.now() - batchStartTime;
+            observer?.recordOperation({
+              metric: "graphql_batch",
+              operation: "batch_enrichment",
+              correlationId: createCorrelationId("graphql-batch"),
+              outcome: "success",
+              projectId: scopedProjectId,
+              durationMs: batchDuration,
+              data: {
+                plugin: pluginKey,
+                prCount: pluginPRs.length,
+                prKeys: pluginPRs.map((pr) => getPRKey(pr)),
+              },
+              level: "info",
+            });
           },
-        );
+          recordFailure(data) {
+            const batchDuration = Date.now() - batchStartTime;
+            observer?.recordOperation({
+              metric: "graphql_batch",
+              operation: "batch_enrichment",
+              correlationId: createCorrelationId("graphql-batch"),
+              outcome: "failure",
+              reason: data.error,
+              level: "warn",
+              data: {
+                plugin: pluginKey,
+                prCount: pluginPRs.length,
+                error: data.error,
+                durationMs: batchDuration,
+              },
+            });
+          },
+          log(level, message) {
+            // Log to stderr for observability
+            process.stderr.write(
+              JSON.stringify({
+                source: "ao-graphql-batch",
+                level,
+                message,
+                plugin: pluginKey,
+                timestamp: new Date().toISOString(),
+              }) + "\n",
+            );
+          },
+        });
 
-        // Merge into cache
+        // Merge into cache (normalize keys to lowercase)
         for (const [key, data] of enrichmentData) {
-          prEnrichmentCache.set(key, data);
+          prEnrichmentCache.set(key.toLowerCase(), data);
         }
       } catch (err) {
         // Batch fetch failed - individual calls will still work
@@ -489,7 +618,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (session.pr && scm) {
       try {
         // Try to use cached enrichment data from batch GraphQL query
-        const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+        const prKey = getPRKey(session.pr);
         const cachedData = prEnrichmentCache.get(prKey);
 
         if (cachedData) {
@@ -501,8 +630,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           if (cachedData.ciStatus === CI_STATUS.FAILING) return "ci_failed";
 
           // Check reviews
-          if (cachedData.reviewDecision === "changes_requested")
-            return "changes_requested";
+          if (cachedData.reviewDecision === "changes_requested") return "changes_requested";
           if (cachedData.reviewDecision === "approved" || cachedData.reviewDecision === "none") {
             // Check merge readiness — treat "none" (no reviewers required)
             // as "approved" so CI-green PRs reach "mergeable" status
@@ -722,10 +850,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return reactionConfig ? (reactionConfig as ReactionConfig) : null;
   }
 
-  function updateSessionMetadata(
-    session: Session,
-    updates: Partial<Record<string, string>>,
-  ): void {
+  function updateSessionMetadata(session: Session, updates: Partial<Record<string, string>>): void {
     const project = config.projects[session.projectId];
     if (!project) return;
 
@@ -880,12 +1005,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // --- Automated (bot) review comments ---
     if (automatedComments !== null) {
-      const automatedFingerprint = makeFingerprint(
-        automatedComments.map((comment) => comment.id),
-      );
+      const automatedFingerprint = makeFingerprint(automatedComments.map((comment) => comment.id));
       const lastAutomatedFingerprint = session.metadata["lastAutomatedReviewFingerprint"] ?? "";
-      const lastAutomatedDispatchHash =
-        session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
+      const lastAutomatedDispatchHash = session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
 
       if (automatedFingerprint !== lastAutomatedFingerprint) {
         clearReactionTracker(session.id, automatedReactionKey);
@@ -930,19 +1052,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
    * Includes check names, statuses, and links for debugging.
    */
   function formatCIFailureMessage(failedChecks: CICheck[]): string {
-    const lines = [
-      "CI checks are failing on your PR. Here are the failed checks:",
-      "",
-    ];
+    const lines = ["CI checks are failing on your PR. Here are the failed checks:", ""];
     for (const check of failedChecks) {
       const status = check.conclusion ?? check.status;
       const link = check.url ? ` — ${check.url}` : "";
       lines.push(`- **${check.name}**: ${status}${link}`);
     }
-    lines.push(
-      "",
-      "Investigate the failures, fix the issues, and push again.",
-    );
+    lines.push("", "Investigate the failures, fix the issues, and push again.");
     return lines.join("\n");
   }
 
@@ -994,7 +1110,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // Fetch individual CI checks for failure details.
     // Use batch enrichment data when available to avoid an extra REST call;
     // fall back to getCIChecks() when the batch didn't run this cycle.
-    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+    const prKey = getPRKey(session.pr);
     const cachedEnrichment = prEnrichmentCache.get(prKey);
 
     let checks: CICheck[];
@@ -1033,10 +1149,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // If transition already sent a ci-failed reaction with the static message,
     // skip this cycle but do NOT record dispatch hash — the next poll will send
     // the detailed CI failure info with check names and URLs.
-    if (
-      transitionReaction?.key === ciReactionKey &&
-      transitionReaction.result?.success
-    ) {
+    if (transitionReaction?.key === ciReactionKey && transitionReaction.result?.success) {
       return;
     }
 
@@ -1121,7 +1234,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // When batch enrichment ran (cachedData is present), use its hasConflicts value
     // to avoid 3 redundant REST calls from getMergeability() — the batch already
     // fetched the mergeable/mergeStateStatus fields via GraphQL.
-    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+    const prKey = getPRKey(session.pr);
     const cachedData = prEnrichmentCache.get(prKey);
 
     let hasConflicts: boolean;
@@ -1206,16 +1319,21 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // Use tracked state if available; otherwise use the persisted metadata status
     // (not session.status, which list() may have already overwritten for dead runtimes).
     // This ensures transitions are detected after a lifecycle manager restart.
-    const tracked = states.get(session.id);
+    const tracked = getSessionStatus(session.id);
     const oldStatus =
       tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
     const newStatus = await determineStatus(session);
+    // Update session status immediately for accurate terminal detection
+    session.status = newStatus;
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
 
     if (newStatus !== oldStatus) {
       const correlationId = createCorrelationId("lifecycle-transition");
       // State transition detected
-      states.set(session.id, newStatus);
+      await recordStateTransition(session.id, session.projectId, newStatus, {
+        oldStatus,
+        transition: true,
+      });
       updateSessionMetadata(session, { status: newStatus });
       observer.recordOperation({
         metric: "lifecycle_poll",
@@ -1284,9 +1402,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           await notifyHuman(event, priority);
         }
       }
-    } else {
-      // No transition but track current state
-      states.set(session.id, newStatus);
+    } else if (!tracked) {
+      // No transition yet, but this is the first time we've seen the session.
+      // Persist an initial snapshot so brand-new sessions show up in events.jsonl
+      // even before their first status change.
+      await stateStore.appendEvent({
+        timestamp: Math.floor(Date.now() / 1000),
+        sessionId: session.id,
+        projectId: session.projectId,
+        status: newStatus,
+      });
     }
 
     // Pin first quality summary for title stability
@@ -1310,6 +1435,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchMergeConflicts(session, newStatus),
     ]);
+
+    // Mark terminal PR session as dispatched after sidecar dispatches
+    if (TERMINAL_STATUSES.has(session.status) && session.pr) {
+      markTerminalDispatched(session.id);
+    }
   }
 
   /** Run one polling cycle across all sessions. */
@@ -1320,33 +1450,36 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (polling) return;
     polling = true;
 
+    let sessions: Session[] = [];
+
     try {
-      const sessions = await sessionManager.list(scopedProjectId);
+      sessions = await sessionManager.list(scopedProjectId);
 
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
       // process that transition even though the new status is terminal)
+      // Also keep terminal PR sessions only if they haven't been fully dispatched yet
       const sessionsToCheck = sessions.filter((s) => {
         if (!TERMINAL_STATUSES.has(s.status)) return true;
-        const tracked = states.get(s.id);
-        return tracked !== undefined && tracked !== s.status;
+        const tracked = getSessionStatus(s.id);
+        if (tracked !== undefined && tracked !== s.status) return true;
+        // Only poll terminal PR sessions if not yet dispatched
+        if (s.pr && !isTerminalDispatched(s.id)) return true;
+        return false;
       });
 
       // Populate PR enrichment cache using batch GraphQL queries
       // This reduces API calls from N×3 to 1 per poll cycle
-      await populatePREnrichmentCache(sessionsToCheck);
+      // Use FULL session list to ensure cache is always warm
+      await populatePREnrichmentCache(sessions);
 
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
 
-      // Prune stale entries from states, reactionTrackers, and lastReviewBacklogCheckAt
-      // for sessions that no longer appear in the session list (e.g., after kill/cleanup)
+      // Prune stale entries from reactionTrackers and lastReviewBacklogCheckAt
+      // for sessions that no longer appear in the session list (e.g., after kill/cleanup).
+      // Note: StateStore retains history; we do not prune sessions from memory so that compaction preserves the full audit trail on disk.
       const currentSessionIds = new Set(sessions.map((s) => s.id));
-      for (const trackedId of states.keys()) {
-        if (!currentSessionIds.has(trackedId)) {
-          states.delete(trackedId);
-        }
-      }
       for (const trackerKey of reactionTrackers.keys()) {
         const sessionId = trackerKey.split(":")[0];
         if (sessionId && !currentSessionIds.has(sessionId)) {
@@ -1356,6 +1489,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       for (const sessionId of lastReviewBacklogCheckAt.keys()) {
         if (!currentSessionIds.has(sessionId)) {
           lastReviewBacklogCheckAt.delete(sessionId);
+        }
+      }
+      // Prune stale entries from dispatchedTerminalPRs to prevent memory growth
+      for (const sessionId of dispatchedTerminalPRs) {
+        if (!currentSessionIds.has(sessionId)) {
+          dispatchedTerminalPRs.delete(sessionId);
         }
       }
 
@@ -1419,6 +1558,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         details: scopedProjectId ? { projectId: scopedProjectId } : { projectScope: "all" },
       });
     } finally {
+      // Prune stale sessions from StateStore to prevent unbounded memory growth
+      // Note: The durable audit trail is safe because compactLog has already written to disk
+      await stateStore.prune(sessions.map((s) => s.id));
+      // Await compaction to ensure the file system is stable before releasing the polling lock
+      await maybeCompactLog();
       polling = false;
     }
   }
@@ -1439,7 +1583,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     },
 
     getStates(): Map<SessionId, SessionStatus> {
-      return new Map(states);
+      return getStatesMap();
     },
 
     async check(sessionId: SessionId): Promise<void> {

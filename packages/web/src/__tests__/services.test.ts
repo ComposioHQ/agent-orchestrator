@@ -43,10 +43,10 @@ vi.mock("@aoagents/ao-core", () => ({
   loadConfig: mockLoadConfig,
   createPluginRegistry: () => mockRegistry,
   createSessionManager: mockCreateSessionManager,
-  createLifecycleManager: () => ({
+  createLifecycleManager: vi.fn().mockResolvedValue({
     start: vi.fn(),
     stop: vi.fn(),
-    getStates: vi.fn(),
+    getStates: vi.fn().mockReturnValue(new Map()),
     check: vi.fn(),
   }),
   TERMINAL_STATUSES: new Set(["merged", "killed"]) as ReadonlySet<string>,

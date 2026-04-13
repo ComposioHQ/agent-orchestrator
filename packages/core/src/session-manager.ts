@@ -11,7 +11,15 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
+import {
+  statSync,
+  existsSync,
+  readdirSync,
+  writeFileSync,
+  mkdirSync,
+  utimesSync,
+  unlinkSync,
+} from "node:fs";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -750,8 +758,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
     // After config validation, plugin is always set if tracker/scm exists
     // (either from user config or auto-generated from package/path)
-    const tracker =
-      project.tracker?.plugin ? registry.get<Tracker>("tracker", project.tracker.plugin) : null;
+    const tracker = project.tracker?.plugin
+      ? registry.get<Tracker>("tracker", project.tracker.plugin)
+      : null;
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     return { runtime, agent, workspace, tracker, scm };
@@ -1443,7 +1452,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_CALLER_TYPE: "orchestrator",
           AO_PROJECT_ID: orchestratorConfig.projectId,
           AO_CONFIG_PATH: config.configPath,
-          ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+          ...(config.port !== undefined &&
+            config.port !== null && { AO_PORT: String(config.port) }),
         },
       });
     } catch (err) {
@@ -2171,7 +2181,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
 
     for (const { sessionName, raw: otherRaw } of activeRecords) {
-      if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix)) continue;
+      if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix))
+        continue;
 
       const samePr = otherRaw["pr"] === pr.url;
       const sameBranch =
