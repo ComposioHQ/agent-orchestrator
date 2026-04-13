@@ -7,7 +7,7 @@ import { cn } from "@/lib/cn";
 import { useMux } from "@/hooks/useMux";
 
 // Import xterm CSS (must be imported in client component)
-import "xterm/css/xterm.css";
+import "@xterm/xterm/css/xterm.css";
 
 // Dynamically import xterm types for TypeScript
 import type { ITheme, Terminal as TerminalType } from "xterm";
