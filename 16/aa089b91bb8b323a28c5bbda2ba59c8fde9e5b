@@ -1,0 +1,25 @@
+packages/web/src/components/SessionCard.tsx
+  4515c52800cf1fcc 574-599
+packages/web/src/__tests__/components.test.tsx
+  4515c52800cf1fcc 211,272-333
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "16aa089b91bb8b323a28c5bbda2ba59c8fde9e5b",
+  "prompts": {
+    "4515c52800cf1fcc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "75c36544-a339-4d25-9a76-77d4758a8486",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 89,
+      "total_deletions": 9,
+      "accepted_lines": 89,
+      "overriden_lines": 0
+    }
+  }
+}
