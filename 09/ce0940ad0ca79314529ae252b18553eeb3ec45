@@ -1,0 +1,25 @@
+packages/web/src/components/PullRequestsPage.tsx
+  b84552d18b2b94ca 10,29-30,50,54-57,61,64,70-71
+packages/web/src/app/prs/page.tsx
+  b84552d18b2b94ca 34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "09ce0940ad0ca79314529ae252b18553eeb3ec45",
+  "prompts": {
+    "b84552d18b2b94ca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2698ecd1-236f-4275-b64d-de7e1dd89611",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 2,
+      "accepted_lines": 13,
+      "overriden_lines": 0
+    }
+  }
+}
