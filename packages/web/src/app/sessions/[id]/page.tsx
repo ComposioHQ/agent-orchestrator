@@ -52,6 +52,25 @@ interface ProjectSessionsBody {
   orchestrators?: Array<{ id: string; projectId: string; projectName: string }>;
 }
 
+function areSidebarSessionsEqual(
+  previous: DashboardSession[] | null,
+  next: DashboardSession[],
+): boolean {
+  if (!previous || previous.length !== next.length) {
+    return false;
+  }
+
+  return previous.every((session, index) => {
+    const candidate = next[index];
+    return (
+      session.id === candidate?.id &&
+      session.status === candidate.status &&
+      session.activity === candidate.activity &&
+      session.lastActivityAt === candidate.lastActivityAt
+    );
+  });
+}
+
 export default function SessionPage() {
   const params = useParams();
   const id = params.id as string;
@@ -60,7 +79,7 @@ export default function SessionPage() {
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(undefined);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[]>([]);
+  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [routeError, setRouteError] = useState<Error | null>(null);
   const [sessionMissing, setSessionMissing] = useState(false);
@@ -82,18 +101,19 @@ export default function SessionPage() {
   }, [prefixByProject]);
 
   // Fetch project prefix map once on mount so isOrchestratorSession can use the correct prefix
-  useEffect(() => {
-    fetch("/api/projects")
-      .then((res) => res.ok ? res.json() : null)
-      .then((data: { projects?: ProjectInfo[] } | null) => {
-        if (data?.projects) {
-          setProjects(data.projects);
-          setPrefixByProject(
-            new Map(data.projects.map((p) => [p.id, p.sessionPrefix ?? p.id])),
-          );
-        }
-      })
-      .catch(() => {/* non-critical — falls back to role metadata check */});
+  const fetchProjects = useCallback(async () => {
+    try {
+      const res = await fetch("/api/projects");
+      if (!res.ok) return;
+      const data = (await res.json()) as { projects?: ProjectInfo[] } | null;
+      if (!data?.projects) return;
+      setProjects(data.projects);
+      setPrefixByProject(
+        new Map(data.projects.map((p) => [p.id, p.sessionPrefix ?? p.id])),
+      );
+    } catch {
+      // non-critical — falls back to role metadata check
+    }
   }, []);
 
   // Subscribe to SSE for real-time activity updates (title emoji)
@@ -193,7 +213,10 @@ export default function SessionPage() {
       const res = await fetch("/api/sessions");
       if (!res.ok) return;
       const body = (await res.json()) as { sessions?: DashboardSession[] } | null;
-      setSidebarSessions(body?.sessions ?? []);
+      const nextSessions = body?.sessions ?? [];
+      setSidebarSessions((current) => (
+        areSidebarSessionsEqual(current, nextSessions) ? current : nextSessions
+      ));
     } catch {
       // non-critical
     }
@@ -205,14 +228,19 @@ export default function SessionPage() {
     }
   }, [sessionIsOrchestrator]);
 
-  // Initial fetch — session first, zone counts after (avoids blocking on slow /api/sessions)
+  // Initial fetch — load independent sidebar/session data in parallel.
   useEffect(() => {
-    fetchSession();
-    fetchSidebarSessions();
-    // Delay zone counts so the heavy /api/sessions call doesn't contend with session load
-    const t = setTimeout(fetchProjectSessions, 2000);
-    return () => clearTimeout(t);
-  }, [fetchSession, fetchProjectSessions, fetchSidebarSessions]);
+    void Promise.all([
+      fetchProjects(),
+      fetchSession(),
+      fetchSidebarSessions(),
+    ]);
+  }, [fetchProjects, fetchSession, fetchSidebarSessions]);
+
+  useEffect(() => {
+    if (!sessionProjectId) return;
+    void fetchProjectSessions();
+  }, [fetchProjectSessions, sessionIsOrchestrator, sessionProjectId]);
 
   // Poll every 5s
   useEffect(() => {
@@ -253,6 +281,7 @@ export default function SessionPage() {
       projectOrchestratorId={projectOrchestratorId}
       projects={projects}
       sidebarSessions={sidebarSessions}
+      sidebarLoading={sidebarSessions === null}
     />
   );
 }

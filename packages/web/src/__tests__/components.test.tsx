@@ -208,7 +208,7 @@ describe("SessionCard", () => {
     const session = makeSession({ id: "backend-5" });
     render(<SessionCard session={session} />);
     const link = screen.getByText("terminal");
-    expect(link).toHaveAttribute("href", "/sessions/backend-5");
+    expect(link).toHaveAttribute("href", "/sessions/backend-5#session-terminal-section");
   });
 
   it("shows restore button when agent has exited", () => {

@@ -46,7 +46,8 @@ interface SessionDetailProps {
   orchestratorZones?: OrchestratorZones;
   projectOrchestratorId?: string | null;
   projects?: ProjectInfo[];
-  sidebarSessions?: DashboardSession[];
+  sidebarSessions?: DashboardSession[] | null;
+  sidebarLoading?: boolean;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -451,6 +452,7 @@ export function SessionDetail({
   projectOrchestratorId = null,
   projects = [],
   sidebarSessions = [],
+  sidebarLoading = false,
 }: SessionDetailProps) {
   const searchParams = useSearchParams();
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
@@ -593,6 +595,7 @@ export function SessionDetail({
             <ProjectSidebar
               projects={projects}
               sessions={sidebarSessions}
+              loading={sidebarLoading}
               activeProjectId={session.projectId}
               activeSessionId={session.id}
               collapsed={sidebarCollapsed}

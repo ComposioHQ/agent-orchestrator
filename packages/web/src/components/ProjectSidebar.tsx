@@ -11,9 +11,10 @@ import { ThemeToggle } from "./ThemeToggle";
 
 interface ProjectSidebarProps {
   projects: ProjectInfo[];
-  sessions: DashboardSession[];
+  sessions: DashboardSession[] | null;
   activeProjectId: string | undefined;
   activeSessionId: string | undefined;
+  loading?: boolean;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   mobileOpen?: boolean;
@@ -55,6 +56,7 @@ function ProjectSidebarInner({
   sessions,
   activeProjectId,
   activeSessionId,
+  loading = false,
   collapsed = false,
   onToggleCollapsed: _onToggleCollapsed,
   mobileOpen = false,
@@ -84,6 +86,7 @@ function ProjectSidebarInner({
 
   const sessionsByProject = useMemo(() => {
     const map = new Map<string, DashboardSession[]>();
+    if (!sessions) return map;
     for (const s of sessions) {
       if (isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes)) continue;
       const list = map.get(s.projectId) ?? [];
@@ -197,7 +200,20 @@ function ProjectSidebarInner({
                 {/* Sessions */}
                 {isExpanded && (
                   <div className="project-sidebar__sessions">
-                    {visibleSessions.length > 0 ? (
+                    {loading ? (
+                      <div className="space-y-2 px-3 py-2" aria-label="Loading sessions">
+                        {Array.from({ length: 3 }, (_, index) => (
+                          <div
+                            key={`${project.id}-loading-${index}`}
+                            className="flex items-center gap-3 rounded-lg px-2 py-2"
+                          >
+                            <div className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[var(--color-border-strong)]" />
+                            <div className="h-3 flex-1 animate-pulse rounded bg-[var(--color-bg-primary)]" />
+                            <div className="h-3 w-12 animate-pulse rounded bg-[var(--color-bg-primary)]" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : visibleSessions.length > 0 ? (
                       visibleSessions.map((session) => {
                         const level = getAttentionLevel(session);
                         const isSessionActive = activeSessionId === session.id;
