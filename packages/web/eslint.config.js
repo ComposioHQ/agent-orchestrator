@@ -4,7 +4,7 @@ import rootConfig from "../../eslint.config.js";
 export default [
   ...rootConfig,
   {
-    ignores: ["next-env.d.ts", "next.config.js"],
+    ignores: ["next-env.d.ts", "next.config.js", "postcss.config.mjs"],
   },
   {
     plugins: { "@next/next": nextPlugin },
