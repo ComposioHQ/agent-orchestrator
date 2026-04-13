@@ -186,4 +186,37 @@ describe("DirectTerminal render", () => {
     expect(terminalShell).toHaveClass("relative");
     expect(terminalShell).not.toHaveClass("fixed");
   });
+
+  it("handles window resize without throwing when terminal is initialised", async () => {
+    render(<DirectTerminal sessionId="resize-test" variant="agent" />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Connected")).toBeInTheDocument(),
+    );
+
+    // Let the async terminal setup (Promise.all + terminal.open) complete
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    // Dispatch resize — exercises the handleResize → safeFit path
+    expect(() => window.dispatchEvent(new Event("resize"))).not.toThrow();
+  });
+
+  it("handles window resize gracefully when fit throws", async () => {
+    const fitSpy = vi.spyOn(MockFitAddon.prototype, "fit").mockImplementation(() => {
+      throw new TypeError("Cannot read properties of undefined (reading 'dimensions')");
+    });
+
+    render(<DirectTerminal sessionId="resize-throw-test" variant="agent" />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Connected")).toBeInTheDocument(),
+    );
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    // Resize must not propagate the TypeError
+    expect(() => window.dispatchEvent(new Event("resize"))).not.toThrow();
+
+    fitSpy.mockRestore();
+  });
 });
