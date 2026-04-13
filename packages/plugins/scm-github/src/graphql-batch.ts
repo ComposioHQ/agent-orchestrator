@@ -941,7 +941,6 @@ function extractPREnrichment(
 
   const data: PREnrichmentData = {
     state,
-    ...(headSha ? { headSha } : {}),
     ciStatus,
     reviewDecision,
     mergeable: mergeReady,
@@ -954,22 +953,29 @@ function extractPREnrichment(
     blockers,
     ...(ciChecks !== undefined ? { ciChecks } : {}),
   };
+  if (headSha) {
+    data.headSha = headSha;
+  }
 
   return { data, headSha };
 }
 
 /**
- * Main batch enrichment function with 2-Guard ETag Strategy.
+ * Main batch enrichment function with 3-Guard ETag Strategy.
  *
- * Before running expensive GraphQL batch queries, uses two lightweight REST API
+ * Before running expensive GraphQL batch queries, uses three lightweight REST API
  * ETag checks to detect if anything actually changed:
  *
  * 1. Guard 1: PR List ETag Check (per repo)
  *    - Detects PR metadata changes (commits, reviews, labels, state)
  *    - Cost: 1 REST point if changed, 0 if unchanged (304)
  *
- * 2. Guard 2: Commit Status ETag Check (per PR with pending CI)
- *    - Detects CI status changes for PRs with pending CI
+ * 2. Guard 2: PR Detail ETag Check (per tracked PR)
+ *    - Detects head SHA, mergeability, review, and draft/state changes on the specific PR
+ *    - Cost: 1 REST point if changed, 0 if unchanged (304)
+ *
+ * 3. Guard 3: Commit Status ETag Check (per cached head SHA)
+ *    - Detects CI status changes for the exact cached head commit
  *    - Cost: 1 REST point if changed, 0 if unchanged (304)
  *
  * If guards indicate no changes, skips GraphQL entirely (saves ~50 points per batch).
@@ -987,7 +993,7 @@ export async function enrichSessionsPRBatch(
     return result;
   }
 
-  // Step 1: Check if we need to refresh using 2-Guard ETag Strategy
+  // Step 1: Check if we need to refresh using 3-Guard ETag Strategy
   const guardResult = await shouldRefreshPREnrichment(prs);
 
   if (!guardResult.shouldRefresh) {
