@@ -87,6 +87,7 @@ export function PullRequestsPage({
   const closedPRs = useMemo(() => allPRs.filter((pr) => pr.state === "closed"), [allPRs]);
   const dashboardHref = getProjectScopedHref("/", projectId);
   const prsHref = getProjectScopedHref("/prs", projectId);
+  const phasesHref = getProjectScopedHref("/phases", projectId);
   const orchestratorHref = currentProjectOrchestrator
     ? `/sessions/${encodeURIComponent(currentProjectOrchestrator.id)}`
     : null;
@@ -389,6 +390,7 @@ export function PullRequestsPage({
           activeTab="prs"
           dashboardHref={dashboardHref}
           prsHref={prsHref}
+          phasesHref={phasesHref}
           showOrchestrator={!allProjectsView}
           orchestratorHref={orchestratorHref}
         />

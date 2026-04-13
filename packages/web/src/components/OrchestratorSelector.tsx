@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
+import { getPhaseStatusColor } from "@/lib/phases";
 
 export interface Orchestrator {
   id: string;
@@ -40,30 +41,6 @@ function formatRelativeTime(isoDate: string | null): string {
   if (diffMins < 60) return `${diffMins}m ago`;
   if (diffHours < 24) return `${diffHours}h ago`;
   return `${diffDays}d ago`;
-}
-
-function getStatusColor(status: string): string {
-  switch (status) {
-    case "working":
-      return "var(--color-status-working)";
-    case "spawning":
-      return "var(--color-status-attention)";
-    case "pr_open":
-    case "review_pending":
-    case "approved":
-    case "mergeable":
-      return "var(--color-status-ready)";
-    case "ci_failed":
-    case "changes_requested":
-      return "var(--color-status-error)";
-    case "merged":
-    case "done":
-    case "killed":
-    case "terminated":
-      return "var(--color-text-tertiary)";
-    default:
-      return "var(--color-text-secondary)";
-  }
 }
 
 function getActivityLabel(activity: string | null): string {
@@ -197,7 +174,7 @@ export function OrchestratorSelector({
                   <div className="flex items-center gap-3">
                     <div
                       className="h-2.5 w-2.5 rounded-full"
-                      style={{ backgroundColor: getStatusColor(orch.status) }}
+                      style={{ backgroundColor: getPhaseStatusColor(orch.status) }}
                     />
                     <div>
                       <div className="font-medium text-[var(--color-text-primary)]">{orch.id}</div>

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as NodeFs from "node:fs";
 import type { Session, RuntimeHandle, AgentLaunchConfig, AgentSpecificConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
@@ -54,10 +55,16 @@ vi.mock("node:crypto", () => ({
   randomBytes: () => ({ toString: () => "abc123" }),
 }));
 
-vi.mock("node:fs", () => ({
-  existsSync: vi.fn(() => false),
-  createReadStream: mockCreateReadStream,
-}));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof NodeFs;
+  return {
+    ...actual,
+    existsSync: vi.fn((path: Parameters<typeof actual.existsSync>[0]) =>
+      actual.existsSync(path),
+    ),
+    createReadStream: mockCreateReadStream,
+  };
+});
 
 vi.mock("node:os", () => ({
   homedir: mockHomedir,

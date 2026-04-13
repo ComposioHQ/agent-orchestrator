@@ -39,7 +39,7 @@ case "$PROJECT" in
         SESSION_PREFIX="ao"
         SESSION_MANAGER="$HOME/claude-ao-session"
         SESSION_DATA_DIR="$HOME/.ao-sessions"
-        GITHUB_REPO="ComposioHQ/agent-orchestrator"
+        GITHUB_REPO="snagnever/agent-orchestrator"
         ;;
     *)
         echo "Unknown project: $PROJECT"

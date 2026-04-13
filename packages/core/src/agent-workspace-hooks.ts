@@ -11,6 +11,7 @@ import { writeFile, mkdir, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
+import { PromptLoader } from "./prompts/loader.js";
 
 // =============================================================================
 // Constants
@@ -259,23 +260,6 @@ fi
 exit \$exit_code
 `;
 
-/**
- * Section appended to AGENTS.md as a secondary signal. The PATH-based wrappers
- * handle metadata updates automatically, but AGENTS.md reinforces the intent
- * and helps if the wrappers are bypassed.
- */
-export const AO_AGENTS_MD_SECTION = `
-## Agent Orchestrator (ao) Session
-
-You are running inside an Agent Orchestrator managed workspace.
-Session metadata is updated automatically via shell wrappers.
-
-If automatic updates fail, you can manually update metadata:
-\`\`\`bash
-~/.ao/bin/ao-metadata-helper.sh  # sourced automatically
-# Then call: update_ao_metadata <key> <value>
-\`\`\`
-`;
 /* eslint-enable no-useless-escape */
 
 // =============================================================================
@@ -293,6 +277,17 @@ async function atomicWriteFile(filePath: string, content: string, mode: number):
   await rename(tmpPath, filePath);
 }
 
+function getAgentWorkspaceSection(
+  workspacePath: string,
+  options?: { promptsDir?: string },
+): string {
+  const loader = new PromptLoader({
+    projectDir: workspacePath,
+    promptsDir: options?.promptsDir,
+  });
+  return loader.render("agent-workspace", {});
+}
+
 /**
  * Install PATH-based shell wrappers and append an AO section to AGENTS.md.
  *
@@ -303,7 +298,10 @@ async function atomicWriteFile(filePath: string, content: string, mode: number):
  * 1. Creates ~/.ao/bin/ with gh/git wrappers and metadata helper script
  * 2. Appends an "Agent Orchestrator" section to the workspace AGENTS.md
  */
-export async function setupPathWrapperWorkspace(workspacePath: string): Promise<void> {
+export async function setupPathWrapperWorkspace(
+  workspacePath: string,
+  options?: { promptsDir?: string },
+): Promise<void> {
   // 1. Write shared wrappers to ~/.ao/bin/ (skip if version marker matches)
   await mkdir(getAoBinDir(), { recursive: true });
 
@@ -335,5 +333,5 @@ export async function setupPathWrapperWorkspace(workspacePath: string): Promise<
   //    repo-tracked AGENTS.md to avoid polluting worktrees with dirty state.
   const aoAgentsMdPath = join(workspacePath, ".ao", "AGENTS.md");
   await mkdir(join(workspacePath, ".ao"), { recursive: true });
-  await writeFile(aoAgentsMdPath, AO_AGENTS_MD_SECTION.trimStart(), "utf-8");
+  await writeFile(aoAgentsMdPath, getAgentWorkspaceSection(workspacePath, options), "utf-8");
 }

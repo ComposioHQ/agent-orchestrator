@@ -13,6 +13,22 @@ port: 3000
 # terminalPort: 14800
 # directTerminalPort: 14801
 
+# Optional: directory to search for prompt template overrides.
+#
+# The PromptLoader looks up templates in this order (first hit wins):
+#   1. <promptsDir>/<name>.yaml
+#   2. Scope-local .agent-orchestrator/prompts/<name>.yaml
+#   3. Bundled defaults shipped with @aoagents/ao-core
+#
+# promptsDir is absolute or relative to the directory containing this config file.
+# Scope-local means:
+#   - project repo root for: base-agent, orchestrator
+#   - config file directory for: reactions, ci-failure
+#   - managed workspace root for: agent-workspace
+#
+# Templates available: base-agent, orchestrator, reactions, ci-failure, agent-workspace
+# promptsDir: ./custom-prompts
+
 # Default plugins (these are the defaults — you can omit this section)
 defaults:
   runtime: tmux           # tmux | process

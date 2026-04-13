@@ -12,38 +12,16 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import type { PromptLoader } from "./prompts/loader.js";
 import type { ProjectConfig } from "./types.js";
-
-// =============================================================================
-// LAYER 1: BASE AGENT PROMPT
-// =============================================================================
-
-export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agent Orchestrator (ao).
-
-## Session Lifecycle
-- You are running inside a managed session. Focus on the assigned task.
-- When you finish your work, create a PR and push it. The orchestrator will handle CI monitoring and review routing.
-- If you're told to take over or continue work on an existing PR, run \`ao session claim-pr <pr-number-or-url>\` from inside this session before making changes.
-- If CI fails, the orchestrator will send you the failures — fix them and push again.
-- If reviewers request changes, the orchestrator will forward their comments — address each one, push fixes, and reply to the comments.
-
-## Git Workflow
-- Always create a feature branch from the default branch (never commit directly to it).
-- Use conventional commit messages (feat:, fix:, chore:, etc.).
-- Push your branch and create a PR when the implementation is ready.
-- Keep PRs focused — one issue per PR.
-
-## PR Best Practices
-- Write a clear PR title and description explaining what changed and why.
-- Link the issue in the PR description so it auto-closes when merged.
-- If the repo has CI checks, make sure they pass before requesting review.
-- Respond to every review comment, even if just to acknowledge it.`;
 
 // =============================================================================
 // TYPES
 // =============================================================================
 
 export interface PromptBuildConfig {
+  /** Loader for YAML-backed prompt templates */
+  loader: PromptLoader;
   /** The project config from the orchestrator config */
   project: ProjectConfig;
 
@@ -149,7 +127,7 @@ export function buildPrompt(config: PromptBuildConfig): string {
   const sections: string[] = [];
 
   // Layer 1: Base prompt is always included for every managed session.
-  sections.push(BASE_AGENT_PROMPT);
+  sections.push(config.loader.render("base-agent", {}));
 
   // Layer 2: Config-derived context
   sections.push(buildConfigLayer(config));

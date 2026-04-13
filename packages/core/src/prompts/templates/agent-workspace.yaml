@@ -1,0 +1,14 @@
+name: agent-workspace
+description: Section written to .ao/AGENTS.md inside managed workspaces for PATH-wrapper agents.
+variables: []
+template: |-
+  ## Agent Orchestrator (ao) Session
+  
+  You are running inside an Agent Orchestrator managed workspace.
+  Session metadata is updated automatically via shell wrappers.
+  
+  If automatic updates fail, you can manually update metadata:
+  ```bash
+  ~/.ao/bin/ao-metadata-helper.sh  # sourced automatically
+  # Then call: update_ao_metadata <key> <value>
+  ```

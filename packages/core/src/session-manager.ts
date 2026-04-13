@@ -67,6 +67,7 @@ import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse } from "./utils/validation.js";
 import { isGitBranchNameSafe } from "./utils.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { PromptLoader } from "./prompts/loader.js";
 
 const execFileAsync = promisify(execFile);
 const OPENCODE_DISCOVERY_TIMEOUT_MS = 10_000;
@@ -253,11 +254,25 @@ function metadataToSession(
 export interface SessionManagerDeps {
   config: OrchestratorConfig;
   registry: PluginRegistry;
+  promptLoaderFactory?: (projectDir: string) => PromptLoader;
 }
 
 /** Create a SessionManager instance. */
 export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionManager {
   const { config, registry } = deps;
+  const promptLoaderFactory =
+    deps.promptLoaderFactory ??
+    ((projectDir: string) => new PromptLoader({ projectDir, promptsDir: config.promptsDir }));
+  const promptLoaderCache = new Map<string, PromptLoader>();
+
+  function getPromptLoader(projectDir: string): PromptLoader {
+    let loader = promptLoaderCache.get(projectDir);
+    if (!loader) {
+      loader = promptLoaderFactory(projectDir);
+      promptLoaderCache.set(projectDir, loader);
+    }
+    return loader;
+  }
 
   interface LocatedSession {
     raw: Record<string, string>;
@@ -1063,6 +1078,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     const composedPrompt = buildPrompt({
+      loader: getPromptLoader(project.path),
       project,
       projectId: spawnConfig.projectId,
       issueId: spawnConfig.issueId,
@@ -1360,7 +1376,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // Setup agent hooks for automatic metadata updates
     try {
       if (plugins.agent.setupWorkspaceHooks) {
-        await plugins.agent.setupWorkspaceHooks(workspacePath, { dataDir: sessionsDir });
+        await plugins.agent.setupWorkspaceHooks(workspacePath, {
+          dataDir: sessionsDir,
+          promptsDir: config.promptsDir,
+        });
       }
     } catch (err) {
       await cleanupWorktreeAndMetadata();

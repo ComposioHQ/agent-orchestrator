@@ -113,6 +113,65 @@ projects:
       expect(config.port).toBe(5000);
     });
 
+    it("should apply config-scoped reaction template overrides from promptsDir", () => {
+      const customPromptsDir = join(testDir, "custom-prompts");
+      mkdirSync(customPromptsDir, { recursive: true });
+      writeFileSync(
+        join(customPromptsDir, "reactions.yaml"),
+        `name: reactions
+description: custom reactions
+reactions:
+  ci-failed:
+    description: custom
+    variables: []
+    template: |-
+      CUSTOM CI FAILURE
+  changes-requested:
+    description: custom
+    variables: []
+    template: |-
+      CUSTOM CHANGES REQUESTED
+  bugbot-comments:
+    description: custom
+    variables: []
+    template: |-
+      CUSTOM BUGBOT
+  merge-conflicts:
+    description: custom
+    variables: []
+    template: |-
+      CUSTOM CONFLICTS
+  approved-and-green:
+    description: custom
+    variables: []
+    template: |-
+      CUSTOM READY
+  agent-idle:
+    description: custom
+    variables: []
+    template: |-
+      CUSTOM IDLE`,
+      );
+
+      const configPath = join(testDir, "prompt-config.yaml");
+      writeFileSync(
+        configPath,
+        `
+promptsDir: ./custom-prompts
+projects:
+  test-project:
+    repo: test/repo
+    path: ${testDir}
+    defaultBranch: main
+`,
+      );
+
+      const config = loadConfig(configPath);
+      expect(config.promptsDir).toBe("./custom-prompts");
+      expect(config.reactions["ci-failed"]?.message).toBe("CUSTOM CI FAILURE");
+      expect(config.reactions["approved-and-green"]?.message).toBe("CUSTOM READY");
+    });
+
     it("should throw error if config not found", () => {
       expect(() => loadConfig()).toThrow(ConfigNotFoundError);
     });

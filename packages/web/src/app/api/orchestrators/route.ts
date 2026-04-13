@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { generateOrchestratorPrompt, generateSessionPrefix } from "@aoagents/ao-core";
+import { generateOrchestratorPrompt, generateSessionPrefix, PromptLoader } from "@aoagents/ao-core";
 import { getServices } from "@/lib/services";
 import { validateIdentifier, validateConfiguredProject } from "@/lib/validation";
 import { mapSessionsToOrchestrators } from "@/lib/orchestrator-utils";
@@ -64,7 +64,12 @@ export async function POST(request: NextRequest) {
     }
     const project = config.projects[projectId];
 
-    const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
+    const systemPrompt = generateOrchestratorPrompt({
+      loader: new PromptLoader({ projectDir: project.path, promptsDir: config.promptsDir }),
+      config,
+      projectId,
+      project,
+    });
     const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt });
 
     return NextResponse.json(

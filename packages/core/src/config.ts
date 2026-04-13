@@ -11,12 +11,13 @@
  */
 
 import { readFileSync, existsSync } from "node:fs";
-import { resolve, join, basename } from "node:path";
+import { resolve, join, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ConfigNotFoundError, type ExternalPluginEntryRef, type OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
+import { PromptLoader } from "./prompts/loader.js";
 
 function inferScmPlugin(project: {
   repo: string;
@@ -233,6 +234,7 @@ const OrchestratorConfigSchema = z.object({
   terminalPort: z.number().optional(),
   directTerminalPort: z.number().optional(),
   readyThresholdMs: z.number().nonnegative().default(300_000),
+  promptsDir: z.string().optional(),
   defaults: DefaultPluginsSchema.default({}),
   plugins: z.array(InstalledPluginConfigSchema).default([]),
   projects: z.record(
@@ -534,46 +536,46 @@ function validateProjectUniqueness(config: OrchestratorConfig): void {
 }
 
 /** Apply default reactions */
-function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
+function applyDefaultReactions(
+  config: OrchestratorConfig,
+  promptLoader: PromptLoader,
+): OrchestratorConfig {
   const defaults: Record<string, (typeof config.reactions)[string]> = {
     "ci-failed": {
       auto: true,
       action: "send-to-agent",
-      message:
-        "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push.",
+      message: promptLoader.renderReaction("ci-failed"),
       retries: 2,
       escalateAfter: 2,
     },
     "changes-requested": {
       auto: true,
       action: "send-to-agent",
-      message:
-        "There are review comments on your PR. Check with `gh pr view --comments` and `gh api` for inline comments. Address each one, push fixes, and reply.",
+      message: promptLoader.renderReaction("changes-requested"),
       escalateAfter: "30m",
     },
     "bugbot-comments": {
       auto: true,
       action: "send-to-agent",
-      message: "Automated review comments found on your PR. Fix the issues flagged by the bot.",
+      message: promptLoader.renderReaction("bugbot-comments"),
       escalateAfter: "30m",
     },
     "merge-conflicts": {
       auto: true,
       action: "send-to-agent",
-      message: "Your branch has merge conflicts. Rebase on the default branch and resolve them.",
+      message: promptLoader.renderReaction("merge-conflicts"),
       escalateAfter: "15m",
     },
     "approved-and-green": {
       auto: false,
       action: "notify",
       priority: "action",
-      message: "PR is ready to merge",
+      message: promptLoader.renderReaction("approved-and-green"),
     },
     "agent-idle": {
       auto: true,
       action: "send-to-agent",
-      message:
-        "You appear to be idle. If your task is not complete, continue working — write the code, commit, push, and create a PR. If you are blocked, explain what is blocking you.",
+      message: promptLoader.renderReaction("agent-idle"),
       retries: 2,
       escalateAfter: "15m",
     },
@@ -699,7 +701,7 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
 
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
-  const config = validateConfig(parsed);
+  const config = validateConfig(parsed, { configPath: path });
 
   // Set the config path in the config object for hash generation
   config.configPath = path;
@@ -720,7 +722,7 @@ export function loadConfigWithPath(configPath?: string): {
 
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
-  const config = validateConfig(parsed);
+  const config = validateConfig(parsed, { configPath: path });
 
   // Set the config path in the config object for hash generation
   config.configPath = path;
@@ -729,13 +731,24 @@ export function loadConfigWithPath(configPath?: string): {
 }
 
 /** Validate a raw config object */
-export function validateConfig(raw: unknown): OrchestratorConfig {
+export function validateConfig(
+  raw: unknown,
+  options?: { configPath?: string },
+): OrchestratorConfig {
   const validated = OrchestratorConfigSchema.parse(raw);
 
   let config = validated as OrchestratorConfig;
   config = expandPaths(config);
   config = applyProjectDefaults(config);
-  config = applyDefaultReactions(config);
+  const configRoot =
+    options?.configPath
+      ? dirname(resolve(options.configPath))
+      : Object.values(config.projects)[0]?.path ?? process.cwd();
+  const promptLoader = new PromptLoader({
+    projectDir: configRoot,
+    promptsDir: config.promptsDir,
+  });
+  config = applyDefaultReactions(config, promptLoader);
 
   // Collect external plugin configs from inline tracker/scm/notifier configs
   // and merge them into config.plugins for loading

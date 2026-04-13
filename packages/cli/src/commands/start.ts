@@ -19,6 +19,7 @@ import type { Command } from "commander";
 import {
   loadConfig,
   generateOrchestratorPrompt,
+  PromptLoader,
   generateSessionPrefix,
   findConfigFile,
   isRepoUrl,
@@ -1061,7 +1062,12 @@ async function runStartup(
       // No existing orchestrators — spawn a new one
       try {
         spinner.start("Creating orchestrator session");
-        const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
+        const systemPrompt = generateOrchestratorPrompt({
+          loader: new PromptLoader({ projectDir: project.path, promptsDir: config.promptsDir }),
+          config,
+          projectId,
+          project,
+        });
         const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
         selectedOrchestratorId = session.id;
         reused =

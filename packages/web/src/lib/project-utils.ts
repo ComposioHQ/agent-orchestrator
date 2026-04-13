@@ -33,7 +33,7 @@ export function filterProjectSessions<T extends SessionLike>(
 
 /** Build a project-scoped href, falling back to ?project=all when no project is active. */
 export function getProjectScopedHref(
-  basePath: "/" | "/prs",
+  basePath: "/" | "/prs" | "/phases",
   projectId: string | undefined,
 ): string {
   return projectId ? `${basePath}?project=${encodeURIComponent(projectId)}` : `${basePath}?project=all`;
