@@ -41,6 +41,10 @@
     "overrides": {
       "axios": "^1.15.0",
       "flatted": "^3.4.2"
+    },
+    "_overrides_rationale": {
+      "axios": "SSRF vulnerability fix — CVE-2023-45857, see PR #1092",
+      "flatted": "prototype-pollution security pin"
     }
   }
 }

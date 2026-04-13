@@ -1,7 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ["@composio/core", "@aoagents/ao-core"],
+  // @composio/core: optional transitive dep via tracker-linear (dynamic import); kept external
+  // so it is resolved from node_modules at runtime instead of being bundled.
+  serverExternalPackages: ["@composio/core"],
   transpilePackages: [
+    // @aoagents/ao-core: must stay here — dist/ is gitignored so a fresh checkout has no
+    // dist/index.js; transpilePackages lets webpack compile from source directly.
+    // Client components (SessionDetail, ProjectSidebar, sessions/[id]/page) also import
+    // @aoagents/ao-core/types which serverExternalPackages does not cover.
+    "@aoagents/ao-core",
     "@aoagents/ao-plugin-agent-claude-code",
     "@aoagents/ao-plugin-agent-opencode",
     "@aoagents/ao-plugin-runtime-tmux",
