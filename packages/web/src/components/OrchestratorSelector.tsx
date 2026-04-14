@@ -170,12 +170,21 @@ export function OrchestratorSelector({
           {/* Info banner */}
           <div className="mb-6 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] p-4">
             <p className="text-sm text-[var(--color-text-secondary)]">
-              Found{" "}
-              <span className="font-medium text-[var(--color-text-primary)]">
-                {orchestrators.length}
-              </span>{" "}
-              existing orchestrator session{orchestrators.length !== 1 ? "s" : ""}. You can resume
-              an existing session or start a new one.
+              {orchestrators.length > 0 ? (
+                <>
+                  Found{" "}
+                  <span className="font-medium text-[var(--color-text-primary)]">
+                    {orchestrators.length}
+                  </span>{" "}
+                  active orchestrator session{orchestrators.length !== 1 ? "s" : ""}. Resume one
+                  below or start a new one.
+                </>
+              ) : (
+                "No active orchestrator sessions found. Start a new one below."
+              )}
+            </p>
+            <p className="mt-2 text-xs text-[var(--color-text-tertiary)]">
+              Inactive or exited orchestrators are hidden from this list.
             </p>
           </div>
 

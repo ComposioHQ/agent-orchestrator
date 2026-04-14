@@ -59,9 +59,8 @@ describe("OrchestratorSelector", () => {
   it("shows count of existing sessions", () => {
     render(<OrchestratorSelector {...defaultProps} />);
 
-    expect(screen.getByText(/existing orchestrator sessions/)).toBeInTheDocument();
-    // The count "2" appears in multiple places, so we check the full info banner text
-    expect(screen.getByText(/Found/)).toBeInTheDocument();
+    expect(screen.getByText(/active orchestrator sessions/)).toBeInTheDocument();
+    expect(screen.getByText(/inactive or exited orchestrators are hidden/i)).toBeInTheDocument();
   });
 
   it("shows error state", () => {
