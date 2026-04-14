@@ -1,0 +1,36 @@
+packages/cli/src/lib/prompts.ts
+  c55c4a30a154bad4 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "f1bd1d2b18b228ae3d2d9ca1be2d1e2fb3c5e7ae",
+  "prompts": {
+    "3b3b057bdfd8aeb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef60a7a6-f160-47e8-bbcb-a3219a8ab2ee",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2760,
+      "overriden_lines": 0
+    },
+    "c55c4a30a154bad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "386eb42a-2d3d-4703-b4d3-cb37ecac06e9",
+        "model": "<synthetic>"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 20,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
