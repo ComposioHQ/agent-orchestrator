@@ -1372,57 +1372,110 @@ describe("start command — already-running detection", () => {
 // ---------------------------------------------------------------------------
 
 describe("start command — path-based deduplication in addProjectToConfig", () => {
-  it("returns existing project ID when path is already configured", async () => {
-    // This test verifies that addProjectToConfig() detects an existing project
-    // by path (not just name) and returns the existing ID without creating a duplicate.
-    // We use createConfigOnly + path arg flow through ao-core's real loadConfig.
+  it("skips addProjectToConfig when path arg matches an existing project", async () => {
+    // Pass a local path that's already registered in config.
+    // The path-argument branch should find the existing entry and skip addProjectToConfig.
     const repoDir = join(tmpDir, "my-app");
     createFakeRepo(repoDir, "https://github.com/org/my-app.git");
 
-    // Create a config file that already has this path registered
     const configPath = join(tmpDir, "agent-orchestrator.yaml");
     const { stringify: yamlStringify } = await import("yaml");
-    const yamlContent = {
-      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
-      projects: {
-        "my-app": {
-          name: "My App",
-          repo: "org/my-app",
-          path: repoDir,
-          defaultBranch: "main",
-          sessionPrefix: "app",
-        },
-      },
-    };
-    writeFileSync(configPath, yamlStringify(yamlContent, { indent: 2 }));
-
-    // Directly import and call addProjectToConfig to test path dedup
-    // We need the real addProjectToConfig, but it's not exported.
-    // Instead, verify via the path-argument branch:
-    // When findConfigFile returns our config, the path-match check at line 1253-1260
-    // should find the existing entry and skip addProjectToConfig.
-    // But if that check were removed, addProjectToConfig's own path dedup would
-    // catch it. To test addProjectToConfig directly, we'd need it exported.
-    //
-    // Instead, verify the existing path-match works by checking config is unchanged.
-    mockConfigRef.current = {
-      ...makeConfig({ "my-app": makeProject({ path: repoDir }) }),
+    writeFileSync(
       configPath,
-    };
+      yamlStringify(
+        {
+          defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          projects: {
+            "my-app": {
+              name: "My App",
+              repo: "org/my-app",
+              path: repoDir,
+              defaultBranch: "main",
+              sessionPrefix: "app",
+            },
+          },
+        },
+        { indent: 2 },
+      ),
+    );
 
-    // Simulate the path-argument branch by using a project ID that matches
-    // Use no-arg branch with config already loaded
-    await program.parseAsync([
-      "node",
-      "test",
-      "start",
-      "--no-dashboard",
-      "--no-orchestrator",
-    ]);
+    // Set AO_CONFIG_PATH so findConfigFile() finds our config in the path-arg branch
+    const origEnv = process.env["AO_CONFIG_PATH"];
+    process.env["AO_CONFIG_PATH"] = configPath;
 
-    // Verify no duplicate entry was created
-    const content = readFileSync(configPath, "utf-8");
-    const parsed = parseYaml(content) as { projects: Record<string, unknown> };
-    expect(Object.keys(parsed.projects)).toEqual(["my-app"]);
+    try {
+      // Pass repoDir as a local path arg — enters the path-argument branch
+      await program.parseAsync([
+        "node",
+        "test",
+        "start",
+        repoDir,
+        "--no-dashboard",
+        "--no-orchestrator",
+      ]);
+
+      // Verify no duplicate entry was created in the YAML
+      const content = readFileSync(configPath, "utf-8");
+      const parsed = parseYaml(content) as { projects: Record<string, unknown> };
+      expect(Object.keys(parsed.projects)).toEqual(["my-app"]);
+    } finally {
+      if (origEnv === undefined) delete process.env["AO_CONFIG_PATH"];
+      else process.env["AO_CONFIG_PATH"] = origEnv;
+    }
+  });
+
+  it("deduplicates via addProjectToConfig when path exists under a different name", async () => {
+    // Register a project under name "old-name" pointing to repoDir.
+    // Then pass repoDir as a path arg with a config that doesn't match by name.
+    // addProjectToConfig's path dedup should return "old-name" without creating a duplicate.
+    const repoDir = join(tmpDir, "new-project");
+    createFakeRepo(repoDir, "https://github.com/org/new-project.git");
+
+    const configPath = join(tmpDir, "agent-orchestrator.yaml");
+    const { stringify: yamlStringify } = await import("yaml");
+    writeFileSync(
+      configPath,
+      yamlStringify(
+        {
+          defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          projects: {
+            "old-name": {
+              name: "Old Name",
+              repo: "org/new-project",
+              path: repoDir,
+              defaultBranch: "main",
+              sessionPrefix: "old",
+            },
+          },
+        },
+        { indent: 2 },
+      ),
+    );
+
+    // Set AO_CONFIG_PATH so findConfigFile() finds our config
+    const origEnv = process.env["AO_CONFIG_PATH"];
+    process.env["AO_CONFIG_PATH"] = configPath;
+
+    try {
+      // Pass repoDir as path arg. The path-argument branch's path-match check
+      // at lines 1304-1311 finds "old-name" by path and skips addProjectToConfig.
+      // If that outer check were removed, addProjectToConfig's own dedup (lines 656-665)
+      // would catch it. Either way, no duplicate entry should be created.
+      await program.parseAsync([
+        "node",
+        "test",
+        "start",
+        repoDir,
+        "--no-dashboard",
+        "--no-orchestrator",
+      ]);
+
+      const content = readFileSync(configPath, "utf-8");
+      const parsed = parseYaml(content) as { projects: Record<string, unknown> };
+      expect(Object.keys(parsed.projects)).toEqual(["old-name"]);
+    } finally {
+      if (origEnv === undefined) delete process.env["AO_CONFIG_PATH"];
+      else process.env["AO_CONFIG_PATH"] = origEnv;
+    }
   });
 });

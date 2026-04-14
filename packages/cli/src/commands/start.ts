@@ -10,7 +10,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { cwd } from "node:process";
 import chalk from "chalk";
@@ -648,18 +648,25 @@ async function addProjectToConfig(
   config: OrchestratorConfig,
   projectPath: string,
 ): Promise<string> {
-  await ensureGit("adding projects");
-
   const resolvedPath = resolve(projectPath.replace(/^~/, process.env["HOME"] || ""));
 
-  // Check if this path is already registered under any project name
-  const existingByPath = Object.entries(config.projects).find(
-    ([, p]) => resolve(p.path.replace(/^~/, process.env["HOME"] || "")) === resolvedPath,
-  );
+  // Check if this path is already registered under any project name.
+  // Use realpathSync for canonical comparison (resolves symlinks, case variants).
+  // Done before ensureGit so already-registered paths return early without requiring git.
+  const canonicalPath = realpathSync(resolvedPath);
+  const existingByPath = Object.entries(config.projects).find(([, p]) => {
+    try {
+      return realpathSync(resolve(p.path.replace(/^~/, process.env["HOME"] || ""))) === canonicalPath;
+    } catch {
+      return false;
+    }
+  });
   if (existingByPath) {
     console.log(chalk.dim(`  Path already configured as project "${existingByPath[0]}" — skipping add.`));
     return existingByPath[0];
   }
+
+  await ensureGit("adding projects");
 
   let projectId = basename(resolvedPath);
 
@@ -1257,6 +1264,11 @@ export function registerStart(program: Command): void {
                 if (!(await waitForExit(running.pid, 5000))) {
                   console.log(chalk.yellow("  Process didn't exit cleanly, sending SIGKILL..."));
                   try { process.kill(running.pid, "SIGKILL"); } catch { /* already dead */ }
+                  if (!(await waitForExit(running.pid, 3000))) {
+                    throw new Error(
+                      `Failed to stop AO process (PID ${running.pid}). Check permissions or stop it manually.`,
+                    );
+                  }
                 }
                 await unregister();
                 console.log(chalk.yellow("\n  Stopped existing instance. Restarting...\n"));
