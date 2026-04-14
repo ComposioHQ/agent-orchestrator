@@ -55,6 +55,10 @@ export default defineConfig({
         find: "@aoagents/ao-plugin-scm-github",
         replacement: resolve(__dirname, "../plugins/scm-github/src/index.ts"),
       },
+      {
+        find: "@aoagents/ao-plugin-scm-gitlab",
+        replacement: resolve(__dirname, "../plugins/scm-gitlab/src/index.ts"),
+      },
     ],
   },
 });

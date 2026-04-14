@@ -59,7 +59,9 @@ function runHook(opts: {
         HOME: testDir,
       },
       encoding: "utf-8",
-      timeout: 5000,
+      // jq + sed + filesystem can exceed 5s on slow CI or parallel `pnpm test` runs;
+      // a short timeout leaves metadata unchanged and looks like a detection bug.
+      timeout: 20_000,
     });
   } catch (err: unknown) {
     const e = err as { stdout?: string };

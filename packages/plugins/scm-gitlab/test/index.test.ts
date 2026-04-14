@@ -96,12 +96,15 @@ function makeWebhookRequest(overrides: Partial<SCMWebhookRequest> = {}): SCMWebh
 describe("scm-gitlab plugin", () => {
   let scm: ReturnType<typeof create>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
+  const originalGlabHost = process.env.GLAB_HOST;
 
   beforeEach(() => {
     vi.clearAllMocks();
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     scm = create();
     delete process.env["GITLAB_WEBHOOK_SECRET"];
+    if (originalGlabHost === undefined) delete process.env.GLAB_HOST;
+    else process.env.GLAB_HOST = originalGlabHost;
   });
 
   afterEach(() => {
@@ -128,6 +131,12 @@ describe("scm-gitlab plugin", () => {
     it("accepts host config for self-hosted GitLab", () => {
       const selfHosted = create({ host: "gitlab.internal.corp" });
       expect(selfHosted.name).toBe("gitlab");
+    });
+
+    it("does not mutate process.env.GLAB_HOST", () => {
+      const before = process.env.GLAB_HOST;
+      create({ host: "https://gitlab.internal.corp" });
+      expect(process.env.GLAB_HOST).toBe(before);
     });
   });
 
@@ -589,25 +598,34 @@ describe("scm-gitlab plugin", () => {
       expect(checks[0].status).toBe("failed");
     });
 
-    it("passes --hostname to glab api for self-hosted GitLab", async () => {
+    it("passes GLAB_HOST in subprocess env for self-hosted GitLab", async () => {
       const selfHosted = create({ host: "gitlab.corp.com" });
       mockGlab([{ id: 100 }]);
       mockGlab([]);
       await selfHosted.getCIChecks(pr);
+      const opts = glabMock.mock.calls[0][2] as { env?: NodeJS.ProcessEnv };
       const firstCallArgs = glabMock.mock.calls[0][1] as string[];
       expect(firstCallArgs[0]).toBe("api");
-      expect(firstCallArgs[1]).toBe("--hostname");
-      expect(firstCallArgs[2]).toBe("gitlab.corp.com");
+      expect(opts.env?.GLAB_HOST).toBe("gitlab.corp.com");
     });
 
-    it("strips hostname from project ID and infers --hostname from pr.owner", async () => {
+    it("strips protocol before setting GLAB_HOST for glab subprocess", async () => {
+      const selfHosted = create({ host: "https://gitlab.corp.com" });
+      mockGlab([{ id: 100 }]);
+      mockGlab([]);
+      await selfHosted.getCIChecks(pr);
+      const opts = glabMock.mock.calls[0][2] as { env?: NodeJS.ProcessEnv };
+      expect(opts.env?.GLAB_HOST).toBe("gitlab.corp.com");
+    });
+
+    it("strips hostname from project ID and infers host from pr.owner for glab env", async () => {
       const selfHostedPr = { ...pr, owner: "gitlab.corp.com/acme", repo: "repo" };
       mockGlab([{ id: 100 }]);
       mockGlab([]);
       await scm.getCIChecks(selfHostedPr);
+      const opts = glabMock.mock.calls[0][2] as { env?: NodeJS.ProcessEnv };
       const firstCallArgs = glabMock.mock.calls[0][1] as string[];
-      expect(firstCallArgs).toContain("--hostname");
-      expect(firstCallArgs).toContain("gitlab.corp.com");
+      expect(opts.env?.GLAB_HOST).toBe("gitlab.corp.com");
       expect(firstCallArgs).toContain("projects/acme%2Frepo/merge_requests/42/pipelines");
     });
 
@@ -616,8 +634,9 @@ describe("scm-gitlab plugin", () => {
       mockGlab([{ id: 100 }]);
       mockGlab([]);
       await scm.getCIChecks(dottedGroupPr);
+      const opts = glabMock.mock.calls[0][2] as { env?: NodeJS.ProcessEnv };
       const firstCallArgs = glabMock.mock.calls[0][1] as string[];
-      expect(firstCallArgs).not.toContain("--hostname");
+      expect(opts.env?.GLAB_HOST).toBeUndefined();
       expect(firstCallArgs).toContain("projects/my.company%2Frepo/merge_requests/42/pipelines");
     });
   });
@@ -885,14 +904,14 @@ describe("scm-gitlab plugin", () => {
       expect(await scm.getReviewDecision(pr)).toBe("none");
     });
 
-    it("passes --hostname to glab api for self-hosted GitLab", async () => {
+    it("passes GLAB_HOST in subprocess env for self-hosted GitLab", async () => {
       const selfHosted = create({ host: "gitlab.corp.com" });
       mockGlab({ approved: true, approvals_left: 0 });
       await selfHosted.getReviewDecision(pr);
       const args = glabMock.mock.calls[0][1] as string[];
+      const opts = glabMock.mock.calls[0][2] as { env?: NodeJS.ProcessEnv };
       expect(args[0]).toBe("api");
-      expect(args[1]).toBe("--hostname");
-      expect(args[2]).toBe("gitlab.corp.com");
+      expect(opts.env?.GLAB_HOST).toBe("gitlab.corp.com");
     });
   });
 

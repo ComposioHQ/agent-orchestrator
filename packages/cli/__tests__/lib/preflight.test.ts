@@ -60,12 +60,17 @@ describe("preflight.checkBuilt", () => {
   });
 
   it("finds ao-core when hoisted one level up (npm global install layout)", async () => {
-    // /web/node_modules/@aoagents/ao-core     — miss
-    // /node_modules/@aoagents/ao-core         — hit
-    // /node_modules/@aoagents/ao-core/dist/index.js — exists
-    // /web/.next/BUILD_ID and /web/dist-server/start-all.js — exist
+    // /web/node_modules/@composio/ao-core     — miss
+    // /node_modules/@composio/ao-core         — hit
+    // /node_modules/@composio/ao-core/dist/index.js — exists
+    // /web/.next/BUILD_ID, /web/dist-server/start-all.js,
+    // /web/.next build manifests, and /web/.next/server/webpack-runtime.js — exist
     mockExistsSync
       .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
@@ -104,7 +109,20 @@ describe("preflight.checkBuilt", () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
     await expect(preflight.checkBuilt("/web")).rejects.toThrow(
-      "Packages not built",
+      "Dashboard production artifacts are missing or incomplete",
+    );
+  });
+
+  it("throws when app build manifest is missing from the dashboard build", async () => {
+    mockExistsSync
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    await expect(preflight.checkBuilt("/web")).rejects.toThrow(
+      "Dashboard production artifacts are missing or incomplete",
     );
   });
 
@@ -139,10 +157,7 @@ describe("preflight.checkTmux", () => {
 
   it("throws with install instructions when tmux is missing", async () => {
     mockExec.mockRejectedValue(new Error("ENOENT"));
-    const err = await preflight.checkTmux().catch((e: Error) => e);
-    expect(err).toBeInstanceOf(Error);
-    expect(err.message).toContain("tmux is not installed");
-    expect(err.message).toContain("Install it:");
+    await expect(preflight.checkTmux()).rejects.toThrow("tmux is not installed. Install it:");
     expect(mockExec).toHaveBeenCalledTimes(1);
     expect(mockExec).toHaveBeenCalledWith("tmux", ["-V"]);
   });

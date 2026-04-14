@@ -31,6 +31,10 @@ export default defineConfig({
         replacement: resolve(__dirname, "../plugins/agent-claude-code/src/index.ts"),
       },
       {
+        find: "@aoagents/ao-plugin-agent-codex",
+        replacement: resolve(__dirname, "../plugins/agent-codex/src/index.ts"),
+      },
+      {
         find: "@aoagents/ao-plugin-agent-opencode",
         replacement: resolve(__dirname, "../plugins/agent-opencode/src/index.ts"),
       },
@@ -39,8 +43,16 @@ export default defineConfig({
         replacement: resolve(__dirname, "../plugins/workspace-worktree/src/index.ts"),
       },
       {
+        find: "@aoagents/ao-plugin-scm-gitlab",
+        replacement: resolve(__dirname, "../plugins/scm-gitlab/src/index.ts"),
+      },
+      {
         find: "@aoagents/ao-plugin-scm-github",
         replacement: resolve(__dirname, "../plugins/scm-github/src/index.ts"),
+      },
+      {
+        find: "@aoagents/ao-plugin-tracker-gitlab",
+        replacement: resolve(__dirname, "../plugins/tracker-gitlab/src/index.ts"),
       },
       {
         find: "@aoagents/ao-plugin-tracker-github",

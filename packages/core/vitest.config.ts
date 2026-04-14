@@ -6,6 +6,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   test: {
+    // Session-manager tests shell out to a mock `opencode` binary; each call uses
+    // OPENCODE_DISCOVERY_TIMEOUT_MS (10s) in execFile. Default Vitest 5s is too low
+    // when the real CLI is hit or CI is slow — tests would time out before exec does.
+    testTimeout: 15_000,
     alias: {
       // Integration tests import real plugins. These aliases resolve
       // package names to source files so we don't need circular devDeps

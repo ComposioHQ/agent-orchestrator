@@ -1,7 +1,10 @@
 import { afterAll, describe, expect, it } from "vitest";
 import processPlugin from "@aoagents/ao-plugin-runtime-process";
 import type { RuntimeHandle } from "@aoagents/ao-core";
-import { sleep } from "./helpers/polling.js";
+import { pollUntil, sleep } from "./helpers/polling.js";
+
+/** Echo stdin to stdout without libc pipe buffering (unlike `cat`, which often block-buffers when stdout is not a TTY). */
+const STDIN_ECHO_CMD = `node -e 'process.stdin.on("data",d=>process.stdout.write(d))'`;
 
 describe("runtime-process (integration)", () => {
   const runtime = processPlugin.create();
@@ -20,7 +23,7 @@ describe("runtime-process (integration)", () => {
     handle = await runtime.create({
       sessionId,
       workspacePath: "/tmp",
-      launchCommand: "cat", // cat echoes stdin to stdout
+      launchCommand: STDIN_ECHO_CMD,
       environment: { AO_TEST: "1" },
     });
 
@@ -35,8 +38,13 @@ describe("runtime-process (integration)", () => {
 
   it("sendMessage writes to stdin and output is captured", async () => {
     await runtime.sendMessage(handle, "hello from test");
-    await sleep(200); // give time for stdout to be captured
-    const output = await runtime.getOutput(handle);
+    const output = await pollUntil(
+      async () => {
+        const o = await runtime.getOutput(handle);
+        return o.includes("hello from test") ? o : "";
+      },
+      { timeoutMs: 5_000, intervalMs: 25 },
+    );
     expect(output).toContain("hello from test");
   });
 
@@ -56,7 +64,7 @@ describe("runtime-process (integration)", () => {
       runtime.create({
         sessionId,
         workspacePath: "/tmp",
-        launchCommand: "cat",
+        launchCommand: STDIN_ECHO_CMD,
         environment: {},
       }),
     ).rejects.toThrow("already exists");
