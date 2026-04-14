@@ -10,7 +10,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { cwd } from "node:process";
 import chalk from "chalk";
@@ -648,9 +648,26 @@ async function addProjectToConfig(
   config: OrchestratorConfig,
   projectPath: string,
 ): Promise<string> {
+  const resolvedPath = resolve(projectPath.replace(/^~/, process.env["HOME"] || ""));
+
+  // Check if this path is already registered under any project name.
+  // Use realpathSync for canonical comparison (resolves symlinks, case variants).
+  // Done before ensureGit so already-registered paths return early without requiring git.
+  const canonicalPath = realpathSync(resolvedPath);
+  const existingByPath = Object.entries(config.projects).find(([, p]) => {
+    try {
+      return realpathSync(resolve(p.path.replace(/^~/, process.env["HOME"] || ""))) === canonicalPath;
+    } catch {
+      return false;
+    }
+  });
+  if (existingByPath) {
+    console.log(chalk.dim(`  Path already configured as project "${existingByPath[0]}" — skipping add.`));
+    return existingByPath[0];
+  }
+
   await ensureGit("adding projects");
 
-  const resolvedPath = resolve(projectPath.replace(/^~/, process.env["HOME"] || ""));
   let projectId = basename(resolvedPath);
 
   // Avoid overwriting an existing project with the same directory name
@@ -1270,6 +1287,62 @@ export function registerStart(program: Command): void {
           let projectId: string;
           let project: ProjectConfig;
 
+          // ── Already-running detection (before any config mutation) ──
+          const running = await isAlreadyRunning();
+          let startNewOrchestrator = false;
+          if (running) {
+            if (isHumanCaller()) {
+              console.log(chalk.cyan(`\nℹ AO is already running.`));
+              console.log(`  Dashboard: ${chalk.cyan(`http://localhost:${running.port}`)}`);
+              console.log(`  PID: ${running.pid} | Up since: ${running.startedAt}`);
+              console.log(`  Projects: ${running.projects.join(", ")}\n`);
+
+              const choice = await promptSelect(
+                "AO is already running. What do you want to do?",
+                [
+                  { value: "open", label: "Open dashboard", hint: "Keep the current instance" },
+                  { value: "new", label: "Start new orchestrator", hint: "Add a new session for this project" },
+                  { value: "restart", label: "Restart everything", hint: "Stop the current instance first" },
+                  { value: "quit", label: "Quit" },
+                ],
+                "open",
+              );
+
+              if (choice === "open") {
+                const url = `http://localhost:${running.port}`;
+                openUrl(url);
+                process.exit(0);
+              } else if (choice === "new") {
+                // Defer config mutation until after config is loaded below
+                startNewOrchestrator = true;
+              } else if (choice === "restart") {
+                try { process.kill(running.pid, "SIGTERM"); } catch { /* already dead */ }
+                if (!(await waitForExit(running.pid, 5000))) {
+                  console.log(chalk.yellow("  Process didn't exit cleanly, sending SIGKILL..."));
+                  try { process.kill(running.pid, "SIGKILL"); } catch { /* already dead */ }
+                  if (!(await waitForExit(running.pid, 3000))) {
+                    throw new Error(
+                      `Failed to stop AO process (PID ${running.pid}). Check permissions or stop it manually.`,
+                    );
+                  }
+                }
+                await unregister();
+                console.log(chalk.yellow("\n  Stopped existing instance. Restarting...\n"));
+                // Continue to startup below
+              } else {
+                process.exit(0);
+              }
+            } else {
+              // Agent/non-TTY caller — print info and exit
+              console.log(`AO is already running.`);
+              console.log(`Dashboard: http://localhost:${running.port}`);
+              console.log(`PID: ${running.pid}`);
+              console.log(`Projects: ${running.projects.join(", ")}`);
+              console.log(`To restart: ao stop && ao start`);
+              process.exit(0);
+            }
+          }
+
           if (projectArg && isRepoUrl(projectArg)) {
             // ── URL argument: clone + auto-config + start ──
             console.log(chalk.bold.cyan("\n  Agent Orchestrator — Quick Start\n"));
@@ -1337,81 +1410,35 @@ export function registerStart(program: Command): void {
             ({ projectId, project } = await resolveProject(config, projectArg));
           }
 
-          // ── Already-running detection (Step 9) ──
-          const running = await isAlreadyRunning();
-          if (running) {
-            if (isHumanCaller()) {
-              console.log(chalk.cyan(`\nℹ AO is already running.`));
-              console.log(`  Dashboard: ${chalk.cyan(`http://localhost:${running.port}`)}`);
-              console.log(`  PID: ${running.pid} | Up since: ${running.startedAt}`);
-              console.log(`  Projects: ${running.projects.join(", ")}\n`);
+          // ── Handle "new orchestrator" choice (deferred from already-running check) ──
+          if (startNewOrchestrator) {
+            const rawYaml = readFileSync(config.configPath, "utf-8");
+            const rawConfig = yamlParse(rawYaml);
 
-              const choice = await promptSelect(
-                "AO is already running. What do you want to do?",
-                [
-                  { value: "open", label: "Open dashboard", hint: "Keep the current instance" },
-                  { value: "new", label: "Start new orchestrator", hint: "Add a new session for this project" },
-                  { value: "restart", label: "Restart everything", hint: "Stop the current instance first" },
-                  { value: "quit", label: "Quit" },
-                ],
-                "open",
-              );
+            // Collect existing prefixes to avoid collisions
+            const existingPrefixes = new Set(
+              Object.values(rawConfig.projects as Record<string, Record<string, unknown>>).map(
+                (p) => p.sessionPrefix as string,
+              ).filter(Boolean),
+            );
 
-              if (choice === "open") {
-                const url = `http://localhost:${running.port}`;
-                openUrl(url);
-                process.exit(0);
-              } else if (choice === "new") {
-                // Generate unique orchestrator: same project, new session
-                const rawYaml = readFileSync(config.configPath, "utf-8");
-                const rawConfig = yamlParse(rawYaml);
+            let newId: string;
+            let newPrefix: string;
+            do {
+              const suffix = Math.random().toString(36).slice(2, 6);
+              newId = `${projectId}-${suffix}`;
+              newPrefix = generateSessionPrefix(newId);
+            } while (rawConfig.projects[newId] || existingPrefixes.has(newPrefix));
 
-                // Collect existing prefixes to avoid collisions
-                const existingPrefixes = new Set(
-                  Object.values(rawConfig.projects as Record<string, Record<string, unknown>>).map(
-                    (p) => p.sessionPrefix as string,
-                  ).filter(Boolean),
-                );
-
-                let newId: string;
-                let newPrefix: string;
-                do {
-                  const suffix = Math.random().toString(36).slice(2, 6);
-                  newId = `${projectId}-${suffix}`;
-                  newPrefix = generateSessionPrefix(newId);
-                } while (rawConfig.projects[newId] || existingPrefixes.has(newPrefix));
-
-                rawConfig.projects[newId] = {
-                  ...rawConfig.projects[projectId],
-                  sessionPrefix: newPrefix,
-                };
-                writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
-                console.log(chalk.green(`\n✓ New orchestrator "${newId}" added to config\n`));
-                config = loadConfig(config.configPath);
-                projectId = newId;
-                project = config.projects[newId];
-                // Continue to startup below
-              } else if (choice === "restart") {
-                try { process.kill(running.pid, "SIGTERM"); } catch { /* already dead */ }
-                if (!(await waitForExit(running.pid, 5000))) {
-                  console.log(chalk.yellow("  Process didn't exit cleanly, sending SIGKILL..."));
-                  try { process.kill(running.pid, "SIGKILL"); } catch { /* already dead */ }
-                }
-                await unregister();
-                console.log(chalk.yellow("\n  Stopped existing instance. Restarting...\n"));
-                // Continue to startup below
-              } else {
-                process.exit(0);
-              }
-            } else {
-              // Agent/non-TTY caller — print info and exit
-              console.log(`AO is already running.`);
-              console.log(`Dashboard: http://localhost:${running.port}`);
-              console.log(`PID: ${running.pid}`);
-              console.log(`Projects: ${running.projects.join(", ")}`);
-              console.log(`To restart: ao stop && ao start`);
-              process.exit(0);
-            }
+            rawConfig.projects[newId] = {
+              ...rawConfig.projects[projectId],
+              sessionPrefix: newPrefix,
+            };
+            writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
+            console.log(chalk.green(`\n✓ New orchestrator "${newId}" added to config\n`));
+            config = loadConfig(config.configPath);
+            projectId = newId;
+            project = config.projects[newId];
           }
 
           // ── Agent selection prompt (Step 10)──
