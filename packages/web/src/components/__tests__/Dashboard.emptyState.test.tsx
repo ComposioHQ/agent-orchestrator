@@ -26,7 +26,10 @@ beforeEach(() => {
 describe("Dashboard empty state", () => {
   it("shows empty state when there are no sessions (single-project view)", () => {
     render(<Dashboard initialSessions={[]} />);
-    expect(screen.getByText(/No active sessions/i)).toBeInTheDocument();
+    expect(screen.getByText(/Ready to orchestrate/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Open the main orchestrator to start a session and fan out parallel agents across your codebase/i),
+    ).toBeInTheDocument();
   });
 
   it("does not show empty state when sessions exist", () => {
@@ -53,6 +56,35 @@ describe("Dashboard empty state", () => {
         ]}
       />,
     );
-    expect(queryByText(/No active sessions/i)).not.toBeInTheDocument();
+    expect(queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
+  });
+
+  it("shows empty state when only done sessions exist", () => {
+    render(
+      <Dashboard
+        initialSessions={[
+          {
+            id: "s-done",
+            projectId: "proj",
+            status: "killed",
+            activity: "exited",
+            branch: "feat/done",
+            issueId: null,
+            issueUrl: null,
+            issueLabel: null,
+            issueTitle: null,
+            summary: "Finished",
+            summaryIsFallback: false,
+            createdAt: new Date().toISOString(),
+            lastActivityAt: new Date().toISOString(),
+            pr: null,
+            metadata: {},
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText(/Ready to orchestrate/i)).toBeInTheDocument();
+    expect(screen.getByText("Done / Terminated")).toBeInTheDocument();
   });
 });

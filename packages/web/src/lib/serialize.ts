@@ -62,6 +62,7 @@ export function sessionToDashboard(session: Session): DashboardSession {
     issueUrl: session.issueId, // issueId is actually the full URL
     issueLabel: null, // Will be enriched by enrichSessionIssue()
     issueTitle: null, // Will be enriched by enrichSessionIssueTitle()
+    userPrompt: session.metadata["userPrompt"] ?? null,
     summary,
     summaryIsFallback: agentSummary ? (session.agentInfo?.summaryIsFallback ?? false) : false,
     createdAt: session.createdAt.toISOString(),

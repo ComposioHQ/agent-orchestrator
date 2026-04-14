@@ -208,7 +208,7 @@ describe("SessionCard", () => {
     const session = makeSession({ id: "backend-5" });
     render(<SessionCard session={session} />);
     const link = screen.getByText("terminal");
-    expect(link).toHaveAttribute("href", "/sessions/backend-5");
+    expect(link).toHaveAttribute("href", "/sessions/backend-5#session-terminal-section");
   });
 
   it("shows restore button when agent has exited", () => {
@@ -269,6 +269,68 @@ describe("SessionCard", () => {
     expect(onMerge).toHaveBeenCalledWith(42);
   });
 
+  it("renders passing CI check chips as hyperlinks when url is present", () => {
+    const pr = makePR({
+      state: "open",
+      ciStatus: "passing",
+      ciChecks: [
+        { name: "lint-and-type-checks", status: "passed", url: "https://github.com/owner/repo/runs/111" },
+        { name: "tests", status: "passed", url: "https://github.com/owner/repo/runs/222" },
+        { name: "no-url-check", status: "passed" },
+      ],
+      reviewDecision: "approved",
+      mergeability: {
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      },
+    });
+    const session = makeSession({ status: "mergeable", activity: "idle", pr });
+    render(<SessionCard session={session} />);
+
+    const lintLink = screen.getByRole("link", { name: /lint-and-type-checks/ });
+    expect(lintLink).toHaveAttribute("href", "https://github.com/owner/repo/runs/111");
+    expect(lintLink).toHaveAttribute("target", "_blank");
+    expect(lintLink).toHaveAttribute("rel", "noopener noreferrer");
+
+    const testsLink = screen.getByRole("link", { name: /^tests$/ });
+    expect(testsLink).toHaveAttribute("href", "https://github.com/owner/repo/runs/222");
+
+    // Check without url should still render as plain text, not a link
+    expect(screen.queryByRole("link", { name: /no-url-check/ })).not.toBeInTheDocument();
+    expect(screen.getByText("no-url-check")).toBeInTheDocument();
+  });
+
+  it("stops propagation when clicking a passing CI chip link", () => {
+    const onClick = vi.fn();
+    const pr = makePR({
+      state: "open",
+      ciStatus: "passing",
+      ciChecks: [
+        { name: "build", status: "passed", url: "https://github.com/owner/repo/runs/333" },
+      ],
+      reviewDecision: "approved",
+      mergeability: {
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      },
+    });
+    const session = makeSession({ status: "mergeable", activity: "idle", pr });
+    render(
+      <div onClick={onClick}>
+        <SessionCard session={session} />
+      </div>,
+    );
+    const link = screen.getByRole("link", { name: /build/ });
+    fireEvent.click(link);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
   it("shows CI failing alert", () => {
     const pr = makePR({
       state: "open",
@@ -288,7 +350,7 @@ describe("SessionCard", () => {
     });
     const session = makeSession({ status: "ci_failed", activity: "idle", pr });
     render(<SessionCard session={session} />);
-    expect(screen.getByText("1 CI check failing")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "1 check failing" })).toBeInTheDocument();
   });
 
   it("shows CI status unknown when ciStatus is failing but no failed checks", () => {
@@ -393,7 +455,7 @@ describe("SessionCard", () => {
     });
     const session = makeSession({ activity: "idle", pr });
     render(<SessionCard session={session} />);
-    expect(screen.getByText("ask to fix")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask to fix" })).toBeInTheDocument();
   });
 
   it("shows action buttons even when agent is active", () => {
@@ -412,13 +474,13 @@ describe("SessionCard", () => {
     });
     const session = makeSession({ activity: "active", pr });
     render(<SessionCard session={session} />);
-    expect(screen.getByText("ask to fix")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask to fix" })).toBeInTheDocument();
   });
 
   it("shows issue details in the compact card footer", () => {
     const session = makeSession({ id: "test-1", issueId: "INT-100", pr: null });
     render(<SessionCard session={session} />);
-    expect(screen.getAllByText("INT-100")).toHaveLength(2);
+    expect(screen.getAllByText("INT-100")).toHaveLength(1);
   });
 
   it("shows icon-only terminate button in the footer", () => {
@@ -548,7 +610,7 @@ describe("SessionCard", () => {
 
     render(<SessionCard session={session} onSend={onSend} />);
 
-    const actionButton = screen.getByRole("button", { name: "ask to fix" });
+    const actionButton = screen.getByRole("button", { name: "Ask to fix" });
     fireEvent.click(actionButton);
 
     await waitFor(() => {
@@ -558,7 +620,7 @@ describe("SessionCard", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "failed" })).toBeInTheDocument();
     });
-    expect(screen.queryByRole("button", { name: "sent!" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sent!" })).not.toBeInTheDocument();
   });
 });
 
@@ -575,7 +637,26 @@ describe("AttentionZone", () => {
 
   it("renders empty state when sessions array is empty", () => {
     render(<AttentionZone level="respond" sessions={[]} />);
-    expect(screen.getByText("No sessions")).toBeInTheDocument();
+    expect(screen.getByText("Respond")).toBeInTheDocument();
+    expect(screen.getByText("0")).toBeInTheDocument();
+    expect(screen.queryByText("No agents need your input.")).not.toBeInTheDocument();
+  });
+
+  it("renders zone-specific empty messages for all attention zones", () => {
+    const cases: Array<[string, string]> = [
+      ["review", "Review"],
+      ["pending", "Pending"],
+      ["working", "Working"],
+      ["done", "Done"],
+    ];
+    for (const [level, expectedLabel] of cases) {
+      const { unmount } = render(
+        <AttentionZone level={level as "review" | "pending" | "working" | "done"} sessions={[]} />,
+      );
+      expect(screen.getByText(expectedLabel)).toBeInTheDocument();
+      expect(screen.getByText("0")).toBeInTheDocument();
+      unmount();
+    }
   });
 
   it("shows session cards when not collapsed", () => {

@@ -32,39 +32,32 @@ const zoneConfig: Record<
   AttentionLevel,
   {
     label: string;
-    color: string;
-    caption: string;
+    emptyMessage: string;
   }
 > = {
   merge: {
     label: "Ready",
-    color: "var(--color-status-ready)",
-    caption: "Cleared to land",
+    emptyMessage: "Nothing cleared to land yet.",
   },
   respond: {
     label: "Respond",
-    color: "var(--color-status-error)",
-    caption: "Human judgment needed",
+    emptyMessage: "No agents need your input.",
   },
   review: {
     label: "Review",
-    color: "var(--color-accent-orange)",
-    caption: "Code waiting on eyes",
+    emptyMessage: "No code waiting for review.",
   },
   pending: {
     label: "Pending",
-    color: "var(--color-status-attention)",
-    caption: "Waiting on external state",
+    emptyMessage: "Nothing blocked.",
   },
   working: {
     label: "Working",
-    color: "var(--color-status-working)",
-    caption: "Agents are actively moving",
+    emptyMessage: "No agents running.",
   },
   done: {
     label: "Done",
-    color: "var(--color-text-tertiary)",
-    caption: "Completed or exited",
+    emptyMessage: "No completed sessions.",
   },
 };
 
@@ -118,14 +111,15 @@ function AttentionZoneView({
           className="accordion-header"
           onClick={() => onToggle(level)}
           aria-expanded={!collapsed}
+          aria-controls={`accordion-body-${level}`}
         >
-          <span className="accordion-header__dot" style={{ background: config.color }} />
+          <span className="accordion-header__dot" data-level={level} />
           <span className="accordion-header__label">{config.label}</span>
           <span className="accordion-header__count">{sessions.length}</span>
           <span className="accordion-header__chevron" aria-hidden="true">▶</span>
         </button>
 
-        <div className="accordion-body">
+        <div id={`accordion-body-${level}`} className="accordion-body">
           {sessions.length > 0 ? (
             <div className={compactMobile ? "mobile-session-list" : "flex flex-col gap-2 p-3"}>
               {visibleSessions.map((session) =>
@@ -159,7 +153,7 @@ function AttentionZoneView({
             </div>
           ) : compactMobile ? (
             <div className="mobile-session-list">
-              <div className="mobile-session-list__empty">No sessions</div>
+              <div className="mobile-session-list__empty">{config.emptyMessage}</div>
             </div>
           ) : null}
         </div>
@@ -171,16 +165,15 @@ function AttentionZoneView({
     <div className="kanban-column" data-level={level}>
       <div className="kanban-column__header">
         <div className="kanban-column__title-row">
-          <div className="kanban-column__dot" style={{ background: config.color }} />
+          <div className="kanban-column__dot" data-level={level} />
           <span className="kanban-column__title">{config.label}</span>
           <span className="kanban-column__count">{sessions.length}</span>
         </div>
-        <p className="kanban-column__caption">{config.caption}</p>
       </div>
 
       <div className="kanban-column-body">
         {sessions.length > 0 ? (
-          <div className="flex flex-col gap-2">
+          <div className="kanban-column__stack">
             {sessions.map((session) => (
               <SessionCard
                 key={session.id}
@@ -192,11 +185,7 @@ function AttentionZoneView({
               />
             ))}
           </div>
-        ) : (
-          <div className="kanban-column__empty">
-            <span className="kanban-column__empty-label">No sessions</span>
-          </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -247,7 +236,7 @@ function MobileSessionRow({
         <div className="mobile-session-row__line">
           <span
             className="mobile-session-row__dot"
-            style={{ background: zoneConfig[level].color }}
+            data-level={level}
             aria-hidden="true"
           />
           <span className="mobile-session-row__title">{getSessionTitle(session)}</span>

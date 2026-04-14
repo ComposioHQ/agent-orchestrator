@@ -201,7 +201,8 @@ Hash = SHA-256 of config directory (first 12 chars). Prevents collision across m
 | `packages/web/src/components/SessionCard.tsx` | Kanban session card |
 | `packages/web/src/hooks/useSessionEvents.ts` | SSE consumer hook |
 | `packages/web/src/lib/types.ts` | Dashboard types |
-| `packages/web/src/app/globals.css` | Design tokens and base styles |
+| `packages/web/src/app/globals.css` | Design tokens and base styles (full token definitions) |
+| `DESIGN.md` | **Design system reference** — design principles, token mapping, component patterns, anti-patterns (read this before writing any web UI) |
 | `agent-orchestrator.yaml` | Project-level config (user-created) |
 | `eslint.config.js` | ESLint flat config |
 | `tsconfig.base.json` | Shared TypeScript base config |

@@ -84,6 +84,7 @@ async function spawnSession(
   openTab?: boolean,
   agent?: string,
   claimOptions?: SpawnClaimOptions,
+  prompt?: string,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -91,10 +92,17 @@ async function spawnSession(
     const sm = await getSessionManager(config);
     spinner.text = "Spawning session via core";
 
+    // Validate and sanitize prompt (strip newlines to prevent metadata injection)
+    const sanitizedPrompt = prompt?.replace(/[\r\n]/g, " ").trim() || undefined;
+    if (sanitizedPrompt && sanitizedPrompt.length > 4096) {
+      throw new Error("Prompt must be at most 4096 characters");
+    }
+
     const session = await sm.spawn({
       projectId,
       issueId,
       agent,
+      prompt: sanitizedPrompt,
     });
 
     let claimedPrUrl: string | null = null;
@@ -162,6 +170,7 @@ export function registerSpawn(program: Command): void {
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
+    .option("--prompt <text>", "Initial prompt/instructions for the agent (use instead of an issue)")
     .action(
       async (
         first: string | undefined,
@@ -171,6 +180,7 @@ export function registerSpawn(program: Command): void {
           agent?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
+          prompt?: string;
         },
       ) => {
         // Catch old two-arg usage: ao spawn <project> <issue>
@@ -222,7 +232,7 @@ export function registerSpawn(program: Command): void {
           await runSpawnPreflight(config, projectId, claimOptions);
           await ensureLifecycleWorker(config, projectId);
 
-          await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
+          await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt);
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
           process.exit(1);

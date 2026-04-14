@@ -33,6 +33,7 @@
     "eslint": "^10.0.0",
     "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",
+    "istanbul-lib-coverage": "^3.2.2",
     "prettier": "^3.8.1",
     "typescript-eslint": "^8.55.0"
   },

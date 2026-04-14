@@ -59,6 +59,8 @@ export default function SessionPage() {
   const [session, setSession] = useState<DashboardSession | null>(null);
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(undefined);
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [routeError, setRouteError] = useState<Error | null>(null);
   const [sessionMissing, setSessionMissing] = useState(false);
@@ -85,6 +87,7 @@ export default function SessionPage() {
       .then((res) => res.ok ? res.json() : null)
       .then((data: { projects?: ProjectInfo[] } | null) => {
         if (data?.projects) {
+          setProjects(data.projects);
           setPrefixByProject(
             new Map(data.projects.map((p) => [p.id, p.sessionPrefix ?? p.id])),
           );
@@ -185,6 +188,17 @@ export default function SessionPage() {
     }
   }, []);
 
+  const fetchSidebarSessions = useCallback(async () => {
+    try {
+      const res = await fetch("/api/sessions");
+      if (!res.ok) return;
+      const body = (await res.json()) as { sessions?: DashboardSession[] } | null;
+      setSidebarSessions(body?.sessions ?? []);
+    } catch {
+      // non-critical
+    }
+  }, []);
+
   useEffect(() => {
     if (!sessionIsOrchestrator) {
       setZoneCounts(null);
@@ -194,19 +208,21 @@ export default function SessionPage() {
   // Initial fetch — session first, zone counts after (avoids blocking on slow /api/sessions)
   useEffect(() => {
     fetchSession();
+    fetchSidebarSessions();
     // Delay zone counts so the heavy /api/sessions call doesn't contend with session load
     const t = setTimeout(fetchProjectSessions, 2000);
     return () => clearTimeout(t);
-  }, [fetchSession, fetchProjectSessions]);
+  }, [fetchSession, fetchProjectSessions, fetchSidebarSessions]);
 
   // Poll every 5s
   useEffect(() => {
     const interval = setInterval(() => {
       fetchSession();
       fetchProjectSessions();
+      fetchSidebarSessions();
     }, 5000);
     return () => clearInterval(interval);
-  }, [fetchSession, fetchProjectSessions]);
+  }, [fetchSession, fetchProjectSessions, fetchSidebarSessions]);
 
   if (loading) {
     return (
@@ -235,6 +251,8 @@ export default function SessionPage() {
       isOrchestrator={sessionIsOrchestrator}
       orchestratorZones={zoneCounts ?? undefined}
       projectOrchestratorId={projectOrchestratorId}
+      projects={projects}
+      sidebarSessions={sidebarSessions}
     />
   );
 }

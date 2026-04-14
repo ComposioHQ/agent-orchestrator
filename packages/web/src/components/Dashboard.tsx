@@ -5,20 +5,19 @@ import { useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   type DashboardSession,
-  type DashboardStats,
+  type DashboardPR,
   type AttentionLevel,
   type DashboardOrchestratorLink,
   getAttentionLevel,
   isPRRateLimited,
   isPRMergeReady,
+  isPRUnenriched,
 } from "@/lib/types";
 import { AttentionZone } from "./AttentionZone";
-import { SessionCard } from "./SessionCard";
 import { DynamicFavicon, countNeedingAttention } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { useMuxOptional } from "@/providers/MuxProvider";
 import { ProjectSidebar } from "./ProjectSidebar";
-import { ThemeToggle } from "./ThemeToggle";
 import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
@@ -46,9 +45,28 @@ const MOBILE_FILTERS = [
   { value: "pending", label: "Pending" },
   { value: "working", label: "Working" },
 ] as const;
-type MobileAttentionLevel = (typeof MOBILE_KANBAN_ORDER)[number];
+
 type MobileFilterValue = (typeof MOBILE_FILTERS)[number]["value"];
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
+
+function formatRelativeTimeCompact(isoDate: string | null): string {
+  if (!isoDate) return "just now";
+  const timestamp = new Date(isoDate).getTime();
+  if (!Number.isFinite(timestamp)) return "just now";
+
+  const diffMs = Date.now() - timestamp;
+  if (diffMs <= 0) return "just now";
+
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSecs < 60) return `${diffSecs}s ago`;
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return `${diffDays}d ago`;
+}
 
 function mergeOrchestrators(
   current: DashboardOrchestratorLink[],
@@ -61,6 +79,157 @@ function mergeOrchestrators(
   }
 
   return [...merged.values()];
+}
+
+function DoneCard({
+  session,
+  onRestore,
+}: {
+  session: DashboardSession;
+  onRestore: (id: string) => void;
+}) {
+  const title =
+    (!session.summaryIsFallback && session.summary) ||
+    session.issueTitle ||
+    session.summary ||
+    session.id;
+  const isMerged = session.pr?.state === "merged";
+  const isTerminated = session.status === "killed" || session.status === "terminated";
+  const badgeLabel = isMerged ? "merged" : isTerminated ? "terminated" : "done";
+  const badgeClass = `done-card__badge ${isTerminated ? "done-card__badge--terminated" : "done-card__badge--merged"}`;
+
+  return (
+    <div className="done-card">
+      <p className="done-card__title">{title}</p>
+      <div className="done-card__meta">
+        <span className={badgeClass}>{badgeLabel}</span>
+        {session.pr ? (
+          <a
+            href={session.pr.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="done-card__pr"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <svg width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+              <circle cx="18" cy="18" r="3" />
+              <circle cx="6" cy="6" r="3" />
+              <path d="M6 9v3a6 6 0 0 0 6 6h3" />
+            </svg>
+            #{session.pr.number}
+          </a>
+        ) : null}
+        <span className="done-card__age">{formatRelativeTimeCompact(session.lastActivityAt)}</span>
+        <button
+          type="button"
+          className="done-card__restore"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRestore(session.id);
+          }}
+        >
+          Restore
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function getCiPillClass(pr: DashboardPR): string {
+  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "";
+  return pr.ciStatus === "passing"
+    ? "mobile-feed-card__pill--green"
+    : pr.ciStatus === "failing"
+      ? "mobile-feed-card__pill--red"
+      : "mobile-feed-card__pill--amber";
+}
+
+function getCiLabel(pr: DashboardPR): string {
+  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "";
+  return pr.ciStatus === "passing" ? "CI passing" : pr.ciStatus === "failing" ? "CI failed" : "CI pending";
+}
+
+function getReviewPillClass(pr: DashboardPR): string {
+  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "";
+  return pr.reviewDecision === "approved"
+    ? "mobile-feed-card__pill--green"
+    : pr.reviewDecision === "changes_requested"
+      ? "mobile-feed-card__pill--red"
+      : "mobile-feed-card__pill--amber";
+}
+
+function getReviewLabel(pr: DashboardPR): string {
+  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "";
+  return pr.reviewDecision === "approved"
+    ? "approved"
+    : pr.reviewDecision === "changes_requested"
+      ? "changes requested"
+      : "needs review";
+}
+
+function MobileFeedCard({
+  session,
+  level,
+  onTap,
+}: {
+  session: DashboardSession;
+  level: AttentionLevel;
+  onTap: (session: DashboardSession) => void;
+}) {
+  const title =
+    (!session.summaryIsFallback && session.summary) ||
+    session.issueTitle ||
+    session.summary ||
+    session.id;
+  const pr = session.pr;
+
+  return (
+    <button
+      type="button"
+      className="mobile-feed-card"
+      onClick={() => onTap(session)}
+    >
+      <div className="mobile-feed-card__strip" data-level={level} />
+      <div className="mobile-feed-card__content">
+        <div className="mobile-feed-card__header">
+          <span className="mobile-feed-card__id">{session.id}</span>
+          <span className="mobile-feed-card__time">
+            {formatRelativeTimeCompact(session.lastActivityAt)}
+          </span>
+        </div>
+        <div className="mobile-feed-card__title">{title}</div>
+        <div className="mobile-feed-card__meta">
+          {session.branch ? (
+            <span className="mobile-feed-card__branch">{session.branch}</span>
+          ) : null}
+          {pr ? (
+            <span className="mobile-feed-card__pr">#{pr.number}</span>
+          ) : null}
+          {pr && !isPRRateLimited(pr) && !isPRUnenriched(pr) ? (
+            <span className="mobile-feed-card__diff">
+              <span style={{ color: "var(--color-accent-green)" }}>+{pr.additions}</span>
+              {" "}
+              <span style={{ color: "var(--color-accent-red)" }}>-{pr.deletions}</span>
+            </span>
+          ) : null}
+        </div>
+        {pr && !isPRRateLimited(pr) && !isPRUnenriched(pr) ? (
+          <div className="mobile-feed-card__pills">
+            {getCiLabel(pr) ? (
+              <span className={`mobile-feed-card__pill ${getCiPillClass(pr)}`}>
+                {getCiLabel(pr)}
+              </span>
+            ) : null}
+            {getReviewLabel(pr) ? (
+              <span className={`mobile-feed-card__pill ${getReviewPillClass(pr)}`}>
+                {getReviewLabel(pr)}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </button>
+  );
 }
 
 function DashboardInner({
@@ -84,6 +253,7 @@ function DashboardInner({
     projectId,
     mux?.status === "connected" ? mux.sessions : undefined,
     initialAttentionLevels,
+    false,
   );
   const searchParams = useSearchParams();
   const activeSessionId = searchParams.get("session") ?? undefined;
@@ -96,9 +266,8 @@ function DashboardInner({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const [hasMounted, setHasMounted] = useState(false);
-  const [expandedLevel, setExpandedLevel] = useState<MobileAttentionLevel | null>(null);
   const [mobileFilter, setMobileFilter] = useState<MobileFilterValue>("all");
-  const showSidebar = projects.length > 1;
+  const showSidebar = projects.length >= 1;
   const { showToast } = useToast();
   const [sheetState, setSheetState] = useState<{
     sessionId: string;
@@ -107,13 +276,13 @@ function DashboardInner({
   const [sheetSessionOverride, setSheetSessionOverride] = useState<DashboardSession | null>(null);
   const [doneExpanded, setDoneExpanded] = useState(false);
   const sessionsRef = useRef(sessions);
-  const hasSeededMobileExpansionRef = useRef(false);
+
   sessionsRef.current = sessions;
-  const allProjectsView = showSidebar && projectId === undefined;
+  const allProjectsView = projects.length > 1 && showSidebar && projectId === undefined;
   const currentProjectOrchestrator = useMemo(
     () =>
       projectId
-        ? activeOrchestrators.find((orchestrator) => orchestrator.projectId === projectId) ?? null
+        ? (activeOrchestrators.find((orchestrator) => orchestrator.projectId === projectId) ?? null)
         : null,
     [activeOrchestrators, projectId],
   );
@@ -122,13 +291,38 @@ function DashboardInner({
   const orchestratorHref = currentProjectOrchestrator
     ? `/sessions/${encodeURIComponent(currentProjectOrchestrator.id)}`
     : null;
+  const latestActivityAt = useMemo(() => {
+    if (sessions.length === 0) return null;
+
+    let latest: string | null = null;
+    let latestTs = -Infinity;
+
+    for (const session of sessions) {
+      const ts = new Date(session.lastActivityAt).getTime();
+      if (!Number.isFinite(ts) || ts <= latestTs) continue;
+      latestTs = ts;
+      latest = session.lastActivityAt;
+    }
+
+    return latest;
+  }, [sessions]);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  const headerMeta = useMemo(() => {
+    const sessionLabel = `${sessions.length} session${sessions.length === 1 ? "" : "s"}`;
+    if (!mounted) return sessionLabel;
+    return `${sessionLabel} · ${formatRelativeTimeCompact(latestActivityAt)}`;
+  }, [latestActivityAt, sessions.length, mounted]);
 
   const displaySessions = useMemo(() => {
     if (allProjectsView || !activeSessionId) return sessions;
     return sessions.filter((s) => s.id === activeSessionId);
   }, [sessions, allProjectsView, activeSessionId]);
   const sheetSession = useMemo(
-    () => (sheetState ? sessions.find((session) => session.id === sheetState.sessionId) ?? null : null),
+    () =>
+      sheetState ? (sessions.find((session) => session.id === sheetState.sessionId) ?? null) : null,
     [sessions, sheetState],
   );
   const hydratedSheetSession = useMemo(() => {
@@ -219,34 +413,6 @@ function DashboardInner({
     setHasMounted(true);
   }, []);
 
-  useEffect(() => {
-    if (!isMobile) {
-      hasSeededMobileExpansionRef.current = false;
-      return;
-    }
-    if (hasSeededMobileExpansionRef.current) return;
-
-    hasSeededMobileExpansionRef.current = true;
-    setExpandedLevel(
-      MOBILE_KANBAN_ORDER.find((level) => grouped[level].length > 0) ?? null,
-    );
-  }, [grouped, isMobile]);
-
-  useEffect(() => {
-    if (!isMobile) return;
-    if (mobileFilter !== "all") {
-      setExpandedLevel(mobileFilter);
-      return;
-    }
-    // Preserve an explicit all-collapsed state. Only auto-expand when a specific expanded
-    // section becomes empty, so SSE regrouping does not override a deliberate user collapse.
-    setExpandedLevel((current) => {
-      if (current === null) return current;
-      if (current !== null && grouped[current].length > 0) return current;
-      return MOBILE_KANBAN_ORDER.find((level) => grouped[level].length > 0) ?? null;
-    });
-  }, [grouped, isMobile, mobileFilter]);
-
   const sessionsByProject = useMemo(() => {
     const groupedSessions = new Map<string, DashboardSession[]>();
     for (const session of sessions) {
@@ -289,84 +455,95 @@ function DashboardInner({
     });
   }, [activeOrchestrators, allProjectsView, projects, sessionsByProject]);
 
-  const handleAccordionToggle = useCallback((level: AttentionLevel) => {
-    if (level === "done") return;
-    setExpandedLevel((current) => (current === level ? null : level));
-  }, []);
-
   const handlePillTap = useCallback((level: AttentionLevel) => {
     if (level === "done") return;
     setMobileFilter(level);
-    setExpandedLevel(level);
     const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches
       ? ("instant" as ScrollBehavior)
       : "smooth";
     document.getElementById("mobile-board")?.scrollIntoView({ behavior, block: "start" });
   }, []);
 
-  const visibleMobileLevels =
-    mobileFilter === "all" ? MOBILE_KANBAN_ORDER : MOBILE_KANBAN_ORDER.filter((level) => level === mobileFilter);
+  const mobileFeedSessions = useMemo(() => {
+    const levels = mobileFilter === "all"
+      ? MOBILE_KANBAN_ORDER
+      : MOBILE_KANBAN_ORDER.filter((level) => level === mobileFilter);
+    const feed: Array<{ session: DashboardSession; level: AttentionLevel }> = [];
+    for (const level of levels) {
+      for (const session of grouped[level]) {
+        feed.push({ session, level });
+      }
+    }
+    return feed;
+  }, [grouped, mobileFilter]);
+
   const showDesktopPrsLink = hasMounted && !isMobile;
 
-  const handleSend = useCallback(async (sessionId: string, message: string) => {
-    try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        const messageText = text || "Unknown error";
-        console.error(`Failed to send message to ${sessionId}:`, messageText);
-        showToast(`Send failed: ${messageText}`, "error");
-        const errorWithToast = new Error(messageText);
-        (errorWithToast as Error & { toastShown?: boolean }).toastShown = true;
-        throw errorWithToast;
+  const handleSend = useCallback(
+    async (sessionId: string, message: string) => {
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          const messageText = text || "Unknown error";
+          console.error(`Failed to send message to ${sessionId}:`, messageText);
+          showToast(`Send failed: ${messageText}`, "error");
+          const errorWithToast = new Error(messageText);
+          (errorWithToast as Error & { toastShown?: boolean }).toastShown = true;
+          throw errorWithToast;
+        }
+      } catch (error) {
+        const toastShown =
+          error instanceof Error &&
+          "toastShown" in error &&
+          (error as Error & { toastShown?: boolean }).toastShown;
+        if (!toastShown) {
+          console.error(`Network error sending message to ${sessionId}:`, error);
+          showToast("Network error while sending message", "error");
+        }
+        throw error;
       }
-    } catch (error) {
-      const toastShown =
-        error instanceof Error &&
-        "toastShown" in error &&
-        (error as Error & { toastShown?: boolean }).toastShown;
-      if (!toastShown) {
-        console.error(`Network error sending message to ${sessionId}:`, error);
-        showToast("Network error while sending message", "error");
-      }
-      throw error;
-    }
-  }, [showToast]);
+    },
+    [showToast],
+  );
 
-  const killSession = useCallback(async (sessionId: string) => {
-    try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kill`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        console.error(`Failed to kill ${sessionId}:`, text);
-        showToast(`Terminate failed: ${text}`, "error");
-      } else {
-        showToast("Session terminated", "success");
+  const killSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kill`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          console.error(`Failed to kill ${sessionId}:`, text);
+          showToast(`Terminate failed: ${text}`, "error");
+        } else {
+          showToast("Session terminated", "success");
+        }
+      } catch (error) {
+        console.error(`Network error killing ${sessionId}:`, error);
+        showToast("Network error while terminating session", "error");
       }
-    } catch (error) {
-      console.error(`Network error killing ${sessionId}:`, error);
-      showToast("Network error while terminating session", "error");
-    }
-  }, [showToast]);
+    },
+    [showToast],
+  );
 
-  const handleKill = useCallback((sessionId: string) => {
-    const session = sessionsRef.current.find((s) => s.id === sessionId) ?? null;
-    if (!session) return;
-    if (!isMobile) {
-      const confirmed = window.confirm("Terminate this session?");
-      if (confirmed) {
+  const handleKill = useCallback(
+    (sessionId: string) => {
+      const session = sessionsRef.current.find((s) => s.id === sessionId) ?? null;
+      if (!session) return;
+      if (!isMobile) {
         void killSession(session.id);
+        return;
       }
-      return;
-    }
-    setSheetState({ sessionId: session.id, mode: "confirm-kill" });
-  }, [isMobile, killSession]);
+      setSheetState({ sessionId: session.id, mode: "confirm-kill" });
+    },
+    [isMobile, killSession],
+  );
 
   const handlePreview = useCallback((session: DashboardSession) => {
     setSheetState({ sessionId: session.id, mode: "preview" });
@@ -385,41 +562,47 @@ function DashboardInner({
     await killSession(session.id);
   }, [hydratedSheetSession, killSession]);
 
-  const handleMerge = useCallback(async (prNumber: number) => {
-    try {
-      const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
-      if (!res.ok) {
-        const text = await res.text();
-        console.error(`Failed to merge PR #${prNumber}:`, text);
-        showToast(`Merge failed: ${text}`, "error");
-        return;
-      } else {
-        showToast(`PR #${prNumber} merged`, "success");
-        setSheetState(null);
+  const handleMerge = useCallback(
+    async (prNumber: number) => {
+      try {
+        const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
+        if (!res.ok) {
+          const text = await res.text();
+          console.error(`Failed to merge PR #${prNumber}:`, text);
+          showToast(`Merge failed: ${text}`, "error");
+          return;
+        } else {
+          showToast(`PR #${prNumber} merged`, "success");
+          setSheetState(null);
+        }
+      } catch (error) {
+        console.error(`Network error merging PR #${prNumber}:`, error);
+        showToast("Network error while merging PR", "error");
       }
-    } catch (error) {
-      console.error(`Network error merging PR #${prNumber}:`, error);
-      showToast("Network error while merging PR", "error");
-    }
-  }, [showToast]);
+    },
+    [showToast],
+  );
 
-  const handleRestore = useCallback(async (sessionId: string) => {
-    try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        console.error(`Failed to restore ${sessionId}:`, text);
-        showToast(`Restore failed: ${text}`, "error");
-      } else {
-        showToast("Session restored", "success");
+  const handleRestore = useCallback(
+    async (sessionId: string) => {
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          console.error(`Failed to restore ${sessionId}:`, text);
+          showToast(`Restore failed: ${text}`, "error");
+        } else {
+          showToast("Session restored", "success");
+        }
+      } catch (error) {
+        console.error(`Network error restoring ${sessionId}:`, error);
+        showToast("Network error while restoring session", "error");
       }
-    } catch (error) {
-      console.error(`Network error restoring ${sessionId}:`, error);
-      showToast("Network error while restoring session", "error");
-    }
-  }, [showToast]);
+    },
+    [showToast],
+  );
 
   const handleSpawnOrchestrator = async (project: ProjectInfo) => {
     setSpawningProjectIds((current) =>
@@ -459,300 +642,450 @@ function DashboardInner({
     }
   };
 
-  const hasAnySessions = KANBAN_LEVELS.some(
-    (level) => grouped[level].length > 0,
-  );
+  const hasAnySessions = KANBAN_LEVELS.some((level) => grouped[level].length > 0);
+  const showEmptyState = !allProjectsView && !hasAnySessions;
 
   const anyRateLimited = useMemo(
     () => sessions.some((session) => session.pr && isPRRateLimited(session.pr)),
     [sessions],
   );
+  const normalizedProjectName = projectName?.trim().toLowerCase();
+  const headerProjectLabel =
+    normalizedProjectName === "agent orchestrator"
+      ? (projectId ?? projectName ?? (allProjectsView ? "All projects" : "Dashboard"))
+      : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
+  const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
-  const liveStats = useMemo<DashboardStats>(
-    () => ({
-      totalSessions: sessions.length,
-      workingSessions: sessions.filter(
-        (session) => session.activity !== null && session.activity !== "exited",
-      ).length,
-      openPRs: sessions.filter((session) => session.pr?.state === "open").length,
-      needsReview: sessions.filter(
-        (session) => session.pr && !session.pr.isDraft && session.pr.reviewDecision === "pending",
-      ).length,
-    }),
-    [sessions],
-  );
-
-  return (
-    <>
-    <ConnectionBar status={connectionStatus} />
-    <div className="dashboard-shell flex h-screen">
-      {showSidebar && (
-        <ProjectSidebar
-          projects={projects}
-          sessions={sessions}
-          activeProjectId={projectId}
-          activeSessionId={activeSessionId}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-          mobileOpen={mobileMenuOpen}
-          onMobileClose={() => setMobileMenuOpen(false)}
-        />
-      )}
-      <div className="dashboard-main flex-1 overflow-y-auto px-4 py-4 md:px-7 md:py-6">
-        <div id="mobile-dashboard-anchor" aria-hidden="true" />
-        <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName} />
-        <section className="dashboard-hero mb-5">
-          <div className="dashboard-hero__backdrop" />
-          <div className="dashboard-hero__content">
-            {showSidebar && (
+  if (!isMobile) {
+    return (
+      <>
+        <ConnectionBar status={connectionStatus} />
+        <div className="dashboard-app-shell">
+          <header className="dashboard-app-header">
+            {showSidebar ? (
               <button
                 type="button"
-                className="mobile-menu-toggle"
-                onClick={() => setMobileMenuOpen(true)}
-                aria-label="Open menu"
+                className="dashboard-app-sidebar-toggle"
+                onClick={() => setSidebarCollapsed((current) => !current)}
+                aria-label="Toggle sidebar"
               >
                 <svg
+                  width="14"
+                  height="14"
                   fill="none"
                   stroke="currentColor"
-                  strokeWidth="2"
+                  strokeWidth="1.75"
                   viewBox="0 0 24 24"
-                  className="h-5 w-5"
+                  aria-hidden="true"
                 >
-                  <path d="M4 6h16M4 12h16M4 18h16" />
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <path d="M9 3v18" />
                 </svg>
               </button>
-            )}
-            <div className="dashboard-hero__primary">
-              <div className="dashboard-hero__heading">
-                <div className="dashboard-hero__copy">
-                  <h1 className="dashboard-title">
-                    {projectName ?? "Orchestrator"}
-                  </h1>
-                  <p className="dashboard-subtitle">
-                    Live agent sessions, pull requests, and merge status.
-                  </p>
-                </div>
-              </div>
-              {!isMobile ? <StatusCards stats={liveStats} /> : null}
+            ) : null}
+            <div className="dashboard-app-header__brand">
+              <span className="dashboard-app-header__brand-dot" aria-hidden="true" />
+              <span>Agent Orchestrator</span>
             </div>
-
-            <div className="dashboard-hero__meta">
-              <div className="flex items-center gap-3">
-                {showDesktopPrsLink ? (
-                  <a
-                    href={prsHref}
-                    className="dashboard-prs-link orchestrator-btn flex items-center gap-2 px-4 py-2 text-[12px] font-semibold hover:no-underline"
+            {showHeaderProjectLabel ? (
+              <>
+                <span className="dashboard-app-header__sep" aria-hidden="true" />
+                <span className="dashboard-app-header__project">{headerProjectLabel}</span>
+              </>
+            ) : null}
+            <div className="dashboard-app-header__spacer" />
+            <div className="dashboard-app-header__actions">
+              {!allProjectsView && orchestratorHref ? (
+                <a
+                  href={orchestratorHref}
+                  className="dashboard-app-btn dashboard-app-btn--amber"
+                  aria-label="Orchestrator"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
                   >
+                    <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+                    <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+                    <circle cx="6" cy="17" r="2" />
+                    <circle cx="12" cy="17" r="2" />
+                    <circle cx="18" cy="17" r="2" />
+                  </svg>
+                  Orchestrator
+                </a>
+              ) : null}
+            </div>
+          </header>
+
+          <div
+            className={`dashboard-shell dashboard-shell--desktop${sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
+          >
+            {showSidebar && (
+              <ProjectSidebar
+                projects={projects}
+                sessions={sessions}
+                activeProjectId={projectId}
+                activeSessionId={activeSessionId}
+                collapsed={sidebarCollapsed}
+                onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+                mobileOpen={mobileMenuOpen}
+                onMobileClose={() => setMobileMenuOpen(false)}
+              />
+            )}
+
+            <main className="dashboard-main dashboard-main--desktop">
+              <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName} />
+              <div className="dashboard-main__subhead">
+                <h1 className="dashboard-main__title">Dashboard</h1>
+                <p className="dashboard-main__subtitle">
+                  Live agent sessions, pull requests, and merge status.
+                </p>
+              </div>
+
+              <div className="dashboard-main__body">
+                {anyRateLimited && !rateLimitDismissed && (
+                  <div className="dashboard-alert mb-4 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-attention)_25%,transparent)] bg-[var(--color-tint-yellow)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
                     <svg
-                      className="h-3.5 w-3.5 opacity-75"
+                      className="h-3.5 w-3.5 shrink-0"
                       fill="none"
                       stroke="currentColor"
                       strokeWidth="2"
                       viewBox="0 0 24 24"
-                      aria-hidden="true"
                     >
-                      <path d="M4 6h16M4 12h16M4 18h10" />
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M12 8v4M12 16h.01" />
                     </svg>
-                    PRs
-                  </a>
-                ) : null}
-                {!allProjectsView && !isMobile ? (
-                  <OrchestratorControl orchestrators={activeOrchestrators} />
-                ) : null}
-                <ThemeToggle />
+                    <span className="flex-1">
+                      GitHub API rate limited — PR data (CI status, review state, sizes) may be
+                      stale. Will retry automatically on next refresh.
+                    </span>
+                    <button
+                      onClick={() => setRateLimitDismissed(true)}
+                      className="ml-1 shrink-0 opacity-60 hover:opacity-100"
+                      aria-label="Dismiss"
+                    >
+                      <svg
+                        className="h-3.5 w-3.5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        viewBox="0 0 24 24"
+                      >
+                        <path d="M18 6 6 18M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+
+                {allProjectsView && (
+                  <ProjectOverviewGrid
+                    overviews={projectOverviews}
+                    onSpawnOrchestrator={handleSpawnOrchestrator}
+                    spawningProjectIds={spawningProjectIds}
+                    spawnErrors={spawnErrors}
+                  />
+                )}
+
+                {!allProjectsView && hasAnySessions && (
+                  <div className="kanban-board-wrap">
+                    <div className="kanban-board">
+                      {KANBAN_LEVELS.map((level) => (
+                        <AttentionZone
+                          key={level}
+                          level={level}
+                          sessions={grouped[level]}
+                          onSend={handleSend}
+                          onKill={handleKill}
+                          onMerge={handleMerge}
+                          onRestore={handleRestore}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {showEmptyState ? <EmptyState orchestratorHref={orchestratorHref} /> : null}
+
+                {!allProjectsView && grouped.done.length > 0 && (
+                  <div className="done-bar mt-6">
+                    <button
+                      type="button"
+                      className="done-bar__toggle"
+                      onClick={() => setDoneExpanded((v) => !v)}
+                      aria-expanded={doneExpanded}
+                    >
+                      <svg
+                        className={`done-bar__chevron${doneExpanded ? " done-bar__chevron--open" : ""}`}
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
+                        <path d="m9 18 6-6-6-6" />
+                      </svg>
+                      <span className="done-bar__label">Done / Terminated</span>
+                      <span className="done-bar__count">{grouped.done.length}</span>
+                    </button>
+                    {doneExpanded && (
+                      <div className="done-bar__cards">
+                        {grouped.done.map((session) => (
+                          <DoneCard key={session.id} session={session} onRestore={handleRestore} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            </div>
+            </main>
           </div>
-        </section>
+        </div>
+      </>
+    );
+  }
 
-        {isMobile ? (
-          <section className="mobile-priority-row" aria-label="Needs attention">
-            <div className="mobile-priority-row__label">Needs attention</div>
-            <MobileActionStrip
-              grouped={grouped}
-              onPillTap={handlePillTap}
-            />
-          </section>
-        ) : null}
-
-        {isMobile ? (
-          <section className="mobile-filter-row" aria-label="Dashboard filters">
-            {MOBILE_FILTERS.map((filter) => (
-              <button
-                key={filter.value}
-                type="button"
-                className="mobile-filter-chip"
-                data-active={mobileFilter === filter.value ? "true" : "false"}
-                onClick={() => setMobileFilter(filter.value)}
-              >
-                {filter.label}
-              </button>
-            ))}
-          </section>
-        ) : null}
-
-        {anyRateLimited && !rateLimitDismissed && (
-          <div className="dashboard-alert mb-6 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-attention)_25%,transparent)] bg-[var(--color-tint-yellow)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
-            <svg
-              className="h-3.5 w-3.5 shrink-0"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              viewBox="0 0 24 24"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 8v4M12 16h.01" />
-            </svg>
-            <span className="flex-1">
-              GitHub API rate limited — PR data (CI status, review state, sizes) may be stale. Will
-              retry automatically on next refresh.
-            </span>
-            <button
-              onClick={() => setRateLimitDismissed(true)}
-              className="ml-1 shrink-0 opacity-60 hover:opacity-100"
-              aria-label="Dismiss"
-            >
-              <svg
-                className="h-3.5 w-3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        )}
-
-        {allProjectsView && (
-          <ProjectOverviewGrid
-            overviews={projectOverviews}
-            onSpawnOrchestrator={handleSpawnOrchestrator}
-            spawningProjectIds={spawningProjectIds}
-            spawnErrors={spawnErrors}
+  return (
+    <>
+      <ConnectionBar status={connectionStatus} />
+      <div className="dashboard-shell flex h-screen">
+        {showSidebar && (
+          <ProjectSidebar
+            projects={projects}
+            sessions={sessions}
+            activeProjectId={projectId}
+            activeSessionId={activeSessionId}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+            mobileOpen={mobileMenuOpen}
+            onMobileClose={() => setMobileMenuOpen(false)}
           />
         )}
-
-        {!allProjectsView && hasAnySessions && (
-          <div className="kanban-board-wrap">
-            <div className="board-section-head">
-              <div>
-                <h2 className="board-section-head__title">Attention Board</h2>
-                <p className="board-section-head__subtitle">
-                  Sessions sorted by what needs your attention.
-                </p>
+        <div className="dashboard-main flex-1 overflow-y-auto">
+          <div id="mobile-dashboard-anchor" aria-hidden="true" />
+          <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName} />
+          <section className="dashboard-hero">
+            <div className="dashboard-hero__backdrop" />
+            <div className="dashboard-hero__content">
+              {showSidebar && (
+                <button
+                  type="button"
+                  className="mobile-menu-toggle"
+                  onClick={() => setMobileMenuOpen(true)}
+                  aria-label="Open menu"
+                >
+                  <svg
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
+                    className="h-5 w-5"
+                  >
+                    <path d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+              )}
+              <div className="dashboard-hero__primary">
+                <div className="dashboard-hero__heading">
+                  <div className="dashboard-hero__copy">
+                    <h1 className="dashboard-title">Kanban</h1>
+                    {projectName ? <p className="dashboard-subtitle">{projectName}</p> : null}
+                  </div>
+                </div>
               </div>
-              <div className="board-section-head__legend">
-                <BoardLegendItem label="Human action" tone="var(--color-status-error)" />
-                <BoardLegendItem label="Review queue" tone="var(--color-accent-orange)" />
-                <BoardLegendItem label="Ready to land" tone="var(--color-status-ready)" />
+
+              <div className="dashboard-hero__meta">
+                <div className="dashboard-topbar-meta">
+                  <span className="dashboard-topbar-summary">{headerMeta}</span>
+                  {showDesktopPrsLink ? (
+                    <a href={prsHref} className="dashboard-topbar-link dashboard-prs-link">
+                      PRs
+                    </a>
+                  ) : null}
+                  {!allProjectsView && !isMobile && orchestratorHref ? (
+                    <a
+                      href={orchestratorHref}
+                      className="dashboard-topbar-link dashboard-topbar-link--orchestrator"
+                      aria-label="Orchestrator"
+                    >
+                      <span className="dashboard-topbar-link__chip" aria-hidden="true">
+                        Main
+                      </span>
+                      <span className="dashboard-topbar-link__label">Orchestrator</span>
+                      <span className="dashboard-topbar-link__arrow" aria-hidden="true">
+                        &rarr;
+                      </span>
+                    </a>
+                  ) : null}
+                </div>
               </div>
             </div>
+          </section>
+
+          <div className="px-4 pt-4 md:px-7 md:pt-6">
+            {isMobile ? (
+              <section className="mobile-priority-row" aria-label="Needs attention">
+                <div className="mobile-priority-row__label">Needs attention</div>
+                <MobileActionStrip grouped={grouped} onPillTap={handlePillTap} />
+              </section>
+            ) : null}
 
             {isMobile ? (
-              <div id="mobile-board" className="accordion-board">
-                {visibleMobileLevels.map((level) => (
-                  <AttentionZone
-                    key={level}
-                    level={level}
-                    sessions={grouped[level]}
-                    onSend={handleSend}
-                    onKill={handleKill}
-                    onMerge={handleMerge}
-                    onRestore={handleRestore}
-                    collapsed={expandedLevel !== level}
-                    onToggle={handleAccordionToggle}
-                    compactMobile
-                    onPreview={handlePreview}
-                    resetKey={mobileFilter}
-                  />
+              <section className="mobile-filter-row" aria-label="Dashboard filters">
+                {MOBILE_FILTERS.map((filter) => (
+                  <button
+                    key={filter.value}
+                    type="button"
+                    className="mobile-filter-chip"
+                    data-active={mobileFilter === filter.value ? "true" : "false"}
+                    onClick={() => setMobileFilter(filter.value)}
+                  >
+                    {filter.label}
+                  </button>
                 ))}
+              </section>
+            ) : null}
+
+            {anyRateLimited && !rateLimitDismissed && (
+              <div className="dashboard-alert mb-6 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-attention)_25%,transparent)] bg-[var(--color-tint-yellow)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
+                <svg
+                  className="h-3.5 w-3.5 shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 8v4M12 16h.01" />
+                </svg>
+                <span className="flex-1">
+                  GitHub API rate limited — PR data (CI status, review state, sizes) may be stale.
+                  Will retry automatically on next refresh.
+                </span>
+                <button
+                  onClick={() => setRateLimitDismissed(true)}
+                  className="ml-1 shrink-0 opacity-60 hover:opacity-100"
+                  aria-label="Dismiss"
+                >
+                  <svg
+                    className="h-3.5 w-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
-            ) : (
-              <div className="kanban-board">
-                {KANBAN_LEVELS.map((level) => (
-                  <AttentionZone
-                    key={level}
-                    level={level}
-                    sessions={grouped[level]}
-                    onSend={handleSend}
-                    onKill={handleKill}
-                    onMerge={handleMerge}
-                    onRestore={handleRestore}
-                  />
-                ))}
+            )}
+
+            {allProjectsView && (
+              <ProjectOverviewGrid
+                overviews={projectOverviews}
+                onSpawnOrchestrator={handleSpawnOrchestrator}
+                spawningProjectIds={spawningProjectIds}
+                spawnErrors={spawnErrors}
+              />
+            )}
+
+            {!allProjectsView && hasAnySessions && (
+              <div className="kanban-board-wrap">
+                {isMobile ? (
+                  <div id="mobile-board" className="mobile-feed">
+                    {mobileFeedSessions.length > 0 ? (
+                      mobileFeedSessions.map(({ session, level }) => (
+                        <MobileFeedCard
+                          key={session.id}
+                          session={session}
+                          level={level}
+                          onTap={handlePreview}
+                        />
+                      ))
+                    ) : (
+                      <div className="mobile-feed-empty">No sessions match this filter.</div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="kanban-board">
+                    {KANBAN_LEVELS.map((level) => (
+                      <AttentionZone
+                        key={level}
+                        level={level}
+                        sessions={grouped[level]}
+                        onSend={handleSend}
+                        onKill={handleKill}
+                        onMerge={handleMerge}
+                        onRestore={handleRestore}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!allProjectsView && !hasAnySessions && (
+              <EmptyState orchestratorHref={orchestratorHref} />
+            )}
+
+            {!allProjectsView && grouped.done.length > 0 && (
+              <div className="done-bar mt-6">
+                <button
+                  type="button"
+                  className="done-bar__toggle"
+                  onClick={() => setDoneExpanded((v) => !v)}
+                  aria-expanded={doneExpanded}
+                >
+                  <svg
+                    className={`done-bar__chevron${doneExpanded ? " done-bar__chevron--open" : ""}`}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                  <span className="done-bar__label">Done / Terminated</span>
+                  <span className="done-bar__count">{grouped.done.length}</span>
+                </button>
+                {doneExpanded && (
+                  <div className="done-bar__cards">
+                    {grouped.done.map((session) => (
+                      <DoneCard key={session.id} session={session} onRestore={handleRestore} />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
-        )}
-
-        {!allProjectsView && grouped.done.length > 0 && (
-          <div className="done-bar mt-6">
-            <button
-              type="button"
-              className="done-bar__toggle"
-              onClick={() => setDoneExpanded((v) => !v)}
-              aria-expanded={doneExpanded}
-            >
-              <svg
-                className={`done-bar__chevron${doneExpanded ? " done-bar__chevron--open" : ""}`}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path d="m9 18 6-6-6-6" />
-              </svg>
-              <span>Done / Terminated</span>
-              <span className="done-bar__count">{grouped.done.length}</span>
-              <span className="done-bar__rule" aria-hidden="true" />
-            </button>
-            {doneExpanded && (
-              <div className="done-bar__cards">
-                {grouped.done.map((session) => (
-                  <SessionCard
-                    key={session.id}
-                    session={session}
-                    onSend={handleSend}
-                    onKill={handleKill}
-                    onMerge={handleMerge}
-                    onRestore={handleRestore}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {!allProjectsView && !hasAnySessions && grouped.done.length === 0 && <EmptyState />}
-
+        </div>
       </div>
-    </div>
-    {isMobile ? (
-      <MobileBottomNav
-        ariaLabel="Dashboard navigation"
-        activeTab="dashboard"
-        dashboardHref={dashboardHref}
-        prsHref={prsHref}
-        showOrchestrator={!allProjectsView}
-        orchestratorHref={orchestratorHref}
-      />
-    ) : null}
-    {isMobile ? (
-    <BottomSheet
-      session={hydratedSheetSession}
-      mode={sheetState?.mode ?? "preview"}
-      onConfirm={handleKillConfirm}
-      onCancel={() => setSheetState(null)}
-      onRequestKill={handleRequestKillFromPreview}
-      onMerge={handleMerge}
-      isMergeReady={
-        hydratedSheetSession?.pr ? isPRMergeReady(hydratedSheetSession.pr) : false
-      }
-    />
-    ) : null}
+      {isMobile ? (
+        <MobileBottomNav
+          ariaLabel="Dashboard navigation"
+          activeTab="dashboard"
+          dashboardHref={dashboardHref}
+          prsHref={prsHref}
+          showOrchestrator={!allProjectsView}
+          orchestratorHref={orchestratorHref}
+        />
+      ) : null}
+      {isMobile ? (
+        <BottomSheet
+          session={hydratedSheetSession}
+          mode={sheetState?.mode ?? "preview"}
+          onConfirm={handleKillConfirm}
+          onCancel={() => setSheetState(null)}
+          onRequestKill={handleRequestKillFromPreview}
+          onMerge={handleMerge}
+          isMergeReady={hydratedSheetSession?.pr ? isPRMergeReady(hydratedSheetSession.pr) : false}
+        />
+      ) : null}
     </>
   );
 }
@@ -762,75 +1095,6 @@ export function Dashboard(props: DashboardProps) {
     <ToastProvider>
       <DashboardInner {...props} />
     </ToastProvider>
-  );
-}
-
-function OrchestratorControl({ orchestrators }: { orchestrators: DashboardOrchestratorLink[] }) {
-  if (orchestrators.length === 0) return null;
-
-  if (orchestrators.length === 1) {
-    const orchestrator = orchestrators[0];
-    return (
-      <a
-        href={`/sessions/${encodeURIComponent(orchestrator.id)}`}
-        className="orchestrator-btn flex items-center gap-2 px-4 py-2 text-[12px] font-semibold hover:no-underline"
-      >
-        <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
-        orchestrator
-        <svg
-          className="h-3 w-3 opacity-70"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          viewBox="0 0 24 24"
-        >
-          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
-        </svg>
-      </a>
-    );
-  }
-
-  return (
-    <details className="group relative">
-      <summary className="orchestrator-btn flex cursor-pointer list-none items-center gap-2 px-4 py-2 text-[12px] font-semibold hover:no-underline">
-        <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
-        {orchestrators.length} orchestrators
-        <svg
-          className="h-3 w-3 opacity-70 transition-transform group-open:rotate-90"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          viewBox="0 0 24 24"
-        >
-          <path d="m9 18 6-6-6-6" />
-        </svg>
-      </summary>
-      <div className="absolute right-0 top-[calc(100%+0.5rem)] z-10 min-w-[220px] overflow-hidden border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] shadow-[0_18px_40px_rgba(0,0,0,0.18)]">
-        {orchestrators.map((orchestrator, index) => (
-          <a
-            key={orchestrator.id}
-            href={`/sessions/${encodeURIComponent(orchestrator.id)}`}
-            className={`flex items-center justify-between gap-3 px-4 py-3 text-[12px] hover:bg-[var(--color-bg-hover)] hover:no-underline ${
-              index > 0 ? "border-t border-[var(--color-border-subtle)]" : ""
-            }`}
-          >
-            <span className="flex min-w-0 items-center gap-2 text-[var(--color-text-primary)]">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent)] opacity-80" />
-              <span className="truncate">{orchestrator.projectName}</span>
-            </span>
-            <svg
-              className="h-3 w-3 shrink-0 opacity-60"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              viewBox="0 0 24 24"
-            >
-              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
-            </svg>
-          </a>
-        ))}
-      </div>
-    </details>
   );
 }
 
@@ -877,23 +1141,11 @@ function ProjectOverviewGrid({
           </div>
 
           <div className="mb-4 flex flex-wrap gap-2">
-            <ProjectMetric label="Merge" value={counts.merge} tone="var(--color-status-ready)" />
-            <ProjectMetric
-              label="Respond"
-              value={counts.respond}
-              tone="var(--color-status-error)"
-            />
-            <ProjectMetric label="Review" value={counts.review} tone="var(--color-accent-orange)" />
-            <ProjectMetric
-              label="Pending"
-              value={counts.pending}
-              tone="var(--color-status-attention)"
-            />
-            <ProjectMetric
-              label="Working"
-              value={counts.working}
-              tone="var(--color-status-working)"
-            />
+            <ProjectMetric label="Merge" value={counts.merge} tone="ready" />
+            <ProjectMetric label="Respond" value={counts.respond} tone="error" />
+            <ProjectMetric label="Review" value={counts.review} tone="orange" />
+            <ProjectMetric label="Pending" value={counts.pending} tone="attention" />
+            <ProjectMetric label="Working" value={counts.working} tone="working" />
           </div>
 
           <div className="border-t border-[var(--color-border-subtle)] pt-3">
@@ -938,7 +1190,10 @@ function ProjectMetric({ label, value, tone }: { label: string; value: number; t
       <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
         {label}
       </div>
-      <div className="mt-1 text-[18px] font-semibold tabular-nums" style={{ color: tone }}>
+      <div
+        className="project-metric__value mt-1 text-[18px] font-semibold tabular-nums"
+        data-tone={tone}
+      >
         {value}
       </div>
     </div>
@@ -946,22 +1201,10 @@ function ProjectMetric({ label, value, tone }: { label: string; value: number; t
 }
 
 const MOBILE_ACTION_STRIP_LEVELS = [
-  {
-    level: "respond" as const,
-    label: "respond",
-    color: "var(--color-status-error)",
-  },
-  {
-    level: "merge" as const,
-    label: "merge",
-    color: "var(--color-status-ready)",
-  },
-  {
-    level: "review" as const,
-    label: "review",
-    color: "var(--color-accent-orange)",
-  },
-] satisfies Array<{ level: AttentionLevel; label: string; color: string }>;
+  { level: "respond" as const, label: "respond" },
+  { level: "merge" as const, label: "merge" },
+  { level: "review" as const, label: "review" },
+] satisfies Array<{ level: AttentionLevel; label: string }>;
 
 function MobileActionStrip({
   grouped,
@@ -970,9 +1213,7 @@ function MobileActionStrip({
   grouped: Record<AttentionLevel, DashboardSession[]>;
   onPillTap: (level: AttentionLevel) => void;
 }) {
-  const activePills = MOBILE_ACTION_STRIP_LEVELS.filter(
-    ({ level }) => grouped[level].length > 0,
-  );
+  const activePills = MOBILE_ACTION_STRIP_LEVELS.filter(({ level }) => grouped[level].length > 0);
 
   if (activePills.length === 0) {
     return (
@@ -984,7 +1225,7 @@ function MobileActionStrip({
 
   return (
     <div className="mobile-action-strip" role="group" aria-label="Session priorities">
-      {activePills.map(({ level, label, color }) => (
+      {activePills.map(({ level, label }) => (
         <button
           key={level}
           type="button"
@@ -992,12 +1233,8 @@ function MobileActionStrip({
           onClick={() => onPillTap(level)}
           aria-label={`${grouped[level].length} ${label} — scroll to section`}
         >
-          <span
-            className="mobile-action-pill__dot"
-            style={{ background: color }}
-            aria-hidden="true"
-          />
-          <span className="mobile-action-pill__count" style={{ color }}>
+          <span className="mobile-action-pill__dot" data-level={level} aria-hidden="true" />
+          <span className="mobile-action-pill__count" data-level={level}>
             {grouped[level].length}
           </span>
           <span className="mobile-action-pill__label">{label}</span>
@@ -1006,61 +1243,3 @@ function MobileActionStrip({
     </div>
   );
 }
-
-function StatusCards({ stats }: { stats: DashboardStats }) {
-  if (stats.totalSessions === 0) {
-    return (
-      <div className="dashboard-stat-cards">
-        <div className="dashboard-stat-card dashboard-stat-card--empty">
-          <span className="dashboard-stat-card__label">Fleet</span>
-          <span className="dashboard-stat-card__value">0</span>
-          <span className="dashboard-stat-card__meta">No live sessions</span>
-        </div>
-      </div>
-    );
-  }
-
-  const parts: Array<{ value: number; label: string; meta: string; tone?: string }> = [
-    { value: stats.totalSessions, label: "Fleet", meta: "Live sessions" },
-    {
-      value: stats.workingSessions,
-      label: "Active",
-      meta: "Currently moving",
-      tone: "var(--color-status-working)",
-    },
-    { value: stats.openPRs, label: "PRs", meta: "Open pull requests" },
-    {
-      value: stats.needsReview,
-      label: "Review",
-      meta: "Awaiting eyes",
-      tone: "var(--color-status-attention)",
-    },
-  ];
-
-  return (
-    <div className="dashboard-stat-cards">
-      {parts.map((part) => (
-        <div key={part.label} className="dashboard-stat-card">
-          <span
-            className="dashboard-stat-card__value"
-            style={{ color: part.tone ?? "var(--color-text-primary)" }}
-          >
-            {part.value}
-          </span>
-          <span className="dashboard-stat-card__label">{part.label}</span>
-          <span className="dashboard-stat-card__meta">{part.meta}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function BoardLegendItem({ label, tone }: { label: string; tone: string }) {
-  return (
-    <span className="board-legend-item">
-      <span className="board-legend-item__dot" style={{ background: tone }} />
-      {label}
-    </span>
-  );
-}
-

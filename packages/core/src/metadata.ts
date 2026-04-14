@@ -36,12 +36,12 @@ import type { SessionId, SessionMetadata } from "./types.js";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { parseKeyValueContent } from "./key-value.js";
 
-/** Serialize a record back to key=value format. */
+/** Serialize a record back to key=value format. Newlines in values are replaced to prevent injection. */
 function serializeMetadata(data: Record<string, string>): string {
   return (
     Object.entries(data)
       .filter(([, v]) => v !== undefined && v !== "")
-      .map(([k, v]) => `${k}=${v}`)
+      .map(([k, v]) => `${k}=${v.replace(/[\r\n]/g, " ")}`)
       .join("\n") + "\n"
   );
 }
@@ -94,6 +94,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
       : undefined,
     opencodeSessionId: raw["opencodeSessionId"],
     pinnedSummary: raw["pinnedSummary"],
+    userPrompt: raw["userPrompt"],
   };
 }
 
@@ -144,6 +145,7 @@ export function writeMetadata(
     data["directTerminalWsPort"] = String(metadata.directTerminalWsPort);
   if (metadata.opencodeSessionId) data["opencodeSessionId"] = metadata.opencodeSessionId;
   if (metadata.pinnedSummary) data["pinnedSummary"] = metadata.pinnedSummary;
+  if (metadata.userPrompt) data["userPrompt"] = metadata.userPrompt;
 
   atomicWriteFileSync(path, serializeMetadata(data));
 }
