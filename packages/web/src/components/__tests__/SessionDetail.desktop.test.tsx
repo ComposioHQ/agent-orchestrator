@@ -128,6 +128,23 @@ describe("SessionDetail desktop layout", () => {
     expect(screen.getByText("Live Terminal")).toBeInTheDocument();
   });
 
+  it("keeps the desktop session detail in a fixed split layout", () => {
+    const { container } = render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-split",
+          projectId: "my-app",
+          pr: null,
+        })}
+      />,
+    );
+
+    expect(container.querySelector(".session-detail-page--desktop")).toBeTruthy();
+    expect(container.querySelector(".session-detail-layout--desktop")).toBeTruthy();
+    expect(container.querySelector(".session-detail-terminal-wrap--desktop")).toBeTruthy();
+    expect(container.querySelector(".session-detail-terminal-panel")).toBeTruthy();
+  });
+
   it("sends unresolved comments back to the agent and shows sent state", async () => {
     vi.useFakeTimers();
 

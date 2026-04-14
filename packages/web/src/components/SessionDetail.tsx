@@ -469,9 +469,9 @@ export function SessionDetail({
   const accentColor = "var(--color-accent)";
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
 
-  const terminalHeight = isOrchestrator
-    ? "clamp(400px, 52vh, 620px)"
-    : "clamp(380px, 48vh, 560px)";
+  const terminalHeight = isMobile
+    ? (isOrchestrator ? "clamp(400px, 52vh, 620px)" : "clamp(380px, 48vh, 560px)")
+    : "100%";
   const isOpenCodeSession = session.metadata["agent"] === "opencode";
   const opencodeSessionId =
     typeof session.metadata["opencodeSessionId"] === "string" &&
@@ -601,9 +601,9 @@ export function SessionDetail({
           ) : null}
 
           <div className="dashboard-main dashboard-main--desktop">
-            <main className="session-detail-page min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-base)]">
-              <div className="session-detail-layout">
-                <main className="min-w-0">
+            <main className="session-detail-page session-detail-page--desktop min-h-0 flex-1 overflow-hidden bg-[var(--color-bg-base)]">
+              <div className="session-detail-layout session-detail-layout--desktop">
+                <main className="session-detail-content min-w-0">
                   {(!isOrchestrator || (isOrchestrator && orchestratorZones)) && (
                     <SessionTopStrip
                       headline={headline}
@@ -630,7 +630,7 @@ export function SessionDetail({
                     </section>
                   ) : null}
 
-                  <section className="session-detail-terminal-wrap">
+                  <section className="session-detail-terminal-wrap session-detail-terminal-wrap--desktop">
                     <div id="session-terminal-section" aria-hidden="true" />
                     <div className="session-detail-section-label">
                       <div
@@ -641,25 +641,27 @@ export function SessionDetail({
                         Live Terminal
                       </span>
                     </div>
-                    {!showTerminal ? (
-                      <div className="session-detail-terminal-placeholder" style={{ height: terminalHeight }} />
-                    ) : terminalEnded ? (
-                      <div className="terminal-exited-placeholder" style={{ height: terminalHeight }}>
-                        <span className="terminal-exited-placeholder__text">
-                          Terminal session has ended
-                        </span>
-                      </div>
-                    ) : (
-                      <DirectTerminal
-                        sessionId={session.id}
-                        startFullscreen={startFullscreen}
-                        variant={terminalVariant}
-                        appearance="dark"
-                        height={terminalHeight}
-                        isOpenCodeSession={isOpenCodeSession}
-                        reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-                      />
-                    )}
+                    <div className="session-detail-terminal-panel">
+                      {!showTerminal ? (
+                        <div className="session-detail-terminal-placeholder" style={{ height: terminalHeight }} />
+                      ) : terminalEnded ? (
+                        <div className="terminal-exited-placeholder" style={{ height: terminalHeight }}>
+                          <span className="terminal-exited-placeholder__text">
+                            Terminal session has ended
+                          </span>
+                        </div>
+                      ) : (
+                        <DirectTerminal
+                          sessionId={session.id}
+                          startFullscreen={startFullscreen}
+                          variant={terminalVariant}
+                          appearance="dark"
+                          height={terminalHeight}
+                          isOpenCodeSession={isOpenCodeSession}
+                          reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+                        />
+                      )}
+                    </div>
                   </section>
                 </main>
               </div>

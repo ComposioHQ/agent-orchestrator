@@ -1573,6 +1573,13 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     var(--color-bg-base);
 }
 
+.session-detail-page--desktop {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .session-page-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1646,6 +1653,23 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .session-detail-layout {
   max-width: 1200px;
   padding: 16px 24px 48px;
+}
+
+.session-detail-layout--desktop {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  padding-bottom: 24px;
+}
+
+.session-detail-content {
+  display: flex;
+  min-height: 0;
+  width: min(1200px, 100%);
+  flex: 1;
+  flex-direction: column;
 }
 
 .session-detail-top-strip {
@@ -1899,6 +1923,28 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 .session-detail-terminal-wrap {
   margin-bottom: 18px;
+}
+
+.session-detail-terminal-wrap--desktop {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
+.session-detail-terminal-panel {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.session-detail-terminal-panel > .direct-terminal,
+.session-detail-terminal-panel > .terminal-exited-placeholder,
+.session-detail-terminal-panel > .session-detail-terminal-placeholder {
+  min-height: 0;
+  flex: 1;
 }
 
 .session-detail-section-label {
