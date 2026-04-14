@@ -110,39 +110,24 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
   // Compute effective selected file: URL takes precedence, then storage, then metadata hint
   const [restoredFile, setRestoredFile] = useState<string | null>(null);
   const lastSessionRef = useRef<string | null>(null);
-  // Tracks whether we've successfully restored a file for the current session id.
-  // Prevents re-running the hint logic on every SSE tick, while still allowing
-  // the metadata hint to fire after the stub session is replaced by the real one.
-  const fileRestoredRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (lastSessionRef.current !== session.id) {
-      // Session changed — reset and try sessionStorage first
       lastSessionRef.current = session.id;
-      fileRestoredRef.current = false;
       if (!urlFile) {
         const stored = loadSessionFileState(session.id);
         if (stored?.filePath) {
           setRestoredFile(stored.filePath);
-          fileRestoredRef.current = true;
         } else {
-          setRestoredFile(null);
+          // Fall back to plan hint set by agent via `ao session open-plan`
+          const hint = session.metadata["pendingPreviewFile"];
+          setRestoredFile(typeof hint === "string" && hint.length > 0 ? hint : null);
         }
       } else {
         setRestoredFile(null);
       }
-    } else if (!fileRestoredRef.current && !urlFile) {
-      // Same session, no file restored yet — check if the metadata hint has arrived.
-      // This handles the stub-session → real-session transition: the stub renders with
-      // metadata:{}, setting restoredFile=null; when the real session arrives with
-      // pendingPreviewFile set, this branch picks it up.
-      const hint = session.metadata["pendingPreviewFile"];
-      if (typeof hint === "string" && hint.length > 0) {
-        setRestoredFile(hint);
-        fileRestoredRef.current = true;
-      }
     }
-  }, [session.id, session.metadata, urlFile]);
+  }, [session.id, urlFile]);
 
   // URL file always wins; fall back to restored file from storage
   const selectedFile = urlFile ?? restoredFile;
@@ -382,19 +367,6 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
       ensurePreviewVisible();
     }
   }, [diffMode, selectedFile, ensurePreviewVisible]);
-
-  // Ensure preview is visible when a file is first restored (from storage or metadata hint).
-  // Use a ref gate so this fires at most once per unique restoredFile value — prevents
-  // the preview pane from snapping back open every time the user collapses it
-  // (ensurePreviewVisible's identity changes with collapsed, which would re-trigger a
-  // naive [restoredFile, ensurePreviewVisible] dep array on every toggle).
-  const ensuredPreviewForFileRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (restoredFile && ensuredPreviewForFileRef.current !== restoredFile) {
-      ensuredPreviewForFileRef.current = restoredFile;
-      ensurePreviewVisible();
-    }
-  }, [restoredFile, ensurePreviewVisible]);
 
   const topBarProps = {
     session,
