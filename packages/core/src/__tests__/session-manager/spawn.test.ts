@@ -1062,12 +1062,16 @@ describe("spawn", () => {
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
     const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
-    // Advance only 2s — not enough, message should not have been sent yet
+    // Advance only 2s — not enough, message should not have been sent yet.
+    // On Windows: stabilization polls at 1.5s intervals (stableCount not reached yet).
+    // On non-Windows: exponential backoff waits 3s before first attempt.
     await vi.advanceTimersByTimeAsync(2_000);
     expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
 
-    // Advance the remaining 1s — now the first attempt should fire (3s total = 3000 * 1)
-    await vi.advanceTimersByTimeAsync(1_000);
+    // Advance to 5s total — enough for prompt delivery on all platforms.
+    // On Windows: 3 polls × 1.5s = 4.5s for stabilization, then sends immediately.
+    // On non-Windows: 3s backoff fires and sends.
+    await vi.advanceTimersByTimeAsync(3_000);
     await spawnPromise;
     expect(mockRuntime.sendMessage).toHaveBeenCalled();
     vi.useRealTimers();

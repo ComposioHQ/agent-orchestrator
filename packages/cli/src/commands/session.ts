@@ -95,7 +95,10 @@ export function registerSession(program: Command): void {
 
         const activities = await Promise.all(
           projectSessions.map((s) => {
-            if (isWindows()) return Promise.resolve(null);
+            // On Windows, use enriched session lastActivityAt (no tmux available).
+            if (isWindows()) {
+              return Promise.resolve(s.lastActivityAt ? s.lastActivityAt.getTime() : null);
+            }
             const tmuxTarget = s.runtimeHandle?.id ?? s.id;
             return getTmuxActivity(tmuxTarget).catch(() => null);
           }),

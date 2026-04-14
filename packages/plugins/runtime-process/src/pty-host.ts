@@ -223,10 +223,13 @@ async function runPtyHost(): Promise<void> {
     );
     broadcast(statusMsg);
 
-    // Give clients 2 s to receive the status notification, then exit
-    setTimeout(() => {
-      process.exit(exitCode ?? 0);
-    }, 2000).unref();
+    // Keep the PTY host alive after the agent exits — mirrors tmux behavior
+    // where the shell session persists after the command finishes. This keeps
+    // the named pipe reachable so:
+    //   - isAlive() returns true (pipe connectable)
+    //   - Clients can still connect and view scrollback output
+    //   - The STATUS_RES reports alive:false so getActivityState sees "exited"
+    //   - ao session kill / ao stop will destroy the pipe server via MSG_KILL_REQ
   });
 
   // ---------------------------------------------------------------------------

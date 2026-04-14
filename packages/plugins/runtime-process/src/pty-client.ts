@@ -96,17 +96,32 @@ export function connectPtyHost(pipePath: string, timeoutMs = 3000): Promise<Sock
  */
 export async function ptyHostSendMessage(pipePath: string, message: string): Promise<void> {
   const sock = await connectPtyHost(pipePath);
+  // Send message text first, then Enter as a separate write after a small delay.
+  // Mirrors tmux behavior: `send-keys -l <text>` then `send-keys Enter`.
+  // Sending \r concatenated with the text can cause the Enter to be consumed
+  // as part of a paste rather than triggering input submission.
   await new Promise<void>((resolve, reject) => {
     sock.once("error", reject);
-    const frame = encodeMessage(MSG_TERMINAL_INPUT, message + "\r");
-    sock.write(frame, (err) => {
+    const textFrame = encodeMessage(MSG_TERMINAL_INPUT, message);
+    sock.write(textFrame, (err) => {
       if (err) {
         sock.destroy();
         reject(err);
         return;
       }
-      sock.end();
-      resolve();
+      // Small delay to let the terminal process the pasted text before Enter
+      setTimeout(() => {
+        const enterFrame = encodeMessage(MSG_TERMINAL_INPUT, "\r");
+        sock.write(enterFrame, (err2) => {
+          if (err2) {
+            sock.destroy();
+            reject(err2);
+            return;
+          }
+          sock.end();
+          resolve();
+        });
+      }, 300);
     });
   });
 }
@@ -189,9 +204,14 @@ export async function ptyHostIsAlive(pipePath: string): Promise<boolean> {
 
     const parser = new MessageParser((type, payload) => {
       if (type === MSG_STATUS_RES) {
+        // The pty-host process is alive if we got ANY valid response.
+        // Whether the agent inside the PTY has exited (status.alive=false)
+        // is a separate concern handled by getActivityState, not isAlive.
+        // This mirrors tmux: `tmux has-session` returns true even after
+        // the command inside the pane has exited.
         try {
-          const status = JSON.parse(payload.toString("utf-8")) as PtyHostStatus;
-          finish(status.alive === true);
+          JSON.parse(payload.toString("utf-8")); // validate it's real JSON
+          finish(true);
         } catch {
           finish(false);
         }

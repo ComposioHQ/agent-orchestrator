@@ -61,6 +61,7 @@ import {
   generateTmuxName,
   validateAndStoreOrigin,
 } from "./paths.js";
+import { isWindows } from "./platform.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
@@ -1228,14 +1229,41 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     let promptDelivered = false;
     if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
       const maxRetries = 3;
-      const baseDelayMs = 3_000;
       let lastError: Error | undefined;
 
+      // On Windows (ConPTY), pty.write() delivers immediately — if the agent
+      // hasn't drawn its input prompt yet, the text is consumed by the startup
+      // screen and lost. Poll terminal output until it stabilizes before sending.
+      // On Linux/Mac, tmux buffers keystrokes so this is not needed.
+      if (isWindows()) {
+        const readyDeadline = Date.now() + 30_000;
+        let lastOutput = "";
+        let stableCount = 0;
+        while (Date.now() < readyDeadline) {
+          await new Promise((resolve) => setTimeout(resolve, 1_500));
+          try {
+            const output = await plugins.runtime.getOutput(handle, 5);
+            if (output.trim().length > 0 && output === lastOutput) {
+              stableCount++;
+              if (stableCount >= 2) break; // Output settled — agent is ready
+            } else {
+              stableCount = 0;
+            }
+            lastOutput = output;
+          } catch {
+            // getOutput may fail early in startup — keep polling
+          }
+        }
+      }
+
+      // On non-Windows, use exponential backoff (3s, 6s, 9s) to wait for agent startup.
+      // On Windows the stabilization loop above already waited — no additional delay needed.
+      const baseDelayMs = isWindows() ? 0 : 3_000;
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          // Wait for agent to start and be ready for input
-          // Use exponential backoff: 3s, 6s, 9s between attempts
-          await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
+          if (baseDelayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
+          }
           await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
           promptDelivered = true;
           break;
