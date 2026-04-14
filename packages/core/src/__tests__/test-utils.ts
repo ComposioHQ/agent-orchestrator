@@ -17,6 +17,12 @@ import type {
   Notifier,
   ActivityState,
   PRInfo,
+  PREnrichmentData,
+  CICheck,
+  MergeReadiness,
+  PRState,
+  CIStatus,
+  ReviewDecision,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -49,10 +55,10 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
 export function makePR(overrides: Partial<PRInfo> = {}): PRInfo {
   return {
     number: 42,
-    url: "https://github.com/org/repo/pull/42",
+    url: "https://github.com/org/my-app/pull/42",
     title: "Fix things",
     owner: "org",
-    repo: "repo",
+    repo: "my-app",
     branch: "feat/test",
     baseBranch: "main",
     isDraft: false,
@@ -107,7 +113,7 @@ export function createMockPlugins(): MockPlugins {
 }
 
 export function createMockSCM(overrides: Partial<SCM> = {}): SCM {
-  return {
+  const scm: SCM = {
     name: "github",
     detectPR: vi.fn().mockResolvedValue(null),
     getPRState: vi.fn().mockResolvedValue("open"),
@@ -128,6 +134,36 @@ export function createMockSCM(overrides: Partial<SCM> = {}): SCM {
     }),
     ...overrides,
   };
+
+  // Add a default enrichSessionsPRBatch that delegates to the individual mock
+  // methods so the batch enrichment cache is populated during tests.
+  if (!overrides.enrichSessionsPRBatch) {
+    scm.enrichSessionsPRBatch = vi.fn().mockImplementation(
+      async (prs: PRInfo[]): Promise<Map<string, PREnrichmentData>> => {
+        const result = new Map<string, PREnrichmentData>();
+        for (const pr of prs) {
+          const key = `${pr.owner}/${pr.repo}#${pr.number}`;
+          const prState = await scm.getPRState(pr) as PRState;
+          const ciStatus = await scm.getCISummary(pr) as CIStatus;
+          const reviewDecision = await scm.getReviewDecision(pr) as ReviewDecision;
+          const mergeability = await scm.getMergeability(pr) as MergeReadiness;
+          const ciChecks = await scm.getCIChecks(pr) as CICheck[];
+          result.set(key, {
+            state: prState,
+            ciStatus,
+            reviewDecision,
+            mergeable: mergeability.mergeable,
+            hasConflicts: !mergeability.noConflicts,
+            blockers: mergeability.blockers,
+            ciChecks,
+          });
+        }
+        return result;
+      },
+    );
+  }
+
+  return scm;
 }
 
 export function createMockNotifier(): Notifier {

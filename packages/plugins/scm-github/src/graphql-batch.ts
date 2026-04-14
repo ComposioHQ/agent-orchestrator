@@ -5,35 +5,23 @@
  * Reduces API calls from N×3 to 1 (or a few if batching needed).
  */
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import type {
-  BatchObserver,
-  CICheck,
-  CIStatus,
-  PREnrichmentData,
-  PRInfo,
-  PRState,
-  ReviewDecision,
+import {
+  getGhClient,
+  type BatchObserver,
+  type CICheck,
+  type CIStatus,
+  type PREnrichmentData,
+  type PRInfo,
+  type PRState,
+  type ReviewDecision,
 } from "@aoagents/ao-core";
 import { LRUCache } from "./lru-cache.js";
-
-let execFileAsync = promisify(execFile);
-
-/**
- * Set execFileAsync for testing.
- * Allows mocking the underlying execFile in unit tests.
- */
-export function setExecFileAsync(fn: typeof execFileAsync): void {
-  execFileAsync = fn;
-}
 
 /**
  * Configuration constants for cache sizing.
  * LRU cache automatically evicts oldest entries when these limits are reached.
  */
 const MAX_PR_LIST_ETAGS = 100;  // Number of repos to cache
-const MAX_COMMIT_STATUS_ETAGS = 500;  // Number of commits to cache
 const MAX_PR_METADATA = 200;  // Number of PRs to cache full data
 
 /**
@@ -42,11 +30,9 @@ const MAX_PR_METADATA = 200;  // Number of PRs to cache full data
  *
  * Keys:
  * - PR list: "prList:{owner}/{repo}"
- * - Commit status: "commit:{owner}/{repo}#{sha}"
  */
 interface ETagCache {
   prList: LRUCache<string, string>; // Key: "owner/repo", Value: ETag
-  commitStatus: LRUCache<string, string>; // Key: "owner/repo#sha", Value: ETag
 }
 
 /**
@@ -58,7 +44,6 @@ interface ETagCache {
  */
 const etagCache: ETagCache = {
   prList: new LRUCache(MAX_PR_LIST_ETAGS),
-  commitStatus: new LRUCache(MAX_COMMIT_STATUS_ETAGS),
 };
 
 /**
@@ -75,7 +60,6 @@ interface ETagGuardResult {
  */
 export function clearETagCache(): void {
   etagCache.prList.clear();
-  etagCache.commitStatus.clear();
 }
 
 /**
@@ -86,35 +70,11 @@ export function getPRListETag(owner: string, repo: string): string | undefined {
 }
 
 /**
- * Get commit status ETag for a specific commit.
- */
-export function getCommitStatusETag(
-  owner: string,
-  repo: string,
-  sha: string,
-): string | undefined {
-  return etagCache.commitStatus.get(`${owner}/${repo}#${sha}`);
-}
-
-/**
  * Set PR list ETag for a repository.
  * Exported for testing.
  */
 export function setPRListETag(owner: string, repo: string, etag: string): void {
   etagCache.prList.set(`${owner}/${repo}`, etag);
-}
-
-/**
- * Set commit status ETag for a specific commit.
- * Exported for testing.
- */
-export function setCommitStatusETag(
-  owner: string,
-  repo: string,
-  sha: string,
-  etag: string,
-): void {
-  etagCache.commitStatus.set(`${owner}/${repo}#${sha}`, etag);
 }
 
 /**
@@ -140,6 +100,17 @@ const prMetadataCache = new LRUCache<
 const prEnrichmentDataCache = new LRUCache<string, PREnrichmentData>(MAX_PR_METADATA);
 
 /**
+ * Timestamp of the last successful batch refresh.
+ * Used to enforce a staleness cap so that the batch re-runs
+ * even when Guard 1 returns 304 (e.g. CI status changes that
+ * don't touch the PR list).
+ */
+let lastBatchRefreshAt = 0;
+
+/** Maximum staleness before forcing a batch refresh (2 minutes). */
+const STALENESS_CAP_MS = 2 * 60 * 1000;
+
+/**
  * Update PR metadata cache with latest enrichment data.
  * Called after successful GraphQL batch enrichment.
  */
@@ -157,19 +128,20 @@ function updatePRMetadataCache(
 }
 
 /**
- * 2-Guard ETag Strategy: Check if PR enrichment cache needs refreshing.
+ * ETag Guard + Staleness Cap: Check if PR enrichment cache needs refreshing.
  *
- * Before running expensive GraphQL batch queries, use two lightweight REST API
- * ETag checks to detect if anything actually changed:
+ * Before running expensive GraphQL batch queries, uses a lightweight REST API
+ * ETag check (Guard 1) plus a time-based staleness cap to decide if the batch
+ * should run.
  *
  * Guard 1: PR List ETag Check (per repo)
  *   - Detects: New commits, PR title/body edits, labels changes, reviews, PR state changes
- *   - Misses: CI status changes
+ *   - Cost: 1 REST call per repo (0 if 304 Not Modified)
  *
- * Guard 2: Commit Status ETag Check (per PR with cached metadata)
- *   - Checks ALL PRs with cached metadata and head SHA
- *   - Detects: CI check starts, passes, fails, or external status updates
- *   - Critical for catching CI transitions (failing -> passing, passing -> failing, etc.)
+ * Staleness Cap (replaces former Guard 2):
+ *   - If Guard 1 says "no change" but the cache is older than 2 minutes, run batch anyway.
+ *   - Catches CI status changes that don't touch the PR list.
+ *   - Saves ~6,000 REST calls/hour compared to per-PR commit status checks.
  *
  * @param prs - PRs to check
  * @returns true if GraphQL batch should run, false if nothing changed
@@ -178,83 +150,41 @@ export async function shouldRefreshPREnrichment(
   prs: PRInfo[],
 ): Promise<ETagGuardResult> {
   const details: string[] = [];
-  let shouldRefresh = false;
 
   if (prs.length === 0) {
     return { shouldRefresh: false, details: ["No PRs to check"] };
   }
 
   // Group PRs by repository for Guard 1 (PR list check)
-  const repos = new Map<string, PRInfo[]>();
-
+  const repos = new Set<string>();
   for (const pr of prs) {
-    const repoKey = `${pr.owner}/${pr.repo}`;
-    if (!repos.has(repoKey)) {
-      repos.set(repoKey, []);
-    }
-    const repoPrs = repos.get(repoKey);
-    if (repoPrs) {
-      repoPrs.push(pr);
-    }
+    repos.add(`${pr.owner}/${pr.repo}`);
   }
 
   // Guard 1: Check PR list ETag for each repository
   let guard1DetectedChanges = false;
-  for (const [repoKey] of repos) {
+  for (const repoKey of repos) {
     const [owner, repo] = repoKey.split("/");
     const prListChanged = await checkPRListETag(owner, repo);
     if (prListChanged) {
       guard1DetectedChanges = true;
-      shouldRefresh = true;
       details.push(`PR list changed for ${repoKey} (Guard 1)`);
     }
   }
 
-  // Guard 2: Check commit status ETag only when Guard 1 didn't detect changes
-  // We check ALL PRs (not just pending) to catch CI status transitions:
-  // - failing -> passing (PR becomes merge-ready)
-  // - passing -> failing (PR becomes unmergeable)
-  // - pending -> passing/failing (CI completes)
-  // - passing -> pending (new CI run starts)
-  //
-  // Guard 2 is only needed when Guard 1 returns 304 (no PR list changes).
-  // If Guard 1 detected changes, we're going to refresh all PRs anyway.
-  if (!guard1DetectedChanges) {
-    for (const pr of prs) {
-      const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
-      const cached = prMetadataCache.get(prKey);
-
-      // Check for incomplete cache (cached but no headSha)
-      // This happens when PR was cached but headSha wasn't captured
-      // We need to refresh to get complete data including headSha
-      if (cached && cached.headSha === null) {
-        shouldRefresh = true;
-        details.push(`First time seeing PR #${pr.number} (Guard 2: no cached head SHA)`);
-        continue;
-      }
-
-      // Only check commit status ETag if we have cached data with a non-null head SHA
-      if (!cached || !cached.headSha) {
-        // No cached metadata - skip Guard 2. Since Guard 1 didn't detect changes
-        // and we have no cached data, there's nothing to check.
-        continue;
-      }
-
-      const statusChanged = await checkCommitStatusETag(
-        pr.owner,
-        pr.repo,
-        cached.headSha,
-      );
-      if (statusChanged) {
-        shouldRefresh = true;
-        details.push(
-          `CI status changed for ${pr.owner}/${pr.repo}#${pr.number} (Guard 2)`,
-        );
-      }
-    }
+  if (guard1DetectedChanges) {
+    return { shouldRefresh: true, details };
   }
 
-  return { shouldRefresh, details };
+  // Staleness cap: if Guard 1 says "no change" but cache is older than
+  // STALENESS_CAP_MS, run the batch anyway to catch CI status changes.
+  const cacheAge = Date.now() - lastBatchRefreshAt;
+  if (cacheAge >= STALENESS_CAP_MS) {
+    details.push(`Cache stale (${Math.round(cacheAge / 1000)}s old, cap ${STALENESS_CAP_MS / 1000}s)`);
+    return { shouldRefresh: true, details };
+  }
+
+  return { shouldRefresh: false, details: ["No changes detected (Guard 1 + staleness cap)"] };
 }
 
 /**
@@ -290,30 +220,7 @@ export function setPRMetadata(
 export function clearPRMetadataCache(): void {
   prMetadataCache.clear();
   prEnrichmentDataCache.clear();
-}
-
-/**
- * Interface for errors with cause property (ES2022+).
- * Used for better error tracking when cause is not available in older environments.
- */
-interface ErrorWithCause extends Error {
-  cause?: unknown;
-}
-
-/**
- * Pre-flight check to verify gh CLI is available and authenticated.
- * This prevents silent failures during GraphQL batch queries.
- */
-async function verifyGhCLI(): Promise<void> {
-  try {
-    await execFileAsync("gh", ["--version"], { timeout: 5000 });
-  } catch {
-    const error = new Error(
-      "gh CLI not available or not authenticated. GraphQL batch enrichment requires gh CLI to be installed and configured.",
-    ) as ErrorWithCause;
-    error.cause = "GH_CLI_UNAVAILABLE";
-    throw error;
-  }
+  lastBatchRefreshAt = 0;
 }
 
 /**
@@ -350,8 +257,7 @@ async function checkPRListETag(
   }
 
   try {
-    const { stdout } = await execFileAsync("gh", args, { timeout: 10_000 });
-    const output = stdout.trim();
+    const output = await getGhClient().exec(args, { timeout: 10_000 });
 
     // Check for HTTP 304 Not Modified response
     if (output.includes("HTTP/1.1 304") || output.includes("HTTP/2 304")) {
@@ -381,68 +287,8 @@ async function checkPRListETag(
 }
 
 /**
- * Guard 2: Commit Status ETag Check (per PR with pending CI)
- *
- * Detects if CI status has changed for a specific commit using REST ETag.
- *
- * - Endpoint: GET /repos/{owner}/{repo}/commits/{head_sha}/status
- * - Detects: CI check starts, passes, fails, or external status updates
- * - Only checked for PRs with ciStatus === "pending" to minimize calls
- *
- * @returns true if CI status has changed (200 OK), false if unchanged (304 Not Modified)
- */
-async function checkCommitStatusETag(
-  owner: string,
-  repo: string,
-  sha: string,
-): Promise<boolean> {
-  const commitKey = `${owner}/${repo}#${sha}`;
-  const cachedETag = etagCache.commitStatus.get(commitKey);
-
-  // Build gh CLI args for REST API call
-  const url = `repos/${owner}/${repo}/commits/${sha}/status`;
-  const args = ["api", "--method", "GET", url, "-i"]; // -i includes headers
-
-  // Add If-None-Match header if we have a cached ETag
-  if (cachedETag) {
-    args.push("-H", `If-None-Match: ${cachedETag}`);
-  }
-
-  try {
-    const { stdout } = await execFileAsync("gh", args, { timeout: 10_000 });
-    const output = stdout.trim();
-
-    // Check for HTTP 304 Not Modified response
-    if (output.includes("HTTP/1.1 304") || output.includes("HTTP/2 304")) {
-      // No CI changes detected - cost: 0 GraphQL points
-      return false;
-    }
-
-    // Extract new ETag from response headers
-    const etagMatch = output.match(/etag:\s*(.+)/i);
-    if (etagMatch) {
-      // Trim to remove trailing whitespace/newlines that could cause comparison issues
-      const newETag = etagMatch[1].trim();
-      setCommitStatusETag(owner, repo, sha, newETag);
-    }
-
-    // CI status changed - cost: 1 REST point
-    return true;
-  } catch (err) {
-    // On error, assume change to ensure we don't miss anything
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    // eslint-disable-next-line no-console -- Observability logging for ETag errors
-    console.warn(
-      `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`,
-    );
-    return true; // Assume changed to be safe
-  }
-}
-
-/**
  * GraphQL fields to fetch for each PR.
  * This includes all data needed for orchestrator status detection.
- * Includes head SHA for ETag Guard 2 (commit status checks).
  */
 const PR_FIELDS = `
   title
@@ -455,7 +301,7 @@ const PR_FIELDS = `
   reviewDecision
   headRefName
   headRefOid
-  reviews(last: 5) {
+  reviews(last: 3) {
     nodes {
       author { login }
       state
@@ -467,7 +313,7 @@ const PR_FIELDS = `
       commit {
         statusCheckRollup {
           state
-          contexts(first: 20) {
+          contexts(first: 15) {
             nodes {
               ... on CheckRun {
                 name
@@ -554,9 +400,6 @@ async function executeBatchQuery(
     return {};
   }
 
-  // Pre-flight check to verify gh CLI is available
-  await verifyGhCLI();
-
   // Build gh CLI arguments with variables
   const varArgs: string[] = [];
   for (const [key, value] of Object.entries(variables)) {
@@ -574,15 +417,12 @@ async function executeBatchQuery(
   const batchSize = prs.length;
   const adaptiveTimeout = 30_000 + Math.max(0, (batchSize - 10) * 2000);
 
-  const { stdout } = await execFileAsync("gh", args, {
-    maxBuffer: 10 * 1024 * 1024,
-    timeout: adaptiveTimeout,
-  });
+  const stdout = await getGhClient().exec(args, { timeout: adaptiveTimeout });
 
   const result: {
     data?: Record<string, unknown>;
     errors?: Array<{ message: string; path?: string[] }>;
-  } = JSON.parse(stdout.trim());
+  } = JSON.parse(stdout);
 
   // Check for GraphQL errors and throw to allow individual API fallback
   if (result.errors && result.errors.length > 0) {
@@ -1006,6 +846,10 @@ export async function enrichSessionsPRBatch(
     }
   }
 
+  // Record refresh timestamp unconditionally — even if all PRs were missing
+  // or returned errors, the batch ran and we shouldn't re-run on every poll.
+  lastBatchRefreshAt = Date.now();
+
   return result;
 }
 
@@ -1016,7 +860,6 @@ export {
   parsePRState,
   extractPREnrichment,
   checkPRListETag,
-  checkCommitStatusETag,
   // shouldRefreshPREnrichment is already exported as async function
   updatePRMetadataCache,
 };

@@ -48,6 +48,7 @@ import type {
   Workspace,
   SessionManager,
   Session,
+  SCM,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -469,7 +470,7 @@ describe("plugin integration", () => {
       return session;
     }
 
-    it("check() detects ci_failed via scm-github getCISummary()", async () => {
+    it("check() detects ci_failed via batch enrichment", async () => {
       seedSession({ status: "pr_open", pr });
 
       // Mock the sessionManager.list() to return our session
@@ -483,17 +484,18 @@ describe("plugin integration", () => {
         spawnOrchestrator: vi.fn(),
       };
 
+      // Mock individual SCM methods (check() calls these directly, not enrichSessionsPRBatch)
+      const scm = registry.get<SCM>("scm", "github")!;
+      scm.getPRState = vi.fn().mockResolvedValue("open");
+      scm.getCISummary = vi.fn().mockResolvedValue("failing");
+      scm.getReviewDecision = vi.fn().mockResolvedValue("none");
+      scm.getMergeability = vi.fn().mockResolvedValue({ mergeable: false, noConflicts: true, blockers: [] });
+
       const lm = createLifecycleManager({
         config,
         registry,
         sessionManager: mockSM,
       });
-
-      // gh calls for determineStatus:
-      // 1. getPRState → open
-      mockGh({ state: "OPEN" });
-      // 2. getCISummary → failing (pr checks returns array of checks with correct field names)
-      mockGh([{ name: "lint", state: "FAILURE", link: "", startedAt: "", completedAt: "" }]);
 
       await lm.check("app-1");
 
@@ -501,7 +503,7 @@ describe("plugin integration", () => {
       expect(states.get("app-1")).toBe("ci_failed");
     });
 
-    it("check() detects merged via scm-github getPRState()", async () => {
+    it("check() detects merged via individual SCM calls", async () => {
       seedSession({ status: "pr_open", pr });
 
       const mockSM: SessionManager = {
@@ -514,14 +516,17 @@ describe("plugin integration", () => {
         spawnOrchestrator: vi.fn(),
       };
 
+      const scm = registry.get<SCM>("scm", "github")!;
+      scm.getPRState = vi.fn().mockResolvedValue("merged");
+      scm.getCISummary = vi.fn().mockResolvedValue("passing");
+      scm.getReviewDecision = vi.fn().mockResolvedValue("approved");
+      scm.getMergeability = vi.fn().mockResolvedValue({ mergeable: false, noConflicts: true, blockers: [] });
+
       const lm = createLifecycleManager({
         config,
         registry,
         sessionManager: mockSM,
       });
-
-      // getPRState → merged
-      mockGh({ state: "MERGED" });
 
       await lm.check("app-1");
 
@@ -529,7 +534,7 @@ describe("plugin integration", () => {
       expect(states.get("app-1")).toBe("merged");
     });
 
-    it("check() detects changes_requested via scm-github getReviewDecision()", async () => {
+    it("check() detects changes_requested via individual SCM calls", async () => {
       seedSession({ status: "pr_open", pr });
 
       const mockSM: SessionManager = {
@@ -542,18 +547,17 @@ describe("plugin integration", () => {
         spawnOrchestrator: vi.fn(),
       };
 
+      const scm = registry.get<SCM>("scm", "github")!;
+      scm.getPRState = vi.fn().mockResolvedValue("open");
+      scm.getCISummary = vi.fn().mockResolvedValue("passing");
+      scm.getReviewDecision = vi.fn().mockResolvedValue("changes_requested");
+      scm.getMergeability = vi.fn().mockResolvedValue({ mergeable: false, noConflicts: true, blockers: [] });
+
       const lm = createLifecycleManager({
         config,
         registry,
         sessionManager: mockSM,
       });
-
-      // 1. getPRState → open
-      mockGh({ state: "OPEN" });
-      // 2. getCISummary → passing (using correct field names: state and link)
-      mockGh([{ name: "lint", state: "SUCCESS", link: "", startedAt: "", completedAt: "" }]);
-      // 3. getReviewDecision (gh pr view with reviewDecision)
-      mockGh({ reviewDecision: "CHANGES_REQUESTED" });
 
       await lm.check("app-1");
 

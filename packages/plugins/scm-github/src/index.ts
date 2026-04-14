@@ -9,6 +9,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import {
   CI_STATUS,
+  getGhClient,
   type PluginModule,
   type SCM,
   type SCMWebhookEvent,
@@ -59,33 +60,27 @@ const BOT_AUTHORS = new Set([
 // Helpers
 // ---------------------------------------------------------------------------
 
-type ExecCommand = "gh" | "git";
+async function gh(args: string[]): Promise<string> {
+  return getGhClient().exec(args);
+}
 
-async function execCli(bin: ExecCommand, args: string[], cwd?: string): Promise<string> {
+async function ghInDir(args: string[], cwd: string): Promise<string> {
+  return getGhClient().exec(args, { cwd });
+}
+
+async function git(args: string[], cwd: string): Promise<string> {
   try {
-    const { stdout } = await execFileAsync(bin, args, {
-      ...(cwd ? { cwd } : {}),
+    const { stdout } = await execFileAsync("git", args, {
+      cwd,
       maxBuffer: 10 * 1024 * 1024,
       timeout: 30_000,
     });
     return stdout.trim();
   } catch (err) {
-    throw new Error(`${bin} ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
+    throw new Error(`git ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
       cause: err,
     });
   }
-}
-
-async function gh(args: string[]): Promise<string> {
-  return execCli("gh", args);
-}
-
-async function ghInDir(args: string[], cwd: string): Promise<string> {
-  return execCli("gh", args, cwd);
-}
-
-async function git(args: string[], cwd: string): Promise<string> {
-  return execCli("git", args, cwd);
 }
 
 function parseProjectRepo(projectRepo: string): [string, string] {
@@ -572,7 +567,10 @@ function createGitHubSCM(): SCM {
     },
 
     async assignPRToCurrentUser(pr: PRInfo): Promise<void> {
-      await gh(["pr", "edit", String(pr.number), "--repo", repoFlag(pr), "--add-assignee", "@me"]);
+      await getGhClient().exec(
+        ["pr", "edit", String(pr.number), "--repo", repoFlag(pr), "--add-assignee", "@me"],
+        { noRetry: true, noDedup: true },
+      );
     },
 
     async checkoutPR(pr: PRInfo, workspacePath: string): Promise<boolean> {
@@ -636,11 +634,17 @@ function createGitHubSCM(): SCM {
     async mergePR(pr: PRInfo, method: MergeMethod = "squash"): Promise<void> {
       const flag = method === "rebase" ? "--rebase" : method === "merge" ? "--merge" : "--squash";
 
-      await gh(["pr", "merge", String(pr.number), "--repo", repoFlag(pr), flag, "--delete-branch"]);
+      await getGhClient().exec(
+        ["pr", "merge", String(pr.number), "--repo", repoFlag(pr), flag, "--delete-branch"],
+        { noRetry: true, noDedup: true },
+      );
     },
 
     async closePR(pr: PRInfo): Promise<void> {
-      await gh(["pr", "close", String(pr.number), "--repo", repoFlag(pr)]);
+      await getGhClient().exec(
+        ["pr", "close", String(pr.number), "--repo", repoFlag(pr)],
+        { noRetry: true, noDedup: true },
+      );
     },
 
     async getCIChecks(pr: PRInfo): Promise<CICheck[]> {
@@ -863,9 +867,10 @@ function createGitHubSCM(): SCM {
       }
     },
 
-    async getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]> {
+    async getAutomatedComments(pr: PRInfo, since?: string): Promise<AutomatedComment[]> {
       try {
         const perPage = 100;
+        const maxPages = 3; // Cap pagination to prevent unbounded API calls (F-04)
         const comments: Array<{
           id: number;
           user: { login: string };
@@ -877,12 +882,16 @@ function createGitHubSCM(): SCM {
           html_url: string;
         }> = [];
 
-        for (let page = 1; ; page++) {
+        for (let page = 1; page <= maxPages; page++) {
+          let url = `repos/${repoFlag(pr)}/pulls/${pr.number}/comments?per_page=${perPage}&page=${page}`;
+          if (since) {
+            url += `&since=${encodeURIComponent(since)}`;
+          }
           const raw = await gh([
             "api",
             "--method",
             "GET",
-            `repos/${repoFlag(pr)}/pulls/${pr.number}/comments?per_page=${perPage}&page=${page}`,
+            url,
           ]);
           const pageComments: Array<{
             id: number;

@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServices } from "@/lib/services";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { getGhClient } from "@aoagents/ao-core";
 
 export const dynamic = "force-dynamic";
 
@@ -28,13 +25,13 @@ export async function POST() {
 
       for (const label of LABELS) {
         try {
-          await execFileAsync("gh", [
+          await getGhClient().exec([
             "label", "create", label.name,
             "--repo", project.repo,
             "--color", label.color,
             "--description", label.description,
             "--force",
-          ], { timeout: 10_000 });
+          ], { timeout: 10_000, noRetry: true, noDedup: true });
           results.push({ repo: project.repo, label: label.name, status: "created" });
         } catch {
           results.push({ repo: project.repo, label: label.name, status: "exists" });

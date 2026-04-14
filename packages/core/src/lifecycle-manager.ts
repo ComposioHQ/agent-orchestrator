@@ -475,10 +475,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (detectedPR) {
           session.pr = detectedPR;
           // Persist PR URL so subsequent polls don't need to re-query.
-          // Don't write status here — step 4 below will determine the
-          // correct status (merged, ci_failed, etc.) on this same cycle.
+          // Detect-and-stop: don't check status this cycle — the batch
+          // will include this PR next cycle. This avoids individual REST
+          // calls that previously caused rate limit cascades (F-02).
           const sessionsDir = getSessionsDir(config.configPath, project.path);
           updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
+          return session.status === "spawning" ? "working" : session.status;
         }
       } catch {
         // SCM detection failed — will retry next poll
@@ -524,38 +526,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           return "pr_open";
         }
 
-        // Fall back to individual API calls if no cached data
-        const prState = await scm.getPRState(session.pr);
-        if (prState === PR_STATE.MERGED) return "merged";
-        if (prState === PR_STATE.CLOSED) return "killed";
-
-        // Check CI
-        const ciStatus = await scm.getCISummary(session.pr);
-        if (ciStatus === CI_STATUS.FAILING) return "ci_failed";
-
-        // Check reviews
-        const reviewDecision = await scm.getReviewDecision(session.pr);
-        if (reviewDecision === "changes_requested") return "changes_requested";
-        if (reviewDecision === "approved" || reviewDecision === "none") {
-          // Check merge readiness — treat "none" (no reviewers required)
-          // as "approved" so CI-green PRs reach "mergeable" status
-          // and fire the merge.ready event / approved-and-green reaction.
-          const mergeReady = await scm.getMergeability(session.pr);
-          if (mergeReady.mergeable) return "mergeable";
-          if (reviewDecision === "approved") return "approved";
-        }
-        if (reviewDecision === "pending") return "review_pending";
-
-        // 4b. Post-PR stuck detection: agent has a PR open but is idle beyond
-        // threshold. This catches the case where step 2's stuck check was
-        // bypassed (getActivityState returned null) or the idle timestamp
-        // wasn't available during step 2 but the session has been at pr_open
-        // for a long time. Without this, sessions get stuck at "pr_open" forever.
-        if (detectedIdleTimestamp && isIdleBeyondThreshold(session, detectedIdleTimestamp)) {
-          return "stuck";
-        }
-
-        return "pr_open";
+        // Batch cache miss — keep current status, defer to next cycle.
+        // The batch runs every 30s and will include this PR next time.
+        // This avoids spawning 4-7 individual REST calls per session on
+        // cache miss, which previously caused rate limit cascades (F-02).
+        return session.status;
       } catch {
         // SCM check failed — keep current status
       }
@@ -785,10 +760,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     //
     // Exception: bypass throttle when a transition reaction just fired for a
     // review reaction key. The transitionReaction branch records
-    // lastPendingReviewDispatchHash, which requires the current fingerprint from
-    // the API. If we throttle here, that metadata never gets written and the
-    // next unthrottled poll sees a "new" fingerprint, clears the reaction tracker,
-    // and fires a duplicate dispatch.
+    // lastPendingReviewDispatchHash / lastAutomatedReviewDispatchHash, which
+    // requires the current fingerprint from the API. Throttling here would
+    // prevent that metadata write, causing a duplicate dispatch on the next
+    // unthrottled poll.
     const hasRelevantTransition =
       transitionReaction?.key === humanReactionKey ||
       transitionReaction?.key === automatedReactionKey;
@@ -997,17 +972,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
     const cachedEnrichment = prEnrichmentCache.get(prKey);
 
-    let checks: CICheck[];
-    if (cachedEnrichment?.ciChecks !== undefined) {
-      checks = cachedEnrichment.ciChecks;
-    } else {
-      try {
-        checks = await scm.getCIChecks(session.pr);
-      } catch {
-        // Failed to fetch checks — skip this cycle
-        return;
-      }
-    }
+    // Use batch enrichment data only — no fallback to individual REST calls.
+    // If the batch didn't include CI checks this cycle, defer to next cycle.
+    if (cachedEnrichment?.ciChecks === undefined) return;
+    const checks: CICheck[] = cachedEnrichment.ciChecks;
 
     const failedChecks = checks.filter(
       (c) => c.status === "failed" || c.conclusion?.toUpperCase() === "FAILURE",
@@ -1124,19 +1092,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
     const cachedData = prEnrichmentCache.get(prKey);
 
-    let hasConflicts: boolean;
-    if (cachedData) {
-      // Batch ran — trust its data (undefined means CONFLICTING wasn't set → no conflicts)
-      hasConflicts = cachedData.hasConflicts ?? false;
-    } else {
-      // Batch didn't run this cycle — fall back to individual API call
-      try {
-        const mergeReadiness = await scm.getMergeability(session.pr);
-        hasConflicts = !mergeReadiness.noConflicts;
-      } catch {
-        return;
-      }
-    }
+    // Use batch enrichment data only — no fallback to individual REST calls.
+    // If the batch didn't run this cycle, defer to next cycle.
+    if (!cachedData) return;
+    const hasConflicts = cachedData.hasConflicts ?? false;
 
     const lastDispatched = session.metadata["lastMergeConflictDispatched"] ?? "";
 
@@ -1445,6 +1404,47 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     async check(sessionId: SessionId): Promise<void> {
       const session = await sessionManager.get(sessionId);
       if (!session) throw new Error(`Session ${sessionId} not found`);
+      // Build enrichment data from individual SCM calls for this single session.
+      // We don't use enrichSessionsPRBatch here because it updates the shared
+      // lastBatchRefreshAt staleness timer, which would suppress the next
+      // pollAll() batch refresh for all PRs.
+      if (session.pr) {
+        const project = config.projects[session.projectId];
+        const scmPlugin = project?.scm?.plugin;
+        if (scmPlugin) {
+          const scm = registry.get<SCM>("scm", scmPlugin);
+          if (scm) {
+            // Use allSettled so partial results still populate the cache.
+            // A transient failure in e.g. getMergeability shouldn't prevent
+            // detection of "merged" from getPRState.
+            const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+            const [prStateR, ciStatusR, reviewR, mergeR, checksR] = await Promise.allSettled([
+              scm.getPRState(session.pr),
+              scm.getCISummary(session.pr),
+              scm.getReviewDecision(session.pr),
+              scm.getMergeability(session.pr),
+              scm.getCIChecks(session.pr),
+            ]);
+            const prState = prStateR.status === "fulfilled" ? prStateR.value : undefined;
+            const ciStatus = ciStatusR.status === "fulfilled" ? ciStatusR.value : undefined;
+            const reviewDecision = reviewR.status === "fulfilled" ? reviewR.value : undefined;
+            const mergeReady = mergeR.status === "fulfilled" ? mergeR.value : undefined;
+            const ciChecks = checksR.status === "fulfilled" ? checksR.value : undefined;
+            // Only populate cache if we got at least the PR state
+            if (prState !== undefined) {
+              prEnrichmentCache.set(prKey, {
+                state: prState,
+                ciStatus: ciStatus ?? "none",
+                reviewDecision: reviewDecision ?? "none",
+                mergeable: mergeReady?.mergeable ?? false,
+                hasConflicts: mergeReady ? !mergeReady.noConflicts : undefined,
+                blockers: mergeReady?.blockers,
+                ...(ciChecks !== undefined ? { ciChecks } : {}),
+              });
+            }
+          }
+        }
+      }
       await checkSession(session);
     },
   };

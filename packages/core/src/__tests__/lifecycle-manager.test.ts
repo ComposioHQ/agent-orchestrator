@@ -343,11 +343,24 @@ describe("check (single session)", () => {
       registry,
     });
 
+    // First check: detects PR and persists it (defers status to next cycle)
     await lm.check("app-1");
 
     expect(mockSCM.detectPR).toHaveBeenCalledOnce();
     const meta = readMetadataRaw(env.sessionsDir, "app-1");
     expect(meta?.["pr"]).toBe(makePR().url);
+
+    // Second check: PR is now known, batch enrichment populates cache, stuck detected
+    vi.mocked(mockSessionManager.get).mockResolvedValue(
+      makeSession({
+        status: "working",
+        branch: "feat/test",
+        pr: makePR(),
+        metadata: { agent: "mock-agent", pr: makePR().url },
+      }),
+    );
+    await lm.check("app-1");
+
     expect(lm.getStates().get("app-1")).toBe("stuck");
   });
 

@@ -4,36 +4,23 @@
  * Uses the `gh` CLI for all GitHub API interactions.
  */
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import type {
-  PluginModule,
-  Tracker,
-  Issue,
-  IssueFilters,
-  IssueUpdate,
-  CreateIssueInput,
-  ProjectConfig,
+import {
+  getGhClient,
+  type PluginModule,
+  type Tracker,
+  type Issue,
+  type IssueFilters,
+  type IssueUpdate,
+  type CreateIssueInput,
+  type ProjectConfig,
 } from "@aoagents/ao-core";
-
-const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 async function gh(args: string[]): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync("gh", args, {
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 30_000,
-    });
-    return stdout.trim();
-  } catch (err) {
-    throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
+  return getGhClient().exec(args);
 }
 
 function getErrorText(err: unknown): string {
@@ -257,17 +244,20 @@ function createGitHubTracker(): Tracker {
       update: IssueUpdate,
       project: ProjectConfig,
     ): Promise<void> {
+      const client = getGhClient();
+      const writeOpts = { noRetry: true, noDedup: true } as const;
+
       // Handle state change — GitHub Issues only supports open/closed.
       // "in_progress" is not a GitHub state, so it is intentionally a no-op.
       if (update.state === "closed") {
-        await gh(["issue", "close", identifier, "--repo", project.repo]);
+        await client.exec(["issue", "close", identifier, "--repo", project.repo], writeOpts);
       } else if (update.state === "open") {
-        await gh(["issue", "reopen", identifier, "--repo", project.repo]);
+        await client.exec(["issue", "reopen", identifier, "--repo", project.repo], writeOpts);
       }
 
       // Handle label removal
       if (update.removeLabels && update.removeLabels.length > 0) {
-        await gh([
+        await client.exec([
           "issue",
           "edit",
           identifier,
@@ -275,12 +265,12 @@ function createGitHubTracker(): Tracker {
           project.repo,
           "--remove-label",
           update.removeLabels.join(","),
-        ]);
+        ], writeOpts);
       }
 
       // Handle label changes
       if (update.labels && update.labels.length > 0) {
-        await gh([
+        await client.exec([
           "issue",
           "edit",
           identifier,
@@ -288,12 +278,12 @@ function createGitHubTracker(): Tracker {
           project.repo,
           "--add-label",
           update.labels.join(","),
-        ]);
+        ], writeOpts);
       }
 
       // Handle assignee changes
       if (update.assignee) {
-        await gh([
+        await client.exec([
           "issue",
           "edit",
           identifier,
@@ -301,12 +291,12 @@ function createGitHubTracker(): Tracker {
           project.repo,
           "--add-assignee",
           update.assignee,
-        ]);
+        ], writeOpts);
       }
 
       // Handle comment
       if (update.comment) {
-        await gh([
+        await client.exec([
           "issue",
           "comment",
           identifier,
@@ -314,7 +304,7 @@ function createGitHubTracker(): Tracker {
           project.repo,
           "--body",
           update.comment,
-        ]);
+        ], writeOpts);
       }
     },
 
@@ -339,7 +329,7 @@ function createGitHubTracker(): Tracker {
       }
 
       // gh issue create outputs the URL of the new issue
-      const url = await gh(args);
+      const url = await getGhClient().exec(args, { noRetry: true, noDedup: true });
 
       // Extract issue number from URL and fetch full details
       const match = url.match(/\/issues\/(\d+)/);

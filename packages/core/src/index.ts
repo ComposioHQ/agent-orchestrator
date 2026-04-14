@@ -95,6 +95,17 @@ export {
   recordTerminalActivity,
 } from "./activity-log.js";
 
+// GhClient — centralized GitHub API gatekeeper
+export { GhClient, getGhClient, initGhClient, resetGhClient } from "./gh-client.js";
+export type { GhExecOptions, GhClientStats } from "./gh-client.js";
+export {
+  GhClientError,
+  CircuitOpenError,
+  RateLimitError,
+  SemaphoreTimeoutError,
+  GhCliError,
+} from "./gh-client-errors.js";
+
 // Agent workspace hooks — shared PATH-wrapper setup for non-Claude agents
 export {
   setupPathWrapperWorkspace,

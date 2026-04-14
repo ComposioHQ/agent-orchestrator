@@ -1,6 +1,7 @@
 import {
   createCorrelationId,
   createProjectObserver,
+  initGhClient,
   type LifecycleManager,
   type OrchestratorConfig,
 } from "@aoagents/ao-core";
@@ -42,6 +43,14 @@ export async function ensureLifecycleWorker(
 
   const observer = createProjectObserver(config, "lifecycle-service");
   const lifecycle = await getLifecycleManager(config, projectId);
+
+  // Verify gh CLI is available before polling begins.
+  // Non-fatal: some projects may not use GitHub SCM.
+  try {
+    await initGhClient();
+  } catch {
+    // gh CLI not available — lifecycle will still work for non-GitHub projects
+  }
 
   lifecycle.start(intervalMs);
 

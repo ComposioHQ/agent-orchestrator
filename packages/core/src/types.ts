@@ -638,8 +638,11 @@ export interface SCM {
   /** Get pending (unresolved) review comments */
   getPendingComments(pr: PRInfo): Promise<ReviewComment[]>;
 
-  /** Get automated review comments (bots, linters, security scanners) */
-  getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]>;
+  /**
+   * Get automated review comments (bots, linters, security scanners).
+   * @param since - Optional ISO 8601 timestamp; only returns comments updated after this time.
+   */
+  getAutomatedComments(pr: PRInfo, since?: string): Promise<AutomatedComment[]>;
 
   // --- Merge Readiness ---
 
