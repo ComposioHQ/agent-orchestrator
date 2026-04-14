@@ -1,0 +1,25 @@
+packages/web/src/app/sessions/[id]/page.test.tsx
+  4157d1c6a4042bc0 2,89,317-374
+packages/web/src/app/sessions/[id]/page.tsx
+  4157d1c6a4042bc0 60-70,81,164-170,324,326
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "d158c0c0def91495c2697487b6f6f49c3d3688d1",
+  "prompts": {
+    "4157d1c6a4042bc0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d8862-0876-7de3-94bc-a234d7242482",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 82,
+      "total_deletions": 15,
+      "accepted_lines": 82,
+      "overriden_lines": 0
+    }
+  }
+}
