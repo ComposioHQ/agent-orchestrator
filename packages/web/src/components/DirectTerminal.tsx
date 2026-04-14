@@ -29,6 +29,21 @@ interface DirectTerminalProps {
 
 type TerminalVariant = "agent" | "orchestrator";
 
+// FitAddon.fit() reads `terminal._core._renderService.dimensions`, which is
+// undefined when the terminal has been disposed (stale ref) or when the
+// container has zero size (layout not yet settled). Both cases throw
+// `Cannot read properties of undefined (reading 'dimensions')` and crash the
+// page. Wrap fit() so a deferred timer/RAF that races cleanup can't blow up.
+export function safeFit(fit: FitAddonType | null, terminal: TerminalType | null): boolean {
+  if (!fit || !terminal) return false;
+  try {
+    fit.fit();
+    return true;
+  } catch (err) {
+    console.warn("[DirectTerminal] fit.fit() skipped:", err);
+    return false;
+  }
+}
 
 export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; light: ITheme } {
   const agentAccent = {
@@ -269,8 +284,9 @@ export function DirectTerminal({
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
 
-        // Fit terminal to container
-        fit.fit();
+        // Fit terminal to container — may throw if the container has zero
+        // size at mount (e.g. hidden tab), so always go through safeFit.
+        safeFit(fit, terminal);
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
@@ -351,10 +367,8 @@ export function DirectTerminal({
 
         // Handle window resize
         const handleResize = () => {
-          if (fit) {
-            fit.fit();
-            resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
-          }
+          if (!safeFit(fit, terminal)) return;
+          resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
         };
 
         window.addEventListener("resize", handleResize);
@@ -367,7 +381,12 @@ export function DirectTerminal({
         // Send initial size
         resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
 
-        // Store cleanup function to be called from useEffect cleanup
+        // Store cleanup function to be called from useEffect cleanup.
+        // We null out the refs BEFORE disposing so any concurrent effect
+        // (reconnect, fullscreen resize, deferred RAF/timer) that races
+        // cleanup sees `null` instead of a disposed terminal — calling
+        // fit.fit() on a disposed terminal throws
+        // `Cannot read properties of undefined (reading 'dimensions')`.
         cleanup = () => {
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
@@ -376,6 +395,12 @@ export function DirectTerminal({
           inputDisposable = null;
           unsubscribe?.();
           closeTerminal(sessionId);
+          if (terminalInstance.current === terminal) {
+            terminalInstance.current = null;
+          }
+          if (fitAddon.current === fit) {
+            fitAddon.current = null;
+          }
           terminal.dispose();
         };
       })
@@ -407,8 +432,7 @@ export function DirectTerminal({
     if (muxStatus !== "connected") return;
     const fit = fitAddon.current;
     const terminal = terminalInstance.current;
-    if (!fit || !terminal) return;
-    fit.fit();
+    if (!safeFit(fit, terminal) || !terminal) return;
     resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
   }, [muxStatus, sessionId, resizeTerminalMux]);
 
@@ -423,11 +447,16 @@ export function DirectTerminal({
 
   // Re-fit terminal when fullscreen changes
   useEffect(() => {
-    const fit = fitAddon.current;
-    const terminal = terminalInstance.current;
     const container = terminalRef.current;
 
-    if (!fit || !terminal || muxStatusRef.current !== "connected" || !container) {
+    if (muxStatusRef.current !== "connected" || !container) {
+      return;
+    }
+    // Don't capture terminal/fit in a closure — they may be disposed and
+    // re-created (e.g. on theme change) while this effect's deferred
+    // timers/RAF callbacks are still pending. Always re-read the refs
+    // at call time so we see the current instance or bail safely.
+    if (!terminalInstance.current || !fitAddon.current) {
       return;
     }
 
@@ -452,13 +481,19 @@ export function DirectTerminal({
         return;
       }
 
+      // Re-read refs in case the terminal was disposed + re-created since
+      // the effect started (theme switch, reconnect, etc.).
+      const currentTerminal = terminalInstance.current;
+      const currentFit = fitAddon.current;
+      if (!currentTerminal || !currentFit) return;
+
       // Container is at target size, now resize terminal
-      terminal.refresh(0, terminal.rows - 1);
-      fit.fit();
-      terminal.refresh(0, terminal.rows - 1);
+      currentTerminal.refresh(0, currentTerminal.rows - 1);
+      if (!safeFit(currentFit, currentTerminal)) return;
+      currentTerminal.refresh(0, currentTerminal.rows - 1);
 
       // Send new size to server via mux
-      resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+      resizeTerminalMux(sessionId, currentTerminal.cols, currentTerminal.rows);
     };
 
     // Start resize polling

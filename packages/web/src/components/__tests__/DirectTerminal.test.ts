@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
-import { buildTerminalThemes } from "@/components/DirectTerminal";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import type { Terminal as TerminalType } from "xterm";
+import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
+import { buildTerminalThemes, safeFit } from "@/components/DirectTerminal";
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const ANSI_KEYS = [
@@ -84,5 +86,45 @@ describe("buildTerminalThemes", () => {
   it("selection colors differ between dark and light themes", () => {
     const { dark, light } = buildTerminalThemes("agent");
     expect(dark.selectionBackground).not.toBe(light.selectionBackground);
+  });
+});
+
+describe("safeFit", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const fakeTerminal = {} as TerminalType;
+
+  it("returns false when fit addon is null (disposed/stale ref)", () => {
+    expect(safeFit(null, fakeTerminal)).toBe(false);
+  });
+
+  it("returns false when terminal is null (disposed/stale ref)", () => {
+    const fit = { fit: vi.fn() } as unknown as FitAddonType;
+    expect(safeFit(fit, null)).toBe(false);
+    expect(fit.fit).not.toHaveBeenCalled();
+  });
+
+  it("returns true when fit() succeeds", () => {
+    const fit = { fit: vi.fn() } as unknown as FitAddonType;
+    expect(safeFit(fit, fakeTerminal)).toBe(true);
+    expect(fit.fit).toHaveBeenCalledOnce();
+  });
+
+  it("swallows the 'dimensions' TypeError thrown by FitAddon on a disposed terminal", () => {
+    // This is the exact error from issue #936: xterm's FitAddon reads
+    // `terminal._core._renderService.dimensions` and blows up when the
+    // render service has been torn down by dispose().
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fit = {
+      fit: vi.fn(() => {
+        throw new TypeError("Cannot read properties of undefined (reading 'dimensions')");
+      }),
+    } as unknown as FitAddonType;
+
+    expect(() => safeFit(fit, fakeTerminal)).not.toThrow();
+    expect(safeFit(fit, fakeTerminal)).toBe(false);
+    expect(warn).toHaveBeenCalled();
   });
 });
