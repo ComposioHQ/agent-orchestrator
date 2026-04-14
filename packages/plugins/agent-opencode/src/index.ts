@@ -80,20 +80,19 @@ function parseSessionList(raw: string): OpenCodeSessionListEntry[] {
 function buildSessionIdCaptureScript(): string {
   const script = `
 let buffer = '';
-let captured = null;
 process.stdin.on('data', chunk => {
   buffer += chunk;
   const lines = buffer.split('\\n');
   buffer = lines.pop() || '';
   for (const line of lines) {
-    if (captured) continue;
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       const obj = JSON.parse(trimmed);
       const sid = (typeof obj.session_id === 'string' && obj.session_id) || (typeof obj.sessionID === 'string' && obj.sessionID);
       if (sid && /^ses_[A-Za-z0-9_-]+$/.test(sid)) {
-        captured = sid;
+        process.stdout.write(sid);
+        process.exit(0);
       }
     } catch {}
   }
@@ -103,13 +102,10 @@ process.stdin.on('data', chunk => {
       const obj = JSON.parse(buffer.trim());
       const sid = (typeof obj.session_id === 'string' && obj.session_id) || (typeof obj.sessionID === 'string' && obj.sessionID);
       if (sid && /^ses_[A-Za-z0-9_-]+$/.test(sid)) {
-        captured = sid;
+        process.stdout.write(sid);
+        process.exit(0);
       }
     } catch {}
-  }
-  if (captured) {
-    process.stdout.write(captured);
-    process.exit(0);
   }
   process.exit(1);
 });
@@ -210,6 +206,13 @@ function createOpenCodeAgent(): Agent {
   return {
     name: "opencode",
     processName: "opencode",
+    // Prompt is delivered inline via `opencode run <message>`.
+    // The capture script exits immediately after extracting the session_id,
+    // which SIGPIPEs `opencode run` — but the session is already created
+    // and the prompt submitted to the LLM. The TUI then opens on that session.
+    // Post-launch delivery (via tmux sendMessage) does NOT work because the
+    // multi-step launch script takes 5-10s, and sendMessage fires while the
+    // shell is still running — the typed text goes to the shell, not the TUI.
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const options: string[] = [];
@@ -228,19 +231,15 @@ function createOpenCodeAgent(): Agent {
         sharedOptions.push("--agent", shellEscape(config.subagent));
       }
 
-      let promptValue: string | undefined;
-      if (config.prompt) {
-        if (config.systemPromptFile) {
-          promptValue = `"$(cat ${shellEscape(config.systemPromptFile)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt)})"`;
-        } else if (config.systemPrompt) {
-          promptValue = shellEscape(`${config.systemPrompt}\n\n${config.prompt}`);
-        } else {
-          promptValue = shellEscape(config.prompt);
-        }
-      } else if (config.systemPromptFile) {
-        promptValue = `"$(cat ${shellEscape(config.systemPromptFile)})"`;
+      // Determine the message to send to `opencode run`:
+      // Priority: systemPromptFile > systemPrompt > config.prompt > no message (--command true)
+      let messageValue: string | undefined;
+      if (config.systemPromptFile) {
+        messageValue = `"$(cat ${shellEscape(config.systemPromptFile)})"`;
       } else if (config.systemPrompt) {
-        promptValue = shellEscape(config.systemPrompt);
+        messageValue = shellEscape(config.systemPrompt);
+      } else if (config.prompt) {
+        messageValue = shellEscape(config.prompt);
       }
 
       if (config.model) {
@@ -257,8 +256,15 @@ function createOpenCodeAgent(): Agent {
         ];
         const captureScript = buildSessionIdCaptureScript();
         const fallbackScript = buildSessionLookupScript();
-        const runCommand = ["opencode", "run", ...runOptions, "--command", "true"].join(" ");
-        const resumeOptions = [...(promptValue ? ["--prompt", promptValue] : []), ...sharedOptions];
+        const runCommandParts = ["opencode", "run", ...runOptions];
+        if (messageValue) {
+          runCommandParts.push(messageValue);
+        } else {
+          // No prompt available — create session without a message.
+          runCommandParts.push("--command", "true");
+        }
+        const runCommand = runCommandParts.join(" ");
+        const resumeOptions = [...sharedOptions];
         const resumeOptionsSuffix = resumeOptions.length > 0 ? ` ${resumeOptions.join(" ")}` : "";
         const missingSessionError = shellEscape(
           `failed to discover OpenCode session ID for AO:${config.sessionId}`,
@@ -270,10 +276,7 @@ function createOpenCodeAgent(): Agent {
         ].join("; ");
       }
 
-      if (promptValue) {
-        options.push("--prompt", promptValue);
-      }
-
+      // Existing session resume
       options.push(...sharedOptions);
 
       return ["opencode", ...options].join(" ");
