@@ -86,6 +86,43 @@ describe("send", () => {
     );
   });
 
+  it("throws when a killed session cannot be restored to a ready state for delivery", async () => {
+    vi.useFakeTimers();
+    try {
+      const wsPath = join(tmpDir, "ws-app-1");
+      mkdirSync(wsPath, { recursive: true });
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: wsPath,
+        branch: "feat/TEST-1",
+        status: "killed",
+        project: "my-app",
+        issue: "TEST-1",
+        runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+      });
+
+      vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => handle.id !== "rt-restored");
+      vi.mocked(mockAgent.isProcessRunning).mockImplementation(
+        async (handle) => handle.id !== "rt-restored",
+      );
+      vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
+      vi.mocked(mockRuntime.getOutput).mockResolvedValue("");
+      vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const sendPromise = sm.send("app-1", "hello");
+      const rejection = expect(sendPromise).rejects.toThrow(
+        "Cannot send to session app-1: session is not running",
+      );
+
+      await vi.runAllTimersAsync();
+      await rejection;
+      expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("waits for spawning sessions to become interactive before considering restore", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
