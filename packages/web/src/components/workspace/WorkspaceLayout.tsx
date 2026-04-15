@@ -269,14 +269,21 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
 
     // In vertical layout with vertical separator (separatorIndex === 1), use verticalSplit
     const isVerticalRowSplit = verticalLayout && separatorIndex === 1 && direction === "vertical";
+    // In vertical layout with the column separator (separatorIndex === 0), buildTemplate
+    // normalizes only over sizes[0]+sizes[1] (not 100), so we must scale delta accordingly.
+    const isVerticalColSplit = verticalLayout && separatorIndex === 0 && direction === "horizontal";
     const startSizes = isVerticalRowSplit ? [...verticalSplit] : [...sizes];
     const mins = isVerticalRowSplit ? [15, 15] : [8, 15, 15];
     // verticalSplit is a 2-element array [top, bottom], so indices are 0/1 not separatorIndex
     const idx0 = isVerticalRowSplit ? 0 : separatorIndex;
     const idx1 = isVerticalRowSplit ? 1 : separatorIndex + 1;
+    // Normalization factor: buildTemplate divides by the sum of the sizes it uses.
+    // For the column split in vertical layout that's sizes[0]+sizes[1]; for everything
+    // else that sum equals 100 (all three panes).
+    const normFactor = isVerticalColSplit ? (startSizes[0] + startSizes[1]) : 100;
 
     function applyDelta(currentPos: number) {
-      const deltaPct = ((currentPos - startPos) / containerSize) * 100;
+      const deltaPct = ((currentPos - startPos) / containerSize) * normFactor;
       const newSizes = [...startSizes];
       newSizes[idx0] = Math.max(mins[idx0], startSizes[idx0] + deltaPct);
       newSizes[idx1] = Math.max(mins[idx1], startSizes[idx1] - deltaPct);
