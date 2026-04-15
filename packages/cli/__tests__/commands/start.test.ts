@@ -33,6 +33,8 @@ const {
     list: vi.fn(),
     kill: vi.fn(),
     cleanup: vi.fn(),
+    restore: vi.fn(),
+    remap: vi.fn(),
     get: vi.fn(),
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
@@ -95,7 +97,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
 });
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
-  getSessionManager: async (): Promise<SessionManager> => mockSessionManager as unknown as SessionManager,
+  getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
 }));
 
 vi.mock("../../src/lib/lifecycle-service.js", () => ({
