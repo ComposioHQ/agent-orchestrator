@@ -18,6 +18,7 @@ interface ProjectSidebarProps {
   onToggleCollapsed?: () => void;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
+  loading?: boolean;
 }
 
 type SessionDotLevel = "respond" | "review" | "pending" | "working" | "merge" | "done";
@@ -50,6 +51,19 @@ export function ProjectSidebar(props: ProjectSidebarProps) {
   return <ProjectSidebarInner {...props} />;
 }
 
+function SessionSkeleton() {
+  return (
+    <div className="project-sidebar__sessions">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="project-sidebar__sess-row project-sidebar__sess-row--skeleton" aria-hidden="true">
+          <div className="sidebar-session-dot shrink-0 rounded-full opacity-30" data-level="working" />
+          <div className="project-sidebar__sess-label project-sidebar__sess-label--skeleton" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ProjectSidebarInner({
   projects,
   sessions,
@@ -59,6 +73,7 @@ function ProjectSidebarInner({
   onToggleCollapsed: _onToggleCollapsed,
   mobileOpen = false,
   onMobileClose,
+  loading = false,
 }: ProjectSidebarProps) {
   const router = useRouter();
 
@@ -196,47 +211,51 @@ function ProjectSidebarInner({
 
                 {/* Sessions */}
                 {isExpanded && (
-                  <div className="project-sidebar__sessions">
-                    {visibleSessions.length > 0 ? (
-                      visibleSessions.map((session) => {
-                        const level = getAttentionLevel(session);
-                        const isSessionActive = activeSessionId === session.id;
-                        const title = session.branch ?? getSessionTitle(session);
-                        return (
-                          <button
-                            key={session.id}
-                            type="button"
-                            onClick={() =>
-                              navigate(
-                                `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`,
-                              )
-                            }
-                            className={cn(
-                              "project-sidebar__sess-row",
-                              isSessionActive && "project-sidebar__sess-row--active",
-                            )}
-                            aria-current={isSessionActive ? "page" : undefined}
-                            aria-label={`Open ${title}`}
-                          >
-                            <SessionDot level={level} />
-                            <span
+                  loading ? (
+                    <SessionSkeleton />
+                  ) : (
+                    <div className="project-sidebar__sessions">
+                      {visibleSessions.length > 0 ? (
+                        visibleSessions.map((session) => {
+                          const level = getAttentionLevel(session);
+                          const isSessionActive = activeSessionId === session.id;
+                          const title = session.branch ?? getSessionTitle(session);
+                          return (
+                            <button
+                              key={session.id}
+                              type="button"
+                              onClick={() =>
+                                navigate(
+                                  `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`,
+                                )
+                              }
                               className={cn(
-                                "project-sidebar__sess-label",
-                                isSessionActive && "project-sidebar__sess-label--active",
+                                "project-sidebar__sess-row",
+                                isSessionActive && "project-sidebar__sess-row--active",
                               )}
+                              aria-current={isSessionActive ? "page" : undefined}
+                              aria-label={`Open ${title}`}
                             >
-                              {title}
-                            </span>
-                            <span className="project-sidebar__sess-status">
-                              {LEVEL_LABELS[level]}
-                            </span>
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <div className="project-sidebar__empty">No active sessions</div>
-                    )}
-                  </div>
+                              <SessionDot level={level} />
+                              <span
+                                className={cn(
+                                  "project-sidebar__sess-label",
+                                  isSessionActive && "project-sidebar__sess-label--active",
+                                )}
+                              >
+                                {title}
+                              </span>
+                              <span className="project-sidebar__sess-status">
+                                {LEVEL_LABELS[level]}
+                              </span>
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <div className="project-sidebar__empty">No active sessions</div>
+                      )}
+                    </div>
+                  )
                 )}
               </div>
             );

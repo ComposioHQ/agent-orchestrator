@@ -60,7 +60,7 @@ export default function SessionPage() {
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(undefined);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[]>([]);
+  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [routeError, setRouteError] = useState<Error | null>(null);
   const [sessionMissing, setSessionMissing] = useState(false);
@@ -75,6 +75,7 @@ export default function SessionPage() {
   const resolvedProjectSessionsKeyRef = useRef<string | null>(null);
   const prefixByProjectRef = useRef<Map<string, string>>(new Map());
   const hasLoadedSessionRef = useRef(false);
+  const sidebarSessionsRef = useRef<DashboardSession[] | null>(null);
 
   // Keep prefixByProjectRef in sync so fetchProjectSessions (stable [] dep) reads latest map
   useEffect(() => {
@@ -193,7 +194,25 @@ export default function SessionPage() {
       const res = await fetch("/api/sessions");
       if (!res.ok) return;
       const body = (await res.json()) as { sessions?: DashboardSession[] } | null;
-      setSidebarSessions(body?.sessions ?? []);
+      const next = body?.sessions ?? [];
+      const prev = sidebarSessionsRef.current;
+      // Skip re-render if nothing meaningful changed
+      const changed =
+        prev === null ||
+        prev.length !== next.length ||
+        next.some((s, i) => {
+          const p = prev[i];
+          return (
+            p.id !== s.id ||
+            p.status !== s.status ||
+            p.activity !== s.activity ||
+            p.lastActivityAt !== s.lastActivityAt
+          );
+        });
+      if (changed) {
+        sidebarSessionsRef.current = next;
+        setSidebarSessions(next);
+      }
     } catch {
       // non-critical
     }
@@ -205,10 +224,9 @@ export default function SessionPage() {
     }
   }, [sessionIsOrchestrator]);
 
-  // Initial fetch — session first, zone counts after (avoids blocking on slow /api/sessions)
+  // Initial fetch — session + sidebar in parallel; zone counts deferred to avoid contention
   useEffect(() => {
-    fetchSession();
-    fetchSidebarSessions();
+    void Promise.all([fetchSession(), fetchSidebarSessions()]);
     // Delay zone counts so the heavy /api/sessions call doesn't contend with session load
     const t = setTimeout(fetchProjectSessions, 2000);
     return () => clearTimeout(t);
@@ -252,7 +270,8 @@ export default function SessionPage() {
       orchestratorZones={zoneCounts ?? undefined}
       projectOrchestratorId={projectOrchestratorId}
       projects={projects}
-      sidebarSessions={sidebarSessions}
+      sidebarSessions={sidebarSessions ?? []}
+      sidebarLoading={sidebarSessions === null}
     />
   );
 }
