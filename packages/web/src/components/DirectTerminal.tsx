@@ -7,10 +7,10 @@ import { cn } from "@/lib/cn";
 import { useMux } from "@/hooks/useMux";
 
 // Import xterm CSS (must be imported in client component)
-import "xterm/css/xterm.css";
+import "@xterm/xterm/css/xterm.css";
 
 // Dynamically import xterm types for TypeScript
-import type { ITheme, Terminal as TerminalType } from "xterm";
+import type { ITheme, Terminal as TerminalType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 
 interface DirectTerminalProps {
@@ -194,7 +194,7 @@ export function DirectTerminal({
     let unsubscribe: (() => void) | null = null;
 
     Promise.all([
-      import("xterm").then((mod) => mod.Terminal),
+      import("@xterm/xterm").then((mod) => mod.Terminal),
       import("@xterm/addon-fit").then((mod) => mod.FitAddon),
       import("@xterm/addon-web-links").then((mod) => mod.WebLinksAddon),
       document.fonts.ready,
@@ -217,7 +217,6 @@ export function DirectTerminal({
           minimumContrastRatio: isDark ? 1 : 7,
           scrollback: 10000,
           allowProposedApi: true,
-          fastScrollModifier: "alt",
           fastScrollSensitivity: 3,
           scrollSensitivity: 1,
         });
