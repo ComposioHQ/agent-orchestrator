@@ -210,7 +210,16 @@ beforeEach(() => {
   });
 
   // Default: mock spawn to return a fake child process
-  const fakeChild = { on: vi.fn(), kill: vi.fn(), emit: vi.fn(), stdout: null, stderr: null };
+  const fakeChild = {
+    on: vi.fn(),
+    once: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
+      if (event === "close") cb(0);
+    }),
+    kill: vi.fn(),
+    emit: vi.fn(),
+    stdout: null,
+    stderr: null,
+  };
   mockSpawn.mockReturnValue(fakeChild);
 
   mockSessionManager.list.mockReset();
@@ -480,14 +489,22 @@ describe("start command — URL argument", () => {
     // gh auth status succeeds
     mockExecSilent.mockResolvedValue("Logged in");
 
-    mockExec.mockImplementation(async (cmd: string, args: string[]) => {
+    mockSpawn.mockImplementation((cmd: unknown, args: unknown[], _opts?: unknown) => {
       if (cmd === "gh" && args[0] === "repo" && args[1] === "clone") {
         createFakeRepo(repoDir, "https://github.com/owner/my-app.git", {
           "Cargo.toml": "",
         });
-        return { stdout: "", stderr: "" };
       }
-      return { stdout: "", stderr: "" };
+      return {
+        on: vi.fn(),
+        once: (event: string, cb: (code?: number | null) => void) => {
+          if (event === "close") cb(0);
+        },
+        kill: vi.fn(),
+        emit: vi.fn(),
+        stdout: null,
+        stderr: null,
+      };
     });
 
     await program.parseAsync([
@@ -499,7 +516,7 @@ describe("start command — URL argument", () => {
       "--no-orchestrator",
     ]);
 
-    expect(mockExec).toHaveBeenCalledWith(
+    expect(mockSpawn).toHaveBeenCalledWith(
       "gh",
       ["repo", "clone", "owner/my-app", repoDir, "--", "--depth", "1"],
       expect.anything(),
@@ -524,19 +541,39 @@ describe("start command — URL argument", () => {
       return null;
     });
 
-    mockExec.mockImplementation(async (cmd: string, args: string[]) => {
-      // SSH attempt fails
-      if (cmd === "git" && args[0] === "clone" && args[3]?.startsWith("git@")) {
-        throw new Error("Permission denied (publickey)");
-      }
-      // HTTPS fallback succeeds
+    mockSpawn.mockImplementation((cmd: unknown, args: unknown[], _opts?: unknown) => {
       if (cmd === "git" && args[0] === "clone") {
+        const url = String(args[3] ?? "");
+        // SSH attempt fails (simulate non-zero exit)
+        if (url.startsWith("git@")) {
+          return {
+            on: vi.fn(),
+            once: (event: string, cb: (code?: number | null) => void) => {
+              if (event === "close") cb(1);
+            },
+            kill: vi.fn(),
+            emit: vi.fn(),
+            stdout: null,
+            stderr: null,
+          };
+        }
+
+        // HTTPS fallback succeeds
         createFakeRepo(repoDir, "https://github.com/owner/my-app.git", {
           "Cargo.toml": "",
         });
-        return { stdout: "", stderr: "" };
       }
-      return { stdout: "", stderr: "" };
+
+      return {
+        on: vi.fn(),
+        once: (event: string, cb: (code?: number | null) => void) => {
+          if (event === "close") cb(0);
+        },
+        kill: vi.fn(),
+        emit: vi.fn(),
+        stdout: null,
+        stderr: null,
+      };
     });
 
     await program.parseAsync([
@@ -549,12 +586,12 @@ describe("start command — URL argument", () => {
     ]);
 
     // Should have tried SSH first, then HTTPS
-    expect(mockExec).toHaveBeenCalledWith(
+    expect(mockSpawn).toHaveBeenCalledWith(
       "git",
       ["clone", "--depth", "1", "git@github.com:owner/my-app.git", repoDir],
       expect.anything(),
     );
-    expect(mockExec).toHaveBeenCalledWith(
+    expect(mockSpawn).toHaveBeenCalledWith(
       "git",
       ["clone", "--depth", "1", "https://github.com/owner/my-app.git", repoDir],
       expect.anything(),
@@ -658,7 +695,16 @@ describe("start command — URL argument", () => {
 
   it("fails on clone error with descriptive message", async () => {
     mockCwd(tmpDir);
-    mockExec.mockRejectedValue(new Error("fatal: repository not found"));
+    mockSpawn.mockImplementation(() => ({
+      on: vi.fn(),
+      once: (event: string, cb: (...args: unknown[]) => void) => {
+        if (event === "error") cb(new Error("fatal: repository not found"));
+      },
+      kill: vi.fn(),
+      emit: vi.fn(),
+      stdout: null,
+      stderr: null,
+    }));
 
     await expect(
       program.parseAsync([
