@@ -516,14 +516,20 @@ describe("start command — URL argument", () => {
     // gh auth status succeeds
     mockExecSilent.mockResolvedValue("Logged in");
 
-    mockSpawn.mockImplementation((cmd: unknown, args: unknown[], _opts?: unknown) => {
+    mockSpawn.mockImplementation(
+      (
+        cmd: string,
+        args: string[],
+        _opts?: { cwd?: string; env?: NodeJS.ProcessEnv },
+      ) => {
       if (cmd === "gh" && args[0] === "repo" && args[1] === "clone") {
         createFakeRepo(repoDir, "https://github.com/owner/my-app.git", {
           "Cargo.toml": "",
         });
       }
       return createSpawnChild({ closeCode: 0 });
-    });
+      },
+    );
 
     await program.parseAsync([
       "node",
@@ -559,7 +565,12 @@ describe("start command — URL argument", () => {
       return null;
     });
 
-    mockSpawn.mockImplementation((cmd: unknown, args: unknown[], _opts?: unknown) => {
+    mockSpawn.mockImplementation(
+      (
+        cmd: string,
+        args: string[],
+        _opts?: { cwd?: string; env?: NodeJS.ProcessEnv },
+      ) => {
       if (cmd === "git" && args[0] === "clone") {
         const url = String(args[3] ?? "");
         // SSH attempt fails (simulate non-zero exit)
@@ -574,7 +585,8 @@ describe("start command — URL argument", () => {
       }
 
       return createSpawnChild({ closeCode: 0 });
-    });
+      },
+    );
 
     await program.parseAsync([
       "node",
