@@ -33,7 +33,9 @@ export async function GET(request: Request) {
     const coreSessions = await sessionManager.list(requestedProjectId);
     const visibleSessions = filterProjectSessions(coreSessions, projectFilter, config.projects);
     const orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
-    const orchestratorId = orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null;
+    // Pick the first orchestrator as the default — the list is sorted by
+    // recency (active first, then newest) so this is the best candidate.
+    const orchestratorId = orchestrators.length > 0 ? (orchestrators[0]?.id ?? null) : null;
 
     if (orchestratorOnly) {
       recordApiObservation({

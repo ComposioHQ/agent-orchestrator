@@ -1176,6 +1176,21 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         userPrompt: spawnConfig.prompt,
       });
 
+      // Record the parent orchestrator session so the dashboard can link back.
+      // Find the most recent non-exited orchestrator for this project.
+      const existingRecords = loadActiveSessionRecords(project);
+      const orchestratorRecord = existingRecords
+        .filter((rec) => isOrchestratorSessionRecord(rec.sessionName, rec.raw, project.sessionPrefix))
+        .filter((rec) => {
+          const status = rec.raw["status"] ?? "";
+          return status !== "exited" && status !== "killed" && status !== "done" && status !== "terminated" && status !== "cleanup";
+        })
+        .sort((a, b) => sessionMetadataTimestamp(b) - sessionMetadataTimestamp(a))[0];
+      if (orchestratorRecord) {
+        updateMetadata(sessionsDir, sessionId, { parentOrchestratorId: orchestratorRecord.sessionName });
+        session.metadata["parentOrchestratorId"] = orchestratorRecord.sessionName;
+      }
+
       if (plugins.agent.postLaunchSetup) {
         await plugins.agent.postLaunchSetup(session);
       }

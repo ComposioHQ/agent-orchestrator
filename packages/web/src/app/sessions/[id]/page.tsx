@@ -49,7 +49,7 @@ interface ZoneCounts {
 interface ProjectSessionsBody {
   sessions?: DashboardSession[];
   orchestratorId?: string | null;
-  orchestrators?: Array<{ id: string; projectId: string; projectName: string }>;
+  orchestrators?: Array<{ id: string; projectId: string; projectName: string; status: string; createdAt: string }>;
 }
 
 export default function SessionPage() {
@@ -75,6 +75,7 @@ export default function SessionPage() {
   const resolvedProjectSessionsKeyRef = useRef<string | null>(null);
   const prefixByProjectRef = useRef<Map<string, string>>(new Map());
   const hasLoadedSessionRef = useRef(false);
+  const parentOrchestratorIdRef = useRef<string | null>(null);
 
   // Keep prefixByProjectRef in sync so fetchProjectSessions (stable [] dep) reads latest map
   useEffect(() => {
@@ -115,6 +116,11 @@ export default function SessionPage() {
   useEffect(() => {
     sessionIsOrchestratorRef.current = sessionIsOrchestrator;
   }, [sessionIsOrchestrator]);
+
+  // Keep parentOrchestratorIdRef in sync so fetchProjectSessions reads the latest value
+  useEffect(() => {
+    parentOrchestratorIdRef.current = session?.metadata?.["parentOrchestratorId"] ?? null;
+  }, [session]);
 
   // Fetch session data (memoized to avoid recreating on every render)
   const fetchSession = useCallback(async () => {
@@ -158,6 +164,7 @@ export default function SessionPage() {
       const body = (await res.json()) as ProjectSessionsBody;
       const sessions = body.sessions ?? [];
       const orchestratorId =
+        parentOrchestratorIdRef.current ??
         body.orchestratorId ??
         body.orchestrators?.find((orchestrator) => orchestrator.projectId === projectId)?.id ??
         null;

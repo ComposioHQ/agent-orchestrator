@@ -91,8 +91,21 @@ export function listDashboardOrchestrators(
       id: session.id,
       projectId: session.projectId,
       projectName: projects[session.projectId]?.name ?? session.projectId,
+      status: session.status,
+      createdAt: session.createdAt.toISOString(),
     }))
-    .sort((a, b) => a.projectName.localeCompare(b.projectName) || a.id.localeCompare(b.id));
+    .sort((a, b) => {
+      // Prefer non-exited/active sessions first
+      const aExited = a.status === "exited" || a.status === "killed" || a.status === "done" || a.status === "terminated" || a.status === "cleanup";
+      const bExited = b.status === "exited" || b.status === "killed" || b.status === "done" || b.status === "terminated" || b.status === "cleanup";
+      if (aExited !== bExited) return aExited ? 1 : -1;
+      // Then sort by most recent createdAt descending
+      const aTime = new Date(a.createdAt).getTime();
+      const bTime = new Date(b.createdAt).getTime();
+      if (bTime !== aTime) return bTime - aTime;
+      // Final tie-break by id
+      return a.id.localeCompare(b.id);
+    });
 }
 
 /**
