@@ -1023,7 +1023,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   flex: 1;
   min-height: 0;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
   background: var(--color-bg-base);
 }
 
