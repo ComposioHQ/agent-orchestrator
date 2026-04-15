@@ -58,6 +58,9 @@ function fitTerminal(
     core._renderService?.clear();
     terminal.resize(correctCols, correctRows);
   }
+
+  // Refresh the terminal to repaint with updated cell dimensions
+  terminal.refresh(0, terminal.rows - 1);
 }
 
 // Import xterm CSS (must be imported in client component)

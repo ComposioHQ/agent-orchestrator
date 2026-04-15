@@ -227,8 +227,8 @@
   margin: 0;
   padding: 12px 0;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--preview-font-size, 13px);
+  line-height: calc(var(--preview-font-size, 13px) * 1.54);
   background: var(--color-bg-base);
 }
 
@@ -303,13 +303,13 @@
   padding: 24px 32px;
   color: var(--color-text-primary);
   background: var(--color-bg-base);
-  font-size: 14px;
+  font-size: calc(var(--preview-font-size, 13px) + 1px);
   line-height: 1.6;
 }
 
 /* Headings — 100gb-minimalist: monochrome grey ladder, size + weight */
 .workspace-markdown-preview h1 {
-  font-size: 30px;
+  font-size: 2.14em;
   font-weight: 700;
   color: var(--color-text-primary);
   margin: 24px 0 14px;
@@ -319,7 +319,7 @@
 }
 
 .workspace-markdown-preview h2 {
-  font-size: 22px;
+  font-size: 1.57em;
   font-weight: 650;
   color: color-mix(in srgb, var(--color-text-primary) 88%, var(--color-text-secondary));
   margin: 20px 0 10px;
@@ -328,14 +328,14 @@
 }
 
 .workspace-markdown-preview h3 {
-  font-size: 18px;
+  font-size: 1.29em;
   font-weight: 600;
   color: color-mix(in srgb, var(--color-text-primary) 70%, var(--color-text-secondary));
   margin: 16px 0 8px;
 }
 
 .workspace-markdown-preview h4 {
-  font-size: 15px;
+  font-size: 1.07em;
   font-weight: 600;
   color: color-mix(in srgb, var(--color-text-primary) 50%, var(--color-text-secondary));
   margin: 14px 0 6px;
@@ -343,7 +343,7 @@
 
 .workspace-markdown-preview h5,
 .workspace-markdown-preview h6 {
-  font-size: 12px;
+  font-size: 0.86em;
   font-weight: 600;
   color: var(--color-text-secondary);
   text-transform: uppercase;
@@ -725,8 +725,8 @@
   margin: 0;
   padding: 0;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--preview-font-size, 13px);
+  line-height: calc(var(--preview-font-size, 13px) * 1.54);
   background: var(--color-bg-base);
 }
 
@@ -760,7 +760,7 @@
   min-width: 40px;
   padding: 0 4px;
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: calc(var(--preview-font-size, 13px) - 1px);
 }
 
 .workspace-diff-marker {
