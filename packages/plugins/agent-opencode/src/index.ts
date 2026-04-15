@@ -149,21 +149,45 @@ process.stdin.on('data', c => input += c).on('end', () => {
 // Session List Helpers
 // =============================================================================
 
+const SESSION_LIST_CACHE_TTL_MS = 10_000;
+let _sessionListCache: { promise: Promise<OpenCodeSessionListEntry[]>; fetchedAt: number } | null = null;
+
+/** @internal — reset cache between test runs */
+export function _resetSessionListCache(): void {
+  _sessionListCache = null;
+}
+
+async function fetchCachedSessionList(): Promise<OpenCodeSessionListEntry[]> {
+  const now = Date.now();
+  if (_sessionListCache && now - _sessionListCache.fetchedAt < SESSION_LIST_CACHE_TTL_MS) {
+    return _sessionListCache.promise;
+  }
+  const promise = (async () => {
+    try {
+      const { stdout } = await execFileAsync(
+        "opencode",
+        ["session", "list", "--format", "json"],
+        { timeout: 10_000 },
+      );
+      return parseSessionList(stdout);
+    } catch {
+      return [];
+    }
+  })();
+  _sessionListCache = { promise, fetchedAt: now };
+  return promise;
+}
+
 /**
  * Query OpenCode's session list and find the matching session for this AO session.
  * Tries metadata `opencodeSessionId` first, then falls back to title matching.
+ * Uses a 10s TTL cache to avoid spawning a subprocess on every poll.
  */
 async function findOpenCodeSession(
   session: Session,
 ): Promise<OpenCodeSessionListEntry | null> {
   try {
-    const { stdout } = await execFileAsync(
-      "opencode",
-      ["session", "list", "--format", "json"],
-      { timeout: 30_000 },
-    );
-
-    const sessions = parseSessionList(stdout);
+    const sessions = await fetchCachedSessionList();
 
     // Prefer exact ID match from metadata
     if (session.metadata?.opencodeSessionId) {

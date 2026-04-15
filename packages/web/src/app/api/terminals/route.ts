@@ -1,36 +1,14 @@
 import { type NextRequest } from "next/server";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { validateIdentifier } from "@/lib/validation";
 import { getCorrelationId, jsonWithCorrelation } from "@/lib/observability";
 import { loadTerminals, saveTerminal, type StandaloneTerminal } from "@/lib/standalone-terminals";
+import { findTmuxAsync, getAliveTmuxSessions } from "@/lib/tmux-async";
 
-function findTmux(): string {
-  const candidates = [
-    "/opt/homebrew/bin/tmux",
-    "/usr/local/bin/tmux",
-    "/usr/bin/tmux",
-  ];
-  for (const p of candidates) {
-    try {
-      execFileSync(p, ["-V"], { timeout: 5000 });
-      return p;
-    } catch {
-      continue;
-    }
-  }
-  return "tmux";
-}
-
-function isTmuxSessionAlive(tmuxPath: string, tmuxName: string): boolean {
-  try {
-    execFileSync(tmuxPath, ["has-session", "-t", `=${tmuxName}`], { timeout: 5000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
+const execFileAsync = promisify(execFile);
 
 interface TerminalWithAlive extends StandaloneTerminal {
   alive: boolean;
@@ -42,10 +20,10 @@ export async function GET(request: NextRequest) {
 
   try {
     const terminals = loadTerminals();
-    const tmuxPath = findTmux();
+    const aliveSessions = await getAliveTmuxSessions();
     const withAlive: TerminalWithAlive[] = terminals.map((t) => ({
       ...t,
-      alive: isTmuxSessionAlive(tmuxPath, t.tmuxName),
+      alive: aliveSessions.has(t.tmuxName),
     }));
     return jsonWithCorrelation({ terminals: withAlive }, { status: 200 }, correlationId);
   } catch (err) {
@@ -75,13 +53,14 @@ export async function POST(request: NextRequest) {
     // At this point, validation passed, so rawTmuxName is a valid string
     const tmuxName = rawTmuxName as string;
 
-    const tmuxPath = findTmux();
-    const sessionExists = isTmuxSessionAlive(tmuxPath, tmuxName);
+    const tmuxPath = await findTmuxAsync();
+    const aliveSessions = await getAliveTmuxSessions();
+    const sessionExists = aliveSessions.has(tmuxName);
 
     // Create tmux session if it doesn't exist
     if (!sessionExists) {
       try {
-        execFileSync(tmuxPath, ["new-session", "-d", "-s", tmuxName, "-c", homedir()], {
+        await execFileAsync(tmuxPath, ["new-session", "-d", "-s", tmuxName, "-c", homedir()], {
           timeout: 5000,
         });
       } catch (err) {

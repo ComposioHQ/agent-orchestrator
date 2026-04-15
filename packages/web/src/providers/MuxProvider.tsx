@@ -217,11 +217,11 @@ export function MuxProvider({ children }: { children: ReactNode }) {
       });
 
       ws.addEventListener("error", (err) => {
-        console.error("[MuxProvider] WebSocket error:", err);
+        console.error("[MuxProvider] WebSocket error:", err, "readyState=", ws.readyState);
       });
 
-      ws.addEventListener("close", () => {
-        console.log("[MuxProvider] Disconnected");
+      ws.addEventListener("close", (event) => {
+        console.log(`[MuxProvider] Disconnected — code=${event.code} reason="${event.reason}" wasClean=${event.wasClean} openedTerminals=${openedTerminalsRef.current.size}`);
         if (wsRef.current === ws) wsRef.current = null;
 
         // Don't reconnect if the provider has been unmounted
@@ -270,6 +270,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
     void init();
 
     return () => {
+      console.log("[MuxProvider] useEffect cleanup — unmounting, closing WebSocket");
       cancelled = true;
       isDestroyedRef.current = true;
       if (reconnectTimer.current) {

@@ -3,7 +3,7 @@ import { sessionToDashboard } from "@/lib/serialize";
 import { getAttentionLevel } from "@/lib/types";
 import { filterWorkerSessions } from "@/lib/project-utils";
 import { loadTerminals } from "@/lib/standalone-terminals";
-import { execFileSync } from "node:child_process";
+import { getAliveTmuxSessions } from "@/lib/tmux-async";
 import {
   createCorrelationId,
   createProjectObserver,
@@ -11,32 +11,6 @@ import {
 } from "@composio/ao-core";
 
 export const dynamic = "force-dynamic";
-
-function findTmux(): string {
-  const candidates = [
-    "/opt/homebrew/bin/tmux",
-    "/usr/local/bin/tmux",
-    "/usr/bin/tmux",
-  ];
-  for (const p of candidates) {
-    try {
-      execFileSync(p, ["-V"], { timeout: 5000 });
-      return p;
-    } catch {
-      continue;
-    }
-  }
-  return "tmux";
-}
-
-function isTmuxSessionAlive(tmuxPath: string, tmuxName: string): boolean {
-  try {
-    execFileSync(tmuxPath, ["has-session", "-t", `=${tmuxName}`], { timeout: 5000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * GET /api/events — SSE stream for real-time lifecycle events
@@ -112,12 +86,12 @@ export async function GET(request: Request): Promise<Response> {
           let terminalStatuses: Array<{ id: string; tmuxName: string; label: string; alive: boolean }> = [];
           try {
             const terminals = loadTerminals();
-            const tmuxPath = findTmux();
+            const aliveSessions = await getAliveTmuxSessions();
             terminalStatuses = terminals.map((t) => ({
               id: t.id,
               tmuxName: t.tmuxName,
               label: t.label,
-              alive: isTmuxSessionAlive(tmuxPath, t.tmuxName),
+              alive: aliveSessions.has(t.tmuxName),
             }));
           } catch {
             // ignore terminal fetch errors
@@ -200,12 +174,12 @@ export async function GET(request: Request): Promise<Response> {
             let terminalStatuses: Array<{ id: string; tmuxName: string; label: string; alive: boolean }> = [];
             try {
               const terminals = loadTerminals();
-              const tmuxPath = findTmux();
+              const aliveSessions = await getAliveTmuxSessions();
               terminalStatuses = terminals.map((t) => ({
                 id: t.id,
                 tmuxName: t.tmuxName,
                 label: t.label,
-                alive: isTmuxSessionAlive(tmuxPath, t.tmuxName),
+                alive: aliveSessions.has(t.tmuxName),
               }));
             } catch {
               // ignore terminal fetch errors

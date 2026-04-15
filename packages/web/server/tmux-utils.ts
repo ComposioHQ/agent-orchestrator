@@ -70,16 +70,8 @@ export function resolveTmuxSession(
   tmuxPath: string,
   execFn: typeof execFileSync = execFileSync,
 ): string | null {
-  // Try exact match first using = prefix for exact matching (e.g., "ao-orchestrator")
-  // Without =, tmux uses prefix matching: "ao-1" would match "ao-15"
-  try {
-    execFn(tmuxPath, ["has-session", "-t", `=${sessionId}`], { timeout: 5000 });
-    return sessionId;
-  } catch {
-    // Not an exact match
-  }
-
-  // Search for hash-prefixed tmux session (e.g., "8474d6f29887-ao-15" for "ao-15")
+  // Search for hash-prefixed tmux session first (the common case in AO).
+  // e.g., "8474d6f29887-ao-15" for user-facing "ao-15".
   // Validate the 12-char hex prefix to avoid ambiguous suffix matches where
   // "hash-my-app-1" could falsely match a lookup for "app-1".
   try {
@@ -96,6 +88,15 @@ export function resolveTmuxSession(
     }
   } catch {
     // tmux not running or no sessions
+  }
+
+  // Fallback: exact match for non-hash-prefixed sessions.
+  // Uses = prefix to prevent tmux prefix matching ("ao-1" matching "ao-15").
+  try {
+    execFn(tmuxPath, ["has-session", "-t", `=${sessionId}`], { timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
+    return sessionId;
+  } catch {
+    // Not found
   }
 
   return null;

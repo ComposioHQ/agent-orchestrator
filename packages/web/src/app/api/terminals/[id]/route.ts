@@ -1,25 +1,12 @@
 import { type NextRequest } from "next/server";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { validateIdentifier } from "@/lib/validation";
 import { getCorrelationId, jsonWithCorrelation } from "@/lib/observability";
 import { loadTerminals, removeTerminal } from "@/lib/standalone-terminals";
+import { findTmuxAsync } from "@/lib/tmux-async";
 
-function findTmux(): string {
-  const candidates = [
-    "/opt/homebrew/bin/tmux",
-    "/usr/local/bin/tmux",
-    "/usr/bin/tmux",
-  ];
-  for (const p of candidates) {
-    try {
-      execFileSync(p, ["-V"], { timeout: 5000 });
-      return p;
-    } catch {
-      continue;
-    }
-  }
-  return "tmux";
-}
+const execFileAsync = promisify(execFile);
 
 /** DELETE /api/terminals/[id] — Remove from registry and optionally kill tmux session */
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -42,8 +29,8 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     const shouldKill = new URL(request.url).searchParams.get("kill") === "true";
     if (shouldKill) {
       try {
-        const tmuxPath = findTmux();
-        execFileSync(tmuxPath, ["kill-session", "-t", `=${terminal.tmuxName}`], { timeout: 5000 });
+        const tmuxPath = await findTmuxAsync();
+        await execFileAsync(tmuxPath, ["kill-session", "-t", `=${terminal.tmuxName}`], { timeout: 5000 });
       } catch {
         // Session may already be dead — that's fine
       }

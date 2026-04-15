@@ -34,7 +34,7 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
-import { create, manifest, default as defaultExport } from "./index.js";
+import { create, manifest, default as defaultExport, _resetSessionListCache } from "./index.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -90,6 +90,7 @@ function mockTmuxWithProcess(processName: string, found = true) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  _resetSessionListCache();
 });
 
 describe("plugin manifest & exports", () => {

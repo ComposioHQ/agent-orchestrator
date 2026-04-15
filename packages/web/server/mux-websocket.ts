@@ -727,8 +727,9 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
     /**
      * Handle connection close
      */
-    ws.on("close", () => {
-      console.log("[MuxServer] Mux connection closed");
+    ws.on("close", (code, reason) => {
+      const reasonStr = reason?.toString() || "none";
+      console.log(`[MuxServer] Mux connection closed — code=${code} reason="${reasonStr}" missedPongs=${missedPongs} openTerminals=${subscriptions.size}`);
       clearInterval(heartbeatInterval);
       sessionUnsubscribe?.();
       sessionUnsubscribe = null;
@@ -741,7 +742,7 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
     // In the ws library, "error" is always followed by "close", so the close
     // handler below handles all cleanup.  Log the error here and nothing more.
     ws.on("error", (err) => {
-      console.error("[MuxServer] WebSocket error:", err.message);
+      console.error(`[MuxServer] WebSocket error: ${err.message} (readyState=${ws.readyState})`);
     });
   });
 
