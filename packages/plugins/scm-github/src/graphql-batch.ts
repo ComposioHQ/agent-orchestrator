@@ -371,8 +371,12 @@ async function checkPRListETag(
     // PR list changed - cost: 1 REST point
     return true;
   } catch (err) {
-    // On error, assume change to ensure we don't miss anything
     const errorMsg = err instanceof Error ? err.message : String(err);
+    // gh CLI exits non-zero on HTTP 304 — that means "not modified", not an error
+    if (errorMsg.includes("HTTP 304")) {
+      return false; // Not modified — skip batch, use cache (intended behavior)
+    }
+    // On other errors, assume change to ensure we don't miss anything
     // Log but don't throw - allow GraphQL batch to proceed
     // eslint-disable-next-line no-console -- Observability logging for ETag errors
     console.warn(`[ETag Guard 1] PR list check failed for ${repoKey}: ${errorMsg}`);
@@ -429,8 +433,12 @@ async function checkCommitStatusETag(
     // CI status changed - cost: 1 REST point
     return true;
   } catch (err) {
-    // On error, assume change to ensure we don't miss anything
     const errorMsg = err instanceof Error ? err.message : String(err);
+    // gh CLI exits non-zero on HTTP 304 — that means "not modified", not an error
+    if (errorMsg.includes("HTTP 304")) {
+      return false; // Not modified — skip batch, use cache (intended behavior)
+    }
+    // On other errors, assume change to ensure we don't miss anything
     // eslint-disable-next-line no-console -- Observability logging for ETag errors
     console.warn(
       `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`,
