@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
+import { _resetOpenCodeSessionListCache } from "../session-manager.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -323,6 +324,7 @@ export function setupTestContext(): TestContext {
 }
 
 export function teardownTestContext(ctx: TestContext): void {
+  _resetOpenCodeSessionListCache();
   process.env.PATH = ctx.originalPath;
   const projectBaseDir = getProjectBaseDir(ctx.configPath, join(ctx.tmpDir, "my-app"));
   if (existsSync(projectBaseDir)) {

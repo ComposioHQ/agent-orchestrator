@@ -79,6 +79,7 @@ import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js"
 const execFileAsync = promisify(execFile);
 const OPENCODE_DISCOVERY_TIMEOUT_MS = 10_000;
 const OPENCODE_INTERACTIVE_DISCOVERY_TIMEOUT_MS = 10_000;
+const OPENCODE_SESSION_LIST_CACHE_TTL_MS = 10_000;
 const MAX_TERMINAL_SUB_SESSIONS = 5;
 
 function errorIncludesSessionNotFound(err: unknown): boolean {
@@ -118,8 +119,31 @@ interface OpenCodeSessionListEntry {
   updatedAt?: number;
 }
 
+let _openCodeSessionListCache: {
+  promise: Promise<OpenCodeSessionListEntry[]>;
+  fetchedAt: number;
+} | null = null;
+
+/** @internal — exposed for tests to reset module-level cache between runs */
+export function _resetOpenCodeSessionListCache(): void {
+  _openCodeSessionListCache = null;
+}
+
 async function fetchOpenCodeSessionList(
   timeoutMs = OPENCODE_DISCOVERY_TIMEOUT_MS,
+): Promise<OpenCodeSessionListEntry[]> {
+  const now = Date.now();
+  if (_openCodeSessionListCache && now - _openCodeSessionListCache.fetchedAt < OPENCODE_SESSION_LIST_CACHE_TTL_MS) {
+    return _openCodeSessionListCache.promise;
+  }
+
+  const promise = fetchOpenCodeSessionListUncached(timeoutMs);
+  _openCodeSessionListCache = { promise, fetchedAt: now };
+  return promise;
+}
+
+async function fetchOpenCodeSessionListUncached(
+  timeoutMs: number,
 ): Promise<OpenCodeSessionListEntry[]> {
   try {
     const { stdout } = await execFileAsync("opencode", ["session", "list", "--format", "json"], {
@@ -2053,7 +2077,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         return undefined;
       }
 
-      const sessions = await fetchOpenCodeSessionList(OPENCODE_DISCOVERY_TIMEOUT_MS);
+      // Bypass cache — delivery confirmation needs fresh timestamps to detect changes
+      const sessions = await fetchOpenCodeSessionListUncached(OPENCODE_DISCOVERY_TIMEOUT_MS);
       return sessions.find((entry) => entry.id === mappedSessionId)?.updatedAt;
     };
 
