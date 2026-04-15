@@ -82,6 +82,18 @@ cd ~/your-project && ao start
 
 That's it. The dashboard opens at `http://localhost:3000` and the orchestrator agent starts managing your project.
 
+By default, AO binds the dashboard and direct terminal to `127.0.0.1`. Remote exposure is now explicit:
+
+```bash
+# Expose both dashboard + direct terminal remotely
+HOST=0.0.0.0 ao start
+
+# Expose dashboard remotely but keep direct terminal local-only
+AO_DASHBOARD_HOST=0.0.0.0 AO_DIRECT_TERMINAL_HOST=127.0.0.1 ao start
+```
+
+`AO_DIRECT_TERMINAL_HOST` defaults to the dashboard host when you opt into remote binding, and otherwise falls back to `127.0.0.1`.
+
 ### Add more projects
 
 ```bash
@@ -140,7 +152,7 @@ See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the
 
 ## Remote Access
 
-AO keeps your Mac awake while running, so you can access the dashboard remotely (e.g., via Tailscale from your phone) without the machine going to sleep.
+AO keeps your Mac awake while running, so remote access can stay available without the machine going to sleep once you've explicitly exposed the dashboard off loopback (for example via `HOST=0.0.0.0` or `AO_DASHBOARD_HOST=0.0.0.0`).
 
 **How it works:** On macOS, AO automatically holds an idle-sleep prevention assertion using `caffeinate`. When AO exits, the assertion is released.
 

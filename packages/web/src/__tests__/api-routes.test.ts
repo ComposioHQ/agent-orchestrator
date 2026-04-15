@@ -391,24 +391,58 @@ describe("API Routes", () => {
       });
     }
 
-    it("returns runtime direct terminal port from server env", async () => {
-      await withEnv({ DIRECT_TERMINAL_PORT: "14803", TERMINAL_PORT: "14802" }, async () => {
+    it("returns runtime direct terminal port and host from server env", async () => {
+      await withEnv(
+        {
+          DIRECT_TERMINAL_PORT: "14803",
+          TERMINAL_PORT: "14802",
+          AO_DIRECT_TERMINAL_HOST: "0.0.0.0",
+        },
+        async () => {
         const res = await runtimeTerminalGET();
         expect(res.status).toBe(200);
         const data = await res.json();
         expect(data.directTerminalPort).toBe("14803");
         expect(data.terminalPort).toBe("14802");
-      });
+        expect(data.directTerminalHost).toBe("0.0.0.0");
+      },
+      );
     });
 
-    it("falls back to default ports when env vars are absent", async () => {
-      await withEnv({ DIRECT_TERMINAL_PORT: undefined, TERMINAL_PORT: undefined }, async () => {
+    it("falls back to default ports and loopback host when env vars are absent", async () => {
+      await withEnv(
+        {
+          DIRECT_TERMINAL_PORT: undefined,
+          TERMINAL_PORT: undefined,
+          HOST: undefined,
+          AO_DASHBOARD_HOST: undefined,
+          AO_DIRECT_TERMINAL_HOST: undefined,
+        },
+        async () => {
         const res = await runtimeTerminalGET();
         expect(res.status).toBe(200);
         const data = await res.json();
         expect(data.directTerminalPort).toBe("14801");
         expect(data.terminalPort).toBe("14800");
-      });
+        expect(data.directTerminalHost).toBe("127.0.0.1");
+      },
+      );
+    });
+
+    it("inherits legacy HOST exposure when direct terminal host is unset", async () => {
+      await withEnv(
+        {
+          HOST: "0.0.0.0",
+          AO_DASHBOARD_HOST: undefined,
+          AO_DIRECT_TERMINAL_HOST: undefined,
+        },
+        async () => {
+          const res = await runtimeTerminalGET();
+          expect(res.status).toBe(200);
+          const data = await res.json();
+          expect(data.directTerminalHost).toBe("0.0.0.0");
+        },
+      );
     });
 
     it("falls back to default ports for non-numeric env values", async () => {

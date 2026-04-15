@@ -120,6 +120,7 @@ vi.mock("../../src/lib/lifecycle-service.js", () => ({
 vi.mock("../../src/lib/web-dir.js", () => ({
   findWebDir: vi.fn().mockReturnValue("/fake/web"),
   buildDashboardEnv: vi.fn().mockResolvedValue({}),
+  getExposureWarningLines: vi.fn().mockReturnValue([]),
   waitForPortAndOpen: (...args: unknown[]) => mockWaitForPortAndOpen(...args),
   isPortAvailable: vi.fn().mockResolvedValue(true),
   findFreePort: vi.fn().mockResolvedValue(3000),

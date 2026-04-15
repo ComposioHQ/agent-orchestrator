@@ -9,14 +9,15 @@
     ".next/*.json",
     ".next/BUILD_ID",
     "dist-server",
-    "next.config.js"
+    "next.config.js",
+    "scripts"
   ],
   "scripts": {
     "dev": "concurrently \"npm:dev:next\" \"npm:dev:direct-terminal\"",
-    "dev:next": "next dev -p ${PORT:-3000}",
+    "dev:next": "node scripts/run-next.cjs dev",
     "dev:direct-terminal": "tsx watch server/direct-terminal-ws.ts",
     "build": "next build && tsc -p tsconfig.server.json",
-    "start": "next start",
+    "start": "node scripts/run-next.cjs start",
     "start:all": "node dist-server/start-all.js",
     "dev:optimized": "next build && tsc -p tsconfig.server.json && node dist-server/start-all.js",
     "typecheck": "tsc --noEmit",

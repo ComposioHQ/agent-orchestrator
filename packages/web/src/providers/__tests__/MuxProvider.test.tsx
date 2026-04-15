@@ -557,4 +557,34 @@ describe("buildMuxWsUrl", () => {
     await flushInit();
     expect(MockWebSocket.instances[0].url).toMatch(/\/ao-terminal-mux$/);
   });
+
+  it("marks terminal unavailable when direct terminal is loopback-only from a remote custom-port UI", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ directTerminalPort: 14802, directTerminalHost: "127.0.0.1" }),
+      })),
+    );
+    Object.defineProperty(window, "location", {
+      writable: true,
+      value: {
+        protocol: "http:",
+        host: "ao.example.test:3000",
+        hostname: "ao.example.test",
+        port: "3000",
+      },
+    });
+
+    const { result } = renderHook(() => useMux(), { wrapper });
+    await flushInit();
+
+    expect(result.current.status).toBe("unavailable");
+    expect(MockWebSocket.instances).toHaveLength(0);
+
+    Object.defineProperty(window, "location", {
+      writable: true,
+      value: { protocol: "http:", host: "localhost", hostname: "localhost", port: "" },
+    });
+  });
 });

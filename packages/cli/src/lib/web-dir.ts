@@ -17,6 +17,8 @@ const require = createRequire(import.meta.url);
 
 /** Default terminal server base port (14800 range: zero IANA registrations, no dev tool conflicts) */
 const DEFAULT_TERMINAL_PORT = 14800;
+const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
+const DEFAULT_DIRECT_TERMINAL_HOST = "127.0.0.1";
 
 /**
  * Check if a TCP port is available by attempting to connect to it.
@@ -120,6 +122,58 @@ async function findAvailablePortPair(base: number): Promise<[number, number]> {
   return [base, base + 1];
 }
 
+export function normalizeBindHost(
+  input: string | undefined,
+  fallback = DEFAULT_DASHBOARD_HOST,
+): string {
+  const trimmed = input?.trim();
+  return trimmed ? trimmed : fallback;
+}
+
+export function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().replace(/^\[(.*)\]$/, "$1").toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+}
+
+export function resolveDashboardHosts(env: NodeJS.ProcessEnv): {
+  dashboardHost: string;
+  directTerminalHost: string;
+} {
+  const dashboardHost = normalizeBindHost(
+    env["AO_DASHBOARD_HOST"] ?? env["HOST"],
+    DEFAULT_DASHBOARD_HOST,
+  );
+
+  return {
+    dashboardHost,
+    directTerminalHost: normalizeBindHost(
+      env["AO_DIRECT_TERMINAL_HOST"] ?? dashboardHost,
+      DEFAULT_DIRECT_TERMINAL_HOST,
+    ),
+  };
+}
+
+export function getExposureWarningLines(
+  dashboardHost: string,
+  directTerminalHost: string,
+): string[] {
+  const warnings: string[] = [];
+
+  if (!isLoopbackHost(dashboardHost)) {
+    warnings.push(
+      `Security warning: dashboard HTTP API is bound to ${dashboardHost} without built-in auth.`,
+    );
+  }
+
+  if (!isLoopbackHost(directTerminalHost)) {
+    warnings.push(
+      `Security warning: direct terminal WebSocket is bound to ${directTerminalHost} without built-in auth.`,
+    );
+  }
+
+  return warnings;
+}
+
 /**
  * Build environment variables for spawning the dashboard process.
  * Shared between `ao start` and `ao dashboard` to avoid duplication.
@@ -135,6 +189,7 @@ export async function buildDashboardEnv(
   directTerminalPort?: number,
 ): Promise<Record<string, string>> {
   const env: Record<string, string> = { ...process.env } as Record<string, string>;
+  const { dashboardHost, directTerminalHost } = resolveDashboardHosts(env);
 
   // Pass config path so dashboard uses the same config as the CLI
   if (configPath) {
@@ -142,6 +197,10 @@ export async function buildDashboardEnv(
   }
 
   env["PORT"] = String(port);
+  env["HOST"] = dashboardHost;
+  env["AO_DASHBOARD_HOST"] = dashboardHost;
+  env["AO_DIRECT_TERMINAL_HOST"] = directTerminalHost;
+  env["NEXT_PUBLIC_DIRECT_TERMINAL_HOST"] = directTerminalHost;
 
   // If explicit ports provided (config or env var), use them directly.
   // Otherwise, auto-detect an available pair starting from the default.

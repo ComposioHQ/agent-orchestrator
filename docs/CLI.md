@@ -14,6 +14,8 @@ ao status --watch                      # Live-updating terminal status view
 ao dashboard                           # Open web dashboard in browser
 ```
 
+By default, `ao start` binds the dashboard and direct terminal to `127.0.0.1`. For remote access, set `HOST` or `AO_DASHBOARD_HOST`; `AO_DIRECT_TERMINAL_HOST` lets you keep the direct terminal local-only or expose it separately.
+
 ## Commands the orchestrator agent uses
 
 These are primarily invoked by the orchestrator agent running inside a tmux session. You can use them manually if needed, but the orchestrator handles this automatically.

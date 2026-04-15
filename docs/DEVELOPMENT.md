@@ -431,6 +431,13 @@ regexes = ['''your-pattern-here''']
 ## Environment Variables
 
 ```bash
+# Dashboard bind host (default: 127.0.0.1)
+HOST=127.0.0.1
+AO_DASHBOARD_HOST=127.0.0.1
+
+# Direct terminal bind host (defaults to AO_DIRECT_TERMINAL_HOST ?? AO_DASHBOARD_HOST ?? HOST ?? 127.0.0.1)
+AO_DIRECT_TERMINAL_HOST=127.0.0.1
+
 # Mux WebSocket server port (web dashboard terminal + session updates)
 DIRECT_TERMINAL_PORT=14801
 
@@ -440,6 +447,8 @@ LINEAR_API_KEY=lin_api_...
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
+
+`packages/web` startup scripts honor these host variables on macOS, Linux, and Windows.
 
 Store in `.env.local` (gitignored). Never commit real values.
 

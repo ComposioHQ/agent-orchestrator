@@ -17,9 +17,21 @@ const __dirname = dirname(__filename);
 const pkgRoot = resolve(__dirname, "..");
 
 const children: ChildProcess[] = [];
+const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
+const DEFAULT_DIRECT_TERMINAL_HOST = "127.0.0.1";
 
 function log(label: string, msg: string): void {
   process.stdout.write(`[${label}] ${msg}\n`);
+}
+
+function normalizeBindHost(input: string | undefined, fallback: string): string {
+  const trimmed = input?.trim();
+  return trimmed ? trimmed : fallback;
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().replace(/^\[(.*)\]$/, "$1").toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
 function spawnProcess(
@@ -95,7 +107,30 @@ function resolveNextBin(): string {
 
 // Start Next.js production server
 const port = process.env["PORT"] || "3000";
-spawnProcess("next", resolveNextBin(), ["start", "-p", port]);
+const dashboardHost = normalizeBindHost(
+  process.env["AO_DASHBOARD_HOST"] ?? process.env["HOST"],
+  DEFAULT_DASHBOARD_HOST,
+);
+const directTerminalHost = normalizeBindHost(
+  process.env["AO_DIRECT_TERMINAL_HOST"] ?? dashboardHost,
+  DEFAULT_DIRECT_TERMINAL_HOST,
+);
+
+if (!isLoopbackHost(dashboardHost)) {
+  log(
+    "start-all",
+    `Security warning: dashboard HTTP API is bound to ${dashboardHost} without built-in auth.`,
+  );
+}
+
+if (!isLoopbackHost(directTerminalHost)) {
+  log(
+    "start-all",
+    `Security warning: direct terminal WebSocket is bound to ${directTerminalHost} without built-in auth.`,
+  );
+}
+
+spawnProcess("next", resolveNextBin(), ["start", "-p", port, "-H", dashboardHost]);
 
 // Start direct terminal WebSocket server (auto-restart on crash)
 spawnProcess("direct-terminal", "node", [resolve(__dirname, "direct-terminal-ws.js")], { restart: true });

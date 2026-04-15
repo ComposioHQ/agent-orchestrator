@@ -17,15 +17,26 @@ function normalizeProxyPath(input: string | undefined): string | null {
   return trimmed;
 }
 
+function normalizeHost(input: string | undefined, fallback: string): string {
+  const trimmed = input?.trim();
+  return trimmed ? trimmed : fallback;
+}
+
 export async function GET() {
   const terminalPort = normalizePort(process.env.TERMINAL_PORT, 14800);
   const directTerminalPort = normalizePort(process.env.DIRECT_TERMINAL_PORT, 14801);
+  const directTerminalHost = normalizeHost(
+    process.env.AO_DIRECT_TERMINAL_HOST ??
+      process.env.AO_DASHBOARD_HOST ??
+      process.env.HOST,
+    "127.0.0.1",
+  );
   const proxyWsPath = normalizeProxyPath(
     process.env.TERMINAL_WS_PATH ?? process.env.NEXT_PUBLIC_TERMINAL_WS_PATH,
   );
 
   return NextResponse.json(
-    { terminalPort, directTerminalPort, proxyWsPath },
+    { terminalPort, directTerminalPort, directTerminalHost, proxyWsPath },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

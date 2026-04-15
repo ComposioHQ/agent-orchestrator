@@ -9,7 +9,7 @@ interface MuxContextValue {
   openTerminal: (id: string) => void;
   closeTerminal: (id: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => void;
-  status: "connecting" | "connected" | "reconnecting" | "disconnected";
+  status: "connecting" | "connected" | "reconnecting" | "disconnected" | "unavailable";
   sessions: SessionPatch[];
 }
 
@@ -30,6 +30,7 @@ export function useMuxOptional(): MuxContextValue | undefined {
 
 interface RuntimeTerminalConfig {
   directTerminalPort?: unknown;
+  directTerminalHost?: unknown;
   proxyWsPath?: unknown;
 }
 
@@ -47,7 +48,22 @@ function normalizePathValue(value: unknown): string | undefined {
   return trimmed;
 }
 
-function buildMuxWsUrl(runtimeConfig: { directTerminalPort?: string; proxyWsPath?: string }): string {
+function normalizeHostValue(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().replace(/^\[(.*)\]$/, "$1").toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+}
+
+function buildMuxWsUrl(runtimeConfig: {
+  directTerminalPort?: string;
+  directTerminalHost?: string;
+  proxyWsPath?: string;
+}): string | null {
   const loc = window.location;
   const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
 
@@ -64,6 +80,11 @@ function buildMuxWsUrl(runtimeConfig: { directTerminalPort?: string; proxyWsPath
   }
 
   // Direct port connection — prefer runtime-configured port, fall back to env/default
+  const directHost =
+    runtimeConfig.directTerminalHost ?? process.env.NEXT_PUBLIC_DIRECT_TERMINAL_HOST ?? "127.0.0.1";
+  if (isLoopbackHost(directHost) && !isLoopbackHost(loc.hostname)) {
+    return null;
+  }
   const port = runtimeConfig.directTerminalPort ?? process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
   return `${protocol}//${loc.hostname}:${port}/mux`;
 }
@@ -72,13 +93,19 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const subscribersRef = useRef(new Map<string, Set<(data: string) => void>>());
   const openedTerminalsRef = useRef(new Set<string>());
-  const [status, setStatus] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">(
+  const [status, setStatus] = useState<
+    "connecting" | "connected" | "reconnecting" | "disconnected" | "unavailable"
+  >(
     "connecting",
   );
   const [sessions, setSessions] = useState<SessionPatch[]>([]);
   const reconnectAttempt = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const runtimeConfigRef = useRef<{ directTerminalPort?: string; proxyWsPath?: string }>({});
+  const runtimeConfigRef = useRef<{
+    directTerminalPort?: string;
+    directTerminalHost?: string;
+    proxyWsPath?: string;
+  }>({});
   const isDestroyedRef = useRef(false);
 
   const connect = useCallback(() => {
@@ -90,6 +117,11 @@ export function MuxProvider({ children }: { children: ReactNode }) {
 
     try {
       const url = buildMuxWsUrl(runtimeConfigRef.current);
+      if (!url) {
+        console.warn("[MuxProvider] Direct terminal is unavailable from this browser context");
+        setStatus("unavailable");
+        return;
+      }
       console.log("[MuxProvider] Connecting to", url);
       const ws = new WebSocket(url);
       // Assign immediately so cleanup can close it even during CONNECTING state
@@ -202,6 +234,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
           const data = (await res.json()) as RuntimeTerminalConfig;
           runtimeConfigRef.current = {
             directTerminalPort: normalizePortValue(data.directTerminalPort),
+            directTerminalHost: normalizeHostValue(data.directTerminalHost),
             proxyWsPath: normalizePathValue(data.proxyWsPath),
           };
         }

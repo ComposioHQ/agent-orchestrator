@@ -15,6 +15,15 @@ import { findTmux } from "../tmux-utils.js";
 import { createDirectTerminalServer, type DirectTerminalServer } from "../direct-terminal-ws.js";
 
 const TMUX = findTmux();
+const TMUX_AVAILABLE = (() => {
+  try {
+    execFileSync(TMUX, ["-V"], { timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+const describeIfTmux = TMUX_AVAILABLE ? describe : describe.skip;
 const TEST_SESSION = `ao-test-integration-${process.pid}`;
 const TEST_HASH_SESSION = `abcdef123456-ao-test-hash-${process.pid}`;
 
@@ -83,6 +92,7 @@ function waitForMessage(
 // =============================================================================
 
 beforeAll(() => {
+  if (!TMUX_AVAILABLE) return;
   execFileSync(TMUX, ["new-session", "-d", "-s", TEST_SESSION, "-x", "80", "-y", "24"], {
     timeout: 5000,
   });
@@ -97,6 +107,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  if (!TMUX_AVAILABLE) return;
   terminal.shutdown();
   try { execFileSync(TMUX, ["kill-session", "-t", TEST_SESSION], { timeout: 5000 }); } catch { /* */ }
   try { execFileSync(TMUX, ["kill-session", "-t", TEST_HASH_SESSION], { timeout: 5000 }); } catch { /* */ }
@@ -106,7 +117,7 @@ afterAll(() => {
 // Health endpoint
 // =============================================================================
 
-describe("health endpoint", () => {
+describeIfTmux("health endpoint", () => {
   it("GET /health returns 200 with JSON body", async () => {
     const res = await httpGet("/health");
     expect(res.status).toBe(200);
@@ -131,7 +142,7 @@ describe("health endpoint", () => {
 // HTTP routing
 // =============================================================================
 
-describe("HTTP routing", () => {
+describeIfTmux("HTTP routing", () => {
   it("returns 404 for unknown path", async () => {
     expect((await httpGet("/unknown")).status).toBe(404);
   });
@@ -149,7 +160,7 @@ describe("HTTP routing", () => {
 // WebSocket upgrade routing
 // =============================================================================
 
-describe("WebSocket upgrade routing", () => {
+describeIfTmux("WebSocket upgrade routing", () => {
   it("accepts connections on /mux", async () => {
     const ws = await connectMux();
     expect(ws.readyState).toBe(WebSocket.OPEN);
@@ -172,7 +183,7 @@ describe("WebSocket upgrade routing", () => {
 // Mux protocol — session open/validation
 // =============================================================================
 
-describe("mux terminal open", () => {
+describeIfTmux("mux terminal open", () => {
   it("sends 'opened' response for a valid tmux session", async () => {
     const ws = await connectMux();
 
@@ -234,7 +245,7 @@ describe("mux terminal open", () => {
 // Mux protocol — terminal I/O
 // =============================================================================
 
-describe("mux terminal I/O", () => {
+describeIfTmux("mux terminal I/O", () => {
   it("receives terminal data after open", async () => {
     const ws = await connectMux();
 
@@ -320,7 +331,7 @@ describe("mux terminal I/O", () => {
 // Mux protocol — system channel
 // =============================================================================
 
-describe("mux system channel", () => {
+describeIfTmux("mux system channel", () => {
   it("responds to ping with pong", async () => {
     const ws = await connectMux();
 
@@ -337,7 +348,7 @@ describe("mux system channel", () => {
 // Server creation
 // =============================================================================
 
-describe("server creation", () => {
+describeIfTmux("server creation", () => {
   it("createDirectTerminalServer returns expected properties", () => {
     expect(terminal).toHaveProperty("server");
     expect(terminal).toHaveProperty("shutdown");
