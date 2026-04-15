@@ -8,6 +8,8 @@ interface PaneSizesState {
   sizes: number[];
   collapsed: boolean[];
   verticalLayout?: boolean;
+  verticalSplit?: [number, number];
+  previewFontSize?: number;
 }
 
 export function usePaneSizes(sessionId: string, defaultSizes: number[]) {
@@ -83,13 +85,49 @@ export function usePaneSizes(sessionId: string, defaultSizes: number[]) {
     [sessionId]
   );
 
+  const setVerticalSplit = useCallback(
+    (split: [number, number]) => {
+      setState((prev) => {
+        const updated = { ...prev, verticalSplit: split };
+        const storageKey = STORAGE_KEY_PREFIX + sessionId;
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(updated));
+        } catch (e) {
+          console.error("Failed to save pane state to localStorage:", e);
+        }
+        return updated;
+      });
+    },
+    [sessionId]
+  );
+
+  const setPreviewFontSize = useCallback(
+    (fontSize: number) => {
+      setState((prev) => {
+        const updated = { ...prev, previewFontSize: fontSize };
+        const storageKey = STORAGE_KEY_PREFIX + sessionId;
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(updated));
+        } catch (e) {
+          console.error("Failed to save pane state to localStorage:", e);
+        }
+        return updated;
+      });
+    },
+    [sessionId]
+  );
+
   return {
     sizes: state.sizes,
     collapsed: state.collapsed,
     verticalLayout: state.verticalLayout ?? false,
+    verticalSplit: state.verticalSplit ?? [60, 40],
+    previewFontSize: state.previewFontSize ?? 13,
     setSizes,
     toggleCollapsed,
     setVerticalLayout,
+    setVerticalSplit,
+    setPreviewFontSize,
     isHydrated,
   };
 }

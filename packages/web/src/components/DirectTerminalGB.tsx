@@ -58,6 +58,9 @@ function fitTerminal(
     core._renderService?.clear();
     terminal.resize(correctCols, correctRows);
   }
+
+  // Refresh the terminal to repaint with updated cell dimensions
+  terminal.refresh(0, terminal.rows - 1);
 }
 
 // Import xterm CSS (must be imported in client component)
@@ -231,11 +234,16 @@ export function DirectTerminalGB({
     const fit = fitAddon.current;
     if (terminal) {
       terminal.options.fontSize = clamped;
-      if (fit && terminalRef.current) {
-        fitTerminal(fit, terminal, terminalRef.current);
-      }
+      // Cell dimensions update asynchronously after the font change — defer fit
+      // until after the renderer has recalculated them.
+      requestAnimationFrame(() => {
+        if (fit && terminalRef.current) {
+          fitTerminal(fit, terminal, terminalRef.current);
+          resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+        }
+      });
     }
-  }, []);
+  }, [sessionId, resizeTerminalMux]);
 
   useEffect(() => {
     followOutputRef.current = followOutput;
