@@ -71,6 +71,32 @@ import { findProjectForDirectory } from "../lib/project-resolution.js";
 import { DEFAULT_PORT } from "../lib/constants.js";
 const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().replace(/^\[(.*)\]$/, "$1").toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+}
+
+function logExposureWarnings(env: Record<string, string>): void {
+  const dashboardHost = env["HOST"] ?? "127.0.0.1";
+  const directTerminalHost = env["AO_DIRECT_TERMINAL_HOST"] ?? "127.0.0.1";
+
+  if (!isLoopbackHost(dashboardHost)) {
+    console.log(
+      chalk.yellow(
+        `  Security warning: dashboard HTTP API is bound to ${dashboardHost} without built-in auth.`,
+      ),
+    );
+  }
+
+  if (!isLoopbackHost(directTerminalHost)) {
+    console.log(
+      chalk.yellow(
+        `  Security warning: direct terminal WebSocket is bound to ${directTerminalHost} without built-in auth.`,
+      ),
+    );
+  }
+}
+
 // =============================================================================
 // HELPERS
 // =============================================================================
@@ -821,7 +847,8 @@ async function startDashboard(
   directTerminalPort?: number,
   devMode?: boolean,
 ): Promise<ChildProcess> {
-  const env = await buildDashboardEnv(port, configPath, terminalPort, directTerminalPort);
+  const env = (await buildDashboardEnv(port, configPath, terminalPort, directTerminalPort)) ?? {};
+  logExposureWarnings(env);
 
   // Detect monorepo vs npm install: the `server/` source directory only exists
   // in the monorepo. Published npm packages only have `dist-server/`.

@@ -13,6 +13,24 @@ export interface DirectTerminalServer {
   shutdown: () => void;
 }
 
+const DEFAULT_DIRECT_TERMINAL_HOST = "127.0.0.1";
+
+export function normalizeDirectTerminalHost(input: string | undefined): string {
+  const trimmed = input?.trim();
+  return trimmed ? trimmed : DEFAULT_DIRECT_TERMINAL_HOST;
+}
+
+export function resolveDirectTerminalHost(env: NodeJS.ProcessEnv): string {
+  return normalizeDirectTerminalHost(
+    env["AO_DIRECT_TERMINAL_HOST"] ?? env["AO_DASHBOARD_HOST"] ?? env["HOST"],
+  );
+}
+
+export function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().replace(/^\[(.*)\]$/, "$1").toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+}
+
 /**
  * Create the direct terminal WebSocket server.
  * Separated from listen() so tests can control lifecycle.
@@ -100,9 +118,16 @@ if (isMainModule) {
 
   const { server, shutdown } = createDirectTerminalServer(TMUX);
   const PORT = parseInt(process.env.DIRECT_TERMINAL_PORT ?? "14801", 10);
+  const HOST = resolveDirectTerminalHost(process.env);
 
-  server.listen(PORT, () => {
-    console.log(`[DirectTerminal] WebSocket server listening on port ${PORT}`);
+  if (!isLoopbackHost(HOST)) {
+    console.warn(
+      `[DirectTerminal] Security warning: terminal WebSocket is bound to ${HOST} without built-in auth.`,
+    );
+  }
+
+  server.listen(PORT, HOST, () => {
+    console.log(`[DirectTerminal] WebSocket server listening on ${HOST}:${PORT}`);
   });
 
   function handleShutdown(signal: string) {

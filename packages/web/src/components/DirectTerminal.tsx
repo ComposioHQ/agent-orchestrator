@@ -510,6 +510,8 @@ export function DirectTerminal({
   const statusDotClass =
     displayStatus === "connected"
       ? "bg-[var(--color-status-ready)]"
+      : displayStatus === "unavailable"
+        ? "bg-[var(--color-status-respond)]"
       : displayStatus === "error" || displayStatus === "disconnected"
         ? "bg-[var(--color-status-error)]"
         : "bg-[var(--color-status-attention)] animate-[pulse_1.5s_ease-in-out_infinite]";
@@ -517,6 +519,8 @@ export function DirectTerminal({
   const statusText =
     displayStatus === "connected"
       ? "Connected"
+      : displayStatus === "unavailable"
+        ? "Terminal unavailable"
       : displayStatus === "error"
         ? (error ?? "Error")
         : displayStatus === "disconnected"
@@ -526,6 +530,8 @@ export function DirectTerminal({
   const statusTextColor =
     displayStatus === "connected"
       ? "text-[var(--color-status-ready)]"
+      : displayStatus === "unavailable"
+        ? "text-[var(--color-status-respond)]"
       : displayStatus === "error" || displayStatus === "disconnected"
         ? "text-[var(--color-status-error)]"
         : "text-[var(--color-text-tertiary)]";

@@ -3,7 +3,11 @@ import { resolve } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@aoagents/ao-core";
-import { findWebDir, buildDashboardEnv, waitForPortAndOpen } from "../lib/web-dir.js";
+import {
+  findWebDir,
+  buildDashboardEnv,
+  waitForPortAndOpen,
+} from "../lib/web-dir.js";
 import {
   findRunningDashboardPid,
   isInstalledUnderNodeModules,
@@ -12,6 +16,32 @@ import {
 } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
 import { DEFAULT_PORT } from "../lib/constants.js";
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().replace(/^\[(.*)\]$/, "$1").toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+}
+
+function logExposureWarnings(env: Record<string, string>): void {
+  const dashboardHost = env["HOST"] ?? "127.0.0.1";
+  const directTerminalHost = env["AO_DIRECT_TERMINAL_HOST"] ?? "127.0.0.1";
+
+  if (!isLoopbackHost(dashboardHost)) {
+    console.log(
+      chalk.yellow(
+        `Security warning: dashboard HTTP API is bound to ${dashboardHost} without built-in auth.`,
+      ),
+    );
+  }
+
+  if (!isLoopbackHost(directTerminalHost)) {
+    console.log(
+      chalk.yellow(
+        `Security warning: direct terminal WebSocket is bound to ${directTerminalHost} without built-in auth.`,
+      ),
+    );
+  }
+}
 
 export function registerDashboard(program: Command): void {
   program
@@ -60,12 +90,14 @@ export function registerDashboard(program: Command): void {
 
       console.log(chalk.bold(`Starting dashboard on http://localhost:${port}\n`));
 
-      const env = await buildDashboardEnv(
-        port,
-        config.configPath,
-        config.terminalPort,
-        config.directTerminalPort,
-      );
+      const env =
+        (await buildDashboardEnv(
+          port,
+          config.configPath,
+          config.terminalPort,
+          config.directTerminalPort,
+        )) ?? {};
+      logExposureWarnings(env);
 
       const startScript = resolve(webDir, "dist-server", "start-all.js");
       const child = spawn("node", [startScript], {
