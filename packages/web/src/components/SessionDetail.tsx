@@ -47,6 +47,7 @@ interface SessionDetailProps {
   projectOrchestratorId?: string | null;
   projects?: ProjectInfo[];
   sidebarSessions?: DashboardSession[];
+  sidebarLoading?: boolean;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -451,6 +452,7 @@ export function SessionDetail({
   projectOrchestratorId = null,
   projects = [],
   sidebarSessions = [],
+  sidebarLoading = false,
 }: SessionDetailProps) {
   const searchParams = useSearchParams();
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
@@ -597,6 +599,7 @@ export function SessionDetail({
               activeSessionId={session.id}
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+              loading={sidebarLoading}
             />
           ) : null}
 
