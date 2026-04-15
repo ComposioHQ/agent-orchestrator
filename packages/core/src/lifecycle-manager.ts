@@ -37,6 +37,7 @@ import {
   type PREnrichmentData,
   type CICheck,
   type RecoveredSession,
+  isOrchestratorSession,
 } from "./types.js";
 import { updateMetadata, listMetadata, readMetadataRaw, deleteMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
@@ -44,10 +45,6 @@ import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveNotifierTarget } from "./notifier-resolution.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 
-/** Escape special regex characters in a string. */
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -1546,9 +1543,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             if (!otherRaw) continue;
             const otherStatus = otherRaw["status"] as SessionStatus | undefined;
             if (otherStatus && TERMINAL_STATUSES.has(otherStatus)) continue;
-            // Skip orchestrator sessions — matches spawn()'s isOrchestratorSessionRecord logic
-            if (otherRaw["role"] === "orchestrator" || otherId.endsWith("-orchestrator")) continue;
-            if (sessionPrefix && new RegExp(`^${escapeRegex(sessionPrefix)}-orchestrator-\\d+$`).test(otherId)) continue;
+            // Skip orchestrator sessions — uses the canonical isOrchestratorSession from types.ts
+            if (isOrchestratorSession({ id: otherId, metadata: otherRaw }, sessionPrefix)) continue;
             const otherAgent = resolveAgentSelection({
               role: "worker",
               project,

@@ -590,13 +590,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionsDir: string,
     issueId: string,
     agentName: string,
-    options?: { resumableOnly?: boolean },
+    options?: { resumableOnly?: boolean; projectId?: string },
   ): { sessionId: string; raw: Record<string, string> } | null {
     const allowedStatuses = options?.resumableOnly ? SPAWN_RESUMABLE_STATUSES : SPAWN_CONTEXT_STATUSES;
     for (const sessionId of sortSessionIdsForReuse(listArchivedSessionIds(sessionsDir))) {
       const raw = readArchivedMetadataRaw(sessionsDir, sessionId);
       if (!raw) continue;
       if (raw["issue"] !== issueId || raw["agent"] !== agentName) continue;
+      // In multi-project configs sharing the same issue tracker, filter by projectId
+      if (options?.projectId && raw["project"] && raw["project"] !== options.projectId) continue;
       const status = raw["status"];
       if (!status || !allowedStatuses.has(status)) continue;
       return { sessionId, raw };
@@ -1047,15 +1049,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         didResumableOnlySearch = true;
         archived = findArchivedSessionForIssue(sessionsDir, spawnConfig.issueId, selection.agentName, {
           resumableOnly: true,
+          projectId: spawnConfig.projectId,
         });
         if (archived) {
           attemptNativeResume = true;
         } else {
           // No resumable session found; fall back to context-eligible sessions (includes "done")
-          archived = findArchivedSessionForIssue(sessionsDir, spawnConfig.issueId, selection.agentName);
+          archived = findArchivedSessionForIssue(sessionsDir, spawnConfig.issueId, selection.agentName, { projectId: spawnConfig.projectId });
         }
       } else {
-        archived = findArchivedSessionForIssue(sessionsDir, spawnConfig.issueId, selection.agentName);
+        archived = findArchivedSessionForIssue(sessionsDir, spawnConfig.issueId, selection.agentName, { projectId: spawnConfig.projectId });
       }
     }
 
@@ -1231,7 +1234,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       // Skip re-search when archived was already found with the broad set (context-inject strategy).
       if (!launchCommand) {
         const contextArchived = didResumableOnlySearch
-          ? (findArchivedSessionForIssue(sessionsDir, spawnConfig.issueId!, selection.agentName) ?? archived)
+          ? (findArchivedSessionForIssue(sessionsDir, spawnConfig.issueId!, selection.agentName, { projectId: spawnConfig.projectId }) ?? archived)
           : archived;
         const context = await buildPreviousSessionContext(
           contextArchived.raw,

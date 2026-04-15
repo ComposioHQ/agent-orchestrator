@@ -71,7 +71,7 @@ export async function buildPreviousSessionContext(
 
       const { stdout } = await execFileAsync(
         "git",
-        ["-C", workspacePath, "log", "--oneline", `--max-count=${MAX_COMMITS + 1}`, branch, "--not", `origin/${defaultBranch}`, "--"],
+        ["-C", workspacePath, "log", "--oneline", `--max-count=${MAX_COMMITS + 1}`, `refs/heads/${branch}`, "--not", `origin/${defaultBranch}`, "--"],
         { timeout: 10_000 },
       );
       if (stdout.trim()) {

@@ -54,8 +54,8 @@ vi.mock("@aoagents/ao-core", () => ({
       .replace(/-{2,}/g, "-"),
 }));
 
+import { sanitizeProjectId } from "@aoagents/ao-core";
 import {
-  sanitizeProjectId,
   escapeXml,
   quoteSystemdValue,
   generateLaunchdPlist,

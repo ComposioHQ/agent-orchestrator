@@ -17,9 +17,6 @@ import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig, sanitizeProjectId, type OrchestratorConfig } from "@aoagents/ao-core";
 
-// Re-export canonical sanitizeProjectId from core so existing test imports work
-export { sanitizeProjectId };
-
 // ---------------------------------------------------------------------------
 // Escaping helpers
 // ---------------------------------------------------------------------------

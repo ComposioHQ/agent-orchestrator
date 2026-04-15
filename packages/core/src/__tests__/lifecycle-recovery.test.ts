@@ -156,7 +156,9 @@ describe("recoverDeadSessions", () => {
     expect(readMetadataRaw(env.sessionsDir, "app-alive")).not.toBeNull();
   });
 
-  it("skips orchestrator sessions", async () => {
+  it("recovers dead orchestrator sessions", async () => {
+    // Orchestrator sessions are recovered too — if the orchestrator was mid-flight
+    // when the VM died, it needs to come back to continue driving workers.
     writeMetadata(env.sessionsDir, "app-orchestrator", {
       worktree: "/tmp/ws",
       branch: "main",
@@ -167,15 +169,16 @@ describe("recoverDeadSessions", () => {
     });
 
     vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
 
     const lm = createLifecycle({ projectId: "my-app" });
     const results = await lm.recoverDeadSessions();
 
-    expect(results).toHaveLength(0);
+    expect(results).toHaveLength(1);
+    expect(results[0].archived).toBe(true);
   });
 
-  it("skips orchestrator sessions with prefix-orchestrator-N pattern", async () => {
-    // Update config to have a sessionPrefix
+  it("recovers dead orchestrator sessions with prefix-orchestrator-N pattern", async () => {
     (config.projects["my-app"] as ProjectConfig).sessionPrefix = "web";
     writeMetadata(env.sessionsDir, "web-orchestrator-1", {
       worktree: "/tmp/ws",
@@ -186,13 +189,15 @@ describe("recoverDeadSessions", () => {
     });
 
     vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
 
     const lm = createLifecycle({ projectId: "my-app", configOverride: config });
     const results = await lm.recoverDeadSessions();
 
-    expect(results).toHaveLength(0);
-    // Session should still be in active metadata (not archived)
-    expect(readMetadataRaw(env.sessionsDir, "web-orchestrator-1")).not.toBeNull();
+    expect(results).toHaveLength(1);
+    expect(results[0].archived).toBe(true);
+    // Session should be archived (removed from active metadata)
+    expect(readMetadataRaw(env.sessionsDir, "web-orchestrator-1")).toBeNull();
   });
 
   it("handles spawn failure gracefully", async () => {
