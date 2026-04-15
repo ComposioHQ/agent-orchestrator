@@ -1,3 +1,4 @@
+import { pluginLog } from "@aoagents/ao-core";
 import type { PluginModule, Terminal, Session } from "@aoagents/ao-core";
 
 export const manifest = {
@@ -29,7 +30,8 @@ export function create(config?: Record<string, unknown>): Terminal {
       // In a web context, "opening" means the dashboard should show the terminal.
       // The actual xterm.js connection is handled by the web dashboard frontend
       // using the session's runtime attach info.
-      console.log(
+      pluginLog(
+        "info",
         `[terminal-web] Session ${session.id} terminal available at ${dashboardUrl}/sessions/${session.id}/terminal`,
       );
     },
@@ -38,7 +40,8 @@ export function create(config?: Record<string, unknown>): Terminal {
       for (const session of sessions) {
         openSessions.add(session.id);
       }
-      console.log(
+      pluginLog(
+        "info",
         `[terminal-web] ${sessions.length} sessions available at ${dashboardUrl}/sessions`,
       );
     },

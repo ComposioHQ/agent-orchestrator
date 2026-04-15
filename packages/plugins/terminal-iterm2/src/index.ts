@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { platform } from "node:os";
 import {
   escapeAppleScript,
+  pluginLog,
   type PluginModule,
   type Terminal,
   type Session,
@@ -135,8 +136,7 @@ export function create(): Terminal {
 
     async openSession(session: Session): Promise<void> {
       if (!isMacOS()) {
-        // eslint-disable-next-line no-console
-        console.warn("[terminal-iterm2] iTerm2 is only available on macOS");
+        pluginLog("warn", "[terminal-iterm2] iTerm2 is only available on macOS");
         return;
       }
       const sessionName = getSessionName(session);

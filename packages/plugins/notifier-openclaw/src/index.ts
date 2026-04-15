@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  pluginLog,
   type EventPriority,
   type Notifier,
   type NotifyAction,
@@ -158,7 +159,8 @@ async function postWithRetry(
       }
 
       if (attempt < retries) {
-        console.warn(
+        pluginLog(
+          "warn",
           `[notifier-openclaw] Retry ${attempt + 1}/${retries} for session=${context.sessionId} after HTTP ${response.status}`,
         );
       }
@@ -176,7 +178,8 @@ async function postWithRetry(
       }
 
       if (attempt < retries) {
-        console.warn(
+        pluginLog(
+          "warn",
           `[notifier-openclaw] Retry ${attempt + 1}/${retries} for session=${context.sessionId} after network error: ${lastError.message}`,
         );
       }
@@ -256,7 +259,8 @@ export function create(config?: Record<string, unknown>): Notifier {
   validateUrl(url, "notifier-openclaw");
 
   if (!token) {
-    console.warn(
+    pluginLog(
+      "warn",
       "[notifier-openclaw] No token configured.\n" +
         "  Set OPENCLAW_HOOKS_TOKEN env var, or add token to your notifier config.\n" +
         "  Run: ao setup openclaw",

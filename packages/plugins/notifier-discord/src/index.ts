@@ -1,5 +1,6 @@
 import {
   validateUrl,
+  pluginLog,
   type PluginModule,
   type Notifier,
   type OrchestratorEvent,
@@ -164,7 +165,8 @@ export function create(config?: Record<string, unknown>): Notifier {
   const { retries, retryDelayMs } = normalizeRetryConfig(config);
 
   if (!webhookUrl) {
-    console.warn(
+    pluginLog(
+      "warn",
       "[notifier-discord] No webhookUrl configured.\n" +
       "  Set it in agent-orchestrator.yaml under notifiers.discord.webhookUrl\n" +
       "  Create a webhook: Discord Server Settings > Integrations > Webhooks > New Webhook",
@@ -172,7 +174,8 @@ export function create(config?: Record<string, unknown>): Notifier {
   } else {
     validateUrl(webhookUrl, "notifier-discord");
     if (!DISCORD_WEBHOOK_URL_RE.test(webhookUrl)) {
-      console.warn(
+      pluginLog(
+        "warn",
         "[notifier-discord] webhookUrl does not match expected Discord webhook format.\n" +
         "  Expected: https://discord.com/api/webhooks/... or https://discordapp.com/api/webhooks/...",
       );

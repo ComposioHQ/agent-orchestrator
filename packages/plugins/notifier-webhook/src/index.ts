@@ -1,4 +1,5 @@
 import {
+  pluginLog,
   type PluginModule,
   type Notifier,
   type OrchestratorEvent,
@@ -108,7 +109,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   const { retries, retryDelayMs } = normalizeRetryConfig(config);
 
   if (!url) {
-    console.warn("[notifier-webhook] No url configured — notifications will be no-ops");
+    pluginLog("warn", "[notifier-webhook] No url configured — notifications will be no-ops");
   } else {
     validateUrl(url, "notifier-webhook");
   }

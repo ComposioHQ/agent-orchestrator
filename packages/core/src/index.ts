@@ -124,6 +124,7 @@ export type { NormalizedOrchestratorSessionStrategy } from "./orchestrator-sessi
 export {
   createCorrelationId,
   createProjectObserver,
+  pluginLog,
   readObservabilitySummary,
 } from "./observability.js";
 export { resolveNotifierTarget } from "./notifier-resolution.js";
