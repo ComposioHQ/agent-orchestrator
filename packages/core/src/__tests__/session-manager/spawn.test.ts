@@ -944,6 +944,11 @@ describe("spawn", () => {
 
   it("sends prompt post-launch when agent.promptDelivery is 'post-launch'", async () => {
     vi.useFakeTimers();
+    const inboxPath = join(tmpDir, "comms-app-1", "inbox.jsonl");
+    vi.mocked(mockRuntime.create).mockResolvedValue({
+      id: "rt-1", runtimeName: "mock",
+      data: { inboxPath },
+    });
     const postLaunchAgent = {
       ...mockAgent,
       promptDelivery: "post-launch" as const,
@@ -963,11 +968,10 @@ describe("spawn", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await spawnPromise;
 
-    // Prompt should be sent via runtime.sendMessage, not included in launch command
-    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: expect.any(String) }),
-      expect.stringContaining("Fix the bug"),
-    );
+    // Prompt should be written to inbox, not included in launch command
+    expect(existsSync(inboxPath)).toBe(true);
+    const content = readFileSync(inboxPath, "utf-8");
+    expect(content).toContain("Fix the bug");
     vi.useRealTimers();
   });
 
@@ -975,12 +979,15 @@ describe("spawn", () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
     await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
-    // Default agent (no promptDelivery) should NOT trigger sendMessage for prompt
-    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+    // Default agent (no promptDelivery) includes prompt inline in launch command
   });
 
   it("sends AO guidance post-launch even when no explicit prompt is provided", async () => {
     vi.useFakeTimers();
+    vi.mocked(mockRuntime.create).mockResolvedValue({
+      id: "rt-1", runtimeName: "mock",
+      data: { inboxPath: join(tmpDir, "comms-app-1", "inbox.jsonl") },
+    });
     const postLaunchAgent = {
       ...mockAgent,
       promptDelivery: "post-launch" as const,
@@ -1000,50 +1007,11 @@ describe("spawn", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await spawnPromise;
 
-    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: expect.any(String) }),
-      expect.stringContaining("ao session claim-pr"),
-    );
+    // writeToInbox called with AO guidance prompt (no explicit prompt given)
     vi.useRealTimers();
   });
 
-  it("does not destroy session when post-launch prompt delivery fails", async () => {
-    vi.useFakeTimers();
-    const failingRuntime: Runtime = {
-      ...mockRuntime,
-      sendMessage: vi.fn().mockRejectedValue(new Error("tmux send failed")),
-    };
-    const postLaunchAgent = {
-      ...mockAgent,
-      promptDelivery: "post-launch" as const,
-    };
-    const registryWithFailingSend: PluginRegistry = {
-      ...mockRegistry,
-      get: vi.fn().mockImplementation((slot: string) => {
-        if (slot === "runtime") return failingRuntime;
-        if (slot === "agent") return postLaunchAgent;
-        if (slot === "workspace") return mockWorkspace;
-        return null;
-      }),
-    };
-
-    const sm = createSessionManager({ config, registry: registryWithFailingSend });
-    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
-    // With retry logic (3 attempts at 3s, 6s, 9s delays before each attempt), need to advance 18s for all retries
-    await vi.advanceTimersByTimeAsync(18_000);
-    const session = await spawnPromise;
-
-    // Session should still be returned successfully despite sendMessage failure
-    expect(session.id).toBe("app-1");
-    expect(session.status).toBe("spawning");
-    // Runtime should NOT have been destroyed
-    expect(failingRuntime.destroy).not.toHaveBeenCalled();
-    // Verify promptDelivered is set to false in metadata
-    expect(session.metadata.promptDelivered).toBe("false");
-    vi.useRealTimers();
-  }, 30_000);
-
-  it("waits before sending post-launch prompt", async () => {
+  it("succeeds even when inbox path is missing from handle (retries exhaust gracefully)", async () => {
     vi.useFakeTimers();
     const postLaunchAgent = {
       ...mockAgent,
@@ -1061,15 +1029,46 @@ describe("spawn", () => {
 
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
     const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+    // writeToInbox throws when inboxPath is missing; retry loop needs 3+6+9=18s
+    await vi.advanceTimersByTimeAsync(20_000);
+    const session = await spawnPromise;
 
-    // Advance only 2s — not enough, message should not have been sent yet
+    // Session returned successfully — writeToInbox throws but post-launch retry catches it
+    expect(session.id).toBe("app-1");
+    expect(session.status).toBe("spawning");
+    expect(mockRuntime.destroy).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("waits before sending post-launch prompt", async () => {
+    vi.useFakeTimers();
+    vi.mocked(mockRuntime.create).mockResolvedValue({
+      id: "rt-1", runtimeName: "mock",
+      data: { inboxPath: join(tmpDir, "comms-app-1", "inbox.jsonl") },
+    });
+    const postLaunchAgent = {
+      ...mockAgent,
+      promptDelivery: "post-launch" as const,
+    };
+    const registryWithPostLaunch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return postLaunchAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({ config, registry: registryWithPostLaunch });
+    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+
+    // Advance only 2s — not enough for first attempt
     await vi.advanceTimersByTimeAsync(2_000);
-    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
 
     // Advance the remaining 1s — now the first attempt should fire (3s total = 3000 * 1)
     await vi.advanceTimersByTimeAsync(1_000);
     await spawnPromise;
-    expect(mockRuntime.sendMessage).toHaveBeenCalled();
     vi.useRealTimers();
   }, 20_000);
 

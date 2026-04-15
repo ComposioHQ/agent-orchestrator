@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import tmuxPlugin from "@aoagents/ao-plugin-runtime-tmux";
 import type { RuntimeHandle } from "@aoagents/ao-core";
 import { isTmuxAvailable, killSessionsByPrefix } from "./helpers/tmux.js";
-import { sleep } from "./helpers/polling.js";
 
 const tmuxOk = await isTmuxAvailable();
 const SESSION_PREFIX = "ao-inttest-tmux-";
@@ -41,23 +40,13 @@ describe.skipIf(!tmuxOk)("runtime-tmux (integration)", () => {
     expect(await runtime.isAlive(handle)).toBe(true);
   });
 
-  it("sendMessage sends text and getOutput captures it", async () => {
-    await runtime.sendMessage(handle, "hello world");
-    await sleep(500); // give tmux time to process
-    const output = await runtime.getOutput(handle);
-    expect(output).toContain("hello world");
-  });
-
-  it("sendMessage handles long text via buffer", async () => {
-    const longText = "x".repeat(250);
-    await runtime.sendMessage(handle, longText);
-    await sleep(500);
-    const output = await runtime.getOutput(handle);
-    // tmux wraps long text at column width, so strip ANSI escapes and newlines
-    // eslint-disable-next-line no-control-regex
-    const stripped = output.replace(/\x1b\[[0-9;]*m/g, "").replace(/\n/g, "");
-    expect(stripped).toContain(longText);
-  });
+  // sendMessage now writes to an inbox file (file-based protocol) and requires
+  // an AO-managed session handle with sessionsDir/sessionId. These tests covered
+  // the old tmux send-keys path which has been removed per the file-based comms
+  // protocol (issue #853). End-to-end message delivery is covered by the
+  // runtime-file integration tests.
+  it.skip("sendMessage sends text and getOutput captures it", async () => {});
+  it.skip("sendMessage handles long text via buffer", async () => {});
 
   it("getMetrics returns uptime", async () => {
     const metrics = await runtime.getMetrics!(handle);

@@ -192,13 +192,13 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'claude-opus-4-6'");
   });
 
-  it("does not include -p flag (prompt delivered post-launch)", () => {
+  it("excludes prompt from launch command (post-launch delivery)", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Fix the bug" }));
     expect(cmd).not.toContain("-p");
     expect(cmd).not.toContain("Fix the bug");
   });
 
-  it("combines all options without prompt", () => {
+  it("combines all options without prompt (post-launch delivery)", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "permissionless", model: "opus", prompt: "Hello" }),
     );
@@ -216,18 +216,17 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("-p");
   });
 
-  it("includes --append-system-prompt alongside omitted -p", () => {
+  it("includes --append-system-prompt but excludes prompt (post-launch delivery)", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPrompt: "You are a helper", prompt: "Do the task" }),
     );
     expect(cmd).toContain("--append-system-prompt");
     expect(cmd).toContain("You are a helper");
-    // -p as a standalone flag (not substring of --append-system-prompt)
     expect(cmd).not.toMatch(/\s-p\s/);
     expect(cmd).not.toContain("Do the task");
   });
 
-  it("uses systemPromptFile via shell substitution alongside omitted -p", () => {
+  it("uses systemPromptFile via shell substitution without inline prompt", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPromptFile: "/tmp/prompt.md", prompt: "Do the task" }),
     );

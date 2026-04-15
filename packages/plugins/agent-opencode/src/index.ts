@@ -24,6 +24,7 @@ import {
 } from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
+import { stat } from "node:fs/promises";
 
 const execFileAsync = promisify(execFile);
 
@@ -149,9 +150,7 @@ process.stdin.on('data', c => input += c).on('end', () => {
   return script.replace(/\n/g, " ").replace(/\s+/g, " ");
 }
 
-// =============================================================================
 // Session List Helpers
-// =============================================================================
 
 /**
  * Query OpenCode's session list and find the matching session for this AO session.
@@ -190,9 +189,7 @@ async function findOpenCodeSession(
   }
 }
 
-// =============================================================================
 // Plugin Manifest
-// =============================================================================
 
 export const manifest = {
   name: "opencode",
@@ -202,9 +199,7 @@ export const manifest = {
   displayName: "OpenCode",
 };
 
-// =============================================================================
 // Agent Implementation
-// =============================================================================
 
 function createOpenCodeAgent(): Agent {
   return {
@@ -326,7 +321,20 @@ function createOpenCodeAgent(): Agent {
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      // 1. Check AO activity JSONL first (written by recordActivity from terminal output).
+      // 1. Fast path: log file mtime (file runtime only).
+      const logPath = session.runtimeHandle?.data?.["logPath"] as string | undefined;
+      if (logPath) {
+        try {
+          const { mtime } = await stat(logPath);
+          const ageMs = Date.now() - mtime.getTime();
+          if (ageMs < activeWindowMs) return { state: "active", timestamp: mtime };
+          if (ageMs < threshold) return { state: "ready", timestamp: mtime };
+        } catch {
+          // logPath unreadable — not file runtime, skip
+        }
+      }
+
+      // 2. Check AO activity JSONL (written by recordActivity from terminal output).
       //    This is the only source of waiting_input/blocked states for OpenCode.
       let activityResult: Awaited<ReturnType<typeof readLastActivityEntry>> = null;
       if (session.workspacePath) {
@@ -335,7 +343,7 @@ function createOpenCodeAgent(): Agent {
         if (activityState) return activityState;
       }
 
-      // 2. Fallback: query OpenCode's session list API for timestamp-based detection
+      // 3. Fallback: query OpenCode's session list API for timestamp-based detection
       const targetSession = await findOpenCodeSession(session);
       if (targetSession) {
         const lastActivity = parseUpdatedTimestamp(targetSession.updated);
@@ -352,7 +360,7 @@ function createOpenCodeAgent(): Agent {
         }
       }
 
-      // 3. Fallback: use JSONL entry with age-based decay when session list is unavailable.
+      // 4. Fallback: use JSONL entry with age-based decay when session list is unavailable.
       const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
       if (fallback) return fallback;
 
@@ -456,12 +464,12 @@ function createOpenCodeAgent(): Agent {
       if (!session.workspacePath) return;
       await setupPathWrapperWorkspace(session.workspacePath);
     },
+
+
   };
 }
 
-// =============================================================================
 // Plugin Export
-// =============================================================================
 
 export function create(): Agent {
   return createOpenCodeAgent();

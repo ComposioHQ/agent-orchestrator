@@ -196,45 +196,6 @@ export function create(): Runtime {
       processes.delete(handle.id);
     },
 
-    async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
-      const entry = processes.get(handle.id);
-      if (!entry) {
-        throw new Error(`No process found for session ${handle.id}`);
-      }
-
-      const child = entry.process;
-      if (!child) {
-        throw new Error(`Process for session ${handle.id} is still spawning`);
-      }
-      const stdin = child.stdin;
-      if (!stdin || !stdin.writable) {
-        throw new Error(`stdin not writable for session ${handle.id}`);
-      }
-
-      // Wrap write in a promise with done-flag to prevent double resolve/reject
-      await new Promise<void>((resolve, reject) => {
-        let done = false;
-        const finish = (err?: Error | null) => {
-          if (done) return;
-          done = true;
-          cleanup();
-          if (err) reject(err);
-          else resolve();
-        };
-        const onError = (err: Error) => finish(err);
-        const onDrain = () => {
-          // Drain means backpressure cleared — still wait for write callback
-        };
-        const cleanup = () => {
-          stdin.removeListener("error", onError);
-          stdin.removeListener("drain", onDrain);
-        };
-        stdin.on("error", onError);
-        stdin.on("drain", onDrain);
-        stdin.write(message + "\n", (err) => finish(err ?? null));
-      });
-    },
-
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {
       const entry = processes.get(handle.id);
       if (!entry) return "";

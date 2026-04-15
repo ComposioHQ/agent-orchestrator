@@ -25,9 +25,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-// =============================================================================
 // Metadata Updater Hook Script
-// =============================================================================
 
 /** Hook script content that updates session metadata on git/gh commands.
  *  Exported for integration testing. */
@@ -114,9 +112,7 @@ update_metadata_key() {
   mv "$temp_file" "$metadata_file"
 }
 
-# ============================================================================
 # Command Detection and Parsing
-# ============================================================================
 
 # Strip leading directory-change prefixes so that commands like
 #   cd ~/.worktrees/project && gh pr create ...
@@ -184,9 +180,7 @@ echo '{}'
 exit 0
 `;
 
-// =============================================================================
 // Plugin Manifest
-// =============================================================================
 
 export const manifest = {
   name: "claude-code",
@@ -196,9 +190,7 @@ export const manifest = {
   displayName: "Claude Code",
 };
 
-// =============================================================================
 // JSONL Helpers
-// =============================================================================
 
 /**
  * Convert a workspace path to Claude's project directory path.
@@ -401,9 +393,7 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
   return { inputTokens, outputTokens, estimatedCostUsd: totalCost };
 }
 
-// =============================================================================
 // Process Detection
-// =============================================================================
 
 /**
  * TTL cache for `ps -eo pid,tty,args` output. Without this, listing N sessions
@@ -516,9 +506,7 @@ async function findClaudeProcess(handle: RuntimeHandle): Promise<number | null> 
   }
 }
 
-// =============================================================================
 // Terminal Output Patterns for detectActivity
-// =============================================================================
 
 /** Classify Claude Code's activity state from terminal output (pure, sync). */
 function classifyTerminalOutput(terminalOutput: string): ActivityState {
@@ -548,9 +536,7 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
   return "active";
 }
 
-// =============================================================================
 // Hook Setup Helper
-// =============================================================================
 
 /**
  * Shared helper to setup PostToolUse hooks in a workspace.
@@ -639,9 +625,7 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
   await writeFile(settingsPath, JSON.stringify(existingSettings, null, 2) + "\n", "utf-8");
 }
 
-// =============================================================================
 // Agent Implementation
-// =============================================================================
 
 function createClaudeCodeAgent(): Agent {
   return {
@@ -672,9 +656,8 @@ function createClaudeCodeAgent(): Agent {
         parts.push("--append-system-prompt", shellEscape(config.systemPrompt));
       }
 
-      // NOTE: prompt is NOT included here — it's delivered post-launch via
-      // runtime.sendMessage() to keep Claude in interactive mode.
-      // Using -p causes one-shot mode (Claude exits after responding).
+      // Prompt is delivered post-launch via inbox file, NOT inlined here.
+      // A bare positional arg triggers one-shot mode (Claude exits after responding).
 
       return parts.join(" ");
     },
@@ -831,22 +814,19 @@ function createClaudeCodeAgent(): Agent {
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      // Relative path so that symlinked .claude/ dirs across worktrees
-      // all produce the same settings.json (last writer doesn't clobber).
       await setupHookInWorkspace(workspacePath, ".claude/metadata-updater.sh");
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
       if (!session.workspacePath) return;
-
       await setupHookInWorkspace(session.workspacePath, ".claude/metadata-updater.sh");
     },
+
+
   };
 }
 
-// =============================================================================
 // Plugin Export
-// =============================================================================
 
 export function create(): Agent {
   return createClaudeCodeAgent();

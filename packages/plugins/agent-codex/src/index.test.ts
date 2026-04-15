@@ -229,7 +229,7 @@ describe("getLaunchCommand", () => {
   const agent = create();
 
   it("generates base command", () => {
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'codex' -c check_for_update_on_startup=false");
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'codex' -c check_for_update_on_startup=false -c features.codex_hooks=true");
   });
 
   it("includes bypass flag when permissions=permissionless", () => {
@@ -277,7 +277,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "permissionless", model: "o3", prompt: "Go" }),
     );
-    expect(cmd).toBe("'codex' -c check_for_update_on_startup=false --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high -- 'Go'");
+    expect(cmd).toBe("'codex' -c check_for_update_on_startup=false -c features.codex_hooks=true --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high -- 'Go'");
   });
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {
@@ -1614,13 +1614,13 @@ describe("postLaunchSetup", () => {
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
 
     // Before postLaunchSetup, binary is "codex"
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'codex' -c check_for_update_on_startup=false");
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'codex' -c check_for_update_on_startup=false -c features.codex_hooks=true");
 
     // After postLaunchSetup resolves the binary
     await agent.postLaunchSetup!(makeSession({ workspacePath: "/workspace/test" }));
 
     // Now getLaunchCommand should use the resolved binary
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'/opt/bin/codex' -c check_for_update_on_startup=false");
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'/opt/bin/codex' -c check_for_update_on_startup=false -c features.codex_hooks=true");
   });
 });
 

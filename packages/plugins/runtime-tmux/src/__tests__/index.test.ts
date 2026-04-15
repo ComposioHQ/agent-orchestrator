@@ -17,10 +17,58 @@ vi.mock("node:crypto", () => ({
   randomUUID: () => "test-uuid-1234",
 }));
 
-// Mock node:fs for writeFileSync / unlinkSync
 vi.mock("node:fs", () => ({
   writeFileSync: vi.fn(),
   unlinkSync: vi.fn(),
+  appendFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  existsSync: vi.fn(() => false),
+  chmodSync: vi.fn(),
+  utimesSync: vi.fn(),
+  readFileSync: vi.fn(() => ""),
+  closeSync: vi.fn(),
+  openSync: vi.fn(() => 0),
+}));
+
+const {
+  mockResolveCommsFiles,
+  mockCreateCommsFiles,
+  mockAppendInboxMessage,
+  mockAppendMessage,
+  mockGenerateDedupKey,
+  mockSetupComms,
+  mockReadEpoch,
+  mockReadNewMessages,
+  mockWatchDirectory,
+} = vi.hoisted(() => ({
+  mockResolveCommsFiles: vi.fn((sessionsDir: string, sessionId: string) => ({
+    dir: `${sessionsDir}/${sessionId}/comms`,
+    inbox: `${sessionsDir}/${sessionId}/comms/inbox`,
+    agentEvents: `${sessionsDir}/${sessionId}/comms/agent-events`,
+    systemEvents: `${sessionsDir}/${sessionId}/comms/system-events`,
+    heartbeat: `${sessionsDir}/${sessionId}/comms/heartbeat`,
+  })),
+  mockCreateCommsFiles: vi.fn(),
+  mockAppendInboxMessage: vi.fn(),
+  mockAppendMessage: vi.fn(),
+  mockGenerateDedupKey: vi.fn(() => "test-dedup-1"),
+  mockSetupComms: vi.fn(async () => {}),
+  mockReadEpoch: vi.fn(() => 1),
+  mockReadNewMessages: vi.fn(() => ({ messages: [], newCursor: 0 })),
+  mockWatchDirectory: vi.fn(() => ({ close: vi.fn() })),
+}));
+
+vi.mock("@aoagents/ao-plugin-runtime-file", () => ({
+  resolveCommsFiles: mockResolveCommsFiles,
+  createCommsFiles: mockCreateCommsFiles,
+  appendInboxMessage: mockAppendInboxMessage,
+  appendMessage: mockAppendMessage,
+  generateDedupKey: mockGenerateDedupKey,
+  setupComms: mockSetupComms,
+  readEpoch: mockReadEpoch,
+  readNewMessages: mockReadNewMessages,
+  watchDirectory: mockWatchDirectory,
+  AGENT_EVENTS_FILE: "agent-events",
 }));
 
 // Get reference to the promisify-custom mock — this is what the plugin actually calls
@@ -39,7 +87,6 @@ function mockTmuxError(message: string) {
   mockExecFileCustom.mockRejectedValueOnce(new Error(message));
 }
 
-/** Create a RuntimeHandle for testing. */
 function makeHandle(id: string, createdAt?: number): RuntimeHandle {
   return {
     id,
@@ -47,6 +94,10 @@ function makeHandle(id: string, createdAt?: number): RuntimeHandle {
     data: {
       createdAt: createdAt ?? 1000,
       workspacePath: "/tmp/workspace",
+      sessionsDir: "/tmp/sessions",
+      sessionId: id,
+      inboxPath: `/tmp/sessions/${id}/comms/inbox`,
+      agentEventsPath: `/tmp/sessions/${id}/comms/agent-events`,
     },
   };
 }
@@ -304,161 +355,62 @@ describe("runtime.destroy()", () => {
   });
 });
 
-describe("runtime.sendMessage()", () => {
-  it("sends short text with send-keys -l (literal) + Enter", async () => {
+describe("runtime.create() comms setup", () => {
+  it("installs hooks for claude-code agent and ao-emit for all", async () => {
     const runtime = create();
-    const handle = makeHandle("msg-short");
+    mockTmuxSuccess();
+    mockTmuxSuccess();
 
-    // 1: send-keys C-u (clear), 2: send-keys -l text, 3: send-keys Enter
+    await runtime.create({
+      sessionId: "comms-test",
+      workspacePath: "/tmp/ws",
+      launchCommand: "claude",
+      environment: { AO_DATA_DIR: "/tmp/sessions", AO_AGENT_NAME: "claude-code" },
+    });
+
+    expect(mockResolveCommsFiles).toHaveBeenCalledWith("/tmp/sessions", "comms-test");
+    expect(mockCreateCommsFiles).toHaveBeenCalled();
+    expect(mockSetupComms).toHaveBeenCalledWith("/tmp/ws", { flavors: ["claude-code"] });
+  });
+
+  it("installs aider flavor and attempts generic watcher window", async () => {
+    const runtime = create();
     mockTmuxSuccess();
     mockTmuxSuccess();
     mockTmuxSuccess();
 
-    await runtime.sendMessage(handle, "hello world");
+    await runtime.create({
+      sessionId: "aider-test",
+      workspacePath: "/tmp/ws",
+      launchCommand: "aider",
+      environment: { AO_DATA_DIR: "/tmp/sessions", AO_AGENT_NAME: "aider" },
+    });
 
-    expect(mockExecFileCustom).toHaveBeenCalledTimes(3);
-
-    // Call 0: Clear partial input
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      1,
-      "tmux",
-      ["send-keys", "-t", "msg-short", "C-u"],
-      expectedTmuxOptions,
+    expect(mockSetupComms).toHaveBeenCalledWith("/tmp/ws", { flavors: ["aider"] });
+    const newWindowCall = mockExecFileCustom.mock.calls.find(
+      (call) => (call[1] as string[])[0] === "new-window",
     );
-
-    // Call 1: Literal text
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      2,
-      "tmux",
-      ["send-keys", "-t", "msg-short", "-l", "hello world"],
-      expectedTmuxOptions,
-    );
-
-    // Call 2: Enter
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      3,
-      "tmux",
-      ["send-keys", "-t", "msg-short", "Enter"],
-      expectedTmuxOptions,
-    );
+    expect(newWindowCall).toBeDefined();
+    const args = newWindowCall![1] as string[];
+    expect(args).toContain("ao-watcher");
+    expect(args).toContain("AO_WAKE_MODE=inject");
   });
 
-  it("uses load-buffer + paste-buffer for long text (> 200 chars)", async () => {
+  it("propagates AO_INBOX_PATH and AO_AGENT_EVENTS_PATH into tmux env", async () => {
     const runtime = create();
-    const handle = makeHandle("msg-long");
-    const longText = "x".repeat(250);
+    mockTmuxSuccess();
+    mockTmuxSuccess();
 
-    // 1: C-u, 2: load-buffer, 3: paste-buffer, 4: unlinkSync (sync), 5: delete-buffer, 6: Enter
-    mockTmuxSuccess(); // C-u
-    mockTmuxSuccess(); // load-buffer
-    mockTmuxSuccess(); // paste-buffer
-    mockTmuxSuccess(); // delete-buffer (finally block)
-    mockTmuxSuccess(); // Enter
+    await runtime.create({
+      sessionId: "env-prop",
+      workspacePath: "/tmp/ws",
+      launchCommand: "claude",
+      environment: { AO_DATA_DIR: "/tmp/sessions", AO_AGENT_NAME: "claude-code" },
+    });
 
-    await runtime.sendMessage(handle, longText);
-
-    expect(mockExecFileCustom).toHaveBeenCalledTimes(5);
-
-    // Call 0: clear
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      1,
-      "tmux",
-      ["send-keys", "-t", "msg-long", "C-u"],
-      expectedTmuxOptions,
-    );
-
-    // Call 1: load-buffer with named buffer
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      2,
-      "tmux",
-      [
-        "load-buffer",
-        "-b",
-        "ao-test-uuid-1234",
-        expect.stringContaining("ao-send-test-uuid-1234.txt"),
-      ],
-      expectedTmuxOptions,
-    );
-
-    // Call 2: paste-buffer
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      3,
-      "tmux",
-      ["paste-buffer", "-b", "ao-test-uuid-1234", "-t", "msg-long", "-d"],
-      expectedTmuxOptions,
-    );
-
-    // Verify writeFileSync was called with the message
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
-      expect.stringContaining("ao-send-test-uuid-1234.txt"),
-      longText,
-      { encoding: "utf-8", mode: 0o600 },
-    );
-
-    // Verify unlinkSync was called for cleanup
-    expect(fs.unlinkSync).toHaveBeenCalledWith(
-      expect.stringContaining("ao-send-test-uuid-1234.txt"),
-    );
-  });
-
-  it("uses load-buffer for multiline text", async () => {
-    const runtime = create();
-    const handle = makeHandle("msg-multi");
-
-    mockTmuxSuccess(); // C-u
-    mockTmuxSuccess(); // load-buffer
-    mockTmuxSuccess(); // paste-buffer
-    mockTmuxSuccess(); // delete-buffer (finally)
-    mockTmuxSuccess(); // Enter
-
-    await runtime.sendMessage(handle, "line1\nline2\nline3");
-
-    // Should use buffer path, not send-keys -l
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      2,
-      "tmux",
-      [
-        "load-buffer",
-        "-b",
-        "ao-test-uuid-1234",
-        expect.stringContaining("ao-send-test-uuid-1234.txt"),
-      ],
-      expectedTmuxOptions,
-    );
-
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
-      expect.stringContaining("ao-send-test-uuid-1234.txt"),
-      "line1\nline2\nline3",
-      { encoding: "utf-8", mode: 0o600 },
-    );
-  });
-
-  it("cleans up buffer and temp file on paste failure", async () => {
-    const runtime = create();
-    const handle = makeHandle("msg-fail");
-    const longText = "y".repeat(250);
-
-    mockTmuxSuccess(); // C-u
-    mockTmuxSuccess(); // load-buffer succeeds
-    mockTmuxError("paste-buffer failed"); // paste-buffer fails
-    // finally block:
-    // unlinkSync is sync (mocked)
-    mockTmuxSuccess(); // delete-buffer in finally
-    // After finally, the error propagates — no Enter call
-
-    await expect(runtime.sendMessage(handle, longText)).rejects.toThrow("paste-buffer failed");
-
-    // unlinkSync should still be called for temp file cleanup
-    expect(fs.unlinkSync).toHaveBeenCalledWith(
-      expect.stringContaining("ao-send-test-uuid-1234.txt"),
-    );
-
-    // delete-buffer should be called in finally block
-    expect(mockExecFileCustom).toHaveBeenCalledWith(
-      "tmux",
-      ["delete-buffer", "-b", "ao-test-uuid-1234"],
-      expectedTmuxOptions,
-    );
+    const newSessionArgs = mockExecFileCustom.mock.calls[0]?.[1] as string[];
+    expect(newSessionArgs).toContain("AO_INBOX_PATH=/tmp/sessions/env-prop/comms/inbox");
+    expect(newSessionArgs).toContain("AO_AGENT_EVENTS_PATH=/tmp/sessions/env-prop/comms/agent-events");
   });
 });
 

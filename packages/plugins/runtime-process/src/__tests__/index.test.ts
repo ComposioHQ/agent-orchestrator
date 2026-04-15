@@ -334,54 +334,6 @@ describe("destroy()", () => {
 });
 
 // =========================================================================
-// sendMessage()
-// =========================================================================
-describe("sendMessage()", () => {
-  it("writes message with trailing newline to stdin", async () => {
-    const child = createMockChild();
-    mockSpawn.mockReturnValue(child);
-
-    const runtime = create();
-    const handle = await runtime.create(defaultConfig());
-
-    await runtime.sendMessage(handle, "hello world");
-
-    expect(child.stdin.write).toHaveBeenCalledWith("hello world\n", expect.any(Function));
-  });
-
-  it("throws for unknown session", async () => {
-    const runtime = create();
-    await expect(runtime.sendMessage(makeHandle("nonexistent"), "hello")).rejects.toThrow(
-      /No process found/,
-    );
-  });
-
-  it("throws when stdin is not writable", async () => {
-    const child = createMockChild();
-    child.stdin.writable = false;
-    mockSpawn.mockReturnValue(child);
-
-    const runtime = create();
-    const handle = await runtime.create(defaultConfig());
-
-    await expect(runtime.sendMessage(handle, "hello")).rejects.toThrow(/stdin not writable/);
-  });
-
-  it("rejects when stdin.write returns an error", async () => {
-    const child = createMockChild();
-    child.stdin.write = vi.fn((_data: string, cb: (err?: Error | null) => void) => {
-      cb(new Error("write EPIPE"));
-    });
-    mockSpawn.mockReturnValue(child);
-
-    const runtime = create();
-    const handle = await runtime.create(defaultConfig());
-
-    await expect(runtime.sendMessage(handle, "hello")).rejects.toThrow(/write EPIPE/);
-  });
-});
-
-// =========================================================================
 // getOutput()
 // =========================================================================
 describe("getOutput()", () => {

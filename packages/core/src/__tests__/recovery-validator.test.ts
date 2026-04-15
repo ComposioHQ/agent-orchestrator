@@ -28,7 +28,7 @@ describe("recovery validator", () => {
       name: "tmux",
       create: vi.fn(),
       destroy: vi.fn(),
-      sendMessage: vi.fn(),
+
       getOutput: vi.fn(),
       isAlive: vi.fn().mockResolvedValue(true),
     };
@@ -134,7 +134,7 @@ describe("recovery validator", () => {
       name: "tmux",
       create: vi.fn(),
       destroy: vi.fn(),
-      sendMessage: vi.fn(),
+
       getOutput: vi.fn(),
       isAlive: vi.fn().mockRejectedValue(new Error("Runtime check failed")),
     };

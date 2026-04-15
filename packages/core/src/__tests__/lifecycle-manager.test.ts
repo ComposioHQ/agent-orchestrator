@@ -1564,6 +1564,251 @@ describe("reactions", () => {
   });
 });
 
+describe("watchEvents integration", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("sets up watchEvents when runtime supports it and fires completion callback", async () => {
+    let capturedCallback: ((events: unknown[]) => void) | null = null;
+    const unsubscribe = vi.fn();
+
+    const runtimeWithWatch = {
+      ...plugins.runtime,
+      name: "mock",
+      watchEvents: vi.fn().mockImplementation((_handle: unknown, cb: (events: unknown[]) => void) => {
+        capturedCallback = cb;
+        return unsubscribe;
+      }),
+    };
+
+    const registryWithWatch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return runtimeWithWatch;
+        if (slot === "agent") return plugins.agent;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "working" });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    writeMetadata(env.sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/test",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithWatch,
+      sessionManager: mockSessionManager,
+    });
+
+    lm.start(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // watchEvents should have been set up
+    expect(runtimeWithWatch.watchEvents).toHaveBeenCalledOnce();
+
+    // Fire a completion event — should trigger checkSession
+    expect(capturedCallback).not.toBeNull();
+    capturedCallback!([{ type: "completion", message: "done" }]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockSessionManager.get).toHaveBeenCalledWith("app-1");
+
+    lm.stop();
+  });
+
+  it("fires escalation event and calls notifyHuman", async () => {
+    let capturedCallback: ((events: unknown[]) => void) | null = null;
+    const notifier = createMockNotifier();
+
+    const runtimeWithWatch = {
+      ...plugins.runtime,
+      name: "mock",
+      watchEvents: vi.fn().mockImplementation((_handle: unknown, cb: (events: unknown[]) => void) => {
+        capturedCallback = cb;
+        return vi.fn();
+      }),
+    };
+
+    const registryWithWatch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return runtimeWithWatch;
+        if (slot === "agent") return plugins.agent;
+        if (slot === "notifier" && name === "desktop") return notifier;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "working" });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    writeMetadata(env.sessionsDir, "app-1", {
+      worktree: "/tmp", branch: "feat/test", status: "working", project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithWatch,
+      sessionManager: mockSessionManager,
+    });
+
+    lm.start(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    capturedCallback!([{ type: "escalation", message: "help needed" }]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(notifier.notify).toHaveBeenCalled();
+    lm.stop();
+  });
+
+  it("handles status and ack events without throwing", async () => {
+    let capturedCallback: ((events: unknown[]) => void) | null = null;
+
+    const runtimeWithWatch = {
+      ...plugins.runtime,
+      name: "mock",
+      watchEvents: vi.fn().mockImplementation((_handle: unknown, cb: (events: unknown[]) => void) => {
+        capturedCallback = cb;
+        return vi.fn();
+      }),
+    };
+
+    const registryWithWatch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return runtimeWithWatch;
+        if (slot === "agent") return plugins.agent;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "working" });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    writeMetadata(env.sessionsDir, "app-1", {
+      worktree: "/tmp", branch: "feat/test", status: "working", project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithWatch,
+      sessionManager: mockSessionManager,
+    });
+
+    lm.start(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Should not throw for status, ack, or unknown event types
+    expect(() => {
+      capturedCallback!([
+        { type: "status", message: "still running" },
+        { type: "ack", message: "received" },
+        { type: "unknown_future_type" },
+        null,
+        "invalid",
+      ]);
+    }).not.toThrow();
+
+    lm.stop();
+  });
+
+  it("cleans up watchers when session leaves the session list", async () => {
+    const unsubscribe = vi.fn();
+
+    const runtimeWithWatch = {
+      ...plugins.runtime,
+      name: "mock",
+      watchEvents: vi.fn().mockReturnValue(unsubscribe),
+    };
+
+    const registryWithWatch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return runtimeWithWatch;
+        if (slot === "agent") return plugins.agent;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "working" });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    writeMetadata(env.sessionsDir, "app-1", {
+      worktree: "/tmp", branch: "feat/test", status: "working", project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithWatch,
+      sessionManager: mockSessionManager,
+    });
+
+    lm.start(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runtimeWithWatch.watchEvents).toHaveBeenCalledOnce();
+
+    // Session disappears from list
+    vi.mocked(mockSessionManager.list).mockResolvedValue([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // Watcher cleanup should have been called
+    expect(unsubscribe).toHaveBeenCalled();
+
+    lm.stop();
+  });
+
+  it("cleans up all watchers on stop()", async () => {
+    const unsubscribe = vi.fn();
+
+    const runtimeWithWatch = {
+      ...plugins.runtime,
+      name: "mock",
+      watchEvents: vi.fn().mockReturnValue(unsubscribe),
+    };
+
+    const registryWithWatch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return runtimeWithWatch;
+        if (slot === "agent") return plugins.agent;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "working" });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    writeMetadata(env.sessionsDir, "app-1", {
+      worktree: "/tmp", branch: "feat/test", status: "working", project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithWatch,
+      sessionManager: mockSessionManager,
+    });
+
+    lm.start(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    lm.stop();
+
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+});
+
 describe("pollAll terminal status accounting", () => {
   beforeEach(() => {
     vi.useFakeTimers();

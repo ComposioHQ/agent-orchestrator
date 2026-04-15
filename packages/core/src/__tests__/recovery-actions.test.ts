@@ -328,7 +328,7 @@ describe("cleanupSession", () => {
       name: "tmux",
       create: vi.fn(),
       destroy: vi.fn().mockRejectedValue(new Error("Runtime destroy failed")),
-      sendMessage: vi.fn(),
+
       getOutput: vi.fn(),
       isAlive: vi.fn(),
     };

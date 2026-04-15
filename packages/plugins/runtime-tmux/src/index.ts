@@ -2,9 +2,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
-import { writeFileSync, unlinkSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   type PluginModule,
   type Runtime,
@@ -14,6 +14,18 @@ import {
   type AttachInfo,
   shellEscape,
 } from "@aoagents/ao-core";
+import {
+  resolveCommsFiles,
+  createCommsFiles,
+  appendMessage,
+  setupComms,
+  readNewMessages,
+  readEpoch,
+  watchDirectory,
+  AGENT_EVENTS_FILE,
+  type SessionCommsFiles,
+  type Flavor,
+} from "@aoagents/ao-plugin-runtime-file";
 
 const execFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = 5_000;
@@ -25,8 +37,18 @@ export const manifest = {
   version: "0.1.0",
 };
 
-/** Only allow safe characters in session IDs */
 const SAFE_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
+
+const AGENT_FLAVORS: Record<string, Flavor[]> = {
+  "claude-code": ["claude-code"],
+  codex: ["codex"],
+  opencode: ["opencode"],
+  cursor: ["cursor"],
+  aider: ["aider"],
+};
+
+const NEEDS_WATCHER: ReadonlySet<Flavor> = new Set(["codex", "cursor", "aider"]);
+const INJECT_FLAVORS: ReadonlySet<Flavor> = new Set(["cursor", "aider"]);
 
 function assertValidSessionId(id: string): void {
   if (!SAFE_SESSION_ID.test(id)) {
@@ -41,12 +63,27 @@ function writeLaunchScript(command: string): string {
   return `bash ${shellEscape(scriptPath)}`;
 }
 
-/** Run a tmux command and return stdout */
 async function tmux(...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("tmux", args, {
     timeout: TMUX_COMMAND_TIMEOUT_MS,
   });
   return stdout.trimEnd();
+}
+
+async function setupCommsForSession(
+  workspacePath: string,
+  sessionsDir: string,
+  sessionId: string,
+  flavors: Flavor[],
+): Promise<SessionCommsFiles> {
+  const files = resolveCommsFiles(sessionsDir, sessionId);
+  createCommsFiles(files);
+  try {
+    await setupComms(workspacePath, { flavors });
+  } catch (err) {
+    console.warn(`[runtime-tmux] comms setup failed:`, err instanceof Error ? err.message : String(err));
+  }
+  return files;
 }
 
 export function create(): Runtime {
@@ -57,18 +94,36 @@ export function create(): Runtime {
       assertValidSessionId(config.sessionId);
       const sessionName = config.sessionId;
 
-      // Build environment flags: -e KEY=VALUE for each env var
+      const env = config.environment ?? {};
+      const sessionsDir = env["AO_DATA_DIR"] ?? "";
+      const agentName = env["AO_AGENT_NAME"] ?? "";
+      const flavors: Flavor[] = AGENT_FLAVORS[agentName] ?? [];
+
+      let files: SessionCommsFiles | null = null;
+      if (sessionsDir) {
+        files = await setupCommsForSession(
+          config.workspacePath,
+          sessionsDir,
+          config.sessionId,
+          flavors,
+        );
+      }
+
+      const tmuxEnv: Record<string, string> = { ...env };
+      if (files) {
+        tmuxEnv["AO_INBOX_PATH"] = files.inbox;
+        tmuxEnv["AO_AGENT_EVENTS_PATH"] = files.agentEvents;
+        tmuxEnv["AO_AGENT_EPOCH"] = String(readEpoch(sessionsDir, config.sessionId));
+        tmuxEnv["PATH"] = `${join(config.workspacePath, ".ao")}:${env["PATH"] ?? process.env.PATH ?? ""}`;
+      }
+
       const envArgs: string[] = [];
-      for (const [key, value] of Object.entries(config.environment ?? {})) {
+      for (const [key, value] of Object.entries(tmuxEnv)) {
         envArgs.push("-e", `${key}=${value}`);
       }
 
-      // Create tmux session in detached mode
       await tmux("new-session", "-d", "-s", sessionName, "-c", config.workspacePath, ...envArgs);
 
-      // Send the launch command — clean up the session if this fails.
-      // Use a temp script for long commands so the pane shows a short
-      // invocation instead of a pasted wall of shell.
       try {
         if (config.launchCommand.length > 200) {
           const invocation = writeLaunchScript(config.launchCommand);
@@ -82,12 +137,36 @@ export function create(): Runtime {
         try {
           await tmux("kill-session", "-t", sessionName);
         } catch {
-          // Best-effort cleanup
+          // best-effort cleanup
         }
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`Failed to send launch command to session "${sessionName}": ${msg}`, {
           cause: err,
         });
+      }
+
+      if (files && flavors.some((f) => NEEDS_WATCHER.has(f))) {
+        const mode = flavors.some((f) => INJECT_FLAVORS.has(f)) ? "inject" : "wake";
+        const watcherScript = join(config.workspacePath, ".ao", "ao-watcher.sh");
+        try {
+          await tmux(
+            "new-window",
+            "-t",
+            `${sessionName}:9`,
+            "-d",
+            "-n",
+            "ao-watcher",
+            "-e",
+            `AO_INBOX_PATH=${files.inbox}`,
+            "-e",
+            `AO_WAKE_TARGET=${sessionName}:0.0`,
+            "-e",
+            `AO_WAKE_MODE=${mode}`,
+            `bash ${shellEscape(watcherScript)}`,
+          );
+        } catch {
+          // best effort
+        }
       }
 
       return {
@@ -96,6 +175,10 @@ export function create(): Runtime {
         data: {
           createdAt: Date.now(),
           workspacePath: config.workspacePath,
+          sessionsDir,
+          sessionId: config.sessionId,
+          inboxPath: files?.inbox ?? "",
+          agentEventsPath: files?.agentEvents ?? "",
         },
       };
     },
@@ -104,47 +187,8 @@ export function create(): Runtime {
       try {
         await tmux("kill-session", "-t", handle.id);
       } catch {
-        // Session may already be dead — that's fine
+        // session may already be dead
       }
-    },
-
-    async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
-      // Clear any partial input
-      await tmux("send-keys", "-t", handle.id, "C-u");
-
-      // For long or multiline messages, use load-buffer + paste-buffer
-      // Use randomUUID to avoid temp file collisions on concurrent sends
-      if (message.includes("\n") || message.length > 200) {
-        const bufferName = `ao-${randomUUID()}`;
-        const tmpPath = join(tmpdir(), `ao-send-${randomUUID()}.txt`);
-        writeFileSync(tmpPath, message, { encoding: "utf-8", mode: 0o600 });
-        try {
-          await tmux("load-buffer", "-b", bufferName, tmpPath);
-          await tmux("paste-buffer", "-b", bufferName, "-t", handle.id, "-d");
-        } finally {
-          // Clean up temp file and tmux buffer (in case paste-buffer failed
-          // and the -d flag didn't delete it)
-          try {
-            unlinkSync(tmpPath);
-          } catch {
-            // ignore cleanup errors
-          }
-          try {
-            await tmux("delete-buffer", "-b", bufferName);
-          } catch {
-            // Buffer may already be deleted by -d flag — that's fine
-          }
-        }
-      } else {
-        // Use -l (literal) so text like "Enter" or "Space" isn't interpreted
-        // as tmux key names
-        await tmux("send-keys", "-t", handle.id, "-l", message);
-      }
-
-      // Small delay to let tmux process the pasted text before pressing Enter.
-      // Without this, Enter can arrive before the text is fully rendered.
-      await sleep(300);
-      await tmux("send-keys", "-t", handle.id, "Enter");
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {
@@ -165,7 +209,7 @@ export function create(): Runtime {
     },
 
     async getMetrics(handle: RuntimeHandle): Promise<RuntimeMetrics> {
-      const createdAt = (handle.data.createdAt as number) ?? Date.now();
+      const createdAt = (handle.data["createdAt"] as number) ?? Date.now();
       return {
         uptimeMs: Date.now() - createdAt,
       };
@@ -177,6 +221,62 @@ export function create(): Runtime {
         target: handle.id,
         command: `tmux attach -t ${handle.id}`,
       };
+    },
+
+    watchEvents(handle: RuntimeHandle, callback: (events: unknown[]) => void): () => void {
+      const agentEventsPath = handle.data["agentEventsPath"] as string | undefined;
+      if (!agentEventsPath) return () => {};
+
+      const dir = dirname(agentEventsPath);
+      let watcher: ReturnType<typeof watchDirectory> | null = null;
+
+      try {
+        watcher = watchDirectory(dir, (filename) => {
+          if (filename !== null && filename !== AGENT_EVENTS_FILE) return;
+          let messages: unknown[];
+          try {
+            const result = readNewMessages(agentEventsPath);
+            messages = result.messages;
+          } catch {
+            return;
+          }
+          if (messages.length === 0) return;
+          try {
+            callback(messages);
+          } catch {
+            // best effort
+          }
+        });
+      } catch {
+        return () => {};
+      }
+
+      return () => {
+        try {
+          watcher?.close();
+        } catch {
+          // best effort
+        }
+      };
+    },
+
+    async writeSystemEvent(
+      handle: RuntimeHandle,
+      type: string,
+      message: string,
+      data?: Record<string, unknown>,
+    ): Promise<void> {
+      const sessionsDir = handle.data["sessionsDir"] as string | undefined;
+      const sessionId = handle.data["sessionId"] as string | undefined;
+      if (!sessionsDir || !sessionId) return;
+
+      const files = resolveCommsFiles(sessionsDir, sessionId);
+      const epoch = readEpoch(sessionsDir, sessionId);
+      try {
+        appendMessage(files.systemEvents, sessionId, epoch, "system", type, message, data);
+      } catch {
+        // best effort
+      }
     },
   };
 }

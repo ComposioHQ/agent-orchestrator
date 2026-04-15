@@ -23,8 +23,8 @@ import type {
 // Data factories
 // ---------------------------------------------------------------------------
 
-export function makeHandle(id: string): RuntimeHandle {
-  return { id, runtimeName: "mock", data: {} };
+export function makeHandle(id: string, data: Record<string, unknown> = {}): RuntimeHandle {
+  return { id, runtimeName: "mock", data };
 }
 
 export function makeSession(overrides: Partial<Session> = {}): Session {
@@ -75,7 +75,6 @@ export function createMockPlugins(): MockPlugins {
     name: "mock",
     create: vi.fn().mockResolvedValue({ id: "rt-1", runtimeName: "mock", data: {} }),
     destroy: vi.fn().mockResolvedValue(undefined),
-    sendMessage: vi.fn().mockResolvedValue(undefined),
     getOutput: vi.fn().mockResolvedValue("$ some terminal output\n"),
     isAlive: vi.fn().mockResolvedValue(true),
   };

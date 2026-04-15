@@ -34,9 +34,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-// =============================================================================
 // Plugin Manifest
-// =============================================================================
 
 export const manifest = {
   name: "codex",
@@ -46,13 +44,9 @@ export const manifest = {
   displayName: "OpenAI Codex",
 };
 
-// =============================================================================
 // Workspace Setup (delegates to shared PATH-wrapper hooks from @aoagents/ao-core)
-// =============================================================================
 
-// =============================================================================
 // Codex Session JSONL Parsing (for getSessionInfo)
-// =============================================================================
 
 /** Codex session directory: ~/.codex/sessions/ */
 const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
@@ -331,9 +325,7 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
   }
 }
 
-// =============================================================================
 // Binary Resolution
-// =============================================================================
 
 /**
  * Resolve the Codex CLI binary path.
@@ -372,9 +364,7 @@ export async function resolveCodexBinary(): Promise<string> {
   return "codex";
 }
 
-// =============================================================================
 // Agent Implementation
-// =============================================================================
 
 /** Append approval-policy flags to a command parts array */
 function appendApprovalFlags(parts: string[], permissions: string | undefined): void {
@@ -439,6 +429,7 @@ function createCodexAgent(): Agent {
       const binary = resolvedBinary ?? "codex";
       const parts: string[] = [shellEscape(binary)];
       appendNoUpdateCheckFlag(parts);
+      parts.push("-c", "features.codex_hooks=true");
 
       appendApprovalFlags(parts, config.permissions);
       appendModelFlags(parts, config.model);
@@ -509,7 +500,22 @@ function createCodexAgent(): Agent {
 
       if (!session.workspacePath) return null;
 
-      // 1. Try Codex's native JSONL first — it has richer 6-state detection
+      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+
+      // 1. Fast path: log file mtime (file runtime only).
+      const logPath = session.runtimeHandle?.data?.["logPath"] as string | undefined;
+      if (logPath) {
+        try {
+          const logStat = await stat(logPath);
+          const ageMs = Date.now() - logStat.mtimeMs;
+          if (ageMs < activeWindowMs) return { state: "active", timestamp: logStat.mtime };
+          if (ageMs < threshold) return { state: "ready", timestamp: logStat.mtime };
+        } catch {
+          // logPath unreadable — not file runtime, skip
+        }
+      }
+
+      // 2. Try Codex's native JSONL first — it has richer 6-state detection
       //    (approval_request, error, tool_call, etc.) that terminal parsing can't match.
       const sessionFile = await findCodexSessionFileCached(session.workspacePath);
       if (sessionFile) {
@@ -578,7 +584,6 @@ function createCodexAgent(): Agent {
 
       // 3. Fallback: use JSONL entry with age-based decay when native session file
       //    is missing or unparseable.
-      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
       const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
       if (fallback) return fallback;
 
@@ -587,7 +592,6 @@ function createCodexAgent(): Agent {
         try {
           const s = await stat(sessionFile);
           const ageMs = Date.now() - s.mtimeMs;
-          const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
           if (ageMs <= activeWindowMs) return { state: "active", timestamp: s.mtime };
           if (ageMs <= threshold) return { state: "ready", timestamp: s.mtime };
           return { state: "idle", timestamp: s.mtime };
@@ -722,8 +726,6 @@ function createCodexAgent(): Agent {
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
-      // Resolve binary path on first launch (cached for subsequent calls).
-      // Uses a promise guard to prevent concurrent calls from racing.
       if (!resolvedBinary) {
         if (!resolvingBinary) {
           resolvingBinary = resolveCodexBinary();
@@ -737,12 +739,11 @@ function createCodexAgent(): Agent {
       if (!session.workspacePath) return;
       await setupPathWrapperWorkspace(session.workspacePath);
     },
+
   };
 }
 
-// =============================================================================
 // Plugin Export
-// =============================================================================
 
 export function create(): Agent {
   return createCodexAgent();

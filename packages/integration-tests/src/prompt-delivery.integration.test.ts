@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import claudeCodePlugin from "@aoagents/ao-plugin-agent-claude-code";
-import runtimeTmuxPlugin from "@aoagents/ao-plugin-runtime-tmux";
+
 import {
   isTmuxAvailable,
   killSessionsByPrefix,
@@ -162,7 +162,6 @@ describe.skipIf(!canRunInteractive)(
   "interactive claude stays alive after post-launch prompt (the fix)",
   () => {
     const agent = claudeCodePlugin.create();
-    const runtime = runtimeTmuxPlugin.create();
     const sessionName = `${SESSION_PREFIX}interactive-${Date.now()}`;
     let tmpDir: string;
     const handle = makeTmuxHandle(sessionName);
@@ -202,7 +201,13 @@ describe.skipIf(!canRunInteractive)(
       await waitForTuiReady(sessionName, 60_000);
 
       // Deliver the initial prompt post-launch (what the fix does)
-      await runtime.sendMessage(handle, "Respond with exactly: SENTINEL_I_DELIVERED");
+      // sendMessage removed from Runtime — deliver via inbox file instead
+      const { appendFileSync, mkdirSync } = await import("node:fs");
+      const inboxPath = handle.data["inboxPath"] as string | undefined;
+      if (inboxPath) {
+        mkdirSync(join(inboxPath, ".."), { recursive: true });
+        appendFileSync(inboxPath, JSON.stringify({ v: 1, id: 1, epoch: 0, ts: new Date().toISOString(), source: "orchestrator", type: "instruction", message: "Respond with exactly: SENTINEL_I_DELIVERED", dedup: "test-1" }) + "\n");
+      }
 
       // Wait for Claude to process the prompt and return to idle (❯)
       const deadline = Date.now() + 90_000;
@@ -236,7 +241,12 @@ describe.skipIf(!canRunInteractive)(
     });
 
     it("can receive and process a follow-up message", async () => {
-      await runtime.sendMessage(handle, "Respond with exactly: SENTINEL_FOLLOWUP_OK");
+      const { appendFileSync: appendFs, mkdirSync: mkFs } = await import("node:fs");
+      const inbox = handle.data["inboxPath"] as string | undefined;
+      if (inbox) {
+        mkFs(join(inbox, ".."), { recursive: true });
+        appendFs(inbox, JSON.stringify({ v: 1, id: 2, epoch: 0, ts: new Date().toISOString(), source: "orchestrator", type: "instruction", message: "Respond with exactly: SENTINEL_FOLLOWUP_OK", dedup: "test-2" }) + "\n");
+      }
 
       const deadline = Date.now() + 90_000;
       let output = "";

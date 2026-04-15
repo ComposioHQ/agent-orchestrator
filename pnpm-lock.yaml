@@ -83,6 +83,9 @@ importers:
       '@aoagents/ao-plugin-notifier-webhook':
         specifier: workspace:*
         version: link:../plugins/notifier-webhook
+      '@aoagents/ao-plugin-runtime-file':
+        specifier: workspace:*
+        version: link:../plugins/runtime-file
       '@aoagents/ao-plugin-runtime-process':
         specifier: workspace:*
         version: link:../plugins/runtime-process
@@ -416,6 +419,22 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
 
+  packages/plugins/runtime-file:
+    dependencies:
+      '@aoagents/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.6.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
+
   packages/plugins/runtime-process:
     dependencies:
       '@aoagents/ao-core':
@@ -437,6 +456,9 @@ importers:
       '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
+      '@aoagents/ao-plugin-runtime-file':
+        specifier: workspace:*
+        version: link:../runtime-file
     devDependencies:
       '@types/node':
         specifier: ^25.2.3

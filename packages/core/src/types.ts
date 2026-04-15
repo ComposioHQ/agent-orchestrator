@@ -257,9 +257,6 @@ export interface Runtime {
   /** Destroy a session environment */
   destroy(handle: RuntimeHandle): Promise<void>;
 
-  /** Send a text message/prompt to the running agent */
-  sendMessage(handle: RuntimeHandle, message: string): Promise<void>;
-
   /** Capture recent output from the session */
   getOutput(handle: RuntimeHandle, lines?: number): Promise<string>;
 
@@ -271,6 +268,35 @@ export interface Runtime {
 
   /** Get info needed to attach a human to this session (for Terminal plugin) */
   getAttachInfo?(handle: RuntimeHandle): Promise<AttachInfo>;
+
+  /**
+   * Subscribe to agent-events written by the agent during this session.
+   * Called by the lifecycle manager when a session is first seen; complements
+   * the polling loop for lower-latency event processing.
+   *
+   * @param handle  Runtime handle identifying the session.
+   * @param callback  Invoked with newly-seen events whenever the agent-events
+   *                  file changes.  May be called with an empty array when
+   *                  fs.watch fires spuriously — callers must handle that.
+   * @returns An unsubscribe function that closes the underlying watcher.
+   *
+   * Implementations must:
+   * - Catch all fs.watch errors internally and log them; never throw.
+   * - Return a no-op cleanup function when watching is unsupported or fails
+   *   to set up.
+   * - Not replace the polling loop — this is additive for lower latency.
+   */
+  watchEvents?(
+    handle: RuntimeHandle,
+    callback: (events: unknown[]) => void,
+  ): () => void;
+
+  writeSystemEvent?(
+    handle: RuntimeHandle,
+    type: string,
+    message: string,
+    data?: Record<string, unknown>,
+  ): Promise<void>;
 }
 
 export interface RuntimeCreateConfig {
@@ -322,7 +348,7 @@ export interface Agent {
   /**
    * How the initial prompt should be delivered to the agent.
    * - "inline" (default): prompt is included in the launch command (e.g. -p flag)
-   * - "post-launch": prompt is sent via runtime.sendMessage() after the agent starts,
+   * - "post-launch": prompt is written to the inbox file after the agent starts,
    *   keeping the agent in interactive mode. Use this for agents where inlining
    *   the prompt causes one-shot/exit behavior (e.g. Claude Code's -p flag).
    */

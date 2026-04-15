@@ -33,13 +33,6 @@ describe("runtime-process (integration)", () => {
     expect(await runtime.isAlive(handle)).toBe(true);
   });
 
-  it("sendMessage writes to stdin and output is captured", async () => {
-    await runtime.sendMessage(handle, "hello from test");
-    await sleep(200); // give time for stdout to be captured
-    const output = await runtime.getOutput(handle);
-    expect(output).toContain("hello from test");
-  });
-
   it("getMetrics returns uptime", async () => {
     const metrics = await runtime.getMetrics!(handle);
     expect(metrics.uptimeMs).toBeGreaterThan(0);
@@ -60,12 +53,6 @@ describe("runtime-process (integration)", () => {
         environment: {},
       }),
     ).rejects.toThrow("already exists");
-  });
-
-  it("sendMessage throws for unknown session", async () => {
-    await expect(
-      runtime.sendMessage({ id: "nonexistent", runtimeName: "process", data: {} }, "hi"),
-    ).rejects.toThrow("No process found");
   });
 
   it("destroy kills the process", async () => {

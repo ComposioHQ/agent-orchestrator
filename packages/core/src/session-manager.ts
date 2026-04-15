@@ -11,7 +11,7 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
+import { statSync, existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, utimesSync, unlinkSync, appendFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -211,8 +211,6 @@ const STALE_PR_OWNERSHIP_STATUSES: ReadonlySet<string> = new Set([
 
 const SEND_RESTORE_READY_TIMEOUT_MS = 5_000;
 const SEND_RESTORE_READY_POLL_MS = 500;
-const SEND_CONFIRMATION_ATTEMPTS = 6;
-const SEND_CONFIRMATION_POLL_MS = 500;
 const SEND_CONFIRMATION_OUTPUT_LINES = 20;
 const SEND_BOOTSTRAP_READY_TIMEOUT_MS = 20_000;
 const SEND_BOOTSTRAP_STABLE_POLLS = 2;
@@ -256,6 +254,34 @@ export interface SessionManagerDeps {
 }
 
 /** Create a SessionManager instance. */
+const _inboxCounters = new Map<string, number>();
+function writeToInbox(handle: RuntimeHandle, message: string): void {
+  const inboxPath = handle.data["inboxPath"] as string | undefined;
+  if (!inboxPath) {
+    throw new Error(`Cannot write to inbox for "${handle.id}": missing inboxPath in handle data`);
+  }
+  mkdirSync(join(inboxPath, ".."), { recursive: true });
+  // Seed counter from file on first write per inbox to maintain per-file monotonic IDs
+  if (!_inboxCounters.has(inboxPath)) {
+    let seed = 0;
+    try {
+      const last = readFileSync(inboxPath, "utf-8").trimEnd().split("\n").pop();
+      if (last) seed = (JSON.parse(last) as { id?: number }).id ?? 0;
+    } catch { /* empty or missing — start at 0 */ }
+    _inboxCounters.set(inboxPath, seed);
+  }
+  const counter = _inboxCounters.get(inboxPath)! + 1;
+  _inboxCounters.set(inboxPath, counter);
+  let epoch = 0;
+  try { epoch = parseInt(readFileSync(join(inboxPath, "..", "epoch"), "utf-8").trim(), 10) || 0; } catch { /* missing — use 0 */ }
+  appendFileSync(inboxPath, JSON.stringify({
+    v: 1, id: counter, epoch,
+    ts: new Date().toISOString(),
+    source: "orchestrator", type: "instruction", message,
+    dedup: `${process.pid}-${Date.now()}-${counter}`,
+  }) + "\n", { encoding: "utf-8" });
+}
+
 export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionManager {
   const { config, registry } = deps;
 
@@ -1105,15 +1131,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const environment = plugins.agent.getEnvironment(agentLaunchConfig);
 
       handle = await plugins.runtime.create({
-        sessionId: tmuxName ?? sessionId, // Use tmux name for runtime if available
+        sessionId: tmuxName ?? sessionId,
         workspacePath,
         launchCommand,
+
         environment: {
           ...environment,
           AO_SESSION: sessionId,
-          AO_DATA_DIR: sessionsDir, // Pass sessions directory (not root dataDir)
-          AO_SESSION_NAME: sessionId, // User-facing session name
-          ...(tmuxName && { AO_TMUX_NAME: tmuxName }), // Tmux session name if using new arch
+          AO_DATA_DIR: sessionsDir,
+          AO_SESSION_NAME: sessionId,
+          AO_AGENT_NAME: selection.agentName,
+          ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
           AO_CALLER_TYPE: "agent",
           AO_PROJECT_ID: spawnConfig.projectId,
           AO_CONFIG_PATH: config.configPath,
@@ -1237,7 +1265,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           // Wait for agent to start and be ready for input
           // Use exponential backoff: 3s, 6s, 9s between attempts
           await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
-          await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
+          writeToInbox(handle, agentLaunchConfig.prompt);
           promptDelivered = true;
           break;
         } catch (err) {
@@ -1437,11 +1465,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         sessionId: tmuxName ?? sessionId,
         workspacePath,
         launchCommand,
+
         environment: {
           ...environment,
           AO_SESSION: sessionId,
           AO_DATA_DIR: sessionsDir,
           AO_SESSION_NAME: sessionId,
+          AO_AGENT_NAME: selection.agentName,
           ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
           AO_CALLER_TYPE: "orchestrator",
           AO_PROJECT_ID: orchestratorConfig.projectId,
@@ -1897,27 +1927,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     };
 
-    const detectActivityFromOutput = (output: string) => {
-      if (!output) return null;
-      try {
-        return agentPlugin.detectActivity(output);
-      } catch {
-        return null;
-      }
-    };
-
     const hasQueuedMessage = (output: string): boolean => {
       return output.includes("Press up to edit queued messages");
-    };
-
-    const getOpenCodeSessionUpdatedAt = async (): Promise<number | undefined> => {
-      const mappedSessionId = asValidOpenCodeSessionId(raw["opencodeSessionId"]);
-      if (agentName !== "opencode" || !mappedSessionId) {
-        return undefined;
-      }
-
-      const sessions = await fetchOpenCodeSessionList(OPENCODE_DISCOVERY_TIMEOUT_MS);
-      return sessions.find((entry) => entry.id === mappedSessionId)?.updatedAt;
     };
 
     const waitForInteractiveReadiness = async (
@@ -2069,73 +2080,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       return normalized;
     };
 
-    const sendWithConfirmation = async (session: Session): Promise<void> => {
-      const handle = session.runtimeHandle;
-      if (!handle) {
-        throw new Error(`Session ${sessionId} has no runtime handle`);
-      }
-
-      const baselineOutput = await captureOutput(handle);
-      const baselineActivity = detectActivityFromOutput(baselineOutput) ?? session.activity;
-      const baselineUpdatedAt = await getOpenCodeSessionUpdatedAt();
-
-      await runtimePlugin.sendMessage(handle, message);
-
-      for (let attempt = 1; attempt <= SEND_CONFIRMATION_ATTEMPTS; attempt++) {
-        // Sleep before each check (including the first) so the runtime has time
-        // to reflect the message in its output.
-        await sleep(SEND_CONFIRMATION_POLL_MS);
-
-        const output = await captureOutput(handle);
-        const activity = detectActivityFromOutput(output) ?? session.activity;
-        const updatedAt = await getOpenCodeSessionUpdatedAt();
-        const delivered =
-          (baselineUpdatedAt !== undefined &&
-            updatedAt !== undefined &&
-            updatedAt > baselineUpdatedAt) ||
-          hasQueuedMessage(output) ||
-          (output.length > 0 && output !== baselineOutput) ||
-          (baselineActivity !== "active" && activity === "active") ||
-          (baselineActivity !== "waiting_input" && activity === "waiting_input");
-
-        if (delivered) {
-          return;
-        }
-      }
-
-      // Message was already sent via runtimePlugin.sendMessage above — if we
-      // cannot *confirm* delivery (e.g. agent is slow to show output), treat it
-      // as a soft success rather than throwing.  Throwing here caused the caller
-      // to report failure, which prevented the dispatch-hash from updating and
-      // led to duplicate messages on the next poll cycle.
-      return;
-    };
-
-    let prepared = await prepareSession();
-
-    try {
-      await sendWithConfirmation(prepared);
-    } catch (err) {
-      const shouldRetryWithRestore =
-        prepared.restoredAt === undefined && !NON_RESTORABLE_STATUSES.has(prepared.status);
-
-      if (!shouldRetryWithRestore) {
-        if (err instanceof Error) {
-          throw err;
-        }
-        throw new Error(String(err), { cause: err });
-      }
-
-      prepared = await prepareSession(true);
-      try {
-        await sendWithConfirmation(prepared);
-      } catch (retryErr) {
-        if (retryErr instanceof Error) {
-          throw retryErr;
-        }
-        throw new Error(String(retryErr), { cause: retryErr });
-      }
+    const prepared = await prepareSession();
+    const handle = prepared.runtimeHandle;
+    if (!handle) {
+      throw new Error(`Session ${sessionId} has no runtime handle`);
     }
+    writeToInbox(handle, message);
   }
 
   async function claimPR(
@@ -2446,6 +2396,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         AO_SESSION: sessionId,
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,
+        AO_AGENT_NAME: selection.agentName,
         ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
         AO_CALLER_TYPE: "agent",
         ...(projectId && { AO_PROJECT_ID: projectId }),

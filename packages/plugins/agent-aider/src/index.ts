@@ -28,9 +28,7 @@ import { constants } from "node:fs";
 
 const execFileAsync = promisify(execFile);
 
-// =============================================================================
 // Aider Activity Detection Helpers
-// =============================================================================
 
 /**
  * Check if Aider has made recent commits (within last 60 seconds).
@@ -62,9 +60,7 @@ async function getChatHistoryMtime(workspacePath: string): Promise<Date | null> 
   }
 }
 
-// =============================================================================
 // Session Info Helpers
-// =============================================================================
 
 /**
  * Extract a summary from Aider's chat history file.
@@ -91,9 +87,7 @@ async function extractAiderSummary(workspacePath: string): Promise<string | null
   return null;
 }
 
-// =============================================================================
 // Plugin Manifest
-// =============================================================================
 
 export const manifest = {
   name: "aider",
@@ -103,9 +97,7 @@ export const manifest = {
   displayName: "Aider",
 };
 
-// =============================================================================
 // Agent Implementation
-// =============================================================================
 
 function createAiderAgent(): Agent {
   return {
@@ -189,17 +181,35 @@ function createAiderAgent(): Agent {
       // Process is running - check for activity signals
       if (!session.workspacePath) return null;
 
-      // 1. Check AO activity JSONL first (written by recordActivity from terminal output).
+      // 1. Fast path: log file mtime (file runtime only).
+      //    The subprocess runtime writes every stdout byte to logPath.
+      //    stat() on a local file is microseconds — zero polling.
+      const logPath = session.runtimeHandle?.data?.["logPath"] as string | undefined;
+      if (logPath) {
+        try {
+          const { mtime } = await stat(logPath);
+          const ageMs = Date.now() - mtime.getTime();
+          const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+          // Only return active/ready from logPath mtime — fall through for idle
+          // so the JSONL check below can surface waiting_input/blocked first.
+          if (ageMs < activeWindowMs) return { state: "active", timestamp: mtime };
+          if (ageMs < threshold) return { state: "ready", timestamp: mtime };
+        } catch {
+          // logPath unreadable — not file runtime or log not created yet, skip
+        }
+      }
+
+      // 2. Check AO activity JSONL (written by recordActivity from terminal output).
       //    This is the only source of waiting_input/blocked states for Aider.
       const activityResult = await readLastActivityEntry(session.workspacePath);
       const activityState = checkActivityLogState(activityResult);
       if (activityState) return activityState;
 
-      // 2. Fallback: check for recent git commits (Aider auto-commits changes)
+      // 3. Fallback: check for recent git commits (Aider auto-commits changes)
       const hasCommits = await hasRecentCommits(session.workspacePath);
       if (hasCommits) return { state: "active" };
 
-      // 3. Fallback: check chat history file modification time
+      // 4. Fallback: check chat history file modification time
       const chatMtime = await getChatHistoryMtime(session.workspacePath);
       if (chatMtime) {
         const ageMs = Date.now() - chatMtime.getTime();
@@ -209,7 +219,7 @@ function createAiderAgent(): Agent {
         return { state: "idle", timestamp: chatMtime };
       }
 
-      // 4. Fallback: use JSONL entry with age-based decay when chat history is unavailable.
+      // 5. Fallback: use JSONL entry with age-based decay when chat history is unavailable.
       const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
       const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
       if (fallback) return fallback;
@@ -302,12 +312,11 @@ function createAiderAgent(): Agent {
       if (!session.workspacePath) return;
       await setupPathWrapperWorkspace(session.workspacePath);
     },
+
   };
 }
 
-// =============================================================================
 // Plugin Export
-// =============================================================================
 
 export function create(): Agent {
   return createAiderAgent();
