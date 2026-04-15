@@ -91,6 +91,7 @@ vi.mock("@xterm/addon-web-links", () => ({
 vi.mock("@/hooks/useMux", () => ({
   useMux: () => ({
     subscribeTerminal: vi.fn(() => vi.fn()),
+    subscribeTerminalLifecycle: vi.fn(() => vi.fn()),
     writeTerminal: vi.fn(),
     openTerminal: vi.fn(),
     closeTerminal: vi.fn(),

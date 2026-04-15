@@ -87,11 +87,95 @@ describe("services", () => {
   });
 
   it("registers the OpenCode agent plugin with web services", async () => {
+    mockLoadConfig.mockReturnValue({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      port: 3000,
+      readyThresholdMs: 300_000,
+      defaults: {
+        runtime: "tmux",
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: [],
+        worker: { agent: "opencode" },
+      },
+      projects: {},
+      notifiers: {},
+      notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+      reactions: {},
+    });
+
     const { getServices } = await import("../lib/services");
 
     await getServices();
 
-    expect(mockRegister).toHaveBeenCalledWith(opencodePlugin);
+    expect(
+      mockRegister.mock.calls.some(
+        ([plugin]) => (plugin as { manifest?: { name?: string } }).manifest?.name === opencodePlugin.manifest.name,
+      ),
+    ).toBe(true);
+  });
+
+  it("loads built-in plugins from workspace packages when web does not depend on them", async () => {
+    mockLoadConfig.mockReturnValue({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      port: 3000,
+      readyThresholdMs: 300_000,
+      defaults: {
+        runtime: "tmux",
+        agent: "codex",
+        workspace: "worktree",
+        notifiers: [],
+      },
+      projects: {},
+      notifiers: {},
+      notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+      reactions: {},
+    });
+
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(
+      mockRegister.mock.calls.some(
+        ([plugin]) => (plugin as { manifest?: { name?: string } }).manifest?.name === "codex",
+      ),
+    ).toBe(true);
+  });
+
+  it("skips non-builtin plugin names so external plugins do not break startup", async () => {
+    mockLoadConfig.mockReturnValue({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      port: 3000,
+      readyThresholdMs: 300_000,
+      defaults: {
+        runtime: "tmux",
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: [],
+      },
+      plugins: [
+        {
+          name: "custom-tracker",
+          source: "npm",
+          package: "@acme/ao-plugin-tracker-custom",
+        },
+      ],
+      projects: {
+        "test-project": {
+          path: "/tmp/test-project",
+          tracker: { plugin: "custom-tracker" },
+        },
+      },
+      notifiers: {},
+      notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+      reactions: {},
+    });
+
+    const { getServices } = await import("../lib/services");
+
+    await expect(getServices()).resolves.toBeDefined();
+    expect(mockCreateSessionManager).toHaveBeenCalledTimes(1);
   });
 
   it("caches initialized services across repeated calls", async () => {

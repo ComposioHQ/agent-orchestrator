@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
@@ -17,6 +17,7 @@ import { cn } from "@/lib/cn";
 import dynamic from "next/dynamic";
 import { getSessionTitle } from "@/lib/format";
 import type { ProjectInfo } from "@/lib/project-name";
+import type { TerminalLifecycleEvent } from "@/providers/MuxProvider";
 
 import { MobileBottomNav } from "./MobileBottomNav";
 import { ProjectSidebar } from "./ProjectSidebar";
@@ -457,6 +458,7 @@ export function SessionDetail({
   const startFullscreen = searchParams.get("fullscreen") === "true";
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
+  const [terminalPhase, setTerminalPhase] = useState<"probing" | "attached" | "exited">("probing");
   const pr = session.pr;
   const terminalEnded = TERMINAL_STATUSES.has(session.status);
   const isRestorable = terminalEnded && !NON_RESTORABLE_STATUSES.has(session.status);
@@ -509,11 +511,11 @@ export function SessionDetail({
     projects.find((project) => project.id === session.projectId)?.name ?? session.projectId;
   const showHeaderProjectLabel =
     headerProjectLabel.trim().toLowerCase() !== "agent orchestrator";
-  const orchestratorHref = useMemo(() => {
-    if (isOrchestrator) return `/sessions/${encodeURIComponent(session.id)}`;
-    if (!projectOrchestratorId) return null;
-    return `/sessions/${encodeURIComponent(projectOrchestratorId)}`;
-  }, [isOrchestrator, projectOrchestratorId, session.id]);
+  const orchestratorHref = isOrchestrator
+    ? `/sessions/${encodeURIComponent(session.id)}`
+    : projectOrchestratorId
+      ? `/sessions/${encodeURIComponent(projectOrchestratorId)}`
+      : null;
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setShowTerminal(true));
@@ -522,6 +524,23 @@ export function SessionDetail({
       setShowTerminal(false);
     };
   }, [session.id]);
+
+  useEffect(() => {
+    setTerminalPhase("probing");
+  }, [session.id]);
+
+  const handleTerminalStateChange = useCallback((event: TerminalLifecycleEvent) => {
+    if (event.type === "opened") {
+      setTerminalPhase("attached");
+      return;
+    }
+
+    if (event.type === "exited") {
+      setTerminalPhase("exited");
+    }
+  }, []);
+
+  const showTerminalEndedPlaceholder = showTerminal && terminalPhase === "exited";
 
   if (!isMobile) {
     return (
@@ -643,7 +662,7 @@ export function SessionDetail({
                     </div>
                     {!showTerminal ? (
                       <div className="session-detail-terminal-placeholder" style={{ height: terminalHeight }} />
-                    ) : terminalEnded ? (
+                    ) : showTerminalEndedPlaceholder ? (
                       <div className="terminal-exited-placeholder" style={{ height: terminalHeight }}>
                         <span className="terminal-exited-placeholder__text">
                           Terminal session has ended
@@ -658,6 +677,7 @@ export function SessionDetail({
                         height={terminalHeight}
                         isOpenCodeSession={isOpenCodeSession}
                         reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+                        onTerminalStateChange={handleTerminalStateChange}
                       />
                     )}
                   </section>
@@ -704,7 +724,7 @@ export function SessionDetail({
       <div className={`session-detail__terminal-full${pr ? " session-detail__terminal-full--with-sheet" : ""}`}>
         {!showTerminal ? (
           <div className="session-detail-terminal-placeholder" style={{ height: "100%" }} />
-        ) : terminalEnded ? (
+        ) : showTerminalEndedPlaceholder ? (
           <div className="terminal-exited-placeholder" style={{ height: "100%" }}>
             <span className="terminal-exited-placeholder__text">
               Terminal session has ended
@@ -720,6 +740,7 @@ export function SessionDetail({
             chromeless
             isOpenCodeSession={isOpenCodeSession}
             reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+            onTerminalStateChange={handleTerminalStateChange}
           />
         )}
       </div>

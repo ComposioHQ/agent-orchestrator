@@ -5,6 +5,7 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
 import { useMux } from "@/hooks/useMux";
+import type { TerminalLifecycleEvent } from "@/providers/MuxProvider";
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
@@ -25,6 +26,7 @@ interface DirectTerminalProps {
   isOpenCodeSession?: boolean;
   reloadCommand?: string;
   chromeless?: boolean;
+  onTerminalStateChange?: (event: TerminalLifecycleEvent) => void;
 }
 
 type TerminalVariant = "agent" | "orchestrator";
@@ -113,18 +115,29 @@ export function DirectTerminal({
   isOpenCodeSession = false,
   reloadCommand,
   chromeless = false,
+  onTerminalStateChange,
 }: DirectTerminalProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { resolvedTheme } = useTheme();
   const terminalThemes = useMemo(() => buildTerminalThemes(variant), [variant]);
-  const { subscribeTerminal, writeTerminal, resizeTerminal: resizeTerminalMux, openTerminal, closeTerminal, status: muxStatus } = useMux();
+  const {
+    subscribeTerminal,
+    subscribeTerminalLifecycle,
+    writeTerminal,
+    resizeTerminal: resizeTerminalMux,
+    openTerminal,
+    closeTerminal,
+    status: muxStatus,
+  } = useMux();
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<TerminalType | null>(null);
   const fitAddon = useRef<FitAddonType | null>(null);
+  const onTerminalStateChangeRef = useRef(onTerminalStateChange);
   const muxStatusRef = useRef(muxStatus);
+  onTerminalStateChangeRef.current = onTerminalStateChange;
   muxStatusRef.current = muxStatus;
   const [fullscreen, setFullscreen] = useState(startFullscreen);
   const [error, setError] = useState<string | null>(null);
@@ -192,6 +205,7 @@ export function DirectTerminal({
     let cleanup: (() => void) | null = null;
     let inputDisposable: { dispose(): void } | null = null;
     let unsubscribe: (() => void) | null = null;
+    let unsubscribeLifecycle: (() => void) | null = null;
 
     Promise.all([
       import("xterm").then((mod) => mod.Terminal),
@@ -332,6 +346,14 @@ export function DirectTerminal({
         });
 
         // Open terminal via mux
+        unsubscribeLifecycle = subscribeTerminalLifecycle(sessionId, (event) => {
+          onTerminalStateChangeRef.current?.(event);
+          if (event.type === "error") {
+            setError(event.message);
+          }
+        });
+
+        // Open terminal via mux
         openTerminal(sessionId);
 
         // Subscribe to terminal data via mux
@@ -375,6 +397,7 @@ export function DirectTerminal({
           inputDisposable?.dispose();
           inputDisposable = null;
           unsubscribe?.();
+          unsubscribeLifecycle?.();
           closeTerminal(sessionId);
           terminal.dispose();
         };
@@ -399,6 +422,7 @@ export function DirectTerminal({
     resizeTerminalMux,
     openTerminal,
     closeTerminal,
+    subscribeTerminalLifecycle,
   ]);
 
   // Re-send terminal dimensions on every reconnect so the server-side PTY

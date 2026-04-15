@@ -3,8 +3,14 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback, type ReactNode } from "react";
 import type { ClientMessage, ServerMessage, SessionPatch } from "@/lib/mux-protocol";
 
+export type TerminalLifecycleEvent =
+  | { type: "opened" }
+  | { type: "exited"; code: number }
+  | { type: "error"; message: string };
+
 interface MuxContextValue {
   subscribeTerminal: (id: string, callback: (data: string) => void) => () => void;
+  subscribeTerminalLifecycle: (id: string, callback: (event: TerminalLifecycleEvent) => void) => () => void;
   writeTerminal: (id: string, data: string) => void;
   openTerminal: (id: string) => void;
   closeTerminal: (id: string) => void;
@@ -71,6 +77,7 @@ function buildMuxWsUrl(runtimeConfig: { directTerminalPort?: string; proxyWsPath
 export function MuxProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const subscribersRef = useRef(new Map<string, Set<(data: string) => void>>());
+  const lifecycleSubscribersRef = useRef(new Map<string, Set<(event: TerminalLifecycleEvent) => void>>());
   const openedTerminalsRef = useRef(new Set<string>());
   const [status, setStatus] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">(
     "connecting",
@@ -126,6 +133,14 @@ export function MuxProvider({ children }: { children: ReactNode }) {
         try {
           const msg = JSON.parse(event.data as string) as ServerMessage;
 
+          const notifyTerminalLifecycle = (id: string, lifecycleEvent: TerminalLifecycleEvent) => {
+            const lifecycleSubscribers = lifecycleSubscribersRef.current.get(id);
+            if (!lifecycleSubscribers) return;
+            for (const callback of lifecycleSubscribers) {
+              callback(lifecycleEvent);
+            }
+          };
+
           if (msg.ch === "terminal") {
             if (msg.type === "data") {
               // Push to subscribers
@@ -138,10 +153,12 @@ export function MuxProvider({ children }: { children: ReactNode }) {
             } else if (msg.type === "opened") {
               // Terminal opened successfully
               openedTerminalsRef.current.add(msg.id);
+              notifyTerminalLifecycle(msg.id, { type: "opened" });
             } else if (msg.type === "exited") {
               // PTY exited and could not be re-attached — remove so it isn't
               // re-opened on reconnect, and surface a terminal-level error chunk
               openedTerminalsRef.current.delete(msg.id);
+              notifyTerminalLifecycle(msg.id, { type: "exited", code: msg.code });
               const subs = subscribersRef.current.get(msg.id);
               if (subs) {
                 const notice = `\r\n\x1b[31m[Terminal exited with code ${msg.code}]\x1b[0m\r\n`;
@@ -151,6 +168,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
               }
             } else if (msg.type === "error") {
               console.error(`[MuxProvider] Terminal error for ${msg.id}:`, msg.message);
+              notifyTerminalLifecycle(msg.id, { type: "error", message: msg.message });
             }
           } else if (msg.ch === "sessions" && msg.type === "snapshot") {
             setSessions(msg.sessions);
@@ -269,6 +287,27 @@ export function MuxProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const subscribeTerminalLifecycle = useCallback(
+    (id: string, callback: (event: TerminalLifecycleEvent) => void): (() => void) => {
+      let subs = lifecycleSubscribersRef.current.get(id);
+      if (!subs) {
+        subs = new Set();
+        lifecycleSubscribersRef.current.set(id, subs);
+      }
+      subs.add(callback);
+
+      return () => {
+        const currentSubs = lifecycleSubscribersRef.current.get(id);
+        if (!currentSubs) return;
+        currentSubs.delete(callback);
+        if (currentSubs.size === 0) {
+          lifecycleSubscribersRef.current.delete(id);
+        }
+      };
+    },
+    [],
+  );
+
   const openTerminal = useCallback((id: string) => {
     openedTerminalsRef.current.add(id);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -309,6 +348,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const contextValue: MuxContextValue = useMemo(
     () => ({
       subscribeTerminal,
+      subscribeTerminalLifecycle,
       writeTerminal,
       openTerminal,
       closeTerminal,
@@ -316,7 +356,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
       status,
       sessions,
     }),
-    [subscribeTerminal, writeTerminal, openTerminal, closeTerminal, resizeTerminal, status, sessions],
+    [subscribeTerminal, subscribeTerminalLifecycle, writeTerminal, openTerminal, closeTerminal, resizeTerminal, status, sessions],
   );
 
   return <MuxContext.Provider value={contextValue}>{children}</MuxContext.Provider>;

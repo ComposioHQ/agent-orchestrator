@@ -335,6 +335,23 @@ describe("MuxProvider message handling", () => {
     expect(received).toContain("hello");
   });
 
+  it("dispatches terminal lifecycle events to subscribers", async () => {
+    const { result, ws } = await setupConnected();
+
+    const received: Array<{ type: string; code?: number }> = [];
+    act(() => {
+      result.current.subscribeTerminalLifecycle("s1", (event) => received.push(event));
+    });
+
+    act(() => ws.simulateMessage({ ch: "terminal", id: "s1", type: "opened" }));
+    act(() => ws.simulateMessage({ ch: "terminal", id: "s1", type: "exited", code: 17 }));
+
+    expect(received).toEqual([
+      { type: "opened" },
+      { type: "exited", code: 17 },
+    ]);
+  });
+
   it("tracks opened terminals on 'opened' message", async () => {
     vi.useFakeTimers();
     try {
@@ -410,6 +427,24 @@ describe("MuxProvider message handling", () => {
     act(() => ws.simulateMessage({ ch: "terminal", id: "s1", type: "error", message: "PTY failed" }));
     expect(spy).toHaveBeenCalledWith(expect.stringContaining("Terminal error"), expect.any(String));
     expect(result.current.status).toBe("connected");
+    spy.mockRestore();
+  });
+
+  it("dispatches terminal error events to lifecycle subscribers", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { result, ws } = await setupConnected();
+
+    const received: string[] = [];
+    act(() => {
+      result.current.subscribeTerminalLifecycle("s1", (event) => {
+        if (event.type === "error") {
+          received.push(event.message);
+        }
+      });
+    });
+    act(() => ws.simulateMessage({ ch: "terminal", id: "s1", type: "error", message: "PTY failed" }));
+
+    expect(received).toEqual(["PTY failed"]);
     spy.mockRestore();
   });
 

@@ -1,7 +1,9 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import React from "react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionDetail } from "../SessionDetail";
 import { makePR, makeSession } from "../../__tests__/helpers";
+import type { TerminalLifecycleEvent } from "@/providers/MuxProvider";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
@@ -10,9 +12,29 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("../DirectTerminal", () => ({
-  DirectTerminal: ({ sessionId }: { sessionId: string }) => (
-    <div data-testid="direct-terminal">{sessionId}</div>
-  ),
+  DirectTerminal: ({
+    sessionId,
+    onTerminalStateChange,
+  }: {
+    sessionId: string;
+    onTerminalStateChange?: (event: TerminalLifecycleEvent) => void;
+  }) => {
+    React.useEffect(() => {
+      if (sessionId === "worker-ended") {
+        onTerminalStateChange?.({ type: "exited", code: 1 });
+        return;
+      }
+
+      if (sessionId === "worker-error") {
+        onTerminalStateChange?.({ type: "error", message: "Terminal not available" });
+        return;
+      }
+
+      onTerminalStateChange?.({ type: "opened" });
+    }, [onTerminalStateChange, sessionId]);
+
+    return <div data-testid="direct-terminal">{sessionId}</div>;
+  },
 }));
 
 function mockDesktopViewport() {
@@ -170,7 +192,7 @@ describe("SessionDetail desktop layout", () => {
     expect(screen.getByRole("button", { name: "Ask Agent to Fix" })).toBeInTheDocument();
   });
 
-  it("shows terminal-ended placeholder for exited desktop sessions", () => {
+  it("shows terminal-ended placeholder for exited desktop sessions", async () => {
     render(
       <SessionDetail
         session={makeSession({
@@ -183,7 +205,59 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    expect(screen.getByText(/Terminal session has ended/i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/Terminal session has ended/i)).toBeInTheDocument(),
+    );
     expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
+  });
+
+  it("keeps the terminal mounted when terminal attach fails with an error", async () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-error",
+          projectId: "my-app",
+          status: "terminated",
+          activity: "exited",
+          pr: null,
+        })}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("direct-terminal")).toHaveTextContent("worker-error"),
+    );
+    expect(screen.queryByText(/Terminal session has ended/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the terminal mounted after it has attached even if session status turns terminal", () => {
+    const { rerender } = render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-live",
+          projectId: "my-app",
+          status: "working",
+          activity: "active",
+          pr: null,
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("direct-terminal")).toHaveTextContent("worker-live");
+
+    rerender(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-live",
+          projectId: "my-app",
+          status: "terminated",
+          activity: "exited",
+          pr: null,
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("direct-terminal")).toHaveTextContent("worker-live");
+    expect(screen.queryByText(/Terminal session has ended/i)).not.toBeInTheDocument();
   });
 });
