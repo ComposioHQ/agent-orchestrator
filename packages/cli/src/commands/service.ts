@@ -58,7 +58,9 @@ function resolveAoBinary(): string {
   try {
     return execFileSync("which", ["ao"], { encoding: "utf-8" }).trim();
   } catch {
-    return "ao";
+    throw new Error(
+      "Could not resolve the `ao` binary path. Ensure `ao` is installed and in your PATH.",
+    );
   }
 }
 
@@ -128,6 +130,7 @@ After=network.target
 Type=simple
 ExecStart=${quoteSystemdValue(aoBinary)} start ${quoteSystemdValue(projectId)}
 Environment=${quoteSystemdValue(`AO_CONFIG_PATH=${configPath}`)}
+Environment=${quoteSystemdValue(`PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:${join(homedir(), ".local", "bin")}`)}
 Restart=on-failure
 RestartSec=30
 

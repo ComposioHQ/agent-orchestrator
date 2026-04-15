@@ -365,22 +365,15 @@ describe("installService", () => {
     expect(() => installService("my-app", mockConfig)).toThrow("Unsupported platform");
   });
 
-  it("falls back to 'ao' binary when which fails", () => {
+  it("throws when ao binary cannot be resolved", () => {
     mockPlatform.mockReturnValue("darwin");
-    mockExistsSync.mockImplementation((path: string) => {
-      if (path === "/usr/local/bin/ao") return false;
-      return false;
-    });
+    mockExistsSync.mockImplementation(() => false);
     mockExecFileSync.mockImplementation((cmd: string) => {
       if (cmd === "which") throw new Error("not in PATH");
       return "";
     });
 
-    const result = installService("my-app", mockConfig);
-    expect(result.activated).toBe(true);
-    // Verify the generated content uses fallback "ao" or resolved path
-    const writtenContent = mockWriteFileSync.mock.calls[0][1] as string;
-    expect(writtenContent).toContain("<string>ao</string>");
+    expect(() => installService("my-app", mockConfig)).toThrow("Could not resolve the `ao` binary path");
   });
 
   it("handles writeFileSync failure during install", () => {

@@ -1223,8 +1223,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             launchCommand = restoreCmd;
             resumedFromSession = archived.sessionId;
           }
-        } catch {
-          // Ignore restore-command failures — fall back to context injection below.
+        } catch (err) {
+          // Log restore-command failure, then fall back to context injection below.
+          process.stderr.write(
+            `[session-manager] getRestoreCommand failed for ${archived.sessionId}: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
         }
       }
 
