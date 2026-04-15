@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { platform } from "node:os";
 import {
   escapeAppleScript,
+  pluginLog,
   type PluginModule,
   type Notifier,
   type OrchestratorEvent,
@@ -81,7 +82,7 @@ function sendNotification(
         else resolve();
       });
     } else {
-      console.warn(`[notifier-desktop] Desktop notifications not supported on ${os}`);
+      pluginLog("warn", `[notifier-desktop] Desktop notifications not supported on ${os}`);
       resolve();
     }
   });

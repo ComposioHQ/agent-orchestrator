@@ -7,6 +7,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
   CI_STATUS,
+  pluginLog,
   type PluginModule,
   type SCM,
   type SCMWebhookEvent,
@@ -498,7 +499,7 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
           isDraft: mr.draft ?? false,
         };
       } catch (err) {
-        console.warn(`detectPR: failed for branch "${session.branch}": ${(err as Error).message}`);
+        pluginLog("warn", `detectPR: failed for branch "${session.branch}": ${(err as Error).message}`);
         return null;
       }
     },
@@ -588,14 +589,16 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
       try {
         checks = await this.getCIChecks(pr);
       } catch (err) {
-        console.warn(
+        pluginLog(
+          "warn",
           `getCISummary: CI check fetch failed for MR !${pr.number}: ${(err as Error).message}`,
         );
         try {
           const state = await this.getPRState(pr);
           if (state === "merged" || state === "closed") return "none";
         } catch (innerErr) {
-          console.warn(
+          pluginLog(
+            "warn",
             `getCISummary: PR state fallback also failed for MR !${pr.number}: ${(innerErr as Error).message}`,
           );
         }
@@ -653,7 +656,8 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
           });
         }
       } catch (err) {
-        console.warn(
+        pluginLog(
+          "warn",
           `getReviews: discussions fetch failed for MR !${pr.number}: ${(err as Error).message}`,
         );
       }

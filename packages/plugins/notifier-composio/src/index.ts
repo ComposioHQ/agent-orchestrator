@@ -1,3 +1,4 @@
+import { pluginLog } from "@aoagents/ao-core";
 import type {
   PluginModule,
   Notifier,
@@ -169,7 +170,8 @@ export function create(config?: Record<string, unknown>): Notifier {
 
     if (!apiKey) {
       if (!warnedNoKey) {
-        console.warn(
+        pluginLog(
+          "warn",
           "[notifier-composio] No composioApiKey or COMPOSIO_API_KEY configured — notifications will be no-ops",
         );
         warnedNoKey = true;
@@ -183,8 +185,8 @@ export function create(config?: Record<string, unknown>): Notifier {
       client = await loadComposioSDK(apiKey);
       if (client === null) {
         sdkMissing = true;
-        // eslint-disable-next-line no-console
-        console.warn(
+        pluginLog(
+          "warn",
           "[notifier-composio] composio-core package is not installed — notifications will be no-ops. Run: npm install composio-core",
         );
         return null;

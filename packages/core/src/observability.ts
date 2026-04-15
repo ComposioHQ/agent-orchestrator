@@ -154,7 +154,7 @@ function getLogLevel(): ObservabilityLevel {
   if (raw === "debug" || raw === "info" || raw === "warn" || raw === "error") {
     return raw;
   }
-  return "warn";
+  return "error";
 }
 
 function shouldLog(level: ObservabilityLevel): boolean {
@@ -164,6 +164,18 @@ function shouldLog(level: ObservabilityLevel): boolean {
 function emitStructuredLog(entry: Record<string, unknown>, level: ObservabilityLevel): void {
   if (!shouldLog(level)) return;
   process.stderr.write(`${JSON.stringify({ ...entry, level })}\n`);
+}
+
+/**
+ * Simple log function for plugins that respects AO_LOG_LEVEL.
+ *
+ * Use instead of raw `console.warn`/`console.log` so that
+ * `AO_LOG_LEVEL=error` can silence informational messages.
+ */
+export function pluginLog(level: ObservabilityLevel, message: string): void {
+  if (!shouldLog(level)) return;
+  const writer = level === "error" ? process.stderr : process.stderr;
+  writer.write(`${message}\n`);
 }
 
 function atomicWriteJson(filePath: string, payload: unknown): void {

@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { existsSync, rmSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { pluginLog } from "@aoagents/ao-core";
 import type {
   PluginModule,
   Workspace,
@@ -150,8 +151,7 @@ export function create(config?: Record<string, unknown>): Workspace {
         } catch (err: unknown) {
           // Warn about corrupted clones instead of silently skipping
           const msg = err instanceof Error ? err.message : String(err);
-          // eslint-disable-next-line no-console -- expected diagnostic for corrupted clones
-          console.warn(`[workspace-clone] Skipping "${entry.name}": not a valid git repo (${msg})`);
+          pluginLog("warn", `[workspace-clone] Skipping "${entry.name}": not a valid git repo (${msg})`);
           continue;
         }
 

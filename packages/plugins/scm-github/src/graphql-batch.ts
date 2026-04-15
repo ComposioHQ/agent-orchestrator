@@ -7,6 +7,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { pluginLog } from "@aoagents/ao-core";
 import type {
   BatchObserver,
   CICheck,
@@ -374,8 +375,7 @@ async function checkPRListETag(
     // On error, assume change to ensure we don't miss anything
     const errorMsg = err instanceof Error ? err.message : String(err);
     // Log but don't throw - allow GraphQL batch to proceed
-    // eslint-disable-next-line no-console -- Observability logging for ETag errors
-    console.warn(`[ETag Guard 1] PR list check failed for ${repoKey}: ${errorMsg}`);
+    pluginLog("warn", `[ETag Guard 1] PR list check failed for ${repoKey}: ${errorMsg}`);
     return true; // Assume changed to be safe
   }
 }
@@ -431,10 +431,7 @@ async function checkCommitStatusETag(
   } catch (err) {
     // On error, assume change to ensure we don't miss anything
     const errorMsg = err instanceof Error ? err.message : String(err);
-    // eslint-disable-next-line no-console -- Observability logging for ETag errors
-    console.warn(
-      `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`,
-    );
+    pluginLog("warn", `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`);
     return true; // Assume changed to be safe
   }
 }
@@ -993,8 +990,7 @@ export async function enrichSessionsPRBatch(
       });
 
       // Log error for observability but don't fail entirely
-      // eslint-disable-next-line no-console -- Observability logging for batch errors
-      console.error(`[GraphQL Batch Warning] Batch enrichment partially failed: ${errorMsg}`);
+      pluginLog("error", `[GraphQL Batch Warning] Batch enrichment partially failed: ${errorMsg}`);
 
       // Don't add placeholder entries to result or cache.
       // This allows lifecycle-manager to fall back to individual API calls
