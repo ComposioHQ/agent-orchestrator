@@ -334,7 +334,10 @@ export function isOrchestratorSession(
   sessionPrefix?: string,
   allSessionPrefixes?: string[],
 ): boolean {
-  if (session.metadata?.["role"] === "orchestrator" || session.id.endsWith("-orchestrator")) {
+  // Explicit role metadata is always authoritative — covers legacy
+  // bare-named records once they have been backfilled by
+  // repairSingleSessionMetadataOnRead on read.
+  if (session.metadata?.["role"] === "orchestrator") {
     return true;
   }
   if (!sessionPrefix) {

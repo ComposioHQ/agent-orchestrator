@@ -35,6 +35,7 @@ const {
     get: vi.fn(),
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
+    restore: vi.fn(),
     send: vi.fn(),
     claimPR: vi.fn(),
   },
@@ -216,7 +217,7 @@ let tmpDir: string;
 let program: Command;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-start-test-"));
 
   program = new Command();
@@ -234,10 +235,21 @@ beforeEach(() => {
   const fakeChild = { on: vi.fn(), kill: vi.fn(), emit: vi.fn(), stdout: null, stderr: null };
   mockSpawn.mockReturnValue(fakeChild);
 
+  // Re-prime web-dir mocks defeated by afterEach's vi.restoreAllMocks().
+  // Without this, findFreePort/isPortAvailable return `undefined`, which makes
+  // dashboard-enabled tests print `http://localhost:undefined` and fail in
+  // confusing ways.
+  const webDir = await import("../../src/lib/web-dir.js");
+  vi.mocked(webDir.findWebDir).mockReturnValue("/fake/web");
+  vi.mocked(webDir.isPortAvailable).mockResolvedValue(true);
+  vi.mocked(webDir.findFreePort).mockResolvedValue(3000);
+  vi.mocked(webDir.buildDashboardEnv).mockResolvedValue({});
+
   mockSessionManager.list.mockReset();
   mockSessionManager.list.mockResolvedValue([]);
   mockSessionManager.get.mockReset();
   mockSessionManager.spawnOrchestrator.mockReset();
+  mockSessionManager.restore.mockReset();
   mockSessionManager.kill.mockReset();
   mockExec.mockReset();
   mockExecSilent.mockReset();
@@ -790,15 +802,23 @@ describe("start command — browser open waits for port", () => {
     vi.mocked(findWebDir).mockReturnValue(tmpDir);
     writeFileSync(join(tmpDir, "package.json"), "{}");
 
-    mockSessionManager.get.mockResolvedValue(null);
-    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "app-orchestrator" });
+    // No existing orchestrators on disk → spawnOrchestrator runs and returns
+    // a numbered id which must end up in the auto-opened browser URL.
+    mockSessionManager.list.mockResolvedValue([]);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator-1",
+      projectId: "my-app",
+      status: "working",
+      activity: "active",
+      metadata: { role: "orchestrator" },
+    });
 
-    await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
+    await program.parseAsync(["node", "test", "start"]);
 
     // waitForPortAndOpen should have been called with orchestrator URL and AbortSignal
     expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
     const args = mockWaitForPortAndOpen.mock.calls[0];
-    expect(args[1]).toContain("/sessions/app-orchestrator");
+    expect(args[1]).toContain("/sessions/app-orchestrator-1");
     expect(args[2]).toBeInstanceOf(AbortSignal);
     expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
       expect.objectContaining({ configPath: expect.any(String) }),
@@ -1010,11 +1030,176 @@ describe("start command — orchestrator session strategy display", () => {
     await program.parseAsync(["node", "test", "start"]);
 
     const output = getLoggedOutput();
-    // With multiple orchestrators, shows selection message so user can choose or spawn a new one
-    expect(output).toContain("multiple sessions found — select one in the dashboard");
+    // With multiple orchestrators, the CLI auto-selects the most recent and tells the user
+    // how many other sessions are available so they can pick a different one in the dashboard.
+    expect(output).toContain("/sessions/app-orchestrator-2");
+    expect(output).toContain("1 other session(s) available");
+
+    // The browser auto-open should land on the dashboard's orchestrator-selection page
+    // (not a direct session URL) so the user can pick a different one if desired.
+    expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
+    const args = mockWaitForPortAndOpen.mock.calls[0];
+    expect(args[1]).toContain("/orchestrators?project=my-app");
 
     // Should NOT spawn a new orchestrator when existing ones exist
     expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
+  // ----- Issue #1048: stable orchestrator reuse -----------------------------
+  // The next block of tests pins down the new lookup contract that runStartup
+  // must follow when deciding whether to reuse, restore, or spawn fresh.
+
+  it("restores the most-recently-active killed orchestrator instead of spawning", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Only orchestrator on disk is killed (its tmux pane was destroyed) but
+    // still restorable — runStartup must call sm.restore() and reuse its id.
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-3",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-session-3" },
+      },
+    ]);
+    mockSessionManager.restore.mockResolvedValue({
+      id: "app-orchestrator-3",
+      projectId: "my-app",
+      status: "spawning",
+      activity: "active",
+      metadata: { role: "orchestrator" },
+      lastActivityAt: new Date(),
+      runtimeHandle: { id: "tmux-session-3" },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("app-orchestrator-3");
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+
+    const output = getLoggedOutput();
+    // Restored id is preserved (no fresh -N allocation) and the user sees an
+    // explicit "(restored)" marker so the resurfaced id isn't a surprise.
+    expect(output).toContain("ao session attach app-orchestrator-3");
+    expect(output).toContain("(restored)");
+  });
+
+  it("ignores stale bare {projectId}-orchestrator records that lack role metadata", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Legacy bare-named record from a pre-numbered AO version with no role
+    // metadata — must NOT be treated as an orchestrator, so spawnOrchestrator
+    // still gets called and the user gets a fresh numbered id.
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "my-app-orchestrator",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: null,
+      },
+    ]);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator-1",
+      projectId: "my-app",
+      status: "working",
+      activity: "active",
+      metadata: { role: "orchestrator" },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.restore).not.toHaveBeenCalled();
+
+    const output = getLoggedOutput();
+    expect(output).toContain("ao session attach app-orchestrator-1");
+    expect(output).not.toContain("/sessions/my-app-orchestrator");
+  });
+
+  it("prefers a live orchestrator over a more-recently-active restorable one", async () => {
+    // Regression guard for PR #1075 review comment: an earlier version of
+    // runStartup merged live + restorable into one bucket and sorted by
+    // lastActivityAt, which could pick a newer *killed* record over an older
+    // but still-running one. sm.restore() would then spin up the killed
+    // record while the live one kept running, leaving two orchestrators
+    // alive. The fix prefers live unconditionally.
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const now = Date.now();
+    mockSessionManager.list.mockResolvedValue([
+      // Live but older — this is the one we must pick.
+      {
+        id: "app-orchestrator-2",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now - 60_000),
+        runtimeHandle: { id: "tmux-2" },
+      },
+      // Killed but newer — the old buggy sort would have picked this one.
+      {
+        id: "app-orchestrator-3",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now),
+        runtimeHandle: { id: "tmux-3" },
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start"]);
+
+    // The live -2 is reused in place; the killed -3 is NOT restored.
+    expect(mockSessionManager.restore).not.toHaveBeenCalled();
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+
+    const output = getLoggedOutput();
+    expect(output).toContain("/sessions/app-orchestrator-2");
+    expect(output).not.toContain("/sessions/app-orchestrator-3");
+  });
+
+  it("reuses the most-recently-active live orchestrator when multiple are running", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const now = Date.now();
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now - 30_000),
+        runtimeHandle: { id: "tmux-1" },
+      },
+      {
+        id: "app-orchestrator-2",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now),
+        runtimeHandle: { id: "tmux-2" },
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+    expect(mockSessionManager.restore).not.toHaveBeenCalled();
+
+    const output = getLoggedOutput();
+    // The newer one (-2) is auto-selected for attach.
+    expect(output).toContain("ao session attach app-orchestrator-2");
+    expect(output).toContain("1 other session(s) available");
   });
 
   it("fails and cleans up dashboard when orchestrator setup throws", async () => {
@@ -1046,6 +1231,63 @@ describe("start command — orchestrator session strategy display", () => {
     // Should have killed the dashboard
     expect(fakeDashboard.kill).toHaveBeenCalled();
   });
+
+  it("fails and cleans up dashboard when sm.restore throws on a killed orchestrator", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = { on: vi.fn(), kill: vi.fn(), emit: vi.fn() };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    // Only candidate is restorable. sm.restore throws — runStartup must
+    // surface the error, kill the dashboard, and never fall through to
+    // spawnOrchestrator (which would silently allocate a fresh -N).
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-3",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-3" },
+      },
+    ]);
+    mockSessionManager.restore.mockRejectedValue(new Error("workspace gone"));
+
+    await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(errors).toContain("Failed to restore orchestrator session app-orchestrator-3");
+    expect(errors).toContain("workspace gone");
+
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+    expect(fakeDashboard.kill).toHaveBeenCalled();
+  });
+
+  it("opens the bare dashboard URL when --no-orchestrator skips the orchestrator block", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
+
+    // Without an orchestrator id, the auto-open URL falls back to the dashboard
+    // root rather than the legacy phantom `/sessions/${prefix}-orchestrator` path.
+    expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
+    const args = mockWaitForPortAndOpen.mock.calls[0];
+    expect(args[1]).toBe("http://localhost:3000");
+    expect(args[1]).not.toContain("/sessions/");
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1066,15 +1308,27 @@ describe("stop command", () => {
     });
   }
 
-  it("stops orchestrator session and dashboard", async () => {
+  it("stops the actual numbered orchestrator session and dashboard", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
+    // Issue #1048: ao stop must look up the real numbered orchestrator id
+    // (e.g. app-orchestrator-3) via sm.list — never the phantom `${prefix}-orchestrator`.
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-3",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-3" },
+      },
+    ]);
     mockSessionManager.kill.mockResolvedValue(undefined);
     mockDashboardOnPort(3000);
 
     await program.parseAsync(["node", "test", "stop"]);
 
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-3", {
       purgeOpenCode: false,
     });
     const output = vi
@@ -1082,11 +1336,44 @@ describe("stop command", () => {
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
     expect(output).toContain("Orchestrator stopped");
+    expect(output).toContain("app-orchestrator-3");
+  });
+
+  it("kills the most-recently-active orchestrator when multiple exist", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    const now = Date.now();
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now - 10_000),
+        runtimeHandle: { id: "tmux-1" },
+      },
+      {
+        id: "app-orchestrator-2",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now),
+        runtimeHandle: { id: "tmux-2" },
+      },
+    ]);
+    mockSessionManager.kill.mockResolvedValue(undefined);
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-2", {
+      purgeOpenCode: false,
+    });
   });
 
   it("handles missing orchestrator session gracefully", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue(null);
+    mockSessionManager.list.mockResolvedValue([]);
     mockExec.mockRejectedValue(new Error("no process"));
 
     await program.parseAsync(["node", "test", "stop"]);
@@ -1096,18 +1383,28 @@ describe("stop command", () => {
       .mocked(console.log)
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
-    expect(output).toContain("is not running");
+    expect(output).toContain("No running orchestrator session found");
   });
 
   it("passes purge flag when stopping orchestrator with --purge-session", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-1" },
+      },
+    ]);
     mockSessionManager.kill.mockResolvedValue(undefined);
     mockDashboardOnPort(3000);
 
     await program.parseAsync(["node", "test", "stop", "--purge-session"]);
 
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-1", {
       purgeOpenCode: true,
     });
   });

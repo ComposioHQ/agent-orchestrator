@@ -30,10 +30,12 @@ import {
   normalizeOrchestratorSessionStrategy,
   isOrchestratorSession,
   isTerminalSession,
+  isRestorable,
   ConfigNotFoundError,
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
+  type Session,
 } from "@aoagents/ao-core";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { exec, execSilent, git } from "../lib/shell.js";
@@ -1009,7 +1011,6 @@ async function runStartup(
     }
   }
 
-  const sessionId = `${project.sessionPrefix}-orchestrator`;
   const shouldStartLifecycle = opts?.dashboard !== false || opts?.orchestrator !== false;
   let lifecycleStatus: Awaited<ReturnType<typeof ensureLifecycleWorker>> | null = null;
   let port = config.port ?? DEFAULT_PORT;
@@ -1022,6 +1023,7 @@ async function runStartup(
   const spinner = ora();
   let dashboardProcess: ChildProcess | null = null;
   let reused = false;
+  let restored = false;
 
   // Start dashboard (unless --no-dashboard)
   if (opts?.dashboard !== false) {
@@ -1082,13 +1084,14 @@ async function runStartup(
   }
 
   // Create orchestrator session (unless --no-orchestrator or existing orchestrators found)
-  let hasExistingOrchestrators = false;
+  let hasMultipleReusable = false;
   let selectedOrchestratorId: string | null = null;
+  let otherCandidateCount = 0;
 
   if (opts?.orchestrator !== false) {
     const sm = await getSessionManager(config);
 
-    // Check for existing orchestrator sessions for this project
+    // Check for existing orchestrator sessions for this project.
     let allSessions;
     try {
       allSessions = await sm.list(projectId);
@@ -1105,33 +1108,80 @@ async function runStartup(
     const allSessionPrefixes = Object.entries(config.projects).map(
       ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
     );
-    const existingOrchestrators = allSessions.filter(
-      (s) =>
-        isOrchestratorSession(s, project.sessionPrefix ?? projectId, allSessionPrefixes) &&
-        !isTerminalSession(s),
+    const orchestrators = allSessions.filter((s) =>
+      isOrchestratorSession(s, project.sessionPrefix ?? projectId, allSessionPrefixes),
     );
 
-    if (existingOrchestrators.length > 0) {
-      // Existing orchestrators found — always auto-select the most recently active one.
-      // With a single orchestrator, navigate directly to its session page.
-      // With multiple orchestrators, keep the selection page so the user can choose or spawn a
-      // new one — the dashboard only links to one orchestrator per project, so the selection page
-      // is the only startup path for multi-orchestrator projects.
-      const sortedOrchestrators = [...existingOrchestrators].sort(
-        (a, b) => (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0),
-      );
-      const selected = sortedOrchestrators[0];
-      selectedOrchestratorId = selected.id;
-      if (opts?.dashboard !== false && existingOrchestrators.length > 1) {
-        hasExistingOrchestrators = true;
+    // Partition into two reuse buckets so we never spawn a new numbered id when
+    // an existing one is still usable:
+    //   - live:       runtime is still running, attach in place.
+    //   - restorable: status is terminal but the session can be restarted via
+    //                 sm.restore() (workspace + branch + handle still on disk).
+    //                 Restoring keeps the original numbered id rather than
+    //                 allocating a fresh one.
+    //
+    // IMPORTANT: live MUST be preferred unconditionally over restorable. A
+    // previous version sorted both buckets together by `lastActivityAt`, which
+    // could pick a newer killed record over an older-but-still-running one —
+    // sm.restore() would then spin up the killed record while the live one
+    // kept running, leaving two orchestrators alive for the project. Only fall
+    // back to restorable when the live bucket is empty.
+    const live = orchestrators.filter((s) => !isTerminalSession(s));
+    // isRestorable already requires isTerminalSession internally, so no need
+    // to repeat that guard here.
+    const restorable = orchestrators.filter((s) => isRestorable(s));
+    type OrchestratorCandidate = { session: Session; mode: "live" | "restore" };
+    const byMostRecent = (a: Session, b: Session): number =>
+      (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0);
+    const candidates: OrchestratorCandidate[] =
+      live.length > 0
+        ? [...live]
+            .sort(byMostRecent)
+            .map<OrchestratorCandidate>((session) => ({ session, mode: "live" }))
+        : [...restorable]
+            .sort(byMostRecent)
+            .map<OrchestratorCandidate>((session) => ({ session, mode: "restore" }));
+
+    if (candidates.length > 0) {
+      const chosen = candidates[0];
+      // Multiple candidates → CLI auto-picks the most recent, but the dashboard
+      // surfaces all of them via the orchestrator-selection page. Only meaningful
+      // when the dashboard is running.
+      otherCandidateCount = candidates.length - 1;
+      if (opts?.dashboard !== false && candidates.length > 1) {
+        hasMultipleReusable = true;
       }
-      spinner.succeed(
-        `Using existing orchestrator session: ${selected.id}` +
-          (existingOrchestrators.length > 1
-            ? ` (${existingOrchestrators.length - 1} other session(s) available)` : ""),
-      );
+
+      const otherSuffix =
+        otherCandidateCount > 0 ? ` (${otherCandidateCount} other session(s) available)` : "";
+
+      if (chosen.mode === "live") {
+        selectedOrchestratorId = chosen.session.id;
+        spinner.succeed(`Using existing orchestrator session: ${chosen.session.id}${otherSuffix}`);
+      } else {
+        try {
+          spinner.start(`Restoring orchestrator session: ${chosen.session.id}`);
+          const restoredSession = await sm.restore(chosen.session.id);
+          selectedOrchestratorId = restoredSession.id;
+          restored = true;
+          spinner.succeed(
+            `Restored orchestrator session: ${restoredSession.id}${otherSuffix}`,
+          );
+        } catch (err) {
+          spinner.fail(`Failed to restore orchestrator session: ${chosen.session.id}`);
+          if (dashboardProcess) {
+            dashboardProcess.kill();
+          }
+          throw new Error(
+            `Failed to restore orchestrator session ${chosen.session.id}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            { cause: err },
+          );
+        }
+      }
     } else {
-      // No existing orchestrators — spawn a new one
+      // No reusable orchestrators — spawn a fresh numbered one.
       try {
         spinner.start("Creating orchestrator session");
         const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
@@ -1166,42 +1216,44 @@ async function runStartup(
     console.log(chalk.cyan("Lifecycle:"), lifecycleLabel);
   }
 
-  if (hasExistingOrchestrators) {
-    console.log(
-      chalk.cyan("Orchestrator:"),
-      "multiple sessions found — select one in the dashboard",
-    );
-  } else if (opts?.orchestrator !== false && !reused) {
-    const orchSessionId = selectedOrchestratorId ?? sessionId;
-    if (opts?.dashboard !== false) {
+  if (opts?.orchestrator !== false && selectedOrchestratorId) {
+    const restoreNote = restored ? " (restored)" : "";
+    const otherSummarySuffix =
+      otherCandidateCount > 0 ? ` — ${otherCandidateCount} other session(s) available` : "";
+    const target =
+      opts?.dashboard !== false
+        ? `http://localhost:${port}/sessions/${selectedOrchestratorId}`
+        : `ao session attach ${selectedOrchestratorId}`;
+
+    if (reused) {
       console.log(
         chalk.cyan("Orchestrator:"),
-        `http://localhost:${port}/sessions/${orchSessionId}`,
+        `reused existing session (${selectedOrchestratorId})${otherSummarySuffix}`,
       );
     } else {
       console.log(
         chalk.cyan("Orchestrator:"),
-        `ao session attach ${orchSessionId}`,
+        `${target}${restoreNote}${otherSummarySuffix}`,
       );
     }
-  } else if (reused) {
-    console.log(chalk.cyan("Orchestrator:"), `reused existing session (${sessionId})`);
   }
 
   console.log(chalk.dim(`Config: ${config.configPath}`));
 
   // Auto-open browser once the server is ready.
-  // With a single orchestrator (or a newly created one), navigate directly to the session page.
-  // With multiple existing orchestrators, open the selection page so the user can choose or
-  // spawn a new one — the dashboard only links one orchestrator per project.
+  // With a single chosen orchestrator (live, restored, or newly spawned), navigate directly to
+  // its session page. With multiple reusable orchestrators, open the selection page so the user
+  // can choose or spawn a new one — the dashboard only links one orchestrator per project.
   // Polls the port instead of using a fixed delay — deterministic and works regardless of
   // how long Next.js takes to compile. AbortController cancels polling on early exit.
   let openAbort: AbortController | undefined;
   if (opts?.dashboard !== false) {
     openAbort = new AbortController();
-    const orchestratorUrl = hasExistingOrchestrators
+    const orchestratorUrl = hasMultipleReusable
       ? `http://localhost:${port}/orchestrators?project=${projectId}`
-      : `http://localhost:${port}/sessions/${selectedOrchestratorId ?? sessionId}`;
+      : selectedOrchestratorId
+        ? `http://localhost:${port}/sessions/${selectedOrchestratorId}`
+        : `http://localhost:${port}`;
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
   }
 
@@ -1588,22 +1640,58 @@ export function registerStop(program: Command): void {
 
           const config = loadConfig();
           const { projectId: _projectId, project } = await resolveProject(config, projectArg, "stop");
-          const sessionId = `${project.sessionPrefix}-orchestrator`;
           const port = config.port ?? DEFAULT_PORT;
 
           console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(project.name)}\n`));
 
-          // Kill orchestrator session via SessionManager
+          // Resolve the actual orchestrator session id by listing the project's sessions
+          // and finding the most-recently-active orchestrator. This avoids relying on the
+          // legacy `${prefix}-orchestrator` (no-N) phantom id, which never matches a real
+          // numbered session and causes ao stop to silently no-op.
           const sm = await getSessionManager(config);
-          const existing = await sm.get(sessionId);
+          const allSessionPrefixes = Object.entries(config.projects).map(
+            ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
+          );
+          let orchestratorToKill: { id: string } | null = null;
+          let lookupFailed = false;
+          try {
+            const projectSessions = await sm.list(_projectId);
+            const orchestrators = projectSessions
+              .filter((s) =>
+                isOrchestratorSession(s, project.sessionPrefix ?? _projectId, allSessionPrefixes),
+              )
+              .filter((s) => !isTerminalSession(s));
+            const sorted = [...orchestrators].sort(
+              (a, b) =>
+                (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0),
+            );
+            orchestratorToKill = sorted[0] ?? null;
+          } catch (err) {
+            lookupFailed = true;
+            console.log(
+              chalk.yellow(
+                `  Could not list sessions to locate orchestrator: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              ),
+            );
+          }
 
-          if (existing) {
+          if (orchestratorToKill) {
             const spinner = ora("Stopping orchestrator session").start();
             const purgeOpenCode = opts?.purgeSession === true;
-            await sm.kill(sessionId, { purgeOpenCode });
-            spinner.succeed("Orchestrator session stopped");
-          } else {
-            console.log(chalk.yellow(`Orchestrator session "${sessionId}" is not running`));
+            await sm.kill(orchestratorToKill.id, { purgeOpenCode });
+            spinner.succeed(`Orchestrator session stopped (${orchestratorToKill.id})`);
+            // Also log to console.log so the killed id is visible in non-TTY callers
+            // (CI, scripts) and in test capture, since spinner output is suppressed.
+            console.log(chalk.green(`  Stopped orchestrator session: ${orchestratorToKill.id}`));
+          } else if (!lookupFailed) {
+            // Suppress the "no orchestrator found" message when sm.list threw —
+            // the catch above already explained the real reason and adding a
+            // second message would falsely imply the lookup succeeded.
+            console.log(
+              chalk.yellow(`No running orchestrator session found for "${project.name}"`),
+            );
           }
 
           // Lifecycle polling runs in-process inside the `ao start` process
