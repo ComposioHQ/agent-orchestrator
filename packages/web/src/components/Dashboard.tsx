@@ -158,17 +158,19 @@ function DashboardInner({
     }
     return levels;
   }, [initialSessions, attentionZones]);
-  const { sessions, connectionStatus, sseAttentionLevels, liveSessionsResolved, loadError } =
-    useSessionEvents({
-      initialSessions,
-      project: projectId,
-      muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
-      initialAttentionLevels,
-      attentionZones,
-    });
-  const recoveredFromLoadError = Boolean(dashboardLoadError) && liveSessionsResolved;
-  const visibleDashboardLoadError =
-    loadError ?? (recoveredFromLoadError ? undefined : dashboardLoadError);
+  const { sessions, attentionLevels } = useSessionEvents({
+    initialSessions,
+    project: projectId,
+    muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
+    initialAttentionLevels,
+    attentionZones,
+  });
+  const connectionStatus: "connected" | "reconnecting" | "disconnected" =
+    mux?.status === "disconnected" ? "disconnected"
+    : mux?.status === "connected" ? "connected"
+    : "reconnecting";
+  const recoveredFromLoadError = Boolean(dashboardLoadError) && mux?.status === "connected";
+  const visibleDashboardLoadError = recoveredFromLoadError ? undefined : dashboardLoadError;
   const searchParams = useSearchParams();
   const router = useRouter();
   const routerRef = useRef(router);
@@ -223,12 +225,12 @@ function DashboardInner({
     setActiveOrchestrators((current) => mergeOrchestrators(current, orchestratorLinks));
   }, [orchestratorLinks]);
 
-  // Update document title with live attention counts from SSE
+  // Update document title with live attention counts
   useEffect(() => {
-    const needsAttention = countNeedingAttention(sseAttentionLevels);
+    const needsAttention = countNeedingAttention(attentionLevels);
     const label = projectName ?? "ao";
     document.title = needsAttention > 0 ? `${label} (${needsAttention} need attention)` : label;
-  }, [sseAttentionLevels, projectName]);
+  }, [attentionLevels, projectName]);
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -606,8 +608,8 @@ function DashboardInner({
               <div className="sidebar-mobile-backdrop" onClick={() => setMobileMenuOpen(false)} />
             )}
 
-            <main className="dashboard-main dashboard-main--desktop overflow-y-auto">
-              <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName} />
+            <main className="dashboard-main dashboard-main--desktop">
+              <DynamicFavicon attentionLevels={attentionLevels} projectName={projectName} />
               <div className="dashboard-main__subhead">
                 <h1 className="dashboard-main__title">Dashboard</h1>
                 <p className="dashboard-main__subtitle">
