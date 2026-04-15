@@ -1,1 +1,1 @@
-export { useMux } from "@/providers/MuxProvider";
+export { useMux, useMuxOptional, useMuxSession, useMuxTerminal } from "@/providers/MuxProvider";

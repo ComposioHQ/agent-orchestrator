@@ -3,29 +3,69 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback, type ReactNode } from "react";
 import type { ClientMessage, ServerMessage, SessionPatch } from "@/lib/mux-protocol";
 
-interface MuxContextValue {
+type MuxStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
+
+interface MuxTerminalContextValue {
   subscribeTerminal: (id: string, callback: (data: string) => void) => () => void;
   writeTerminal: (id: string, data: string) => void;
   openTerminal: (id: string) => void;
   closeTerminal: (id: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => void;
-  status: "connecting" | "connected" | "reconnecting" | "disconnected";
+}
+
+interface MuxSessionContextValue {
+  status: MuxStatus;
   sessions: SessionPatch[];
 }
 
-const MuxContext = React.createContext<MuxContextValue | undefined>(undefined);
+interface MuxContextValue extends MuxTerminalContextValue, MuxSessionContextValue {}
 
-export function useMux(): MuxContextValue {
-  const context = React.useContext(MuxContext);
+const MuxTerminalContext = React.createContext<MuxTerminalContextValue | undefined>(undefined);
+const MuxSessionContext = React.createContext<MuxSessionContextValue | undefined>(undefined);
+
+export function useMuxTerminal(): MuxTerminalContextValue {
+  const context = React.useContext(MuxTerminalContext);
   if (!context) {
-    throw new Error("useMux() must be used within <MuxProvider>");
+    throw new Error("useMuxTerminal() must be used within <MuxProvider>");
   }
   return context;
 }
 
+export function useMuxSession(): MuxSessionContextValue {
+  const context = React.useContext(MuxSessionContext);
+  if (!context) {
+    throw new Error("useMuxSession() must be used within <MuxProvider>");
+  }
+  return context;
+}
+
+export function useMux(): MuxContextValue {
+  const terminalContext = React.useContext(MuxTerminalContext);
+  const sessionContext = React.useContext(MuxSessionContext);
+
+  if (!terminalContext || !sessionContext) {
+    throw new Error("useMux() must be used within <MuxProvider>");
+  }
+
+  return {
+    ...terminalContext,
+    ...sessionContext,
+  };
+}
+
 /** Like useMux() but returns undefined when outside a MuxProvider (safe for tests). */
 export function useMuxOptional(): MuxContextValue | undefined {
-  return React.useContext(MuxContext);
+  const terminalContext = React.useContext(MuxTerminalContext);
+  const sessionContext = React.useContext(MuxSessionContext);
+
+  if (!terminalContext || !sessionContext) {
+    return undefined;
+  }
+
+  return {
+    ...terminalContext,
+    ...sessionContext,
+  };
 }
 
 interface RuntimeTerminalConfig {
@@ -72,9 +112,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const subscribersRef = useRef(new Map<string, Set<(data: string) => void>>());
   const openedTerminalsRef = useRef(new Set<string>());
-  const [status, setStatus] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">(
-    "connecting",
-  );
+  const [status, setStatus] = useState<MuxStatus>("connecting");
   const [sessions, setSessions] = useState<SessionPatch[]>([]);
   const reconnectAttempt = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -306,18 +344,28 @@ export function MuxProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const contextValue: MuxContextValue = useMemo(
+  const terminalContextValue: MuxTerminalContextValue = useMemo(
     () => ({
       subscribeTerminal,
       writeTerminal,
       openTerminal,
       closeTerminal,
       resizeTerminal,
+    }),
+    [subscribeTerminal, writeTerminal, openTerminal, closeTerminal, resizeTerminal],
+  );
+
+  const sessionContextValue: MuxSessionContextValue = useMemo(
+    () => ({
       status,
       sessions,
     }),
-    [subscribeTerminal, writeTerminal, openTerminal, closeTerminal, resizeTerminal, status, sessions],
+    [status, sessions],
   );
 
-  return <MuxContext.Provider value={contextValue}>{children}</MuxContext.Provider>;
+  return (
+    <MuxTerminalContext.Provider value={terminalContextValue}>
+      <MuxSessionContext.Provider value={sessionContextValue}>{children}</MuxSessionContext.Provider>
+    </MuxTerminalContext.Provider>
+  );
 }

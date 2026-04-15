@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
-import { useMux } from "@/hooks/useMux";
+import { useMuxSession, useMuxTerminal } from "@/hooks/useMux";
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
@@ -119,7 +119,9 @@ export function DirectTerminal({
   const searchParams = useSearchParams();
   const { resolvedTheme } = useTheme();
   const terminalThemes = useMemo(() => buildTerminalThemes(variant), [variant]);
-  const { subscribeTerminal, writeTerminal, resizeTerminal: resizeTerminalMux, openTerminal, closeTerminal, status: muxStatus } = useMux();
+  const { subscribeTerminal, writeTerminal, resizeTerminal: resizeTerminalMux, openTerminal, closeTerminal } =
+    useMuxTerminal();
+  const { status: muxStatus } = useMuxSession();
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<TerminalType | null>(null);
@@ -130,6 +132,18 @@ export function DirectTerminal({
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+
+  const restoreTerminalFocus = useCallback((trigger?: HTMLButtonElement | null) => {
+    trigger?.blur();
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const textarea = terminalRef.current?.querySelector("textarea");
+        if (textarea instanceof HTMLTextAreaElement) {
+          textarea.focus();
+        }
+      });
+    });
+  }, []);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -145,7 +159,7 @@ export function DirectTerminal({
     router.replace(newUrl, { scroll: false });
   }, [fullscreen, pathname, router, searchParams]);
 
-  async function handleReload(): Promise<void> {
+  async function handleReload(trigger?: HTMLButtonElement | null): Promise<void> {
     if (!isOpenCodeSession || reloading) return;
     setReloadError(null);
     setReloading(true);
@@ -181,8 +195,14 @@ export function DirectTerminal({
       setReloadError(err instanceof Error ? err.message : "Failed to reload OpenCode session");
     } finally {
       setReloading(false);
+      restoreTerminalFocus(trigger);
     }
   }
+
+  const toggleFullscreen = useCallback((trigger?: HTMLButtonElement | null) => {
+    setFullscreen((current) => !current);
+    restoreTerminalFocus(trigger);
+  }, [restoreTerminalFocus]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -532,7 +552,8 @@ export function DirectTerminal({
   const isDarkChrome = appearance === "dark" || resolvedTheme !== "light";
   const fullscreenButton = (
     <button
-      onClick={() => setFullscreen(!fullscreen)}
+      type="button"
+      onClick={(event) => toggleFullscreen(event.currentTarget)}
       className={cn(
         "flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
         !isOpenCodeSession && !chromeless && "ml-auto",
@@ -600,7 +621,10 @@ export function DirectTerminal({
           </span>
           {isOpenCodeSession ? (
             <button
-              onClick={handleReload}
+              type="button"
+              onClick={(event) => {
+                void handleReload(event.currentTarget);
+              }}
               disabled={reloading || muxStatus !== "connected"}
               title="Restart OpenCode session (/exit then resume mapped session)"
               aria-label="Restart OpenCode session"
@@ -651,7 +675,10 @@ export function DirectTerminal({
         <div className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-[6px] border border-[var(--color-border-subtle)] bg-[color-mix(in_srgb,var(--color-bg-elevated)_92%,transparent)] px-1.5 py-1 shadow-[0_8px_24px_rgba(0,0,0,0.18)] backdrop-blur-sm">
           {isOpenCodeSession ? (
             <button
-              onClick={handleReload}
+              type="button"
+              onClick={(event) => {
+                void handleReload(event.currentTarget);
+              }}
               disabled={reloading || muxStatus !== "connected"}
               title="Restart OpenCode session (/exit then resume mapped session)"
               aria-label="Restart OpenCode session"

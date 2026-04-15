@@ -23,16 +23,25 @@ class MockTerminal {
   };
   cols = 80;
   rows = 24;
+  private textarea: HTMLTextAreaElement | null = null;
 
   constructor(options: Record<string, unknown>) {
     this.options = options;
   }
 
   loadAddon() {}
-  open() {}
+  open(container: Element) {
+    const textarea = document.createElement("textarea");
+    textarea.className = "xterm-helper-textarea";
+    container.appendChild(textarea);
+    this.textarea = textarea;
+  }
   write() {}
   refresh() {}
-  dispose() {}
+  dispose() {
+    this.textarea?.remove();
+    this.textarea = null;
+  }
   hasSelection() {
     return false;
   }
@@ -89,15 +98,16 @@ vi.mock("@xterm/addon-web-links", () => ({
 }));
 
 vi.mock("@/hooks/useMux", () => ({
-  useMux: () => ({
+  useMuxTerminal: () => ({
     subscribeTerminal: vi.fn(() => vi.fn()),
     writeTerminal: vi.fn(),
     openTerminal: vi.fn(),
     closeTerminal: vi.fn(),
     resizeTerminal: vi.fn(),
+  }),
+  useMuxSession: () => ({
     status: "connected",
     sessions: [],
-    terminals: [],
   }),
 }));
 
@@ -109,6 +119,10 @@ describe("DirectTerminal render", () => {
     Object.defineProperty(document, "fonts", {
       configurable: true,
       value: { ready: Promise.resolve() },
+    });
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      configurable: true,
+      value: vi.fn(() => ({})),
     });
     vi.stubGlobal("WebSocket", MockWebSocket);
     vi.stubGlobal(
@@ -178,5 +192,61 @@ describe("DirectTerminal render", () => {
     expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument();
     expect(terminalShell).toHaveClass("relative");
     expect(terminalShell).not.toHaveClass("fixed");
+  });
+
+  it("returns focus to the terminal after toggling fullscreen", async () => {
+    render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument(),
+    );
+
+    const fullscreenButton = screen.getByRole("button", { name: "fullscreen" });
+    fullscreenButton.focus();
+    fireEvent.click(fullscreenButton);
+
+    await waitFor(() => {
+      expect(document.activeElement).toBeInstanceOf(HTMLTextAreaElement);
+      expect(fullscreenButton).not.toHaveFocus();
+    });
+  });
+
+  it("returns focus to the terminal after restarting an OpenCode session", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/runtime/terminal") {
+          return {
+            ok: true,
+            json: async () => ({ proxyWsPath: "/ao-terminal-ws" }),
+          };
+        }
+        if (url.includes("/remap")) {
+          return {
+            ok: true,
+            json: async () => ({ opencodeSessionId: "mapped-session" }),
+          };
+        }
+        if (url.includes("/send")) {
+          return {
+            ok: true,
+            json: async () => ({}),
+          };
+        }
+        throw new Error(`Unexpected fetch call: ${url}`);
+      }),
+    );
+
+    render(<DirectTerminal sessionId="ao-opencode" chromeless isOpenCodeSession />);
+
+    const restartButton = await screen.findByRole("button", { name: "Restart OpenCode session" });
+    restartButton.focus();
+    fireEvent.click(restartButton);
+
+    await waitFor(() => {
+      expect(document.activeElement).toBeInstanceOf(HTMLTextAreaElement);
+      expect(restartButton).not.toHaveFocus();
+    });
   });
 });

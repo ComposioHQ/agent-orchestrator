@@ -1,7 +1,7 @@
 import React from "react";
 import { renderHook, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { MuxProvider, useMux, useMuxOptional } from "../MuxProvider";
+import { MuxProvider, useMux, useMuxOptional, useMuxSession, useMuxTerminal } from "../MuxProvider";
 
 // ---------------------------------------------------------------------------
 // Mock WebSocket
@@ -117,6 +117,18 @@ afterEach(() => {
 describe("useMux outside provider", () => {
   it("throws when used outside MuxProvider", () => {
     expect(() => renderHook(() => useMux())).toThrow("useMux() must be used within <MuxProvider>");
+  });
+
+  it("throws when terminal hook is used outside MuxProvider", () => {
+    expect(() => renderHook(() => useMuxTerminal())).toThrow(
+      "useMuxTerminal() must be used within <MuxProvider>",
+    );
+  });
+
+  it("throws when session hook is used outside MuxProvider", () => {
+    expect(() => renderHook(() => useMuxSession())).toThrow(
+      "useMuxSession() must be used within <MuxProvider>",
+    );
   });
 });
 
@@ -424,6 +436,31 @@ describe("MuxProvider message handling", () => {
 
     expect(result.current.sessions.length).toBe(1);
     expect(result.current.sessions[0].id).toBe("s1");
+  });
+
+  it("keeps terminal context stable across session snapshots", async () => {
+    const { result } = renderHook(
+      () => ({
+        terminal: useMuxTerminal(),
+        session: useMuxSession(),
+      }),
+      { wrapper },
+    );
+    await flushInit();
+
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    act(() => ws.simulateOpen());
+
+    const terminalBeforeSnapshot = result.current.terminal;
+
+    act(() => ws.simulateMessage({
+      ch: "sessions",
+      type: "snapshot",
+      sessions: [{ id: "s1", status: "working", activity: null, attentionLevel: "none", lastActivityAt: "" }],
+    }));
+
+    expect(result.current.session.sessions).toHaveLength(1);
+    expect(result.current.terminal).toBe(terminalBeforeSnapshot);
   });
 
   it("handles malformed JSON message without crashing", async () => {
