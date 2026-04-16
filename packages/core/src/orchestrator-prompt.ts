@@ -100,16 +100,38 @@ function removeOptionalSectionBlocks(
       const fullStart = start;
       const fullEnd = end + endMarker.length;
       const blockContent = interpolated.slice(start + startMarker.length, end);
-      const replacement = section ? blockContent : "";
+      // Optional sections are flat by design. Reject nesting of the same block
+      // type so future template edits fail loudly instead of matching ambiguously.
+      if (blockContent.includes(startMarker)) {
+        throw new Error(
+          `Nested optional section blocks are not supported: ${startMarker} before ${endMarker}`,
+        );
+      }
 
-      interpolated =
-        interpolated.slice(0, fullStart) +
-        replacement +
-        interpolated.slice(fullEnd);
+      const replacement = section ? blockContent : "";
+      const before = interpolated.slice(0, fullStart);
+      const after = interpolated.slice(fullEnd);
+
+      interpolated = replacement
+        ? before + replacement + after
+        : collapseOptionalGap(before, after);
     }
   }
 
   return interpolated;
+}
+
+function collapseOptionalGap(before: string, after: string): string {
+  const trailingNewlines = before.match(/\n*$/)?.[0] ?? "";
+  const leadingNewlines = after.match(/^\n*/)?.[0] ?? "";
+  const totalNewlines = trailingNewlines.length + leadingNewlines.length;
+  const boundary = totalNewlines >= 2 ? "\n\n" : trailingNewlines + leadingNewlines;
+
+  return (
+    before.slice(0, before.length - trailingNewlines.length) +
+    boundary +
+    after.slice(leadingNewlines.length)
+  );
 }
 
 function hasRenderDataKey(
@@ -139,17 +161,24 @@ function createRenderData(opts: OrchestratorPromptConfig): OrchestratorPromptRen
 }
 
 function renderTemplate(template: string, data: OrchestratorPromptRenderData): string {
-  return template.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_match, rawKey: string) => {
+  const rendered = template.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_match, rawKey: string) => {
     if (!hasRenderDataKey(data, rawKey)) {
       throw new Error(`Unresolved template placeholder: ${rawKey}`);
     }
 
     return data[rawKey];
   });
+
+  const unresolvedPlaceholder = rendered.match(/\{\{[^}]+\}\}/);
+  if (unresolvedPlaceholder) {
+    throw new Error(`Unresolved template placeholder: ${unresolvedPlaceholder[0]}`);
+  }
+
+  return rendered;
 }
 
-function normalizeRenderedPrompt(prompt: string): string {
-  return prompt.replace(/\n{3,}/g, "\n\n").trim();
+function finalizeRenderedPrompt(prompt: string): string {
+  return prompt.trim();
 }
 
 /**
@@ -164,7 +193,7 @@ export function generateOrchestratorPrompt(opts: OrchestratorPromptConfig): stri
     data,
   );
 
-  return normalizeRenderedPrompt(
+  return finalizeRenderedPrompt(
     renderTemplate(templateWithOptionalSections, data),
   );
 }

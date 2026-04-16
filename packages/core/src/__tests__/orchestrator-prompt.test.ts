@@ -147,6 +147,19 @@ describe("generateOrchestratorPrompt", () => {
     ).toThrow("Unresolved template placeholder: toString");
   });
 
+  it("throws when the markdown template leaves behind a malformed placeholder", async () => {
+    const generateOrchestratorPrompt =
+      await loadGenerateOrchestratorPromptWithTemplate("Hello {{ projectName }}");
+
+    expect(() =>
+      generateOrchestratorPrompt({
+        config,
+        projectId: "my-app",
+        project: config.projects["my-app"]!,
+      }),
+    ).toThrow("Unresolved template placeholder: {{ projectName }}");
+  });
+
   it("throws when the markdown template contains an unmatched optional-section marker", async () => {
     const generateOrchestratorPrompt =
       await loadGenerateOrchestratorPromptWithTemplate(
@@ -161,6 +174,23 @@ describe("generateOrchestratorPrompt", () => {
       }),
     ).toThrow(
       "Malformed optional section block: expected {{AUTOMATED_REACTIONS_SECTION_START}} before {{AUTOMATED_REACTIONS_SECTION_END}}",
+    );
+  });
+
+  it("throws when the markdown template nests the same optional section type", async () => {
+    const generateOrchestratorPrompt =
+      await loadGenerateOrchestratorPromptWithTemplate(
+        "{{REPO_CONFIGURED_SECTION_START}}outer {{REPO_CONFIGURED_SECTION_START}}inner{{REPO_CONFIGURED_SECTION_END}}{{REPO_CONFIGURED_SECTION_END}}",
+      );
+
+    expect(() =>
+      generateOrchestratorPrompt({
+        config,
+        projectId: "my-app",
+        project: config.projects["my-app"]!,
+      }),
+    ).toThrow(
+      "Nested optional section blocks are not supported: {{REPO_CONFIGURED_SECTION_START}} before {{REPO_CONFIGURED_SECTION_END}}",
     );
   });
 
@@ -197,5 +227,21 @@ describe("generateOrchestratorPrompt", () => {
     expect(promptWithOptionalSections).toContain("Escalate production incidents immediately.");
     expect(promptWithoutOptionalSections).not.toContain("## Automated Reactions");
     expect(promptWithoutOptionalSections).not.toContain("## Project-Specific Rules");
+  });
+
+  it("preserves intentional blank lines inside project-specific rules", async () => {
+    const generateOrchestratorPrompt = await loadGenerateOrchestratorPrompt();
+    const projectWithSpacedRules: ProjectConfig = {
+      ...config.projects["my-app"]!,
+      orchestratorRules: "First block\n\n\nSecond block",
+    };
+
+    const prompt = generateOrchestratorPrompt({
+      config,
+      projectId: "my-app",
+      project: projectWithSpacedRules,
+    });
+
+    expect(prompt).toContain("First block\n\n\nSecond block");
   });
 });
