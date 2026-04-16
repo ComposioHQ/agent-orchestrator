@@ -296,11 +296,39 @@ export function DirectTerminal({
         // Fit terminal to container
         fit.fit();
 
+        // Deferred fit to handle cases where container wasn't sized yet
+        const deferredFitTimeout = setTimeout(() => {
+          if (mounted && fitAddon.current) {
+            try {
+              fitAddon.current.fit();
+              resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+            } catch {
+              // Ignore fit errors
+            }
+          }
+        }, 100);
+
         // Attach touch scroll for mobile
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const cleanupTouchScroll = attachTouchScroll(terminal as any, (data) => {
           writeTerminal(sessionId, data);
         });
+
+        // Set up ResizeObserver to handle flex layout changes
+        let resizeObserver: ResizeObserver | null = null;
+        if (terminalRef.current) {
+          resizeObserver = new ResizeObserver(() => {
+            if (mounted && fitAddon.current) {
+              try {
+                fitAddon.current.fit();
+                resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+              } catch {
+                // Ignore fit errors
+              }
+            }
+          });
+          resizeObserver.observe(terminalRef.current);
+        }
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
@@ -399,6 +427,8 @@ export function DirectTerminal({
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
+          clearTimeout(deferredFitTimeout);
+          resizeObserver?.disconnect();
           cleanupTouchScroll();
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
