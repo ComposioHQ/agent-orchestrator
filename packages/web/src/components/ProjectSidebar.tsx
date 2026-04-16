@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
 import type { ProjectInfo } from "@/lib/project-name";
 import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@/lib/types";
-import { isOrchestratorSession } from "@aoagents/ao-core/types";
+import { isOrchestratorSession } from "@composio/ao-core/types";
 import { getSessionTitle } from "@/lib/format";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -85,6 +85,8 @@ function ProjectSidebarInner({
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
     () => new Set(activeProjectId && activeProjectId !== "all" ? [activeProjectId] : []),
   );
+  const [showKilled, setShowKilled] = useState(false);
+  const [showDone, setShowDone] = useState(false);
 
   useEffect(() => {
     if (activeProjectId && activeProjectId !== "all") {
@@ -107,12 +109,15 @@ function ProjectSidebarInner({
     if (!sessions) return map;
     for (const s of sessions) {
       if (isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes)) continue;
+      // Filter by status visibility
+      if (s.status === "killed" && !showKilled) continue;
+      if (s.status === "done" && !showDone) continue;
       const list = map.get(s.projectId) ?? [];
       list.push(s);
       map.set(s.projectId, list);
     }
     return map;
-  }, [sessions, prefixByProject, allPrefixes]);
+  }, [sessions, prefixByProject, allPrefixes, showKilled, showDone]);
 
   const navigate = (url: string) => {
     router.push(url);
@@ -273,14 +278,19 @@ function ProjectSidebarInner({
                             aria-label={`Open ${title}`}
                           >
                             <SessionDot level={level} />
-                            <span
-                              className={cn(
-                                "project-sidebar__sess-label",
-                                isSessionActive && "project-sidebar__sess-label--active",
-                              )}
-                            >
-                              {title}
-                            </span>
+                            <div className="flex-1 min-w-0">
+                              <span
+                                className={cn(
+                                  "project-sidebar__sess-label",
+                                  isSessionActive && "project-sidebar__sess-label--active",
+                                )}
+                              >
+                                {title}
+                              </span>
+                              <div className="text-xs text-[var(--color-text-muted)]">
+                                ao-{session.id.slice(0, 6)}
+                              </div>
+                            </div>
                             <span className="project-sidebar__sess-status">
                               {LEVEL_LABELS[level]}
                             </span>
@@ -308,8 +318,38 @@ function ProjectSidebarInner({
           })}
         </div>
         <div className="project-sidebar__footer">
-          <ThemeToggle className="project-sidebar__theme-toggle" />
-          <span className="project-sidebar__theme-label">Theme</span>
+          <div className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--color-text-secondary)]">
+            <button
+              type="button"
+              onClick={() => setShowKilled(!showKilled)}
+              className={cn(
+                "px-2 py-1 rounded text-xs transition-colors",
+                showKilled
+                  ? "bg-[var(--color-accent)] text-white"
+                  : "hover:bg-[var(--color-bg-hover)]",
+              )}
+              aria-pressed={showKilled}
+            >
+              Show killed
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDone(!showDone)}
+              className={cn(
+                "px-2 py-1 rounded text-xs transition-colors",
+                showDone
+                  ? "bg-[var(--color-accent)] text-white"
+                  : "hover:bg-[var(--color-bg-hover)]",
+              )}
+              aria-pressed={showDone}
+            >
+              Show done
+            </button>
+          </div>
+          <div className="flex items-center gap-2 border-t border-[var(--color-border-subtle)] px-3 py-2">
+            <ThemeToggle className="project-sidebar__theme-toggle" />
+            <span className="project-sidebar__theme-label">Theme</span>
+          </div>
         </div>
       </aside>
     </>
