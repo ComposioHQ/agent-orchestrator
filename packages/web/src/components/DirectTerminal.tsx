@@ -297,7 +297,8 @@ export function DirectTerminal({
         fit.fit();
 
         // Attach touch scroll for mobile
-        const cleanupTouchScroll = attachTouchScroll(terminal, (data) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const cleanupTouchScroll = attachTouchScroll(terminal as any, (data) => {
           writeTerminal(sessionId, data);
         });
 
