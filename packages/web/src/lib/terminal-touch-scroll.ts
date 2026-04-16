@@ -10,10 +10,13 @@
  *   // later: cleanup();
  */
 
-import type { Terminal as XTermTerminal } from "xterm";
-
-// Use a more lenient type to support dynamically imported Terminal
-type TerminalLike = Omit<XTermTerminal, "input" | "attachCustomWheelEventHandler"> & Partial<Pick<XTermTerminal, "input" | "attachCustomWheelEventHandler">>;
+// Minimal interface matching the xterm Terminal members actually used here
+interface TerminalLike {
+  element: HTMLElement | undefined;
+  buffer: { active: { type: string } };
+  options: { fontSize?: number };
+  scrollLines(amount: number): void;
+}
 
 export interface TouchScrollConfig {
   /** Pixels of movement before gesture direction is decided. Default: 8 */
