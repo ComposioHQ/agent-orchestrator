@@ -5,6 +5,7 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
 import { useMux } from "@/hooks/useMux";
+import { attachTouchScroll } from "@/lib/terminal-touch-scroll";
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
@@ -12,6 +13,28 @@ import "xterm/css/xterm.css";
 // Dynamically import xterm types for TypeScript
 import type { ITheme, Terminal as TerminalType } from "xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
+
+// Font size constants
+const FONT_SIZE_KEY = "ao-terminal-font-size";
+const FONT_SIZE_MIN = 9;
+const FONT_SIZE_MAX = 18;
+const FONT_SIZE_DEFAULT = 13;
+
+function getStoredFontSize(): number {
+  if (typeof window === "undefined") return FONT_SIZE_DEFAULT;
+  try {
+    const stored = localStorage.getItem(FONT_SIZE_KEY);
+    if (stored) {
+      const size = parseInt(stored, 10);
+      if (!Number.isNaN(size)) {
+        return Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, size));
+      }
+    }
+  } catch {
+    // localStorage might be unavailable
+  }
+  return FONT_SIZE_DEFAULT;
+}
 
 interface DirectTerminalProps {
   sessionId: string;
@@ -130,6 +153,7 @@ export function DirectTerminal({
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+  const [fontSize, setFontSize] = useState(getStoredFontSize());
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -208,7 +232,7 @@ export function DirectTerminal({
         // Initialize xterm.js Terminal
         const terminal = new Terminal({
           cursorBlink: true,
-          fontSize: 13,
+          fontSize: fontSize,
           fontFamily:
             'var(--font-jetbrains-mono), "JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
           theme: activeTheme,
@@ -271,6 +295,11 @@ export function DirectTerminal({
 
         // Fit terminal to container
         fit.fit();
+
+        // Attach touch scroll for mobile
+        const cleanupTouchScroll = attachTouchScroll(terminal, (data) => {
+          writeTerminal(sessionId, data);
+        });
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
@@ -369,6 +398,7 @@ export function DirectTerminal({
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
+          cleanupTouchScroll();
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
           window.removeEventListener("resize", handleResize);
@@ -399,6 +429,7 @@ export function DirectTerminal({
     resizeTerminalMux,
     openTerminal,
     closeTerminal,
+    fontSize,
   ]);
 
   // Re-send terminal dimensions on every reconnect so the server-side PTY
@@ -420,6 +451,25 @@ export function DirectTerminal({
     terminal.options.theme = isDark ? terminalThemes.dark : terminalThemes.light;
     terminal.options.minimumContrastRatio = isDark ? 1 : 7;
   }, [appearance, resolvedTheme, terminalThemes]);
+
+  // Font size change effect
+  useEffect(() => {
+    const terminal = terminalInstance.current;
+    const fit = fitAddon.current;
+    if (!terminal || !fit) return;
+    terminal.options.fontSize = fontSize;
+    try {
+      localStorage.setItem(FONT_SIZE_KEY, String(fontSize));
+    } catch {
+      // localStorage might be unavailable
+    }
+    // Re-fit locally AND tell the server-side PTY about the new cols/rows.
+    // Without the mux resize, the shell keeps wrapping at the old dimensions
+    // and the rendered output stops matching the visible grid until the
+    // next resize event (window resize, tab switch, etc.).
+    fit.fit();
+    resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+  }, [fontSize, sessionId, resizeTerminalMux]);
 
   // Re-fit terminal when fullscreen changes
   useEffect(() => {
@@ -530,6 +580,31 @@ export function DirectTerminal({
         ? "text-[var(--color-status-error)]"
         : "text-[var(--color-text-tertiary)]";
   const isDarkChrome = appearance === "dark" || resolvedTheme !== "light";
+
+  const fontSizeControls = (
+    <div className="flex items-center gap-1.5">
+      <button
+        onClick={() => setFontSize((prev) => Math.max(FONT_SIZE_MIN, prev - 1))}
+        disabled={fontSize <= FONT_SIZE_MIN}
+        className="w-6 h-6 text-xs flex items-center justify-center rounded hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        aria-label="Decrease font size"
+      >
+        −
+      </button>
+      <span className="w-12 text-center text-xs font-medium text-[var(--color-text-secondary)]">
+        {fontSize}px
+      </span>
+      <button
+        onClick={() => setFontSize((prev) => Math.min(FONT_SIZE_MAX, prev + 1))}
+        disabled={fontSize >= FONT_SIZE_MAX}
+        className="w-6 h-6 text-xs flex items-center justify-center rounded hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        aria-label="Increase font size"
+      >
+        +
+      </button>
+    </div>
+  );
+
   const fullscreenButton = (
     <button
       onClick={() => setFullscreen(!fullscreen)}
@@ -598,13 +673,15 @@ export function DirectTerminal({
           >
             XDA
           </span>
+          <div className="flex-1" />
+          {fontSizeControls}
           {isOpenCodeSession ? (
             <button
               onClick={handleReload}
               disabled={reloading || muxStatus !== "connected"}
               title="Restart OpenCode session (/exit then resume mapped session)"
               aria-label="Restart OpenCode session"
-              className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
+              className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
             >
               {reloading ? (
                 <>
