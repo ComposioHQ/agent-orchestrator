@@ -3,6 +3,7 @@ import { Command } from "commander";
 
 const {
   mockRunRepoScript,
+  mockHasRepoScript,
   mockFindConfigFile,
   mockLoadConfig,
   mockCreatePluginRegistry,
@@ -11,8 +12,10 @@ const {
   mockRegistry,
   mockGetCurrentVersion,
   mockReadCachedUpdateInfo,
+  mockDetectInstallMethod,
 } = vi.hoisted(() => ({
   mockRunRepoScript: vi.fn(),
+  mockHasRepoScript: vi.fn(() => true),
   mockFindConfigFile: vi.fn(),
   mockLoadConfig: vi.fn(),
   mockCreatePluginRegistry: vi.fn(),
@@ -25,10 +28,12 @@ const {
   },
   mockGetCurrentVersion: vi.fn(() => "0.2.2"),
   mockReadCachedUpdateInfo: vi.fn(() => null),
+  mockDetectInstallMethod: vi.fn(() => "git" as const),
 }));
 
 vi.mock("../../src/lib/script-runner.js", () => ({
   runRepoScript: (...args: unknown[]) => mockRunRepoScript(...args),
+  hasRepoScript: (...args: unknown[]) => mockHasRepoScript(...args),
 }));
 
 vi.mock("@aoagents/ao-core", () => ({
@@ -51,6 +56,7 @@ vi.mock("../../src/lib/openclaw-probe.js", () => ({
 }));
 
 vi.mock("../../src/lib/update-check.js", () => ({
+  detectInstallMethod: () => mockDetectInstallMethod(),
   getCurrentVersion: () => mockGetCurrentVersion(),
   readCachedUpdateInfo: () => mockReadCachedUpdateInfo(),
   isVersionOutdated: (current: string, latest: string) => {
@@ -140,6 +146,10 @@ describe("doctor command", () => {
 
     mockRunRepoScript.mockReset();
     mockRunRepoScript.mockResolvedValue(0);
+    mockHasRepoScript.mockReset();
+    mockHasRepoScript.mockReturnValue(true);
+    mockDetectInstallMethod.mockReset();
+    mockDetectInstallMethod.mockReturnValue("git");
 
     mockFindConfigFile.mockReset();
     mockFindConfigFile.mockReturnValue(null);
@@ -185,6 +195,28 @@ describe("doctor command", () => {
     await program.parseAsync(["node", "test", "doctor", "--fix"]);
 
     expect(mockRunRepoScript).toHaveBeenCalledWith("ao-doctor.sh", ["--fix"]);
+  });
+
+  it("skips ao-doctor.sh for npm-global installs and runs packaged checks", async () => {
+    mockDetectInstallMethod.mockReturnValue("npm-global");
+
+    await program.parseAsync(["node", "test", "doctor"]);
+
+    expect(mockRunRepoScript).not.toHaveBeenCalled();
+    const output = consoleLogSpy.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).toContain("SKIP: ao-doctor.sh is not supported for npm-global installs.");
+  });
+
+  it("skips ao-doctor.sh when the source script is missing in git-like installs", async () => {
+    mockDetectInstallMethod.mockReturnValue("git");
+    mockHasRepoScript.mockReturnValue(false);
+
+    await program.parseAsync(["node", "test", "doctor"]);
+
+    expect(mockRunRepoScript).not.toHaveBeenCalled();
+    expect(mockHasRepoScript).toHaveBeenCalledWith("ao-doctor.sh");
+    const output = consoleLogSpy.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).toContain("SKIP: running packaged checks only");
   });
 
   it("checks configured plugin references when config is present", async () => {

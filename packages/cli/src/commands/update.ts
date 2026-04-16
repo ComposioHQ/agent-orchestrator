@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import type { Command } from "commander";
 import chalk from "chalk";
-import { executeScriptCommand } from "../lib/script-runner.js";
+import { executeScriptCommand, hasRepoScript } from "../lib/script-runner.js";
 import {
   checkForUpdate,
   detectInstallMethod,
@@ -76,6 +76,15 @@ async function handleGitUpdate(opts: {
   const args: string[] = [];
   if (opts.skipSmoke) args.push("--skip-smoke");
   if (opts.smokeOnly) args.push("--smoke-only");
+
+  if (!hasRepoScript("ao-update.sh")) {
+    console.log(
+      chalk.yellow("Source-update script unavailable; using package-manager update flow for this install."),
+    );
+    await handleNpmUpdate(opts);
+    return;
+  }
+
   await executeScriptCommand("ao-update.sh", args);
   invalidateCache();
 }

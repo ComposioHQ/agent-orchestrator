@@ -5,12 +5,17 @@ import { Command } from "commander";
 // Mocks
 // ---------------------------------------------------------------------------
 
-const { mockExecuteScriptCommand } = vi.hoisted(() => ({
+const {
+  mockExecuteScriptCommand,
+  mockHasRepoScript,
+} = vi.hoisted(() => ({
   mockExecuteScriptCommand: vi.fn(),
+  mockHasRepoScript: vi.fn(() => true),
 }));
 
 vi.mock("../../src/lib/script-runner.js", () => ({
   executeScriptCommand: (...args: unknown[]) => mockExecuteScriptCommand(...args),
+  hasRepoScript: (...args: unknown[]) => mockHasRepoScript(...args),
 }));
 
 const {
@@ -98,6 +103,8 @@ describe("update command", () => {
     registerUpdate(program);
     mockExecuteScriptCommand.mockReset();
     mockExecuteScriptCommand.mockResolvedValue(undefined);
+    mockHasRepoScript.mockReset();
+    mockHasRepoScript.mockReturnValue(true);
     mockDetectInstallMethod.mockReturnValue("git");
     mockCheckForUpdate.mockReset();
     mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ installMethod: "git", recommendedCommand: "ao update" }));
@@ -178,6 +185,21 @@ describe("update command", () => {
     it("runs the update script with default args", async () => {
       await program.parseAsync(["node", "test", "update"]);
       expect(mockExecuteScriptCommand).toHaveBeenCalledWith("ao-update.sh", []);
+    });
+
+    it("falls back to npm flow when the update script is unavailable", async () => {
+      mockHasRepoScript.mockReturnValue(false);
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      mockPromptConfirm.mockResolvedValue(true);
+      mockSpawn.mockReturnValue(createMockChild(0));
+
+      await program.parseAsync(["node", "test", "update"]);
+
+      expect(mockExecuteScriptCommand).not.toHaveBeenCalled();
+      expect(mockSpawn).toHaveBeenCalled();
+      expect(mockCheckForUpdate).toHaveBeenCalledWith({ force: true });
+      expect(mockInvalidateCache).toHaveBeenCalledTimes(1);
     });
 
     it("passes through --skip-smoke", async () => {

@@ -18,6 +18,10 @@ export function resolveScriptPath(scriptName: string): string {
   return scriptPath;
 }
 
+export function hasRepoScript(scriptName: string): boolean {
+  return existsSync(resolve(resolveRepoRoot(), "scripts", scriptName));
+}
+
 export async function runRepoScript(scriptName: string, args: string[]): Promise<number> {
   const shell = process.env["AO_BASH_PATH"] || "bash";
   const scriptPath = resolveScriptPath(scriptName);

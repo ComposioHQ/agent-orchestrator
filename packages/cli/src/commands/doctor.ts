@@ -13,10 +13,15 @@ import {
   type PluginRegistry,
   type PluginSlot,
 } from "@aoagents/ao-core";
-import { runRepoScript } from "../lib/script-runner.js";
+import { hasRepoScript, runRepoScript } from "../lib/script-runner.js";
 import { detectOpenClawInstallation, validateToken } from "../lib/openclaw-probe.js";
 import { importPluginModuleFromSource } from "../lib/plugin-store.js";
-import { getCurrentVersion, isVersionOutdated, readCachedUpdateInfo } from "../lib/update-check.js";
+import {
+  detectInstallMethod,
+  getCurrentVersion,
+  isVersionOutdated,
+  readCachedUpdateInfo,
+} from "../lib/update-check.js";
 
 // ---------------------------------------------------------------------------
 // Helpers — match the PASS / WARN / FAIL style of ao-doctor.sh
@@ -414,18 +419,34 @@ export function registerDoctor(program: Command): void {
     .action(async (opts: { fix?: boolean; testNotify?: boolean }) => {
       const { fail, count: failCount } = makeFailCounter();
 
-      // 1. Run the existing shell-based checks
+      // 1. Run shell checks for source installs only
       const scriptArgs: string[] = [];
       if (opts.fix) {
         scriptArgs.push("--fix");
       }
 
       let shellExitCode: number;
-      try {
-        shellExitCode = await runRepoScript("ao-doctor.sh", scriptArgs);
-      } catch (err) {
-        console.error(err instanceof Error ? err.message : String(err));
-        shellExitCode = 1;
+      const installMethod = detectInstallMethod();
+      const shouldRunRepoScript = installMethod === "git" && hasRepoScript("ao-doctor.sh");
+      if (shouldRunRepoScript) {
+        try {
+          shellExitCode = await runRepoScript("ao-doctor.sh", scriptArgs);
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : String(err));
+          shellExitCode = 1;
+        }
+      } else {
+        shellExitCode = 0;
+        if (installMethod === "npm-global" || installMethod === "pnpm-global") {
+          console.log(
+            `SKIP: ao-doctor.sh is not supported for ${installMethod} installs. ` +
+              "Using packaged checks instead.",
+          );
+        } else {
+          console.log(
+            "SKIP: running packaged checks only (ao-doctor.sh is unavailable in this install type).",
+          );
+        }
       }
 
       // 2. Version freshness (cache-only, no network dependency)
