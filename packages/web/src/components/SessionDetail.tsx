@@ -17,6 +17,7 @@ import { cn } from "@/lib/cn";
 import dynamic from "next/dynamic";
 import { getSessionTitle } from "@/lib/format";
 import type { ProjectInfo } from "@/lib/project-name";
+import { useSidebarContext } from "./workspace/SidebarContext";
 
 import { MobileBottomNav } from "./MobileBottomNav";
 import { ProjectSidebar } from "./ProjectSidebar";
@@ -680,15 +681,22 @@ export function SessionDetail({
         ? "color-mix(in srgb, var(--color-status-error) 12%, transparent)"
         : "color-mix(in srgb, var(--color-accent) 12%, transparent)";
 
+  const sidebar = useSidebarContext();
+
   return (
     <div className="session-detail--terminal-first">
       {/* Floating header */}
       <div className="session-detail__floating-header">
-        <a href={crumbHref} className="session-detail__back" aria-label="Back to dashboard">
+        <button
+          type="button"
+          onClick={() => sidebar?.onToggleSidebar()}
+          className="session-detail__back"
+          aria-label="Toggle sidebar"
+        >
           <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
+            <path d="M4 6h16M4 12h16M4 18h16" />
           </svg>
-        </a>
+        </button>
         <span className="session-detail__status-dot" style={{ background: activity.color }} />
         <span className="session-detail__session-id">{session.id}</span>
         <span
