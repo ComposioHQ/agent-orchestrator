@@ -47,7 +47,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`dark ${geistSans.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
-      <body className="bg-[var(--color-bg-base)] text-[var(--color-text-primary)] antialiased">
+      <body className="h-screen overflow-hidden bg-[var(--color-bg-base)] text-[var(--color-text-primary)] antialiased">
         <Providers>{children}</Providers>
         <ServiceWorkerRegistrar />
       </body>

@@ -601,9 +601,9 @@ export function SessionDetail({
           ) : null}
 
           <div className="dashboard-main dashboard-main--desktop">
-            <main className="session-detail-page min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-base)]">
-              <div className="session-detail-layout">
-                <main className="min-w-0">
+            <main className="session-detail-page h-full flex flex-col overflow-y-auto bg-[var(--color-bg-base)]">
+              <div className="session-detail-layout flex flex-col h-full">
+                <main className="min-w-0 flex-1 min-h-0 flex flex-col">
                   {(!isOrchestrator || (isOrchestrator && orchestratorZones)) && (
                     <SessionTopStrip
                       headline={headline}
@@ -630,7 +630,7 @@ export function SessionDetail({
                     </section>
                   ) : null}
 
-                  <section className="session-detail-terminal-wrap">
+                  <section className="session-detail-terminal-wrap flex-1 min-h-0 flex flex-col">
                     <div id="session-terminal-section" aria-hidden="true" />
                     <div className="session-detail-section-label">
                       <div
@@ -641,25 +641,27 @@ export function SessionDetail({
                         Live Terminal
                       </span>
                     </div>
-                    {!showTerminal ? (
-                      <div className="session-detail-terminal-placeholder" style={{ height: terminalHeight }} />
-                    ) : terminalEnded ? (
-                      <div className="terminal-exited-placeholder" style={{ height: terminalHeight }}>
-                        <span className="terminal-exited-placeholder__text">
-                          Terminal session has ended
-                        </span>
-                      </div>
-                    ) : (
-                      <DirectTerminal
-                        sessionId={session.id}
-                        startFullscreen={startFullscreen}
-                        variant={terminalVariant}
-                        appearance="dark"
-                        height={terminalHeight}
-                        isOpenCodeSession={isOpenCodeSession}
-                        reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-                      />
-                    )}
+                    <div className="flex-1 min-h-0">
+                      {!showTerminal ? (
+                        <div className="session-detail-terminal-placeholder" style={{ height: terminalHeight }} />
+                      ) : terminalEnded ? (
+                        <div className="terminal-exited-placeholder" style={{ height: terminalHeight }}>
+                          <span className="terminal-exited-placeholder__text">
+                            Terminal session has ended
+                          </span>
+                        </div>
+                      ) : (
+                        <DirectTerminal
+                          sessionId={session.id}
+                          startFullscreen={startFullscreen}
+                          variant={terminalVariant}
+                          appearance="dark"
+                          height={terminalHeight}
+                          isOpenCodeSession={isOpenCodeSession}
+                          reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+                        />
+                      )}
+                    </div>
                   </section>
                 </main>
               </div>
