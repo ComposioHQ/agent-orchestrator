@@ -1,0 +1,42 @@
+packages/web/src/components/PortfolioPage.tsx
+  ff23df7c065129b1 4,6,9,15-17,28-188,249
+packages/core/src/paths.ts
+  ff23df7c065129b1 69-76,78-79,246-251,255-260,265-266
+packages/core/src/__tests__/paths.test.ts
+  ff23df7c065129b1 152,156-157,162,171-173,447,451,455,458,460-462
+packages/core/src/portfolio-registry.ts
+  ff23df7c065129b1 28,93-117,120-123,142-165,168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "0351e6cee0b1365026fb368bfafd45645cd078ce",
+  "prompts": {
+    "e129a32749bee826": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07762ca9-ce23-4277-8a0c-597679cfdb03",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 90,
+      "total_deletions": 18,
+      "accepted_lines": 90,
+      "overriden_lines": 0
+    },
+    "ff23df7c065129b1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0194d48-ee96-4704-8265-2bb7f4ec2d42",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 333,
+      "total_deletions": 116,
+      "accepted_lines": 324,
+      "overriden_lines": 0
+    }
+  }
+}

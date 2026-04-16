@@ -1,0 +1,51 @@
+packages/plugins/agent-opencode/src/index.test.ts
+  a2dbe3f95970304e 837,841-842,845,847,849-853,855-859,864,869,872,874-886
+packages/plugins/agent-opencode/src/index.ts
+  a2dbe3f95970304e 26-28,78-80,82-83,85-91,126,128,155-160,269,277-278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "b09d3d909833f965815184998492414f383948d1",
+  "prompts": {
+    "497edd07f701b248": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0f788a34-2a38-4ddc-bca8-6a1a4b36014c",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 68,
+      "overriden_lines": 0
+    },
+    "6a7be1e5b3c0af2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9355450-9e9f-494c-80ab-e914f4f8274b",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 245,
+      "overriden_lines": 0
+    },
+    "a2dbe3f95970304e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f274ac70-5544-4895-9a6f-3e95e08c06fa",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 59,
+      "overriden_lines": 0
+    }
+  }
+}

@@ -1,0 +1,65 @@
+packages/web/src/components/ActionItemRow.tsx
+  ff23df7c065129b1 112,136,149,161,173
+packages/web/src/components/CloneFromUrlModal.tsx
+  ff23df7c065129b1 118
+packages/web/src/components/settings/IntegrationSettings.tsx
+  ff23df7c065129b1 69
+packages/web/src/components/InlineMessageInput.tsx
+  ff23df7c065129b1 69,71,83,92
+packages/web/src/components/settings/AgentSettings.tsx
+  ff23df7c065129b1 42,55
+packages/web/src/components/settings/PreferenceSettings.tsx
+  ff23df7c065129b1 80,122,138
+packages/web/src/components/QuickStartModal.tsx
+  ff23df7c065129b1 99,108,147,163
+packages/web/src/app/settings/page.tsx
+  ff23df7c065129b1 63-64,77,95,102
+packages/web/src/components/AddProjectModal.tsx
+  ff23df7c065129b1 140,155,164,190,196,206,226,241,285,323
+packages/web/src/components/settings/ProjectSettings.tsx
+  ff23df7c065129b1 70,99,114,122,130
+packages/web/src/components/UnifiedSidebar.tsx
+  e129a32749bee826 82,85,149-160,179,184,464-503,1210-1233
+  ff23df7c065129b1 218,522,606,615,626,841,921,1045
+packages/web/src/components/ToastContainer.tsx
+  ff23df7c065129b1 24
+packages/web/src/components/WorkspaceResourcesModal.tsx
+  ff23df7c065129b1 220,228,260,275,323
+packages/web/src/components/ActivityFeedPage.tsx
+  ff23df7c065129b1 95
+packages/web/src/components/SubmitWorkModal.tsx
+  ff23df7c065129b1 76,85,105,127,129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "b7db169854a9cb1c51373e7ac4a73e51defdcfb9",
+  "prompts": {
+    "e129a32749bee826": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07762ca9-ce23-4277-8a0c-597679cfdb03",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 90,
+      "overriden_lines": 0
+    },
+    "ff23df7c065129b1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0194d48-ee96-4704-8265-2bb7f4ec2d42",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 60,
+      "overriden_lines": 0
+    }
+  }
+}

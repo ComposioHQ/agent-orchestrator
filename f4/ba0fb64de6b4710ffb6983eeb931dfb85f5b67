@@ -1,0 +1,27 @@
+packages/web/src/app/layout.tsx
+  b04c3dc6b2376a79 2,8,10,49
+packages/web/src/app/globals.css
+  b04c3dc6b2376a79 57-60,63-66,70,73-74,77,82-83,162-163,191-193,196-199,203,206-207,210,215-216,299-300,305-306,309,540,547,555,557-558,561,578-594,598,604,614,620-621,639-640,1043,1047
+packages/web/src/components/ActivityDot.tsx
+  b04c3dc6b2376a79 40,52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "f4ba0fb64de6b4710ffb6983eeb931dfb85f5b67",
+  "prompts": {
+    "b04c3dc6b2376a79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "47171029-25fa-4631-b451-6fd1bd86a271",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 74,
+      "total_deletions": 79,
+      "accepted_lines": 74,
+      "overriden_lines": 0
+    }
+  }
+}

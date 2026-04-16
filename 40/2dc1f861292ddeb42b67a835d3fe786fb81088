@@ -1,0 +1,25 @@
+packages/web/src/components/ProjectSidebar.tsx
+  550c05ea05d1bbd7 201,380
+packages/web/src/app/globals.css
+  550c05ea05d1bbd7 1936
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "402dc1f861292ddeb42b67a835d3fe786fb81088",
+  "prompts": {
+    "550c05ea05d1bbd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40331246-2b0e-4f54-85f1-09702e3d74a9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 3,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}

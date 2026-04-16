@@ -1,0 +1,23 @@
+packages/web/src/components/Dashboard.tsx
+  4538a92217143cac 265-270,273-281
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "24a293d81191df888205f758592e186b0052080b",
+  "prompts": {
+    "4538a92217143cac": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d2511-0727-7641-bd0f-24c5e7c118af",
+        "model": "gpt-5.2-codex"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 15,
+      "total_deletions": 5,
+      "accepted_lines": 15,
+      "overriden_lines": 0
+    }
+  }
+}

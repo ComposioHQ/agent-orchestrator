@@ -1,0 +1,25 @@
+packages/core/src/config.ts
+  a271ef70a2607a42 281
+packages/core/src/global-config.ts
+  a271ef70a2607a42 585-587
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "464b56a9d105b3275a038eac153c0e77625703b4",
+  "prompts": {
+    "a271ef70a2607a42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3be41795-6f73-4d51-9697-61db44b5ab6b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 1,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}

@@ -1,0 +1,23 @@
+packages/web/src/app/sessions/[id]/page.tsx
+  4538a92217143cac 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "8ce7366b828dcc962007f790690624e91d9516e5",
+  "prompts": {
+    "4538a92217143cac": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d2511-0727-7641-bd0f-24c5e7c118af",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}

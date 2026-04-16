@@ -1,0 +1,27 @@
+packages/web/src/lib/__tests__/serialize.test.ts
+  cb73aca2676f2efd 23,988-1042
+packages/web/src/hooks/__tests__/useSessionEvents.test.ts
+  cb73aca2676f2efd 869-921
+packages/web/src/components/__tests__/SessionCard.coverage.test.tsx
+  cb73aca2676f2efd 51-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "9e87c04fac89b53ab7d887a8e1d9b7c50c9a5500",
+  "prompts": {
+    "cb73aca2676f2efd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "53e4fdb5-e18f-4c68-8f3a-bfeb449a9b11",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 149,
+      "total_deletions": 2,
+      "accepted_lines": 147,
+      "overriden_lines": 0
+    }
+  }
+}

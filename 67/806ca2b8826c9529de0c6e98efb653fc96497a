@@ -1,0 +1,23 @@
+packages/web/src/components/Dashboard.tsx
+  a271ef70a2607a42 81,92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "67806ca2b8826c9529de0c6e98efb653fc96497a",
+  "prompts": {
+    "a271ef70a2607a42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3be41795-6f73-4d51-9697-61db44b5ab6b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}

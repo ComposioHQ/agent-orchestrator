@@ -1,0 +1,33 @@
+packages/web/src/app/api/projects/route.ts
+  5dde8a415f306ae4 21,100
+packages/web/src/app/api/projects/clone/route.ts
+  5dde8a415f306ae4 16,52
+packages/web/src/app/api/projects/[id]/favicon/route.ts
+  5dde8a415f306ae4 1,4,38-44,47-52
+packages/web/src/lib/portfolio-services.ts
+  5dde8a415f306ae4 143
+packages/web/src/lib/path-security.ts
+  5dde8a415f306ae4 1-35
+packages/web/src/app/api/browse-directory/route.ts
+  5dde8a415f306ae4 2-4,16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "47c1e59d355e92c966e9bbf84fe1db28177f06f5",
+  "prompts": {
+    "5dde8a415f306ae4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4a93-2ca8-7b20-a778-4bc5ef0d7b9e",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 59,
+      "total_deletions": 43,
+      "accepted_lines": 59,
+      "overriden_lines": 0
+    }
+  }
+}

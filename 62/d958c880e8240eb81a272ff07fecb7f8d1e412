@@ -1,0 +1,42 @@
+packages/core/src/types.ts
+  12f9980a21b76117 1391
+packages/core/src/metadata.ts
+  12f9980a21b76117 96,146
+packages/core/src/lifecycle-manager.ts
+  12f9980a21b76117 1271-1286
+packages/core/src/session-manager.ts
+  12f9980a21b76117 2336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "62d958c880e8240eb81a272ff07fecb7f8d1e412",
+  "prompts": {
+    "12f9980a21b76117": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15694006-fcac-46a2-9918-71b528854195",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 181,
+      "total_deletions": 3,
+      "accepted_lines": 180,
+      "overriden_lines": 0
+    },
+    "ea86128d27c07130": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d62cc-80e9-7001-9e3a-14ee6e4af460",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 51,
+      "total_deletions": 35,
+      "accepted_lines": 51,
+      "overriden_lines": 0
+    }
+  }
+}

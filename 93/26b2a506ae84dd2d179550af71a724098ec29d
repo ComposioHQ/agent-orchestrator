@@ -1,0 +1,23 @@
+packages/core/src/config.ts
+  d2d7964b1f2a40db 258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "9326b2a506ae84dd2d179550af71a724098ec29d",
+  "prompts": {
+    "d2d7964b1f2a40db": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "205a3191-a43f-419c-9f60-8855fb4ffa42",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 6,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}

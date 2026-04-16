@@ -1,0 +1,27 @@
+packages/core/src/types.ts
+  4a53202215bbd834 1380
+packages/core/src/session-manager.ts
+  4a53202215bbd834 481,489-500,2177-2178,2203
+packages/core/src/lifecycle-manager.ts
+  4a53202215bbd834 1232-1235,1237,1275-1289
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "a2de27213b8d1f70d0c3b7cd4f457e5aff57e495",
+  "prompts": {
+    "4a53202215bbd834": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1deb7276-ad1e-410c-8428-d1c042f85dd4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 514,
+      "total_deletions": 38,
+      "accepted_lines": 505,
+      "overriden_lines": 0
+    }
+  }
+}

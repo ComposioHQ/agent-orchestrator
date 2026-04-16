@@ -1,0 +1,23 @@
+packages/web/src/components/PullRequestsPage.tsx
+  68da3c0fad7d7a73 3,46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "315a5c7eeecd55bdbdead9219a4a414b5571c7df",
+  "prompts": {
+    "68da3c0fad7d7a73": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d544c-69d6-7072-9602-a13b4a1831b8",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 42,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}

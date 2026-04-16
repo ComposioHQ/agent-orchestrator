@@ -1,0 +1,23 @@
+DESIGN.md
+  9f484f56446aa97f 6,10-13,16,19-21,31-35,38-44,47-55,60-62,67-69,74-76,82-83,86,88,106,131-207,226-228,233-243
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "afbbaeb4842c1c7b96f997266d4483d181f1e18d",
+  "prompts": {
+    "9f484f56446aa97f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6befeeed-b65e-410c-99a4-881aec7a8edd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 440,
+      "total_deletions": 50,
+      "accepted_lines": 440,
+      "overriden_lines": 0
+    }
+  }
+}

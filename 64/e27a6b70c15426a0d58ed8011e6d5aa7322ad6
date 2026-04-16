@@ -1,0 +1,25 @@
+packages/web/src/hooks/useSessionEvents.ts
+  49eb900aa12f565f 139-141
+packages/web/src/hooks/__tests__/useSessionEvents.test.ts
+  49eb900aa12f565f 922-988
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "64e27a6b70c15426a0d58ed8011e6d5aa7322ad6",
+  "prompts": {
+    "49eb900aa12f565f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "30760a96-8c79-4ba7-9efb-d776faa667f0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 70,
+      "total_deletions": 0,
+      "accepted_lines": 70,
+      "overriden_lines": 0
+    }
+  }
+}

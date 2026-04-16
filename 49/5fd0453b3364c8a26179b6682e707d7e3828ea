@@ -1,0 +1,25 @@
+packages/web/src/components/Skeleton.tsx
+  68da3c0fad7d7a73 27-28
+packages/web/src/components/__tests__/Dashboard.emptyState.test.tsx
+  68da3c0fad7d7a73 29-30,57,85,98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "495fd0453b3364c8a26179b6682e707d7e3828ea",
+  "prompts": {
+    "68da3c0fad7d7a73": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d544c-69d6-7072-9602-a13b4a1831b8",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 11,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}

@@ -1,0 +1,27 @@
+packages/core/src/__tests__/agent-selection.test.ts
+  714094fc0b70a132 1-57
+packages/core/src/agent-selection.ts
+  714094fc0b70a132 43-47
+packages/core/src/portfolio-registry.ts
+  714094fc0b70a132 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "554b9e6851f297a510199a29ec7cacf1254a3cfa",
+  "prompts": {
+    "714094fc0b70a132": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d49a6-6571-7a43-83a8-e7ef8a32def9",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 63,
+      "total_deletions": 87,
+      "accepted_lines": 63,
+      "overriden_lines": 0
+    }
+  }
+}

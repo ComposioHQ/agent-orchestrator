@@ -1,0 +1,35 @@
+packages/web/src/app/globals.css
+  558d4dd7ff6a0112 1385-1402,2118-2121
+packages/web/src/components/Dashboard.tsx
+  558d4dd7ff6a0112 91,164-166,254,257-275,280-293,329-340,345-358,488,491
+packages/web/src/app/api/sessions/route.ts
+  558d4dd7ff6a0112 41,53-75
+packages/web/src/app/sessions/[id]/page.tsx
+  558d4dd7ff6a0112 95-98
+packages/web/src/components/SessionCard.tsx
+  558d4dd7ff6a0112 97,145,152-154,550-551,559-563
+packages/web/src/app/sessions/[id]/page.test.tsx
+  558d4dd7ff6a0112 67,72-73,76-77,99,102-104,113-115
+packages/web/src/__tests__/components.test.tsx
+  558d4dd7ff6a0112 530,557
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "128c9101c81fecdd693dc5c5b8ca011171f68c2d",
+  "prompts": {
+    "558d4dd7ff6a0112": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d28a4-db36-7b62-96e8-a92d68a16d84",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 146,
+      "total_deletions": 51,
+      "accepted_lines": 146,
+      "overriden_lines": 0
+    }
+  }
+}

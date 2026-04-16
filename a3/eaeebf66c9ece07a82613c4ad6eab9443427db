@@ -1,0 +1,31 @@
+packages/core/src/__tests__/session-manager/claim-pr.test.ts
+  4a53202215bbd834 217-219,265-267
+packages/web/src/components/__tests__/SessionDetail.enrichment.test.tsx
+  4a53202215bbd834 1-99
+packages/web/src/__tests__/api-routes.test.ts
+  4a53202215bbd834 206,372-447
+packages/core/src/__tests__/lifecycle-manager.test.ts
+  4a53202215bbd834 1303-1386
+packages/core/src/__tests__/session-manager.test.ts
+  4a53202215bbd834 3,284-438
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "a3eaeebf66c9ece07a82613c4ad6eab9443427db",
+  "prompts": {
+    "4a53202215bbd834": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1deb7276-ad1e-410c-8428-d1c042f85dd4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 422,
+      "overriden_lines": 0
+    }
+  }
+}

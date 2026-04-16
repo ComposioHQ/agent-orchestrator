@@ -1,0 +1,23 @@
+packages/core/src/__tests__/config.test.ts
+  68da3c0fad7d7a73 1-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "0934af6d6d3f60631ec4e42f228c4387fd730baa",
+  "prompts": {
+    "68da3c0fad7d7a73": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d544c-69d6-7072-9602-a13b4a1831b8",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 27,
+      "total_deletions": 0,
+      "accepted_lines": 27,
+      "overriden_lines": 0
+    }
+  }
+}

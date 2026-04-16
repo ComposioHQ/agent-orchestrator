@@ -1,0 +1,25 @@
+packages/web/src/components/DirectTerminal.tsx
+  6468c57871b7b345 97,105,123,131
+packages/web/src/components/__tests__/DirectTerminal.test.ts
+  6468c57871b7b345 137-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "108dd7aa503c0a0a0013f97930f1f27055cfd2b7",
+  "prompts": {
+    "6468c57871b7b345": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d35fa-56d5-7d30-affd-80a68e77e785",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 4,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}

@@ -1,0 +1,27 @@
+packages/web/src/lib/dashboard-page-data.ts
+  cb73aca2676f2efd 14
+packages/web/src/lib/async-utils.ts
+  cb73aca2676f2efd 1-19
+packages/web/src/app/api/sessions/route.ts
+  cb73aca2676f2efd 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "cfb7689f5e2bd39f9bc3e706b5822c1d250a1e56",
+  "prompts": {
+    "cb73aca2676f2efd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "53e4fdb5-e18f-4c68-8f3a-bfeb449a9b11",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 21,
+      "total_deletions": 30,
+      "accepted_lines": 21,
+      "overriden_lines": 0
+    }
+  }
+}

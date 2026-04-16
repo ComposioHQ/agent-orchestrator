@@ -1,0 +1,62 @@
+packages/web/src/app/globals.css
+  5e9e47c191a4e4e9 900-907,913-916,925-1019,2030-2033,2077,2080-2085,2089-2090,2092,2094,2098-2099,2106,2108-2115,2128-2197,2199-2211,2219,2224-2241,2244-2281,2301-2302,2304,2307,2412-2415,2417-2421,2424,2429-2438,2440,2443-2465,2469-2515,2559,2564-2566,2570-2572,2575-2577,2580,2582-2589,2592-2616,2619,2621-2651,2653,2656-2760,2764,2766-2767,2783,2786-2787,2790,2794-2801,2803-2807,2809,2814,2909-2980,3117,3127-3129,3182-3215,3226-3229,3237-3240,3266-3286
+packages/web/src/components/BottomSheet.tsx
+  5e9e47c191a4e4e9 4,21-35,38,41-43,46-53,113-125,151,153-157,161-163,165-172,174,178-234
+packages/web/src/components/AttentionZone.tsx
+  5e9e47c191a4e4e9 3-7,10,23-26,87-88,92-95,116-145,147-151,201-202,209-291
+packages/web/src/components/Dashboard.tsx
+  b657893801bf9f40 65-71,115-116
+  13dbcc3435c5ae02 48-49,97-98,211,216
+  5e9e47c191a4e4e9 14,26,40-47,101-104,108-114,117-119,159-167,217,225-227,241-246,249-252,256-257,269,272,383,408-411,417,422-424,431-455,557,568-569,595-604,606-607,609-614
+packages/web/src/components/__tests__/Dashboard.mobile.test.tsx
+  b657893801bf9f40 116,147-148
+  5e9e47c191a4e4e9 1-115,117-146,149-217
+packages/web/src/components/PRStatus.tsx
+  5e9e47c191a4e4e9 131-173
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "b8eab07d284fb0ccc21826ccd92d656d1a2860cc",
+  "prompts": {
+    "13dbcc3435c5ae02": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d2183-a40a-7e02-8ad4-13b0e6bc8bff",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 2,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    },
+    "5e9e47c191a4e4e9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d20ef-4afc-7f22-a34e-69c4a7d9f40c",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 1768,
+      "total_deletions": 581,
+      "accepted_lines": 1369,
+      "overriden_lines": 0
+    },
+    "b657893801bf9f40": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d214b-9899-7742-8038-ff5d997c28c1",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 5,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}

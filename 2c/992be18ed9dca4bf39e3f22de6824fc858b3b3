@@ -1,0 +1,23 @@
+packages/web/src/app/globals.css
+  1c70601610fd2184 788,841-845
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "2c992be18ed9dca4bf39e3f22de6824fc858b3b3",
+  "prompts": {
+    "1c70601610fd2184": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44fdbbc2-107f-4408-843e-0be64720d760",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 1,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    }
+  }
+}

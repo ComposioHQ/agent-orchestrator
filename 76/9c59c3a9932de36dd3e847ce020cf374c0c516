@@ -1,0 +1,23 @@
+packages/web/src/app/projects/[projectId]/page.tsx
+  a271ef70a2607a42 5,8-9,27-30,37-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "769c59c3a9932de36dd3e847ce020cf374c0c516",
+  "prompts": {
+    "a271ef70a2607a42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3be41795-6f73-4d51-9697-61db44b5ab6b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 22,
+      "total_deletions": 9,
+      "accepted_lines": 22,
+      "overriden_lines": 0
+    }
+  }
+}

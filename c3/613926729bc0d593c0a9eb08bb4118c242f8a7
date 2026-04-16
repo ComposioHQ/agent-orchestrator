@@ -1,0 +1,29 @@
+packages/web/src/components/Toast.tsx
+  11e09340c0760e62 1-91
+packages/web/src/components/BottomSheet.tsx
+  11e09340c0760e62 1-118
+packages/web/src/app/globals.css
+  11e09340c0760e62 2401-2602
+packages/web/src/components/Dashboard.tsx
+  11e09340c0760e62 3,25-26,55,82-85,201-204,206-210,214-218,220,225-229,231,238-242,244,317,556-569
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "c3613926729bc0d593c0a9eb08bb4118c242f8a7",
+  "prompts": {
+    "11e09340c0760e62": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21ec3665-889a-47af-abe8-9e064a01ecf0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 468,
+      "total_deletions": 18,
+      "accepted_lines": 466,
+      "overriden_lines": 0
+    }
+  }
+}

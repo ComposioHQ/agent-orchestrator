@@ -1,0 +1,35 @@
+packages/cli/__tests__/commands/start.test.ts
+  38c85b5c94d2e7cf 256
+packages/core/src/config-generator.ts
+  38c85b5c94d2e7cf 246
+packages/core/src/config.ts
+  38c85b5c94d2e7cf 214
+packages/cli/src/commands/start.ts
+  38c85b5c94d2e7cf 585
+packages/cli/src/commands/setup.ts
+  38c85b5c94d2e7cf 293
+packages/core/src/__tests__/config-generator.test.ts
+  38c85b5c94d2e7cf 258
+packages/cli/__tests__/commands/setup.test.ts
+  38c85b5c94d2e7cf 59,235-264
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "e47a14b331bbcd129a590e705dacd1b24ab68034",
+  "prompts": {
+    "38c85b5c94d2e7cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe66c160-342a-4d4b-958a-0771e1826a37",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 37,
+      "total_deletions": 12,
+      "accepted_lines": 37,
+      "overriden_lines": 0
+    }
+  }
+}

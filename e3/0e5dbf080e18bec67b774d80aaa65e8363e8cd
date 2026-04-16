@@ -1,0 +1,25 @@
+packages/web/src/app/not-found.test.tsx
+  6d81523139b22571 1-33
+packages/web/src/app/not-found.tsx
+  6d81523139b22571 1-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "e30e5dbf080e18bec67b774d80aaa65e8363e8cd",
+  "prompts": {
+    "6d81523139b22571": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a683656-9f82-4226-9dfe-13a3f69fbbfe",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 60,
+      "total_deletions": 0,
+      "accepted_lines": 60,
+      "overriden_lines": 0
+    }
+  }
+}

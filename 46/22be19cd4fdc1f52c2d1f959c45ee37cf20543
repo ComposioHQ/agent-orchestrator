@@ -1,0 +1,49 @@
+packages/web/src/components/Terminal.tsx
+  550c05ea05d1bbd7 76
+packages/web/src/app/icon.tsx
+  550c05ea05d1bbd7 3,10
+packages/web/src/app/icon-192/route.tsx
+  550c05ea05d1bbd7 1-13
+packages/web/src/app/globals.css
+  550c05ea05d1bbd7 391-396,402,1636,1931-1933,1951-1952,1954,2095-2099,2135-2142
+packages/web/public/sw.js
+  550c05ea05d1bbd7 1-30
+packages/web/next.config.js
+  550c05ea05d1bbd7 13-23
+packages/web/src/app/apple-icon.tsx
+  550c05ea05d1bbd7 1-11
+packages/web/src/app/manifest.ts
+  550c05ea05d1bbd7 1-20
+packages/web/src/app/icon-512/route.tsx
+  550c05ea05d1bbd7 1-13
+packages/web/src/lib/icon-renderer.tsx
+  550c05ea05d1bbd7 1-38
+packages/web/src/components/ServiceWorkerRegistrar.tsx
+  550c05ea05d1bbd7 1-12
+packages/web/src/app/layout.tsx
+  550c05ea05d1bbd7 1,5,29-39,48-52,63
+packages/web/public/offline.html
+  550c05ea05d1bbd7 1-86
+packages/web/src/components/DirectTerminal.tsx
+  550c05ea05d1bbd7 145,751
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "4622be19cd4fdc1f52c2d1f959c45ee37cf20543",
+  "prompts": {
+    "550c05ea05d1bbd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40331246-2b0e-4f54-85f1-09702e3d74a9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 285,
+      "total_deletions": 41,
+      "accepted_lines": 285,
+      "overriden_lines": 0
+    }
+  }
+}

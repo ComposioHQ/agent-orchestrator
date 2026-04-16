@@ -1,0 +1,23 @@
+packages/web/src/components/__tests__/Dashboard.doneBar.test.tsx
+  780151cb06a54223 1-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "651ffa592e571141227fafc0dd0993e980207532",
+  "prompts": {
+    "780151cb06a54223": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "87530233-f2cd-485c-9496-49d480fd9829",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 66,
+      "total_deletions": 4,
+      "accepted_lines": 62,
+      "overriden_lines": 0
+    }
+  }
+}

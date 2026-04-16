@@ -1,0 +1,36 @@
+packages/web/src/lib/serialize.ts
+  377caccb760d8de7 273,281-289
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "ac1b08dbf7315e8002366f26e7a6fc73924aaf20",
+  "prompts": {
+    "1f11f70a1447ad99": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d1a9e-50d2-7691-ae47-1bd1b29f08d7",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 227,
+      "overriden_lines": 0
+    },
+    "377caccb760d8de7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "30b95b6b-5511-4cad-95ea-ce7b34663337",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 1,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}

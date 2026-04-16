@@ -1,0 +1,25 @@
+packages/web/src/app/sessions/[id]/page.tsx
+  6d81523139b22571 124-126
+packages/web/src/app/sessions/[id]/error.test.tsx
+  6d81523139b22571 10-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "156006764b0a23872ca2c6a1871e9fe5cbe3cdb9",
+  "prompts": {
+    "6d81523139b22571": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a683656-9f82-4226-9dfe-13a3f69fbbfe",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 1,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}

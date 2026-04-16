@@ -1,0 +1,23 @@
+packages/cli/src/commands/start.ts
+  c7642d13ddb11c10 750,800-808,843
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "84272a96864a980caa8059d01a902ddf326a2762",
+  "prompts": {
+    "c7642d13ddb11c10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5af9095-96c8-408e-bfd6-a9fd3bb2f2e5",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 1,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}

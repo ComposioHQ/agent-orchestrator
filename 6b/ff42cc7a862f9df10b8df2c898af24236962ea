@@ -1,0 +1,25 @@
+packages/cli/src/commands/start.ts
+  e00e361de985ffbd 1024-1033,1036-1040,1086,1106-1107,1113-1114
+packages/cli/__tests__/commands/start.test.ts
+  e00e361de985ffbd 892,920-922
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "6bff42cc7a862f9df10b8df2c898af24236962ea",
+  "prompts": {
+    "e00e361de985ffbd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e76cd487-d14d-41f8-b1c2-6e1b6ada80f7",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 38,
+      "total_deletions": 45,
+      "accepted_lines": 24,
+      "overriden_lines": 0
+    }
+  }
+}

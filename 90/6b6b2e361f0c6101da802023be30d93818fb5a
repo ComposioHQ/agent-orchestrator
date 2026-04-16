@@ -1,0 +1,29 @@
+packages/web/src/app/projects/[projectId]/sessions/[sessionId]/page.tsx
+  5f9afb626ee184f9 1,7,15-20
+packages/web/src/app/projects/[projectId]/sessions/[sessionId]/__tests__/page.test.tsx
+  5f9afb626ee184f9 3-6,27-28,40-41,46-47,53-56,84-88,98-108
+packages/web/src/app/projects/[projectId]/__tests__/page.test.tsx
+  5f9afb626ee184f9 4,36,45,69-71,88,91-92
+packages/web/src/app/projects/[projectId]/page.tsx
+  5f9afb626ee184f9 4,27-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "906b6b2e361f0c6101da802023be30d93818fb5a",
+  "prompts": {
+    "5f9afb626ee184f9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d53a3-b386-7b62-b6d9-8dc9a61b8473",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 57,
+      "total_deletions": 13,
+      "accepted_lines": 57,
+      "overriden_lines": 0
+    }
+  }
+}

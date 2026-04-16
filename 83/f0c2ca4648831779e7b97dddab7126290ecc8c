@@ -1,0 +1,31 @@
+packages/web/src/__tests__/components.test.tsx
+  bafd6df946c50d0e 250,268,399,415,447-449,466
+packages/web/src/components/__tests__/Dashboard.globalPause.test.tsx
+  bafd6df946c50d0e 7-12
+packages/web/src/components/__tests__/Dashboard.renderCadence.test.tsx
+  bafd6df946c50d0e 7-12
+packages/web/src/components/__tests__/ProjectSidebar.test.tsx
+  bafd6df946c50d0e 26,32,37,46,52,58,64,74
+packages/web/src/components/__tests__/Dashboard.projectOverview.test.tsx
+  bafd6df946c50d0e 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "83f0c2ca4648831779e7b97dddab7126290ecc8c",
+  "prompts": {
+    "bafd6df946c50d0e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac64a32c-d59e-4499-aeb0-d791eaa547a8",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 29,
+      "overriden_lines": 0
+    }
+  }
+}

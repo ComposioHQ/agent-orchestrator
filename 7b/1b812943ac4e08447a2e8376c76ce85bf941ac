@@ -1,0 +1,25 @@
+packages/web/src/app/api/projects/quick-start/route.ts
+  ff23df7c065129b1 6
+packages/web/src/app/sessions/[id]/page.tsx
+  ff23df7c065129b1 21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "7b1b812943ac4e08447a2e8376c76ce85bf941ac",
+  "prompts": {
+    "ff23df7c065129b1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0194d48-ee96-4704-8265-2bb7f4ec2d42",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 11,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}

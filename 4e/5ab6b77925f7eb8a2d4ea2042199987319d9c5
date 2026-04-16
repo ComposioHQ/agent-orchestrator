@@ -1,0 +1,27 @@
+packages/web/src/components/ProjectSidebar.tsx
+  0dfd38dd4ee786a5 11,186
+packages/web/src/components/ProjectAvatar.tsx
+  0dfd38dd4ee786a5 1-68
+packages/web/src/components/UnifiedSidebar.tsx
+  0dfd38dd4ee786a5 14,421,423
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "4e5ab6b77925f7eb8a2d4ea2042199987319d9c5",
+  "prompts": {
+    "0dfd38dd4ee786a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e970658-5121-43b1-a9a3-6c5d8ee9a2b3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 73,
+      "overriden_lines": 0
+    }
+  }
+}

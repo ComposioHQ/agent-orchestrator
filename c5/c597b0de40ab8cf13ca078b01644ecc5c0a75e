@@ -1,0 +1,29 @@
+packages/web/src/components/AddProjectModal.tsx
+  23c5d64b04ae6f61 90-93,135-137,139-140,192-193,497-502
+packages/web/src/app/activity/page.tsx
+  23c5d64b04ae6f61 15,21-25
+packages/web/src/app/page.tsx
+  23c5d64b04ae6f61 14,19
+packages/web/src/lib/portfolio-page-data.ts
+  23c5d64b04ae6f61 11-15,40,45,68,87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "c5c597b0de40ab8cf13ca078b01644ecc5c0a75e",
+  "prompts": {
+    "23c5d64b04ae6f61": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4c54-8466-7133-b061-5dd0271c0503",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 37,
+      "total_deletions": 6,
+      "accepted_lines": 36,
+      "overriden_lines": 0
+    }
+  }
+}

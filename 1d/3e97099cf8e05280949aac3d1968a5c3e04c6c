@@ -1,0 +1,25 @@
+packages/core/src/portfolio-session-service.ts
+  a271ef70a2607a42 11,70-73,162-166
+packages/web/src/app/sessions/[id]/page.test.tsx
+  a271ef70a2607a42 7,11-12,15-18,20-28,33,38,40,42,46,48,50,52,56,58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "1d3e97099cf8e05280949aac3d1968a5c3e04c6c",
+  "prompts": {
+    "a271ef70a2607a42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3be41795-6f73-4d51-9697-61db44b5ab6b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 41,
+      "total_deletions": 49,
+      "accepted_lines": 39,
+      "overriden_lines": 0
+    }
+  }
+}

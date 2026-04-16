@@ -1,0 +1,23 @@
+packages/web/package.json
+  fb6460de0865daf6 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "46fb432e37051b7e1ad44f6b50d37e2992dc65d3",
+  "prompts": {
+    "fb6460de0865daf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c16619-f3dc-47c9-968c-c85b3c0382d5",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}

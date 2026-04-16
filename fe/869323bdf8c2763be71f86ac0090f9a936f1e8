@@ -1,0 +1,50 @@
+packages/web/src/components/__tests__/UnifiedSidebar.test.tsx
+  eb79a4f1df0ed108 1-167
+packages/web/src/lib/portfolio-page-data.ts
+  eb79a4f1df0ed108 69
+packages/web/src/app/api/projects/route.ts
+  d1937d38142f07ac 149,161
+packages/web/src/lib/__tests__/portfolio-page-data.test.ts
+  eb79a4f1df0ed108 1-49
+packages/core/src/portfolio-projects.ts
+  d1937d38142f07ac 40-42
+packages/web/src/components/CloneFromUrlModal.tsx
+  d1937d38142f07ac 104
+packages/web/src/components/UnifiedSidebar.tsx
+  eb79a4f1df0ed108 4,51-67,73,97-99,105-106,110,112,123,125,139,141-144,276-290,293-324,509-513,518-527,533-535,542-553,571,594-595,1212-1215
+packages/web/src/app/settings/page.tsx
+  eb79a4f1df0ed108 55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "fe869323bdf8c2763be71f86ac0090f9a936f1e8",
+  "prompts": {
+    "d1937d38142f07ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cbb89ab6-e0ab-4d0e-a326-edd106c202fb",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 8,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    },
+    "eb79a4f1df0ed108": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d493f-b74c-7c62-b8f5-e49d26d9ed4f",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 346,
+      "total_deletions": 17,
+      "accepted_lines": 346,
+      "overriden_lines": 0
+    }
+  }
+}

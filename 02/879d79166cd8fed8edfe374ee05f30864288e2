@@ -1,0 +1,25 @@
+packages/cli/src/commands/start.ts
+  375b4acc951697d6 39-41,1153,1156,1158
+packages/cli/src/commands/status.ts
+  375b4acc951697d6 17-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "02879d79166cd8fed8edfe374ee05f30864288e2",
+  "prompts": {
+    "375b4acc951697d6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4ab2-a1f2-72d3-a8c7-0af5d797fca4",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 6,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    }
+  }
+}

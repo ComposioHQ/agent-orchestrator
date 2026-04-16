@@ -1,0 +1,25 @@
+packages/web/src/components/__tests__/Dashboard.emptyState.test.tsx
+  23c5d64b04ae6f61 59,84-85
+packages/web/src/components/Dashboard.tsx
+  23c5d64b04ae6f61 427-428
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "d6a78aae1790100cf9d8dad3ec95b27cbd954039",
+  "prompts": {
+    "23c5d64b04ae6f61": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4c54-8466-7133-b061-5dd0271c0503",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 5,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}

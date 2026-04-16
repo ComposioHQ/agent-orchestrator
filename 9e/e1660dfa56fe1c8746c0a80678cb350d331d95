@@ -1,0 +1,59 @@
+packages/web/src/app/layout.tsx
+  dede220a83bdfe12 2,21-27,41
+packages/web/src/app/globals.css
+  dede220a83bdfe12 448,450-452,455,460-461,463-465,467-469,471-472,474-475,478,480-481,483-485,487-488,490-491
+  879f118a80754c75 110-111,113,143,282-283,717,796,871,944,1417-1418,1448-1449,1456-1457,1518,1520-1521,1524
+  6dbf605cf8c47895 554,603,605-611,618,622-623,625-628,635,654,656-664,671,698-700,707-709,715,718-719,722-724,726,729,731-746,749-750,753-754,757,761-766,769,771,775-776,797-800,802,808-830,855,857-859,874-875,878-883,886-889,892-893,896-899,902-907,910-918,921-923,925-933,939-940,950-951,987,1358-1359,1366,1369-1413,1419,1422-1433,1437-1438,1454-1455,1463-1464,1466-1467,1469-1470,1473,1477-1479,1487,1505,1508-1514,1528,1533,1536-1538,1543-1581
+packages/web/src/components/__tests__/DirectTerminal.test.ts
+  dede220a83bdfe12 2,64-106
+packages/web/src/components/DirectTerminal.tsx
+  dede220a83bdfe12 3,5,13,42-103,145-146,233,238-239,245-246,501-508,624
+packages/web/src/components/SessionCard.tsx
+  6dbf605cf8c47895 124-139,340-341,348,352,382,385,400-409,411-413,415-428,430-437,440-451,453,459-460,462-465,467-470,473,475-476,485,519-520,522-535,538-575
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "9ee1660dfa56fe1c8746c0a80678cb350d331d95",
+  "prompts": {
+    "6dbf605cf8c47895": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d103e-3e8f-7440-82d3-89cffd26eb87",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 676,
+      "total_deletions": 582,
+      "accepted_lines": 503,
+      "overriden_lines": 0
+    },
+    "879f118a80754c75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4279dadb-0b83-4645-9ab1-f7305e0e4075",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 91,
+      "total_deletions": 170,
+      "accepted_lines": 24,
+      "overriden_lines": 0
+    },
+    "dede220a83bdfe12": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "616e431f-40df-4f35-9856-c4b394b8a4f3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 164,
+      "total_deletions": 49,
+      "accepted_lines": 164,
+      "overriden_lines": 0
+    }
+  }
+}

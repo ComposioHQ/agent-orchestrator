@@ -1,0 +1,25 @@
+packages/web/src/components/Dashboard.tsx
+  4538a92217143cac 267,650
+packages/web/src/components/AttentionZone.tsx
+  4538a92217143cac 3,27-28,91,100-109,216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "5b1f3625a505073ecab4107f21eff8175c3b0326",
+  "prompts": {
+    "4538a92217143cac": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d2511-0727-7641-bd0f-24c5e7c118af",
+        "model": "gpt-5.2-codex"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 17,
+      "total_deletions": 6,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    }
+  }
+}

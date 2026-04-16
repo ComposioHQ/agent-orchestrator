@@ -1,0 +1,23 @@
+DESIGN.md
+  ebc7410ddadc5393 50,215-216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "36255c4eedfcf0d15264c7128dc439f1cf9d6aeb",
+  "prompts": {
+    "ebc7410ddadc5393": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe304f09-f348-4a90-b4b1-232ed88be8df",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 1,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
