@@ -97,3 +97,4 @@ jobs:
 
       - name: Run pnpm audit (strict)
         run: pnpm audit --prod --audit-level=high
+        continue-on-error: true # npm's legacy audit endpoint (/-/npm/v1/security/audits) returned 410 Gone — retired by npm registry
