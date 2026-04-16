@@ -62,6 +62,9 @@ import {
   validateAndStoreOrigin,
 } from "./paths.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
+import {
+  writeWorkspaceOpenCodeAgentsMd,
+} from "./opencode-agents-md.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse } from "./utils/validation.js";
@@ -1386,6 +1389,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
+    if (plugins.agent.name === "opencode" && systemPromptFile) {
+      try {
+        writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile);
+      } catch (err) {
+        await cleanupWorktreeAndMetadata(systemPromptFile);
+        throw err;
+      }
+    }
+
     let reusableOpenCodeSessionId: string | undefined;
     try {
       reusableOpenCodeSessionId =
@@ -2397,6 +2409,21 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
+    if (plugins.agent.name === "opencode" && selection.role === "orchestrator") {
+      const baseDir = getProjectBaseDir(config.configPath, project.path);
+      const systemPromptFile = join(baseDir, `orchestrator-prompt-${sessionId}.md`);
+      if (existsSync(systemPromptFile)) {
+        try {
+          writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile);
+        } catch (err) {
+          throw new Error(
+            `failed to restore OpenCode orchestrator AGENTS.md: ${err instanceof Error ? err.message : String(err)}`,
+            { cause: err },
+          );
+        }
+      }
+    }
+
     // 6. Destroy old runtime if still alive (e.g. tmux session survives agent crash)
     if (session.runtimeHandle) {
       try {
@@ -2408,18 +2435,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // 7. Get launch command — try restore command first, fall back to fresh launch
     let launchCommand: string;
+    const projectConfigForLaunch: ProjectConfig = {
+      ...project,
+      agentConfig: {
+        ...selection.agentConfig,
+        ...(selection.role === "orchestrator" ? { permissions: "permissionless" as const } : {}),
+        ...(session.metadata?.opencodeSessionId
+          ? { opencodeSessionId: session.metadata.opencodeSessionId }
+          : {}),
+      },
+    };
     const agentLaunchConfig = {
       sessionId,
-      projectConfig: {
-        ...project,
-        agentConfig: {
-          ...selection.agentConfig,
-          ...(selection.role === "orchestrator" ? { permissions: "permissionless" as const } : {}),
-          ...(session.metadata?.opencodeSessionId
-            ? { opencodeSessionId: session.metadata.opencodeSessionId }
-            : {}),
-        },
-      },
+      projectConfig: projectConfigForLaunch,
       issueId: session.issueId ?? undefined,
       permissions: selection.role === "orchestrator" ? "permissionless" : selection.permissions,
       model: selection.model,
@@ -2427,7 +2455,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     };
 
     if (plugins.agent.getRestoreCommand) {
-      const restoreCmd = await plugins.agent.getRestoreCommand(session, project);
+      const restoreCmd = await plugins.agent.getRestoreCommand(session, projectConfigForLaunch);
       launchCommand = restoreCmd ?? plugins.agent.getLaunchCommand(agentLaunchConfig);
     } else {
       launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
