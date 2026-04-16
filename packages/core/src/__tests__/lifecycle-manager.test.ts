@@ -370,6 +370,31 @@ describe("check (single session)", () => {
     expect(meta?.["lifecycleEvidence"]).toContain("signal_disagreement");
   });
 
+  it("enters detecting when runtime is dead but process state is unknown", async () => {
+    const registryWithoutAgent = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+    });
+    vi.mocked(registryWithoutAgent.get).mockImplementation((slot: string, name?: string) => {
+      if (slot === "runtime") return plugins.runtime;
+      if (slot === "agent") return null;
+      return null;
+    });
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+      registry: registryWithoutAgent,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("detecting");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).toContain("runtime_dead process_unknown");
+    expect(meta?.["detectingAttempts"]).toBe("1");
+  });
+
   it("escalates detecting to stuck after bounded retries", async () => {
     vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue({

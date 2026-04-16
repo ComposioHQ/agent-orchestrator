@@ -310,4 +310,75 @@ describe("recovery validator", () => {
     expect(assessment.action).toBe("escalate");
     expect(assessment.reason).toContain("Signal disagreement");
   });
+
+  it("keeps terminal metadata unrecoverable even when probes are uncertain", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-validator-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    const projectPath = join(rootDir, "project");
+    mkdirSync(projectPath, { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const mockWorkspace: Workspace = {
+      name: "worktree",
+      create: vi.fn(),
+      destroy: vi.fn(),
+      list: vi.fn(),
+      exists: vi.fn().mockResolvedValue(false),
+    };
+    const registry: PluginRegistry = {
+      register: vi.fn(),
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn().mockResolvedValue(undefined),
+      loadFromConfig: vi.fn().mockResolvedValue(undefined),
+    };
+    const config: OrchestratorConfig = {
+      configPath: join(rootDir, "agent-orchestrator.yaml"),
+      port: 3000,
+      readyThresholdMs: 300_000,
+      power: { preventIdleSleep: false },
+      defaults: {
+        runtime: "tmux",
+        agent: "mock-agent",
+        workspace: "worktree",
+        notifiers: ["desktop"],
+      },
+      projects: {
+        app: {
+          name: "app",
+          repo: "org/repo",
+          path: projectPath,
+          defaultBranch: "main",
+          sessionPrefix: "app",
+        },
+      },
+      notifiers: {},
+      notificationRouting: {
+        urgent: ["desktop"],
+        action: ["desktop"],
+        warning: [],
+        info: [],
+      },
+      reactions: {},
+    };
+    const scanned: ScannedSession = {
+      sessionId: "app-1",
+      projectId: "app",
+      project: config.projects.app,
+      sessionsDir: getSessionsDir(config.configPath, projectPath),
+      rawMetadata: {
+        worktree: projectPath,
+        status: "merged",
+      },
+    };
+
+    const assessment = await validateSession(scanned, config, registry);
+
+    expect(assessment.classification).toBe("unrecoverable");
+    expect(assessment.recoveryRule).toBe("skip");
+    expect(assessment.action).toBe("skip");
+  });
 });

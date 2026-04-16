@@ -637,6 +637,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     if (
       runtimeProbe.state === "dead" &&
+      processProbe.state === "unknown" &&
+      canProbeRuntimeIdentity
+    ) {
+      return buildDetectingAssessment(
+        `runtime_dead process_unknown activity=${activityFreshness}`,
+        "runtime_lost",
+      );
+    }
+
+    if (
+      runtimeProbe.state === "dead" &&
       processProbe.state === "dead" &&
       !recentActivitySupportsLiveness
     ) {
@@ -1452,16 +1463,29 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const lifecycleChanged = session.metadata["statePayload"] !== JSON.stringify(session.lifecycle);
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
 
-    updateSessionMetadata(session, {
-      lifecycleEvidence: assessment.evidence,
-      detectingAttempts:
-        assessment.detectingAttempts > 0 ? String(assessment.detectingAttempts) : "",
-      detectingEscalatedAt:
-        newStatus === SESSION_STATUS.STUCK &&
-        assessment.detectingAttempts > DETECTING_MAX_ATTEMPTS
-          ? new Date().toISOString()
-          : "",
-    });
+    const nextLifecycleEvidence = assessment.evidence;
+    const nextDetectingAttempts =
+      assessment.detectingAttempts > 0 ? String(assessment.detectingAttempts) : "";
+    const isDetectingEscalated =
+      newStatus === SESSION_STATUS.STUCK &&
+      assessment.detectingAttempts > DETECTING_MAX_ATTEMPTS;
+    const nextDetectingEscalatedAt = isDetectingEscalated
+      ? (session.metadata["detectingEscalatedAt"] || new Date().toISOString())
+      : "";
+
+    const metadataUpdates: Record<string, string> = {};
+    if (session.metadata["lifecycleEvidence"] !== nextLifecycleEvidence) {
+      metadataUpdates["lifecycleEvidence"] = nextLifecycleEvidence;
+    }
+    if ((session.metadata["detectingAttempts"] || "") !== nextDetectingAttempts) {
+      metadataUpdates["detectingAttempts"] = nextDetectingAttempts;
+    }
+    if ((session.metadata["detectingEscalatedAt"] || "") !== nextDetectingEscalatedAt) {
+      metadataUpdates["detectingEscalatedAt"] = nextDetectingEscalatedAt;
+    }
+    if (Object.keys(metadataUpdates).length > 0) {
+      updateSessionMetadata(session, metadataUpdates);
+    }
 
     if (newStatus !== oldStatus) {
       const correlationId = createCorrelationId("lifecycle-transition");

@@ -151,6 +151,10 @@ function classifySession(
   runtimeProbeSucceeded: boolean,
   processProbeSucceeded: boolean,
 ): RecoveryClassification {
+  if (TERMINAL_STATUSES_SET.has(metadataStatus)) {
+    return "unrecoverable";
+  }
+
   if (metadataStatus === "detecting" || !runtimeProbeSucceeded || !processProbeSucceeded) {
     return "partial";
   }
@@ -160,9 +164,6 @@ function classifySession(
   }
 
   if (!runtimeAlive && !workspaceExists) {
-    if (TERMINAL_STATUSES_SET.has(metadataStatus)) {
-      return "unrecoverable";
-    }
     return "dead";
   }
 
