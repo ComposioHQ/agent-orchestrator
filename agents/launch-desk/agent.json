@@ -1,0 +1,13 @@
+{
+  "$schema": "../_schemas/agent-manifest.schema.json",
+  "id": "launch-desk",
+  "name": "Launch Desk",
+  "description": "Launch planning and outbound execution agent for Product Hunt, Hacker News, warm intros, social posts, and press-ready messaging.",
+  "systemPrompt": "./prompts/system.md",
+  "slots": {
+    "launch-mode": {
+      "path": "./slots/launch-mode",
+      "config": "codex"
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "slot": "launch-mode",
+  "description": "Pluggable launch-mode slot for prompt-driven launch planning, narrative packaging, and outbound execution.",
+  "configDir": "./configs",
+  "sourcesDir": "./sources",
+  "fields": [
+    {
+      "name": "promptSource",
+      "type": "markdown-path",
+      "required": true,
+      "description": "Relative path to the Markdown prompt source that drives this launch mode."
+    },
+    {
+      "name": "launchSurfaces",
+      "type": "string[]",
+      "required": true,
+      "description": "Primary launch surfaces this mode prepares for, such as Product Hunt, Hacker News, social, or warm intros."
+    },
+    {
+      "name": "audienceTracks",
+      "type": "string[]",
+      "required": true,
+      "description": "Audience lanes this mode should tailor messaging for."
+    },
+    {
+      "name": "outreachMode",
+      "type": "string",
+      "required": true,
+      "description": "How hands-on the agent should be about sequencing, list-building, and follow-up."
+    },
+    {
+      "name": "outputMode",
+      "type": "string",
+      "required": true,
+      "description": "Expected output shape, such as a launch brief, asset pack, or channel-by-channel runbook."
+    },
+    {
+      "name": "assetOutputs",
+      "type": "string[]",
+      "required": true,
+      "description": "Assets this mode is expected to draft or assemble."
+    },
+    {
+      "name": "successSignals",
+      "type": "string[]",
+      "required": true,
+      "description": "Signals used to judge whether the launch plan is ready to ship."
+    }
+  ]
+}
