@@ -33,6 +33,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.89.0",
     "@aoagents/ao-core": "workspace:*",
     "@aoagents/ao-plugin-agent-aider": "workspace:*",
     "@aoagents/ao-plugin-agent-claude-code": "workspace:*",
@@ -62,6 +63,7 @@
     "@types/react-dom": "^19.0.0",
     "chalk": "^5.4.0",
     "commander": "^13.0.0",
+    "openai": "^6.34.0",
     "ora": "^8.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

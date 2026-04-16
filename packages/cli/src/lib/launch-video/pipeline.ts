@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -15,6 +16,7 @@ import { bundle } from "@remotion/bundler";
 import { ensureBrowser, renderMedia, selectComposition } from "@remotion/renderer";
 import { exec } from "../shell.js";
 import { createBlueprintSceneDefaults, launchFamilySpecV1 } from "./spec.js";
+import type { KeyframeRecord } from "./pipeline-types.js";
 import type { LaunchVideoRenderInput } from "./render-types.js";
 import type {
   AnalysisScene,
@@ -51,12 +53,6 @@ interface InspectResult {
   videoCodec: string | null;
   audioCodec: string | null;
   hasAudio: boolean;
-}
-
-interface KeyframeRecord {
-  index: number;
-  timeSeconds: number;
-  path: string;
 }
 
 interface FrameAnalysis {
@@ -1089,7 +1085,10 @@ function encodeFileAsDataUrl(path: string | null): string | null {
   return `data:image/${extension};base64,${buffer.toString("base64")}`;
 }
 
-function buildRenderInput(blueprint: LaunchVideoBlueprintV1): LaunchVideoRenderInput {
+function buildRenderInput(
+  blueprint: LaunchVideoBlueprintV1,
+  keyframeRecords: KeyframeRecord[],
+): LaunchVideoRenderInput {
   const fps = 30;
   const width = blueprint.reference.dimensions.width ?? 640;
   const height = blueprint.reference.dimensions.height ?? 360;
@@ -1109,9 +1108,39 @@ function buildRenderInput(blueprint: LaunchVideoBlueprintV1): LaunchVideoRenderI
     };
   });
 
+  // Build per-second keyframe scenes for dense playback
+  const keyframeScenes: LaunchVideoRenderInput["keyframeScenes"] = keyframeRecords
+    .filter((kf) => existsSync(kf.path))
+    .map((kf, index, arr) => {
+      const nextTime = arr[index + 1]?.timeSeconds ?? kf.timeSeconds + 1;
+      const duration = Number((nextTime - kf.timeSeconds).toFixed(2));
+      // Determine which editorial role this keyframe falls under
+      const matchingScene = blueprint.scenes.find(
+        (s) => kf.timeSeconds >= s.startSeconds && kf.timeSeconds < s.endSeconds,
+      );
+      return {
+        id: `kf-${String(index).padStart(3, "0")}`,
+        startSeconds: kf.timeSeconds,
+        endSeconds: Number((kf.timeSeconds + duration).toFixed(2)),
+        durationSeconds: duration,
+        keyframeDataUrl: encodeFileAsDataUrl(kf.path) ?? "",
+        role: matchingScene?.role ?? null,
+        label: matchingScene
+          ? `${matchingScene.role.toUpperCase()} · ${matchingScene.copyIntent.slice(0, 60)}`
+          : null,
+      };
+    })
+    .filter((kf) => kf.keyframeDataUrl !== "");
+
+  // Resolve the reference video path for direct playback
+  const refPath = blueprint.reference.originalPath;
+  const referenceVideoPath = refPath && existsSync(refPath) ? refPath : null;
+
   return {
     blueprint,
     scenes,
+    keyframeScenes,
+    referenceVideoPath,
     fps,
     width,
     height,
@@ -1392,6 +1421,7 @@ export async function analyzeReferenceVideo(options: AnalyzeOptions): Promise<An
       "The current blueprint reads from this location as the canonical staging point for the next render pass.",
     ].join("\n"),
   );
+  writeJsonFile(join(artifactPaths.analysisDir, "keyframes.json"), keyframes);
   writeJsonFile(metadataPath, metadata);
   writeJsonFile(join(artifactPaths.analysisDir, "scenes.json"), scenes);
   writeJsonFile(join(artifactPaths.analysisDir, "transcript.json"), transcript);
@@ -1541,7 +1571,20 @@ export async function createBuildPlan(options: CommonCommandOptions): Promise<Bu
         })
       ).blueprint;
 
-  const renderInput = buildRenderInput(blueprint);
+  const keyframesPath = join(artifactPaths.analysisDir, "keyframes.json");
+  const keyframeRecords: KeyframeRecord[] = existsSync(keyframesPath)
+    ? readJsonFile<KeyframeRecord[]>(keyframesPath)
+    : [];
+  const renderInput = buildRenderInput(blueprint, keyframeRecords);
+
+  // Stage the reference video into a temp public dir so Remotion can serve it
+  const publicDir = mkdtempSync(join(tmpdir(), "ao-launch-video-public-"));
+  const refVideoSrc = blueprint.reference.originalPath;
+  if (refVideoSrc && existsSync(refVideoSrc)) {
+    copyFileSync(refVideoSrc, join(publicDir, "reference-video.mp4"));
+    renderInput.referenceVideoPath = "reference-video.mp4";
+  }
+
   const browserStatus = await ensureBrowser({ logLevel: "error" });
   if (!("path" in browserStatus)) {
     throw new Error("Remotion could not resolve a Chromium browser executable.");
@@ -1549,6 +1592,7 @@ export async function createBuildPlan(options: CommonCommandOptions): Promise<Bu
   const browserExecutable = browserStatus.path;
   const bundledServeUrl = await bundle({
     entryPoint: renderRootPath(),
+    publicDir,
     onProgress: () => undefined,
   });
   const composition = await selectComposition({
@@ -1594,6 +1638,10 @@ export async function createBuildPlan(options: CommonCommandOptions): Promise<Bu
       "Typography is driven by system fonts and OCR-derived text, not final brand type.",
     ],
   });
+
+  // Clean up temp public dir
+  rmSync(publicDir, { recursive: true, force: true });
+
   return { artifactPaths, renderOutputPath, buildMetadataPath, cached: false };
 }
 
@@ -1703,4 +1751,233 @@ export function summarizeReviseResult(result: ReviseResult): string {
     `revision_plan=${result.revisionPlanPath}`,
     `cache=${result.cached ? "reused" : "generated"}`,
   ].join("\n");
+}
+
+// ── LLM-powered pipeline functions ──────────────────────────────────
+
+export interface LlmBuildResult {
+  artifactPaths: ArtifactPaths;
+  compositionPath: string;
+  renderOutputPath: string;
+  buildMetadataPath: string;
+}
+
+export interface LlmJudgeResult {
+  artifactPaths: ArtifactPaths;
+  judge: JudgeOutput;
+  judgePath: string;
+}
+
+export interface AutoResult {
+  artifactPaths: ArtifactPaths;
+  analyzeResult: AnalyzeResult;
+  blueprintResult: BlueprintResult;
+  buildResult: LlmBuildResult;
+  judgeResult: LlmJudgeResult;
+}
+
+function loadKeyframeRecords(artifactPaths: ArtifactPaths): KeyframeRecord[] {
+  const keyframesPath = join(artifactPaths.analysisDir, "keyframes.json");
+  return existsSync(keyframesPath) ? readJsonFile<KeyframeRecord[]>(keyframesPath) : [];
+}
+
+export async function llmBuild(options: CommonCommandOptions): Promise<LlmBuildResult> {
+  const { generateComposition } = await import("./llm-builder.js");
+
+  const artifactPaths = resolveArtifactPathsFromOptions(options);
+  ensureArtifactTree(artifactPaths);
+  ensureAnalyzed(artifactPaths);
+
+  const blueprint = existsSync(join(artifactPaths.blueprintsDir, "blueprint-v1.json"))
+    ? readJsonFile<LaunchVideoBlueprintV1>(join(artifactPaths.blueprintsDir, "blueprint-v1.json"))
+    : (
+        await generateBlueprint({
+          artifactDir: artifactPaths.rootDir,
+          projectName: options.projectName,
+          force: options.force,
+        })
+      ).blueprint;
+
+  const keyframeRecords = loadKeyframeRecords(artifactPaths);
+
+  // Generate composition via LLM
+  const compositionCode = await generateComposition(blueprint, keyframeRecords);
+  const compositionPath = join(artifactPaths.rendersDir, "ai-composition.tsx");
+  writeFileSync(compositionPath, compositionCode, "utf8");
+
+  // Write a render-root that imports the AI-generated composition
+  const aiRootCode = `import React from "react";
+import { Composition, getInputProps, registerRoot } from "remotion";
+import { LaunchVideoPreviewComposition } from "./ai-composition";
+import type { LaunchVideoRenderInput } from "${resolve(
+    decodeURIComponent(
+      new URL("./render-types.js", import.meta.url).pathname,
+    ),
+  ).replace(/\.js$/, "")}";
+
+const RemotionRoot: React.FC = () => {
+  const inputProps = getInputProps() as Partial<LaunchVideoRenderInput>;
+  const fps = inputProps.fps ?? 30;
+  const width = inputProps.width ?? 640;
+  const height = inputProps.height ?? 360;
+  const durationInFrames = inputProps.durationInFrames ?? 300;
+
+  return (
+    <Composition
+      id="LaunchVideoPreview"
+      component={LaunchVideoPreviewComposition as React.ComponentType<Record<string, unknown>>}
+      fps={fps}
+      width={width}
+      height={height}
+      durationInFrames={durationInFrames}
+      defaultProps={inputProps as Record<string, unknown>}
+    />
+  );
+};
+
+registerRoot(RemotionRoot);
+`;
+  const aiRootPath = join(artifactPaths.rendersDir, "ai-root.tsx");
+  writeFileSync(aiRootPath, aiRootCode, "utf8");
+
+  // Build render input (reuse existing function)
+  const renderInput = buildRenderInput(blueprint, keyframeRecords);
+
+  // Stage reference video for Remotion
+  const publicDir = mkdtempSync(join(tmpdir(), "ao-launch-video-ai-public-"));
+  const refVideoSrc = blueprint.reference.originalPath;
+  if (refVideoSrc && existsSync(refVideoSrc)) {
+    copyFileSync(refVideoSrc, join(publicDir, "reference-video.mp4"));
+    renderInput.referenceVideoPath = "reference-video.mp4";
+  }
+
+  const browserStatus = await ensureBrowser({ logLevel: "error" });
+  if (!("path" in browserStatus)) {
+    throw new Error("Remotion could not resolve a Chromium browser executable.");
+  }
+  const browserExecutable = browserStatus.path;
+
+  // Try to bundle the AI composition; fall back to standard if it fails
+  const renderOutputPath = join(artifactPaths.rendersDir, "ai-preview-v1.mp4");
+  const buildMetadataPath = join(artifactPaths.rendersDir, "ai-preview-v1-build.json");
+
+  let bundledServeUrl: string;
+  try {
+    bundledServeUrl = await bundle({
+      entryPoint: aiRootPath,
+      publicDir,
+      onProgress: () => undefined,
+    });
+  } catch (bundleError) {
+    // If AI composition has syntax errors, fall back to standard composition
+    console.error("AI composition failed to bundle, falling back to standard render.");
+    console.error(String(bundleError));
+    bundledServeUrl = await bundle({
+      entryPoint: renderRootPath(),
+      publicDir,
+      onProgress: () => undefined,
+    });
+  }
+
+  const composition = await selectComposition({
+    id: "LaunchVideoPreview",
+    serveUrl: bundledServeUrl,
+    inputProps: renderInput,
+    browserExecutable,
+    logLevel: "error",
+  });
+
+  await renderMedia({
+    composition,
+    serveUrl: bundledServeUrl,
+    codec: "h264",
+    outputLocation: renderOutputPath,
+    inputProps: renderInput,
+    overwrite: true,
+    browserExecutable,
+    muted: true,
+    logLevel: "error",
+  });
+
+  rmSync(publicDir, { recursive: true, force: true });
+
+  writeJsonFile(buildMetadataPath, {
+    mode: "llm-generated",
+    compositionPath,
+    renderOutputPath,
+    blueprintPath: join(artifactPaths.blueprintsDir, "blueprint-v1.json"),
+    fps: composition.fps,
+    dimensions: { width: composition.width, height: composition.height },
+    durationInFrames: composition.durationInFrames,
+    durationSeconds: composition.durationInFrames / composition.fps,
+  });
+
+  return { artifactPaths, compositionPath, renderOutputPath, buildMetadataPath };
+}
+
+export async function llmJudgeCommand(options: CommonCommandOptions): Promise<LlmJudgeResult> {
+  const { llmJudge } = await import("./llm-judge.js");
+
+  const artifactPaths = resolveArtifactPathsFromOptions(options);
+  ensureArtifactTree(artifactPaths);
+  ensureAnalyzed(artifactPaths);
+
+  const blueprint = existsSync(join(artifactPaths.blueprintsDir, "blueprint-v1.json"))
+    ? readJsonFile<LaunchVideoBlueprintV1>(join(artifactPaths.blueprintsDir, "blueprint-v1.json"))
+    : (
+        await generateBlueprint({
+          artifactDir: artifactPaths.rootDir,
+          projectName: options.projectName,
+          force: options.force,
+        })
+      ).blueprint;
+
+  const keyframeRecords = loadKeyframeRecords(artifactPaths);
+  const judge = await llmJudge(artifactPaths.rootDir, blueprint, keyframeRecords);
+  const judgePath = join(artifactPaths.judgeDir, "llm-judge-v1.json");
+  writeJsonFile(judgePath, judge);
+
+  return { artifactPaths, judge, judgePath };
+}
+
+export async function runAuto(options: CommonCommandOptions & { inputPath: string }): Promise<AutoResult> {
+  console.log("=== Step 1/4: Analyzing reference video ===");
+  const analyzeResult = await analyzeReferenceVideo({
+    inputPath: options.inputPath,
+    outputRoot: options.outputRoot,
+    projectName: options.projectName,
+    force: options.force,
+  });
+  console.log(summarizeAnalyzeResult(analyzeResult));
+
+  console.log("\n=== Step 2/4: Generating blueprint ===");
+  const blueprintResult = await generateBlueprint({
+    artifactDir: analyzeResult.artifactPaths.rootDir,
+    projectName: options.projectName,
+    force: options.force,
+  });
+  console.log(summarizeBlueprintResult(blueprintResult));
+
+  console.log("\n=== Step 3/4: AI-generating composition & rendering ===");
+  const buildResult = await llmBuild({
+    artifactDir: analyzeResult.artifactPaths.rootDir,
+    projectName: options.projectName,
+    force: true,
+  });
+  console.log(`composition=${buildResult.compositionPath}`);
+  console.log(`render_output=${buildResult.renderOutputPath}`);
+
+  console.log("\n=== Step 4/4: AI judge review ===");
+  const judgeResult = await llmJudgeCommand({
+    artifactDir: analyzeResult.artifactPaths.rootDir,
+    projectName: options.projectName,
+    force: true,
+  });
+  console.log(`approved=${judgeResult.judge.approved}`);
+  console.log(`summary=${judgeResult.judge.summary}`);
+  for (const fix of judgeResult.judge.top_fixes) {
+    console.log(`  fix: ${fix}`);
+  }
+
+  return { artifactPaths: analyzeResult.artifactPaths, analyzeResult, blueprintResult, buildResult, judgeResult };
 }

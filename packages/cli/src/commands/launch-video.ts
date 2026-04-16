@@ -6,6 +6,9 @@ import {
   createBuildPlan,
   createRevisionPlan,
   generateBlueprint,
+  llmBuild,
+  llmJudgeCommand,
+  runAuto,
   runJudge,
   summarizeAnalyzeResult,
   summarizeBlueprintResult,
@@ -128,12 +131,13 @@ export function registerLaunchVideo(program: Command): void {
 
   launchVideo
     .command("build")
-    .description("Create a concrete render handoff for the persisted blueprint")
+    .description("Render a video from the blueprint (use --ai for LLM-generated composition)")
     .option("-i, --input <path>", "Reference video path")
     .option("--artifact-dir <path>", "Existing artifact directory")
     .option("-o, --output-root <path>", "Artifact root", DEFAULT_PIPELINE_OUTPUT_ROOT)
     .option("--project-name <name>", "Project name for the build plan", DEFAULT_PROJECT_NAME)
     .option("--force", "Regenerate the build plan")
+    .option("--ai", "Use LLM to generate a custom Remotion composition")
     .action(
       async (options: {
         input?: string;
@@ -141,26 +145,42 @@ export function registerLaunchVideo(program: Command): void {
         outputRoot: string;
         projectName: string;
         force?: boolean;
+        ai?: boolean;
       }) => {
-        const result = await createBuildPlan({
-          inputPath: options.input,
-          artifactDir: options.artifactDir,
-          outputRoot: options.outputRoot,
-          projectName: options.projectName,
-          force: options.force,
-        });
-        console.log(summarizeBuildResult(result));
+        if (options.ai) {
+          const result = await llmBuild({
+            inputPath: options.input,
+            artifactDir: options.artifactDir,
+            outputRoot: options.outputRoot,
+            projectName: options.projectName,
+            force: options.force,
+          });
+          console.log(`mode=llm-generated`);
+          console.log(`composition=${result.compositionPath}`);
+          console.log(`render_output=${result.renderOutputPath}`);
+          console.log(`build_metadata=${result.buildMetadataPath}`);
+        } else {
+          const result = await createBuildPlan({
+            inputPath: options.input,
+            artifactDir: options.artifactDir,
+            outputRoot: options.outputRoot,
+            projectName: options.projectName,
+            force: options.force,
+          });
+          console.log(summarizeBuildResult(result));
+        }
       },
     );
 
   launchVideo
     .command("judge")
-    .description("Write a structured judge-v1.json review for the current blueprint")
+    .description("Review the blueprint (use --ai for LLM-powered review)")
     .option("-i, --input <path>", "Reference video path")
     .option("--artifact-dir <path>", "Existing artifact directory")
     .option("-o, --output-root <path>", "Artifact root", DEFAULT_PIPELINE_OUTPUT_ROOT)
     .option("--project-name <name>", "Project name for judge context", DEFAULT_PROJECT_NAME)
     .option("--force", "Regenerate the judge output")
+    .option("--ai", "Use LLM for review instead of heuristic scoring")
     .action(
       async (options: {
         input?: string;
@@ -168,21 +188,39 @@ export function registerLaunchVideo(program: Command): void {
         outputRoot: string;
         projectName: string;
         force?: boolean;
+        ai?: boolean;
       }) => {
-        const result = await runJudge({
-          inputPath: options.input,
-          artifactDir: options.artifactDir,
-          outputRoot: options.outputRoot,
-          projectName: options.projectName,
-          force: options.force,
-        });
-        console.log(summarizeJudgeResult(result));
+        if (options.ai) {
+          const result = await llmJudgeCommand({
+            inputPath: options.input,
+            artifactDir: options.artifactDir,
+            outputRoot: options.outputRoot,
+            projectName: options.projectName,
+            force: options.force,
+          });
+          console.log(`mode=llm-judge`);
+          console.log(`approved=${result.judge.approved}`);
+          console.log(`summary=${result.judge.summary}`);
+          console.log(`scores=${JSON.stringify(result.judge.scores)}`);
+          for (const fix of result.judge.top_fixes) {
+            console.log(`  fix: ${fix}`);
+          }
+        } else {
+          const result = await runJudge({
+            inputPath: options.input,
+            artifactDir: options.artifactDir,
+            outputRoot: options.outputRoot,
+            projectName: options.projectName,
+            force: options.force,
+          });
+          console.log(summarizeJudgeResult(result));
+        }
       },
     );
 
   launchVideo
     .command("revise")
-    .description("Persist the next revision target from judge-v1.json")
+    .description("Persist the next revision target from judge output")
     .option("-i, --input <path>", "Reference video path")
     .option("--artifact-dir <path>", "Existing artifact directory")
     .option("-o, --output-root <path>", "Artifact root", DEFAULT_PIPELINE_OUTPUT_ROOT)
@@ -204,6 +242,37 @@ export function registerLaunchVideo(program: Command): void {
           force: options.force,
         });
         console.log(summarizeReviseResult(result));
+      },
+    );
+
+  launchVideo
+    .command("auto")
+    .description("Run the full AI pipeline: analyze → blueprint → AI build → AI judge")
+    .requiredOption("-i, --input <path>", "Reference video path")
+    .option(
+      "-o, --output-root <path>",
+      "Artifact root",
+      "/Users/suraj.markupgmail.com/Desktop/video-hackathon-mvp",
+    )
+    .option("--project-name <name>", "Project name", "Launch Video MVP")
+    .option("--force", "Regenerate all outputs")
+    .action(
+      async (options: {
+        input: string;
+        outputRoot: string;
+        projectName: string;
+        force?: boolean;
+      }) => {
+        const result = await runAuto({
+          inputPath: options.input,
+          outputRoot: options.outputRoot,
+          projectName: options.projectName,
+          force: options.force,
+        });
+        console.log("\n=== Done ===");
+        console.log(`artifact_root=${result.artifactPaths.rootDir}`);
+        console.log(`render_output=${result.buildResult.renderOutputPath}`);
+        console.log(`judge_approved=${result.judgeResult.judge.approved}`);
       },
     );
 }

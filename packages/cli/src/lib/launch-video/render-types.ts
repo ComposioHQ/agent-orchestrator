@@ -20,9 +20,21 @@ export interface RenderSceneInput {
   placeholderAssetsUsed: string[];
 }
 
+export interface KeyframeRenderScene {
+  id: string;
+  startSeconds: number;
+  endSeconds: number;
+  durationSeconds: number;
+  keyframeDataUrl: string;
+  role: string | null;
+  label: string | null;
+}
+
 export interface LaunchVideoRenderInput extends Record<string, unknown> {
   blueprint: LaunchVideoBlueprintV1;
   scenes: RenderSceneInput[];
+  keyframeScenes: KeyframeRenderScene[];
+  referenceVideoPath: string | null;
   fps: number;
   width: number;
   height: number;

@@ -2,198 +2,204 @@ import React from "react";
 import {
   AbsoluteFill,
   Img,
+  OffthreadVideo,
   Sequence,
   interpolate,
   spring,
+  staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
 import type { LaunchVideoRenderInput, RenderSceneInput } from "./render-types.js";
 
-function chip(label: string, background: string): React.CSSProperties {
-  return {
-    borderRadius: 999,
-    padding: "6px 10px",
-    background,
-    color: "white",
-    fontSize: 13,
-    fontWeight: 600,
-    letterSpacing: 0.3,
-  };
-}
+const ROLE_COLORS: Record<string, string> = {
+  hook: "#EF4444",
+  before: "#F59E0B",
+  after: "#22C55E",
+  "value-beats": "#6366F1",
+  outro: "#A855F7",
+};
 
-const SceneCard: React.FC<{
-  scene: RenderSceneInput;
-}> = ({ scene }) => {
-  const { fps, width, height } = useVideoConfig();
-  const sceneFrame = useCurrentFrame();
-  const entrance = spring({
-    frame: sceneFrame,
+const SceneOverlay: React.FC<{ scene: RenderSceneInput }> = ({ scene }) => {
+  const { fps } = useVideoConfig();
+  const frame = useCurrentFrame();
+
+  const fadeIn = interpolate(frame, [0, 8], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  const totalFrames = Math.max(1, Math.round(scene.durationSeconds * fps));
+  const fadeOut = interpolate(frame, [totalFrames - 8, totalFrames], [1, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  const opacity = Math.min(fadeIn, fadeOut);
+
+  const pillIn = spring({
+    frame,
     fps,
     config: { damping: 200, stiffness: 170 },
   });
-  const overlayOpacity = interpolate(sceneFrame, [0, 8, 30], [0, 0.92, 0.96], {
-    extrapolateRight: "clamp",
-  });
-  const backgroundScale = interpolate(sceneFrame, [0, Math.max(1, scene.durationSeconds * fps)], [1, 1.08], {
-    extrapolateRight: "clamp",
-  });
-  const gradientA = scene.palette[0] ?? "#101828";
-  const gradientB = scene.palette[1] ?? "#4f46e5";
+  const pillY = interpolate(pillIn, [0, 1], [20, 0]);
+
+  const roleColor = ROLE_COLORS[scene.role] ?? "#64748B";
   const headline = scene.detectedText[0] ?? scene.copyIntent;
-  const support = scene.detectedText.slice(1, 3).join(" | ") || scene.editorialPurpose;
 
   return (
-    <AbsoluteFill
-      style={{
-        background: `linear-gradient(135deg, ${gradientA} 0%, ${gradientB} 100%)`,
-        color: "white",
-        fontFamily: "Helvetica Neue, Arial, sans-serif",
-      }}
-    >
-      {scene.keyframeDataUrl ? (
-        <AbsoluteFill
-          style={{
-            transform: `scale(${backgroundScale})`,
-            opacity: 0.38,
-          }}
-        >
-          <Img
-            src={scene.keyframeDataUrl}
-            style={{
-              width,
-              height,
-              objectFit: "cover",
-            }}
-          />
-        </AbsoluteFill>
-      ) : null}
-
+    <AbsoluteFill style={{ opacity }}>
+      {/* Bottom gradient for text legibility */}
       <AbsoluteFill
         style={{
           background:
-            "linear-gradient(180deg, rgba(5,8,20,0.24) 0%, rgba(5,8,20,0.78) 58%, rgba(5,8,20,0.96) 100%)",
+            "linear-gradient(180deg, transparent 60%, rgba(0,0,0,0.6) 85%, rgba(0,0,0,0.85) 100%)",
         }}
       />
 
-      <AbsoluteFill
+      {/* Role pill + timing */}
+      <div
         style={{
-          opacity: overlayOpacity,
-          padding: 28,
-          justifyContent: "space-between",
-          transform: `translateY(${(1 - entrance) * 24}px)`,
+          position: "absolute",
+          bottom: 64,
+          left: 28,
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          transform: `translateY(${pillY}px)`,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <span style={chip(scene.role.toUpperCase(), "rgba(15, 23, 42, 0.8)")}>{scene.role}</span>
-            <span style={chip(`${scene.startSeconds.toFixed(2)}s - ${scene.endSeconds.toFixed(2)}s`, "rgba(99, 102, 241, 0.55)")}>
-              {scene.startSeconds.toFixed(2)}s - {scene.endSeconds.toFixed(2)}s
-            </span>
-          </div>
-          <div style={{ ...chip("PLACEHOLDERS", "rgba(225, 29, 72, 0.75)") }}>
-            {scene.placeholderAssetsUsed.length}
-          </div>
-        </div>
+        <span
+          style={{
+            borderRadius: 999,
+            padding: "6px 14px",
+            background: roleColor,
+            color: "white",
+            fontSize: 14,
+            fontWeight: 700,
+            fontFamily: "Helvetica Neue, Arial, sans-serif",
+            letterSpacing: 0.8,
+            textTransform: "uppercase",
+          }}
+        >
+          {scene.role}
+        </span>
+        <span
+          style={{
+            borderRadius: 999,
+            padding: "5px 12px",
+            background: "rgba(0, 0, 0, 0.6)",
+            backdropFilter: "blur(8px)",
+            color: "rgba(255,255,255,0.9)",
+            fontSize: 13,
+            fontWeight: 500,
+            fontFamily: "Helvetica Neue, Arial, sans-serif",
+          }}
+        >
+          {scene.startSeconds.toFixed(1)}s – {scene.endSeconds.toFixed(1)}s
+        </span>
+      </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1.45fr 1fr", gap: 22, alignItems: "end" }}>
-          <div>
-            <div
-              style={{
-                fontSize: 14,
-                lineHeight: 1.4,
-                letterSpacing: 1.8,
-                textTransform: "uppercase",
-                opacity: 0.78,
-                marginBottom: 12,
-              }}
-            >
-              Launch-family {scene.role}
-            </div>
-            <div
-              style={{
-                fontSize: scene.role === "hook" ? 42 : 34,
-                fontWeight: 800,
-                lineHeight: 1.03,
-                marginBottom: 12,
-                maxWidth: 560,
-              }}
-            >
-              {headline}
-            </div>
-            <div
-              style={{
-                fontSize: 18,
-                lineHeight: 1.35,
-                opacity: 0.88,
-                maxWidth: 560,
-              }}
-            >
-              {support}
-            </div>
-          </div>
-
-          <div
-            style={{
-              borderRadius: 22,
-              background: "rgba(15, 23, 42, 0.72)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              padding: 18,
-              backdropFilter: "blur(10px)",
-              display: "grid",
-              gap: 12,
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 1.4, opacity: 0.7 }}>
-                Output Intent
-              </div>
-              <div style={{ fontSize: 17, lineHeight: 1.3, fontWeight: 600 }}>{scene.outputIntent}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 1.4, opacity: 0.7 }}>
-                Motion
-              </div>
-              <div style={{ fontSize: 14, lineHeight: 1.35 }}>{scene.motionDirectives[0]}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 1.4, opacity: 0.7 }}>
-                Needed Assets
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
-                {scene.assetsNeeded.slice(0, 4).map((asset) => (
-                  <span key={asset} style={chip(asset, "rgba(255,255,255,0.12)")}>
-                    {asset}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 18 }}>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", maxWidth: width * 0.7 }}>
-            {scene.typographyHints.slice(0, 2).map((hint) => (
-              <span key={hint} style={chip(hint, "rgba(255,255,255,0.12)")}>
-                {hint}
-              </span>
-            ))}
-          </div>
-          <div style={{ textAlign: "right", maxWidth: width * 0.25 }}>
-            <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 1.4, opacity: 0.7 }}>
-              Transition
-            </div>
-            <div style={{ fontSize: 14, lineHeight: 1.35 }}>{scene.transition}</div>
-          </div>
-        </div>
-      </AbsoluteFill>
+      {/* Headline text */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: 24,
+          left: 28,
+          right: 28,
+          color: "white",
+          fontFamily: "Helvetica Neue, Arial, sans-serif",
+          fontSize: 18,
+          fontWeight: 500,
+          lineHeight: 1.3,
+          opacity: 0.92,
+          textShadow: "0 1px 6px rgba(0,0,0,0.8)",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {headline}
+      </div>
     </AbsoluteFill>
   );
 };
 
-export const LaunchVideoPreviewComposition: React.FC<LaunchVideoRenderInput> = ({ scenes }) => {
-  const { fps } = useVideoConfig();
+export const LaunchVideoPreviewComposition: React.FC<LaunchVideoRenderInput> = ({
+  referenceVideoPath,
+  scenes,
+  keyframeScenes,
+}) => {
+  const { fps, width, height } = useVideoConfig();
 
+  // Primary mode: play the actual reference video with editorial overlays
+  if (referenceVideoPath) {
+    const videoSrc = staticFile(referenceVideoPath);
+    return (
+      <AbsoluteFill style={{ backgroundColor: "#000" }}>
+        {/* Full-duration reference video playback */}
+        <OffthreadVideo
+          src={videoSrc}
+          muted
+          style={{ width, height, objectFit: "cover" }}
+        />
+
+        {/* Editorial scene overlays */}
+        {scenes.map((scene) => {
+          const from = Math.round(scene.startSeconds * fps);
+          const durationInFrames = Math.max(1, Math.round(scene.durationSeconds * fps));
+          return (
+            <Sequence key={scene.id} from={from} durationInFrames={durationInFrames}>
+              <SceneOverlay scene={scene} />
+            </Sequence>
+          );
+        })}
+      </AbsoluteFill>
+    );
+  }
+
+  // Fallback: per-second keyframe slideshow
+  if (keyframeScenes && keyframeScenes.length > 0) {
+    return (
+      <AbsoluteFill style={{ backgroundColor: "#020617" }}>
+        {keyframeScenes.map((scene) => {
+          const from = Math.round(scene.startSeconds * fps);
+          const durationInFrames = Math.max(1, Math.round(scene.durationSeconds * fps));
+          return (
+            <Sequence key={scene.id} from={from} durationInFrames={durationInFrames}>
+              <AbsoluteFill style={{ overflow: "hidden" }}>
+                <Img
+                  src={scene.keyframeDataUrl}
+                  style={{ width, height, objectFit: "cover" }}
+                />
+                {scene.role ? (
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: 20,
+                      left: 20,
+                      borderRadius: 999,
+                      padding: "5px 12px",
+                      background: ROLE_COLORS[scene.role] ?? "rgba(100,116,139,0.85)",
+                      color: "white",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      fontFamily: "Helvetica Neue, Arial, sans-serif",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {scene.role}
+                  </div>
+                ) : null}
+              </AbsoluteFill>
+            </Sequence>
+          );
+        })}
+      </AbsoluteFill>
+    );
+  }
+
+  // Last fallback: old scene-card rendering
   return (
     <AbsoluteFill style={{ backgroundColor: "#020617" }}>
       {scenes.map((scene) => {
@@ -201,7 +207,19 @@ export const LaunchVideoPreviewComposition: React.FC<LaunchVideoRenderInput> = (
         const durationInFrames = Math.max(1, Math.round(scene.durationSeconds * fps));
         return (
           <Sequence key={scene.id} from={from} durationInFrames={durationInFrames}>
-            <SceneCard scene={scene} />
+            <AbsoluteFill
+              style={{
+                background: `linear-gradient(135deg, ${scene.palette[0] ?? "#101828"} 0%, ${scene.palette[1] ?? "#4f46e5"} 100%)`,
+                color: "white",
+                fontFamily: "Helvetica Neue, Arial, sans-serif",
+                justifyContent: "center",
+                alignItems: "center",
+                fontSize: 32,
+                fontWeight: 700,
+              }}
+            >
+              {scene.detectedText[0] ?? scene.copyIntent}
+            </AbsoluteFill>
           </Sequence>
         );
       })}

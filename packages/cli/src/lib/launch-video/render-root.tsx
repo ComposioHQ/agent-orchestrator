@@ -45,6 +45,8 @@ const defaultProps: LaunchVideoRenderInput = {
     },
   },
   scenes: [],
+  keyframeScenes: [],
+  referenceVideoPath: null,
   fps: 30,
   width: 640,
   height: 360,
