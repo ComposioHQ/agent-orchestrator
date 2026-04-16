@@ -34,14 +34,14 @@ describe("DirectTerminal", () => {
   });
 
   it("font size button decrements and writes to localStorage", () => {
-    let fontSize = 13;
+    const fontSize = 13;
     const newFontSize = Math.max(9, fontSize - 1);
     localStorage.setItem(FONT_SIZE_KEY, String(newFontSize));
     expect(localStorage.getItem(FONT_SIZE_KEY)).toBe("12");
   });
 
   it("font size button increments and writes to localStorage", () => {
-    let fontSize = 13;
+    const fontSize = 13;
     const newFontSize = Math.min(18, fontSize + 1);
     localStorage.setItem(FONT_SIZE_KEY, String(newFontSize));
     expect(localStorage.getItem(FONT_SIZE_KEY)).toBe("14");

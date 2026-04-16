@@ -18,6 +18,7 @@ import { DynamicFavicon, countNeedingAttention } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { useMuxOptional } from "@/providers/MuxProvider";
 import { ProjectSidebar } from "./ProjectSidebar";
+import { ReconnectingPill } from "./ReconnectingPill";
 import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
@@ -25,6 +26,7 @@ import { BottomSheet } from "./BottomSheet";
 import { ConnectionBar } from "./ConnectionBar";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { getProjectScopedHref } from "@/lib/project-utils";
+import { SidebarContext } from "./workspace/SidebarContext";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -656,10 +658,19 @@ function DashboardInner({
       : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
   const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
+  const handleToggleSidebar = () => {
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      setMobileMenuOpen((current) => !current);
+    } else {
+      setSidebarCollapsed((current) => !current);
+    }
+  };
+
   if (!isMobile) {
     return (
-      <>
-        <ConnectionBar status={connectionStatus} />
+      <SidebarContext.Provider value={{ onToggleSidebar: handleToggleSidebar }}>
+        <>
+          <ConnectionBar status={connectionStatus} />
         <div className="dashboard-app-shell">
           <header className="dashboard-app-header">
             {showSidebar ? (
@@ -845,14 +856,17 @@ function DashboardInner({
             </main>
           </div>
         </div>
+        <ReconnectingPill />
       </>
+    </SidebarContext.Provider>
     );
   }
 
   return (
-    <>
-      <ConnectionBar status={connectionStatus} />
-      <div className="dashboard-shell flex h-screen">
+    <SidebarContext.Provider value={{ onToggleSidebar: handleToggleSidebar }}>
+      <>
+        <ConnectionBar status={connectionStatus} />
+        <div className="dashboard-shell flex h-screen">
         {showSidebar && (
           <ProjectSidebar
             projects={projects}
@@ -1086,7 +1100,9 @@ function DashboardInner({
           isMergeReady={hydratedSheetSession?.pr ? isPRMergeReady(hydratedSheetSession.pr) : false}
         />
       ) : null}
-    </>
+      </>
+      <ReconnectingPill />
+    </SidebarContext.Provider>
   );
 }
 

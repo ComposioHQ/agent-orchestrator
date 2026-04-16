@@ -10,7 +10,10 @@
  *   // later: cleanup();
  */
 
-import type { Terminal } from "@xterm/xterm";
+import type { Terminal as XTermTerminal } from "@xterm/xterm";
+
+// Use a more lenient type to support dynamically imported Terminal
+type TerminalLike = Omit<XTermTerminal, "input" | "attachCustomWheelEventHandler"> & Partial<Pick<XTermTerminal, "input" | "attachCustomWheelEventHandler">>;
 
 export interface TouchScrollConfig {
   /** Pixels of movement before gesture direction is decided. Default: 8 */
@@ -52,7 +55,7 @@ const DEFAULT_CONFIG: Required<Omit<TouchScrollConfig, "onScrollAway" | "onScrol
  * Returns a cleanup function to remove the listeners.
  */
 export function attachTouchScroll(
-  terminal: Terminal,
+  terminal: TerminalLike,
   sendData: (data: string) => void,
   config: TouchScrollConfig = {},
 ): () => void {
