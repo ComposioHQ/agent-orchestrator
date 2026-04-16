@@ -234,6 +234,7 @@ function gitInstallAttempts(): InstallAttempt[] {
     return [
       { cmd: "sudo", args: ["apt-get", "install", "-y", "git"], label: "sudo apt-get install -y git" },
       { cmd: "sudo", args: ["dnf", "install", "-y", "git"], label: "sudo dnf install -y git" },
+      { cmd: "sudo", args: ["pacman", "-S", "--noconfirm", "git"], label: "sudo pacman -S --noconfirm git" },
     ];
   }
   if (process.platform === "win32") {
@@ -265,6 +266,7 @@ function ghInstallAttempts(): InstallAttempt[] {
     return [
       { cmd: "sudo", args: ["apt-get", "install", "-y", "gh"], label: "sudo apt-get install -y gh" },
       { cmd: "sudo", args: ["dnf", "install", "-y", "gh"], label: "sudo dnf install -y gh" },
+      { cmd: "sudo", args: ["pacman", "-S", "--noconfirm", "github-cli"], label: "sudo pacman -S --noconfirm github-cli" },
     ];
   }
   if (process.platform === "win32") {
@@ -887,6 +889,7 @@ function tmuxInstallAttempts(): InstallAttempt[] {
     return [
       { cmd: "sudo", args: ["apt-get", "install", "-y", "tmux"], label: "sudo apt-get install -y tmux" },
       { cmd: "sudo", args: ["dnf", "install", "-y", "tmux"], label: "sudo dnf install -y tmux" },
+      { cmd: "sudo", args: ["pacman", "-S", "--noconfirm", "tmux"], label: "sudo pacman -S --noconfirm tmux" },
     ];
   }
   return [];
