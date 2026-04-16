@@ -142,6 +142,7 @@ describe.skipIf(!realProject)("path encoding & JSONL reading (real Claude data)"
         "last-prompt",
         "tool_use",
         "progress",
+        "permission-mode",
         "permission_request",
         "error",
         "summary",
