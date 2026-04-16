@@ -106,8 +106,12 @@ function ProjectSidebarInner({
 
   const sessionsByProject = useMemo(() => {
     const map = new Map<string, DashboardSession[]>();
-    if (!sessions) return map;
+    // Build a set of valid project IDs to filter sessions strictly
+    const validProjectIds = new Set(projects.map((p) => p.id));
+
     for (const s of sessions) {
+      // Only include sessions whose projectId matches a configured project
+      if (!validProjectIds.has(s.projectId)) continue;
       if (isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes)) continue;
       // Filter by status visibility
       if (s.status === "killed" && !showKilled) continue;
@@ -117,7 +121,7 @@ function ProjectSidebarInner({
       map.set(s.projectId, list);
     }
     return map;
-  }, [sessions, prefixByProject, allPrefixes, showKilled, showDone]);
+  }, [sessions, prefixByProject, allPrefixes, projects, showKilled, showDone]);
 
   const navigate = (url: string) => {
     router.push(url);
