@@ -52,3 +52,39 @@ console.log(`Longest request: ${peakDurationMs}ms`);
 
 printMap("By operation", byOperation);
 printMap("By HTTP status", byStatus);
+
+// Rate-limit burn per reset window
+const withRL = entries.filter((e) => typeof e.rateLimitRemaining === "number");
+if (withRL.length >= 2) {
+  console.log(`\nRate limit (${withRL.length} rows with headers):`);
+
+  // Group by rateLimitReset to segment across reset boundaries
+  const windowMap = new Map();
+  for (const r of withRL) {
+    const resetKey = r.rateLimitReset ?? "unknown";
+    if (!windowMap.has(resetKey)) windowMap.set(resetKey, []);
+    windowMap.get(resetKey).push(r);
+  }
+  const windows = [...windowMap.entries()].sort((a, b) => {
+    const aKey = typeof a[0] === "number" ? a[0] : 0;
+    const bKey = typeof b[0] === "number" ? b[0] : 0;
+    return aKey - bKey;
+  });
+
+  if (windows.length > 1) {
+    console.log(`  ⚠ Run straddled ${windows.length} reset windows`);
+  }
+  for (const [resetEpoch, windowRows] of windows) {
+    const resetDate = typeof resetEpoch === "number"
+      ? new Date(resetEpoch * 1000).toISOString()
+      : "unknown";
+    const wFirst = windowRows[0];
+    const wLast = windowRows[windowRows.length - 1];
+    const wDelta = wFirst.rateLimitRemaining - wLast.rateLimitRemaining;
+    const wElapsedMs =
+      new Date(wLast.timestamp).getTime() - new Date(wFirst.timestamp).getTime();
+    const wElapsedHr = wElapsedMs / 3_600_000;
+    const resource = wFirst.rateLimitResource ?? "?";
+    console.log(`  Window reset=${resetDate} resource=${resource}: remaining ${wFirst.rateLimitRemaining}→${wLast.rateLimitRemaining} delta=${wDelta} (${windowRows.length} rows, ${(wElapsedMs / 60_000).toFixed(1)}min${wElapsedHr > 0 ? `, ${(wDelta / wElapsedHr).toFixed(0)} tokens/hr` : ""})`);
+  }
+}

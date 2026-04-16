@@ -78,6 +78,42 @@ Bursts of `N = 20, 60, 120, 200` via `gh api /user` in parallel and `N = 150` vi
 
 The most important structural change from v1: **the baseline recorder (Track A) and any behavior-changing work (Track B) are strictly separated.** Track A ships first, unchanged behavior, just instrumentation. Only after we have baseline numbers does Track B start landing fixes.
 
+### Progress & Status (updated 2026-04-16)
+
+**Tracks are strictly sequential:** A → B → C. Each track depends on the previous track's output.
+
+```
+Track A ── Measure ──────────────────────────────────────────────────────
+  A1a  Ship execGhObserved() + JSONL recorder        ✅ Done (PR #1238)
+  A1b  Fix tracer blind spots (5 blockers)            🔄 In progress
+  A2   Baseline scenario × scale × topology matrix    ⏳ Blocked on A1b
+
+Track B ── Fix bugs ─────────────────────────────────────────────────────
+  B1   Safe behavioral fixes (304, status parsing)    ⏳ Blocked on A2 baseline
+  B2   Structural reductions (detectPR dedup, batch)  ⏳ Blocked on B1
+
+Track C ── Octokit migration (optional) ─────────────────────────────────
+  C1   OctokitRunner behind flag + compare            ⏳ Blocked on B scorecard
+```
+
+**Why sequential:**
+- **A before B:** B fixes bugs, but without A's baseline numbers there's no "before" to prove the fix helped. Every B fix lands with a before/after trace delta.
+- **B before C:** B tells us which call patterns are hot and which optimizations matter. Migrating to Octokit without that data means guessing.
+
+**A1b blockers (owner / status):**
+
+| # | Blocker | Owner | Status |
+|---|---------|-------|--------|
+| 1 | `graphql-batch.ts:578` — add `-i`, split headers/body | us | ✅ |
+| 2 | `extractOperation()` — skip `-*` flags | us | ✅ |
+| 3 | Analyzers — segment burn by `rateLimitReset` window | us | ✅ |
+| 4 | Gap 1 decision — accept opaque, bracket with `/rate_limit` | us | ✅ |
+| 5 | `sessionId`/`projectId` threading through callsites | deferred | ⏳ |
+
+**Parallel work while A1b lands:** A2 scenario matrix design (scenarios, topologies, scale points, pruning rules) can be drafted now since it doesn't depend on A1b code.
+
+**After A1b code lands:** @whoisasx reruns a clean trace inside a single rate-limit reset window (~45 min max), pastes analyzer output, and A1b is closed.
+
 ---
 
 ### Track A — Baseline recorder
@@ -224,7 +260,7 @@ These rules are enforced by the recorder, not by convention. The recorder **spli
 1. **`executeBatchQuery` does not pass `-i`.** `packages/plugins/scm-github/src/graphql-batch.ts:578` builds `["api", "graphql", ...varArgs, "-f", "query=..."]` with no `-i`, so every `gh.api.graphql-batch` row has `httpStatus=none` and zero rate-limit headers. In Adil's 1,487-row run that's 186 batch calls — the single hottest explicitly-named `api` callsite — completely invisible to status and rate-limit analysis. Must add `-i` and split the header prefix from the JSON body before parsing (same treatment as `checkPRListETag`).
 2. **`extractOperation()` flag handling is broken.** `packages/core/src/gh-trace.ts:68` returns `gh.${args[0]}.${args[1]}`, which buckets any `gh api --method GET ...` call under `gh.api.--method` (124 rows in Adil's latest run). Fix is to skip leading `-*` flags when picking the operation segment.
 3. **Analyzer does not segment by reset window.** Neither `experiments/summarize-gh-trace.mjs` nor `experiments/analyze-trace.mjs` uses `rateLimitReset` to split the burn calculation. Any run that straddles a reset (Adil's 50-min run crossed 20:00 UTC) produces a naive `first - last` delta that is mathematically meaningless. This is an analyzer patch — the field is already on every row.
-4. **CLI-subcommand HTTP visibility gap.** Separate from #1: `gh pr view/list/checks` and `gh issue view/list` never expose HTTP responses in stdout, so ~53% of calls in Adil's run have `httpStatus=none` by construction. The fix is not `-i` (not supported on subcommands). Options are (a) parse `GH_DEBUG=api` stderr in the tracer to surface per-call status and rate-limit for subcommands, or (b) accept subcommands as opaque for A1 and bracket runs with start/end `/rate_limit` snapshots as a coarse floor only. **These are not equivalent.** Per Experiment 1 (and summarized above in line 62), `/rate_limit` reads lag real bucket state — the authoritative per-call signal can only come from per-response `x-ratelimit-*` headers, which for subcommands means stderr parsing. `/rate_limit` snapshots bracket total burn; they do not give per-call visibility or 200/304 split. A1b must pick one explicitly and document it in the A1b PR description.
+4. **CLI-subcommand HTTP visibility gap — DECIDED: accept opaque for A1.** `gh pr view/list/checks` and `gh issue view/list` never expose HTTP responses in stdout (~53% of calls in Adil's run). Options were (a) parse `GH_DEBUG=api` stderr for per-call visibility, or (b) accept subcommands as opaque and bracket runs with `/rate_limit` snapshots for coarse total burn only. **Decision (2026-04-16): option (b) — accept opaque.** Rationale: `GH_DEBUG=api` stderr is undocumented, version-fragile, and mixes with real error output — parsing it adds tracer complexity that Track C (Octokit migration) would delete. `/rate_limit` snapshots are lagged (per Experiment 1, line 62) and don't give per-call 200/304 split, but they answer the A2 question "did subcommands collectively cost more than expected?" which is sufficient for baseline. If Track B analysis shows subcommands are a significant budget fraction, `GH_DEBUG` parsing can be added with real evidence it's needed. A2 runs will bracket each scenario with a start/end `/rate_limit` snapshot and note the coarse delta alongside the per-call trace.
 5. **`sessionId`/`projectId` never threaded through plugin callsites.** `GhTraceContext` supports them, but the three migrated callsites in `scm-github` and `tracker-github` pass only `component`/`operation`. Without these, per-session attribution — the whole point of the `<plugin>.<module>.<operation>` naming rule above — is not achievable in practice. A1b must thread the session/project IDs from the lifecycle manager into the plugin methods that call `execGhObserved`.
 
 **Known-open, not a freeze blocker.** The bare `gh()` helper at `packages/plugins/scm-github/src/index.ts:80` passes `{ component: "scm-github" }` with no `-i` and no `operation`. Two scm-github callsites route through it: `getPendingComments` at `index.ts:780` (the 198 `gh.api.graphql` rows) and review-comment pagination at `index.ts:882` (the 124 `gh.api.--method` rows). Fixing the helper to inject `-i`, strip the header prefix before returning body-only, and require an `operation` argument would close both buckets, but it carries parser-audit risk across ~15 callers and should not be conflated with the A1b freeze. File as a follow-up after A1b lands.

@@ -68,7 +68,23 @@ function parseIntHeader(value: string | undefined): number | undefined {
 function extractOperation(args: string[]): string {
   if (args.length === 0) return "gh";
   if (args.length === 1) return `gh.${args[0]}`;
-  return `gh.${args[0]}.${args[1]}`;
+  // Walk past leading flags (e.g. --method, -X, -H) to find the first
+  // positional arg after args[0]. Without this, "api --method GET ..."
+  // gets bucketed as "gh.api.--method" instead of "gh.api.graphql" etc.
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg || arg.startsWith("-")) {
+      // Skip flags and their values (--method GET, -X POST, -H "...", etc.)
+      if (arg === "--method" || arg === "-X" || arg === "-H" || arg === "--header" ||
+          arg === "-f" || arg === "--raw-field" || arg === "-F" || arg === "--field" ||
+          arg === "--input" || arg === "-t" || arg === "--template") {
+        i++; // skip the flag's value too
+      }
+      continue;
+    }
+    return `gh.${args[0]}.${arg}`;
+  }
+  return `gh.${args[0]}`;
 }
 
 function extractMethod(args: string[]): string | undefined {

@@ -575,7 +575,7 @@ async function executeBatchQuery(
     }
   }
 
-  const args = ["api", "graphql", ...varArgs, "-f", `query=${query}`];
+  const args = ["api", "graphql", "-i", ...varArgs, "-f", `query=${query}`];
 
   // Scale timeout based on batch size to prevent large batches from timing out
   // Base: 30s, +2s per PR beyond first 10
@@ -584,10 +584,23 @@ async function executeBatchQuery(
 
   const stdout = await execGhAsync(args, adaptiveTimeout, "gh.api.graphql-batch");
 
+  // With -i, stdout contains HTTP headers + blank line + JSON body.
+  // Split at first blank line to get the JSON body for parsing.
+  // The tracer (execGhObserved) already parses the headers for its trace row.
+  const blankLineIdx = stdout.indexOf("\r\n\r\n");
+  const altBlankLineIdx = stdout.indexOf("\n\n");
+  const splitIdx =
+    blankLineIdx >= 0 && (altBlankLineIdx < 0 || blankLineIdx < altBlankLineIdx)
+      ? blankLineIdx + 4
+      : altBlankLineIdx >= 0
+        ? altBlankLineIdx + 2
+        : 0;
+  const body = splitIdx > 0 ? stdout.slice(splitIdx) : stdout;
+
   const result: {
     data?: Record<string, unknown>;
     errors?: Array<{ message: string; path?: string[] }>;
-  } = JSON.parse(stdout.trim());
+  } = JSON.parse(body.trim());
 
   // Check for GraphQL errors and throw to allow individual API fallback
   if (result.errors && result.errors.length > 0) {
