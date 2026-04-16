@@ -114,6 +114,13 @@ Track C ── Octokit migration (optional) ────────────
 
 **After A1b code lands:** @whoisasx reruns a clean trace inside a single rate-limit reset window (~45 min max), pastes analyzer output, and A1b is closed.
 
+**A1b verification results (2026-04-16):** Two independent runs completed — Adil's A1b rerun (974 calls, 33 min, 5 sessions) and our verification run (234 calls, 22 min, 6 sessions). Both confirm:
+- `graphql-batch` is the dominant measured budget consumer: **820–1,416 tokens/hr at 5 sessions** (per-window measurement)
+- REST core burn is negligible: **28 tokens/hr** at 5 sessions
+- Bug #1 (304-as-error) causes most guard-pr-list calls to be treated as changes, driving unnecessary `graphql-batch` calls
+- Bug #1 is the first high-confidence cause to remove (Track B1)
+- Full data captured in `experiments/baseline.md` (cell S2-T1-5)
+
 ---
 
 ### Track A — Baseline recorder
