@@ -112,6 +112,7 @@ export function useSessionEvents(
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMembershipKeyRef = useRef<string | null>(null);
   const lastRefreshAtRef = useRef(0);
+  const lastFetchStartedAtRef = useRef(0);
   const disconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRefreshControllerRef = useRef<AbortController | null>(null);
 
@@ -135,13 +136,20 @@ export function useSessionEvents(
 
   // Define scheduleRefresh with useCallback so both effects can use it
   const scheduleRefresh = useCallback(() => {
-    if (refreshingRef.current || refreshTimerRef.current) return;
+    // Skip scheduling if a timer is already pending
+    if (refreshTimerRef.current) return;
+    // Skip if a fetch was already started recently (< 500ms ago)
+    if (Date.now() - lastFetchStartedAtRef.current < 500) return;
+    if (refreshingRef.current) return;
+
     refreshTimerRef.current = setTimeout(() => {
       refreshTimerRef.current = null;
       refreshingRef.current = true;
       const requestedMembershipKey = pendingMembershipKeyRef.current;
       const refreshController = new AbortController();
       activeRefreshControllerRef.current = refreshController;
+
+      lastFetchStartedAtRef.current = Date.now();
 
       const sessionsUrl = project
         ? `/api/sessions?project=${encodeURIComponent(project)}`
