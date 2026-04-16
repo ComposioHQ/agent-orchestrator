@@ -10,7 +10,7 @@
  *   // later: cleanup();
  */
 
-import type { Terminal as XTermTerminal } from "@xterm/xterm";
+import type { Terminal as XTermTerminal } from "xterm";
 
 // Use a more lenient type to support dynamically imported Terminal
 type TerminalLike = Omit<XTermTerminal, "input" | "attachCustomWheelEventHandler"> & Partial<Pick<XTermTerminal, "input" | "attachCustomWheelEventHandler">>;
