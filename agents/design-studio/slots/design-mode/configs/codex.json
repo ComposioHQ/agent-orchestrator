@@ -1,0 +1,32 @@
+{
+  "id": "codex",
+  "name": "Codex Design Mode",
+  "promptSource": "../sources/codex-design-mode.md",
+  "artifactMode": "brand-system-and-landing-page-brief",
+  "voice": "founder-clear",
+  "brandFocus": [
+    "brand system",
+    "product UI direction",
+    "landing page narrative",
+    "launch-ready copy"
+  ],
+  "deliverables": [
+    "brand territory and positioning",
+    "copy system with headline directions",
+    "landing page section plan",
+    "product UI tone and layout cues",
+    "first visual artifact brief"
+  ],
+  "experiencePrinciples": [
+    "Prefer deliberate visual decisions over generic AI startup defaults.",
+    "Make the product feel composed, confident, and slightly cinematic.",
+    "Keep the work implementable by a product and frontend team without guesswork.",
+    "Tie every aesthetic move back to the product wedge and audience."
+  ],
+  "antiPatterns": [
+    "template SaaS copy with no point of view",
+    "brand language that sounds outsourced or interchangeable",
+    "visual systems that are stylish but impossible to build",
+    "empty moodboarding without product framing"
+  ]
+}

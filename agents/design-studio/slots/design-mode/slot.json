@@ -1,0 +1,50 @@
+{
+  "slot": "design-mode",
+  "description": "Pluggable design-mode slot for prompt-driven brand, UI, and landing-page direction.",
+  "configDir": "./configs",
+  "sourcesDir": "./sources",
+  "fields": [
+    {
+      "name": "promptSource",
+      "type": "markdown-path",
+      "required": true,
+      "description": "Relative path to the Markdown prompt source that drives this design mode."
+    },
+    {
+      "name": "artifactMode",
+      "type": "string",
+      "required": true,
+      "description": "The primary artifact shape, such as brand brief, landing-page system, or UI direction pack."
+    },
+    {
+      "name": "voice",
+      "type": "string",
+      "required": true,
+      "description": "The intended writing voice for copy and creative direction."
+    },
+    {
+      "name": "brandFocus",
+      "type": "string[]",
+      "required": true,
+      "description": "The core brand and interface territories this design mode should emphasize."
+    },
+    {
+      "name": "deliverables",
+      "type": "string[]",
+      "required": true,
+      "description": "The concrete outputs the design mode should aim to produce in the first pass."
+    },
+    {
+      "name": "experiencePrinciples",
+      "type": "string[]",
+      "required": true,
+      "description": "High-level principles that guide the look, feel, and product expression."
+    },
+    {
+      "name": "antiPatterns",
+      "type": "string[]",
+      "required": true,
+      "description": "Patterns the design mode should actively avoid."
+    }
+  ]
+}

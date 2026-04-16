@@ -1,0 +1,13 @@
+{
+  "$schema": "../_schemas/agent-manifest.schema.json",
+  "id": "design-studio",
+  "name": "Design Studio",
+  "description": "Brand, UI, and landing-page design agent for shaping startup ideas into a distinctive first visual system.",
+  "systemPrompt": "./prompts/system.md",
+  "slots": {
+    "design-mode": {
+      "path": "./slots/design-mode",
+      "config": "codex"
+    }
+  }
+}
