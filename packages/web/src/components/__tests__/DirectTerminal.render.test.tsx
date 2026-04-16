@@ -76,7 +76,7 @@ class MockWebSocket {
   close() {}
 }
 
-vi.mock("xterm", () => ({
+vi.mock("@xterm/xterm", () => ({
   Terminal: MockTerminal,
 }));
 
