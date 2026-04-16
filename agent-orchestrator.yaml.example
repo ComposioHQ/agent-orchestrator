@@ -96,6 +96,12 @@ projects:
     #   Always run tests before pushing.
     #   Use conventional commits (feat:, fix:, chore:).
 
+    # Replace the default coding-agent base prompt for non-coding roles
+    # agentBasePrompt: |
+    #   You are ValidatorEngine-3P.
+    #   Falsify first.
+    # agentBasePromptFile: examples/prompts/validatorengine-3p.md
+
     # Path to a rules file (relative to project path)
     # agentRulesFile: .agent-rules.md
 

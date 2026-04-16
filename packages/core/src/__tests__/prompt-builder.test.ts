@@ -140,6 +140,60 @@ describe("buildPrompt", () => {
     expect(result).not.toContain("## Project Rules");
   });
 
+  it("overrides the default base prompt with inline agentBasePrompt", () => {
+    project.agentBasePrompt = "You are ValidatorEngine-3P.\nReturn only JSON.";
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+    });
+
+    expect(result).toContain("You are ValidatorEngine-3P.");
+    expect(result).toContain("Return only JSON.");
+    expect(result).not.toContain("## PR Best Practices");
+  });
+
+  it("reads agentBasePromptFile content", () => {
+    const promptPath = join(tmpDir, "agent-base-prompt.md");
+    writeFileSync(promptPath, "You are a research validator.\nFalsify first.");
+    project.agentBasePromptFile = "agent-base-prompt.md";
+
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+    });
+
+    expect(result).toContain("You are a research validator.");
+    expect(result).toContain("Falsify first.");
+    expect(result).not.toContain("## PR Best Practices");
+  });
+
+  it("combines inline and file-based agentBasePrompt content", () => {
+    const promptPath = join(tmpDir, "agent-base-prompt.md");
+    writeFileSync(promptPath, "Comments > headlines.");
+    project.agentBasePrompt = "You are ValidatorEngine-3P.";
+    project.agentBasePromptFile = "agent-base-prompt.md";
+
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+    });
+
+    expect(result).toContain("You are ValidatorEngine-3P.");
+    expect(result).toContain("Comments > headlines.");
+    expect(result).not.toContain("## PR Best Practices");
+  });
+
+  it("falls back to the default base prompt when agentBasePromptFile is missing", () => {
+    project.agentBasePromptFile = "missing-base-prompt.md";
+
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+    });
+
+    expect(result).toContain(BASE_AGENT_PROMPT);
+  });
+
   it("appends userPrompt last", () => {
     project.agentRules = "Project rule.";
     const result = buildPrompt({

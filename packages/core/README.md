@@ -112,7 +112,7 @@ Loads and validates `agent-orchestrator.yaml`:
 - `directTerminalPort` — direct terminal WebSocket port (auto-detected if not set)
 - `defaults` — default plugins (runtime, agent, workspace, notifiers)
 - `plugins` — installer-managed external plugin descriptors (registry, npm, or local)
-- `projects` — per-project config (repo, path, branch, symlinks, reactions, agentRules)
+- `projects` — per-project config (repo, path, branch, symlinks, reactions, agentRules, agentBasePrompt)
 - `notifiers` — notification channel config (Slack webhooks, etc.)
 - `notificationRouting` — which notifiers get which priority events
 - `reactions` — auto-response config (ci-failed, changes-requested, approved-and-green, etc.)

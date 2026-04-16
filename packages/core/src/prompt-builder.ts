@@ -2,12 +2,12 @@
  * Prompt Builder — composes layered prompts for agent sessions.
  *
  * Three layers:
- *   1. BASE_AGENT_PROMPT — constant instructions about session lifecycle, git workflow, PR handling
+ *   1. Base prompt — default AO coding guidance or a project-provided override
  *   2. Config-derived context — project name, repo, default branch, tracker info, reaction rules
  *   3. User rules — inline agentRules and/or agentRulesFile content
  *
- * buildPrompt() always returns the AO base guidance and project context so
- * bare launches still know about AO-specific commands such as PR claiming.
+ * buildPrompt() always returns a base prompt and project context so bare
+ * launches still have the correct role framing.
  */
 
 import { readFileSync } from "node:fs";
@@ -122,6 +122,32 @@ function buildConfigLayer(config: PromptBuildConfig): string {
 }
 
 // =============================================================================
+// LAYER 1: BASE PROMPT OVERRIDE
+// =============================================================================
+
+function readAgentBasePrompt(project: ProjectConfig): string | null {
+  const parts: string[] = [];
+
+  if (project.agentBasePrompt) {
+    parts.push(project.agentBasePrompt);
+  }
+
+  if (project.agentBasePromptFile) {
+    const filePath = resolve(project.path, project.agentBasePromptFile);
+    try {
+      const content = readFileSync(filePath, "utf-8").trim();
+      if (content) {
+        parts.push(content);
+      }
+    } catch {
+      // File not found or unreadable — fall back to the default base prompt.
+    }
+  }
+
+  return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+// =============================================================================
 // LAYER 3: USER RULES
 // =============================================================================
 
@@ -158,12 +184,15 @@ function readUserRules(project: ProjectConfig): string | null {
  * issue context, user rules, and explicit instructions when available.
  */
 export function buildPrompt(config: PromptBuildConfig): string {
+  const customBasePrompt = readAgentBasePrompt(config.project);
   const userRules = readUserRules(config.project);
   const sections: string[] = [];
 
   // Layer 1: Base prompt is always included for every managed session.
-  // Use trimmed prompt when no repo is configured (PR/CI instructions don't apply).
-  sections.push(config.project.repo ? BASE_AGENT_PROMPT : BASE_AGENT_PROMPT_NO_REPO);
+  // Projects can override the default coding prompt for non-coding workflows.
+  sections.push(
+    customBasePrompt ?? (config.project.repo ? BASE_AGENT_PROMPT : BASE_AGENT_PROMPT_NO_REPO),
+  );
 
   // Layer 2: Config-derived context
   sections.push(buildConfigLayer(config));

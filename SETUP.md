@@ -281,6 +281,14 @@ projects:
     agentRulesFile: .agent-rules.md
 ```
 
+Replace the default coding-agent base prompt entirely when you want a non-coding role such as research, triage, or idea validation:
+
+```yaml
+projects:
+  startup-factory:
+    agentBasePromptFile: examples/prompts/validatorengine-3p.md
+```
+
 ### Per-Project Overrides
 
 Override defaults per project:

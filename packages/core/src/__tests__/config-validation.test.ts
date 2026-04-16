@@ -808,6 +808,23 @@ describe("Config Validation - External Plugin Schema", () => {
     expect(validated.projects.proj1.tracker?.host).toBe("https://jira.company.com");
     expect(validated.projects.proj1.tracker?.teamId).toBe("TEAM-123");
   });
+
+  it("accepts worker base prompt overrides", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          defaultBranch: "main",
+          agentBasePrompt: "You are ValidatorEngine-3P.",
+          agentBasePromptFile: ".ao/validator.md",
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.agentBasePrompt).toBe("You are ValidatorEngine-3P.");
+    expect(validated.projects.proj1.agentBasePromptFile).toBe(".ao/validator.md");
+  });
 });
 
 describe("collectExternalPluginConfigs", () => {
