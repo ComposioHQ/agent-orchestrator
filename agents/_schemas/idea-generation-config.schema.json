@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aoagents.dev/schemas/idea-generation-config.json",
+  "title": "Idea Generation Config",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "promptSource",
+    "researchMode",
+    "noveltyBar",
+    "outputMode",
+    "sourceTypes",
+    "scoringAxes"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "promptSource": {
+      "type": "string"
+    },
+    "researchMode": {
+      "type": "string"
+    },
+    "noveltyBar": {
+      "type": "string"
+    },
+    "outputMode": {
+      "type": "string"
+    },
+    "sourceTypes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "scoringAxes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

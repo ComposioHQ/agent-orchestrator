@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aoagents.dev/schemas/repo-local-agent-manifest.json",
+  "title": "Repo Local Agent Manifest",
+  "type": "object",
+  "required": ["id", "name", "description", "systemPrompt", "slots"],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "systemPrompt": {
+      "type": "string"
+    },
+    "slots": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["path", "config"],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "config": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -10,8 +10,10 @@
   "packageManager": "pnpm@9.15.4",
   "type": "module",
   "scripts": {
+    "agents:validate": "node scripts/validate-agents.mjs",
     "build": "pnpm -r build",
     "dev": "pnpm --filter @aoagents/ao-web dev",
+    "discord:fetch-thread": "node scripts/fetch-discord-thread.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

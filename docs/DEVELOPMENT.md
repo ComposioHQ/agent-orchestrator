@@ -101,6 +101,7 @@ cd packages/web && pnpm dev
 
 ```
 agent-orchestrator/
+├── agents/                 # Repo-local agent manifests, slots, and prompt configs
 ├── packages/
 │   ├── core/              # Core types, services, config
 │   ├── cli/               # CLI tool (ao command)
@@ -115,7 +116,8 @@ agent-orchestrator/
 │   │   └── terminal-*/    # Terminal UIs
 │   └── integration-tests/ # Integration tests
 ├── agent-orchestrator.yaml.example
-└── docs/                  # Documentation
+├── docs/                  # Documentation
+└── scripts/               # Utility and validation scripts
 ```
 
 ---
