@@ -1,7 +1,14 @@
 import {
+  DEFAULT_ACTIVE_WINDOW_MS,
+  DEFAULT_READY_THRESHOLD_MS,
+  checkActivityLogState,
+  getActivityFallbackState,
+  readLastActivityEntry,
+  recordTerminalActivity,
+  shellEscape,
   type Agent,
-  type AgentSessionInfo,
   type AgentLaunchConfig,
+  type AgentSessionInfo,
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
@@ -35,16 +42,35 @@ function createAmpAgent(): Agent {
     processName: "amp",
     promptDelivery: "post-launch",
 
-    getLaunchCommand(_config: AgentLaunchConfig): string {
-      // Amp launches in interactive mode without any flags
-      // Prompt will be delivered post-launch via runtime.sendMessage()
-      return "amp";
+    getLaunchCommand(config: AgentLaunchConfig): string {
+      // Amp uses threads for conversation continuity.
+      // On first launch: `amp threads new --execute --dangerously-allow-all`
+      // The prompt is sent post-launch via runtime.sendMessage().
+      const threadId = (config.projectConfig.agentConfig as Record<string, unknown> | undefined)
+        ?.ampThreadId as string | undefined;
+
+      if (threadId) {
+        // Resume existing thread
+        return [
+          "amp",
+          "threads",
+          "continue",
+          shellEscape(threadId),
+          "--execute",
+          "--dangerously-allow-all",
+          "--no-ide",
+        ].join(" ");
+      }
+
+      // New thread
+      return ["amp", "threads", "new", "--execute", "--dangerously-allow-all", "--no-ide"].join(
+        " ",
+      );
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
       const env: Record<string, string> = {};
       env["AO_SESSION_ID"] = config.sessionId;
-      // NOTE: AO_PROJECT_ID is the caller's responsibility (spawn.ts sets it)
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
       }
@@ -53,23 +79,49 @@ function createAmpAgent(): Agent {
 
     detectActivity(terminalOutput: string): ActivityState {
       if (!terminalOutput.trim()) return "idle";
-      // Amp doesn't have rich terminal output patterns yet
+      // Amp-specific patterns
+      if (/waiting for|confirm|approve|permission/i.test(terminalOutput)) {
+        return "waiting_input";
+      }
+      if (/error:|failed:|cannot|exception/i.test(terminalOutput)) {
+        return "blocked";
+      }
       return "active";
     },
 
     async getActivityState(
       session: Session,
-      _readyThresholdMs?: number,
+      readyThresholdMs?: number,
     ): Promise<ActivityDetection | null> {
-      // Check if process is running first
+      const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
+      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+
+      // 1. Process check — always first
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      // Process is running - return ready state
-      // Without native session files, we can't determine fine-grained activity
-      return { state: "ready", timestamp: new Date() };
+      // 2. Check AO activity JSONL for actionable states (waiting_input/blocked)
+      let activityResult: Awaited<ReturnType<typeof readLastActivityEntry>> = null;
+      if (session.workspacePath) {
+        activityResult = await readLastActivityEntry(session.workspacePath);
+        const activityState = checkActivityLogState(activityResult);
+        if (activityState) return activityState;
+      }
+
+      // 3. JSONL entry fallback — age-based decay (active → ready → idle)
+      const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
+      if (fallback) return fallback;
+
+      return null;
+    },
+
+    async recordActivity(session: Session, terminalOutput: string): Promise<void> {
+      if (!session.workspacePath) return;
+      await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
+        this.detectActivity(output),
+      );
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
@@ -91,7 +143,7 @@ function createAmpAgent(): Agent {
             timeout: 30_000,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          const processRe = /(?:^|\/)amp(?:\s|$)/;
+          const processRe = /(?:^|\/)\.?amp(?:\s|$)/;
           for (const line of psOut.split("\n")) {
             const cols = line.trimStart().split(/\s+/);
             if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
@@ -110,7 +162,7 @@ function createAmpAgent(): Agent {
             process.kill(pid, 0);
             return true;
           } catch (err: unknown) {
-            if (err instanceof Error && "code" in err && err.code === "EPERM") {
+            if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EPERM") {
               return true;
             }
             return false;
@@ -124,7 +176,7 @@ function createAmpAgent(): Agent {
     },
 
     async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
-      // Amp doesn't have JSONL session files for introspection yet
+      // Amp doesn't expose a JSONL session file for introspection
       return null;
     },
   };
