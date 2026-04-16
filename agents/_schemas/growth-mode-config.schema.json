@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aoagents.dev/schemas/growth-mode-config.json",
+  "title": "Growth Mode Config",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "promptSource",
+    "growthMode",
+    "outputMode",
+    "channels",
+    "experimentTypes",
+    "successMetrics"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "promptSource": {
+      "type": "string"
+    },
+    "growthMode": {
+      "type": "string"
+    },
+    "outputMode": {
+      "type": "string"
+    },
+    "channels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "experimentTypes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "successMetrics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

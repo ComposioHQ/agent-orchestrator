@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aoagents.dev/schemas/design-mode-config.json",
+  "title": "Design Mode Config",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "promptSource",
+    "designMode",
+    "outputMode",
+    "artifactTypes",
+    "deliverables"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "promptSource": {
+      "type": "string"
+    },
+    "designMode": {
+      "type": "string"
+    },
+    "outputMode": {
+      "type": "string"
+    },
+    "artifactTypes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "deliverables": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

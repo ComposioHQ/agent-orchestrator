@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aoagents.dev/schemas/build-mode-config.json",
+  "title": "Build Mode Config",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "promptSource",
+    "buildMode",
+    "outputMode",
+    "workstreams",
+    "qualityGates",
+    "deliverables"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "promptSource": {
+      "type": "string"
+    },
+    "buildMode": {
+      "type": "string"
+    },
+    "outputMode": {
+      "type": "string"
+    },
+    "workstreams": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "qualityGates": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "deliverables": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

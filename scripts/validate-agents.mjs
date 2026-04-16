@@ -5,6 +5,7 @@ import { join, relative, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const agentsRoot = join(repoRoot, "agents");
+const fleetsRoot = join(repoRoot, "fleets");
 
 function fail(message) {
   throw new Error(message);
@@ -41,24 +42,41 @@ function assertObject(value, label) {
   }
 }
 
+function assertArray(value, label) {
+  if (!Array.isArray(value)) {
+    fail(`${label} must be an array`);
+  }
+}
+
 function assertNonEmptyArray(value, label) {
   if (!Array.isArray(value) || value.length === 0) {
     fail(`${label} must be a non-empty array`);
   }
 }
 
-function assertNonEmptyStringArray(value, label) {
-  assertNonEmptyArray(value, label);
+function assertStringArray(value, label, { requireNonEmpty = false } = {}) {
+  assertArray(value, label);
+  if (requireNonEmpty && value.length === 0) {
+    fail(`${label} must be a non-empty array`);
+  }
   for (const [index, item] of value.entries()) {
     assertString(item, `${label}[${index}]`);
   }
 }
 
-async function listAgentDirs() {
-  const entries = await readdir(agentsRoot, { withFileTypes: true });
+async function listRecordDirs(rootDir) {
+  const entries = await readdir(rootDir, { withFileTypes: true });
   return entries
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith("_"))
-    .map((entry) => join(agentsRoot, entry.name));
+    .map((entry) => join(rootDir, entry.name));
+}
+
+async function listAgentDirs() {
+  return listRecordDirs(agentsRoot);
+}
+
+async function listFleetDirs() {
+  return listRecordDirs(fleetsRoot);
 }
 
 async function loadAgentRecord(agentDir) {
@@ -69,6 +87,16 @@ async function loadAgentRecord(agentDir) {
 
   const manifest = await readJson(manifestPath);
   return { agentDir, manifest, manifestPath };
+}
+
+async function loadFleetRecord(fleetDir) {
+  const manifestPath = join(fleetDir, "fleet.json");
+  if (!(await exists(manifestPath))) {
+    fail(`Missing fleet manifest: ${relative(repoRoot, manifestPath)}`);
+  }
+
+  const manifest = await readJson(manifestPath);
+  return { fleetDir, manifest, manifestPath };
 }
 
 async function loadSlotRecord(agentDir, slotName, slotRef) {
@@ -84,6 +112,15 @@ async function loadSlotRecord(agentDir, slotName, slotRef) {
   assertString(slotManifest.configDir, `${relative(repoRoot, slotManifestPath)}: configDir`);
   assertString(slotManifest.sourcesDir, `${relative(repoRoot, slotManifestPath)}: sourcesDir`);
   assertNonEmptyArray(slotManifest.fields, `${relative(repoRoot, slotManifestPath)}: fields`);
+  for (const [index, field] of slotManifest.fields.entries()) {
+    assertObject(field, `${relative(repoRoot, slotManifestPath)}: fields[${index}]`);
+    assertString(field.name, `${relative(repoRoot, slotManifestPath)}: fields[${index}].name`);
+    assertString(field.type, `${relative(repoRoot, slotManifestPath)}: fields[${index}].type`);
+    if (typeof field.required !== "boolean") {
+      fail(`${relative(repoRoot, slotManifestPath)}: fields[${index}].required must be a boolean`);
+    }
+    assertString(field.description, `${relative(repoRoot, slotManifestPath)}: fields[${index}].description`);
+  }
 
   const configDir = resolve(slotDir, slotManifest.configDir);
   const sourcesDir = resolve(slotDir, slotManifest.sourcesDir);
@@ -100,57 +137,103 @@ async function assertPromptSourceExists(configPath, configDir, promptSource) {
   }
 }
 
-function validateSharedResearchConfig(slotConfig, configPath) {
-  assertString(slotConfig.id, `${relative(repoRoot, configPath)}: id`);
-  assertString(slotConfig.name, `${relative(repoRoot, configPath)}: name`);
-  assertString(slotConfig.promptSource, `${relative(repoRoot, configPath)}: promptSource`);
-  assertString(slotConfig.researchMode, `${relative(repoRoot, configPath)}: researchMode`);
-  assertString(slotConfig.outputMode, `${relative(repoRoot, configPath)}: outputMode`);
-  assertNonEmptyStringArray(slotConfig.sourceTypes, `${relative(repoRoot, configPath)}: sourceTypes`);
-  assertNonEmptyStringArray(slotConfig.scoringAxes, `${relative(repoRoot, configPath)}: scoringAxes`);
-}
-
-async function validateIdeaGenerationConfig(slotConfig, configPath, configDir) {
-  validateSharedResearchConfig(slotConfig, configPath);
-  assertString(slotConfig.noveltyBar, `${relative(repoRoot, configPath)}: noveltyBar`);
-  await assertPromptSourceExists(configPath, configDir, slotConfig.promptSource);
-}
-
-async function validateIdeaValidationConfig(slotConfig, configPath, configDir, agentRecords) {
-  validateSharedResearchConfig(slotConfig, configPath);
-  assertString(slotConfig.scoreScale, `${relative(repoRoot, configPath)}: scoreScale`);
-  assertNonEmptyStringArray(
-    slotConfig.researchDimensions,
-    `${relative(repoRoot, configPath)}: researchDimensions`,
-  );
-  assertObject(slotConfig.ideaSource, `${relative(repoRoot, configPath)}: ideaSource`);
-  assertString(slotConfig.ideaSource.agentId, `${relative(repoRoot, configPath)}: ideaSource.agentId`);
-  assertString(slotConfig.ideaSource.slot, `${relative(repoRoot, configPath)}: ideaSource.slot`);
-  assertString(slotConfig.ideaSource.config, `${relative(repoRoot, configPath)}: ideaSource.config`);
-  await assertPromptSourceExists(configPath, configDir, slotConfig.promptSource);
-
-  const sourceAgent = agentRecords.get(slotConfig.ideaSource.agentId);
+async function validateAgentSlotConfigReference(reference, label, agentRecords, configPath) {
+  const sourceAgent = agentRecords.get(reference.agentId);
   if (!sourceAgent) {
     fail(
-      `${relative(repoRoot, configPath)} references unknown source agent ${slotConfig.ideaSource.agentId}`,
+      `${relative(repoRoot, configPath)} references unknown source agent ${reference.agentId}`,
     );
   }
 
-  const sourceSlotRef = sourceAgent.manifest.slots?.[slotConfig.ideaSource.slot];
-  assertObject(
-    sourceSlotRef,
-    `${relative(repoRoot, sourceAgent.manifestPath)}: slots.${slotConfig.ideaSource.slot}`,
-  );
+  const sourceSlotRef = sourceAgent.manifest.slots?.[reference.slot];
+  assertObject(sourceSlotRef, `${relative(repoRoot, sourceAgent.manifestPath)}: slots.${reference.slot}`);
 
-  const sourceSlotRecord = await loadSlotRecord(
-    sourceAgent.agentDir,
-    slotConfig.ideaSource.slot,
-    sourceSlotRef,
-  );
-  const sourceConfigPath = join(sourceSlotRecord.configDir, `${slotConfig.ideaSource.config}.json`);
+  const sourceSlotRecord = await loadSlotRecord(sourceAgent.agentDir, reference.slot, sourceSlotRef);
+  const sourceConfigPath = join(sourceSlotRecord.configDir, `${reference.config}.json`);
   if (!(await exists(sourceConfigPath))) {
     fail(
-      `${relative(repoRoot, configPath)} references missing source config ${relative(repoRoot, sourceConfigPath)}`,
+      `${label} references missing source config ${relative(repoRoot, sourceConfigPath)}`,
+    );
+  }
+}
+
+const fieldTypeValidators = {
+  async string(value, label, _context, required) {
+    if (value === undefined) {
+      if (required) {
+        fail(`${label} is required`);
+      }
+      return;
+    }
+
+    assertString(value, label);
+  },
+
+  async "string[]"(value, label, _context, required) {
+    if (value === undefined) {
+      if (required) {
+        fail(`${label} is required`);
+      }
+      return;
+    }
+
+    assertStringArray(value, label, { requireNonEmpty: required });
+  },
+
+  async "markdown-path"(value, label, context, required) {
+    if (value === undefined) {
+      if (required) {
+        fail(`${label} is required`);
+      }
+      return;
+    }
+
+    assertString(value, label);
+    await assertPromptSourceExists(context.configPath, context.configDir, value);
+  },
+
+  async "agent-slot-config-ref"(value, label, context, required) {
+    if (value === undefined) {
+      if (required) {
+        fail(`${label} is required`);
+      }
+      return;
+    }
+
+    assertObject(value, label);
+    assertString(value.agentId, `${label}.agentId`);
+    assertString(value.slot, `${label}.slot`);
+    assertString(value.config, `${label}.config`);
+    await validateAgentSlotConfigReference(value, label, context.agentRecords, context.configPath);
+  },
+};
+
+async function validateSlotConfig(slotRecord, slotConfig, configPath, agentRecords) {
+  assertObject(slotConfig, `${relative(repoRoot, configPath)}`);
+  assertString(slotConfig.id, `${relative(repoRoot, configPath)}: id`);
+  assertString(slotConfig.name, `${relative(repoRoot, configPath)}: name`);
+
+  const fieldNames = new Set();
+  for (const [index, field] of slotRecord.slotManifest.fields.entries()) {
+    if (fieldNames.has(field.name)) {
+      fail(
+        `${relative(repoRoot, slotRecord.slotManifestPath)}: duplicate field definition ${field.name} at index ${index}`,
+      );
+    }
+    fieldNames.add(field.name);
+
+    const validator = fieldTypeValidators[field.type];
+    if (!validator) {
+      fail(
+        `Unsupported field type ${field.type} in ${relative(repoRoot, slotRecord.slotManifestPath)}`,
+      );
+    }
+
+    await validator(
+      slotConfig[field.name],
+      `${relative(repoRoot, configPath)}: ${field.name}`,
+      { agentRecords, configDir: slotRecord.configDir, configPath },
+      field.required,
     );
   }
 }
@@ -189,17 +272,48 @@ async function validateAgent(agentRecord, agentRecords) {
     }
 
     const slotConfig = await readJson(configPath);
-    switch (slotManifest.slot) {
-      case "idea-generation":
-        await validateIdeaGenerationConfig(slotConfig, configPath, configDir);
-        break;
-      case "idea-validation":
-        await validateIdeaValidationConfig(slotConfig, configPath, configDir, agentRecords);
-        break;
-      default:
-        fail(
-          `Unsupported slot type ${slotManifest.slot} in ${relative(repoRoot, slotRecord.slotManifestPath)}`,
-        );
+    await validateSlotConfig(slotRecord, slotConfig, configPath, agentRecords);
+  }
+}
+
+async function validateFleet(fleetRecord) {
+  const { manifest, manifestPath } = fleetRecord;
+  assertString(manifest.id, `${relative(repoRoot, manifestPath)}: id`);
+  assertString(manifest.name, `${relative(repoRoot, manifestPath)}: name`);
+  assertString(manifest.description, `${relative(repoRoot, manifestPath)}: description`);
+  if (manifest.goal !== undefined) {
+    assertString(manifest.goal, `${relative(repoRoot, manifestPath)}: goal`);
+  }
+  assertNonEmptyArray(manifest.agents, `${relative(repoRoot, manifestPath)}: agents`);
+
+  const fleetAgentIds = new Set();
+  for (const [index, fleetAgent] of manifest.agents.entries()) {
+    const label = `${relative(repoRoot, manifestPath)}: agents[${index}]`;
+    assertObject(fleetAgent, label);
+    assertString(fleetAgent.agentId, `${label}.agentId`);
+    assertString(fleetAgent.stage, `${label}.stage`);
+    if (fleetAgent.outputs !== undefined) {
+      assertStringArray(fleetAgent.outputs, `${label}.outputs`, { requireNonEmpty: false });
+    }
+    if (fleetAgent.dependsOn !== undefined) {
+      assertStringArray(fleetAgent.dependsOn, `${label}.dependsOn`, { requireNonEmpty: false });
+    }
+
+    if (fleetAgentIds.has(fleetAgent.agentId)) {
+      fail(`${label}.agentId duplicates ${fleetAgent.agentId} in the same fleet manifest`);
+    }
+    fleetAgentIds.add(fleetAgent.agentId);
+  }
+
+  for (const [index, fleetAgent] of manifest.agents.entries()) {
+    const label = `${relative(repoRoot, manifestPath)}: agents[${index}]`;
+    for (const dependency of fleetAgent.dependsOn ?? []) {
+      if (dependency === fleetAgent.agentId) {
+        fail(`${label}.dependsOn cannot reference ${fleetAgent.agentId} itself`);
+      }
+      if (!fleetAgentIds.has(dependency)) {
+        fail(`${label}.dependsOn references unknown fleet agent ${dependency}`);
+      }
     }
   }
 }
@@ -227,7 +341,26 @@ async function main() {
     await validateAgent(agentRecord, agentRecords);
   }
 
-  console.log(`Validated ${agentRecords.size} repo-local agent definition(s).`);
+  let fleetCount = 0;
+  if (await exists(fleetsRoot)) {
+    const fleetDirs = await listFleetDirs();
+    const fleetRecords = [];
+
+    for (const fleetDir of fleetDirs) {
+      const fleetRecord = await loadFleetRecord(fleetDir);
+      fleetRecords.push(fleetRecord);
+    }
+
+    for (const fleetRecord of fleetRecords) {
+      await validateFleet(fleetRecord);
+    }
+
+    fleetCount = fleetRecords.length;
+  }
+
+  console.log(
+    `Validated ${agentRecords.size} repo-local agent definition(s) and ${fleetCount} fleet manifest(s).`,
+  );
 }
 
 main().catch((error) => {
