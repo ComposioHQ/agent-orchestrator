@@ -1,0 +1,180 @@
+---
+title: Configuration Overview
+description: The agent-orchestrator.yaml file — structure, location, and safe defaults.
+---
+
+# Configuration Overview
+
+AO is configured through a single YAML file named `agent-orchestrator.yaml`. The config is validated with Zod on every startup — errors are reported with the field path and a human-readable message before the process exits.
+
+## File location
+
+AO searches for the config file in this order:
+
+1. **`AO_CONFIG_PATH` environment variable** — if set and the file exists, it is used immediately.
+2. **Directory tree walk from the current working directory** — like `git`, AO walks up from `cwd` looking for `agent-orchestrator.yaml` or `agent-orchestrator.yml`.
+3. **Home directory locations** (checked last):
+   - `~/.agent-orchestrator.yaml`
+   - `~/.agent-orchestrator.yml`
+   - `~/.config/agent-orchestrator/config.yaml`
+
+The recommended location is the root of your project or any parent directory you run `ao` from. AO will find it automatically.
+
+## Minimal config that just works
+
+```yaml
+projects:
+  my-app:
+    repo: org/my-app
+    path: ~/my-app
+```
+
+That's it. Every other field has a sensible default. AO infers the SCM plugin from the repo slug, defaults to `claude-code` as the agent, `tmux` as the runtime, and `worktree` for workspace isolation.
+
+## Full annotated example
+
+```yaml
+# Web dashboard port (default: 3000)
+port: 3000
+
+# Terminal WebSocket ports (defaults: 14800 / 14801)
+# terminalPort: 14800
+# directTerminalPort: 14801
+
+# Default plugins — these are the built-in defaults, you can omit this block
+defaults:
+  runtime: tmux           # tmux | process
+  agent: claude-code      # claude-code | codex | aider | opencode
+  workspace: worktree     # worktree | clone
+  notifiers: [desktop]    # desktop | slack | webhook | composio | openclaw
+
+# External / installer-managed plugins (optional)
+# plugins:
+#   - name: owasp-auditor
+#     source: registry
+#     package: "@ao-plugins/owasp-auditor"
+#     version: "^0.1.0"
+#     enabled: true
+#
+#   - name: local-dev-plugin
+#     source: local
+#     path: ./plugins/local-dev-plugin
+#     enabled: true
+
+projects:
+  my-app:
+    name: My App
+    repo: org/my-app
+    path: ~/my-app
+    defaultBranch: main
+    sessionPrefix: app
+
+    tracker:
+      plugin: github   # github | linear | gitlab
+
+    scm:
+      plugin: github
+      webhook:
+        path: /api/webhooks/github
+        secretEnvVar: GITHUB_WEBHOOK_SECRET
+
+    symlinks: [.env, .claude]
+    postCreate:
+      - "pnpm install"
+
+    agentConfig:
+      permissions: permissionless
+      model: claude-sonnet-4-5
+
+    agentRules: |
+      Always run tests before pushing.
+      Use conventional commits.
+
+    agentRulesFile: .agent-rules.md
+
+    reactions:
+      approved-and-green:
+        auto: true   # enable auto-merge for this project only
+
+notifiers:
+  slack:
+    plugin: slack
+    webhook: ${SLACK_WEBHOOK_URL}
+    channel: "#agent-updates"
+
+notificationRouting:
+  urgent: [desktop, slack]
+  action: [desktop, slack]
+  warning: [slack]
+  info: [slack]
+
+reactions:
+  ci-failed:
+    auto: true
+    action: send-to-agent
+    retries: 2
+    escalateAfter: 2
+  approved-and-green:
+    auto: false
+    action: notify
+    priority: action
+```
+
+## Top-level keys
+
+| Key | Type | Default | Purpose |
+|-----|------|---------|---------|
+| `port` | `number` | `3000` | Dashboard HTTP port |
+| `terminalPort` | `number` | `14800` | tmux terminal WebSocket port |
+| `directTerminalPort` | `number` | `14801` | Direct terminal WebSocket port |
+| `readyThresholdMs` | `number` | `300000` | Milliseconds before an agent in "ready" state is considered idle |
+| `defaults` | object | see below | Default plugin selections |
+| `plugins` | array | `[]` | External/installer-managed plugins |
+| `projects` | `Record<string, Project>` | required | Project definitions (at least one required) |
+| `notifiers` | `Record<string, Notifier>` | `{}` | Named notification channels |
+| `notificationRouting` | `Record<string, string[]>` | `{}` | Route priority levels to notifier names |
+| `reactions` | `Record<string, Reaction>` | see defaults | Automatic responses to lifecycle events |
+
+## Default plugin slots
+
+The `defaults` block sets fallback values for every project that does not override them:
+
+| Field | Default | Options |
+|-------|---------|---------|
+| `defaults.runtime` | `tmux` | `tmux`, `process` |
+| `defaults.agent` | `claude-code` | `claude-code`, `codex`, `aider`, `opencode` |
+| `defaults.workspace` | `worktree` | `worktree`, `clone` |
+| `defaults.notifiers` | `[]` | `desktop`, `slack`, `webhook`, `composio`, `openclaw` |
+| `defaults.orchestrator.agent` | inherits `defaults.agent` | any agent name |
+| `defaults.worker.agent` | inherits `defaults.agent` | any agent name |
+
+## Zod validation on startup
+
+AO validates the config with Zod before doing anything else. Common validation errors:
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Project ID must match [a-zA-Z0-9_-]+` | Project key contains a dot, slash, or special character | Rename the key: `my.app` → `my-app` |
+| `Duplicate project ID detected` | Two projects resolve to the same directory basename | Give each project a unique `path` basename |
+| `Duplicate session prefix detected` | Two projects auto-generate the same `sessionPrefix` | Add an explicit `sessionPrefix` to one of them |
+| `Tracker config requires either plugin or package/path` | `tracker:` block has no `plugin` or external reference | Add `plugin: github` (or `linear`, `gitlab`) |
+| `Cannot have both package and path` | External plugin config specifies both | Remove one |
+
+## Data directory
+
+AO never writes to your project directory. All runtime data lives under:
+
+```
+~/.agent-orchestrator/{hash}-{projectId}/
+  sessions/      # session metadata (key-value files)
+  worktrees/     # git worktrees per session
+  archive/       # archived sessions
+```
+
+The `{hash}` is the first 12 characters of the SHA-256 of the config file's directory, preventing collisions when you have multiple checkouts of the same project.
+
+## Next steps
+
+- [Projects](/docs/configuration/projects) — all fields for a project entry
+- [Reactions](/docs//configuration/reactions) — configure automatic CI/review responses
+- [Remote Access](/docs/configuration/remote-access) — access the dashboard from another device

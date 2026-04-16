@@ -1,0 +1,21 @@
+{
+  "title": "Docs",
+  "pages": [
+    "---Getting Started---",
+    "index",
+    "getting-started",
+    "installation",
+    "quickstart",
+    "---Using AO---",
+    "workflows",
+    "configuration",
+    "---Reference---",
+    "cli",
+    "plugins",
+    "---Help---",
+    "troubleshooting",
+    "faq",
+    "changelog",
+    "migration"
+  ]
+}

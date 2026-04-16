@@ -1,0 +1,447 @@
+---
+title: Plugins Reference
+description: The eight plugin slots, available implementations, and how to choose.
+---
+
+# Plugins Reference
+
+Agent Orchestrator uses a plugin system with eight slots. Every major abstraction — agents, runtimes, workspaces, trackers, and more — is a pluggable interface. You choose one implementation per slot in `agent-orchestrator.yaml`.
+
+## Plugin slots overview
+
+| Slot | Default | Purpose |
+|------|---------|---------|
+| `agent` | `claude-code` | Which AI coding tool runs the work |
+| `runtime` | `tmux` | Where agent processes execute |
+| `workspace` | `worktree` | How code isolation is achieved |
+| `tracker` | `github` | Where issues come from |
+| `scm` | `github` | PR, CI, and review management |
+| `notifier` | `desktop` | How you receive notifications |
+| `terminal` | `iterm2` | How you attach to agent terminals |
+
+The `lifecycle` slot is built into core and is not pluggable.
+
+---
+
+## Agent
+
+The agent plugin controls which AI coding tool is spawned per session.
+
+### `claude-code`
+
+**Claude Code** by Anthropic. The default and most deeply integrated agent. Uses PostToolUse hooks to report PR metadata back to AO without any PATH interception.
+
+**Requirements:**
+- `ANTHROPIC_API_KEY` environment variable
+- `claude` binary in PATH (install via `npm install -g @anthropic-ai/claude-code`)
+
+**Config example:**
+
+```yaml
+projects:
+  - path: ~/repos/my-app
+    repo: org/my-app
+    defaultBranch: main
+    agentConfig:
+      agent: claude-code
+      model: claude-opus-4-5          # Optional: override model
+      permissionMode: acceptEdits     # Optional: auto-accept file edits
+```
+
+---
+
+### `codex`
+
+**OpenAI Codex CLI**. Uses PATH wrappers (`~/.ao/bin/gh`, `~/.ao/bin/git`) to intercept PR creation commands and report metadata to AO.
+
+**Requirements:**
+- `OPENAI_API_KEY` environment variable
+- `codex` binary in PATH (install via `npm install -g @openai/codex`)
+
+**Config example:**
+
+```yaml
+projects:
+  - path: ~/repos/my-app
+    repo: org/my-app
+    defaultBranch: main
+    agentConfig:
+      agent: codex
+      model: o4-mini                  # Optional: override model
+```
+
+---
+
+### `aider`
+
+**Aider** — an open-source AI pair programming tool. Uses AO activity JSONL for state tracking and PATH wrappers for PR metadata.
+
+**Requirements:**
+- API key for your chosen model provider (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`)
+- `aider` binary in PATH (install via `pip install aider-chat`)
+
+**Config example:**
+
+```yaml
+projects:
+  - path: ~/repos/my-app
+    repo: org/my-app
+    defaultBranch: main
+    agentConfig:
+      agent: aider
+      model: claude-sonnet-4-5        # Optional: aider model string
+```
+
+---
+
+### `opencode`
+
+**OpenCode** — a terminal-first AI coding agent. Uses AO activity JSONL for state tracking and PATH wrappers for PR metadata.
+
+**Requirements:**
+- API key for your chosen model provider
+- `opencode` binary in PATH
+
+**Config example:**
+
+```yaml
+projects:
+  - path: ~/repos/my-app
+    repo: org/my-app
+    defaultBranch: main
+    agentConfig:
+      agent: opencode
+```
+
+---
+
+## Runtime
+
+The runtime plugin controls where and how agent processes are executed.
+
+### `tmux`
+
+**tmux** — the default and recommended runtime. Each agent runs in a named tmux session. You can attach to any agent's terminal directly from the AO dashboard.
+
+**Requirements:**
+- `tmux` installed and in PATH
+
+**Config example:**
+
+```yaml
+runtime: tmux
+```
+
+**Why choose tmux:** Full terminal access from the dashboard, session persistence across disconnects, and reliable PTY handling. Use this unless you have a specific reason not to.
+
+---
+
+### `process`
+
+**Node.js child process** — runs agents as direct child processes of the AO server. Simpler than tmux but does not support terminal attach from the dashboard.
+
+**Requirements:** None beyond Node.js.
+
+**Config example:**
+
+```yaml
+runtime: process
+```
+
+**When to use:** CI environments or scripted workflows where you don't need live terminal access and tmux is unavailable.
+
+---
+
+## Workspace
+
+The workspace plugin controls how each session gets an isolated copy of the repository.
+
+### `worktree`
+
+**Git worktrees** — the default. Each session gets a `git worktree add` at `~/.agent-orchestrator/{hash}-{projectId}/worktrees/{sessionId}/`. All worktrees share the same `.git` directory, so no re-cloning is needed.
+
+**Requirements:** Git 2.5+ (worktree support).
+
+**Config example:**
+
+```yaml
+workspace: worktree
+```
+
+**Why choose worktree:** Fast (no network), disk-efficient (shared objects), and the worktree is ready in seconds. Use this unless your repo has worktree-incompatible hooks.
+
+---
+
+### `clone`
+
+**Full git clone** — each session gets a complete clone of the repository. Slower and more disk-intensive than worktrees, but compatible with any repo.
+
+**Requirements:** Network access to the remote (or a local path clone source).
+
+**Config example:**
+
+```yaml
+workspace: clone
+```
+
+**When to use:** Repos with hooks or submodules that don't work correctly with worktrees.
+
+---
+
+## Tracker
+
+The tracker plugin is where AO fetches issue details (title, description, comments) and writes back status updates.
+
+### `github`
+
+**GitHub Issues** — the default tracker. AO fetches issue data via the GitHub API and posts status comments as issues progress.
+
+**Requirements:**
+- `GITHUB_TOKEN` or `gh auth login` with repo access
+- The `repo` field set in each project config
+
+**Config example:**
+
+```yaml
+projects:
+  - path: ~/repos/my-app
+    repo: org/my-app
+    defaultBranch: main
+    # tracker defaults to github — no extra config needed
+```
+
+---
+
+### `linear`
+
+**Linear** — syncs with Linear issues. AO reads issue data from Linear and updates issue state as sessions progress.
+
+**Requirements:**
+- `LINEAR_API_KEY` environment variable
+- Linear workspace with the relevant team
+
+**Config example:**
+
+```yaml
+tracker:
+  name: linear
+  apiKey: ${LINEAR_API_KEY}
+  teamId: ENG                         # Linear team identifier
+```
+
+---
+
+### `gitlab`
+
+**GitLab Issues** — for self-hosted or GitLab.com repos. AO fetches issues via the GitLab API.
+
+**Requirements:**
+- `GITLAB_TOKEN` environment variable
+- GitLab instance URL (for self-hosted)
+
+**Config example:**
+
+```yaml
+tracker:
+  name: gitlab
+  token: ${GITLAB_TOKEN}
+  baseUrl: https://gitlab.example.com  # Omit for gitlab.com
+```
+
+---
+
+## SCM
+
+The SCM (source control management) plugin handles PR creation, CI status polling, and review state.
+
+### `github`
+
+**GitHub** — the default SCM. AO creates PRs, polls CI checks, and reads review state via the GitHub API.
+
+**Requirements:**
+- `GITHUB_TOKEN` or `gh auth login` with repo and PR permissions
+- The `repo` field set in each project config
+
+**Config example:**
+
+```yaml
+projects:
+  - path: ~/repos/my-app
+    repo: org/my-app          # Required for GitHub SCM
+    defaultBranch: main
+```
+
+---
+
+### `gitlab`
+
+**GitLab** — creates merge requests and polls CI pipelines via the GitLab API.
+
+**Requirements:**
+- `GITLAB_TOKEN` with `api` scope
+- GitLab instance URL (for self-hosted)
+
+**Config example:**
+
+```yaml
+scm:
+  name: gitlab
+  token: ${GITLAB_TOKEN}
+  baseUrl: https://gitlab.example.com  # Omit for gitlab.com
+  projectId: 12345                     # GitLab project ID
+```
+
+---
+
+## Notifier
+
+The notifier plugin sends you notifications when sessions change state (PR opened, CI failed, approved, etc.). You can configure multiple notifiers.
+
+### `desktop`
+
+**Native OS desktop notifications** — the default. Sends system notifications via `node-notifier`.
+
+**Requirements:** macOS, Windows, or Linux with a notification daemon.
+
+**Config example:**
+
+```yaml
+notifiers:
+  - name: desktop
+```
+
+---
+
+### `slack`
+
+**Slack** — posts messages to a Slack channel when session state changes.
+
+**Requirements:**
+- A Slack bot token with `chat:write` scope (`SLACK_BOT_TOKEN`)
+- The target channel ID
+
+**Config example:**
+
+```yaml
+notifiers:
+  - name: slack
+    token: ${SLACK_BOT_TOKEN}
+    channel: C01234567890             # Slack channel ID
+```
+
+---
+
+### `webhook`
+
+**Generic webhook** — POSTs a JSON payload to any HTTP endpoint when session state changes.
+
+**Requirements:** A reachable HTTPS endpoint that accepts POST requests.
+
+**Config example:**
+
+```yaml
+notifiers:
+  - name: webhook
+    url: https://example.com/ao-events
+    secret: ${WEBHOOK_SECRET}         # Optional HMAC secret for verification
+```
+
+**Payload shape:**
+
+```json
+{
+  "sessionId": "int-3",
+  "projectId": "integrator",
+  "status": "pr_open",
+  "pr": "https://github.com/org/repo/pull/42",
+  "timestamp": "2026-04-16T10:30:00Z"
+}
+```
+
+---
+
+### `composio`
+
+**Composio** — routes notifications through the Composio integration platform, enabling delivery to 200+ apps (email, Teams, Discord, Jira, etc.).
+
+**Requirements:**
+- A Composio API key (`COMPOSIO_API_KEY`)
+- A configured Composio trigger
+
+**Config example:**
+
+```yaml
+notifiers:
+  - name: composio
+    apiKey: ${COMPOSIO_API_KEY}
+    triggerId: ao-session-events      # Your Composio trigger name
+```
+
+---
+
+## Terminal
+
+The terminal plugin controls how you attach to a running agent's terminal from the AO dashboard.
+
+### `iterm2`
+
+**iTerm2** — the default on macOS. Opens a new iTerm2 tab or pane that attaches to the agent's tmux session.
+
+**Requirements:**
+- macOS with iTerm2 installed
+- iTerm2 Python API enabled (Preferences → General → Magic → Enable Python API)
+- `runtime: tmux`
+
+**Config example:**
+
+```yaml
+terminal: iterm2
+```
+
+---
+
+### `web`
+
+**In-browser terminal** — renders an xterm.js terminal directly in the AO dashboard. Works on any OS and any browser. The dashboard's terminal tab uses this plugin when enabled.
+
+**Requirements:**
+- `runtime: tmux` (WebSocket connects to the tmux PTY)
+- The AO web dashboard running
+
+**Config example:**
+
+```yaml
+terminal: web
+```
+
+**When to use:** Windows, Linux, or any environment where iTerm2 is not available. Also useful when you want terminal access without leaving the browser.
+
+---
+
+## Using multiple notifiers
+
+You can activate more than one notifier at the same time:
+
+```yaml
+notifiers:
+  - name: desktop
+  - name: slack
+    token: ${SLACK_BOT_TOKEN}
+    channel: C01234567890
+  - name: webhook
+    url: https://example.com/ao-events
+```
+
+AO fires all configured notifiers for each state change event.
+
+---
+
+## Choosing plugins for common setups
+
+| Setup | Recommended combination |
+|-------|------------------------|
+| Solo dev on macOS | `claude-code` + `tmux` + `worktree` + `github` + `iterm2` + `desktop` |
+| Team on Linux CI | `claude-code` + `process` + `worktree` + `github` + `web` + `slack` |
+| Self-hosted GitLab | `claude-code` + `tmux` + `worktree` + `gitlab` (tracker) + `gitlab` (scm) + `iterm2` |
+| Linear + GitHub | `claude-code` + `tmux` + `worktree` + `linear` + `github` + `iterm2` + `slack` |
+| Cost-conscious | `codex` + `tmux` + `worktree` + `github` + `web` + `desktop` |

@@ -1,0 +1,144 @@
+---
+title: FAQ
+description: Frequently asked questions about Agent Orchestrator.
+---
+
+## Can I use AO with private GitHub repositories?
+
+Yes. AO uses the GitHub CLI (`gh`) for all GitHub operations. As long as `gh auth login` has been completed with an account that has access to the private repository, AO will work without any additional configuration. Your credentials are stored by `gh` in its own secure store — AO never reads or stores GitHub tokens directly.
+
+---
+
+## Can I use AO without GitHub?
+
+Partially. The core orchestration engine (session management, worktrees, agent lifecycle) works without GitHub. However, the default tracker and SCM plugins require GitHub, so automatic PR creation and CI monitoring will not function.
+
+If you are using GitLab or Linear, configure the relevant plugins in `agent-orchestrator.yaml`:
+
+```yaml
+tracker:
+  plugin: gitlab   # or linear
+scm:
+  plugin: gitlab
+```
+
+Running agents on local tasks (without any issue tracker or SCM) is also supported — omit the `tracker` and `scm` keys and manage sessions manually via the dashboard.
+
+---
+
+## How do merge conflicts work when multiple agents edit the same files?
+
+Each agent runs in its own isolated git worktree on a dedicated branch, so agents cannot directly conflict with each other while working. Conflicts only arise at merge time, when two agents have independently edited the same lines.
+
+AO does not automatically resolve merge conflicts. When a PR has conflicts, the session will surface this in the dashboard. You can either:
+
+1. Attach to the session terminal and resolve the conflict manually, or
+2. Let one PR merge first and then rebase or re-apply the other agent's changes.
+
+Designing tasks to minimize overlap (e.g., assigning agents to different files or subsystems) is the most effective way to avoid conflicts.
+
+---
+
+## Where does AO store its data?
+
+AO uses flat files — there is no database. All state is stored under `~/.agent-orchestrator/`:
+
+| Path | Contents |
+|------|----------|
+| `~/.agent-orchestrator/<hash>-<projectId>/sessions/<sessionId>` | Session metadata (key-value pairs) |
+| `~/.agent-orchestrator/<hash>-<projectId>/worktrees/<sessionId>/` | Agent's git worktree |
+| `~/.agent-orchestrator/<hash>-<projectId>/archive/<sessionId>_<ts>` | Archived session data |
+
+The `<hash>` prefix is a 12-character SHA-256 of the config directory path, which prevents collisions when the same project is checked out in multiple locations.
+
+---
+
+## What happens if I restart AO or my machine?
+
+Session metadata is persisted to disk, so AO can recover state after a restart. When `ao start` runs again, it reads the session files from `~/.agent-orchestrator/` and restores the in-memory state.
+
+However, tmux sessions (where agents run) are also persisted across reboots as long as the tmux server is still running. If the machine rebooted, the tmux sessions are gone and any running agents have exited. Those sessions will show as `exited` in the dashboard. You can archive or clean them up from the dashboard UI.
+
+---
+
+## Can I change which Claude model agents use?
+
+Yes. Set the model in your `agent-orchestrator.yaml` under the agent config block:
+
+```yaml
+agent:
+  plugin: claude-code
+  config:
+    model: claude-opus-4-5   # or any supported model identifier
+```
+
+You can also set the `ANTHROPIC_MODEL` environment variable before starting AO, which the Claude Code agent respects by default.
+
+---
+
+## How do I estimate cost before running agents?
+
+AO surfaces the cost reported by each agent in the session detail view (where supported). Claude Code reports token usage and cost per session, which you can see in the dashboard.
+
+Before running, you can estimate cost by:
+1. Checking the Anthropic pricing page for the model you plan to use.
+2. Estimating the size of your codebase context — larger repos with many files will consume more tokens per agent turn.
+3. Starting with a single agent on a well-scoped task before scaling to many parallel sessions.
+
+There is currently no pre-run cost cap feature. Monitor costs via the dashboard during a session.
+
+---
+
+## Can I run AO in Docker or a container?
+
+Yes. The repository includes a `Containerfile` (compatible with both Docker and Podman). Build and run it:
+
+```bash
+# With Docker
+docker build -f Containerfile -t agent-orchestrator .
+docker run -it --rm \
+  -v ~/.agent-orchestrator:/root/.agent-orchestrator \
+  -v $(pwd)/agent-orchestrator.yaml:/app/agent-orchestrator.yaml \
+  -p 3000:3000 \
+  agent-orchestrator
+
+# With Podman
+podman build -f Containerfile -t agent-orchestrator .
+```
+
+When running in a container, ensure that:
+- The `gh` CLI is authenticated (mount `~/.config/gh` or set `GH_TOKEN`)
+- The agent binary (e.g. `claude`) is installed inside the container
+- Tmux is available inside the container if using the tmux runtime
+
+---
+
+## Is there a hosted or cloud version of AO?
+
+Not at this time. AO is entirely self-hosted and runs on your own machine or infrastructure. There is no SaaS offering. Follow the [GitHub repository](https://github.com/ComposioHQ/agent-orchestrator) for announcements.
+
+---
+
+## How do I update AO to the latest version?
+
+If you installed the global `ao` CLI via npm/pnpm:
+
+```bash
+pnpm update -g @aoagents/ao
+```
+
+If you are running from source:
+
+```bash
+git pull origin main
+pnpm install
+pnpm build
+```
+
+After updating, validate your config to catch any schema changes:
+
+```bash
+ao config validate
+```
+
+See the [Changelog](/docs/changelog) page for release notes and the [Migration Notes](/docs/migration) page for any breaking changes.

@@ -1,0 +1,138 @@
+---
+title: Review Loop
+description: How AO handles "changes requested" reviews and pushes updated code.
+---
+
+# Review Loop
+
+When a reviewer leaves "changes requested" on an agent's PR, AO detects the review event, collects the unresolved comments, and sends them to the agent as a new prompt. The agent reads the feedback, makes the changes, and pushes an updated commit. This loop repeats until the PR is approved or escalated to you.
+
+## How AO detects review events
+
+AO's lifecycle manager polls the SCM plugin (GitHub by default) on each tick (~60 seconds). On each tick it:
+
+1. Calls the GitHub Reviews API for the session's PR
+2. Checks whether the latest review state is `CHANGES_REQUESTED`
+3. If a new changes-requested review arrived since the last tick, triggers the `changes-requested` reaction
+
+AO tracks which review it last processed. It will not re-send the same review comments twice unless the session re-enters `review_pending` state.
+
+## What context the agent receives
+
+When AO fires the `changes-requested` reaction, it constructs a prompt that includes:
+
+- The default message from your config (or AO's built-in fallback: `"Review comments on your PR. Check with gh pr view --comments and address each one."`)
+- The unresolved inline review comments (file, line, and comment body)
+- The top-level PR review body if the reviewer left a summary
+
+The agent receives this prompt in its running session. It can run `gh pr view --comments` to read comments in full, make the requested changes, push a new commit, and re-request review.
+
+## Configuring changes-requested reactions
+
+```yaml
+reactions:
+  changes-requested:
+    auto: true              # Must be true for AO to act without human approval
+    action: send-to-agent   # Send the review context to the agent
+    escalateAfter: 30m      # Notify human if the agent has not resolved comments in 30 minutes
+```
+
+### Key fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `auto` | boolean | `false` | Set to `true` to let AO act automatically |
+| `action` | string | `send-to-agent` | What AO does — `send-to-agent` or `notify` |
+| `escalateAfter` | duration | `30m` | If the agent has not pushed a fix within this window, notify the human |
+| `message` | string | built-in | Custom prompt prefix sent to the agent along with the comment list |
+
+### Custom review message
+
+Override the message to add repo-specific context for the agent:
+
+```yaml
+reactions:
+  changes-requested:
+    auto: true
+    action: send-to-agent
+    escalateAfter: 30m
+    message: |
+      Your PR has review feedback. Resolve every unresolved comment.
+      Rules for this repo:
+      - Do not rebase — use merge commits only
+      - Run `pnpm lint:fix` after changes
+      - Re-request review from the original reviewer when done
+```
+
+## When human review is still needed
+
+AO automates the mechanical parts of the review loop, but there are situations where a human must step in:
+
+**Design disagreements.** A reviewer may object to the approach rather than pointing to a specific code fix. Comments like "this whole feature should be done differently" or "please rethink the architecture" are too ambiguous for the agent to resolve correctly. The session will move to **Respond** after `escalateAfter` if the agent has not pushed a satisfactory fix.
+
+**Ambiguous feedback.** Vague comments ("this seems fragile", "can we do better here?") give the agent insufficient information. The agent may make a change that does not satisfy the reviewer, leading to another round of changes requested. If you see this pattern, add a clarifying comment on the PR directly and click **Re-run** in the dashboard.
+
+**Security and correctness concerns.** If a reviewer is questioning the correctness of the agent's logic (not just style), that is a signal to read the code yourself. The agent can produce plausible-looking code that has subtle bugs.
+
+**Access and permission issues.** If the agent cannot push because of branch protection rules, required status checks, or CODEOWNERS restrictions, the session will stall. These require human intervention in GitHub settings.
+
+## The approve-and-merge flow
+
+Once the reviewer approves the PR and CI is green, the session moves to **Ready to Merge**. What happens next depends on `reactions.approved-and-green`:
+
+```yaml
+reactions:
+  approved-and-green:
+    auto: false          # Default: require human confirmation before merging
+    action: notify       # Send a notification that the PR is ready
+    priority: action
+```
+
+With `auto: false` (the default), AO notifies you and waits. You click **Merge** in the dashboard or merge on GitHub. With `auto: true`, AO merges immediately:
+
+```yaml
+reactions:
+  approved-and-green:
+    auto: true
+    action: auto-merge
+```
+
+Only enable `auto: true` if you trust your CI pipeline and agent output completely. A good intermediate setup is `auto: false` with Slack notifications so you see the merge opportunity quickly without giving up the final review.
+
+## Manual intervention steps
+
+When a session is in the **Respond** column due to unresolved review comments:
+
+1. Open the dashboard and click the session card
+2. Read the **Activity** panel to see what the agent last attempted
+3. Open the PR on GitHub to read the full reviewer thread
+4. Choose one of:
+   - **Add a clarifying comment** on the PR thread, then click **Re-run** in the dashboard
+   - **Edit the code yourself** on the branch and push, then click **Re-run**
+   - **Resolve the comments manually** on GitHub if the concern is minor
+   - **Kill the session** if the issue needs a full redesign
+
+## Expected results
+
+With `reactions.changes-requested.auto: true` and a review requesting changes:
+
+1. AO detects the review within ~60 seconds
+2. The session card shows a **Review: changes requested** badge and moves to the **Review** column
+3. The agent receives the comment list and pushes an updated commit
+4. The session moves back to **Pending** while CI runs
+5. If CI passes and the reviewer approves, the session moves to **Ready to Merge**
+6. If the agent cannot resolve comments within `escalateAfter`, the session moves to **Respond**
+
+## Caveats
+
+- **Re-review is not automatic**: AO does not automatically re-request review after the agent pushes changes. The agent should do this itself (using `gh pr review --request-review`) or you can do it from GitHub.
+- **Comment threading**: AO collects top-level and inline comments but does not thread conversation history deeply. If a reviewer replied to an agent response and the thread is long, the agent only sees the most recent context. Check the full thread on GitHub for complex discussions.
+- **Multiple reviewers**: if two reviewers request changes simultaneously, AO collects comments from both and sends them together. If one approves and the other still has pending comments, the session stays in `review_pending`.
+- **Draft PRs**: AO does not fire review reactions for draft PRs. Mark the PR as ready for review to enable the loop.
+- **Polling lag**: as with CI, there is up to a ~60-second lag between a review being submitted and AO reacting.
+
+## Next steps
+
+- [CI Recovery](/docs/workflows/ci-recovery) — how AO handles CI failures before the review stage
+- [Parallel Issues](/docs/workflows/parallel-issues) — running multiple sessions simultaneously
+- [Configuration — Reactions](/docs/configuration/reactions) — full reference for all `reactions` fields

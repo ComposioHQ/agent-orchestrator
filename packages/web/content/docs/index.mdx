@@ -1,0 +1,54 @@
+---
+title: Introduction
+description: Run parallel AI coding agents that autonomously open PRs, fix CI failures, and respond to review comments.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Step, Steps } from "fumadocs-ui/components/steps";
+
+Agent Orchestrator (AO) spawns multiple AI coding agents simultaneously — each in its own git worktree with its own PR — and gives you a single dashboard to supervise them all.
+
+<Callout type="info" title="New to AO?">
+  Start with [Installation](/docs/installation), then follow the [Quickstart](/docs/quickstart/first-run) to spawn your first agent in under 5 minutes.
+</Callout>
+
+## What AO does for you
+
+| Problem | What AO does |
+|---------|-------------|
+| Waiting for one agent to finish before starting another | Runs agents in parallel — one per GitHub issue |
+| Manually re-running agents after CI fails | Automatically detects CI failures and re-runs the agent |
+| Chasing down review comments | Wakes the agent when "changes requested" lands; agent pushes fixes |
+| Losing context when you close your laptop | Persists sessions in `~/.agent-orchestrator`; resumes across reboots |
+
+## How it works
+
+<Steps>
+  <Step>
+    ### Point AO at your repo
+    Create a config or just run `ao start` — AO auto-generates `agent-orchestrator.yaml` for you.
+  </Step>
+  <Step>
+    ### Spawn agents for issues
+    Run `ao spawn --issue 42` — AO creates an isolated git worktree and launches Claude Code inside it.
+  </Step>
+  <Step>
+    ### Watch the dashboard
+    Each agent gets a card on the Kanban board. Cards move through columns automatically: **Spawning** → **Working** → **PR Open** → **Mergeable**.
+  </Step>
+  <Step>
+    ### Merge when ready
+    AO handles CI failures and review comments automatically. You just review and merge.
+  </Step>
+</Steps>
+
+## Explore the docs
+
+<Cards>
+  <Card title="Installation" description="Prerequisites, install steps, and first-run verification." href="/docs/installation" />
+  <Card title="Quickstart" description="Spawn your first agent and watch it open a PR." href="/docs/quickstart/first-run" />
+  <Card title="Workflows" description="Parallel issues, CI recovery, review loops, multi-project." href="/docs/workflows/parallel-issues" />
+  <Card title="Configuration" description="All config options with examples." href="/docs/configuration/overview" />
+  <Card title="CLI Reference" description="Every ao command with flags and examples." href="/docs/cli" />
+  <Card title="Troubleshooting" description="Common issues and concrete fixes." href="/docs/troubleshooting" />
+</Cards>

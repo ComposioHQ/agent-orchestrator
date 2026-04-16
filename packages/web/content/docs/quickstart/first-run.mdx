@@ -1,0 +1,143 @@
+---
+title: First Run
+description: Spawn your first AO session and watch an agent open a PR.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Step, Steps } from "fumadocs-ui/components/steps";
+import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
+
+<Callout type="info">
+  **Time to complete:** 5-10 minutes (not counting agent work time, which varies by issue size).
+</Callout>
+
+## Prerequisites
+
+Before starting, confirm you have:
+
+- `ao` installed and on your PATH (`ao --version` prints a version number)
+- Claude API key set: `ANTHROPIC_API_KEY` in your environment
+- `gh` CLI authenticated: `gh auth status` shows your GitHub account
+- `tmux` installed: `tmux -V` prints a version number
+- A GitHub repository with at least one open issue
+
+## Walkthrough
+
+<Steps>
+  <Step>
+    ### Create the config
+
+    In your project root, create a minimal config file:
+
+    ```yaml title="agent-orchestrator.yaml"
+    project:
+      name: my-project
+      repo: your-org/your-repo
+
+    agent:
+      type: claude-code
+
+    tracker:
+      type: github
+      repo: your-org/your-repo
+    ```
+
+    Replace `your-org/your-repo` with your actual GitHub repository slug. That is the smallest valid config — AO uses sensible defaults for everything else.
+  </Step>
+  <Step>
+    ### Start the AO server
+
+    ```bash
+    ao start
+    ```
+
+    Expected output:
+
+    ```
+    Agent Orchestrator v0.x.x
+    Config loaded: agent-orchestrator.yaml
+    Dashboard: http://localhost:3000
+    Server listening on :4000
+    ```
+
+    Open `http://localhost:3000` in a browser — you will see an empty Kanban board. Leave this terminal running and open a second terminal.
+  </Step>
+  <Step>
+    ### Spawn an agent for an issue
+
+    ```bash
+    ao spawn --issue 42
+    ```
+
+    AO fetches the issue, creates an isolated git worktree on branch `ao-42`, and launches Claude Code inside a tmux session.
+  </Step>
+  <Step>
+    ### Watch the dashboard
+
+    Reload `http://localhost:3000`. Within a few seconds:
+
+    1. A card appears in the **Spawning** column.
+    2. It moves to **Working** once the agent produces output.
+    3. The card shows an activity indicator: **active**, **ready**, or **idle**.
+
+    Click the card to open the session detail view with a live terminal stream.
+  </Step>
+  <Step>
+    ### Wait for the PR
+
+    AO polls GitHub every 30 seconds. When the agent opens a pull request, the card moves to **PR Open** with a direct link.
+
+    The whole process typically takes 5-20 minutes for a self-contained issue. You have nothing to do until the card moves columns — AO handles CI polling and re-engagement automatically.
+  </Step>
+  <Step>
+    ### Confirm success
+
+    The session has succeeded when the card is in **PR Open**, **Mergeable**, or **Done**, and the PR contains real commits on branch `ao-42`.
+  </Step>
+</Steps>
+
+## Troubleshooting: nothing happens after 5 minutes
+
+<Accordions type="single">
+  <Accordion title="Agent is waiting for a permission prompt" id="permission-prompt">
+    Claude Code requires explicit approval before running certain commands. The dashboard shows **waiting_input** on the card.
+
+    Attach to the agent's terminal:
+
+    ```bash
+    ao attach --session sess_abc123
+    ```
+
+    If you see `Allow tool: Bash? [y/n]`, press `y` to approve. To avoid this in future runs:
+
+    ```yaml title="agent-orchestrator.yaml"
+    agent:
+      type: claude-code
+      permissionMode: acceptEdits
+    ```
+  </Accordion>
+  <Accordion title="Common error messages" id="errors">
+    | Message | Cause | Fix |
+    |---------|-------|-----|
+    | `ANTHROPIC_API_KEY not set` | Missing API key | Export the key and restart `ao start` |
+    | `gh: command not found` | `gh` not in PATH | Install GitHub CLI and run `gh auth login` |
+    | `fatal: not a git repository` | Wrong working directory | Run `ao start` from your project root |
+    | `Error: issue not found` | Issue number wrong or wrong repo | Check the `tracker.repo` field |
+  </Accordion>
+  <Accordion title="Restarting a stuck session" id="restart">
+    If the tmux session has exited unexpectedly:
+
+    ```bash
+    ao respawn --session sess_abc123
+    ```
+
+    This re-launches the agent in the same worktree, passing it the existing work as context.
+  </Accordion>
+</Accordions>
+
+## Next step
+
+<Cards>
+  <Card title="Parallel Issues" description="Spawn one agent per issue and supervise them from a single dashboard." href="/docs/workflows/parallel-issues" />
+  <Card title="Configuration" description="Fine-tune AO's behavior with the full config reference." href="/docs/configuration/overview" />
+</Cards>

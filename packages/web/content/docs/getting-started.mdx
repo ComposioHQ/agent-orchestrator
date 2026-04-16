@@ -1,0 +1,73 @@
+---
+title: Getting Started
+description: How AO fits into your workflow and the key concepts you need before running it.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Step, Steps } from "fumadocs-ui/components/steps";
+
+<Callout type="info">
+  This page builds the mental model you need to use AO effectively. Read this once, then go to [Installation](/docs/installation) to set it up.
+</Callout>
+
+## The three-layer model
+
+```
+You (operator)
+    │
+    ▼
+AO Dashboard  ──  supervises  ──►  Session 1 (agent in worktree-A, PR #42)
+                                   Session 2 (agent in worktree-B, PR #43)
+                                   Session 3 (agent in worktree-C, PR #44)
+```
+
+**You** watch the dashboard. You merge PRs, respond to escalations, and decide when to kill stuck sessions.
+
+**AO** manages the lifecycle. It spawns agents, watches CI and PR state, and re-engages agents when something needs attention.
+
+**Agents** (Claude Code by default) live in isolated git worktrees. Each one is working on exactly one GitHub issue and owns exactly one PR.
+
+## Sessions and worktrees
+
+Every issue AO works on becomes a **session**. A session has:
+
+- A dedicated **git worktree** at `~/.agent-orchestrator/{hash}/worktrees/{sessionId}/` — a full working copy of your repo on a feature branch. The agent writes code here; your main working directory is untouched.
+- A **tmux session** where the agent process runs. You can attach to it directly from the dashboard terminal.
+- **Metadata** persisted to disk so AO can recover state across restarts.
+
+## The session lifecycle
+
+```
+spawning → working → pr_open → ci_failed → working (again)
+                             ↘ review_pending → changes_requested → working (again)
+                             ↘ approved → mergeable → merged → done
+```
+
+Sessions move through these states automatically. You only need to act when a session needs your input or when you want to force-merge.
+
+## Reactions
+
+**Reactions** are AO's rules for what to do when a session changes state. The defaults handle the common cases:
+
+<Steps>
+  <Step>
+    ### CI failed
+    AO re-runs the agent with the failure log attached.
+  </Step>
+  <Step>
+    ### Changes requested
+    AO re-runs the agent with the review comments attached.
+  </Step>
+  <Step>
+    ### Approved + CI green
+    AO marks the session as mergeable and notifies you.
+  </Step>
+</Steps>
+
+You can add custom reactions in `agent-orchestrator.yaml`. See [Reactions configuration](/docs/configuration/reactions).
+
+## Next step
+
+<Cards>
+  <Card title="Install AO" description="Prerequisites, install steps, and first-run verification." href="/docs/installation" />
+</Cards>

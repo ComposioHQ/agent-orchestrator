@@ -1,0 +1,273 @@
+---
+title: CLI Reference
+description: All ao commands with options and examples.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Tab, Tabs } from "fumadocs-ui/components/tabs";
+
+The `ao` CLI is the control interface for Agent Orchestrator. Most commands are invoked by the **orchestrator agent itself** to manage sessions autonomously. As a human operator, you typically only need `ao start` and the web dashboard.
+
+<Callout type="info">
+  Run `ao config-help` to see the full config schema reference at any time.
+</Callout>
+
+## Human commands
+
+These are the commands you use day-to-day.
+
+### `ao start`
+
+Start the dashboard, orchestrator, and lifecycle worker. Auto-detects config from the current directory.
+
+```bash
+ao start                    # Auto-detect config, start everything
+ao start <url>              # Clone a GitHub repo, auto-configure, and start
+ao start ~/other-repo       # Add a new project and start
+```
+
+### `ao stop`
+
+Stop everything — the dashboard, orchestrator, and lifecycle worker.
+
+```bash
+ao stop
+```
+
+### `ao status`
+
+Show an overview of all active sessions.
+
+```bash
+ao status             # One-time snapshot
+ao status --watch     # Live-updating terminal view
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--watch` | off | Continuously refresh the status view in the terminal |
+
+### `ao dashboard`
+
+Open the web dashboard in your default browser.
+
+```bash
+ao dashboard
+```
+
+---
+
+## Orchestrator agent commands
+
+These commands are primarily invoked by the orchestrator agent running inside a tmux session. You can run them manually when needed, but the orchestrator handles them automatically in normal operation.
+
+### `ao spawn`
+
+Spawn an agent for a GitHub issue.
+
+```bash
+ao spawn [issue]                   # Spawn for an issue (project auto-detected from cwd)
+ao spawn 123 --agent codex         # Override the agent for this session
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--agent` | config default | Override the agent plugin for this session (`claude-code`, `codex`, `aider`, `opencode`) |
+
+**Examples:**
+
+```bash
+# Spawn an agent for issue #42 in the current project
+ao spawn 42
+
+# Spawn using Codex instead of the default agent
+ao spawn 42 --agent codex
+```
+
+### `ao batch-spawn`
+
+Spawn agents for multiple issues at once.
+
+```bash
+ao batch-spawn 101 102 103
+```
+
+**Examples:**
+
+```bash
+# Kick off three parallel agents in one command
+ao batch-spawn 101 102 103
+```
+
+### `ao send`
+
+Send a message or instructions to a running agent.
+
+```bash
+ao send <session> "Fix the tests"
+```
+
+**Examples:**
+
+```bash
+# Tell a running session to focus on tests
+ao send int-3 "The failing test is in src/auth.ts, focus there"
+```
+
+### `ao session ls`
+
+List all sessions, with status and metadata.
+
+```bash
+ao session ls
+```
+
+### `ao session kill`
+
+Kill a running session.
+
+```bash
+ao session kill <session>
+```
+
+**Examples:**
+
+```bash
+ao session kill int-3
+```
+
+### `ao session restore`
+
+Revive a crashed or exited agent, resuming the session from where it left off.
+
+```bash
+ao session restore <session>
+```
+
+**Examples:**
+
+```bash
+ao session restore int-2
+```
+
+---
+
+## Maintenance commands
+
+### `ao doctor`
+
+Check your install, runtime, and configuration for common issues.
+
+```bash
+ao doctor          # Diagnose only
+ao doctor --fix    # Apply safe fixes automatically
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--fix` | off | Automatically apply safe fixes for detected issues |
+
+`ao doctor` checks:
+
+- PATH and launcher resolution
+- Required binaries (tmux, gh, git)
+- Configured plugin resolution
+- tmux and GitHub CLI health
+- Config support directories
+- Stale AO temp files
+- Core build and runtime sanity
+
+**Examples:**
+
+```bash
+# See what's wrong without changing anything
+ao doctor
+
+# Fix whatever can be fixed automatically
+ao doctor --fix
+```
+
+### `ao update`
+
+Update your local AO install (source installs only).
+
+```bash
+ao update                  # Full update: pull, reinstall, rebuild, smoke test
+ao update --skip-smoke     # Stop after rebuild, skip smoke tests
+ao update --smoke-only     # Rerun only the smoke checks
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--skip-smoke` | off | Stop after rebuild without running smoke tests |
+| `--smoke-only` | off | Skip the pull/rebuild and only rerun smoke checks |
+
+`ao update` fast-forwards the local install on `main`, reinstalls dependencies, clean-rebuilds core packages, refreshes the launcher, and runs smoke tests.
+
+### `ao config-help`
+
+Print the full config schema reference, showing every available field with types and defaults.
+
+```bash
+ao config-help
+```
+
+---
+
+## Environment variables
+
+These environment variables influence AO's behavior at runtime.
+
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_API_KEY` | Required for Claude Code agent. Set in your shell or in `agent-orchestrator.yaml` |
+| `OPENAI_API_KEY` | Required for Codex agent |
+| `GITHUB_TOKEN` | GitHub personal access token for SCM and tracker operations. Can also be set via `gh auth login` |
+| `LINEAR_API_KEY` | Required when using the Linear tracker plugin |
+| `SLACK_BOT_TOKEN` | Required when using the Slack notifier plugin |
+| `AO_SESSION_ID` | Set automatically by AO on each agent process. Identifies the owning session |
+| `AO_ISSUE_ID` | Set automatically by AO on each agent process. The issue being worked on |
+| `AO_CONFIG_PATH` | Override the path to `agent-orchestrator.yaml` (defaults to auto-discovery from cwd) |
+| `AO_LOG_LEVEL` | Log verbosity: `error`, `warn`, `info`, `debug` (default: `info`) |
+
+---
+
+## Session identifiers
+
+AO uses two forms of session identifier:
+
+| Form | Example | When to use |
+|------|---------|-------------|
+| User-facing name | `int-3` | All CLI commands |
+| tmux name | `a3b4c5d6e7f8-int-3` | Direct tmux attach |
+
+The user-facing name is always `{prefix}-{number}`. The prefix is auto-derived from the project name (`integrator` → `int`, `agent-orchestrator` → `ao`) or set explicitly via `sessionPrefix` in config.
+
+---
+
+## Quick reference
+
+```bash
+# Day-to-day operator commands
+ao start                      # Start everything
+ao start <github-url>         # Clone repo and start
+ao stop                       # Stop everything
+ao status                     # Session overview
+ao status --watch             # Live status view
+ao dashboard                  # Open browser dashboard
+
+# Session management (usually automatic)
+ao spawn 42                   # Spawn agent for issue #42
+ao spawn 42 --agent codex     # Spawn with specific agent
+ao batch-spawn 101 102 103    # Spawn multiple at once
+ao send int-3 "message"       # Send instructions to session
+ao session ls                 # List sessions
+ao session kill int-3         # Kill a session
+ao session restore int-2      # Restore a crashed session
+
+# Maintenance
+ao doctor                     # Diagnose issues
+ao doctor --fix               # Diagnose and auto-fix
+ao update                     # Update local install
+ao config-help                # Show config schema
+```

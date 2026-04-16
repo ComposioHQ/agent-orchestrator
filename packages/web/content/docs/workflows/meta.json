@@ -1,0 +1,9 @@
+{
+  "title": "Workflows",
+  "pages": [
+    "parallel-issues",
+    "ci-recovery",
+    "review-loop",
+    "multi-project"
+  ]
+}

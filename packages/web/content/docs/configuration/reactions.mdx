@@ -1,0 +1,200 @@
+---
+title: Reactions
+description: Configure what AO does automatically when CI fails, reviews arrive, or PRs are approved.
+---
+
+# Reactions
+
+Reactions are AO's automatic responses to lifecycle events — CI failures, review comments, approvals, and agent state changes. They are the core of AO's autonomous loop.
+
+**You do not need to configure reactions to get started.** AO ships with sensible defaults that cover all common events. The `reactions` block in your config is only needed when you want to override or extend the defaults.
+
+## Default reactions
+
+These defaults are active in every AO installation without any config:
+
+| Event | Default action | Retries | Escalation |
+|-------|---------------|---------|-----------|
+| `ci-failed` | `send-to-agent` | 2 | after 2 failures |
+| `changes-requested` | `send-to-agent` | — | after 30 minutes |
+| `bugbot-comments` | `send-to-agent` | — | after 30 minutes |
+| `merge-conflicts` | `send-to-agent` | — | after 15 minutes |
+| `approved-and-green` | `notify` (urgent) | — | — |
+| `agent-idle` | `send-to-agent` | 2 | after 15 minutes |
+| `agent-stuck` | `notify` (urgent) | — | threshold: 10 min |
+| `agent-needs-input` | `notify` (urgent) | — | — |
+| `agent-exited` | `notify` (urgent) | — | — |
+| `all-complete` | `notify` (info) | — | — |
+
+The `send-to-agent` action sends a message directly to the running agent's terminal. The `notify` action sends a notification through the configured notifiers.
+
+## Full reactions config
+
+```yaml
+reactions:
+  ci-failed:
+    auto: true
+    action: send-to-agent
+    message: "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push."
+    retries: 2
+    escalateAfter: 2
+
+  changes-requested:
+    auto: true
+    action: send-to-agent
+    message: "There are review comments on your PR. Address each one, push fixes, and reply."
+    escalateAfter: "30m"
+
+  bugbot-comments:
+    auto: true
+    action: send-to-agent
+    message: "Automated review comments found on your PR. Fix the issues flagged by the bot."
+    escalateAfter: "30m"
+
+  merge-conflicts:
+    auto: true
+    action: send-to-agent
+    message: "Your branch has merge conflicts. Rebase on the default branch and resolve them."
+    escalateAfter: "15m"
+
+  approved-and-green:
+    auto: false          # set to true for auto-merge
+    action: notify
+    priority: action
+    message: "PR is ready to merge"
+
+  agent-idle:
+    auto: true
+    action: send-to-agent
+    message: "You appear to be idle. Continue working or explain what is blocking you."
+    retries: 2
+    escalateAfter: "15m"
+
+  agent-stuck:
+    auto: true
+    action: notify
+    priority: urgent
+    threshold: "10m"
+
+  agent-needs-input:
+    auto: true
+    action: notify
+    priority: urgent
+
+  agent-exited:
+    auto: true
+    action: notify
+    priority: urgent
+
+  all-complete:
+    auto: true
+    action: notify
+    priority: info
+    includeSummary: true
+```
+
+## Reaction fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `auto` | `boolean` | `true` | Whether this reaction fires automatically. Set to `false` to require manual intervention. |
+| `action` | `"send-to-agent" \| "notify" \| "auto-merge"` | `"notify"` | What to do when the event fires. |
+| `message` | `string` | built-in | Message sent to the agent (`send-to-agent`) or included in notification (`notify`). |
+| `priority` | `"urgent" \| "action" \| "warning" \| "info"` | none | Notification priority, used with `notificationRouting` to route to the right channels. |
+| `retries` | `number` | none | How many times to retry `send-to-agent` before escalating. |
+| `escalateAfter` | `number \| string` | none | When to escalate. A number means "after N retries". A string like `"30m"` means "after 30 minutes". |
+| `threshold` | `string` | none | For `agent-stuck`: how long the agent must be unresponsive before the event fires. E.g. `"10m"`. |
+| `includeSummary` | `boolean` | none | For `all-complete`: include a per-session summary in the notification. |
+
+### `action` values
+
+**`send-to-agent`** — Sends the `message` directly into the agent's terminal. The agent reads it and responds. Used for recoverable situations where the agent can fix the problem autonomously.
+
+**`notify`** — Sends a notification through the configured notifiers (desktop, Slack, etc.). Used when human attention is needed or the event is informational.
+
+**`auto-merge`** — Merges the PR automatically when all checks pass. Only meaningful for `approved-and-green`. See the auto-merge warning below.
+
+## Event reference
+
+| Event key | When it fires |
+|-----------|--------------|
+| `ci-failed` | CI checks on the PR fail |
+| `changes-requested` | A reviewer requests changes on the PR |
+| `bugbot-comments` | An automated bot (e.g. BugBot) leaves review comments |
+| `merge-conflicts` | The PR branch has merge conflicts with the target branch |
+| `approved-and-green` | PR is approved and all CI checks pass — ready to merge |
+| `agent-idle` | Agent process is alive but has been idle for longer than `readyThresholdMs` |
+| `agent-stuck` | Agent has not produced any output for longer than `threshold` |
+| `agent-needs-input` | Agent is waiting for a permission prompt to be answered |
+| `agent-exited` | Agent process has exited unexpectedly |
+| `all-complete` | All sessions for the project have reached `done` state |
+
+## Per-project reaction overrides
+
+You can override individual reactions for a specific project without affecting the global defaults. Only the fields you specify are changed — everything else falls through to the global config.
+
+```yaml
+projects:
+  my-app:
+    reactions:
+      approved-and-green:
+        auto: true          # auto-merge for this project
+      ci-failed:
+        retries: 5          # be more patient with flaky CI
+        escalateAfter: 5
+```
+
+This is useful when projects have different CI reliability profiles or different auto-merge policies.
+
+## Escalation behavior
+
+When `retries` is set and the agent has failed that many times, AO escalates the session to the `review_pending` state and sends an `urgent` notification. A human must then manually resume or close the session from the dashboard.
+
+When `escalateAfter` is a time string (e.g. `"30m"`), AO tracks how long the session has been in the waiting state and escalates if the time is exceeded without resolution.
+
+The two forms can be combined:
+
+```yaml
+ci-failed:
+  retries: 3
+  escalateAfter: "2h"   # also escalate if stuck for over 2 hours regardless of retry count
+```
+
+## Auto-merge warning
+
+Setting `approved-and-green.auto: true` (or `action: auto-merge`) will merge PRs automatically without any human review step. Before enabling this:
+
+- Ensure your branch protection rules require passing CI.
+- Ensure at least one human approval is required before the `approved-and-green` event can fire.
+- Consider enabling it only on specific low-risk projects via the per-project override.
+
+A common safe pattern: require human approval globally, but enable auto-merge per-project for projects with strong test coverage:
+
+```yaml
+# Global: notify only (default behavior, no change needed)
+reactions:
+  approved-and-green:
+    auto: false
+    action: notify
+
+projects:
+  well-tested-service:
+    reactions:
+      approved-and-green:
+        auto: true        # auto-merge only for this project
+```
+
+## Disabling a reaction
+
+Set `auto: false` to prevent a reaction from firing automatically. The event is still tracked — sessions will show the relevant state in the dashboard — but no action is taken.
+
+```yaml
+reactions:
+  agent-idle:
+    auto: false    # do not poke idle agents automatically
+```
+
+## Next steps
+
+- [Remote Access](/docs/configuration/remote-access) — access the dashboard from another device
+- [Workflows: CI Recovery](/docs/workflows/ci-recovery) — how the CI failure loop works end-to-end

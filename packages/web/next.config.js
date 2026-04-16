@@ -1,3 +1,5 @@
+import { createMDX } from "fumadocs-mdx/next";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   serverExternalPackages: ["@composio/core"],
@@ -24,11 +26,13 @@ const nextConfig = {
   },
 };
 
+const withMDX = createMDX();
+
 // Only load bundle analyzer when ANALYZE=true (dev-only dependency)
-let config = nextConfig;
+let config = withMDX(nextConfig);
 if (process.env.ANALYZE === "true") {
   const { default: bundleAnalyzer } = await import("@next/bundle-analyzer");
-  config = bundleAnalyzer({ enabled: true })(nextConfig);
+  config = bundleAnalyzer({ enabled: true })(config);
 }
 
 export default config;

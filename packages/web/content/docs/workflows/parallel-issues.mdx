@@ -1,0 +1,138 @@
+---
+title: Parallel Issues
+description: Spawn multiple agents at once and supervise them from a single dashboard.
+---
+
+# Parallel Issues
+
+AO's core value proposition is running many agents simultaneously. Instead of waiting for one agent to finish before starting the next, you spawn one agent per issue and let them all work in parallel — each in an isolated git worktree, each opening its own PR.
+
+## Prerequisites
+
+- AO installed and authenticated (`ao --version` works)
+- `agent-orchestrator.yaml` in your project root with at least one project configured
+- GitHub issues exist and are open on the configured repo
+- `gh auth status` shows you are authenticated
+
+## Spawning multiple agents
+
+Run `ao spawn` once per issue. Each command returns immediately after creating the session:
+
+```bash
+ao spawn --issue 42
+ao spawn --issue 43
+ao spawn --issue 44
+```
+
+Each session gets its own worktree under `~/.agent-orchestrator/{hash}/worktrees/`, its own tmux session, and its own branch (`ao/42`, `ao/43`, `ao/44` by default). Sessions run concurrently — starting issue 44 does not wait for issue 42 to finish.
+
+To spawn from a specific project in a multi-project config, add `--project`:
+
+```bash
+ao spawn --project frontend --issue 42
+ao spawn --project backend --issue 17
+```
+
+## Dashboard Kanban columns
+
+Open the dashboard (`ao start`, then navigate to `http://localhost:3000`) to supervise all sessions at once. Sessions move through five columns as work progresses:
+
+| Column | What it means |
+|--------|---------------|
+| **Working** | Agent is actively running — writing code, running tests, committing |
+| **Pending** | Agent finished its initial work; PR is open and CI is running |
+| **Review** | Reviewer has looked at the PR; awaiting agent response or human decision |
+| **Respond** | AO needs human input — CI retries exhausted, ambiguous review comments, or agent stuck |
+| **Ready to Merge** | PR is approved and CI is green; waiting for you to merge |
+
+Sessions move left-to-right in the happy path. A session in **Respond** requires your attention before it can continue.
+
+## Monitoring vs responding
+
+Most of the time you are in **monitoring mode**: glancing at the dashboard to see progress, watching sessions move from Working to Pending to Ready to Merge. You do not need to interact.
+
+You switch to **responding mode** when a session enters the **Respond** column. This happens when:
+
+- CI failed more times than `reactions.ci-failed.retries` allows
+- Review comments are ambiguous and the agent could not determine what change to make
+- The agent requested a permission it does not have
+- The agent has been idle longer than the `agent-stuck.threshold`
+
+In responding mode, open the session detail, read the agent's terminal output, and take one of:
+
+- Answering a question in the agent's terminal (click the session, type in the embedded terminal)
+- Editing the PR description or adding a clarifying comment on GitHub, then clicking **Re-run** in the dashboard
+- Killing the session if the issue is no longer worth pursuing
+
+## Avoiding conflicts between parallel sessions
+
+Parallel sessions modify different files when working on different issues. Conflicts arise when two sessions touch the same file. To reduce conflicts:
+
+- Assign issues that affect distinct parts of the codebase to parallel agents
+- Use short-lived sessions — the faster each session merges, the smaller the overlap window
+- Enable `reactions.merge-conflicts` so AO automatically sends a rebase prompt when a conflict is detected:
+
+```yaml
+reactions:
+  merge-conflicts:
+    auto: true
+    action: send-to-agent
+    message: "Your branch has merge conflicts. Rebase on the default branch and resolve them."
+    escalateAfter: 15m
+```
+
+If two sessions do conflict, they each rebase independently. They do not see each other's uncommitted changes because each runs in its own worktree.
+
+## Session limits
+
+There is no hard cap on parallel sessions enforced by AO itself, but practical limits apply:
+
+- Each session runs a full Claude Code (or other agent) process. Memory and CPU add up quickly.
+- GitHub API rate limits apply to CI polling, PR creation, and branch operations.
+- A reasonable default for most developer machines is 4–8 parallel sessions.
+
+If you are running on a server or CI runner with more resources, you can push higher. Watch `htop` and GitHub API rate-limit headers if you hit issues.
+
+## Killing a session
+
+To stop a session that is no longer needed:
+
+```bash
+ao kill --session ao-42
+```
+
+Or kill by issue number (AO resolves the session ID from the issue):
+
+```bash
+ao kill --issue 42
+```
+
+Killing a session stops the agent process, removes the tmux session, and optionally cleans up the worktree. The branch and PR remain on GitHub — AO does not close the PR automatically on kill.
+
+To list all running sessions:
+
+```bash
+ao session ls
+```
+
+## Expected results
+
+After spawning three sessions and waiting a few minutes you should see:
+
+- Three rows in the dashboard, each in a different column depending on how fast each agent works
+- Three branches (`ao/42`, `ao/43`, `ao/44`) on GitHub
+- Three open PRs, each referencing its issue
+
+The dashboard refreshes every 5 seconds over SSE. You do not need to reload the page.
+
+## Caveats
+
+- **Worktree disk usage**: each worktree is a full checkout. For large repos (>1 GB) running 10 sessions means 10 GB of disk. Use `workspace: clone` instead of `workspace: worktree` if disk is tight — clones share the object store.
+- **Agent costs**: each parallel session burns API tokens independently. Monitor spend in the session detail panel (shows cumulative cost per session when using Claude Code).
+- **Branch naming collisions**: if you kill a session and respawn the same issue, AO appends a suffix to avoid reusing the same branch name if the old branch still exists on the remote.
+
+## Next steps
+
+- [CI Recovery](/docs/workflows/ci-recovery) — what happens when a parallel session's CI fails
+- [Review Loop](/docs/workflows/review-loop) — how AO handles reviewer feedback
+- [Configuration — Reactions](/docs/configuration/reactions) — full reference for all reaction options

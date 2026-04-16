@@ -1,0 +1,188 @@
+---
+title: Remote Access
+description: Access the AO dashboard from another device or over Tailscale.
+---
+
+# Remote Access
+
+By default the AO dashboard binds to `localhost:3000` and is only accessible from the machine it runs on. This page explains how to access it from another device — your phone, a second laptop, or a remote machine — using Tailscale or direct network binding.
+
+## Tailscale (recommended)
+
+[Tailscale](https://tailscale.com) creates a private WireGuard mesh network between your devices. Every device gets a stable IP like `100.x.x.x` and a DNS name like `my-laptop.tail1234.ts.net`. No port forwarding, no firewall rules required.
+
+### Setup
+
+1. Install Tailscale on both the machine running AO and the device you want to access it from.
+
+   ```bash
+   # macOS
+   brew install --cask tailscale
+
+   # Ubuntu / Debian
+   curl -fsSL https://tailscale.com/install.sh | sh
+   ```
+
+2. Start Tailscale and authenticate:
+
+   ```bash
+   sudo tailscale up
+   ```
+
+3. Find your machine's Tailscale IP:
+
+   ```bash
+   tailscale ip -4
+   # e.g. 100.64.0.1
+   ```
+
+4. Bind AO to all interfaces so Tailscale traffic can reach it:
+
+   ```yaml
+   # agent-orchestrator.yaml
+   port: 3000
+   ```
+
+   Then start AO and access the dashboard from another Tailscale device at:
+
+   ```
+   http://100.64.0.1:3000
+   ```
+
+   Or using the MagicDNS hostname (if you have MagicDNS enabled in your Tailnet):
+
+   ```
+   http://my-laptop.tail1234.ts.net:3000
+   ```
+
+### Tailscale serve (optional — HTTPS)
+
+For HTTPS with a valid certificate, use `tailscale serve`:
+
+```bash
+tailscale serve https:443 / http://localhost:3000
+```
+
+This makes the dashboard available at `https://my-laptop.tail1234.ts.net` with a Let's Encrypt certificate managed by Tailscale. The WebSocket connections for the terminal also work through Tailscale serve.
+
+## Binding to a specific interface
+
+AO currently uses the Next.js default binding. To bind to all interfaces (required for any remote access without Tailscale serve):
+
+```bash
+# Set the hostname when starting AO
+HOST=0.0.0.0 ao start
+```
+
+Or set it in your shell profile:
+
+```bash
+export HOST=0.0.0.0
+ao start
+```
+
+To bind to a specific IP only (e.g. your Tailscale IP):
+
+```bash
+HOST=100.64.0.1 ao start
+```
+
+The terminal WebSocket ports (`terminalPort` and `directTerminalPort`) also need to be reachable. If you're using Tailscale, the mesh handles this transparently as long as the ports are not firewalled locally.
+
+## macOS: preventing sleep
+
+If you run AO on a Mac, the machine going to sleep will kill the agents and the dashboard. Use `caffeinate` to prevent sleep while AO is running:
+
+```bash
+caffeinate -i ao start
+```
+
+`caffeinate -i` prevents idle sleep (triggered by inactivity) but still allows display sleep. For a machine you want to run headlessly overnight:
+
+```bash
+# Prevent all sleep (including display)
+caffeinate -dims ao start
+```
+
+To run AO persistently in the background as a launchd service, create a plist at `~/Library/LaunchAgents/com.ao.orchestrator.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ao.orchestrator</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/ao</string>
+    <string>start</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOST</key>
+    <string>0.0.0.0</string>
+  </dict>
+</dict>
+</plist>
+```
+
+Load it with:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.ao.orchestrator.plist
+```
+
+## Accessing the dashboard from mobile
+
+The AO dashboard is a responsive web app — it works on mobile browsers. Connect over Tailscale and open the URL in Safari or Chrome. The Kanban board and session detail views are usable on a phone screen.
+
+**Limitations on mobile:**
+
+- The built-in terminal (xterm.js) works but is difficult to type in on a touch screen. Use it to read agent output; for sending messages use the session detail input field.
+- There is no native mobile app. Notifications go through your configured notifiers (Slack, desktop, etc.) — there is no push notification to the browser.
+
+## Security considerations
+
+**AO has no authentication.** Anyone who can reach the HTTP port can view all sessions, read terminal output, send messages to agents, and trigger merges. Never expose the dashboard port to the public internet.
+
+Mitigations:
+
+- Use Tailscale — the mesh is authenticated and encrypted end-to-end. Only your devices can reach the IP.
+- If you must use a public host, put a reverse proxy with HTTP Basic Auth (nginx, Caddy) in front of AO.
+- Firewall the port at the OS level and only allow Tailscale traffic:
+
+  ```bash
+  # UFW example — allow only Tailscale interface
+  sudo ufw allow in on tailscale0 to any port 3000
+  sudo ufw deny 3000
+  ```
+
+**Environment variables and secrets** in agent processes are visible to anyone with dashboard access. Do not run AO on a shared machine without Tailscale or auth.
+
+## Port reference
+
+| Port | Default | Config key | Purpose |
+|------|---------|------------|---------|
+| `3000` | dashboard HTTP | `port` | Next.js app + API routes |
+| `14800` | tmux terminal WS | `terminalPort` | WebSocket for tmux-attached terminal |
+| `14801` | direct terminal WS | `directTerminalPort` | WebSocket for direct PTY terminal |
+
+If you run multiple AO instances on the same machine, change all three ports to avoid `EADDRINUSE` errors:
+
+```yaml
+# Second AO instance
+port: 3001
+terminalPort: 14810
+directTerminalPort: 14811
+```
+
+## Next steps
+
+- [Configuration Overview](/docs/configuration/overview) — all top-level config keys
+- [Projects](/docs/configuration/projects) — per-project config options

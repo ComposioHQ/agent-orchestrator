@@ -1,0 +1,205 @@
+---
+title: Installation
+description: Prerequisites, install steps, and how to verify AO is working.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Tab, Tabs } from "fumadocs-ui/components/tabs";
+import { Step, Steps } from "fumadocs-ui/components/steps";
+import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
+
+## Prerequisites
+
+| Requirement | Version | How to check |
+|-------------|---------|--------------|
+| Node.js | 20+ | `node --version` |
+| Git | 2.25+ | `git --version` |
+| tmux | any | `tmux -V` |
+| GitHub CLI (`gh`) | any | `gh --version` |
+| Claude Code (`claude`) | any | `claude --version` |
+
+<Callout type="info" title="tmux is required">
+  AO uses tmux as the default runtime to manage agent processes. Install it before proceeding.
+</Callout>
+
+<Tabs items={["macOS", "Ubuntu / Debian", "Fedora / RHEL"]}>
+  <Tab value="macOS">
+    ```bash
+    brew install tmux
+    ```
+  </Tab>
+  <Tab value="Ubuntu / Debian">
+    ```bash
+    sudo apt install tmux
+    ```
+  </Tab>
+  <Tab value="Fedora / RHEL">
+    ```bash
+    sudo dnf install tmux
+    ```
+  </Tab>
+</Tabs>
+
+## Install AO
+
+<Steps>
+  <Step>
+    ### Install the CLI globally
+
+    ```bash
+    npm install -g @aoagents/ao
+    ```
+
+    <Accordions type="single">
+      <Accordion title="Permission denied (EACCES)?">
+        Three options:
+
+        ```bash
+        # Option 1: Use sudo
+        sudo npm install -g @aoagents/ao
+
+        # Option 2: Use npx — no global install needed
+        npx @aoagents/ao start
+
+        # Option 3: Fix npm permissions permanently (recommended)
+        mkdir -p ~/.npm-global
+        npm config set prefix '~/.npm-global'
+        echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc
+        source ~/.zshrc
+        npm install -g @aoagents/ao
+        ```
+      </Accordion>
+    </Accordions>
+  </Step>
+  <Step>
+    ### Verify the install
+
+    ```bash
+    ao --version
+    ```
+
+    You should see a version string such as `0.x.y`. If the command is not found, check that your npm global bin directory is on your `PATH`.
+  </Step>
+  <Step>
+    ### Authenticate GitHub CLI
+
+    AO uses `gh` to create PRs, read issues, and poll CI status.
+
+    ```bash
+    gh auth login
+    ```
+
+    When prompted, select **GitHub.com** → **HTTPS** → **Login with a web browser**. Ensure the `repo` scope is granted. Verify:
+
+    ```bash
+    gh auth status
+    ```
+  </Step>
+  <Step>
+    ### Authenticate Claude Code
+
+    AO uses Claude Code as the default agent.
+
+    ```bash
+    claude auth login
+    ```
+
+    Follow the browser prompt. Verify with `claude --version`.
+  </Step>
+</Steps>
+
+## Create your first config
+
+`ao start` auto-generates `agent-orchestrator.yaml` for you — you do not need to write it by hand. From inside any git repo:
+
+```bash
+cd ~/your-project
+ao start
+```
+
+Or point it at a repo URL directly:
+
+```bash
+ao start https://github.com/your-org/your-repo
+```
+
+If you prefer to write the config manually, the minimum is:
+
+```yaml title="agent-orchestrator.yaml"
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/my-app
+    defaultBranch: main
+```
+
+Everything else has sensible defaults (tmux runtime, Claude Code agent, worktree workspace, desktop notifier).
+
+## Run the dashboard
+
+```bash
+ao start
+```
+
+The dashboard opens at `http://localhost:3000`. If port 3000 is busy, AO automatically selects the next available port.
+
+You should see the AO dashboard with an empty sessions board. AO is now running and ready to spawn agents.
+
+## Common install issues
+
+<Accordions type="single">
+  <Accordion title="tmux not found" id="tmux-not-found">
+    ```
+    Error: tmux not found in PATH
+    ```
+
+    Install tmux for your OS using the tabs above.
+  </Accordion>
+  <Accordion title="gh not found or not authenticated" id="gh-auth">
+    ```
+    Error: gh auth failed
+    ```
+
+    Install `gh` and run `gh auth login`. See the [GitHub CLI install docs](https://github.com/cli/cli/blob/trunk/docs/install_linux.md) for Linux.
+  </Accordion>
+  <Accordion title="Port already in use" id="port-busy">
+    AO automatically finds the next free port. To fix it explicitly:
+
+    ```yaml title="agent-orchestrator.yaml"
+    port: 3001
+    ```
+
+    Or kill whatever is using it:
+
+    ```bash
+    lsof -ti:3000 | xargs kill
+    ```
+  </Accordion>
+  <Accordion title="Node version too old" id="node-old">
+    ```
+    Error: Node.js 20 or higher is required
+    ```
+
+    Upgrade:
+
+    ```bash
+    nvm install 20
+    nvm use 20
+    nvm alias default 20
+    ```
+  </Accordion>
+  <Accordion title="Dashboard connection error after start" id="connection-error">
+    The API server may still be starting up. Wait a few seconds and refresh. If it persists:
+
+    ```bash
+    ao doctor
+    ao doctor --fix
+    ```
+  </Accordion>
+</Accordions>
+
+## Next step
+
+<Cards>
+  <Card title="Quickstart: First Run" description="Spawn your first agent and watch it open a PR." href="/docs/quickstart/first-run" />
+</Cards>

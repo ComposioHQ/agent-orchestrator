@@ -1,0 +1,140 @@
+---
+title: CI Recovery
+description: How AO detects CI failures and automatically re-runs the agent to fix them.
+---
+
+# CI Recovery
+
+When a PR's CI pipeline fails, AO detects the failure during its polling loop and sends the failed job logs back to the agent as a new prompt. The agent reads the failure output and pushes a fix — without you manually copying log output, re-opening a terminal, or hunting for the right branch.
+
+## How AO polls CI status
+
+AO's lifecycle manager runs a polling loop with an interval of approximately 60 seconds. On each tick it:
+
+1. Calls the SCM plugin (GitHub by default) to fetch the latest CI check status for the session's PR
+2. Compares the result to the last known state
+3. If the state changed to `failed`, triggers the `ci-failed` reaction
+
+This means there is roughly a 60-second lag between a CI run completing and AO reacting. The polling interval is not configurable in the current release.
+
+## What context the agent receives
+
+When AO fires the `ci-failed` reaction, it constructs a prompt that includes:
+
+- The default message from your config (or AO's built-in fallback: `"CI is failing. Run gh pr checks to see failures, fix them, and push."`)
+- The name and URL of the failed job
+- The tail of the failed job's log output (fetched via the GitHub Checks API)
+
+The agent receives this prompt in its running session. It can immediately run `gh pr checks` to inspect details, read the log, apply a fix, and push a new commit to the same branch. CI re-runs automatically on the new push.
+
+## Configuring ci-failed reactions
+
+Add a `reactions` block to your `agent-orchestrator.yaml`. All fields are optional — omitting a field uses the default.
+
+```yaml
+reactions:
+  ci-failed:
+    auto: true              # Must be true for AO to act without human approval
+    action: send-to-agent   # Send the failure context to the agent
+    retries: 2              # Attempt auto-fix up to 2 times (default: 2)
+    escalateAfter: 2        # Notify human after this many failed auto-fix attempts
+```
+
+### Key fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `auto` | boolean | `false` | Set to `true` to let AO act automatically |
+| `action` | string | `send-to-agent` | What AO does — `send-to-agent` or `notify` |
+| `retries` | number | `2` | How many times AO will resend to the agent before escalating |
+| `escalateAfter` | number | same as `retries` | After this many failures, move session to **Respond** column and notify |
+| `message` | string | built-in | Custom prompt prefix sent to the agent along with the log output |
+
+### Custom failure message
+
+If your agents benefit from project-specific context in the CI failure prompt, override the message:
+
+```yaml
+reactions:
+  ci-failed:
+    auto: true
+    action: send-to-agent
+    retries: 3
+    message: |
+      CI is failing. Run `gh pr checks --watch` to see the latest status.
+      Common failures in this repo:
+      - Type errors: run `pnpm typecheck` locally
+      - Lint: run `pnpm lint:fix`
+      - Tests: run `pnpm test` and check snapshots
+```
+
+## What happens when maxRetries is exceeded
+
+When the number of consecutive CI failures for a session reaches `escalateAfter`, AO:
+
+1. Stops sending auto-fix prompts to the agent
+2. Moves the session to the **Respond** column in the dashboard
+3. Fires a notification (desktop alert or Slack, depending on your notifier config) at `warning` priority
+
+At this point the session is paused and waiting for a human. You have three options:
+
+**Option A — Intervene manually.** Click the session in the dashboard to open the terminal. Read the agent's last output and the CI failure. Either fix the code yourself or give the agent a more specific prompt.
+
+**Option B — Re-enable auto-fix.** If you believe one more automated attempt will succeed (e.g. a flaky test), click **Re-run** in the session detail. AO resets the retry counter and sends the prompt again.
+
+**Option C — Kill the session.** If the issue is more complex than originally scoped, kill the session and handle it manually:
+
+```bash
+ao kill --session ao-42
+```
+
+The PR and branch remain on GitHub for you to continue by hand.
+
+## Manual intervention steps
+
+When a session is in the **Respond** column due to CI failures:
+
+1. Open the dashboard and click the session card
+2. Read the **Activity** panel to see the last few prompts and agent responses
+3. Open the terminal tab to see the agent's raw output
+4. Check the failing CI job on GitHub to understand the error class:
+   - Compilation / type errors → the agent can usually fix these; give a specific prompt
+   - Test failures with known flakiness → re-run once
+   - Infrastructure failures (secret not found, network timeout) → see below
+
+## CI that requires secrets
+
+Some CI jobs require secrets that the agent does not have access to (e.g. cloud credentials, paid API keys, internal registry tokens). In these cases the CI failure is not fixable by code changes.
+
+When this happens:
+
+1. Check whether the secret is available in your GitHub repo's Actions secrets (`Settings → Secrets and variables → Actions`)
+2. If the secret is missing, add it at the repo or org level — the agent does not need to do anything
+3. Re-run the CI job from the GitHub Actions UI (or use `gh run rerun <run-id>`)
+4. AO will pick up the new CI status on the next poll
+
+Do not add secrets to `agent-orchestrator.yaml` or the worktree. Secrets belong in GitHub Actions secrets or your CI provider's secret store.
+
+## Expected results
+
+With `reactions.ci-failed.auto: true` and a CI failure:
+
+1. AO detects the failure within ~60 seconds of the job completing
+2. The session card shows a **CI failed — retrying** badge
+3. The agent receives the failure context and pushes a fix commit
+4. CI re-runs on the new commit
+5. If CI passes, the session advances to **Pending** or **Ready to Merge**
+6. If CI fails again and retries are exhausted, the session moves to **Respond**
+
+## Caveats
+
+- **Polling lag**: AO uses ~60-second polling, not webhooks. There will always be up to a 60-second delay between CI completing and AO reacting. This is by design to avoid hammering the GitHub API.
+- **Retry counter resets**: the retry counter resets when CI passes, even once. If CI alternates between pass and fail (e.g. a flaky test), AO will keep retrying indefinitely. Set `escalateAfter` to a low number (1 or 2) to catch this pattern early.
+- **Partial failures**: if only one of several CI jobs fails, AO still triggers the reaction. The agent receives the log for the first failed job. If fixing it causes a different job to fail, the cycle continues.
+- **Draft PRs**: AO does not fire CI reactions for draft PRs by default. Mark the PR as ready for review to enable CI reaction tracking.
+
+## Next steps
+
+- [Review Loop](/docs/workflows/review-loop) — how AO handles reviewer feedback after CI passes
+- [Parallel Issues](/docs/workflows/parallel-issues) — running multiple sessions simultaneously
+- [Configuration — Reactions](/docs/configuration/reactions) — full reference for all `reactions` fields

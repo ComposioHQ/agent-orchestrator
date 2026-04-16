@@ -1,0 +1,265 @@
+---
+title: Multiple Projects
+description: Configure AO for multiple repos and manage them from one dashboard.
+---
+
+# Multiple Projects
+
+A single `agent-orchestrator.yaml` can describe any number of repos. Each project has its own tracker, agent rules, and per-project reaction overrides. The dashboard shows all projects in one view with a project switcher.
+
+## Prerequisites
+
+- AO installed and authenticated
+- `gh auth status` is authenticated for all repos you want to manage
+- Each repo is cloned locally at the path you will reference in the config
+
+## Multi-project agent-orchestrator.yaml
+
+Place the config file at the root of any convenient directory — it does not need to live inside any of the repos it manages.
+
+```yaml
+# agent-orchestrator.yaml
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+defaults:
+  runtime: tmux
+  agent: claude-code
+  workspace: worktree
+  notifiers: [desktop, slack]
+
+projects:
+  frontend:
+    name: Frontend
+    repo: org/frontend
+    path: ~/frontend
+    defaultBranch: main
+    sessionPrefix: fe
+
+    tracker:
+      plugin: github
+
+    agentRules: |
+      Use TypeScript strict mode.
+      Follow React best practices.
+      Always run `pnpm test` before pushing.
+
+  backend:
+    name: Backend API
+    repo: org/backend
+    path: ~/backend
+    defaultBranch: main
+    sessionPrefix: api
+
+    tracker:
+      plugin: linear
+      teamId: "your-linear-team-id"
+
+    agentRules: |
+      All endpoints require auth middleware.
+      Add OpenAPI docs for new routes.
+      Run `pnpm test` and `pnpm lint` before pushing.
+
+notifiers:
+  slack:
+    plugin: slack
+    webhook: ${SLACK_WEBHOOK_URL}
+    channel: "#agent-updates"
+
+reactions:
+  ci-failed:
+    auto: true
+    retries: 2
+    escalateAfter: 2
+  changes-requested:
+    auto: true
+    escalateAfter: 30m
+  approved-and-green:
+    auto: false
+```
+
+### What each project field does
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | No | Display name shown in the dashboard project switcher |
+| `repo` | Yes | GitHub repo in `owner/repo` format |
+| `path` | Yes | Absolute or `~`-prefixed path to the local clone |
+| `defaultBranch` | No | Base branch for new worktrees (default: `main`) |
+| `sessionPrefix` | No | Short prefix for session and branch names (default: `ao`) |
+| `tracker.plugin` | No | Issue tracker — `github`, `linear`, or `gitlab` (default: `github`) |
+| `agentRules` | No | Free-form instructions appended to the agent's system prompt for this project |
+
+## Dashboard project switcher
+
+Start AO with `ao start`. Open the dashboard at `http://localhost:3000`.
+
+The header contains a project switcher dropdown. Selecting a project filters the Kanban board to show only sessions belonging to that project. Selecting **All Projects** shows every session across all projects in a single board.
+
+Sessions from different projects are visually distinguished by their `sessionPrefix` in the session card title (`fe-42`, `api-17`, etc.).
+
+## Spawning sessions for a specific project
+
+Use `--project` to target a specific project by its key in the YAML:
+
+```bash
+ao spawn --project frontend --issue 42
+ao spawn --project backend --issue 17
+```
+
+Without `--project`, AO uses the first project in the config (or prompts you to choose if there are multiple).
+
+You can spawn sessions for multiple projects simultaneously:
+
+```bash
+ao spawn --project frontend --issue 42
+ao spawn --project frontend --issue 43
+ao spawn --project backend --issue 17
+ao spawn --project backend --issue 22
+```
+
+All four sessions run in parallel. Frontend sessions live in `~/frontend` worktrees; backend sessions live in `~/backend` worktrees.
+
+## Per-project config overrides
+
+Any field in `defaults` or the top-level `reactions` block can be overridden inside a project. Per-project values take precedence over global values.
+
+### Different agent per project
+
+```yaml
+defaults:
+  agent: claude-code
+
+projects:
+  legacy-service:
+    repo: org/legacy
+    path: ~/legacy
+    agent: codex    # Use Codex for this project instead of Claude Code
+```
+
+### Different tracker per project
+
+```yaml
+projects:
+  frontend:
+    repo: org/frontend
+    path: ~/frontend
+    tracker:
+      plugin: github     # Issues live on GitHub
+
+  backend:
+    repo: org/backend
+    path: ~/backend
+    tracker:
+      plugin: linear     # Issues live on Linear
+      teamId: "ENG"
+```
+
+### Per-project reaction overrides
+
+```yaml
+# Global default: manual merge approval required
+reactions:
+  approved-and-green:
+    auto: false
+
+projects:
+  docs:
+    repo: org/docs
+    path: ~/docs
+    # Docs PRs are low risk — auto-merge when approved
+    reactions:
+      approved-and-green:
+        auto: true
+        action: auto-merge
+```
+
+### Different tracker labels per project
+
+When using the GitHub tracker, you can restrict which issues AO considers to specific labels:
+
+```yaml
+projects:
+  frontend:
+    repo: org/frontend
+    path: ~/frontend
+    tracker:
+      plugin: github
+      labels: [agent-ready, good-first-issue]
+```
+
+Only issues with at least one of the listed labels will appear when you run `ao issues` for this project.
+
+## Worktree storage locations
+
+AO stores worktrees under a hash-scoped directory to prevent collisions between multiple config files or checkouts:
+
+```
+~/.agent-orchestrator/
+  {12-char-hash}/          # SHA-256 of the directory containing agent-orchestrator.yaml
+    sessions/
+      {sessionId}          # Flat metadata files (key-value pairs)
+    worktrees/
+      {sessionId}/         # Full git worktree for each session
+    archive/
+      {sessionId}_{ts}     # Archived completed sessions
+```
+
+The hash is derived from the directory containing `agent-orchestrator.yaml`, not the project path. Two different config files produce different hashes and never share worktree directories, even if they reference the same repo.
+
+Override the root storage directory with `dataDir`:
+
+```yaml
+dataDir: /data/ao            # Move storage off your home partition
+worktreeDir: /data/worktrees  # Separate worktree root (useful for fast SSDs)
+```
+
+## Running multiple dashboard instances
+
+Each `agent-orchestrator.yaml` instance can run its own dashboard on a different port. This is useful when you want to keep entirely separate AO instances for different teams or environments:
+
+```yaml
+# team-a/agent-orchestrator.yaml
+port: 3000
+
+# team-b/agent-orchestrator.yaml
+port: 3001
+```
+
+Start each from its own directory:
+
+```bash
+cd ~/team-a && ao start
+cd ~/team-b && ao start
+```
+
+Within a single config file, the multi-project setup is preferred — you get one dashboard for all projects.
+
+## Expected results
+
+After setting up a two-project config and running:
+
+```bash
+ao spawn --project frontend --issue 42
+ao spawn --project backend --issue 17
+```
+
+You should see:
+
+- Two sessions in the dashboard: `fe-42` and `api-17`
+- Each session tracks CI and reviews against its own repo
+- Linear-tracked issues show their Linear issue ID in the session card; GitHub-tracked issues link to GitHub
+- Worktrees stored at `~/.agent-orchestrator/{hash}/worktrees/fe-42/` and `~/.agent-orchestrator/{hash}/worktrees/api-17/`
+
+## Caveats
+
+- **Linear tracker requires a team ID**: obtain it from `https://linear.app/{your-workspace}/settings/teams` — the ID is in the URL.
+- **Repo paths must be local clones**: AO does not clone repos for you. Run `git clone` for each repo before starting AO.
+- **Session prefix collisions**: if two projects share the same `sessionPrefix`, AO will warn at startup. Use distinct prefixes (`fe`, `api`, `doc`, etc.).
+- **Config file location matters for hashing**: moving `agent-orchestrator.yaml` to a different directory changes the hash and orphans existing worktrees. Keep the config file in a stable location.
+
+## Next steps
+
+- [Parallel Issues](/docs/workflows/parallel-issues) — spawning and supervising multiple sessions
+- [CI Recovery](/docs/workflows/ci-recovery) — handling CI failures across projects
+- [Configuration — Projects](/docs/configuration/projects) — full reference for all project-level config fields

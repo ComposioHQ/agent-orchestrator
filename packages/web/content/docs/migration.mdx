@@ -1,0 +1,72 @@
+---
+title: Migration Notes
+description: Breaking changes and upgrade guides between AO versions.
+---
+
+This page documents breaking changes between Agent Orchestrator versions and how to handle them when upgrading.
+
+## Checking your current version
+
+```bash
+ao --version
+```
+
+To see the version of the core package when running from source:
+
+```bash
+node -e "console.log(require('./packages/core/package.json').version)"
+```
+
+---
+
+## General upgrade process
+
+1. **Pull the latest release:**
+   ```bash
+   # Global install
+   pnpm update -g @aoagents/ao
+
+   # Or, from source
+   git pull origin main
+   pnpm install
+   pnpm build
+   ```
+
+2. **Validate your config** — this catches schema changes before you start AO:
+   ```bash
+   ao config validate
+   ```
+
+3. **Review the release notes** for the versions you skipped:
+   [https://github.com/ComposioHQ/agent-orchestrator/releases](https://github.com/ComposioHQ/agent-orchestrator/releases)
+
+4. **Restart AO:**
+   ```bash
+   ao start
+   ```
+
+---
+
+## Current migration status
+
+As of the current release, there are **no breaking changes** in the AO public API or config schema. The project is still in active development; breaking changes may be introduced in future major version releases.
+
+When a breaking change is released, this page will be updated with:
+- The version number where the break was introduced
+- What changed and why
+- Step-by-step migration instructions
+- Whether existing session data needs to be migrated or cleared
+
+---
+
+## Where to watch for breaking changes
+
+- **GitHub releases:** [https://github.com/ComposioHQ/agent-orchestrator/releases](https://github.com/ComposioHQ/agent-orchestrator/releases) — all breaking changes are called out explicitly in release notes and tagged with the `breaking` label.
+- **`CHANGELOG.md` files** — each package's changelog notes breaking changes at the top of the relevant version entry.
+- **Changeset files** — before a release, `.changeset/*.md` files in the repository describe pending major changes. Reviewing open PRs against `main` gives early warning of upcoming breaks.
+
+---
+
+## Config schema stability
+
+The `agent-orchestrator.yaml` schema is validated with Zod on startup. If a new release adds required fields or renames existing ones, `ao config validate` will print actionable errors telling you exactly what to change. Always run config validation after upgrading.

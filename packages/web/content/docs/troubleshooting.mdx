@@ -1,0 +1,198 @@
+---
+title: Troubleshooting
+description: Common AO problems and how to fix them.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
+
+<Callout type="info">
+  Run `ao doctor --fix` first — it automatically detects and fixes many common issues.
+</Callout>
+
+This page covers the most common issues encountered when running Agent Orchestrator, organized by symptom. Each entry includes a cause and a concrete fix.
+
+## Dashboard connection error
+
+**Symptom:** The browser shows a blank dashboard or a "Failed to fetch" error when navigating to `http://localhost:3000`.
+
+**Cause:** The web server (`ao start` or `pnpm dev`) is not running, or it started on a different port.
+
+**Fix:**
+1. Confirm the server is running — `ao start` should print a URL on startup.
+2. Check for port conflicts: another process may be using port 3000.
+3. If you are running from source, run `pnpm dev` from the repository root and wait for the "Ready" message before opening the browser.
+4. Check the terminal output for startup errors — a missing `agent-orchestrator.yaml` will prevent the server from starting (see [Config file not found](#config-file-not-found) below).
+
+---
+
+## Session stuck in `spawning`
+
+**Symptom:** A session stays in the `spawning` state indefinitely and never transitions to `working`.
+
+**Cause:** The agent binary is missing, the tmux session failed to start, or the workspace could not be created.
+
+**Fix:**
+1. Verify the agent binary is on your `PATH`:
+   ```bash
+   which claude   # for claude-code
+   which codex    # for codex
+   ```
+2. Check that tmux is installed and working:
+   ```bash
+   tmux new-session -d -s test && tmux kill-session -t test
+   ```
+3. Inspect the session's tmux window directly:
+   ```bash
+   tmux attach -t ao-<sessionId>
+   ```
+   Any startup error will be visible in the terminal.
+4. Check `~/.agent-orchestrator/` for partially created worktree directories — remove them and retry.
+
+---
+
+## Agent looping on CI failures
+
+**Symptom:** An agent repeatedly pushes commits, CI fails with the same error, and the session cycles between `ci_failed` and `working` without making progress.
+
+**Cause:** The agent is unable to reproduce the CI failure locally, or the fix it applies does not address the root cause.
+
+**Fix:**
+1. Open the session terminal from the dashboard and inspect what the agent is doing.
+2. Add a `prompt` field to your `agent-orchestrator.yaml` with explicit instructions for the CI environment (e.g. required env vars, test commands).
+3. If the issue is environmental (secrets, locked dependencies), the agent cannot fix it autonomously — intervene manually by attaching to the session terminal.
+4. Consider adding an `.agent-rules.md` file to your repo with project-specific guidance the agent should follow when CI fails.
+
+---
+
+## Permission denied on worktree
+
+**Symptom:** Session creation fails with `EACCES` or `permission denied` when creating a worktree.
+
+**Cause:** The `~/.agent-orchestrator/` directory or the project working tree has restrictive permissions, or the worktree path already exists with different ownership.
+
+**Fix:**
+1. Check and fix permissions on the data directory:
+   ```bash
+   ls -la ~/.agent-orchestrator/
+   chmod -R u+rwX ~/.agent-orchestrator/
+   ```
+2. If a stale worktree directory exists from a previous failed session, remove it:
+   ```bash
+   git worktree prune
+   rm -rf ~/.agent-orchestrator/<hash>-<projectId>/worktrees/<sessionId>
+   ```
+3. Ensure the user running `ao start` has write access to the project's git repository.
+
+---
+
+## `gh` not found in agent session
+
+**Symptom:** The agent fails with `gh: command not found` or PRs created by the agent do not appear in the dashboard.
+
+**Cause:** The GitHub CLI (`gh`) is not installed, is not on the agent's `PATH`, or the PATH wrapper setup failed.
+
+**Fix:**
+1. Install the GitHub CLI: [https://cli.github.com](https://cli.github.com)
+2. Authenticate with your GitHub account:
+   ```bash
+   gh auth login
+   ```
+3. AO installs PATH wrappers in `~/.ao/bin/`. Ensure this directory is not blocked by your shell configuration.
+4. If you are using Claude Code, confirm that `.claude/settings.json` contains the PostToolUse hook entries — `ao start` installs these automatically on session creation, but they can be removed if the file is overwritten.
+5. Verify `gh` resolves at `/usr/local/bin/gh` or is otherwise on `PATH`:
+   ```bash
+   which gh
+   gh --version
+   ```
+
+---
+
+## Worktree already exists error
+
+**Symptom:** Session creation fails with `fatal: '<path>' is already checked out` or `worktree already exists`.
+
+**Cause:** A previous session left a worktree behind — either the session was force-killed or cleanup did not complete.
+
+**Fix:**
+1. List registered worktrees and prune stale entries:
+   ```bash
+   git worktree list
+   git worktree prune
+   ```
+2. If the path is listed but the directory is gone, remove the stale ref manually:
+   ```bash
+   rm -rf .git/worktrees/<stale-name>
+   git worktree prune
+   ```
+3. If the directory still exists and is not needed, remove it and prune:
+   ```bash
+   rm -rf ~/.agent-orchestrator/<hash>-<projectId>/worktrees/<sessionId>
+   git worktree prune
+   ```
+
+---
+
+## Dashboard slow or not updating
+
+**Symptom:** Session cards do not reflect the current state, the dashboard appears frozen, or updates arrive very slowly.
+
+**Cause:** The SSE (Server-Sent Events) connection has dropped, or the browser tab has been throttled by the browser.
+
+**Fix:**
+1. Reload the page — this re-establishes the SSE connection.
+2. Check the browser console for network errors related to the `/api/sessions/stream` endpoint.
+3. Ensure `ao start` is still running — if the server process exits, the dashboard will stop receiving updates.
+4. The SSE polling interval is 5 seconds by design. Updates will never appear faster than this; this is expected behavior, not a bug.
+
+---
+
+## Terminal shows "Connected" but blank / `posix_spawnp failed`
+
+**Symptom:** The in-browser terminal connects but shows no output, and WebSocket logs contain:
+
+```
+[DirectTerminal] Failed to spawn PTY: Error: posix_spawnp failed.
+```
+
+**Cause:** `node-pty` prebuilt binaries are incompatible with your system (common after `pnpm install` on some macOS configurations).
+
+**Fix:** Rebuild `node-pty` from source:
+
+```bash
+cd node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty
+npx node-gyp rebuild
+```
+
+You can verify the rebuild worked with:
+
+```bash
+node -e "const pty = require('./node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty'); \
+  const shell = pty.spawn('/bin/bash', [], {name: 'xterm-256color', cols: 80, rows: 24, \
+  cwd: process.env.HOME, env: process.env}); \
+  shell.onData(() => { console.log('node-pty OK'); process.exit(0); }); \
+  setTimeout(() => process.exit(1), 2000);"
+```
+
+The `postinstall` hook in the repository runs this rebuild automatically on `pnpm install`. If it fails silently, run the commands above manually.
+
+---
+
+## Config file not found
+
+**Symptom:** The API returns HTTP 500 with the message `No agent-orchestrator.yaml found`.
+
+**Cause:** `ao start` (or `pnpm dev`) is being run from a directory that does not contain `agent-orchestrator.yaml`.
+
+**Fix:** Run AO from the directory containing your config file, or create a symlink:
+
+```bash
+# Run from the correct directory
+cd /path/to/your/project
+ao start
+
+# Or symlink the config into the web package directory (dev mode only)
+ln -s /path/to/agent-orchestrator.yaml packages/web/agent-orchestrator.yaml
+```
+
+See the [Configuration](/docs/configuration) reference for the full config schema.
