@@ -131,7 +131,6 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
   const sessionsRef = useRef(state.sessions);
   const initialAttentionLevelsRef = useRef(initialAttentionLevels);
   initialAttentionLevelsRef.current = initialAttentionLevels;
-  const refreshingRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMembershipKeyRef = useRef<string | null>(null);
   const lastRefreshAtRef = useRef(0);
@@ -163,11 +162,13 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
     if (refreshTimerRef.current) return;
     // Skip if a fetch was already started recently (< 500ms ago)
     if (Date.now() - lastFetchStartedAtRef.current < 500) return;
-    if (refreshingRef.current) return;
+    // Skip if a fetch is currently in flight (use controller as authoritative signal)
+    if (activeRefreshControllerRef.current !== null) return;
 
     refreshTimerRef.current = setTimeout(() => {
       refreshTimerRef.current = null;
-      refreshingRef.current = true;
+      // Re-check in-flight state after the 120ms debounce window
+      if (activeRefreshControllerRef.current !== null) return;
       const requestedMembershipKey = pendingMembershipKeyRef.current;
       const refreshController = new AbortController();
       activeRefreshControllerRef.current = refreshController;
@@ -212,15 +213,12 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
             activeRefreshControllerRef.current = null;
           }
           if (refreshController.signal.aborted) {
-            refreshingRef.current = false;
             // If there's still a pending membership change, reschedule so it isn't lost
             if (pendingMembershipKeyRef.current !== null) {
               scheduleRefresh();
             }
             return;
           }
-
-          refreshingRef.current = false;
 
           if (
             pendingMembershipKeyRef.current !== null &&
@@ -286,7 +284,6 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
           refreshTimerRef.current = null;
         }
         pendingMembershipKeyRef.current = null;
-        refreshingRef.current = false;
         activeRefreshControllerRef.current?.abort();
         activeRefreshControllerRef.current = null;
       };
@@ -368,7 +365,6 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
       disposed = true;
       activeRefreshControllerRef.current?.abort();
       activeRefreshControllerRef.current = null;
-      refreshingRef.current = false;
       pendingMembershipKeyRef.current = null;
       clearRefreshTimer();
       clearDisconnectedTimer();

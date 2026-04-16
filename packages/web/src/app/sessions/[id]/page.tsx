@@ -163,13 +163,25 @@ export default function SessionPage() {
   const id = params.id as string;
   const mux = useMuxOptional();
 
-  const [session, setSession] = useState<DashboardSession | null>(null);
+  // Read optimistic session data written by sidebar navigation (instant render, no white screen)
+  const cachedSession = (() => {
+    if (typeof sessionStorage === "undefined") return null;
+    try {
+      const raw = sessionStorage.getItem(`ao-session-nav:${id}`);
+      if (raw) {
+        sessionStorage.removeItem(`ao-session-nav:${id}`);
+        return JSON.parse(raw) as DashboardSession;
+      }
+    } catch { /* ignore */ }
+    return null;
+  })();
+
+  const [session, setSession] = useState<DashboardSession | null>(cachedSession);
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(undefined);
-  const [projects, setProjects] = useState<ProjectInfo[]>(() => cachedProjects ?? []);
-  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[] | null>(() => cachedSidebarSessions);
-  const [loading, setLoading] = useState(true);
-  const [sidebarError, setSidebarError] = useState(false);
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[]>([]);
+  const [loading, setLoading] = useState(cachedSession === null);
   const [routeError, setRouteError] = useState<Error | null>(null);
   const [sessionMissing, setSessionMissing] = useState(false);
   const [prefixByProject, setPrefixByProject] = useState<Map<string, string>>(new Map());
@@ -182,9 +194,11 @@ export default function SessionPage() {
   const sessionIsOrchestratorRef = useRef(false);
   const resolvedProjectSessionsKeyRef = useRef<string | null>(null);
   const prefixByProjectRef = useRef<Map<string, string>>(new Map());
-  const hasLoadedSessionRef = useRef(false);
-  const pendingMuxSessionsRef = useRef<SessionPatch[] | null>(null);
-  const sidebarFetchIdRef = useRef(0);
+  const hasLoadedSessionRef = useRef(cachedSession !== null);
+  // In-flight guards — prevent concurrent duplicate fetches
+  const fetchingSessionRef = useRef(false);
+  const fetchingProjectSessionsRef = useRef(false);
+  const fetchingSidebarRef = useRef(false);
 
   // Keep prefixByProjectRef in sync so fetchProjectSessions (stable [] dep) reads latest map
   useEffect(() => {
@@ -242,6 +256,8 @@ export default function SessionPage() {
 
   // Fetch session data (memoized to avoid recreating on every render)
   const fetchSession = useCallback(async () => {
+    if (fetchingSessionRef.current) return;
+    fetchingSessionRef.current = true;
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
       if (res.status === 404) {
@@ -264,12 +280,15 @@ export default function SessionPage() {
       }
     } finally {
       setLoading(false);
+      fetchingSessionRef.current = false;
     }
   }, [id]);
 
   const fetchProjectSessions = useCallback(async () => {
+    if (fetchingProjectSessionsRef.current) return;
     const projectId = sessionProjectIdRef.current;
     if (!projectId) return;
+    fetchingProjectSessionsRef.current = true;
     const isOrchestrator = sessionIsOrchestratorRef.current;
     const projectSessionsKey = `${projectId}:${isOrchestrator ? "orchestrator" : "worker"}`;
     if (!isOrchestrator && resolvedProjectSessionsKeyRef.current === projectSessionsKey) return;
@@ -314,35 +333,27 @@ export default function SessionPage() {
         }
       }
       setZoneCounts(counts);
-    } catch (err) {
-      console.error("Failed to fetch project sessions for", projectId, err);
+    } catch {
+      // non-critical - status strip just won't show
+    } finally {
+      fetchingProjectSessionsRef.current = false;
     }
   }, []);
 
   const fetchSidebarSessions = useCallback(async () => {
-    // Track a per-invocation token so out-of-order responses from concurrent
-    // callers (5s poll, mux refetch, retry button) don't overwrite newer data.
-    const fetchId = ++sidebarFetchIdRef.current;
+    if (fetchingSidebarRef.current) return;
+    fetchingSidebarRef.current = true;
     try {
       const res = await fetch("/api/sessions");
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
       const body = (await res.json()) as { sessions?: DashboardSession[] } | null;
-      if (fetchId !== sidebarFetchIdRef.current) return;
-      const restSessions = body?.sessions ?? [];
-      const nextSessions =
-        applyMuxSessionPatches(restSessions, pendingMuxSessionsRef.current ?? []) ?? restSessions;
-      cachedSidebarSessions = nextSessions;
-      setSidebarError(false);
-      setSidebarSessions((current) => (
-        areSidebarSessionsEqual(current, nextSessions) ? current : nextSessions
-      ));
-    } catch (err) {
-      console.error("Failed to fetch sidebar sessions:", err);
-      if (fetchId !== sidebarFetchIdRef.current) return;
-      setSidebarError(true);
-      setSidebarSessions((current) => (current === null ? [] : current));
+      setSidebarSessions(body?.sessions ?? []);
+    } catch {
+      // non-critical
+    } finally {
+      fetchingSidebarRef.current = false;
     }
   }, []);
 

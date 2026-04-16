@@ -76,7 +76,7 @@ function ProjectSidebarInner({
   onRetry,
   collapsed = false,
   onToggleCollapsed: _onToggleCollapsed,
-  mobileOpen = false,
+  mobileOpen: _mobileOpen = false,
   onMobileClose,
 }: ProjectSidebarProps) {
   const router = useRouter();
@@ -123,7 +123,14 @@ function ProjectSidebarInner({
     return map;
   }, [sessions, prefixByProject, allPrefixes, projects, showKilled, showDone]);
 
-  const navigate = (url: string) => {
+  const navigate = (url: string, session?: DashboardSession) => {
+    if (session) {
+      try {
+        sessionStorage.setItem(`ao-session-nav:${session.id}`, JSON.stringify(session));
+      } catch {
+        // sessionStorage unavailable — silent fallback
+      }
+    }
     router.push(url);
     onMobileClose?.();
   };
@@ -142,27 +149,63 @@ function ProjectSidebarInner({
 
   if (collapsed) {
     return (
-      <>
-        {mobileOpen && <div className="sidebar-mobile-backdrop" onClick={onMobileClose} />}
-        <aside
-          className={cn(
-            "project-sidebar project-sidebar--collapsed flex h-full flex-col",
-            mobileOpen && "project-sidebar--mobile-open",
-          )}
-        />
-      </>
+      <aside className={cn(
+        "project-sidebar project-sidebar--collapsed flex flex-col h-full items-center py-2 gap-1 overflow-y-auto",
+      )}>
+        {projects.map((project) => {
+          const workerSessions = sessionsByProject.get(project.id) ?? [];
+          const visibleSessions = showDone ? workerSessions : workerSessions.filter(s => getAttentionLevel(s) !== "done");
+          const projectAbbr = project.name.slice(0, 2).toUpperCase();
+          return (
+            <div key={project.id} className="flex flex-col items-center gap-0.5 w-full px-1">
+              <a
+                href={`/?project=${encodeURIComponent(project.id)}`}
+                className={cn(
+                  "project-sidebar__collapsed-icon",
+                  activeProjectId === project.id && "project-sidebar__collapsed-icon--active",
+                )}
+                title={project.name}
+                aria-label={project.name}
+              >
+                <span className="project-sidebar__collapsed-abbr">{projectAbbr}</span>
+              </a>
+              {visibleSessions.slice(0, 5).map((session) => {
+                const level = getAttentionLevel(session);
+                const title = session.branch ?? getSessionTitle(session);
+                const abbr = title.slice(0, 3).toUpperCase();
+                const isActive = activeSessionId === session.id;
+                return (
+                  <button
+                    key={session.id}
+                    type="button"
+                    onClick={() => navigate(`/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`)}
+                    className={cn(
+                      "project-sidebar__collapsed-session-btn",
+                      isActive && "project-sidebar__collapsed-session-btn--active",
+                    )}
+                    data-level={level}
+                    title={title}
+                    aria-label={title}
+                  >
+                    <span className="project-sidebar__session-abbr-first">{abbr[0]}</span>
+                    <span className="project-sidebar__session-abbr-rest">{abbr.slice(1)}</span>
+                  </button>
+                );
+              })}
+              {visibleSessions.length > 5 && (
+                <span className="project-sidebar__collapsed-overflow">+{visibleSessions.length - 5}</span>
+              )}
+            </div>
+          );
+        })}
+      </aside>
     );
   }
 
   return (
-    <>
-      {mobileOpen && <div className="sidebar-mobile-backdrop" onClick={onMobileClose} />}
-      <aside
-        className={cn(
-          "project-sidebar flex h-full flex-col",
-          mobileOpen && "project-sidebar--mobile-open",
-        )}
-      >
+    <aside
+      className="project-sidebar flex h-full flex-col"
+    >
         <div className="project-sidebar__compact-hdr">
           <span className="project-sidebar__sect-label">Projects</span>
           <button type="button" className="project-sidebar__add-btn" aria-label="New project">
@@ -198,51 +241,85 @@ function ProjectSidebarInner({
             const workerSessions = sessionsByProject.get(project.id) ?? [];
             const isExpanded = expandedProjects.has(project.id);
             const isActive = activeProjectId === project.id;
-            const visibleSessions = workerSessions.filter(
+            const visibleSessions = showDone ? workerSessions : workerSessions.filter(
               (s) => getAttentionLevel(s) !== "done",
             );
             const hasActiveSessions = visibleSessions.length > 0;
 
+            const orchestratorSession = sessions.find(
+              (s) => isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes) && s.projectId === project.id
+            );
+
             return (
               <div key={project.id} className="project-sidebar__project">
-                {/* Project toggle */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    toggleExpand(project.id);
-                    navigate(`/?project=${encodeURIComponent(project.id)}`);
-                  }}
-                  className={cn(
-                    "project-sidebar__proj-toggle",
-                    isActive && "project-sidebar__proj-toggle--active",
+                {/* Project row: toggle + action buttons */}
+                <div className="project-sidebar__proj-row flex items-center">
+                  {/* Project toggle */}
+                  <button
+                    type="button"
+                    onClick={() => toggleExpand(project.id)}
+                    className={cn(
+                      "project-sidebar__proj-toggle",
+                      isActive && "project-sidebar__proj-toggle--active",
+                    )}
+                    aria-expanded={isExpanded}
+                    aria-current={isActive ? "page" : undefined}
+                  >
+                    <svg
+                      className={cn(
+                        "project-sidebar__proj-chevron",
+                        isExpanded && "project-sidebar__proj-chevron--open",
+                      )}
+                      width="10"
+                      height="10"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      viewBox="0 0 24 24"
+                    >
+                      <path d="m9 18 6-6-6-6" />
+                    </svg>
+                    <span className="project-sidebar__proj-name">{project.name}</span>
+                    <span
+                      className={cn(
+                        "project-sidebar__proj-badge",
+                        hasActiveSessions && "project-sidebar__proj-badge--active",
+                      )}
+                    >
+                      {workerSessions.length}
+                    </span>
+                  </button>
+
+                  {/* Dashboard button */}
+                  <a
+                    href={`/?project=${encodeURIComponent(project.id)}`}
+                    onClick={(e) => { e.stopPropagation(); onMobileClose?.(); }}
+                    className="project-sidebar__proj-action"
+                    aria-label={`Open ${project.name} dashboard`}
+                    title="Dashboard"
+                  >
+                    <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path d="M3 13h8V3H3zm10 8h8V11h-8zM3 21h8v-6H3zm10-10h8V3h-8z" />
+                    </svg>
+                  </a>
+
+                  {/* Orchestrator button */}
+                  {orchestratorSession && (
+                    <a
+                      href={`/sessions/${encodeURIComponent(orchestratorSession.id)}?project=${encodeURIComponent(project.id)}`}
+                      onClick={(e) => { e.stopPropagation(); onMobileClose?.(); }}
+                      className="project-sidebar__proj-action"
+                      aria-label={`Open ${project.name} orchestrator`}
+                      title="Orchestrator"
+                    >
+                      <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+                        <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+                        <circle cx="6" cy="17" r="2" /><circle cx="12" cy="17" r="2" /><circle cx="18" cy="17" r="2" />
+                      </svg>
+                    </a>
                   )}
-                  aria-expanded={isExpanded}
-                  aria-current={isActive ? "page" : undefined}
-                >
-                  <svg
-                    className={cn(
-                      "project-sidebar__proj-chevron",
-                      isExpanded && "project-sidebar__proj-chevron--open",
-                    )}
-                    width="10"
-                    height="10"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="m9 18 6-6-6-6" />
-                  </svg>
-                  <span className="project-sidebar__proj-name">{project.name}</span>
-                  <span
-                    className={cn(
-                      "project-sidebar__proj-badge",
-                      hasActiveSessions && "project-sidebar__proj-badge--active",
-                    )}
-                  >
-                    {workerSessions.length}
-                  </span>
-                </button>
+                </div>
 
                 {/* Sessions */}
                 {isExpanded && (
@@ -272,6 +349,7 @@ function ProjectSidebarInner({
                             onClick={() =>
                               navigate(
                                 `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`,
+                                session,
                               )
                             }
                             className={cn(
@@ -292,7 +370,7 @@ function ProjectSidebarInner({
                                 {title}
                               </span>
                               <div className="text-xs text-[var(--color-text-muted)]">
-                                ao-{session.id.slice(0, 6)}
+                                {session.id}
                               </div>
                             </div>
                             <span className="project-sidebar__sess-status">
@@ -322,40 +400,47 @@ function ProjectSidebarInner({
           })}
         </div>
         <div className="project-sidebar__footer">
-          <div className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--color-text-secondary)]">
+          <div className="flex items-center gap-1 border-t border-[var(--color-border-subtle)] px-2 py-2">
+            {/* Show killed toggle */}
             <button
               type="button"
               onClick={() => setShowKilled(!showKilled)}
               className={cn(
-                "px-2 py-1 rounded text-xs transition-colors",
-                showKilled
-                  ? "bg-[var(--color-accent)] text-white"
-                  : "hover:bg-[var(--color-bg-hover)]",
+                "project-sidebar__footer-btn",
+                showKilled && "project-sidebar__footer-btn--active",
               )}
               aria-pressed={showKilled}
+              title={showKilled ? "Hide killed sessions" : "Show killed sessions"}
+              aria-label={showKilled ? "Hide killed sessions" : "Show killed sessions"}
             >
-              Show killed
+              {/* skull / terminated icon */}
+              <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3C7.03 3 3 7.03 3 12c0 3.1 1.5 5.84 3.8 7.55V21h2.4v-1h1.6v1h2.4v-1h1.6v1H17v-1.45A9 9 0 0 0 21 12c0-4.97-4.03-9-9-9z" />
+                <circle cx="9" cy="11" r="1.5" fill="currentColor" stroke="none" />
+                <circle cx="15" cy="11" r="1.5" fill="currentColor" stroke="none" />
+              </svg>
             </button>
+            {/* Show done toggle */}
             <button
               type="button"
               onClick={() => setShowDone(!showDone)}
               className={cn(
-                "px-2 py-1 rounded text-xs transition-colors",
-                showDone
-                  ? "bg-[var(--color-accent)] text-white"
-                  : "hover:bg-[var(--color-bg-hover)]",
+                "project-sidebar__footer-btn",
+                showDone && "project-sidebar__footer-btn--active",
               )}
               aria-pressed={showDone}
+              title={showDone ? "Hide completed sessions" : "Show completed sessions"}
+              aria-label={showDone ? "Hide completed sessions" : "Show completed sessions"}
             >
-              Show done
+              {/* checkmark / done icon */}
+              <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
             </button>
-          </div>
-          <div className="flex items-center gap-2 border-t border-[var(--color-border-subtle)] px-3 py-2">
+            <div className="flex-1" />
             <ThemeToggle className="project-sidebar__theme-toggle" />
-            <span className="project-sidebar__theme-label">Theme</span>
           </div>
         </div>
-      </aside>
-    </>
+    </aside>
   );
 }

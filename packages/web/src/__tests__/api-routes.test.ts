@@ -90,6 +90,7 @@ const multiProjectSessions: Session[] = [
 
 const mockSessionManager: SessionManager = {
   list: vi.fn(async () => testSessions),
+  listCached: vi.fn(async () => testSessions),
   get: vi.fn(async (id: string) => testSessions.find((s) => s.id === id) ?? null),
   spawn: vi.fn(async (config) =>
     makeSession({
@@ -220,6 +221,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Re-set default return values
   (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
+  (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
   (mockSessionManager.get as ReturnType<typeof vi.fn>).mockImplementation(
     async (id: string) => testSessions.find((s) => s.id === id) ?? null,
   );
@@ -279,7 +281,7 @@ describe("API Routes", () => {
     });
 
     it("returns per-project orchestrators and excludes them from worker sessions", async () => {
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         multiProjectSessions,
       );
 
@@ -300,7 +302,7 @@ describe("API Routes", () => {
     });
 
     it("supports project-scoped session queries for orchestrator detail views", async () => {
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockImplementationOnce(
         async (projectId?: string) =>
           multiProjectSessions.filter((session) => !projectId || session.projectId === projectId),
       );
@@ -316,7 +318,7 @@ describe("API Routes", () => {
         { id: "docs-orchestrator", projectId: "docs-app", projectName: "Docs App" },
       ]);
       expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
-      expect(mockSessionManager.list).toHaveBeenCalledWith("docs-app");
+      expect(mockSessionManager.listCached).toHaveBeenCalledWith("docs-app");
     });
 
     it("enriches all PRs concurrently, not sequentially", async () => {
@@ -339,7 +341,7 @@ describe("API Routes", () => {
           },
         }),
       );
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue(sessionsWithPRs);
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(sessionsWithPRs);
 
       const metadataSpy = vi
         .spyOn(serialize, "enrichSessionsMetadata")

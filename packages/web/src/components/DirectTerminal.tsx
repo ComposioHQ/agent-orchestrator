@@ -42,12 +42,13 @@ interface DirectTerminalProps {
   /** Visual variant. Orchestrator keeps the same design-system blue accent as the rest of the app. */
   variant?: "agent" | "orchestrator";
   appearance?: "theme" | "dark";
-  /** CSS height for the terminal container in normal (non-fullscreen) mode.
-   *  Defaults to "max(440px, calc(100vh - 440px))". */
+  /** @deprecated Terminal now fills its flex parent via flex:1. This prop is ignored. */
   height?: string;
   isOpenCodeSession?: boolean;
   reloadCommand?: string;
   chromeless?: boolean;
+  /** When true, focus the terminal immediately after it mounts so keyboard input works without clicking first. */
+  autoFocus?: boolean;
 }
 
 type TerminalVariant = "agent" | "orchestrator";
@@ -132,10 +133,11 @@ export function DirectTerminal({
   startFullscreen = false,
   variant = "agent",
   appearance = "theme",
-  height = "max(440px, calc(100dvh - 440px))",
+  height: _height = "max(440px, calc(100dvh - 440px))",
   isOpenCodeSession = false,
   reloadCommand,
   chromeless = false,
+  autoFocus = false,
 }: DirectTerminalProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -292,6 +294,10 @@ export function DirectTerminal({
         // Open terminal in DOM
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
+
+        if (autoFocus) {
+          terminal.focus();
+        }
 
         // Fit terminal to container
         fit.fit();
@@ -678,32 +684,39 @@ export function DirectTerminal({
   return (
     <div
       className={cn(
-        "overflow-hidden border border-[var(--color-border-default)]",
-        fullscreen ? "fixed inset-0 z-50 rounded-none border-0" : "relative",
+        "overflow-hidden border border-[var(--color-border-default)] flex flex-col",
+        fullscreen ? "fixed inset-0 z-50 rounded-none border-0" : "relative h-full",
         isDarkChrome ? "bg-[#0a0a0f]" : "bg-[#fafafa]",
         chromeless && "border-0",
       )}
     >
       {!chromeless ? (
-        <div className="flex items-center gap-2 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
-          <div className={cn("h-2 w-2 shrink-0 rounded-full", statusDotClass)} />
-          <span className="font-[var(--font-mono)] text-[11px]" style={{ color: accentColor }}>
-            {sessionId}
-          </span>
-          <span
-            className={cn("text-[10px] font-medium uppercase tracking-[0.06em]", statusTextColor)}
-          >
-            {statusText}
-          </span>
-          <span
-            className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em]"
-            style={{
-              color: accentColor,
-              background: `color-mix(in srgb, ${accentColor} 12%, transparent)`,
-            }}
-          >
-            XDA
-          </span>
+        <div className="terminal-chrome-bar flex items-center gap-2 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
+          {/* Pane label — matches the workspace pane-header style used elsewhere */}
+          <span className="terminal-chrome-pane-label">TERMINAL</span>
+          {/* Identity group: session name on top, status+XDA below on mobile */}
+          <div className="terminal-chrome-identity">
+            <span className="terminal-chrome-session-id font-[var(--font-mono)] text-[11px]" style={{ color: accentColor }}>
+              {sessionId}
+            </span>
+            <div className="terminal-chrome-status-row">
+              <div className={cn("h-2 w-2 shrink-0 rounded-full", statusDotClass)} />
+              <span
+                className={cn("text-[10px] font-medium uppercase tracking-[0.06em]", statusTextColor)}
+              >
+                {statusText}
+              </span>
+              <span
+                className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em]"
+                style={{
+                  color: accentColor,
+                  background: `color-mix(in srgb, ${accentColor} 12%, transparent)`,
+                }}
+              >
+                XDA
+              </span>
+            </div>
+          </div>
           <div className="flex-1" />
           {fontSizeControls}
           {isOpenCodeSession ? (
@@ -798,7 +811,7 @@ export function DirectTerminal({
           {fullscreenButton}
         </div>
       ) : null}
-      {/* Terminal area */}
+      {/* Terminal area — flex:1 so it fills remaining space after the chrome bar */}
       <div
         ref={terminalRef}
         className={cn("w-full p-1.5")}
@@ -806,7 +819,8 @@ export function DirectTerminal({
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
-          height: fullscreen ? `calc(100dvh - ${chromeless ? "0px" : "37px"})` : height,
+          flex: 1,
+          minHeight: 0,
         }}
       />
     </div>
