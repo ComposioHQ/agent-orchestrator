@@ -158,15 +158,14 @@ function createCursorAgent(): Agent {
     processName: "agent",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
-      const parts: string[] = ["agent"];
+      const parts: string[] = ["agent", "--force"];
 
       const permissionMode = normalizeAgentPermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
-        // Cursor uses --force (or --yolo alias) for automatic approval
         // --sandbox disabled: Skip workspace trust prompts entirely
         // --approve-mcps: Auto-approve MCP servers
-        // Note: --trust only works in headless mode (with --print), so we use --sandbox disabled instead
-        parts.push("--force", "--sandbox", "disabled", "--approve-mcps");
+        // Note: --force is already set unconditionally above; don't duplicate it
+        parts.push("--sandbox", "disabled", "--approve-mcps");
       }
 
       if (config.model) {
@@ -389,9 +388,11 @@ function createCursorAgent(): Agent {
       };
     },
 
-    // Cursor doesn't support session resume — return null so caller falls back to getLaunchCommand
+    // Cursor's `--continue` resumes the latest chat session for the current
+    // workspace. Since restore launches in the same worktree, this brings
+    // back the prior conversation without needing to track a chat ID.
     async getRestoreCommand(_session: Session, _project: ProjectConfig): Promise<string | null> {
-      return null;
+      return "agent --force --continue";
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {

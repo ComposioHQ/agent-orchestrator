@@ -158,8 +158,8 @@ describe("plugin manifest & exports", () => {
 describe("getLaunchCommand", () => {
   const agent = create();
 
-  it("generates base command", () => {
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("agent");
+  it("generates base command with --force always set", () => {
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("agent --force");
   });
 
   it("includes --force --sandbox disabled --approve-mcps when permissions=permissionless", () => {
@@ -204,9 +204,9 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("'it'\\''s broken'");
   });
 
-  it("omits optional flags when not provided", () => {
+  it("omits optional flags when not provided (but always includes --force)", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
-    expect(cmd).not.toContain("--force");
+    expect(cmd).toContain("--force");
     expect(cmd).not.toContain("--model");
   });
 
@@ -263,7 +263,7 @@ describe("getLaunchCommand", () => {
       makeLaunchConfig({ systemPromptFile: "/nonexistent.txt", prompt: "Do the task" }),
     );
     // Falls back to just the prompt when file doesn't exist
-    expect(cmd).toBe("agent -- 'Do the task'");
+    expect(cmd).toBe("agent --force -- 'Do the task'");
   });
 
   it("rejects symlinked systemPromptFile for security", () => {
@@ -272,7 +272,7 @@ describe("getLaunchCommand", () => {
       makeLaunchConfig({ systemPromptFile: "/path/to/symlink.txt", prompt: "Do the task" }),
     );
     // Should skip the symlinked file and only include the prompt
-    expect(cmd).toBe("agent -- 'Do the task'");
+    expect(cmd).toBe("agent --force -- 'Do the task'");
     // Should not use $(cat) for symlinked file
     expect(cmd).not.toContain("$(cat");
   });
@@ -459,12 +459,12 @@ describe("getSessionInfo", () => {
 describe("getRestoreCommand", () => {
   const agent = create();
 
-  it("returns null (cursor does not support session resume)", async () => {
+  it("returns agent --force --continue to resume latest workspace chat", async () => {
     const result = await agent.getRestoreCommand!(
       makeSession(),
       { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
     );
-    expect(result).toBeNull();
+    expect(result).toBe("agent --force --continue");
   });
 });
 
