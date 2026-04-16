@@ -9,8 +9,6 @@ import {
   TERMINAL_STATUSES,
   NON_RESTORABLE_STATUSES,
   isPRMergeReady,
-  isPRRateLimited,
-  isPRUnenriched,
 } from "@/lib/types";
 import { CI_STATUS } from "@aoagents/ao-core/types";
 import { cn } from "@/lib/cn";
@@ -19,7 +17,6 @@ import { getSessionTitle } from "@/lib/format";
 import type { ProjectInfo } from "@/lib/project-name";
 import { useSidebarContext } from "./workspace/SidebarContext";
 
-import { MobileBottomNav } from "./MobileBottomNav";
 import { ProjectSidebar } from "./ProjectSidebar";
 
 const DirectTerminal = dynamic(
@@ -52,40 +49,6 @@ interface SessionDetailProps {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function formatTimeCompact(isoDate: string | null): string {
-  if (!isoDate) return "just now";
-  const ts = new Date(isoDate).getTime();
-  if (!Number.isFinite(ts)) return "just now";
-  const diffMs = Date.now() - ts;
-  if (diffMs <= 0) return "just now";
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return `${Math.floor(diffHours / 24)}d ago`;
-}
-
-function getCiDotBg(pr: DashboardPR): string {
-  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "var(--color-text-tertiary)";
-  if (pr.ciStatus === "passing") return "var(--color-accent-green)";
-  if (pr.ciStatus === "failing") return "var(--color-accent-red)";
-  return "var(--color-status-attention)";
-}
-
-function getCiShortLabel(pr: DashboardPR): string {
-  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "CI";
-  if (pr.ciStatus === "passing") return "CI passing";
-  if (pr.ciStatus === "failing") return "CI failed";
-  return "CI pending";
-}
-
-function getReviewShortLabel(pr: DashboardPR): string {
-  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "";
-  if (pr.reviewDecision === "approved") return "approved";
-  if (pr.reviewDecision === "changes_requested") return "changes";
-  return "review";
-}
 
 const activityMeta: Record<string, { label: string; color: string }> = {
   active: { label: "Active", color: "var(--color-status-working)" },
@@ -470,9 +433,7 @@ export function SessionDetail({
   const accentColor = "var(--color-accent)";
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
 
-  const terminalHeight = isOrchestrator
-    ? "clamp(400px, 52vh, 620px)"
-    : "clamp(380px, 48vh, 560px)";
+  const terminalHeight = "100%";
   const isOpenCodeSession = session.metadata["agent"] === "opencode";
   const opencodeSessionId =
     typeof session.metadata["opencodeSessionId"] === "string" &&
@@ -483,7 +444,6 @@ export function SessionDetail({
     ? `/exit\nopencode --session ${opencodeSessionId}\n`
     : undefined;
   const dashboardHref = session.projectId ? `/?project=${encodeURIComponent(session.projectId)}` : "/";
-  const prsHref = session.projectId ? `/prs?project=${encodeURIComponent(session.projectId)}` : "/prs";
   const crumbHref = dashboardHref;
   const crumbLabel = "Dashboard";
 
@@ -524,17 +484,29 @@ export function SessionDetail({
     };
   }, [session.id]);
 
-  if (!isMobile) {
-    return (
-      <div className="dashboard-app-shell">
-        <header className="dashboard-app-header">
-          {projects.length > 0 ? (
-            <button
-              type="button"
-              className="dashboard-app-sidebar-toggle"
-              onClick={() => setSidebarCollapsed((current) => !current)}
-              aria-label="Toggle sidebar"
-            >
+  const sidebar = useSidebarContext();
+
+  return (
+    <div className="dashboard-app-shell">
+      <header className="dashboard-app-header">
+        {projects.length > 0 ? (
+          <button
+            type="button"
+            className="dashboard-app-sidebar-toggle"
+            onClick={() => {
+              if (isMobile) {
+                sidebar?.onToggleSidebar();
+              } else {
+                setSidebarCollapsed((current) => !current);
+              }
+            }}
+            aria-label="Toggle sidebar"
+          >
+            {isMobile ? (
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            ) : (
               <svg
                 width="14"
                 height="14"
@@ -547,50 +519,52 @@ export function SessionDetail({
                 <rect x="3" y="3" width="18" height="18" rx="2" />
                 <path d="M9 3v18" />
               </svg>
-            </button>
-          ) : null}
-          <div className="dashboard-app-header__brand">
-            <span>Agent Orchestrator</span>
-          </div>
-          {showHeaderProjectLabel ? (
-            <>
-              <span className="dashboard-app-header__sep" aria-hidden="true" />
-              <span className="dashboard-app-header__project">{headerProjectLabel}</span>
-            </>
-          ) : null}
-          <div className="dashboard-app-header__spacer" />
-          <div className="dashboard-app-header__actions">
-            {orchestratorHref ? (
-              <a
-                href={orchestratorHref}
-                className="dashboard-app-btn dashboard-app-btn--amber"
-                aria-label="Orchestrator"
+            )}
+          </button>
+        ) : null}
+        <div className="dashboard-app-header__brand">
+          <span>Agent Orchestrator</span>
+        </div>
+        {showHeaderProjectLabel ? (
+          <>
+            <span className="dashboard-app-header__sep" aria-hidden="true" />
+            <span className="dashboard-app-header__project">{headerProjectLabel}</span>
+          </>
+        ) : null}
+        <div className="dashboard-app-header__spacer" />
+        <div className="dashboard-app-header__actions">
+          {orchestratorHref ? (
+            <a
+              href={orchestratorHref}
+              className="dashboard-app-btn dashboard-app-btn--amber"
+              aria-label="Orchestrator"
+            >
+              <svg
+                width="12"
+                height="12"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
               >
-                <svg
-                  width="12"
-                  height="12"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
-                  <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
-                  <circle cx="6" cy="17" r="2" />
-                  <circle cx="12" cy="17" r="2" />
-                  <circle cx="18" cy="17" r="2" />
-                </svg>
-                Orchestrator
-              </a>
-            ) : null}
-          </div>
-        </header>
+                <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+                <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+                <circle cx="6" cy="17" r="2" />
+                <circle cx="12" cy="17" r="2" />
+                <circle cx="18" cy="17" r="2" />
+              </svg>
+              Orchestrator
+            </a>
+          ) : null}
+        </div>
+      </header>
 
-        <div
-          className={`dashboard-shell dashboard-shell--desktop${sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
-        >
-          {projects.length > 0 ? (
+      <div
+        className={`dashboard-shell dashboard-shell--desktop${sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
+      >
+        {projects.length > 0 ? (
+          <div className={`sidebar-wrapper${(sidebar?.mobileSidebarOpen ?? false) ? " sidebar-wrapper--mobile-open" : ""}`}>
             <ProjectSidebar
               projects={projects}
               sessions={sidebarSessions}
@@ -598,177 +572,83 @@ export function SessionDetail({
               activeSessionId={session.id}
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+              mobileOpen={sidebar?.mobileSidebarOpen ?? false}
+              onMobileClose={() => sidebar?.onToggleSidebar()}
             />
-          ) : null}
-
-          <div className="dashboard-main dashboard-main--desktop">
-            <main className="session-detail-page h-full flex flex-col overflow-y-auto bg-[var(--color-bg-base)]">
-              <div className="session-detail-layout flex flex-col h-full">
-                <main className="min-w-0 flex-1 min-h-0 flex flex-col">
-                  {(!isOrchestrator || (isOrchestrator && orchestratorZones)) && (
-                    <SessionTopStrip
-                      headline={headline}
-                      crumbId={session.id}
-                      activityLabel={activity.label}
-                      activityColor={activity.color}
-                      branch={session.branch}
-                      pr={pr}
-                      isOrchestrator={isOrchestrator}
-                      crumbHref={crumbHref}
-                      crumbLabel={crumbLabel}
-                      onKill={isOrchestrator || terminalEnded ? undefined : handleKill}
-                      onRestore={isOrchestrator || !isRestorable ? undefined : handleRestore}
-                    />
-                  )}
-
-                  {pr ? (
-                    <section id="session-pr-section" className="session-detail-pr-section">
-                      <SessionDetailPRCard
-                        pr={pr}
-                        sessionId={session.id}
-                        metadata={session.metadata}
-                      />
-                    </section>
-                  ) : null}
-
-                  <section className="session-detail-terminal-wrap flex-1 min-h-0 flex flex-col">
-                    <div id="session-terminal-section" aria-hidden="true" />
-                    <div className="session-detail-section-label">
-                      <div
-                        className="session-detail-section-label__bar"
-                        style={{ background: isOrchestrator ? accentColor : activity.color }}
-                      />
-                      <span className="session-detail-section-label__text">
-                        Live Terminal
-                      </span>
-                    </div>
-                    <div className="flex-1 min-h-0">
-                      {!showTerminal ? (
-                        <div className="session-detail-terminal-placeholder" style={{ height: terminalHeight }} />
-                      ) : terminalEnded ? (
-                        <div className="terminal-exited-placeholder" style={{ height: terminalHeight }}>
-                          <span className="terminal-exited-placeholder__text">
-                            Terminal session has ended
-                          </span>
-                        </div>
-                      ) : (
-                        <DirectTerminal
-                          sessionId={session.id}
-                          startFullscreen={startFullscreen}
-                          variant={terminalVariant}
-                          appearance="dark"
-                          height={terminalHeight}
-                          isOpenCodeSession={isOpenCodeSession}
-                          reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-                        />
-                      )}
-                    </div>
-                  </section>
-                </main>
-              </div>
-            </main>
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  const statusPillBg = activity.color === "var(--color-status-working)"
-    ? "color-mix(in srgb, var(--color-status-working) 12%, transparent)"
-    : activity.color === "var(--color-status-attention)"
-      ? "color-mix(in srgb, var(--color-status-attention) 12%, transparent)"
-      : activity.color === "var(--color-status-error)"
-        ? "color-mix(in srgb, var(--color-status-error) 12%, transparent)"
-        : "color-mix(in srgb, var(--color-accent) 12%, transparent)";
-
-  const sidebar = useSidebarContext();
-
-  return (
-    <div className="session-detail--terminal-first">
-      {/* Floating header */}
-      <div className="session-detail__floating-header">
-        <button
-          type="button"
-          onClick={() => sidebar?.onToggleSidebar()}
-          className="session-detail__back"
-          aria-label="Toggle sidebar"
-        >
-          <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-        </button>
-        <span className="session-detail__status-dot" style={{ background: activity.color }} />
-        <span className="session-detail__session-id">{session.id}</span>
-        <span
-          className="session-detail__status-pill"
-          style={{ background: statusPillBg, color: activity.color }}
-        >
-          {activity.label.toLowerCase()}
-        </span>
-        <span className="session-detail__time">
-          {formatTimeCompact(session.lastActivityAt)}
-        </span>
-      </div>
-
-      {/* Terminal fills the viewport */}
-      <div className={`session-detail__terminal-full${pr ? " session-detail__terminal-full--with-sheet" : ""}`}>
-        {!showTerminal ? (
-          <div className="session-detail-terminal-placeholder" style={{ height: "100%" }} />
-        ) : terminalEnded ? (
-          <div className="terminal-exited-placeholder" style={{ height: "100%" }}>
-            <span className="terminal-exited-placeholder__text">
-              Terminal session has ended
-            </span>
-          </div>
-        ) : (
-          <DirectTerminal
-            sessionId={session.id}
-            startFullscreen={startFullscreen}
-            variant={terminalVariant}
-            appearance="dark"
-            height="100%"
-            chromeless
-            isOpenCodeSession={isOpenCodeSession}
-            reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-          />
+        ) : null}
+        {(sidebar?.mobileSidebarOpen ?? false) && (
+          <div className="sidebar-mobile-backdrop" onClick={() => sidebar?.onToggleSidebar()} />
         )}
-      </div>
 
-      {/* Bottom sheet with PR info */}
-      {pr ? (
-        <div className="session-detail__bottom-sheet">
-          <div className="session-detail__sheet-handle" />
-          <div className="session-detail__sheet-row">
-            <a
-              href={pr.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="session-detail__sheet-pr"
-            >
-              PR #{pr.number}
-            </a>
-            <span className="session-detail__sheet-item">
-              <span
-                className="session-detail__sheet-ci-dot"
-                style={{ background: getCiDotBg(pr) }}
-              />
-              {getCiShortLabel(pr)}
-            </span>
-            <span className="session-detail__sheet-item">
-              {getReviewShortLabel(pr) || "—"}
-            </span>
-          </div>
+        <div className="dashboard-main dashboard-main--desktop">
+          <main className="session-detail-page h-full flex flex-col bg-[var(--color-bg-base)]">
+            <div className="session-detail-layout flex flex-col h-full min-h-0">
+              <main className="min-w-0 flex-1 min-h-0 flex flex-col">
+                {(!isOrchestrator || (isOrchestrator && orchestratorZones)) && (
+                  <SessionTopStrip
+                    headline={headline}
+                    crumbId={session.id}
+                    activityLabel={activity.label}
+                    activityColor={activity.color}
+                    branch={session.branch}
+                    pr={pr}
+                    isOrchestrator={isOrchestrator}
+                    crumbHref={crumbHref}
+                    crumbLabel={crumbLabel}
+                    onKill={isOrchestrator || terminalEnded ? undefined : handleKill}
+                    onRestore={isOrchestrator || !isRestorable ? undefined : handleRestore}
+                  />
+                )}
+
+                {pr ? (
+                  <section id="session-pr-section" className="session-detail-pr-section overflow-y-auto flex-shrink-0">
+                    <SessionDetailPRCard
+                      pr={pr}
+                      sessionId={session.id}
+                      metadata={session.metadata}
+                    />
+                  </section>
+                ) : null}
+
+                <section className="session-detail-terminal-wrap flex-1 min-h-0 flex flex-col">
+                  <div id="session-terminal-section" aria-hidden="true" />
+                  <div className="session-detail-section-label">
+                    <div
+                      className="session-detail-section-label__bar"
+                      style={{ background: isOrchestrator ? accentColor : activity.color }}
+                    />
+                    <span className="session-detail-section-label__text">
+                      Live Terminal
+                    </span>
+                  </div>
+                  <div className="flex-1 min-h-0 h-full">
+                    {!showTerminal ? (
+                      <div className="session-detail-terminal-placeholder h-full" />
+                    ) : terminalEnded ? (
+                      <div className="terminal-exited-placeholder h-full">
+                        <span className="terminal-exited-placeholder__text">
+                          Terminal session has ended
+                        </span>
+                      </div>
+                    ) : (
+                      <DirectTerminal
+                        sessionId={session.id}
+                        startFullscreen={startFullscreen}
+                        variant={terminalVariant}
+                        appearance="dark"
+                        height={terminalHeight}
+                        isOpenCodeSession={isOpenCodeSession}
+                        reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+                      />
+                    )}
+                  </div>
+                </section>
+              </main>
+            </div>
+          </main>
         </div>
-      ) : null}
-
-      <MobileBottomNav
-        ariaLabel="Session navigation"
-        activeTab={isOrchestrator ? "orchestrator" : undefined}
-        dashboardHref={dashboardHref}
-        prsHref={prsHref}
-        showOrchestrator={orchestratorHref !== null}
-        orchestratorHref={orchestratorHref}
-      />
+      </div>
     </div>
   );
 }
