@@ -1,0 +1,23 @@
+packages/web/src/__tests__/api-routes.test.ts
+  679ad8ecbbaa5837 950-965,967-970,972-991,994-995,999,1002,1004-1005,1009-1029,1034-1036,1039-1077,1080-1117,1119,1121-1122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "70cd226701c9c7e526d0e0b64fd46be4afcfcc95",
+  "prompts": {
+    "679ad8ecbbaa5837": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b74e7b89-b272-4eea-91b5-5348ba748a59",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 150,
+      "total_deletions": 37,
+      "accepted_lines": 150,
+      "overriden_lines": 0
+    }
+  }
+}
