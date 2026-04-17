@@ -485,6 +485,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           // correct status (merged, ci_failed, etc.) on this same cycle.
           const sessionsDir = getSessionsDir(config.configPath, project.path);
           updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
+          sessionManager.invalidateCache();
         }
       } catch {
         // SCM detection failed — will retry next poll
@@ -737,6 +738,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     const sessionsDir = getSessionsDir(config.configPath, project.path);
     updateMetadata(sessionsDir, session.id, updates);
+    sessionManager.invalidateCache();
 
     const cleaned = Object.fromEntries(
       Object.entries(session.metadata).filter(([key]) => {

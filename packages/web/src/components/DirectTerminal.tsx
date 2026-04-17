@@ -871,14 +871,7 @@ export function DirectTerminal({
         ) : null}
         <div
           ref={terminalRef}
-          className={cn("w-full p-1.5")}
-          style={{
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-            flex: 1,
-            minHeight: 0,
-          }}
+          className="w-full p-1.5 flex flex-col flex-1 min-h-0 overflow-hidden"
         />
       </div>
     </div>

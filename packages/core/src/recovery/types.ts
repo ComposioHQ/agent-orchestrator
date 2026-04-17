@@ -213,4 +213,13 @@ export interface RecoveryContext {
 
   /** Whether this is a dry run (no actual changes) */
   dryRun: boolean;
+
+  /**
+   * Invoked after every metadata mutation performed by recovery actions
+   * (recover/cleanup/escalate). Callers that rely on SessionManager's
+   * listCached() cache should pass `sessionManager.invalidateCache` here
+   * so the dashboard sees recovery results immediately instead of waiting
+   * for the 35s TTL. Optional — omitted callers get a no-op.
+   */
+  invalidateCache?: () => void;
 }

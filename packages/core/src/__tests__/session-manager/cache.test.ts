@@ -132,6 +132,36 @@ describe("listCached", () => {
     expect(after).toHaveLength(0);
   });
 
+  it("explicit invalidateCache() forces the next listCached to re-read disk", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/w1",
+      branch: "feat/a",
+      status: "working",
+      project: "my-app",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // Warm the cache
+    const first = await sm.listCached();
+    expect(first).toHaveLength(1);
+
+    // Simulate an external mutation (e.g. lifecycle-manager writing metadata
+    // directly via the imported updateMetadata) followed by the required
+    // invalidateCache() call.
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/w2",
+      branch: "feat/b",
+      status: "working",
+      project: "my-app",
+    });
+    sm.invalidateCache();
+
+    // Next call must re-read disk and pick up app-2
+    const after = await sm.listCached();
+    expect(after).toHaveLength(2);
+  });
+
   it("filters by projectId when provided", async () => {
     // Add second project to config
     const multiConfig: OrchestratorConfig = {

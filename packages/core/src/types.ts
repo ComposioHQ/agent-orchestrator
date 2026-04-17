@@ -1424,6 +1424,12 @@ export interface SessionManager {
   list(projectId?: string): Promise<Session[]>;
   /** Fast cache-served list. Falls back to list() on first call or after TTL. */
   listCached(projectId?: string): Promise<Session[]>;
+  /**
+   * Drop the listCached() cache. Call after any metadata mutation made
+   * outside of the session manager's own mutation APIs (e.g. when another
+   * module imports updateMetadata from ./metadata directly).
+   */
+  invalidateCache(): void;
   get(sessionId: SessionId): Promise<Session | null>;
   kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void>;
   cleanup(

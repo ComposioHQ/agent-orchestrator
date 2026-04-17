@@ -91,6 +91,7 @@ const multiProjectSessions: Session[] = [
 const mockSessionManager: SessionManager = {
   list: vi.fn(async () => testSessions),
   listCached: vi.fn(async () => testSessions),
+  invalidateCache: vi.fn(),
   get: vi.fn(async (id: string) => testSessions.find((s) => s.id === id) ?? null),
   spawn: vi.fn(async (config) =>
     makeSession({

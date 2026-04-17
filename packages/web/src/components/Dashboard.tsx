@@ -32,7 +32,8 @@ interface DashboardProps {
   attentionZones?: DashboardAttentionZoneMode;
 }
 
-const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
+const SIMPLE_KANBAN_LEVELS = ["working", "pending", "action", "merge"] as const;
+const DETAILED_KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
 
 function formatRelativeTimeCompact(isoDate: string | null): string {
@@ -132,9 +133,6 @@ function DashboardInner({
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
   const mux = useMuxOptional();
   const kanbanLevels = attentionZones === "detailed" ? DETAILED_KANBAN_LEVELS : SIMPLE_KANBAN_LEVELS;
-  const mobileKanbanOrder =
-    attentionZones === "detailed" ? DETAILED_MOBILE_KANBAN_ORDER : SIMPLE_MOBILE_KANBAN_ORDER;
-  const mobileFilters = attentionZones === "detailed" ? DETAILED_MOBILE_FILTERS : SIMPLE_MOBILE_FILTERS;
   const initialAttentionLevels = useMemo(() => {
     const levels: Record<string, AttentionLevel> = {};
     for (const s of initialSessions) {
