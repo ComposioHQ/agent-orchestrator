@@ -1,0 +1,23 @@
+packages/web/src/components/ProjectSidebar.tsx
+  c1b0bba7951ad46b 24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "6b380203186e3a12f81068b954b688a290547f15",
+  "prompts": {
+    "c1b0bba7951ad46b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed662fcc-bace-482f-885c-3a64cf1cfffd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 272,
+      "total_deletions": 668,
+      "accepted_lines": 1765,
+      "overriden_lines": 0
+    }
+  }
+}
