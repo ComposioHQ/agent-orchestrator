@@ -5,6 +5,7 @@ import {
   getAttentionLevel,
   type AttentionLevel,
   type DashboardSession,
+  type DashboardOrchestratorLink,
   type SSESnapshotEvent,
 } from "@/lib/types";
 
@@ -26,10 +27,12 @@ interface State {
   connectionStatus: ConnectionStatus;
   /** Attention levels from the latest SSE snapshot (server-computed, includes PR state). */
   sseAttentionLevels: SSEAttentionMap;
+  /** Orchestrator links from the latest /api/sessions refresh. */
+  orchestrators: DashboardOrchestratorLink[];
 }
 
 type Action =
-  | { type: "reset"; sessions: DashboardSession[]; sseAttentionLevels?: SSEAttentionMap }
+  | { type: "reset"; sessions: DashboardSession[]; sseAttentionLevels?: SSEAttentionMap; orchestrators?: DashboardOrchestratorLink[] }
   | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] }
   | { type: "setConnection"; status: ConnectionStatus };
 
@@ -41,6 +44,9 @@ function reducer(state: State, action: Action): State {
         sessions: action.sessions,
         ...(action.sseAttentionLevels !== undefined
           ? { sseAttentionLevels: action.sseAttentionLevels }
+          : {}),
+        ...(action.orchestrators !== undefined
+          ? { orchestrators: action.orchestrators }
           : {}),
       };
     case "setConnection":
@@ -104,6 +110,7 @@ export function useSessionEvents(
     sessions: initialSessions,
     connectionStatus: "connected" as ConnectionStatus,
     sseAttentionLevels: initialAttentionLevels ?? ({} as SSEAttentionMap),
+    orchestrators: [],
   });
   const sessionsRef = useRef(state.sessions);
   const initialAttentionLevelsRef = useRef(initialAttentionLevels);
@@ -150,7 +157,7 @@ export function useSessionEvents(
       void fetch(sessionsUrl, { signal: refreshController.signal })
         .then((res) => (res.ok ? res.json() : null))
         .then(
-          (updated: { sessions?: DashboardSession[] } | null) => {
+          (updated: { sessions?: DashboardSession[]; orchestrators?: DashboardOrchestratorLink[] } | null) => {
             if (refreshController.signal.aborted || !updated?.sessions) {
               // Update timestamp even for non-OK responses to prevent retry storms
               if (!refreshController.signal.aborted) {
@@ -167,6 +174,7 @@ export function useSessionEvents(
               type: "reset",
               sessions: updated.sessions,
               sseAttentionLevels,
+              orchestrators: updated.orchestrators,
             });
           },
         )

@@ -248,7 +248,7 @@ function DashboardInner({
     }
     return levels;
   }, [initialSessions]);
-  const { sessions, connectionStatus, sseAttentionLevels } = useSessionEvents(
+  const { sessions, connectionStatus, sseAttentionLevels, orchestrators: refreshedOrchestrators } = useSessionEvents(
     initialSessions,
     projectId,
     mux?.status === "connected" ? mux.sessions : undefined,
@@ -338,8 +338,15 @@ function DashboardInner({
   }, [sheetSession, sheetSessionOverride]);
 
   useEffect(() => {
-    setActiveOrchestrators((current) => mergeOrchestrators(current, orchestratorLinks));
-  }, [orchestratorLinks]);
+    setActiveOrchestrators((current) => {
+      // Prefer live orchestrators from SSE/API refresh (includes killed session pruning)
+      if (refreshedOrchestrators && refreshedOrchestrators.length > 0) {
+        return mergeOrchestrators(current, refreshedOrchestrators);
+      }
+      // Fallback to SSR orchestrator links
+      return mergeOrchestrators(current, orchestratorLinks);
+    });
+  }, [orchestratorLinks, refreshedOrchestrators]);
 
   // Update document title with live attention counts from SSE
   useEffect(() => {
