@@ -487,6 +487,10 @@ export function DirectTerminal({
       mounted = false;
       cleanup?.();
     };
+    // fontSize intentionally NOT in deps — it's handled by a dedicated effect
+    // below that mutates terminal.options.fontSize in place. Adding it here
+    // would tear down and recreate the terminal (and WebSocket) on every
+    // stepper click, losing scrollback and flashing content.
   }, [
     appearance,
     sessionId,
@@ -498,7 +502,6 @@ export function DirectTerminal({
     resizeTerminalMux,
     openTerminal,
     closeTerminal,
-    fontSize,
   ]);
 
   // Re-send terminal dimensions on every reconnect so the server-side PTY

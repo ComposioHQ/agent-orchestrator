@@ -16,7 +16,6 @@ import { DynamicFavicon, countNeedingAttention } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { useMuxOptional } from "@/providers/MuxProvider";
 import { ProjectSidebar } from "./ProjectSidebar";
-import { ReconnectingPill } from "./ReconnectingPill";
 import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
@@ -624,7 +623,6 @@ function DashboardInner({
             </main>
           </div>
         </div>
-        <ReconnectingPill />
       </>
     </SidebarContext.Provider>
   );

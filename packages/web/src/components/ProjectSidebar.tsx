@@ -158,9 +158,11 @@ function ProjectSidebarInner({
       // Only include sessions whose projectId matches a configured project
       if (!validProjectIds.has(s.projectId)) continue;
       if (isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes)) continue;
-      // Filter by status visibility
+      // Filter by status visibility — use getAttentionLevel so the collected
+      // set matches what the expanded/collapsed rendering below actually shows.
+      // Otherwise the project badge count can disagree with the visible rows.
       if (s.status === "killed" && !showKilled) continue;
-      if (s.status === "done" && !showDone) continue;
+      if (getAttentionLevel(s) === "done" && !showDone) continue;
       const list = map.get(s.projectId) ?? [];
       list.push(s);
       map.set(s.projectId, list);
@@ -199,7 +201,8 @@ function ProjectSidebarInner({
       )}>
         {projects.map((project, idx) => {
           const workerSessions = sessionsByProject.get(project.id) ?? [];
-          const visibleSessions = showDone ? workerSessions : workerSessions.filter(s => getAttentionLevel(s) !== "done");
+          // sessionsByProject already applies the showDone filter consistently.
+          const visibleSessions = workerSessions;
           const projectAbbr = project.name.slice(0, 2).toUpperCase();
           return (
             <div key={project.id} className="flex flex-col items-center gap-0.5 w-full px-1">
@@ -293,9 +296,8 @@ function ProjectSidebarInner({
             const workerSessions = sessionsByProject.get(project.id) ?? [];
             const isExpanded = expandedProjects.has(project.id);
             const isActive = activeProjectId === project.id;
-            const visibleSessions = showDone ? workerSessions : workerSessions.filter(
-              (s) => getAttentionLevel(s) !== "done",
-            );
+            // sessionsByProject already applies the showDone filter consistently.
+            const visibleSessions = workerSessions;
             const hasActiveSessions = visibleSessions.length > 0;
 
             const orchestratorSession = sessions?.find(
