@@ -119,6 +119,20 @@ export const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set([
   "merged",
 ]);
 
+/**
+ * Statuses where the session is actively managed by the lifecycle poll via PR state.
+ * The agent process doesn't need to be running — the lifecycle poll monitors PR status,
+ * CI, reviews, and mergeability. Archiving these sessions would break PR tracking.
+ */
+export const PR_MANAGED_STATUSES: ReadonlySet<SessionStatus> = new Set([
+  "pr_open",
+  "ci_failed",
+  "review_pending",
+  "changes_requested",
+  "approved",
+  "mergeable",
+]);
+
 /** Activity states that indicate the session is no longer running. */
 export const TERMINAL_ACTIVITIES: ReadonlySet<ActivityState> = new Set(["exited"]);
 
@@ -1217,6 +1231,13 @@ export interface ProjectConfig {
     | "kill-previous";
 
   opencodeIssueSessionStrategy?: "reuse" | "delete" | "ignore";
+
+  /** Strategy for handling previous sessions when spawning for the same issue.
+   * - "resume" (default): try getRestoreCommand(), fall back to context injection, then fresh
+   * - "context-inject": don't resume agent conversation, but inject context summary into prompt
+   * - "fresh": always start fresh (current behavior, no change)
+   */
+  workerRespawnStrategy?: "resume" | "context-inject" | "fresh";
 }
 
 export interface TrackerConfig {
@@ -1410,6 +1431,7 @@ export interface SessionMetadata {
   opencodeSessionId?: string;
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
+  resumedFrom?: string; // Session ID this session was resumed from
 }
 
 // =============================================================================
@@ -1477,6 +1499,27 @@ export interface LifecycleManager {
 
   /** Force-check a specific session now */
   check(sessionId: SessionId): Promise<void>;
+
+  /**
+   * Scan active sessions for dead processes and recover them.
+   * - Transitions dead sessions to "terminated" and archives them
+   * - Optionally respawns sessions that have an issueId (triggers resume chain)
+   * Returns IDs of sessions that were recovered (archived + respawned).
+   */
+  recoverDeadSessions(): Promise<RecoveredSession[]>;
+}
+
+/** Result of a dead-session recovery attempt. */
+export interface RecoveredSession {
+  sessionId: SessionId;
+  projectId: string;
+  issueId?: string;
+  /** Whether the session was archived (always true for recovered sessions) */
+  archived: boolean;
+  /** Whether spawn() was called to respawn the session */
+  respawned: boolean;
+  /** If respawn failed, the error message */
+  respawnError?: string;
 }
 
 /** Plugin registry — discovery + loading */

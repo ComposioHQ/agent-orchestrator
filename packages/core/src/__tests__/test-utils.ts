@@ -99,6 +99,12 @@ export function createMockPlugins(): MockPlugins {
       sessionId: "app-1",
       projectId: "my-app",
     }),
+    restore: vi.fn().mockResolvedValue({
+      path: "/tmp/ws",
+      branch: "feat/test",
+      sessionId: "app-1",
+      projectId: "my-app",
+    }),
     destroy: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
   };
