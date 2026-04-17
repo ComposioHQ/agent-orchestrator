@@ -16,6 +16,7 @@ import {
   PR_STATE,
   CI_STATUS,
   TERMINAL_STATUSES,
+  AUTO_ARCHIVE_STATUSES,
   type LifecycleManager,
   type SessionManager,
   type SessionId,
@@ -198,6 +199,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  const archivedSessions = new Set<SessionId>(); // guard against repeated archive attempts
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -1316,6 +1318,32 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchMergeConflicts(session, newStatus),
     ]);
+
+    // Auto-archive sessions that have entered a terminal state. This kills
+    // the tmux session and moves metadata to archive/ so `ao status` and
+    // `ao session ls` stop showing stale entries. Run after notifications
+    // and reactions so they see the live session state first. See issue #536.
+    if (AUTO_ARCHIVE_STATUSES.has(newStatus) && !archivedSessions.has(session.id)) {
+      archivedSessions.add(session.id);
+      try {
+        await sessionManager.archiveTerminalSession(session.id);
+      } catch (err) {
+        archivedSessions.delete(session.id); // allow retry on next poll
+        observer.recordOperation({
+          metric: "lifecycle_poll",
+          operation: "lifecycle.archive",
+          outcome: "failure",
+          correlationId: createCorrelationId("lifecycle-archive"),
+          projectId: session.projectId,
+          sessionId: session.id,
+          data: {
+            status: newStatus,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          level: "error",
+        });
+      }
+    }
   }
 
   /** Run one polling cycle across all sessions. */
@@ -1344,6 +1372,36 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
+
+      // Sweep any terminal sessions that didn't go through a transition this
+      // cycle (e.g., sessions already in terminal state at lifecycle startup,
+      // or set terminal by an external process). Keeps active sessions dir
+      // clean across restarts. See issue #536.
+      await Promise.allSettled(
+        sessions
+          .filter((s) => AUTO_ARCHIVE_STATUSES.has(s.status) && !archivedSessions.has(s.id))
+          .map(async (s) => {
+            archivedSessions.add(s.id);
+            try {
+              await sessionManager.archiveTerminalSession(s.id);
+            } catch (err) {
+              archivedSessions.delete(s.id);
+              observer.recordOperation({
+                metric: "lifecycle_poll",
+                operation: "lifecycle.archive",
+                outcome: "failure",
+                correlationId: createCorrelationId("lifecycle-archive"),
+                projectId: s.projectId,
+                sessionId: s.id,
+                data: {
+                  status: s.status,
+                  error: err instanceof Error ? err.message : String(err),
+                },
+                level: "error",
+              });
+            }
+          }),
+      );
 
       // Prune stale entries from states, reactionTrackers, and lastReviewBacklogCheckAt
       // for sessions that no longer appear in the session list (e.g., after kill/cleanup)

@@ -345,6 +345,7 @@ export function createMockSessionManager(): SessionManager {
     list: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(null),
     kill: vi.fn().mockResolvedValue(undefined),
+    archiveTerminalSession: vi.fn().mockResolvedValue(true),
     cleanup: vi.fn().mockResolvedValue({ killed: [], skipped: [], errors: [] }),
     send: vi.fn().mockResolvedValue(undefined),
     claimPR: vi.fn().mockResolvedValue({

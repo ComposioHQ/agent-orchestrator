@@ -228,6 +228,81 @@ describe("kill", () => {
   }, 15000);
 });
 
+describe("archiveTerminalSession", () => {
+  it("destroys runtime and archives metadata but preserves workspace", async () => {
+    const managedWorktree = join(
+      getWorktreesDir(config.configPath, config.projects["my-app"]!.path),
+      "app-1",
+    );
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: managedWorktree,
+      branch: "main",
+      status: "merged",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const archived = await sm.archiveTerminalSession("app-1");
+
+    expect(archived).toBe(true);
+    expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
+    expect(mockWorkspace.destroy).not.toHaveBeenCalled();
+    expect(readMetadata(sessionsDir, "app-1")).toBeNull();
+    expect(existsSync(join(sessionsDir, "archive"))).toBe(true);
+  });
+
+  it("skips orchestrator sessions", async () => {
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: config.projects["my-app"]!.path,
+      branch: "main",
+      status: "done",
+      project: "my-app",
+      role: "orchestrator",
+      runtimeHandle: JSON.stringify(makeHandle("rt-orch")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const archived = await sm.archiveTerminalSession("app-orchestrator");
+
+    expect(archived).toBe(false);
+    expect(mockRuntime.destroy).not.toHaveBeenCalled();
+    expect(readMetadata(sessionsDir, "app-orchestrator")).not.toBeNull();
+  });
+
+  it("returns false for unknown session", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.archiveTerminalSession("missing")).resolves.toBe(false);
+  });
+
+  it("archives even when runtime destroy throws", async () => {
+    const failRuntime: Runtime = {
+      ...mockRuntime,
+      destroy: vi.fn().mockRejectedValue(new Error("already gone")),
+    };
+    const registryWithFail: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return failRuntime;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithFail });
+    await expect(sm.archiveTerminalSession("app-1")).resolves.toBe(true);
+    expect(readMetadata(sessionsDir, "app-1")).toBeNull();
+  });
+});
+
 describe("cleanup", () => {
   it("kills sessions with merged PRs", async () => {
     const mockSCM: SCM = {

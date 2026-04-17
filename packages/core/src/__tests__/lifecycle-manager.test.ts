@@ -596,6 +596,35 @@ describe("check (single session)", () => {
     await expect(lm.check("nonexistent")).rejects.toThrow("not found");
   });
 
+  it("auto-archives session on transition to terminal status (merged)", async () => {
+    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "approved", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("merged");
+    expect(mockSessionManager.archiveTerminalSession).toHaveBeenCalledWith("app-1");
+  });
+
+  it("does not auto-archive session on transition to errored status", async () => {
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "errored" }),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.archiveTerminalSession).not.toHaveBeenCalled();
+  });
+
   it("does not change state when status is unchanged", async () => {
     const lm = setupCheck("app-1", {
       session: makeSession({ status: "working" }),

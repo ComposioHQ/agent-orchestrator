@@ -119,6 +119,19 @@ export const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set([
   "merged",
 ]);
 
+/**
+ * Statuses that trigger automatic archiving (metadata moved to archive/, tmux killed).
+ * Excludes "errored" because errored sessions may still be recovered via the
+ * recovery manager and should stay in the active sessions directory until then.
+ */
+export const AUTO_ARCHIVE_STATUSES: ReadonlySet<SessionStatus> = new Set([
+  "killed",
+  "terminated",
+  "done",
+  "cleanup",
+  "merged",
+]);
+
 /** Activity states that indicate the session is no longer running. */
 export const TERMINAL_ACTIVITIES: ReadonlySet<ActivityState> = new Set(["exited"]);
 
@@ -1405,6 +1418,14 @@ export interface SessionManager {
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
   kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void>;
+  /**
+   * Archive a session that has entered a terminal state.
+   * Kills the runtime (tmux) and moves metadata to `archive/`, but preserves
+   * the workspace/worktree so users can still inspect the completed work.
+   * Returns true if archived, false if the session was missing, protected
+   * (orchestrator), or had no active metadata to archive.
+   */
+  archiveTerminalSession(sessionId: SessionId): Promise<boolean>;
   cleanup(
     projectId?: string,
     options?: { dryRun?: boolean; purgeOpenCode?: boolean },

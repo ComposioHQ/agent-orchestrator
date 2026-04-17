@@ -1708,6 +1708,46 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
   }
 
+  /**
+   * Archive a session that has reached a terminal state.
+   *
+   * Destroys the runtime (kills the tmux session) and moves metadata to
+   * `archive/` so `ao status` / `ao session ls` stop showing stale entries.
+   * Unlike `kill()`, this preserves the workspace/worktree — the issue is
+   * already done and the worktree may still be useful for human inspection.
+   *
+   * Orchestrator sessions are protected from auto-archive.
+   */
+  async function archiveTerminalSession(sessionId: SessionId): Promise<boolean> {
+    const located = findSessionRecord(sessionId);
+    if (!located) return false;
+    const { raw, sessionsDir, project } = located;
+
+    if (isCleanupProtectedSession(project, sessionId, raw)) {
+      return false;
+    }
+
+    if (raw["runtimeHandle"]) {
+      const handle = safeJsonParse<RuntimeHandle>(raw["runtimeHandle"]);
+      if (handle) {
+        const runtimePlugin = registry.get<Runtime>(
+          "runtime",
+          handle.runtimeName ?? project.runtime ?? config.defaults.runtime,
+        );
+        if (runtimePlugin) {
+          try {
+            await runtimePlugin.destroy(handle);
+          } catch {
+            // Runtime may already be gone — archiving is still valuable.
+          }
+        }
+      }
+    }
+
+    deleteMetadata(sessionsDir, sessionId, true);
+    return true;
+  }
+
   async function cleanup(
     projectId?: string,
     options?: { dryRun?: boolean; purgeOpenCode?: boolean },
@@ -2523,5 +2563,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR, remap };
+  return {
+    spawn,
+    spawnOrchestrator,
+    restore,
+    list,
+    get,
+    kill,
+    archiveTerminalSession,
+    cleanup,
+    send,
+    claimPR,
+    remap,
+  };
 }
