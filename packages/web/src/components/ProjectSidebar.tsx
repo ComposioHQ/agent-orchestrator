@@ -7,7 +7,6 @@ import type { ProjectInfo } from "@/lib/project-name";
 import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@/lib/types";
 import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { getSessionTitle } from "@/lib/format";
-import { ProjectAvatar } from "./ProjectAvatar";
 import { ThemeToggle } from "./ThemeToggle";
 
 interface ProjectSidebarProps {
@@ -22,6 +21,7 @@ interface ProjectSidebarProps {
   onToggleCollapsed?: () => void;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
+  /** When provided, the existing "+" header button opens the add-project flow. */
   onAddProject?: () => void;
 }
 
@@ -49,10 +49,7 @@ const LEVEL_LABELS: Record<AttentionLevel, string> = {
 };
 
 export function ProjectSidebar(props: ProjectSidebarProps) {
-  // Render even when empty so the "+ Add Project" affordance is reachable
-  // in portfolio mode. Session-detail/dashboard callers without that
-  // affordance can hide the sidebar themselves.
-  if (props.projects.length === 0 && !props.onAddProject) {
+  if (props.projects.length === 0) {
     return null;
   }
   return <ProjectSidebarInner {...props} />;
@@ -127,51 +124,13 @@ function ProjectSidebarInner({
   if (collapsed) {
     return (
       <>
-        {mobileOpen && (
-          <div className="sidebar-mobile-backdrop" onClick={onMobileClose} />
-        )}
-        <aside className={cn("project-sidebar project-sidebar--collapsed flex h-full w-[56px] flex-col items-center py-3", mobileOpen && "project-sidebar--mobile-open")}>
-          <div className="flex flex-1 flex-col items-center gap-2">
-            {projects.map((project) => {
-              const workerSessions = sessionsByProject.get(project.id) ?? [];
-              const isActive = activeProjectId === project.id;
-              return (
-                <button
-                  key={project.id}
-                  type="button"
-                  onClick={() => navigate(`/?project=${encodeURIComponent(project.id)}`)}
-                  className={cn(
-                    "project-sidebar__collapsed-project",
-                    isActive && "project-sidebar__collapsed-project--active",
-                  )}
-                  title={project.name}
-                >
-                  <ProjectAvatar projectId={project.id} name={project.name} size={24} />
-                  {workerSessions.length > 0 && (
-                    <span className="project-sidebar__health-indicator" />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <button
-            type="button"
-            onClick={() => { _onToggleCollapsed?.(); onMobileClose?.(); }}
-            className="project-sidebar__collapsed-toggle mt-auto"
-            aria-label="Show project sidebar"
-          >
-            <svg
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              viewBox="0 0 24 24"
-              className="h-4 w-4"
-            >
-              <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
-              <path d="M9 4.5v15M12 10l3 2-3 2" />
-            </svg>
-          </button>
-        </aside>
+        {mobileOpen && <div className="sidebar-mobile-backdrop" onClick={onMobileClose} />}
+        <aside
+          className={cn(
+            "project-sidebar project-sidebar--collapsed flex h-full flex-col",
+            mobileOpen && "project-sidebar--mobile-open",
+          )}
+        />
       </>
     );
   }
@@ -192,7 +151,6 @@ function ProjectSidebarInner({
             className="project-sidebar__add-btn"
             aria-label="New project"
             onClick={onAddProject}
-            disabled={!onAddProject}
           >
             <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path d="M12 5v14M5 12h14" />

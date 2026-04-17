@@ -242,29 +242,4 @@ describe("ProjectSidebar", () => {
     fireEvent.click(screen.getByLabelText("New project"));
     expect(onAddProject).toHaveBeenCalledTimes(1);
   });
-
-  it("disables the + button when onAddProject is not provided", () => {
-    render(
-      <ProjectSidebar
-        projects={projects}
-        sessions={[]}
-        activeProjectId="project-1"
-        activeSessionId={undefined}
-      />,
-    );
-    expect(screen.getByLabelText("New project")).toBeDisabled();
-  });
-
-  it("renders with only the + affordance when projects are empty but onAddProject is provided", () => {
-    render(
-      <ProjectSidebar
-        projects={[]}
-        sessions={[]}
-        activeProjectId={undefined}
-        activeSessionId={undefined}
-        onAddProject={() => undefined}
-      />,
-    );
-    expect(screen.getByLabelText("New project")).toBeInTheDocument();
-  });
 });
