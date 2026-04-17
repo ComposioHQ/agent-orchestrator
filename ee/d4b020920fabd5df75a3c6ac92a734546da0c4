@@ -1,0 +1,29 @@
+packages/web/src/middleware.ts
+  c1b0bba7951ad46b 18-19,21
+packages/core/src/file-lock.ts
+  c1b0bba7951ad46b 27-29,41
+packages/plugins/agent-opencode/src/index.test.ts
+  c1b0bba7951ad46b 279-280,284-285
+packages/cli/src/commands/start.ts
+  c1b0bba7951ad46b 68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "eed4b020920fabd5df75a3c6ac92a734546da0c4",
+  "prompts": {
+    "c1b0bba7951ad46b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed662fcc-bace-482f-885c-3a64cf1cfffd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 7,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}
