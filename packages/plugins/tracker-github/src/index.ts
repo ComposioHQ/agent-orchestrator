@@ -121,13 +121,6 @@ function mapState(ghState: string, stateReason?: string | null): Issue["state"] 
 // Tracker implementation
 // ---------------------------------------------------------------------------
 
-function requireRepo(project: ProjectConfig): string {
-  if (!project.repo) {
-    throw new Error("GitHub tracker requires a 'repo' field in project config");
-  }
-  return project.repo;
-}
-
 function createGitHubTracker(): Tracker {
   return {
     name: "github",
