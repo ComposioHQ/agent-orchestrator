@@ -160,13 +160,51 @@ export async function sendKeys(
   }
 
   if (pressEnter) {
-    // Delay for paste to complete before sending Enter
-    // Higher delay needed when using paste-buffer to ensure tmux processes the paste
-    // before receiving the Enter keystroke (especially with Claude permission prompts)
-    if (text.includes("\n") || text.length > 200) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    const isLargeMessage = text.includes("\n") || text.length > 200;
+
+    if (isLargeMessage) {
+      // Scale initial delay with message size: 1000ms base + 500ms per 1KB
+      const baseDelayMs = 1000 + Math.floor(text.length / 1000) * 500;
+      const cappedDelayMs = Math.min(baseDelayMs, 5000); // cap at 5s
+      await new Promise((resolve) => setTimeout(resolve, cappedDelayMs));
+
+      // Capture pane before sending Enter to detect processing
+      let preEnterOutput: string;
+      try {
+        preEnterOutput = await capturePane(sessionName, 5);
+      } catch {
+        preEnterOutput = "";
+      }
+
+      // Send Enter and retry up to 3 times if the agent doesn't respond
+      const maxRetries = 3;
+      const retryDelays = [500, 1500, 3000]; // increasing backoff
+
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        await tmux("send-keys", "-t", sessionName, "Enter");
+
+        if (attempt >= maxRetries) {
+          break; // Last attempt, don't check — best-effort
+        }
+
+        // Wait and check if pane output changed (agent started processing)
+        await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]));
+
+        let postEnterOutput: string;
+        try {
+          postEnterOutput = await capturePane(sessionName, 5);
+        } catch {
+          postEnterOutput = "";
+        }
+
+        if (postEnterOutput !== preEnterOutput) {
+          break; // Agent responded, Enter was received
+        }
+        // Output unchanged — Enter was likely swallowed, retry
+      }
+    } else {
+      await tmux("send-keys", "-t", sessionName, "Enter");
     }
-    await tmux("send-keys", "-t", sessionName, "Enter");
   }
 }
 
