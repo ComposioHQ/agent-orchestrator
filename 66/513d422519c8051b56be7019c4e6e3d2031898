@@ -1,0 +1,25 @@
+packages/core/src/global-config.ts
+  fbca54827902268f 333-339,357-359
+packages/core/src/__tests__/global-config.test.ts
+  fbca54827902268f 215-225,228-237,241,260
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "66513d422519c8051b56be7019c4e6e3d2031898",
+  "prompts": {
+    "fbca54827902268f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8220e47f-9895-4774-8f6e-5a40c417b074",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 186,
+      "total_deletions": 129,
+      "accepted_lines": 1588,
+      "overriden_lines": 0
+    }
+  }
+}
