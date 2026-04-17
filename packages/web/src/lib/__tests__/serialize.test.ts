@@ -858,7 +858,10 @@ describe("enrichSessionsMetadata", () => {
   it("starts issue-title fetches before agent summaries finish", async () => {
     let resolveSummary: ((value: { summary: string; summaryIsFallback: false; agentSessionId: string }) => void) | null = null;
 
-    const tracker = mockTracker("Fix auth bug");
+    const tracker = {
+      ...mockTracker("Fix auth bug"),
+      issueUrl: vi.fn().mockReturnValue(`${urlBase}-parallel`),
+    };
     const agent = {
       ...mockAgent(),
       getSessionInfo: vi.fn().mockImplementation(
@@ -1036,6 +1039,7 @@ describe("enrichSessionsMetadataFast", () => {
     const tracker: Tracker = {
       name: "mock-tracker",
       getIssue: vi.fn().mockResolvedValue({ id: "99", title: "Should not be called", url: urlBase }),
+      issueUrl: vi.fn().mockReturnValue(urlBase),
       issueLabel: vi.fn().mockReturnValue("#99"),
     } as unknown as Tracker;
     const agent: Agent = {

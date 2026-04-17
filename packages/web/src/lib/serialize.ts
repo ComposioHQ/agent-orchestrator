@@ -59,7 +59,7 @@ export function sessionToDashboard(session: Session): DashboardSession {
     activity: session.activity,
     branch: session.branch,
     issueId: session.issueId, // Deprecated: kept for backwards compatibility
-    issueUrl: session.issueId, // issueId is actually the full URL
+    issueUrl: null, // Will be enriched by enrichSessionIssue() via tracker.issueUrl()
     issueLabel: null, // Will be enriched by enrichSessionIssue()
     issueTitle: null, // Will be enriched by enrichSessionIssueTitle()
     userPrompt: session.metadata["userPrompt"] ?? null,
@@ -287,12 +287,23 @@ export async function enrichSessionPR(
   return true;
 }
 
-/** Enrich a DashboardSession's issue label using the tracker plugin. */
+/** Enrich a DashboardSession's issue URL and label using the tracker plugin. */
 export function enrichSessionIssue(
   dashboard: DashboardSession,
   tracker: Tracker,
   project: ProjectConfig,
 ): void {
+  if (!dashboard.issueId) return;
+
+  // Compute the full issue URL from the identifier using the tracker plugin
+  if (tracker.issueUrl) {
+    try {
+      dashboard.issueUrl = tracker.issueUrl(dashboard.issueId, project);
+    } catch {
+      // If issueUrl() fails, leave issueUrl null
+    }
+  }
+
   if (!dashboard.issueUrl) return;
 
   // Use tracker plugin to extract human-readable label from URL
@@ -396,9 +407,9 @@ function prepareSessionMetadataEnrichment(
 } {
   const projects = coreSessions.map((core) => resolveProject(core, config.projects));
 
-  // Issue labels (synchronous string parsing, no API calls)
+  // Issue URLs and labels (synchronous string parsing, no API calls)
   projects.forEach((project, i) => {
-    if (!dashboardSessions[i].issueUrl || !project?.tracker?.plugin) return;
+    if (!dashboardSessions[i].issueId || !project?.tracker?.plugin) return;
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
     if (!tracker) return;
     enrichSessionIssue(dashboardSessions[i], tracker, project);
