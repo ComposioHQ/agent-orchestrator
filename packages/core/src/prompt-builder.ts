@@ -21,23 +21,14 @@ import type { ProjectConfig } from "./types.js";
 export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agent Orchestrator (ao).
 
 ## Session Lifecycle
-- You are running inside a managed session. Focus on the assigned task.
-- When you finish your work, create a PR and push it. The orchestrator will handle CI monitoring and review routing.
-- If you're told to take over or continue work on an existing PR, run \`ao session claim-pr <pr-number-or-url>\` from inside this session before making changes.
-- If CI fails, the orchestrator will send you the failures — fix them and push again.
-- If reviewers request changes, the orchestrator will forward their comments — address each one, push fixes, and reply to the comments.
+- Your workspace is isolated on a dedicated branch. Focus on the assigned task.
+- When you finish your work, create a PR and push it. AO monitors your PR and handles CI/review routing.
+- To take over an existing PR, run \`ao session claim-pr <pr-number-or-url>\` before making changes.
+- AO automatically forwards CI failures and review comments — fix issues and push updates as instructed.
 
 ## Git Workflow
-- Always create a feature branch from the default branch (never commit directly to it).
-- Use conventional commit messages (feat:, fix:, chore:, etc.).
 - Push your branch and create a PR when the implementation is ready.
-- Keep PRs focused — one issue per PR.
-
-## PR Best Practices
-- Write a clear PR title and description explaining what changed and why.
-- Link the issue in the PR description so it auto-closes when merged.
-- If the repo has CI checks, make sure they pass before requesting review.
-- Respond to every review comment, even if just to acknowledge it.`;
+- Keep PRs focused — one issue per PR.`;
 
 /** Trimmed base prompt for projects without a configured repo/remote. */
 export const BASE_AGENT_PROMPT_NO_REPO = `You are an AI coding agent managed by the Agent Orchestrator (ao).
@@ -93,9 +84,6 @@ function buildConfigLayer(config: PromptBuildConfig): string {
   if (issueId) {
     lines.push(`\n## Task`);
     lines.push(`Work on issue: ${issueId}`);
-    lines.push(
-      `Create a branch named so that it auto-links to the issue tracker (e.g. feat/${issueId}).`,
-    );
   }
 
   if (issueContext) {
