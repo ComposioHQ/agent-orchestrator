@@ -21,6 +21,7 @@ import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
 import { ConnectionBar } from "./ConnectionBar";
 import { SidebarContext } from "./workspace/SidebarContext";
+import { SpawnSessionModal } from "./SpawnSessionModal";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -160,6 +161,8 @@ function DashboardInner({
   const showSidebar = projects.length >= 1;
   const { showToast } = useToast();
   const [doneExpanded, setDoneExpanded] = useState(false);
+  const [spawnOpen, setSpawnOpen] = useState(false);
+  const [optimisticSessions, setOptimisticSessions] = useState<DashboardSession[]>([]);
   const sessionsRef = useRef(sessions);
 
   sessionsRef.current = sessions;
@@ -176,9 +179,12 @@ function DashboardInner({
     : null;
 
   const displaySessions = useMemo(() => {
-    if (allProjectsView || !activeSessionId) return sessions;
-    return sessions.filter((s) => s.id === activeSessionId);
-  }, [sessions, allProjectsView, activeSessionId]);
+    const sseIds = new Set(sessions.map((s) => s.id));
+    const validStubs = optimisticSessions.filter((s) => !sseIds.has(s.id));
+    const merged = [...validStubs, ...sessions];
+    if (allProjectsView || !activeSessionId) return merged;
+    return merged.filter((s) => s.id === activeSessionId);
+  }, [sessions, optimisticSessions, allProjectsView, activeSessionId]);
 
   useEffect(() => {
     setActiveOrchestrators((current) => mergeOrchestrators(current, orchestratorLinks));
@@ -360,6 +366,14 @@ function DashboardInner({
     [showToast],
   );
 
+  const handleSessionCreated = useCallback((session: DashboardSession) => {
+    if (session.id.startsWith("spawning-")) {
+      setOptimisticSessions((prev) => [session, ...prev.filter((s) => s.id !== session.id)]);
+    } else {
+      setOptimisticSessions([]);
+    }
+  }, []);
+
   const handleSpawnOrchestrator = async (project: ProjectInfo) => {
     setSpawningProjectIds((current) =>
       current.includes(project.id) ? current : [...current, project.id],
@@ -465,6 +479,15 @@ function DashboardInner({
             ) : null}
             <div className="dashboard-app-header__spacer" />
             <div className="dashboard-app-header__actions">
+              {!allProjectsView && projectId ? (
+                <button
+                  type="button"
+                  onClick={() => setSpawnOpen(true)}
+                  className="dashboard-app-btn"
+                >
+                  New Session
+                </button>
+              ) : null}
               {!allProjectsView && orchestratorHref ? (
                 <a
                   href={orchestratorHref}
@@ -621,6 +644,15 @@ function DashboardInner({
           </div>
         </div>
       </>
+      {projectId ? (
+        <SpawnSessionModal
+          projectId={projectId}
+          projectName={projectName}
+          open={spawnOpen}
+          onClose={() => setSpawnOpen(false)}
+          onSessionCreated={handleSessionCreated}
+        />
+      ) : null}
     </SidebarContext.Provider>
   );
 }
