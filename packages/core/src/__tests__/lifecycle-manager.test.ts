@@ -253,6 +253,17 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
+  it("detects killed state when the runtime health probe throws", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockRejectedValue(new Error("probe failed"));
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("killed");
+  });
+
   it("detects killed state when getActivityState returns exited", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "exited" });
 

@@ -1947,8 +1947,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       while (true) {
         const [runtimeAlive, processRunning, output, foregroundCommand] = await Promise.all([
-          runtimePlugin.isAlive(handle).catch(() => true),
-          agentPlugin.isProcessRunning(handle).catch(() => true),
+          runtimePlugin.isAlive(handle).catch(() => false),
+          agentPlugin.isProcessRunning(handle).catch(() => false),
           captureOutput(handle),
           handle.runtimeName === "tmux"
             ? getTmuxForegroundCommand(handle.id)
@@ -1994,8 +1994,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const deadline = Date.now() + SEND_RESTORE_READY_TIMEOUT_MS;
       while (true) {
         const [runtimeAlive, processRunning, output, foregroundCommand] = await Promise.all([
-          runtimePlugin.isAlive(handle).catch(() => true),
-          agentPlugin.isProcessRunning(handle).catch(() => true),
+          runtimePlugin.isAlive(handle).catch(() => false),
+          agentPlugin.isProcessRunning(handle).catch(() => false),
           captureOutput(handle),
           handle.runtimeName === "tmux"
             ? getTmuxForegroundCommand(handle.id)
@@ -2010,7 +2010,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
 
         if (Date.now() >= deadline) {
-          return;
+          throw new Error(`Timed out waiting for restored session ${restoredSession.id} to become ready`);
         }
 
         await sleep(SEND_RESTORE_READY_POLL_MS);
@@ -2059,15 +2059,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
 
       let [runtimeAlive, processRunning] = await Promise.all([
-        runtimePlugin.isAlive(handle).catch(() => true),
-        agentPlugin.isProcessRunning(handle).catch(() => true),
+        runtimePlugin.isAlive(handle).catch(() => false),
+        agentPlugin.isProcessRunning(handle).catch(() => false),
       ]);
 
       if (normalized.status === "spawning" && runtimeAlive) {
         await waitForInteractiveReadiness(normalized, SEND_BOOTSTRAP_READY_TIMEOUT_MS);
         [runtimeAlive, processRunning] = await Promise.all([
-          runtimePlugin.isAlive(handle).catch(() => true),
-          agentPlugin.isProcessRunning(handle).catch(() => true),
+          runtimePlugin.isAlive(handle).catch(() => false),
+          agentPlugin.isProcessRunning(handle).catch(() => false),
         ]);
       }
 

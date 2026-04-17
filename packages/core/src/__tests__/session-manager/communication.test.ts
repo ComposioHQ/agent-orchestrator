@@ -86,6 +86,188 @@ describe("send", () => {
     );
   });
 
+  it("treats initial send health probe failures as unhealthy and restores before sending", async () => {
+    const wsPath = join(tmpDir, "ws-app-probe-failure");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "working",
+      project: "my-app",
+      issue: "TEST-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    let isAliveCalls = 0;
+    vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => {
+      if (handle.id === "rt-restored") return true;
+
+      isAliveCalls += 1;
+      if (isAliveCalls === 1) return true;
+      if (isAliveCalls === 2) throw new Error("runtime probe failed");
+      return false;
+    });
+
+    vi.mocked(mockAgent.isProcessRunning)
+      .mockRejectedValueOnce(new Error("process probe failed"))
+      .mockResolvedValueOnce(true);
+
+    vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
+    vi.mocked(mockRuntime.getOutput)
+      .mockResolvedValueOnce("restored prompt")
+      .mockResolvedValueOnce("before send")
+      .mockResolvedValueOnce("after send");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.send("app-1", "Recover from failed health probes");
+
+    expect(mockRuntime.create).toHaveBeenCalled();
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-restored"),
+      "Recover from failed health probes",
+    );
+  });
+
+  it("waits for restored session health probes to recover before sending", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      issue: "TEST-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => {
+      if (handle.id === "rt-restored" && vi.mocked(mockRuntime.isAlive).mock.calls.length === 1) {
+        throw new Error("runtime probe failed");
+      }
+      return true;
+    });
+    vi.mocked(mockAgent.isProcessRunning).mockImplementation(async (handle) => {
+      if (
+        handle.id === "rt-restored" &&
+        vi.mocked(mockAgent.isProcessRunning).mock.calls.length === 1
+      ) {
+        throw new Error("process probe failed");
+      }
+      return true;
+    });
+    vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
+    vi.mocked(mockRuntime.getOutput)
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("restored prompt")
+      .mockResolvedValueOnce("before send")
+      .mockResolvedValueOnce("after send");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.send("app-1", "Please resume");
+
+    expect(mockRuntime.create).toHaveBeenCalled();
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-restored"),
+      "Please resume",
+    );
+  });
+
+  it("restores spawning sessions when readiness probes fail after bootstrap", async () => {
+    const wsPath = join(tmpDir, "ws-app-spawning");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "spawning",
+      project: "my-app",
+      issue: "TEST-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    let isAliveCalls = 0;
+    vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => {
+      if (handle.id === "rt-restored") return true;
+
+      isAliveCalls += 1;
+      if (isAliveCalls === 1) return true;
+      if (isAliveCalls === 2) return true;
+      if (isAliveCalls === 3) throw new Error("bootstrap runtime probe failed");
+      if (isAliveCalls === 4 || isAliveCalls === 5) return true;
+      if (isAliveCalls === 6) throw new Error("post-bootstrap runtime probe failed");
+      return false;
+    });
+
+    vi.mocked(mockAgent.isProcessRunning)
+      .mockResolvedValueOnce(false)
+      .mockRejectedValueOnce(new Error("bootstrap process probe failed"))
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockRejectedValueOnce(new Error("post-bootstrap process probe failed"))
+      .mockResolvedValueOnce(true);
+
+    vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
+    vi.mocked(mockRuntime.getOutput)
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("Press up to edit queued messages")
+      .mockResolvedValueOnce("Press up to edit queued messages")
+      .mockResolvedValueOnce("restored prompt")
+      .mockResolvedValueOnce("before send")
+      .mockResolvedValueOnce("after send");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.send("app-1", "Resume after bootstrap probe failure");
+
+    expect(mockRuntime.create).toHaveBeenCalled();
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-restored"),
+      "Resume after bootstrap probe failure",
+    );
+  });
+
+  it("throws when a restored session never becomes ready", async () => {
+    vi.useFakeTimers();
+    try {
+      const wsPath = join(tmpDir, "ws-app-timeout");
+      mkdirSync(wsPath, { recursive: true });
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: wsPath,
+        branch: "feat/TEST-1",
+        status: "working",
+        project: "my-app",
+        issue: "TEST-1",
+        runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+      });
+
+      vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => {
+        if (handle.id === "rt-old") return false;
+        throw new Error("runtime probe failed");
+      });
+      vi.mocked(mockAgent.isProcessRunning).mockImplementation(async (handle) => {
+        if (handle.id === "rt-old") return false;
+        throw new Error("process probe failed");
+      });
+      vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
+      vi.mocked(mockRuntime.getOutput).mockResolvedValue("");
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const sendPromise = sm.send("app-1", "This should not be delivered");
+      const sendAssertion = expect(sendPromise).rejects.toThrow(
+        "Timed out waiting for restored session app-1 to become ready",
+      );
+
+      await vi.advanceTimersByTimeAsync(6_000);
+
+      await sendAssertion;
+      expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("waits for spawning sessions to become interactive before considering restore", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
