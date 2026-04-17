@@ -1,0 +1,29 @@
+packages/web/src/components/__tests__/ProjectSidebar.test.tsx
+  c1b0bba7951ad46b 230-269
+packages/web/src/components/ProjectSidebar.tsx
+  c1b0bba7951ad46b 25,52-55,73,190-196
+packages/web/src/components/DashboardShell.tsx
+  c1b0bba7951ad46b 12,18,57-60,72-73,81
+packages/web/src/lib/portfolio-page-data.ts
+  c1b0bba7951ad46b 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "f9c54047be1e72ddcba93093a28518d8a6781212",
+  "prompts": {
+    "c1b0bba7951ad46b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed662fcc-bace-482f-885c-3a64cf1cfffd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1268,
+      "total_deletions": 4681,
+      "accepted_lines": 1878,
+      "overriden_lines": 1
+    }
+  }
+}
