@@ -68,7 +68,7 @@ function isUnknownJsonFieldError(err: unknown, fieldName: string): boolean {
 }
 
 async function ghIssueViewJson(identifier: string, project: ProjectConfig): Promise<string> {
-  const repo = requireRepo(project);
+  const repo = requireProjectRepo(project);
   const fieldsWithStateReason = "number,title,body,url,state,stateReason,labels,assignees";
   try {
     return await gh([
@@ -120,13 +120,6 @@ function mapState(ghState: string, stateReason?: string | null): Issue["state"] 
 // ---------------------------------------------------------------------------
 // Tracker implementation
 // ---------------------------------------------------------------------------
-
-function requireRepo(project: ProjectConfig): string {
-  if (!project.repo) {
-    throw new Error("GitHub tracker requires a 'repo' field in project config");
-  }
-  return project.repo;
-}
 
 function createGitHubTracker(): Tracker {
   return {
