@@ -12,9 +12,12 @@ import { ThemeToggle } from "./ThemeToggle";
 
 interface ProjectSidebarProps {
   projects: ProjectInfo[];
-  sessions: DashboardSession[];
+  sessions: DashboardSession[] | null;
   activeProjectId: string | undefined;
   activeSessionId: string | undefined;
+  loading?: boolean;
+  error?: boolean;
+  onRetry?: () => void;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   mobileOpen?: boolean;
@@ -56,12 +59,16 @@ function ProjectSidebarInner({
   sessions,
   activeProjectId,
   activeSessionId,
+  loading = false,
+  error = false,
+  onRetry,
   collapsed = false,
   onToggleCollapsed: _onToggleCollapsed,
   mobileOpen = false,
   onMobileClose,
 }: ProjectSidebarProps) {
   const router = useRouter();
+  const isLoading = loading || sessions === null;
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
     () => new Set(activeProjectId && activeProjectId !== "all" ? [activeProjectId] : []),
@@ -85,6 +92,7 @@ function ProjectSidebarInner({
 
   const sessionsByProject = useMemo(() => {
     const map = new Map<string, DashboardSession[]>();
+    if (!sessions) return map;
     for (const s of sessions) {
       if (isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes)) continue;
       const list = map.get(s.projectId) ?? [];
@@ -181,6 +189,26 @@ function ProjectSidebarInner({
           </button>
         </div>
 
+        {/* Stale-data banner: keep cached sessions visible on fetch failure but
+            surface the error so users know the list may be out of date. */}
+        {error && sessions && sessions.length > 0 ? (
+          <div
+            role="status"
+            className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] px-2 py-1.5 text-[11px] text-[var(--color-text-tertiary)]"
+          >
+            <span>Failed to refresh · showing cached sessions</span>
+            {onRetry ? (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="font-medium text-[var(--color-link)] hover:underline"
+              >
+                Retry
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         {/* Project tree */}
         <div className="project-sidebar__tree flex-1 overflow-y-auto overflow-x-hidden">
           {projects.map((project) => {
@@ -236,7 +264,20 @@ function ProjectSidebarInner({
                 {/* Sessions */}
                 {isExpanded && (
                   <div className="project-sidebar__sessions">
-                    {visibleSessions.length > 0 ? (
+                    {isLoading ? (
+                      <div className="space-y-2 px-3 py-2" aria-label="Loading sessions">
+                        {Array.from({ length: 3 }, (_, index) => (
+                          <div
+                            key={`${project.id}-loading-${index}`}
+                            className="flex items-center gap-3 rounded-lg px-2 py-2"
+                          >
+                            <div className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[var(--color-border-strong)]" />
+                            <div className="h-3 flex-1 animate-pulse rounded bg-[var(--color-bg-primary)]" />
+                            <div className="h-3 w-12 animate-pulse rounded bg-[var(--color-bg-primary)]" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : visibleSessions.length > 0 ? (
                       visibleSessions.map((session) => {
                         const level = getAttentionLevel(session);
                         const isSessionActive = activeSessionId === session.id;
@@ -272,6 +313,17 @@ function ProjectSidebarInner({
                           </button>
                         );
                       })
+                    ) : error ? (
+                      <div className="px-3 py-2">
+                        <div className="project-sidebar__empty">Failed to load sessions</div>
+                        <button
+                          type="button"
+                          className="mt-2 text-xs font-medium text-[var(--color-link)] hover:underline"
+                          onClick={onRetry}
+                        >
+                          Retry
+                        </button>
+                      </div>
                     ) : (
                       <div className="project-sidebar__empty">No active sessions</div>
                     )}

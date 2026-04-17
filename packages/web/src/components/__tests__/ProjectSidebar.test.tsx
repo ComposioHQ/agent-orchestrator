@@ -212,4 +212,19 @@ describe("ProjectSidebar", () => {
     expect(container.querySelector(".project-sidebar--collapsed")).not.toBeNull();
     expect(screen.queryByText("Projects")).not.toBeInTheDocument();
   });
+
+  it("shows loading skeletons instead of the empty state while sessions are loading", () => {
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={null}
+        loading
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+      />,
+    );
+
+    expect(screen.getByLabelText("Loading sessions")).toBeInTheDocument();
+    expect(screen.queryByText("No active sessions")).not.toBeInTheDocument();
+  });
 });
