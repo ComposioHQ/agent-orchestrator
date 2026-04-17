@@ -1,0 +1,29 @@
+packages/web/src/providers/MuxProvider.tsx
+  679ad8ecbbaa5837 4-9,55-57,162-174,195-204
+packages/web/server/mux-websocket.ts
+  679ad8ecbbaa5837 33,223-230,558-559,564-565
+packages/web/src/app/api/events/route.ts
+  679ad8ecbbaa5837 29-45,113,127-128,138,141,143,148-152,180-200,202-205,215
+packages/web/src/lib/mux-protocol.ts
+  679ad8ecbbaa5837 17,22-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "ce550931f4af270ea1a374c556e072249a35ad03",
+  "prompts": {
+    "679ad8ecbbaa5837": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b74e7b89-b272-4eea-91b5-5348ba748a59",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 107,
+      "total_deletions": 37,
+      "accepted_lines": 107,
+      "overriden_lines": 0
+    }
+  }
+}
