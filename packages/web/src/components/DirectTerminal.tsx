@@ -276,18 +276,15 @@ export function DirectTerminal({
         // xterm.js clears the selection on every terminal.write(). We
         // buffer incoming data while a selection is active so the
         // highlight stays visible for Cmd+C. The buffer is flushed
-        // when the selection is cleared (click, keypress, etc.).
+        // when the selection is cleared (click, keypress, etc.) — the
+        // selection stays until the user interacts, matching native
+        // browser copy-paste behavior.
         const writeBuffer: string[] = [];
         let selectionActive = false;
-        let safetyTimer: ReturnType<typeof setTimeout> | null = null;
         let bufferBytes = 0;
         const MAX_BUFFER_BYTES = 1_048_576; // 1 MB
 
         const flushWriteBuffer = () => {
-          if (safetyTimer) {
-            clearTimeout(safetyTimer);
-            safetyTimer = null;
-          }
           if (writeBuffer.length > 0) {
             terminal.write(writeBuffer.join(""));
             writeBuffer.length = 0;
@@ -298,13 +295,6 @@ export function DirectTerminal({
         const selectionDisposable = terminal.onSelectionChange(() => {
           if (terminal.hasSelection()) {
             selectionActive = true;
-            // Safety: flush after 5s to prevent unbounded buffering
-            if (!safetyTimer) {
-              safetyTimer = setTimeout(() => {
-                selectionActive = false;
-                flushWriteBuffer();
-              }, 5_000);
-            }
           } else {
             selectionActive = false;
             flushWriteBuffer();
@@ -370,7 +360,6 @@ export function DirectTerminal({
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
           selectionDisposable.dispose();
-          if (safetyTimer) clearTimeout(safetyTimer);
           window.removeEventListener("resize", handleResize);
           inputDisposable?.dispose();
           inputDisposable = null;
