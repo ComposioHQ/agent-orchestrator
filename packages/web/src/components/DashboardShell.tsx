@@ -9,12 +9,13 @@ import {
   type ReactNode,
 } from "react";
 import type { DashboardSession, PortfolioProjectSummary } from "@/lib/types";
+import type { ProjectInfo } from "@/lib/project-name";
 import { useRouter } from "next/navigation";
 import { useModal } from "@/hooks/useModal";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { AddProjectModal } from "./AddProjectModal";
 import { CloneFromUrlModal } from "./CloneFromUrlModal";
-import { UnifiedSidebar } from "./UnifiedSidebar";
+import { ProjectSidebar } from "./ProjectSidebar";
 
 interface DashboardShellControls {
   openAddProject: () => void;
@@ -49,11 +50,14 @@ export function DashboardShell({
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(228);
   const toggleSidebarCollapse = useCallback(() => setSidebarCollapsed((v) => !v), []);
   const addProjectModal = useModal();
   const cloneModal = useModal();
   const { sessions: liveSessions } = useSessionEvents(sessions ?? []);
+  const projectInfos = useMemo<ProjectInfo[]>(
+    () => projects.map((p) => ({ id: p.id, name: p.name })),
+    [projects],
+  );
   const controls = useMemo<DashboardShellControls>(
     () => ({
       openAddProject: portfolioEnabled ? addProjectModal.open : () => undefined,
@@ -65,8 +69,8 @@ export function DashboardShell({
   return (
     <DashboardShellContext.Provider value={controls}>
       <div className="min-h-screen bg-[var(--color-bg-base)] text-[var(--color-text-primary)] lg:flex">
-        <UnifiedSidebar
-          projects={projects}
+        <ProjectSidebar
+          projects={projectInfos}
           sessions={liveSessions}
           activeProjectId={activeProjectId}
           activeSessionId={activeSessionId}
@@ -74,9 +78,7 @@ export function DashboardShell({
           onMobileClose={() => setMobileOpen(false)}
           onAddProject={portfolioEnabled ? addProjectModal.open : undefined}
           collapsed={sidebarCollapsed}
-          onToggleCollapse={toggleSidebarCollapse}
-          width={sidebarWidth}
-          onWidthChange={setSidebarWidth}
+          onToggleCollapsed={toggleSidebarCollapse}
         />
 
         <div className="min-w-0 flex-1">

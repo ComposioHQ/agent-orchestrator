@@ -227,4 +227,44 @@ describe("ProjectSidebar", () => {
     expect(screen.getByLabelText("Loading sessions")).toBeInTheDocument();
     expect(screen.queryByText("No active sessions")).not.toBeInTheDocument();
   });
+
+  it("calls onAddProject when the + button is clicked", () => {
+    const onAddProject = vi.fn();
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={[]}
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+        onAddProject={onAddProject}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("New project"));
+    expect(onAddProject).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the + button when onAddProject is not provided", () => {
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={[]}
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+      />,
+    );
+    expect(screen.getByLabelText("New project")).toBeDisabled();
+  });
+
+  it("renders with only the + affordance when projects are empty but onAddProject is provided", () => {
+    render(
+      <ProjectSidebar
+        projects={[]}
+        sessions={[]}
+        activeProjectId={undefined}
+        activeSessionId={undefined}
+        onAddProject={() => undefined}
+      />,
+    );
+    expect(screen.getByLabelText("New project")).toBeInTheDocument();
+  });
 });

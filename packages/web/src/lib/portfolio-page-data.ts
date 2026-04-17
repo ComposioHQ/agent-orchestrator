@@ -2,7 +2,7 @@
  * Shared portfolio page data loader.
  *
  * Used by both the home page (/) and project pages (/projects/[id])
- * to populate the UnifiedSidebar with project summaries.
+ * to populate the ProjectSidebar with project summaries.
  */
 
 import {
