@@ -1656,7 +1656,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+  padding-left: 2px;
 }
 
 .session-detail-crumb-back {
@@ -1686,11 +1687,37 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   color: var(--color-text-muted);
 }
 
-.session-detail-identity {
+.session-detail-identity-card {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 14px;
+  padding: 14px 16px 14px 18px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-default);
+  border-left: 2px solid var(--color-text-muted);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.session-detail-identity-card--active {
+  border-left-color: var(--color-status-working);
+}
+
+.session-detail-identity-card--ready {
+  border-left-color: var(--color-status-merge, var(--color-accent));
+}
+
+.session-detail-identity-card--waiting {
+  border-left-color: var(--color-status-respond);
+}
+
+.session-detail-identity-card--error {
+  border-left-color: var(--color-status-error, var(--color-accent-red));
+}
+
+.session-detail-identity-card--idle,
+.session-detail-identity-card--neutral {
+  border-left-color: var(--color-text-muted);
 }
 
 .session-detail-identity__info {
@@ -1698,15 +1725,33 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   min-width: 0;
 }
 
+.session-detail-identity__primary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.session-detail-identity__actions--inline {
+  margin-left: auto;
+  padding-left: 8px;
+}
+
 .session-detail-identity__title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.3;
   letter-spacing: -0.03em;
   color: var(--color-text-primary);
+}
+
+.session-detail-identity__status {
+  flex-shrink: 0;
 }
 
 .session-detail-identity__pills {
@@ -1714,14 +1759,13 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 .session-detail-identity__actions {
   display: flex;
   flex-shrink: 0;
   gap: 6px;
-  padding-top: 2px;
 }
 
 .session-detail-identity__actions--custom {
@@ -1769,6 +1813,12 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .session-detail-link-pill--branch {
   font-family: var(--font-mono);
   font-size: 10px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  line-height: 18px;
 }
 
 .session-detail-link-pill--branch-link {
@@ -3109,6 +3159,27 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: color-mix(in srgb, var(--color-accent-red, var(--color-status-error)) 8%, transparent);
   border-color: color-mix(in srgb, var(--color-accent-red, var(--color-status-error)) 40%, var(--color-border-default));
   color: var(--color-accent-red, var(--color-status-error));
+}
+
+.session-detail-action-btn--ghost {
+  padding: 3px 8px;
+  font-size: 10.5px;
+  border-color: transparent;
+  color: var(--color-text-tertiary);
+  opacity: 0.75;
+}
+
+.session-detail-action-btn--ghost:hover {
+  opacity: 1;
+}
+
+.session-detail-action-btn--ghost.session-detail-action-btn--danger {
+  color: var(--color-text-tertiary);
+}
+
+.session-detail-action-btn--ghost.session-detail-action-btn--danger:hover {
+  color: var(--color-accent-red, var(--color-status-error));
+  border-color: color-mix(in srgb, var(--color-accent-red, var(--color-status-error)) 30%, transparent);
 }
 
 /* Diff stat colors (for PR card and pills) */
