@@ -184,13 +184,15 @@ describe("mux terminal open", () => {
     ws.close();
   });
 
-  it("sends error response for nonexistent tmux session", async () => {
+  it("sends exited response for nonexistent tmux session", async () => {
+    // A missing tmux session is treated as "already gone" rather than a
+    // transient error — clients can then render the end-of-session placeholder.
     const ws = await connectMux();
 
     ws.send(JSON.stringify({ ch: "terminal", id: `nonexistent-${Date.now()}`, type: "open" }));
 
-    const msg = await waitForMessage(ws, (m) => m.ch === "terminal" && m.type === "error");
-    expect(typeof msg.message).toBe("string");
+    const msg = await waitForMessage(ws, (m) => m.ch === "terminal" && m.type === "exited");
+    expect(msg.code).toBe(0);
 
     ws.close();
   });

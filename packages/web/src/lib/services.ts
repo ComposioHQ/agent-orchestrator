@@ -5,15 +5,7 @@ import "server-only";
  *
  * Lazily initializes config, plugin registry, and session manager.
  * Cached in globalThis to survive Next.js HMR reloads in development.
- *
- * NOTE: Next.js webpack cannot resolve the core plugin registry's
- * dynamic `import(variable)` built-in loading path. We resolve the
- * built-in package entrypoints ourselves and import them by file URL.
  */
-
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve as resolvePath } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import {
   loadConfig,
@@ -33,8 +25,9 @@ import {
   TERMINAL_STATUSES,
 } from "@aoagents/ao-core";
 
+import { loadBuiltinPluginModule } from "@/lib/load-builtin-plugin";
+
 type BuiltinSlot = "runtime" | "agent" | "workspace" | "scm" | "tracker";
-type BuiltinPlugin = { default?: unknown };
 
 const BUILTIN_PLUGIN_PACKAGES: Record<BuiltinSlot, Record<string, string>> = {
   runtime: {
@@ -62,60 +55,6 @@ const BUILTIN_PLUGIN_PACKAGES: Record<BuiltinSlot, Record<string, string>> = {
     gitlab: "@aoagents/ao-plugin-tracker-gitlab",
   },
 };
-
-async function loadBuiltinPluginModule(packageName: string): Promise<BuiltinPlugin> {
-  const packageRoot = resolveBuiltinPackageRoot(packageName);
-  const packageJson = JSON.parse(
-    readFileSync(resolvePath(packageRoot, "package.json"), "utf8"),
-  ) as {
-    exports?: { ".": { import?: string } };
-    main?: string;
-  };
-  const entry =
-    packageJson.exports?.["."].import ??
-    packageJson.main;
-
-  if (!entry) {
-    throw new Error(`No import entry found in ${packageName}/package.json`);
-  }
-
-  const resolvedUrl = pathToFileURL(resolvePath(packageRoot, entry)).href;
-  return import(/* webpackIgnore: true */ resolvedUrl) as Promise<BuiltinPlugin>;
-}
-
-function resolveBuiltinPackageRoot(packageName: string): string {
-  const installedPackageRoot = resolvePath(process.cwd(), "node_modules", ...packageName.split("/"));
-  if (existsSync(resolvePath(installedPackageRoot, "package.json"))) {
-    return installedPackageRoot;
-  }
-
-  const workspacePluginName = packageName.replace("@aoagents/ao-plugin-", "");
-  const monorepoRoot = findMonorepoRoot(process.cwd());
-  const workspacePackageRoot = resolvePath(monorepoRoot, "packages", "plugins", workspacePluginName);
-  if (existsSync(resolvePath(workspacePackageRoot, "package.json"))) {
-    return workspacePackageRoot;
-  }
-
-  throw new Error(
-    `Could not resolve ${packageName} from ${installedPackageRoot} or ${workspacePackageRoot}`,
-  );
-}
-
-function findMonorepoRoot(startDir: string): string {
-  let currentDir = startDir;
-
-  while (true) {
-    if (existsSync(resolvePath(currentDir, "pnpm-workspace.yaml"))) {
-      return currentDir;
-    }
-
-    const parentDir = dirname(currentDir);
-    if (parentDir === currentDir) {
-      throw new Error(`Could not find monorepo root from ${startDir}`);
-    }
-    currentDir = parentDir;
-  }
-}
 
 function collectRequiredBuiltins(config: OrchestratorConfig): Array<{ slot: BuiltinSlot; name: string }> {
   const required = new Map<string, { slot: BuiltinSlot; name: string }>();

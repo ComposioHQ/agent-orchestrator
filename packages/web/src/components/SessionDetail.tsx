@@ -458,7 +458,7 @@ export function SessionDetail({
   const startFullscreen = searchParams.get("fullscreen") === "true";
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
-  const [terminalPhase, setTerminalPhase] = useState<"probing" | "attached" | "exited">("probing");
+  const [terminalExited, setTerminalExited] = useState(false);
   const pr = session.pr;
   const terminalEnded = TERMINAL_STATUSES.has(session.status);
   const isRestorable = terminalEnded && !NON_RESTORABLE_STATUSES.has(session.status);
@@ -526,21 +526,16 @@ export function SessionDetail({
   }, [session.id]);
 
   useEffect(() => {
-    setTerminalPhase("probing");
+    setTerminalExited(false);
   }, [session.id]);
 
   const handleTerminalStateChange = useCallback((event: TerminalLifecycleEvent) => {
-    if (event.type === "opened") {
-      setTerminalPhase("attached");
-      return;
-    }
-
     if (event.type === "exited") {
-      setTerminalPhase("exited");
+      setTerminalExited(true);
     }
   }, []);
 
-  const showTerminalEndedPlaceholder = showTerminal && terminalPhase === "exited";
+  const showTerminalEndedPlaceholder = showTerminal && terminalExited;
 
   if (!isMobile) {
     return (

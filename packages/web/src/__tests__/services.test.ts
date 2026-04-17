@@ -52,13 +52,29 @@ vi.mock("@aoagents/ao-core", () => ({
   TERMINAL_STATUSES: new Set(["merged", "killed"]) as ReadonlySet<string>,
 }));
 
-vi.mock("@aoagents/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));
-vi.mock("@aoagents/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
-vi.mock("@aoagents/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
-vi.mock("@aoagents/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));
-vi.mock("@aoagents/ao-plugin-scm-github", () => ({ default: scmPlugin }));
-vi.mock("@aoagents/ao-plugin-tracker-github", () => ({ default: trackerGithubPlugin }));
-vi.mock("@aoagents/ao-plugin-tracker-linear", () => ({ default: trackerLinearPlugin }));
+// `services.ts#loadBuiltinPluginModule` imports plugins via a `file://` URL,
+// so `vi.mock("@aoagents/ao-plugin-…")` on a bare specifier never intercepts.
+// We mock the extracted helper module instead, keyed by package name.
+const pluginByPackageName: Record<string, { manifest: { name: string } }> = {
+  "@aoagents/ao-plugin-runtime-tmux": tmuxPlugin,
+  "@aoagents/ao-plugin-agent-claude-code": claudePlugin,
+  "@aoagents/ao-plugin-agent-opencode": opencodePlugin,
+  "@aoagents/ao-plugin-workspace-worktree": worktreePlugin,
+  "@aoagents/ao-plugin-scm-github": scmPlugin,
+  "@aoagents/ao-plugin-tracker-github": trackerGithubPlugin,
+  "@aoagents/ao-plugin-tracker-linear": trackerLinearPlugin,
+  "@aoagents/ao-plugin-agent-codex": { manifest: { name: "codex" } },
+};
+
+vi.mock("@/lib/load-builtin-plugin", () => ({
+  loadBuiltinPluginModule: async (packageName: string) => {
+    const plugin = pluginByPackageName[packageName];
+    if (!plugin) {
+      throw new Error(`No mock plugin registered for ${packageName}`);
+    }
+    return { default: plugin };
+  },
+}));
 
 describe("services", () => {
   beforeEach(() => {

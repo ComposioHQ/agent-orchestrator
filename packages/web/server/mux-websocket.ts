@@ -547,13 +547,16 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
             }
           } catch (err) {
             if (ws.readyState === WebSocket.OPEN) {
-              const errorMsg: ServerMessage = {
-                ch: "terminal",
-                id,
-                type: "error",
-                message: err instanceof Error ? err.message : String(err),
-              };
-              ws.send(JSON.stringify(errorMsg));
+              // "Session not found" means the tmux session has genuinely gone
+              // away — treat it as an exit so the UI shows the end-of-session
+              // placeholder rather than a transient error.
+              const message = err instanceof Error ? err.message : String(err);
+              const isSessionGone =
+                type === "open" && message.startsWith(`Session not found: ${id}`);
+              const msgOut: ServerMessage = isSessionGone
+                ? { ch: "terminal", id, type: "exited", code: 0 }
+                : { ch: "terminal", id, type: "error", message };
+              ws.send(JSON.stringify(msgOut));
             }
           }
         } else if (msg.ch === "subscribe") {

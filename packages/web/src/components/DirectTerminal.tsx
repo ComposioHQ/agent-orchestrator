@@ -350,6 +350,10 @@ export function DirectTerminal({
           onTerminalStateChangeRef.current?.(event);
           if (event.type === "error") {
             setError(event.message);
+          } else if (event.type === "opened") {
+            // Clear any prior transient error (reconnect race, momentarily
+            // unavailable PTY) so the UI doesn't stay stuck after recovery.
+            setError(null);
           }
         });
 

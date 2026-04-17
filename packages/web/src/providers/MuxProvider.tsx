@@ -168,7 +168,18 @@ export function MuxProvider({ children }: { children: ReactNode }) {
               }
             } else if (msg.type === "error") {
               console.error(`[MuxProvider] Terminal error for ${msg.id}:`, msg.message);
+              // Drop from openedTerminalsRef so a failing id isn't replayed
+              // on every reconnect, and surface a notice chunk to subscribers
+              // so the xterm shows *something* rather than staying silent.
+              openedTerminalsRef.current.delete(msg.id);
               notifyTerminalLifecycle(msg.id, { type: "error", message: msg.message });
+              const subs = subscribersRef.current.get(msg.id);
+              if (subs) {
+                const notice = `\r\n\x1b[31m[Terminal error: ${msg.message}]\x1b[0m\r\n`;
+                for (const callback of subs) {
+                  callback(notice);
+                }
+              }
             }
           } else if (msg.ch === "sessions" && msg.type === "snapshot") {
             setSessions(msg.sessions);
