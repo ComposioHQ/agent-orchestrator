@@ -1,0 +1,127 @@
+packages/cli/src/commands/start.ts
+  fbca54827902268f 1514,1521,1530-1532,1534-1539
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "6ec004a7fe575828f6574328425be7370990608c",
+  "prompts": {
+    "1a962e89aee5a6de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7cbf8719-19ee-4798-9e4f-9ce3bbcda2d4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    },
+    "3c5ec1f3f4b40bac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c56422c1-2987-4a74-ab62-6176d43812d5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "45e01d7a505b594d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a577763b-1d38-44ab-9870-7b98bf067142",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 468,
+      "overriden_lines": 0
+    },
+    "4ec03b471d237940": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d9cad-3f01-7632-be98-e80a2645d171",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 310,
+      "overriden_lines": 0
+    },
+    "d60e2ab129060eb0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b4843209-ddca-450a-80e4-2f86662cd846",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 6939,
+      "overriden_lines": 0
+    },
+    "e3785cd16d4a4812": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d8356-de99-70c2-8a77-72c5badba7be",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    },
+    "f2336bba55648c27": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d9cb6-9823-7343-942e-94f1d68a3867",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 267,
+      "overriden_lines": 0
+    },
+    "fbca54827902268f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8220e47f-9895-4774-8f6e-5a40c417b074",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 2,
+      "accepted_lines": 501,
+      "overriden_lines": 0
+    },
+    "fe86f0b8794a6d4a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02fdcf41-8be9-41c4-a512-5262e8209203",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 49,
+      "overriden_lines": 0
+    }
+  }
+}
