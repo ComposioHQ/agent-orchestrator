@@ -177,11 +177,19 @@ describe("PortfolioPage — AttentionHome (sessions present)", () => {
     expect(screen.getAllByText("1 pending").length).toBe(2);
   });
 
-  it("shows Idle on project card with no active attention levels", () => {
+  it("renders an empty status bar for projects with no active attention levels", () => {
     render(<PortfolioPage projectSummaries={projectsWithSessions} />);
 
-    // Beta has no active levels
-    expect(screen.getByText("Idle")).toBeInTheDocument();
+    // Beta has sessions but no active levels — the card still shows the 4px
+    // status bar as an empty bg-subtle segment (per DESIGN.md), not "Idle" text.
+    expect(screen.queryByText("Idle")).not.toBeInTheDocument();
+
+    const betaCard = screen.getByText("Beta").closest("a");
+    expect(betaCard).not.toBeNull();
+    const emptyBar = betaCard!.querySelector(".bg-\\[var\\(--color-bg-subtle\\)\\]");
+    expect(emptyBar).not.toBeNull();
+    // No segments rendered when totalActive === 0
+    expect(emptyBar!.children.length).toBe(0);
   });
 
   it("links project cards to project detail pages", () => {

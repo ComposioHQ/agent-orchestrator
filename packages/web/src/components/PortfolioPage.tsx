@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { useDashboardShellControls } from "./DashboardShell";
 import type { AttentionLevel, PortfolioProjectSummary } from "@/lib/types";
+import { getProjectColorIndex } from "@/lib/project-color";
 
 interface PortfolioPageProps {
   projectSummaries: PortfolioProjectSummary[];
@@ -30,7 +31,7 @@ export function PortfolioPage({
   const hasSessions = projectSummaries.some((p) => p.sessionCount > 0);
 
   if (hasSessions) {
-    return <AttentionHome projectSummaries={projectSummaries} orphanedSessionCount={orphanedSessionCount} orphanedProjectPaths={orphanedProjectPaths} />;
+    return <AttentionHome projectSummaries={projectSummaries} orphanedSessionCount={orphanedSessionCount} orphanedProjectPaths={orphanedProjectPaths} openProject={openProject} />;
   }
 
   return <LauncherHome
@@ -44,7 +45,7 @@ export function PortfolioPage({
 // Attention-first home — for returning users with sessions
 // ---------------------------------------------------------------------------
 
-function AttentionHome({ projectSummaries, orphanedSessionCount = 0, orphanedProjectPaths = [] }: { projectSummaries: PortfolioProjectSummary[]; orphanedSessionCount?: number; orphanedProjectPaths?: string[] }) {
+function AttentionHome({ projectSummaries, orphanedSessionCount = 0, orphanedProjectPaths = [], openProject }: { projectSummaries: PortfolioProjectSummary[]; orphanedSessionCount?: number; orphanedProjectPaths?: string[]; openProject: () => void }) {
   const totalActive = projectSummaries.reduce((s, p) => s + p.activeCount, 0);
   const totalSessions = projectSummaries.reduce((s, p) => s + p.sessionCount, 0);
 
@@ -59,47 +60,64 @@ function AttentionHome({ projectSummaries, orphanedSessionCount = 0, orphanedPro
     globalCounts.done += p.attentionCounts.done ?? 0;
   }
 
+  const activeSummaryLevels = ACTIVE_LEVELS.filter((l) => globalCounts[l] > 0);
+  const showSummaryRow = activeSummaryLevels.length >= 2;
+
   return (
     <main className="min-h-screen bg-[var(--color-bg-base)] px-6 py-12 text-[var(--color-text-primary)]">
       <div className="mx-auto w-full max-w-[960px]">
         {/* Header */}
-        <div className="flex items-baseline justify-between">
+        <div className="flex items-baseline justify-between gap-4">
           <div>
             <h1 className="text-[22px] font-bold tracking-[-0.025em]">
               Portfolio
             </h1>
-            <p className="mt-1 text-[var(--font-size-sm)] text-[var(--color-text-tertiary)]">
-              {totalActive} active of {totalSessions} sessions across {projectSummaries.length} workspace{projectSummaries.length === 1 ? "" : "s"}
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--font-size-sm)] text-[var(--color-text-secondary)]">
+              <span>
+                {totalActive} active of {totalSessions} sessions across {projectSummaries.length} workspace{projectSummaries.length === 1 ? "" : "s"}
+              </span>
+              {activeSummaryLevels.length === 1 && (
+                <span className="inline-flex items-center gap-1.5 font-[var(--font-mono)] text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-secondary)]">
+                  <span className="h-1.5 w-1.5 rounded-full status-dot-bg" data-status={activeSummaryLevels[0]} aria-hidden="true" />
+                  {globalCounts[activeSummaryLevels[0]]} {activeSummaryLevels[0]}
+                </span>
+              )}
             </p>
           </div>
+          <button
+            type="button"
+            onClick={openProject}
+            className="dashboard-app-btn dashboard-app-btn--amber"
+          >
+            + Add project
+          </button>
         </div>
 
-        {/* Attention summary pills */}
-        <div className="mt-6 flex flex-wrap gap-3">
-          {ACTIVE_LEVELS.map((level) => {
-            const count = globalCounts[level];
-            if (count === 0) return null;
-            return (
+        {/* Attention summary pills — only shown when 2+ levels are active */}
+        {showSummaryRow && (
+          <div className="mt-6 flex flex-wrap gap-2">
+            {activeSummaryLevels.map((level) => (
               <div
                 key={level}
-                className="flex items-center gap-2 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] px-3 py-1.5"
+                className="inline-flex items-center gap-1.5 bg-[var(--color-bg-subtle)] px-2.5 py-1"
               >
                 <span
-                  className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: LEVEL_COLORS[level] }}
+                  className="h-1.5 w-1.5 rounded-full status-dot-bg"
+                  data-status={level}
+                  aria-hidden="true"
                 />
-                <span className="font-[var(--font-mono)] text-[11px] font-medium uppercase tracking-[0.06em] text-[var(--color-text-secondary)]">
-                  {count} {level}
+                <span className="font-[var(--font-mono)] text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--color-text-secondary)]">
+                  {globalCounts[level]} {level}
                 </span>
               </div>
-            );
-          })}
-          {totalActive === 0 && (
-            <p className="text-[var(--font-size-sm)] text-[var(--color-text-tertiary)]">
-              All sessions complete. Fleet is idle.
-            </p>
-          )}
-        </div>
+            ))}
+          </div>
+        )}
+        {totalActive === 0 && (
+          <p className="mt-6 text-[var(--font-size-sm)] text-[var(--color-text-tertiary)]">
+            All sessions complete. Fleet is idle.
+          </p>
+        )}
 
         {/* Orphaned sessions warning */}
         {orphanedSessionCount > 0 && (
@@ -125,7 +143,7 @@ function AttentionHome({ projectSummaries, orphanedSessionCount = 0, orphanedPro
         )}
 
         {/* Project cards */}
-        <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {projectSummaries.map((project) => (
             <ProjectCard key={project.id} project={project} />
           ))}
@@ -139,24 +157,36 @@ function ProjectCard({ project }: { project: PortfolioProjectSummary }) {
   const activeLevels = ACTIVE_LEVELS.filter(
     (l) => (project.attentionCounts[l] ?? 0) > 0,
   );
+  const totalActive = activeLevels.reduce(
+    (sum, l) => sum + (project.attentionCounts[l] ?? 0),
+    0,
+  );
+  const colorIndex = getProjectColorIndex(project.id);
 
   return (
     <Link
       href={`/projects/${encodeURIComponent(project.id)}`}
       prefetch={false}
-      className="group flex flex-col rounded-[2px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] p-4 shadow-[var(--card-shadow)] transition duration-150 hover:border-[var(--color-border-default)] hover:shadow-[var(--card-shadow-hover)]"
+      className="portfolio-project-card group flex flex-col border border-[var(--color-border-default)] border-l-2 bg-[var(--color-bg-surface)] p-4 transition-colors duration-150 hover:bg-[var(--color-bg-elevated-hover)]"
+      data-project-color={colorIndex}
     >
       <div className="flex items-center justify-between">
-        <span className="text-[var(--font-size-base)] font-medium tracking-[-0.015em] text-[var(--color-text-primary)]">
+        <span className="text-[15px] font-medium tracking-[-0.015em] text-[var(--color-text-primary)]">
           {project.name}
         </span>
         <div className="flex items-center gap-2">
           {project.isStale && (
-            <span className="rounded-full border border-[var(--color-status-attention)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] uppercase tracking-[0.04em] text-[var(--color-status-attention)]">
+            <span className="border border-[var(--color-status-attention)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] uppercase tracking-[0.04em] text-[var(--color-status-attention)]">
               Stale
             </span>
           )}
-          <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+          <span
+            className={`font-[var(--font-mono)] text-[11px] tabular-nums ${
+              project.activeCount > 0
+                ? "text-[var(--color-text-secondary)]"
+                : "text-[var(--color-text-tertiary)]"
+            }`}
+          >
             {project.activeCount}/{project.sessionCount}
           </span>
         </div>
@@ -168,38 +198,39 @@ function ProjectCard({ project }: { project: PortfolioProjectSummary }) {
         </span>
       )}
 
-      {activeLevels.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-1.5">
+      <div className="mt-3 flex h-1 w-full overflow-hidden bg-[var(--color-bg-subtle)]">
+        {totalActive > 0 &&
+          activeLevels.map((level) => {
+            const count = project.attentionCounts[level] ?? 0;
+            const pct = (count / totalActive) * 100;
+            return (
+              <span
+                key={level}
+                className="h-full status-bar-segment"
+                data-status={level}
+                style={{ width: `${pct}%` }}
+                aria-label={`${count} ${level}`}
+              />
+            );
+          })}
+      </div>
+
+      {activeLevels.length >= 2 && (
+        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
           {activeLevels.map((level) => (
             <span
               key={level}
-              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.04em]"
-              style={{
-                backgroundColor: `${LEVEL_COLORS[level]}18`,
-                color: LEVEL_COLORS[level],
-              }}
+              className="inline-flex items-center gap-1.5 font-[var(--font-mono)] text-[10px] uppercase tracking-[0.04em] text-[var(--color-text-secondary)]"
             >
+              <span className="h-1.5 w-1.5 status-dot-bg" data-status={level} aria-hidden="true" />
               {project.attentionCounts[level]} {level}
             </span>
           ))}
         </div>
-      ) : (
-        <p className="mt-3 text-[10px] uppercase tracking-[0.04em] text-[var(--color-text-tertiary)]">
-          Idle
-        </p>
       )}
     </Link>
   );
 }
-
-const LEVEL_COLORS: Record<AttentionLevel, string> = {
-  merge: "#22c55e",
-  respond: "#f1be64",
-  review: "#06b6d4",
-  pending: "#5B7EF8",
-  working: "#22c55e",
-  done: "#3a4252",
-};
 
 // ---------------------------------------------------------------------------
 // Launcher home — for new users or empty portfolios
