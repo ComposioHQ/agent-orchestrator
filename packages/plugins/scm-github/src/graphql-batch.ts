@@ -333,6 +333,26 @@ async function verifyGhCLI(): Promise<void> {
 export const MAX_BATCH_SIZE = 25;
 
 /**
+ * Check if an HTTP response contains a 304 Not Modified status.
+ * Handles HTTP/1.1, HTTP/2, and HTTP/2.0 status lines.
+ */
+function is304(output: string): boolean {
+  return /HTTP\/[\d.]+ 304/i.test(output);
+}
+
+/**
+ * Extract stdout/stderr from an execFile error object.
+ * gh cli puts the HTTP response in stdout even on exit code 1 (e.g. 304).
+ */
+function extractErrorOutput(err: unknown): string | null {
+  const e = err as { stdout?: unknown; stderr?: unknown };
+  const stdout = typeof e.stdout === "string" ? e.stdout : "";
+  const stderr = typeof e.stderr === "string" ? e.stderr : "";
+  const combined = stdout + stderr;
+  return combined.length > 0 ? combined : null;
+}
+
+/**
  * Guard 1: PR List ETag Check (per repo)
  *
  * Detects if PR metadata has changed in a repository using REST ETag.
@@ -363,16 +383,13 @@ async function checkPRListETag(
     const output = await execGhAsync(args, 10_000, "gh.api.guard-pr-list");
 
     // Check for HTTP 304 Not Modified response
-    if (output.includes("HTTP/1.1 304") || output.includes("HTTP/2 304")) {
-      // No changes detected - cost: 0 GraphQL points
+    if (is304(output)) {
       return false;
     }
 
     // Extract new ETag from response headers
-    // ETag header format: "etag": "W/"abc123..." or "etag": "abc123..."
     const etagMatch = output.match(/etag:\s*(.+)/i);
     if (etagMatch) {
-      // Trim to remove trailing whitespace/newlines that could cause comparison issues
       const newETag = etagMatch[1].trim();
       setPRListETag(owner, repo, newETag);
     }
@@ -380,9 +397,13 @@ async function checkPRListETag(
     // PR list changed - cost: 1 REST point
     return true;
   } catch (err) {
-    // On error, assume change to ensure we don't miss anything
+    // gh exits code 1 on 304 Not Modified — check stdout/stderr for the status line
+    const output = extractErrorOutput(err);
+    if (output && is304(output)) {
+      return false;
+    }
+
     const errorMsg = err instanceof Error ? err.message : String(err);
-    // Log but don't throw - allow GraphQL batch to proceed
     // eslint-disable-next-line no-console -- Observability logging for ETag errors
     console.warn(`[ETag Guard 1] PR list check failed for ${repoKey}: ${errorMsg}`);
     return true; // Assume changed to be safe
@@ -421,15 +442,13 @@ async function checkCommitStatusETag(
     const output = await execGhAsync(args, 10_000, "gh.api.guard-commit-status");
 
     // Check for HTTP 304 Not Modified response
-    if (output.includes("HTTP/1.1 304") || output.includes("HTTP/2 304")) {
-      // No CI changes detected - cost: 0 GraphQL points
+    if (is304(output)) {
       return false;
     }
 
     // Extract new ETag from response headers
     const etagMatch = output.match(/etag:\s*(.+)/i);
     if (etagMatch) {
-      // Trim to remove trailing whitespace/newlines that could cause comparison issues
       const newETag = etagMatch[1].trim();
       setCommitStatusETag(owner, repo, sha, newETag);
     }
@@ -437,7 +456,12 @@ async function checkCommitStatusETag(
     // CI status changed - cost: 1 REST point
     return true;
   } catch (err) {
-    // On error, assume change to ensure we don't miss anything
+    // gh exits code 1 on 304 Not Modified — check stdout/stderr for the status line
+    const output = extractErrorOutput(err);
+    if (output && is304(output)) {
+      return false;
+    }
+
     const errorMsg = err instanceof Error ? err.message : String(err);
     // eslint-disable-next-line no-console -- Observability logging for ETag errors
     console.warn(
@@ -542,6 +566,7 @@ export function generateBatchQuery(prs: PRInfo[]): {
   return {
     query: `query BatchPRs(${variableDefs}) {
       ${selections.join("\n")}
+      rateLimit { cost remaining resetAt }
     }`,
     variables,
   };

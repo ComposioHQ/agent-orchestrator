@@ -4,7 +4,7 @@
 // Node.js stdlib only, shells out to AO CLI and gh CLI.
 
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync, unlinkSync, symlinkSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -802,6 +802,10 @@ async function runSetup(flags) {
 
     // Derive sessionId from the worktree directory name (last path segment)
     const sessionId = wtPath.split("/").pop();
+
+    // Skip orchestrator sessions — they don't create PRs
+    if (sessionId.includes("orchestrator")) continue;
+
     worktreeMap.set(sessionId, { worktreePath: wtPath, branch: wtBranch });
   }
 
@@ -1078,11 +1082,83 @@ async function runMeasure(flags) {
 
   console.error(`[measure] Setup validated — all ${setup.sessions.length} sessions OK`);
 
-  // ── 5. Set up trace file ───────────────────────────────────────────────────
+  // ── 5. Create placeholder tmux sessions ────────────────────────────────────
+  // The lifecycle manager checks isProcessRunning via tmux.  If the tmux session
+  // for a session is dead, the lifecycle marks it "killed" (terminal) and skips
+  // PR polling entirely.  We need a live tmux session per session so the
+  // lifecycle actually exercises the PR enrichment / CI-check code paths.
+  //
+  // We read the tmuxName from AO metadata and create a detached tmux session
+  // that runs "sleep infinity".  These get cleaned up after the measurement.
+  const placeholderTmuxSessions = [];
+  const aoDataDir = join(homedir(), ".agent-orchestrator");
+  // Find the project data directory: ~/.agent-orchestrator/{hash}-{project}
+  // There may be multiple dirs (from different config checkouts). Pick the one
+  // that has session metadata files matching our setup artifact.
+  let projectDataDir = null;
+  try {
+    const entries = readdirSync(aoDataDir);
+    const candidates = entries.filter((e) => e.endsWith(`-${project}`));
+    const firstSessionId = setup.sessions[0]?.sessionId;
+    for (const candidate of candidates) {
+      const sessionsDir = join(aoDataDir, candidate, "sessions");
+      if (firstSessionId && existsSync(join(sessionsDir, firstSessionId))) {
+        projectDataDir = join(aoDataDir, candidate);
+        break;
+      }
+    }
+  } catch { /* ignore */ }
+
+  // Create a symlink named "claude" -> /bin/sleep so the process appears as
+  // ".../claude" in `ps` output, matching the agent's /(?:^|\/)claude(?:\s|$)/
+  // regex in findClaudeProcess().
+  const claudeStubDir = join(OUT_DIR, "stub-bin");
+  const claudeStubPath = join(claudeStubDir, "claude");
+  mkdirSync(claudeStubDir, { recursive: true });
+  try { unlinkSync(claudeStubPath); } catch { /* didn't exist */ }
+  symlinkSync("/bin/sleep", claudeStubPath);
+
+  if (projectDataDir) {
+    const sessionsMetaDir = join(projectDataDir, "sessions");
+    for (const session of setup.sessions) {
+      try {
+        const metaFile = join(sessionsMetaDir, session.sessionId);
+        const meta = readFileSync(metaFile, "utf-8");
+        const tmuxNameMatch = meta.match(/^tmuxName=(.+)$/m);
+        if (!tmuxNameMatch) continue;
+        const tmuxName = tmuxNameMatch[1].trim();
+
+        // Check if tmux session already exists
+        try {
+          await run("tmux", ["has-session", "-t", tmuxName], { timeout: 3_000 });
+          // Already exists — skip
+          continue;
+        } catch { /* doesn't exist — create it */ }
+
+        // Launch the "claude" symlink (which is really /bin/sleep) in the tmux
+        // session.  `ps` will show ".../claude 86400" which matches the
+        // findClaudeProcess regex, preventing lifecycle from marking sessions
+        // as "killed" before reaching the PR/CI check code paths.
+        // Note: macOS sleep doesn't accept "infinity" — use 86400 (24h).
+        await run("tmux", ["new-session", "-d", "-s", tmuxName, "-x", "80", "-y", "24",
+          `${claudeStubPath} 86400`], {
+          timeout: 5_000,
+        });
+        placeholderTmuxSessions.push(tmuxName);
+      } catch (err) {
+        console.error(`[measure] WARNING: could not create placeholder tmux for ${session.sessionId}: ${err.message}`);
+      }
+    }
+    console.error(`[measure] Created ${placeholderTmuxSessions.length} placeholder tmux session(s)`);
+  } else {
+    console.error(`[measure] WARNING: could not find AO data dir for project "${project}" — sessions may appear as killed`);
+  }
+
+  // ── 6. Set up trace file ───────────────────────────────────────────────────
   const timestamp = Math.floor(Date.now() / 1000);
   const traceFile = resolve(OUT_DIR, `gh-trace-bench-${timestamp}.jsonl`);
 
-  // ── 6. Start AO with trace ─────────────────────────────────────────────────
+  // ── 7. Start AO with trace ─────────────────────────────────────────────────
   console.error(`[measure] Starting AO (trace → ${traceFile})...`);
 
   const aoProc = spawn(
@@ -1136,7 +1212,7 @@ async function runMeasure(flags) {
   let warmupEnd = null;
 
   try {
-    // ── 7. Warmup phase ────────────────────────────────────────────────────────
+    // ── 8. Warmup phase ────────────────────────────────────────────────────────
     console.error(`[measure] Warmup: ${warmupStr} (${warmupMs / 1000}s)...`);
     const warmupDeadline = Date.now() + warmupMs;
     while (Date.now() < warmupDeadline) {
@@ -1145,11 +1221,11 @@ async function runMeasure(flags) {
       await sleep(Math.min(5_000, remaining));
     }
 
-    // ── 8. Record warmup end ───────────────────────────────────────────────────
+    // ── 9. Record warmup end ───────────────────────────────────────────────────
     warmupEnd = new Date().toISOString();
     console.error(`[measure] Warmup complete at ${warmupEnd}`);
 
-    // ── 9. Before rate-limit snapshot ─────────────────────────────────────────
+    // ── 10. Before rate-limit snapshot ────────────────────────────────────────
     console.error("[measure] Capturing rate-limit snapshot (before)...");
     {
       const raw = await ghControl(["api", "rate_limit"]);
@@ -1164,11 +1240,11 @@ async function runMeasure(flags) {
     }
     console.error(`[measure] Before snapshot: core remaining=${snapshotBefore.core.remaining}, graphql remaining=${snapshotBefore.graphql.remaining}`);
 
-    // ── 10. Record measurement start ───────────────────────────────────────────
+    // ── 11. Record measurement start ──────────────────────────────────────────
     measureStart = new Date().toISOString();
     console.error(`[measure] Measurement window started at ${measureStart} (duration: ${durationStr})`);
 
-    // ── 11. Measurement window ─────────────────────────────────────────────────
+    // ── 12. Measurement window ────────────────────────────────────────────────
     const measureDeadline = Date.now() + durationMs;
     let nextLog = Date.now() + 60_000;
     while (Date.now() < measureDeadline) {
@@ -1180,11 +1256,11 @@ async function runMeasure(flags) {
       await sleep(Math.min(5_000, remaining));
     }
 
-    // ── 12. Record measurement end ─────────────────────────────────────────────
+    // ── 13. Record measurement end ────────────────────────────────────────────
     measureEnd = new Date().toISOString();
     console.error(`[measure] Measurement window ended at ${measureEnd}`);
 
-    // ── 13. After rate-limit snapshot ──────────────────────────────────────────
+    // ── 14. After rate-limit snapshot ─────────────────────────────────────────
     console.error("[measure] Capturing rate-limit snapshot (after)...");
     {
       const raw = await ghControl(["api", "rate_limit"]);
@@ -1199,11 +1275,21 @@ async function runMeasure(flags) {
     }
     console.error(`[measure] After snapshot: core remaining=${snapshotAfter.core.remaining}, graphql remaining=${snapshotAfter.graphql.remaining}`);
   } finally {
-    // ── 14. Stop AO (always, even on error) ───────────────────────────────────
+    // ── 15. Stop AO (always, even on error) ──────────────────────────────────
     await stopAO();
+
+    // ── 15b. Kill placeholder tmux sessions ─────────────────────────────────
+    for (const tmuxName of placeholderTmuxSessions) {
+      try {
+        await run("tmux", ["kill-session", "-t", tmuxName], { timeout: 3_000 });
+      } catch { /* best-effort */ }
+    }
+    if (placeholderTmuxSessions.length > 0) {
+      console.error(`[measure] Killed ${placeholderTmuxSessions.length} placeholder tmux session(s)`);
+    }
   }
 
-  // ── 15. Compute scorecard ──────────────────────────────────────────────────
+  // ── 16. Compute scorecard ─────────────────────────────────────────────────
   console.error(`[measure] Reading trace from ${traceFile}...`);
   const allRows = readTrace(traceFile);
   console.error(`[measure] Trace has ${allRows.length} rows`);
@@ -1215,7 +1301,7 @@ async function runMeasure(flags) {
 
   const scorecard = computeScorecard(allRows, measureStart, measureEnd, snapshots, controlCalls);
 
-  // ── 16. Build envelope ─────────────────────────────────────────────────────
+  // ── 17. Build envelope ────────────────────────────────────────────────────
   const windowDurationMs = new Date(measureEnd).getTime() - new Date(measureStart).getTime();
   const durationSec = Math.round(windowDurationMs / 1000);
   const durationMin = Math.floor(durationSec / 60);
@@ -1252,17 +1338,17 @@ async function runMeasure(flags) {
     supplemental: null,
   };
 
-  // ── 17. Write scorecard JSON ───────────────────────────────────────────────
+  // ── 18. Write scorecard JSON ──────────────────────────────────────────────
   const scorecardPath = resolve(OUT_DIR, `scorecard-${scenarioId}-${scorecardTimestamp}.json`);
   writeFileSync(scorecardPath, JSON.stringify(envelope, null, 2), "utf-8");
 
-  // ── 18. Set scorecardPath on envelope ─────────────────────────────────────
+  // ── 19. Set scorecardPath on envelope ────────────────────────────────────
   envelope.scorecardPath = scorecardPath;
 
-  // ── 19. Print scorecard ────────────────────────────────────────────────────
+  // ── 20. Print scorecard ───────────────────────────────────────────────────
   printScorecard(envelope);
 
-  // ── 20. Log paths ──────────────────────────────────────────────────────────
+  // ── 21. Log paths ─────────────────────────────────────────────────────────
   console.error(`Trace written to:     ${traceFile}`);
   console.error(`Scorecard written to: ${scorecardPath}`);
 }
