@@ -95,6 +95,47 @@ export function listDashboardOrchestrators(
     .sort((a, b) => a.projectName.localeCompare(b.projectName) || a.id.localeCompare(b.id));
 }
 
+function getSessionRecencyTimestamp(session: Session): number {
+  const lastActivityAt = session.lastActivityAt.getTime();
+  if (!Number.isNaN(lastActivityAt)) return lastActivityAt;
+
+  const createdAt = session.createdAt.getTime();
+  if (!Number.isNaN(createdAt)) return createdAt;
+
+  return -Infinity;
+}
+
+function compareSessionsByRecency(a: Session, b: Session): number {
+  const timestampDiff = getSessionRecencyTimestamp(b) - getSessionRecencyTimestamp(a);
+  if (timestampDiff !== 0) return timestampDiff;
+
+  const createdAtDiff = b.createdAt.getTime() - a.createdAt.getTime();
+  if (createdAtDiff !== 0) return createdAtDiff;
+
+  return b.id.localeCompare(a.id, undefined, { numeric: true });
+}
+
+export function resolveCurrentProjectOrchestratorId(
+  sessions: Session[],
+  projectId: string,
+  projects: Record<string, ProjectConfig>,
+): string | null {
+  const allSessionPrefixes = Object.entries(projects).map(
+    ([entryProjectId, p]) => p.sessionPrefix ?? entryProjectId,
+  );
+  const projectPrefix = projects[projectId]?.sessionPrefix ?? projectId;
+
+  const currentOrchestrator = sessions
+    .filter(
+      (session) =>
+        session.projectId === projectId &&
+        isOrchestratorSession(session, projectPrefix, allSessionPrefixes),
+    )
+    .sort(compareSessionsByRecency)[0];
+
+  return currentOrchestrator?.id ?? null;
+}
+
 /**
  * Convert minimal PRInfo to a DashboardPR with default values for enriched fields.
  * These defaults indicate "data not yet loaded" rather than "failing".

@@ -16,6 +16,7 @@ import type {
 import {
   sessionToDashboard,
   resolveProject,
+  resolveCurrentProjectOrchestratorId,
   enrichSessionPR,
   enrichSessionAgentSummary,
   enrichSessionIssueTitle,
@@ -313,6 +314,87 @@ describe("resolveProject", () => {
     // session id starts with "app" (matches lib's prefix), but projectId is "app" (direct match)
     const session = createCoreSession({ id: "app-1", projectId: "app" });
     expect(resolveProject(session, projects)).toBe(projects.app);
+  });
+});
+
+describe("resolveCurrentProjectOrchestratorId", () => {
+  function makeProject(overrides?: Partial<ProjectConfig>): ProjectConfig {
+    return {
+      name: "test",
+      repo: "test/repo",
+      path: "/test",
+      defaultBranch: "main",
+      sessionPrefix: "test",
+      ...overrides,
+    };
+  }
+
+  it("returns the most recently active orchestrator for the project", () => {
+    const projects = {
+      "my-app": makeProject({ name: "My App", sessionPrefix: "ao-orchestrator" }),
+    };
+    const sessions = [
+      createCoreSession({
+        id: "ao-orchestrator-1",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        createdAt: new Date("2026-04-12T09:00:00Z"),
+        lastActivityAt: new Date("2026-04-12T09:15:00Z"),
+      }),
+      createCoreSession({
+        id: "ao-orchestrator-5",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        createdAt: new Date("2026-04-12T10:00:00Z"),
+        lastActivityAt: new Date("2026-04-12T10:30:00Z"),
+      }),
+      createCoreSession({
+        id: "worker-2",
+        projectId: "my-app",
+        createdAt: new Date("2026-04-12T11:00:00Z"),
+        lastActivityAt: new Date("2026-04-12T11:30:00Z"),
+      }),
+    ];
+
+    expect(resolveCurrentProjectOrchestratorId(sessions, "my-app", projects)).toBe(
+      "ao-orchestrator-5",
+    );
+  });
+
+  it("uses a numeric id tie-breaker when timestamps match", () => {
+    const projects = {
+      "my-app": makeProject({ name: "My App", sessionPrefix: "ao-orchestrator" }),
+    };
+    const timestamp = new Date("2026-04-12T10:00:00Z");
+    const sessions = [
+      createCoreSession({
+        id: "ao-orchestrator-2",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        createdAt: timestamp,
+        lastActivityAt: timestamp,
+      }),
+      createCoreSession({
+        id: "ao-orchestrator-10",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        createdAt: timestamp,
+        lastActivityAt: timestamp,
+      }),
+    ];
+
+    expect(resolveCurrentProjectOrchestratorId(sessions, "my-app", projects)).toBe(
+      "ao-orchestrator-10",
+    );
+  });
+
+  it("returns null when the project has no orchestrator sessions", () => {
+    const projects = {
+      "my-app": makeProject({ name: "My App", sessionPrefix: "ao-orchestrator" }),
+    };
+    const sessions = [createCoreSession({ id: "worker-1", projectId: "my-app" })];
+
+    expect(resolveCurrentProjectOrchestratorId(sessions, "my-app", projects)).toBeNull();
   });
 });
 

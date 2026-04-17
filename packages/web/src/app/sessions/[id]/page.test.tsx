@@ -95,11 +95,27 @@ describe("SessionPage project polling", () => {
 
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url === "/api/projects") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ projects: [{ id: "my-app", name: "My App", path: "/tmp/my-app" }] }),
+        } as Response;
+      }
+
       if (url === "/api/sessions/worker-1") {
         return {
           ok: true,
           status: 200,
           json: async () => workerSession,
+        } as Response;
+      }
+
+      if (url === "/api/sessions") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [] }),
         } as Response;
       }
 
@@ -136,6 +152,9 @@ describe("SessionPage project polling", () => {
     await flushAsyncWork();
 
     expect(fetch).toHaveBeenCalledWith("/api/sessions?project=my-app&orchestratorOnly=true");
+    expect(sessionDetailSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ projectOrchestratorId: "my-app-orchestrator" }),
+    );
 
     expect(
       vi.mocked(fetch).mock.calls.filter(
@@ -153,6 +172,67 @@ describe("SessionPage project polling", () => {
         ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true",
       ),
     ).toHaveLength(1);
+  });
+
+  it("uses the API-selected current orchestrator instead of the first sorted orchestrator", async () => {
+    const workerSession = makeWorkerSession();
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ projects: [{ id: "my-app", name: "My App", path: "/tmp/my-app" }] }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => workerSession,
+        } as Response;
+      }
+
+      if (url === "/api/sessions") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [] }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            orchestratorId: "ao-orchestrator-5",
+            orchestrators: [
+              { id: "ao-orchestrator-1", projectId: "my-app", projectName: "My App" },
+              { id: "ao-orchestrator-5", projectId: "my-app", projectName: "My App" },
+            ],
+          }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+
+    render(<SessionPage />);
+    await flushAsyncWork();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    await flushAsyncWork();
+
+    expect(sessionDetailSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ projectOrchestratorId: "ao-orchestrator-5" }),
+    );
   });
 
   it("routes 404 responses through notFound()", async () => {
