@@ -780,10 +780,16 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
   const [errorComments, setErrorComments] = useState<Set<string>>(new Set());
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
+  // Action button state for blocker chips (keyed by chip text)
+  const [sendingAction, setSendingAction] = useState<string | null>(null);
+  const [failedAction, setFailedAction] = useState<string | null>(null);
+  const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     return () => {
       timersRef.current.forEach((timer) => clearTimeout(timer));
       timersRef.current.clear();
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
     };
   }, []);
 
@@ -842,6 +848,28 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
         timersRef.current.set(comment.url, timer);
       },
     );
+  };
+
+  const handleChipAction = async (chipKey: string, message: string) => {
+    if (sendingAction !== null) return;
+
+    setSendingAction(chipKey);
+    setFailedAction(null);
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+      actionTimerRef.current = setTimeout(() => setSendingAction(null), 2000);
+    } catch {
+      setSendingAction(null);
+      setFailedAction(chipKey);
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+      actionTimerRef.current = setTimeout(() => setFailedAction(null), 2000);
+    }
   };
 
   const allGreen = isPRMergeReady(pr);
@@ -907,6 +935,22 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
               {issue.icon} {issue.text}
               {issue.notified && (
                 <span className="session-detail-blocker-chip__note">· notified</span>
+              )}
+              {issue.actionLabel && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleChipAction(issue.text, issue.actionMessage ?? "");
+                  }}
+                  disabled={sendingAction === issue.text}
+                  className="alert-row__action"
+                >
+                  {sendingAction === issue.text
+                    ? "sent!"
+                    : failedAction === issue.text
+                      ? "failed"
+                      : issue.actionLabel}
+                </button>
               )}
             </span>
           ))
@@ -1036,6 +1080,8 @@ interface BlockerChip {
   text: string;
   variant: "fail" | "warn" | "muted";
   notified?: boolean;
+  actionLabel?: string;
+  actionMessage?: string;
 }
 
 function buildBlockerChips(pr: DashboardPR, metadata: Record<string, string>): BlockerChip[] {
@@ -1058,19 +1104,35 @@ function buildBlockerChips(pr: DashboardPR, metadata: Record<string, string>): B
       variant: "fail",
       text: failCount > 0 ? `${failCount} check${failCount !== 1 ? "s" : ""} failing` : "CI failing",
       notified: ciNotified,
+      actionLabel: "Ask to fix",
+      actionMessage: `Please fix the failing CI checks on ${pr.url}`,
     });
   } else if (pr.ciStatus === CI_STATUS.PENDING) {
     chips.push({ icon: "\u25CF", variant: "warn", text: "CI pending" });
   }
 
   if (hasChangesRequested) {
-    chips.push({ icon: "\u2717", variant: "fail", text: "Changes requested", notified: reviewNotified });
+    chips.push({
+      icon: "\u2717",
+      variant: "fail",
+      text: "Changes requested",
+      notified: reviewNotified,
+      actionLabel: "Ask to address",
+      actionMessage: `Please address the requested changes on ${pr.url}`,
+    });
   } else if (!pr.mergeability.approved) {
     chips.push({ icon: "\u25CB", variant: "muted", text: "Awaiting reviewer" });
   }
 
   if (hasConflicts) {
-    chips.push({ icon: "\u2717", variant: "fail", text: "Merge conflicts", notified: conflictNotified });
+    chips.push({
+      icon: "\u2717",
+      variant: "fail",
+      text: "Merge conflicts",
+      notified: conflictNotified,
+      actionLabel: "Resolve conflicts",
+      actionMessage: `Please resolve the merge conflicts on ${pr.url} by rebasing on the base branch`,
+    });
   }
 
   if (pr.isDraft) {
