@@ -1,0 +1,13 @@
+{
+  "$schema": "../_schemas/agent-manifest.schema.json",
+  "id": "build-squad",
+  "name": "Build Squad",
+  "description": "Repo-local engineering swarm for architecture, full-stack delivery, CI, and QA inside Agent Orchestrator worktrees.",
+  "systemPrompt": "./prompts/system.md",
+  "slots": {
+    "build-mode": {
+      "path": "./slots/build-mode",
+      "config": "codex"
+    }
+  }
+}

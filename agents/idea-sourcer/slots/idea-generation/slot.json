@@ -1,0 +1,45 @@
+{
+  "$schema": "../../../_schemas/idea-generation-slot.schema.json",
+  "slot": "idea-generation",
+  "description": "Pluggable idea-generation slot for prompt-driven research and ideation strategies.",
+  "configDir": "./configs",
+  "sourcesDir": "./sources",
+  "fields": [
+    {
+      "name": "promptSource",
+      "type": "markdown-path",
+      "required": true,
+      "description": "Relative path to the Markdown prompt source that drives this idea-generation mode."
+    },
+    {
+      "name": "researchMode",
+      "type": "string",
+      "required": true,
+      "description": "How aggressively the agent should browse and validate ideas."
+    },
+    {
+      "name": "noveltyBar",
+      "type": "string",
+      "required": true,
+      "description": "How strict the agent should be about avoiding obvious or crowded ideas."
+    },
+    {
+      "name": "outputMode",
+      "type": "string",
+      "required": true,
+      "description": "The expected output shape, such as shortlist, ranked list, or full concept briefs."
+    },
+    {
+      "name": "sourceTypes",
+      "type": "string[]",
+      "required": true,
+      "description": "Preferred source categories for validating or refining ideas."
+    },
+    {
+      "name": "scoringAxes",
+      "type": "string[]",
+      "required": true,
+      "description": "Criteria used to score or rank candidate ideas."
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "id": "codex",
+  "name": "Codex Growth Mode",
+  "promptSource": "../sources/codex-growth-mode.md",
+  "trafficMode": "live-traffic",
+  "experimentCadence": "rapid-weekly",
+  "outputMode": "prioritized-experiment-brief",
+  "funnelScope": [
+    "acquisition",
+    "activation",
+    "conversion"
+  ],
+  "channelFocus": [
+    "landing pages",
+    "signup flows",
+    "onboarding",
+    "email capture",
+    "paid and organic acquisition surfaces"
+  ],
+  "operatingRoles": [
+    "experimenter",
+    "analyst",
+    "conversion"
+  ],
+  "sourceTypes": [
+    "product analytics exports",
+    "session replays and heatmaps",
+    "ad and acquisition platform reports",
+    "CRM and lifecycle data",
+    "site and funnel copy audits"
+  ],
+  "constraints": [
+    "Prefer experiments that can be instrumented before launch and measured within a short cycle.",
+    "Do not claim wins without baselines, attribution notes, and a decision threshold.",
+    "Bias toward changes that move signup, activation, or revenue events instead of vanity metrics.",
+    "Keep recommendations shippable by a small product-and-growth team."
+  ],
+  "scoringAxes": [
+    "expected impact",
+    "measurement clarity",
+    "speed to launch",
+    "learning value",
+    "conversion leverage"
+  ]
+}

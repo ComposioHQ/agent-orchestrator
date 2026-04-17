@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Video Editor Direction - Research Summary</title>
+  <style>
+    :root {
+      --bg: #07111f;
+      --bg-layer: radial-gradient(circle at top left, rgba(45, 212, 191, 0.18), transparent 28%), radial-gradient(circle at top right, rgba(96, 165, 250, 0.14), transparent 24%), linear-gradient(180deg, #07111f 0%, #0d1729 100%);
+      --surface: rgba(13, 23, 41, 0.9);
+      --surface-strong: #14243f;
+      --surface-soft: rgba(20, 36, 63, 0.72);
+      --border: rgba(148, 163, 184, 0.18);
+      --text: #e6eefb;
+      --muted: #a8b7d4;
+      --accent: #63e6d8;
+      --accent-2: #60a5fa;
+      --good: #4ade80;
+      --warn: #fbbf24;
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: "Segoe UI", "Inter", system-ui, sans-serif;
+      background: var(--bg);
+      background-image: var(--bg-layer);
+      color: var(--text);
+      line-height: 1.65;
+      padding: 28px 18px 56px;
+    }
+
+    .page {
+      max-width: 1140px;
+      margin: 0 auto;
+    }
+
+    .hero {
+      background: linear-gradient(145deg, rgba(20, 36, 63, 0.96), rgba(10, 18, 33, 0.96));
+      border: 1px solid var(--border);
+      border-radius: 28px;
+      padding: 34px;
+      box-shadow: var(--shadow);
+      margin-bottom: 22px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      margin-bottom: 14px;
+    }
+
+    h1 {
+      font-size: clamp(2.2rem, 4vw, 3.5rem);
+      line-height: 1.08;
+      margin-bottom: 14px;
+      max-width: 900px;
+    }
+
+    .subtitle {
+      max-width: 860px;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+
+    .hero-goal {
+      margin-top: 24px;
+      background: rgba(99, 230, 216, 0.08);
+      border: 1px solid rgba(99, 230, 216, 0.16);
+      border-radius: 18px;
+      padding: 18px 20px;
+    }
+
+    .hero-goal strong {
+      color: var(--accent);
+    }
+
+    .status-grid,
+    .grid,
+    .timeline {
+      display: grid;
+      gap: 18px;
+    }
+
+    .status-grid {
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      margin-top: 24px;
+    }
+
+    .grid {
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+      margin-bottom: 18px;
+    }
+
+    .timeline {
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      margin-bottom: 18px;
+    }
+
+    .card,
+    .status-card,
+    .timeline-card,
+    .mode-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 24px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .status-card {
+      background: linear-gradient(180deg, rgba(96, 165, 250, 0.08), rgba(13, 23, 41, 0.92));
+    }
+
+    .status-card .label,
+    .timeline-card .label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+    }
+
+    .status-card .value {
+      font-size: 1rem;
+      color: var(--text);
+    }
+
+    .section-title {
+      font-size: 1.45rem;
+      margin: 30px 0 14px;
+    }
+
+    h2 {
+      font-size: 1.18rem;
+      margin-bottom: 12px;
+    }
+
+    h3 {
+      font-size: 1.02rem;
+      margin-bottom: 10px;
+    }
+
+    p {
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    ul {
+      padding-left: 18px;
+      color: var(--muted);
+    }
+
+    li + li {
+      margin-top: 8px;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .repo-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(96, 165, 250, 0.1);
+      border: 1px solid rgba(96, 165, 250, 0.16);
+      border-radius: 999px;
+      padding: 10px 14px;
+      margin-top: 4px;
+      color: var(--text);
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .callout {
+      background: linear-gradient(180deg, rgba(251, 191, 36, 0.08), rgba(20, 36, 63, 0.8));
+      border: 1px solid rgba(251, 191, 36, 0.16);
+      border-radius: 22px;
+      padding: 24px;
+      margin-bottom: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .callout strong {
+      color: var(--warn);
+    }
+
+    .component-list li::marker,
+    .mode-card li::marker {
+      color: var(--accent);
+    }
+
+    .mode-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .mode-card {
+      background: linear-gradient(180deg, rgba(74, 222, 128, 0.08), rgba(13, 23, 41, 0.92));
+      border-color: rgba(74, 222, 128, 0.16);
+    }
+
+    .badge-line {
+      display: inline-block;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--good);
+      margin-bottom: 10px;
+    }
+
+    .two-mode {
+      background: linear-gradient(180deg, rgba(99, 230, 216, 0.08), rgba(13, 23, 41, 0.9));
+      border: 1px solid rgba(99, 230, 216, 0.16);
+      border-radius: 22px;
+      padding: 22px;
+      margin-bottom: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .timeline-card {
+      background: linear-gradient(180deg, rgba(96, 165, 250, 0.08), rgba(13, 23, 41, 0.9));
+    }
+
+    .timeline-card p:last-child,
+    .card p:last-child,
+    .mode-card p:last-child {
+      margin-bottom: 0;
+    }
+
+    .footer-note {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      text-align: center;
+    }
+
+    @media (max-width: 640px) {
+      body {
+        padding: 16px 12px 40px;
+      }
+
+      .hero,
+      .card,
+      .status-card,
+      .timeline-card,
+      .mode-card,
+      .callout,
+      .two-mode {
+        padding: 20px;
+        border-radius: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Product / Research Summary</div>
+      <h1>AI Video Editor Direction: Reference-Driven Recreation</h1>
+      <p class="subtitle">
+        This direction explores whether an AI-assisted video editor can take a reference video, preserve its structure and creative logic, and recreate that style for a different product or subject. The current research points to a strong foundation, but not yet a complete recreation system.
+      </p>
+
+      <div class="hero-goal">
+        <strong>Goal:</strong>
+        Build a video editor that takes a reference video and recreates the same style, pacing, structure, and editorial logic for a different product or thing as faithfully as possible.
+      </div>
+
+      <div class="status-grid">
+        <div class="status-card">
+          <span class="label">Current Status</span>
+          <div class="value">Research / Concept Validation</div>
+        </div>
+        <div class="status-card">
+          <span class="label">Repository Explored</span>
+          <div class="value"><a href="https://github.com/browser-use/video-use" target="_blank" rel="noreferrer">browser-use/video-use</a></div>
+        </div>
+        <div class="status-card">
+          <span class="label">Key Read</span>
+          <div class="value">Strong base for AI editing, but not sufficient on its own for faithful product-swapped recreation</div>
+        </div>
+        <div class="status-card">
+          <span class="label">Next Status</span>
+          <div class="value">Architecture Definition</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Repository Explored</h2>
+        <p>The research centered on the video-use repository as the most relevant starting point for an AI-assisted editing direction.</p>
+        <a class="repo-link" href="https://github.com/browser-use/video-use" target="_blank" rel="noreferrer">github.com/browser-use/video-use</a>
+      </article>
+
+      <article class="card">
+        <h2>What video-use is</h2>
+        <p>
+          Video-use is an AI-assisted conversational video editor. Its core idea is efficient multimodal reasoning: use word-level transcripts plus on-demand visual timeline images, so the model reasons over structured representations instead of raw video frames all the time.
+        </p>
+        <p>
+          That makes it especially relevant for recreating a proven video format around a new product, because it can reason about editing structure without treating every task as full raw-frame generation.
+        </p>
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Main Components Worth Noting</h2>
+        <ul class="component-list">
+          <li>Transcription with ElevenLabs Scribe</li>
+          <li>Transcript packing for efficient reasoning</li>
+          <li>Timeline visual drill-down only when needed</li>
+          <li>EDL-based rendering</li>
+          <li>Subtitles support</li>
+          <li>Grading controls</li>
+          <li>Overlays and assembly features</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Why the Approach Matters</h2>
+        <p>
+          Transcript-first editing is strategically smart. It reduces cost, avoids constant frame-level processing, and gives the model a tractable structure for reasoning about speech-heavy content, take selection, cleanup, and sequence assembly.
+        </p>
+      </article>
+    </section>
+
+    <section class="callout">
+      <h2>Key Conclusion</h2>
+      <p>
+        <strong>video-use is a strong foundation for AI editing, but it is not enough by itself for faithful “same style, different product” recreation.</strong>
+      </p>
+      <p>
+        It appears better suited to transcript-first editing, talking-head cleanup, take selection, subtitles, overlays, and structured assembly than to full recreation of a reference video's product-specific visuals, transitions, effects, and asset substitutions.
+      </p>
+    </section>
+
+    <section class="split">
+      <article class="card">
+        <h2>What It Can Do Well</h2>
+        <ul>
+          <li>Transcript-first editing and spoken-content reasoning</li>
+          <li>Talking-head cleanup and take selection</li>
+          <li>Subtitle generation and timing-aware assembly</li>
+          <li>Basic overlays, grading, and edit structure support</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>What Exact Recreation Still Needs</h2>
+        <ul>
+          <li>Reference-to-new-product mapping for scenes, claims, and assets</li>
+          <li>Shot detection and scene segmentation</li>
+          <li>Detailed visual parsing of composition, motion, and layout</li>
+          <li>Style extraction for text, captions, color, and pacing</li>
+          <li>Transition and effect mapping</li>
+          <li>Audio and music analysis</li>
+          <li>Recreation planning and asset requirement generation</li>
+          <li>Similarity evaluation loops to compare output against the reference</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>Important Distinction</h2>
+      <p>
+        A content creator or editor platform is clearly possible from this direction. That is a credible product path. But “make this same kind of video for my product instead” is a different class of problem than standard editing and needs materially stronger systems for visual understanding, substitution planning, style interpretation, and evaluation.
+      </p>
+    </section>
+
+    <h2 class="section-title">Recommended Operating Modes</h2>
+    <section class="mode-grid">
+      <article class="mode-card">
+        <div class="badge-line">Mode 1</div>
+        <h3>Analysis / Ingest Mode</h3>
+        <p>Takes the reference and extracts everything possible before recreation begins.</p>
+        <ul>
+          <li>Transcript and speech structure</li>
+          <li>Shot list and scene breakdown</li>
+          <li>Beat map and timing logic</li>
+          <li>Text and caption styling</li>
+          <li>Transitions, audio notes, and visual notes</li>
+          <li>Asset requirements and product-substitution requirements for recreation</li>
+        </ul>
+      </article>
+
+      <article class="mode-card">
+        <div class="badge-line">Mode 2</div>
+        <h3>Master Editor Reviewer Mode</h3>
+        <p>Acts like a highly professional video editor reasoning about why the reference works.</p>
+        <ul>
+          <li>Explains why cuts work</li>
+          <li>Infers editorial intent and pacing logic</li>
+          <li>Identifies visual hierarchy and retention tactics</li>
+          <li>Separates essential details from optional ones for faithful product-adapted recreation</li>
+        </ul>
+      </article>
+
+      <article class="mode-card">
+        <div class="badge-line">Mode 3</div>
+        <h3>Recreator / Builder Mode</h3>
+        <p>Actually rebuilds the target output as closely as possible, then iterates.</p>
+        <ul>
+          <li>Generates or assembles missing assets for the new product</li>
+          <li>Matches timing, structure, style, and substitution logic</li>
+          <li>Executes the build inside the editing workflow</li>
+          <li>Improves output through repeated comparison and revision</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="two-mode">
+      <h2>Short 2-Mode Framing</h2>
+      <p>
+        If a shorter framing is needed, <strong>Analysis + Master Editor</strong> is a useful summary of the intelligence layer. But execution and recreation should still remain a separate mode in the actual system because building is a distinct operational problem.
+      </p>
+    </section>
+
+    <h2 class="section-title">What We Know Now</h2>
+    <section class="timeline">
+      <article class="timeline-card">
+        <span class="label">Finding 01</span>
+        <p>The video-use repo is useful as a base and offers a credible AI editing starting point.</p>
+      </article>
+      <article class="timeline-card">
+        <span class="label">Finding 02</span>
+        <p>Transcript-first editing is smart and efficient, especially for speech-led editing tasks.</p>
+      </article>
+      <article class="timeline-card">
+        <span class="label">Finding 03</span>
+        <p>Faithful recreation for a different product needs stronger visual understanding than the current foundation provides.</p>
+      </article>
+      <article class="timeline-card">
+        <span class="label">Finding 04</span>
+        <p>A similarity loop is required so the system can evaluate how close the rebuilt output is to the target.</p>
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Current Project Status</h2>
+        <p>
+          The work is best described as <strong>Research / Concept Validation</strong>. The direction is strategically interesting and product-relevant, but it is not yet at the point of implementation certainty.
+        </p>
+      </article>
+
+      <article class="card">
+        <h2>Proposed Next Status</h2>
+        <p>
+          <strong>Architecture Definition</strong> should be the next explicit phase. The open question is no longer whether the space is interesting; it is how to structure a system that can actually perform faithful recreation.
+        </p>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>What Architecture Definition Should Cover</h2>
+      <ul>
+        <li>How ingestion, analysis, recreation, and evaluation pass state between modes</li>
+        <li>What representations are transcript-based, visual, temporal, or audio-derived</li>
+        <li>How style extraction and transition mapping are modeled</li>
+        <li>Where similarity evaluation happens and how iteration is triggered</li>
+        <li>Which parts are deterministic pipelines versus agentic reasoning loops</li>
+      </ul>
+    </section>
+
+    <p class="footer-note">Standalone browser-readable summary for internal product and research alignment.</p>
+  </main>
+</body>
+</html>

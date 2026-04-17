@@ -1,0 +1,57 @@
+{
+  "$schema": "../../../_schemas/idea-validation-slot.schema.json",
+  "slot": "idea-validation",
+  "description": "Pluggable idea-validation slot for scoring sourced ideas with web-backed market and timing research.",
+  "configDir": "./configs",
+  "sourcesDir": "./sources",
+  "fields": [
+    {
+      "name": "promptSource",
+      "type": "markdown-path",
+      "required": true,
+      "description": "Relative path to the Markdown prompt source that drives this validation mode."
+    },
+    {
+      "name": "ideaSource",
+      "type": "agent-slot-config-ref",
+      "required": true,
+      "description": "Reference to the source agent, slot, and config that produce the candidate ideas."
+    },
+    {
+      "name": "researchMode",
+      "type": "string",
+      "required": true,
+      "description": "How aggressively the validator should browse and validate market evidence."
+    },
+    {
+      "name": "outputMode",
+      "type": "string",
+      "required": true,
+      "description": "The expected output shape, such as scored ranking, kill/keep memo, or validation brief."
+    },
+    {
+      "name": "sourceTypes",
+      "type": "string[]",
+      "required": true,
+      "description": "Preferred source categories for validating competition, demand, and technical timing."
+    },
+    {
+      "name": "researchDimensions",
+      "type": "string[]",
+      "required": true,
+      "description": "The evidence dimensions the validator should explicitly research."
+    },
+    {
+      "name": "scoringAxes",
+      "type": "string[]",
+      "required": true,
+      "description": "Criteria used to score each idea."
+    },
+    {
+      "name": "scoreScale",
+      "type": "string",
+      "required": true,
+      "description": "Human-readable score scale, such as 0-10 or low/medium/high."
+    }
+  ]
+}

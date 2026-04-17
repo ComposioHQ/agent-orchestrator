@@ -1,0 +1,62 @@
+{
+  "slot": "research-mode",
+  "description": "Pluggable research-mode slot for market sizing, competitive teardown, and interview synthesis workflows.",
+  "configDir": "./configs",
+  "sourcesDir": "./sources",
+  "fields": [
+    {
+      "name": "promptSource",
+      "type": "markdown-path",
+      "required": true,
+      "description": "Relative path to the Markdown prompt source that drives this research mode."
+    },
+    {
+      "name": "researchMode",
+      "type": "string",
+      "required": true,
+      "description": "How aggressively the agent should browse, triangulate, and validate evidence."
+    },
+    {
+      "name": "outputMode",
+      "type": "string",
+      "required": true,
+      "description": "The expected output shape, such as one-pager, teardown, or investment memo."
+    },
+    {
+      "name": "sourceTypes",
+      "type": "string[]",
+      "required": true,
+      "description": "Preferred source categories for market, competition, and interview-backed research."
+    },
+    {
+      "name": "researchDimensions",
+      "type": "string[]",
+      "required": true,
+      "description": "The evidence dimensions the agent should explicitly research."
+    },
+    {
+      "name": "specialists",
+      "type": "string[]",
+      "required": true,
+      "description": "Named specialist lanes that shape the research workflow."
+    },
+    {
+      "name": "deliverables",
+      "type": "string[]",
+      "required": true,
+      "description": "Artifacts the agent should produce before making a verdict."
+    },
+    {
+      "name": "scoringAxes",
+      "type": "string[]",
+      "required": true,
+      "description": "Criteria used to score whether the idea deserves to exist."
+    },
+    {
+      "name": "scoreScale",
+      "type": "string",
+      "required": true,
+      "description": "Human-readable score scale, such as 0-10 or low/medium/high."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aoagents.dev/schemas/launch-mode-config.json",
+  "title": "Launch Mode Config",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "promptSource",
+    "launchMode",
+    "outputMode",
+    "channels",
+    "deliverables",
+    "audiences"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "promptSource": {
+      "type": "string"
+    },
+    "launchMode": {
+      "type": "string"
+    },
+    "outputMode": {
+      "type": "string"
+    },
+    "channels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "deliverables": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "audiences": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

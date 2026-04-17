@@ -1,0 +1,393 @@
+{
+  "audioRelativePath": "audio\/reference-audio.m4a",
+  "durationSeconds": 73.4,
+  "frames": [
+    {
+      "averageColorHex": "#280F45",
+      "averageLuma": 24.29,
+      "fileName": "sample-000-00.00s.jpg",
+      "index": 0,
+      "meanPixelDifferenceFromPrevious": 0,
+      "relativePath": "frames\/sample-000-00.00s.jpg",
+      "timeSeconds": 0,
+      "timestamp": "00:00.00"
+    },
+    {
+      "averageColorHex": "#2B0E4B",
+      "averageLuma": 24.98,
+      "fileName": "sample-001-02.00s.jpg",
+      "index": 1,
+      "meanPixelDifferenceFromPrevious": 13.2,
+      "relativePath": "frames\/sample-001-02.00s.jpg",
+      "timeSeconds": 2,
+      "timestamp": "00:02.00"
+    },
+    {
+      "averageColorHex": "#05070C",
+      "averageLuma": 7.04,
+      "fileName": "sample-002-04.00s.jpg",
+      "index": 2,
+      "meanPixelDifferenceFromPrevious": 40.45,
+      "relativePath": "frames\/sample-002-04.00s.jpg",
+      "timeSeconds": 4,
+      "timestamp": "00:04.00"
+    },
+    {
+      "averageColorHex": "#23273C",
+      "averageLuma": 39.44,
+      "fileName": "sample-003-06.00s.jpg",
+      "index": 3,
+      "meanPixelDifferenceFromPrevious": 38.21,
+      "relativePath": "frames\/sample-003-06.00s.jpg",
+      "timeSeconds": 6,
+      "timestamp": "00:06.00"
+    },
+    {
+      "averageColorHex": "#573B74",
+      "averageLuma": 69.18,
+      "fileName": "sample-004-08.00s.jpg",
+      "index": 4,
+      "meanPixelDifferenceFromPrevious": 76.22,
+      "relativePath": "frames\/sample-004-08.00s.jpg",
+      "timeSeconds": 8,
+      "timestamp": "00:08.00"
+    },
+    {
+      "averageColorHex": "#502E76",
+      "averageLuma": 58.24,
+      "fileName": "sample-005-10.00s.jpg",
+      "index": 5,
+      "meanPixelDifferenceFromPrevious": 46.91,
+      "relativePath": "frames\/sample-005-10.00s.jpg",
+      "timeSeconds": 10,
+      "timestamp": "00:10.00"
+    },
+    {
+      "averageColorHex": "#2B1A3E",
+      "averageLuma": 31.88,
+      "fileName": "sample-006-12.00s.jpg",
+      "index": 6,
+      "meanPixelDifferenceFromPrevious": 45.22,
+      "relativePath": "frames\/sample-006-12.00s.jpg",
+      "timeSeconds": 12,
+      "timestamp": "00:12.00"
+    },
+    {
+      "averageColorHex": "#E9E5ED",
+      "averageLuma": 230.79,
+      "fileName": "sample-007-14.00s.jpg",
+      "index": 7,
+      "meanPixelDifferenceFromPrevious": 189.87,
+      "relativePath": "frames\/sample-007-14.00s.jpg",
+      "timeSeconds": 14,
+      "timestamp": "00:14.00"
+    },
+    {
+      "averageColorHex": "#DABEF9",
+      "averageLuma": 200.41,
+      "fileName": "sample-008-16.00s.jpg",
+      "index": 8,
+      "meanPixelDifferenceFromPrevious": 26.95,
+      "relativePath": "frames\/sample-008-16.00s.jpg",
+      "timeSeconds": 16,
+      "timestamp": "00:16.00"
+    },
+    {
+      "averageColorHex": "#E8DAF7",
+      "averageLuma": 223.08,
+      "fileName": "sample-009-18.00s.jpg",
+      "index": 9,
+      "meanPixelDifferenceFromPrevious": 25.88,
+      "relativePath": "frames\/sample-009-18.00s.jpg",
+      "timeSeconds": 18,
+      "timestamp": "00:18.00"
+    },
+    {
+      "averageColorHex": "#E7D8F7",
+      "averageLuma": 221.7,
+      "fileName": "sample-010-20.00s.jpg",
+      "index": 10,
+      "meanPixelDifferenceFromPrevious": 7.14,
+      "relativePath": "frames\/sample-010-20.00s.jpg",
+      "timeSeconds": 20,
+      "timestamp": "00:20.00"
+    },
+    {
+      "averageColorHex": "#EBDEF8",
+      "averageLuma": 226.73,
+      "fileName": "sample-011-22.00s.jpg",
+      "index": 11,
+      "meanPixelDifferenceFromPrevious": 12.57,
+      "relativePath": "frames\/sample-011-22.00s.jpg",
+      "timeSeconds": 22,
+      "timestamp": "00:22.00"
+    },
+    {
+      "averageColorHex": "#EADDF7",
+      "averageLuma": 225.84,
+      "fileName": "sample-012-24.00s.jpg",
+      "index": 12,
+      "meanPixelDifferenceFromPrevious": 11.95,
+      "relativePath": "frames\/sample-012-24.00s.jpg",
+      "timeSeconds": 24,
+      "timestamp": "00:24.00"
+    },
+    {
+      "averageColorHex": "#DFDAE4",
+      "averageLuma": 219.72,
+      "fileName": "sample-013-26.00s.jpg",
+      "index": 13,
+      "meanPixelDifferenceFromPrevious": 27.21,
+      "relativePath": "frames\/sample-013-26.00s.jpg",
+      "timeSeconds": 26,
+      "timestamp": "00:26.00"
+    },
+    {
+      "averageColorHex": "#F9F9F9",
+      "averageLuma": 249.05,
+      "fileName": "sample-014-28.00s.jpg",
+      "index": 14,
+      "meanPixelDifferenceFromPrevious": 30.93,
+      "relativePath": "frames\/sample-014-28.00s.jpg",
+      "timeSeconds": 28,
+      "timestamp": "00:28.00"
+    },
+    {
+      "averageColorHex": "#BAA8CB",
+      "averageLuma": 174.49,
+      "fileName": "sample-015-30.00s.jpg",
+      "index": 15,
+      "meanPixelDifferenceFromPrevious": 70.01,
+      "relativePath": "frames\/sample-015-30.00s.jpg",
+      "timeSeconds": 30,
+      "timestamp": "00:30.00"
+    },
+    {
+      "averageColorHex": "#18171F",
+      "averageLuma": 23.63,
+      "fileName": "sample-016-32.00s.jpg",
+      "index": 16,
+      "meanPixelDifferenceFromPrevious": 164.83,
+      "relativePath": "frames\/sample-016-32.00s.jpg",
+      "timeSeconds": 32,
+      "timestamp": "00:32.00"
+    },
+    {
+      "averageColorHex": "#2E233B",
+      "averageLuma": 38.98,
+      "fileName": "sample-017-34.00s.jpg",
+      "index": 17,
+      "meanPixelDifferenceFromPrevious": 34.61,
+      "relativePath": "frames\/sample-017-34.00s.jpg",
+      "timeSeconds": 34,
+      "timestamp": "00:34.00"
+    },
+    {
+      "averageColorHex": "#C5C1C9",
+      "averageLuma": 194.69,
+      "fileName": "sample-018-36.00s.jpg",
+      "index": 18,
+      "meanPixelDifferenceFromPrevious": 158.78,
+      "relativePath": "frames\/sample-018-36.00s.jpg",
+      "timeSeconds": 36,
+      "timestamp": "00:36.00"
+    },
+    {
+      "averageColorHex": "#F1EBFB",
+      "averageLuma": 237.33,
+      "fileName": "sample-019-38.00s.jpg",
+      "index": 19,
+      "meanPixelDifferenceFromPrevious": 63.32,
+      "relativePath": "frames\/sample-019-38.00s.jpg",
+      "timeSeconds": 38,
+      "timestamp": "00:38.00"
+    },
+    {
+      "averageColorHex": "#38135B",
+      "averageLuma": 32.08,
+      "fileName": "sample-020-40.00s.jpg",
+      "index": 20,
+      "meanPixelDifferenceFromPrevious": 187.39,
+      "relativePath": "frames\/sample-020-40.00s.jpg",
+      "timeSeconds": 40,
+      "timestamp": "00:40.00"
+    },
+    {
+      "averageColorHex": "#3D1962",
+      "averageLuma": 38.19,
+      "fileName": "sample-021-42.00s.jpg",
+      "index": 21,
+      "meanPixelDifferenceFromPrevious": 36.03,
+      "relativePath": "frames\/sample-021-42.00s.jpg",
+      "timeSeconds": 42,
+      "timestamp": "00:42.00"
+    },
+    {
+      "averageColorHex": "#35105B",
+      "averageLuma": 29.32,
+      "fileName": "sample-022-44.00s.jpg",
+      "index": 22,
+      "meanPixelDifferenceFromPrevious": 16.76,
+      "relativePath": "frames\/sample-022-44.00s.jpg",
+      "timeSeconds": 44,
+      "timestamp": "00:44.00"
+    },
+    {
+      "averageColorHex": "#2C0B50",
+      "averageLuma": 23.39,
+      "fileName": "sample-023-46.00s.jpg",
+      "index": 23,
+      "meanPixelDifferenceFromPrevious": 13.95,
+      "relativePath": "frames\/sample-023-46.00s.jpg",
+      "timeSeconds": 46,
+      "timestamp": "00:46.00"
+    },
+    {
+      "averageColorHex": "#251635",
+      "averageLuma": 27.7,
+      "fileName": "sample-024-48.00s.jpg",
+      "index": 24,
+      "meanPixelDifferenceFromPrevious": 30.43,
+      "relativePath": "frames\/sample-024-48.00s.jpg",
+      "timeSeconds": 48,
+      "timestamp": "00:48.00"
+    },
+    {
+      "averageColorHex": "#5C2891",
+      "averageLuma": 58.89,
+      "fileName": "sample-025-50.00s.jpg",
+      "index": 25,
+      "meanPixelDifferenceFromPrevious": 65.3,
+      "relativePath": "frames\/sample-025-50.00s.jpg",
+      "timeSeconds": 50,
+      "timestamp": "00:50.00"
+    },
+    {
+      "averageColorHex": "#9674B6",
+      "averageLuma": 128.32,
+      "fileName": "sample-026-52.00s.jpg",
+      "index": 26,
+      "meanPixelDifferenceFromPrevious": 73.57,
+      "relativePath": "frames\/sample-026-52.00s.jpg",
+      "timeSeconds": 52,
+      "timestamp": "00:52.00"
+    },
+    {
+      "averageColorHex": "#E9DEF6",
+      "averageLuma": 225.89,
+      "fileName": "sample-027-54.00s.jpg",
+      "index": 27,
+      "meanPixelDifferenceFromPrevious": 97.82,
+      "relativePath": "frames\/sample-027-54.00s.jpg",
+      "timeSeconds": 54,
+      "timestamp": "00:54.00"
+    },
+    {
+      "averageColorHex": "#D9C5EB",
+      "averageLuma": 204.01,
+      "fileName": "sample-028-56.00s.jpg",
+      "index": 28,
+      "meanPixelDifferenceFromPrevious": 21.3,
+      "relativePath": "frames\/sample-028-56.00s.jpg",
+      "timeSeconds": 56,
+      "timestamp": "00:56.00"
+    },
+    {
+      "averageColorHex": "#DBCDEA",
+      "averageLuma": 210.1,
+      "fileName": "sample-029-58.00s.jpg",
+      "index": 29,
+      "meanPixelDifferenceFromPrevious": 15.93,
+      "relativePath": "frames\/sample-029-58.00s.jpg",
+      "timeSeconds": 58,
+      "timestamp": "00:58.00"
+    },
+    {
+      "averageColorHex": "#DAC5F7",
+      "averageLuma": 204.94,
+      "fileName": "sample-030-60.00s.jpg",
+      "index": 30,
+      "meanPixelDifferenceFromPrevious": 15.37,
+      "relativePath": "frames\/sample-030-60.00s.jpg",
+      "timeSeconds": 60,
+      "timestamp": "01:00.00"
+    },
+    {
+      "averageColorHex": "#6321A7",
+      "averageLuma": 56.96,
+      "fileName": "sample-031-62.00s.jpg",
+      "index": 31,
+      "meanPixelDifferenceFromPrevious": 121.05,
+      "relativePath": "frames\/sample-031-62.00s.jpg",
+      "timeSeconds": 62,
+      "timestamp": "01:02.00"
+    },
+    {
+      "averageColorHex": "#6825A4",
+      "averageLuma": 60.13,
+      "fileName": "sample-032-64.00s.jpg",
+      "index": 32,
+      "meanPixelDifferenceFromPrevious": 21.76,
+      "relativePath": "frames\/sample-032-64.00s.jpg",
+      "timeSeconds": 64,
+      "timestamp": "01:04.00"
+    },
+    {
+      "averageColorHex": "#692AA6",
+      "averageLuma": 64.41,
+      "fileName": "sample-033-66.00s.jpg",
+      "index": 33,
+      "meanPixelDifferenceFromPrevious": 21.42,
+      "relativePath": "frames\/sample-033-66.00s.jpg",
+      "timeSeconds": 66,
+      "timestamp": "01:06.00"
+    },
+    {
+      "averageColorHex": "#0A0A0A",
+      "averageLuma": 10.22,
+      "fileName": "sample-034-68.00s.jpg",
+      "index": 34,
+      "meanPixelDifferenceFromPrevious": 94.35,
+      "relativePath": "frames\/sample-034-68.00s.jpg",
+      "timeSeconds": 68,
+      "timestamp": "01:08.00"
+    },
+    {
+      "averageColorHex": "#070707",
+      "averageLuma": 6.93,
+      "fileName": "sample-035-70.00s.jpg",
+      "index": 35,
+      "meanPixelDifferenceFromPrevious": 14.6,
+      "relativePath": "frames\/sample-035-70.00s.jpg",
+      "timeSeconds": 70,
+      "timestamp": "01:10.00"
+    },
+    {
+      "averageColorHex": "#070707",
+      "averageLuma": 6.87,
+      "fileName": "sample-036-72.00s.jpg",
+      "index": 36,
+      "meanPixelDifferenceFromPrevious": 3.23,
+      "relativePath": "frames\/sample-036-72.00s.jpg",
+      "timeSeconds": 72,
+      "timestamp": "01:12.00"
+    },
+    {
+      "averageColorHex": "#F9F9FC",
+      "averageLuma": 249.08,
+      "fileName": "sample-037-73.37s.jpg",
+      "index": 37,
+      "meanPixelDifferenceFromPrevious": 242.95,
+      "relativePath": "frames\/sample-037-73.37s.jpg",
+      "timeSeconds": 73.36666666666666,
+      "timestamp": "01:13.37"
+    }
+  ],
+  "generatedAt": "2026-04-16T09:09:22Z",
+  "hasAudioTrack": true,
+  "height": 360,
+  "inputPath": "\/Users\/suraj.markupgmail.com\/Desktop\/test.mp4",
+  "nominalFrameRate": 30,
+  "sampleIntervalSeconds": 2,
+  "width": 640
+}

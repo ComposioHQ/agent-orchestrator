@@ -1,0 +1,50 @@
+{
+  "$schema": "../_schemas/fleet-manifest.schema.json",
+  "id": "startup-factory",
+  "name": "Startup Factory",
+  "description": "A repo-local fleet that composes the startup swarms from idea generation through launch.",
+  "goal": "Point a declarative fleet at a startup outcome and let the orchestrator resolve staged handoffs.",
+  "agents": [
+    {
+      "agentId": "idea-sourcer",
+      "stage": "ideate",
+      "outputs": ["ranked-shortlist"]
+    },
+    {
+      "agentId": "idea-validator",
+      "stage": "validate",
+      "dependsOn": ["idea-sourcer"],
+      "outputs": ["validation-brief"]
+    },
+    {
+      "agentId": "deep-research",
+      "stage": "research",
+      "dependsOn": ["idea-validator"],
+      "outputs": ["market-report", "interview-plan"]
+    },
+    {
+      "agentId": "design-studio",
+      "stage": "design",
+      "dependsOn": ["deep-research"],
+      "outputs": ["brand-system", "landing-page-brief"]
+    },
+    {
+      "agentId": "build-squad",
+      "stage": "build",
+      "dependsOn": ["deep-research", "design-studio"],
+      "outputs": ["repo-plan", "pull-request-set"]
+    },
+    {
+      "agentId": "growth-loop",
+      "stage": "grow",
+      "dependsOn": ["build-squad"],
+      "outputs": ["acquisition-experiments", "funnel-instrumentation-plan"]
+    },
+    {
+      "agentId": "launch-desk",
+      "stage": "launch",
+      "dependsOn": ["build-squad", "growth-loop", "design-studio"],
+      "outputs": ["launch-brief", "distribution-copy", "outreach-list"]
+    }
+  ]
+}

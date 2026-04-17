@@ -1,0 +1,39 @@
+{
+  "$schema": "../../../_schemas/idea-validation-config.schema.json",
+  "id": "codex",
+  "name": "Codex Idea Validation",
+  "promptSource": "../sources/codex-idea-validation.md",
+  "ideaSource": {
+    "agentId": "idea-sourcer",
+    "slot": "idea-generation",
+    "config": "codex"
+  },
+  "researchMode": "deep",
+  "outputMode": "scored-ranking",
+  "sourceTypes": [
+    "official product docs",
+    "company and competitor sites",
+    "launch surfaces",
+    "credible market and behavior research",
+    "developer and technology announcements"
+  ],
+  "researchDimensions": [
+    "existing competition",
+    "new technological unlocks",
+    "user demand"
+  ],
+  "constraints": [
+    "Do not confuse novelty with viability.",
+    "Do not reject an idea only because competitors exist; judge whether the market is saturated or still opening up.",
+    "Prefer current evidence for demand and timing over generic evergreen statements.",
+    "Make the scoring explainable enough that a team can decide whether to build, sharpen, or kill the idea."
+  ],
+  "scoringAxes": [
+    "demand strength",
+    "timing tailwinds",
+    "competition pressure",
+    "differentiation headroom",
+    "overall relevance"
+  ],
+  "scoreScale": "0-10"
+}

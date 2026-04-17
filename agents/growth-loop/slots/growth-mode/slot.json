@@ -1,0 +1,62 @@
+{
+  "slot": "growth-mode",
+  "description": "Pluggable growth-mode slot for acquisition experiments, funnel instrumentation, and conversion optimization strategies.",
+  "configDir": "./configs",
+  "sourcesDir": "./sources",
+  "fields": [
+    {
+      "name": "promptSource",
+      "type": "markdown-path",
+      "required": true,
+      "description": "Relative path to the Markdown prompt source that drives this growth mode."
+    },
+    {
+      "name": "trafficMode",
+      "type": "string",
+      "required": true,
+      "description": "Whether the mode assumes live traffic, pre-launch traffic, or a synthetic test environment."
+    },
+    {
+      "name": "experimentCadence",
+      "type": "string",
+      "required": true,
+      "description": "How quickly the agent should ship, measure, and iterate growth experiments."
+    },
+    {
+      "name": "outputMode",
+      "type": "string",
+      "required": true,
+      "description": "The expected output shape, such as a ranked experiment slate or a conversion brief."
+    },
+    {
+      "name": "funnelScope",
+      "type": "string[]",
+      "required": true,
+      "description": "Which funnel stages this mode is expected to cover."
+    },
+    {
+      "name": "channelFocus",
+      "type": "string[]",
+      "required": true,
+      "description": "Acquisition and conversion surfaces the agent should prioritize."
+    },
+    {
+      "name": "operatingRoles",
+      "type": "string[]",
+      "required": true,
+      "description": "The internal specialist roles this mode should emulate, such as experimenter, analyst, and conversion."
+    },
+    {
+      "name": "sourceTypes",
+      "type": "string[]",
+      "required": true,
+      "description": "Preferred evidence sources for diagnosing and measuring growth opportunities."
+    },
+    {
+      "name": "scoringAxes",
+      "type": "string[]",
+      "required": true,
+      "description": "Criteria used to prioritize experiments and conversion changes."
+    }
+  ]
+}

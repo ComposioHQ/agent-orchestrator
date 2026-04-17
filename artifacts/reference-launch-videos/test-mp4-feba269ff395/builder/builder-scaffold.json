@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "launch-video-builder-scaffold/v1",
+  "blueprintRelativePath": "blueprints/launch-style-blueprint.json",
+  "sourceArtifactRoot": "/Users/suraj.markupgmail.com/.worktrees/codex-startup-factory/csf-7/artifacts/reference-launch-videos/test-mp4-feba269ff395",
+  "renderFamily": "launch-style",
+  "renderStatus": "pending-assets",
+  "builderInputs": {
+    "keyframesDir": "/Users/suraj.markupgmail.com/.worktrees/codex-startup-factory/csf-7/artifacts/reference-launch-videos/test-mp4-feba269ff395/keyframes",
+    "transcriptPath": "/Users/suraj.markupgmail.com/.worktrees/codex-startup-factory/csf-7/artifacts/reference-launch-videos/test-mp4-feba269ff395/transcript/transcript.json",
+    "notesPath": "/Users/suraj.markupgmail.com/.worktrees/codex-startup-factory/csf-7/artifacts/reference-launch-videos/test-mp4-feba269ff395/notes/launch-style-notes.md"
+  },
+  "unresolved": [
+    "Replace placeholder transcript segments with speech-to-text output or manual script.",
+    "Supply product assets, logos, and any required brand guardrails.",
+    "Choose the final render stack for the builder loop."
+  ],
+  "placeholders": {
+    "brandName": "TBD",
+    "product": "TBD",
+    "coreClaim": "Reference runs 73.4s with 16 detected scenes.",
+    "cta": "TBD",
+    "assetPack": ["logo", "ui-captures", "headline-copy", "social-proof"]
+  }
+}

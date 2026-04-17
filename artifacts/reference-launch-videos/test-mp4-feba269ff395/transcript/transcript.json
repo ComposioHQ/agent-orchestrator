@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "reference-transcript/v1",
+  "status": "audio_extracted_pending_transcription",
+  "sourceAudioRelativePath": "audio/reference-audio.m4a",
+  "generatedAt": "2026-04-16T09:09:33.477Z",
+  "tool": null,
+  "language": null,
+  "segments": [],
+  "notes": [
+    "Audio has been extracted and persisted. Run speech-to-text in a later loop against the saved audio file.",
+    "This placeholder exists so future judge/build loops can update transcript data without reprocessing video scenes or keyframes."
+  ]
+}

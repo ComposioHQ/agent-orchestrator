@@ -1,0 +1,44 @@
+{
+  "id": "codex",
+  "name": "Codex Deep Research",
+  "promptSource": "../sources/codex-research-mode.md",
+  "researchMode": "deep",
+  "outputMode": "decision-one-pager",
+  "sourceTypes": [
+    "official company and product sites",
+    "pricing pages and changelogs",
+    "credible market maps and industry research",
+    "user interviews, surveys, and qualitative studies",
+    "community discussion, job posts, and workflow evidence"
+  ],
+  "researchDimensions": [
+    "market size and urgency",
+    "competitive landscape",
+    "user pain and workflow evidence"
+  ],
+  "specialists": [
+    "market-analyst",
+    "competitor-hunter",
+    "interviewer"
+  ],
+  "deliverables": [
+    "market sizing snapshot",
+    "competitive teardown",
+    "interview synthesis",
+    "ship / sharpen / kill recommendation"
+  ],
+  "constraints": [
+    "Prefer primary evidence over generic market claims.",
+    "Do not present TAM math without stating the assumptions behind it.",
+    "Separate direct competitors from adjacent substitutes and in-house workflows.",
+    "Write the recommendation crisply enough that a founder can decide whether the idea deserves to exist."
+  ],
+  "scoringAxes": [
+    "market pull",
+    "competition gap",
+    "user pain intensity",
+    "timing tailwinds",
+    "wedge clarity"
+  ],
+  "scoreScale": "0-10"
+}

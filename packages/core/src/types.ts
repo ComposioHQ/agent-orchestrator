@@ -1186,6 +1186,12 @@ export interface ProjectConfig {
   /** Path to a file containing agent rules (relative to project path) */
   agentRulesFile?: string;
 
+  /** Override the default worker base prompt with inline instructions */
+  agentBasePrompt?: string;
+
+  /** Path to a file containing worker base prompt instructions (relative to project path) */
+  agentBasePromptFile?: string;
+
   /** Rules for the orchestrator agent (stored, reserved for future use) */
   orchestratorRules?: string;
 

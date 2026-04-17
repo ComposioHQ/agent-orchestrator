@@ -1,0 +1,42 @@
+{
+  "id": "codex",
+  "name": "Codex Launch Mode",
+  "promptSource": "../sources/codex-launch-mode.md",
+  "launchSurfaces": [
+    "Product Hunt",
+    "Hacker News",
+    "social posts",
+    "warm intros",
+    "press angle"
+  ],
+  "audienceTracks": [
+    "makers and early adopters",
+    "technical peers and Hacker News readers",
+    "friends, investors, and operator intros",
+    "select journalists, newsletter writers, or ecosystem amplifiers"
+  ],
+  "outreachMode": "founder-led, high-context, tightly sequenced",
+  "outputMode": "launch-runbook-and-asset-pack",
+  "assetOutputs": [
+    "launch narrative",
+    "Product Hunt draft",
+    "Hacker News angle",
+    "social post set",
+    "warm intro DM and email scripts",
+    "press or outreach brief",
+    "launch-day checklist"
+  ],
+  "constraints": [
+    "Prefer specific hooks, proof points, and artifacts over generic startup copy.",
+    "Treat Product Hunt, Hacker News, social, and warm intros as distinct audiences with different incentives.",
+    "Bias toward assets a small team can actually ship in the next 24 to 72 hours.",
+    "Keep the launch plan grounded in the current product surface instead of aspirational roadmap copy."
+  ],
+  "successSignals": [
+    "clear hook in one sentence",
+    "credible proof or demo artifact",
+    "channel-native copy that sounds like a real founder",
+    "sequenced launch window with dependencies called out",
+    "targeted outreach list with concrete asks"
+  ]
+}

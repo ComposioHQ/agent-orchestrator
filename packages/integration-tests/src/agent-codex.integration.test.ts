@@ -73,7 +73,10 @@ describe.skipIf(!canRun)("agent-codex (integration)", () => {
     await killSessionsByPrefix(SESSION_PREFIX);
     tmpDir = await mkdtemp(join(tmpdir(), "ao-inttest-codex-"));
 
-    const cmd = `${codexBin} exec 'Say hello and nothing else'`;
+    // Launch the interactive CLI instead of `codex exec`.
+    // `codex exec` can complete before the polling loop observes a live process,
+    // which makes this integration test flaky on faster machines.
+    const cmd = `${codexBin} --no-alt-screen`;
     await createSession(sessionName, cmd, tmpDir);
 
     const handle = makeTmuxHandle(sessionName);
@@ -93,6 +96,9 @@ describe.skipIf(!canRun)("agent-codex (integration)", () => {
       }
       await sleep(500);
     }
+
+    // Terminate the interactive session once we've observed the live process.
+    await killSession(sessionName);
 
     // Wait for agent to exit
     exitedRunning = await pollUntilEqual(() => agent.isProcessRunning(handle), false, {

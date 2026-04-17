@@ -78,6 +78,22 @@ Use this if:
 - You need agent-specific configuration
 - You're evaluating different AI coding assistants
 
+### [idea-validator-3p.yaml](./idea-validator-3p.yaml)
+
+**Idea validation / research workflow**
+
+Shows how to replace the default coding-agent prompt with a custom validator role prompt. Useful when AO is coordinating research agents instead of code implementation.
+
+Use this if:
+
+- You want agents to evaluate startup ideas or market hypotheses
+- You need a reusable non-coding worker persona
+- You want to keep the validator prompt in a versioned markdown file
+
+Detailed guide:
+
+- [idea-validator-3p/README.md](./idea-validator-3p/README.md) explains how the validator works and what the upstream Idea Sourcerer should send.
+
 ## Configuration Tips
 
 1. **Start simple** - Use `simple-github.yaml` as a starting point

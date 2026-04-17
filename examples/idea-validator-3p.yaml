@@ -1,0 +1,22 @@
+# Example: 3-phase idea validation worker
+#
+# This replaces AO's default coding-agent base prompt with a research validator
+# prompt. The explicit idea payload is still passed at spawn time, for example:
+#
+#   ao spawn --prompt '{"idea_id":"IDEA-123","idea":"One-line idea","source_agent":"idea-sourcerer"}'
+#
+# See examples/idea-validator-3p/README.md for the full workflow, payload
+# expectations, and guidance for the upstream Idea Sourcerer Agent.
+
+defaults:
+  runtime: tmux
+  agent: codex
+  workspace: worktree
+
+projects:
+  startup-factory:
+    name: Startup Factory
+    path: ~/startup-factory
+    defaultBranch: main
+    sessionPrefix: sf
+    agentBasePromptFile: examples/prompts/validatorengine-3p.md

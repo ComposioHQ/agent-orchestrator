@@ -1,0 +1,29 @@
+{
+  "$schema": "../../../_schemas/idea-generation-config.schema.json",
+  "id": "codex",
+  "name": "Codex Idea Generation",
+  "promptSource": "../sources/codex-idea-generation.md",
+  "researchMode": "deep",
+  "noveltyBar": "high",
+  "outputMode": "ranked-shortlist",
+  "sourceTypes": [
+    "official product docs",
+    "event pages",
+    "public winner recaps",
+    "market scans",
+    "regional behavior research"
+  ],
+  "constraints": [
+    "Prefer ideas that feel impossible or incomplete without Codex.",
+    "Bias toward agentic systems that create, adapt, or operate software instead of just chatting.",
+    "Avoid generic summarizers, copilots, and thin wrappers unless the wedge is unusually sharp.",
+    "Prefer ideas with a one-minute explanation and a visible demo reveal."
+  ],
+  "scoringAxes": [
+    "novelty",
+    "codex centrality",
+    "demo clarity",
+    "cultural specificity",
+    "retellability"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "reference-launch-artifact/v1",
+  "sourceHash": "feba269ff395cc6f99eb5f3a6411f3fc5bcee7df81a10e84df7958d927bd58c8",
+  "sourcePath": "/Users/suraj.markupgmail.com/Desktop/test.mp4",
+  "generatedAt": "2026-04-16T09:09:33.477Z",
+  "sampleIntervalSeconds": 2,
+  "sceneThreshold": 18,
+  "minSceneLengthSeconds": 4
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aoagents.dev/schemas/idea-validation-slot.json",
+  "title": "Idea Validation Slot",
+  "type": "object",
+  "required": ["slot", "description", "configDir", "sourcesDir", "fields"],
+  "properties": {
+    "slot": {
+      "const": "idea-validation"
+    },
+    "description": {
+      "type": "string"
+    },
+    "configDir": {
+      "type": "string"
+    },
+    "sourcesDir": {
+      "type": "string"
+    },
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "type", "required", "description"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "reference-analysis-summary/v1",
+  "generatedAt": "2026-04-16T09:09:33.477Z",
+  "durationSeconds": 73.4,
+  "frameCount": 38,
+  "sceneCount": 16,
+  "launchFamily": "launch-style",
+  "mappedArchetype": "founder-voiceover-reveal",
+  "pacing": "steady-escalation",
+  "reusableOutputs": [
+    "analysis/raw-analysis.json",
+    "analysis/scenes.json",
+    "analysis/summary.json",
+    "blueprints/launch-style-blueprint.json",
+    "builder/builder-scaffold.json",
+    "transcript/transcript.json",
+    "notes/launch-style-notes.md"
+  ]
+}

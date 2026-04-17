@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aoagents.dev/schemas/idea-validation-config.json",
+  "title": "Idea Validation Config",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "promptSource",
+    "ideaSource",
+    "researchMode",
+    "outputMode",
+    "sourceTypes",
+    "researchDimensions",
+    "scoringAxes",
+    "scoreScale"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "promptSource": {
+      "type": "string"
+    },
+    "ideaSource": {
+      "type": "object",
+      "required": ["agentId", "slot", "config"],
+      "properties": {
+        "agentId": {
+          "type": "string"
+        },
+        "slot": {
+          "type": "string"
+        },
+        "config": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "researchMode": {
+      "type": "string"
+    },
+    "outputMode": {
+      "type": "string"
+    },
+    "sourceTypes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "researchDimensions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "scoringAxes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "scoreScale": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

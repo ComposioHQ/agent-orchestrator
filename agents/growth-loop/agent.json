@@ -1,0 +1,13 @@
+{
+  "$schema": "../_schemas/agent-manifest.schema.json",
+  "id": "growth-loop",
+  "name": "Growth Loop",
+  "description": "Growth experimentation agent for acquisition experiments, funnel instrumentation, and conversion copy that reports what moved.",
+  "systemPrompt": "./prompts/system.md",
+  "slots": {
+    "growth-mode": {
+      "path": "./slots/growth-mode",
+      "config": "codex"
+    }
+  }
+}

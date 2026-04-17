@@ -1,0 +1,13 @@
+{
+  "$schema": "../_schemas/agent-manifest.schema.json",
+  "id": "idea-sourcer",
+  "name": "Idea Sourcer",
+  "description": "Research-backed ideation agent for finding, expanding, validating, and ranking high-upside ideas.",
+  "systemPrompt": "./prompts/system.md",
+  "slots": {
+    "idea-generation": {
+      "path": "./slots/idea-generation",
+      "config": "codex"
+    }
+  }
+}

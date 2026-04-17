@@ -1,0 +1,50 @@
+{
+  "slot": "build-mode",
+  "description": "Pluggable build-mode slot for configuring how Build Squad plans, implements, verifies, and hands off engineering work.",
+  "configDir": "./configs",
+  "sourcesDir": "./sources",
+  "fields": [
+    {
+      "name": "promptSource",
+      "type": "markdown-path",
+      "required": true,
+      "description": "Relative path to the Markdown prompt source that drives this build mode."
+    },
+    {
+      "name": "roles",
+      "type": "string[]",
+      "required": true,
+      "description": "Core delivery roles that should be active for this mode."
+    },
+    {
+      "name": "planningMode",
+      "type": "string",
+      "required": true,
+      "description": "How the squad should decompose architecture and implementation work."
+    },
+    {
+      "name": "executionMode",
+      "type": "string",
+      "required": true,
+      "description": "How the squad should parallelize or sequence delivery."
+    },
+    {
+      "name": "outputMode",
+      "type": "string",
+      "required": true,
+      "description": "The expected delivery shape, such as mergeable implementation, PR stack, or ship checklist."
+    },
+    {
+      "name": "qualityGates",
+      "type": "string[]",
+      "required": true,
+      "description": "Checks or standards the squad should satisfy before handoff."
+    },
+    {
+      "name": "artifacts",
+      "type": "string[]",
+      "required": true,
+      "description": "Artifacts the squad should leave behind for review, merge, or release."
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "../_schemas/agent-manifest.schema.json",
+  "id": "deep-research",
+  "name": "Deep Research",
+  "description": "Research-heavy diligence agent for market sizing, competitive teardown, and user interview synthesis.",
+  "systemPrompt": "./prompts/system.md",
+  "slots": {
+    "research-mode": {
+      "path": "./slots/research-mode",
+      "config": "codex"
+    }
+  }
+}

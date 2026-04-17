@@ -70,6 +70,10 @@ projects:
       Always run tests before committing.
       Use conventional commits.
     agentRulesFile: .ao-rules # Or point to a file (relative to project path)
+    agentBasePrompt: |        # Replace the default coding-agent base prompt
+      You are ValidatorEngine-3P.
+      Falsify first.
+    agentBasePromptFile: .ao-base-prompt.md # Or point to a file (relative to project path)
     orchestratorRules: |      # Rules for the orchestrator agent
 
     # ── Orchestrator session strategy (optional) ──────────────────

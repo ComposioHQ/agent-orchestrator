@@ -1,0 +1,13 @@
+{
+  "$schema": "../_schemas/agent-manifest.schema.json",
+  "id": "idea-validator",
+  "name": "Idea Validator",
+  "description": "Research-backed idea validation agent for checking competition, timing, demand, and current relevance.",
+  "systemPrompt": "./prompts/system.md",
+  "slots": {
+    "idea-validation": {
+      "path": "./slots/idea-validation",
+      "config": "codex"
+    }
+  }
+}

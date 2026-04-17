@@ -1,0 +1,21 @@
+{
+  "id": "codex",
+  "name": "Codex Build Mode",
+  "promptSource": "../sources/codex-build-mode.md",
+  "roles": ["architect", "backend", "frontend", "qa"],
+  "planningMode": "architecture-first scoped slices",
+  "executionMode": "parallel AO worktrees with explicit ownership",
+  "outputMode": "mergeable implementation with verification handoff",
+  "qualityGates": [
+    "Define architecture and task boundaries before parallel code changes.",
+    "Keep backend and frontend changes aligned to concrete interfaces or contracts.",
+    "Run the strongest available build, typecheck, lint, and test commands before handoff.",
+    "Surface shared-infra blockers instead of papering over them locally."
+  ],
+  "artifacts": [
+    "implementation plan",
+    "mergeable pull requests",
+    "verification notes",
+    "follow-up risks"
+  ]
+}

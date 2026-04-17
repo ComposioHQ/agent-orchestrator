@@ -1,0 +1,488 @@
+{
+  "schemaVersion": "launch-video-blueprint/v1",
+  "source": {
+    "artifactRoot": "/Users/suraj.markupgmail.com/.worktrees/codex-startup-factory/csf-7/artifacts/reference-launch-videos/test-mp4-feba269ff395",
+    "inputPath": "/Users/suraj.markupgmail.com/Desktop/test.mp4",
+    "sourceHash": "feba269ff395cc6f99eb5f3a6411f3fc5bcee7df81a10e84df7958d927bd58c8",
+    "durationSeconds": 73.4,
+    "dimensions": {
+      "width": 640,
+      "height": 360
+    }
+  },
+  "family": "launch-style",
+  "style": {
+    "mappedArchetype": "founder-voiceover-reveal",
+    "pacing": "steady-escalation",
+    "tone": ["credible", "aspirational", "product-led"],
+    "rationale": [
+      "Reference runs 73.4s with 16 detected scenes.",
+      "Average scene length is 4.6s, which suggests steady escalation pacing.",
+      "Audio track exists, so the family is prepared for VO-led assembly later."
+    ]
+  },
+  "scenes": [
+    {
+      "sceneId": "scene-01",
+      "order": 1,
+      "sourceSceneIndex": 0,
+      "startSeconds": 0,
+      "endSeconds": 4,
+      "durationSeconds": 4,
+      "keyframeRelativePath": "keyframes/scene-01.jpg",
+      "intent": "Establish the opening visual promise fast.",
+      "visualNotes": [
+        "Dominant color cue #280F45.",
+        "Average sampled motion delta 6.6.",
+        "Detected from opening transition at 00:00.00."
+      ],
+      "editorialRole": "hook",
+      "motionProfile": "low",
+      "emotion": {
+        "primary": "curiosity",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "voiceover or presenter bridge likely fits this beat",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-02",
+      "order": 2,
+      "sourceSceneIndex": 1,
+      "startSeconds": 4,
+      "endSeconds": 8,
+      "durationSeconds": 4,
+      "keyframeRelativePath": "keyframes/scene-02.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #05070C.",
+        "Average sampled motion delta 39.3.",
+        "Detected from detected-cut transition at 00:04.00."
+      ],
+      "editorialRole": "problem",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "voiceover or presenter bridge likely fits this beat",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-03",
+      "order": 3,
+      "sourceSceneIndex": 2,
+      "startSeconds": 8,
+      "endSeconds": 12,
+      "durationSeconds": 4,
+      "keyframeRelativePath": "keyframes/scene-03.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #573B74.",
+        "Average sampled motion delta 61.6.",
+        "Detected from detected-cut transition at 00:08.00."
+      ],
+      "editorialRole": "proof",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-04",
+      "order": 4,
+      "sourceSceneIndex": 3,
+      "startSeconds": 12,
+      "endSeconds": 16,
+      "durationSeconds": 4,
+      "keyframeRelativePath": "keyframes/scene-04.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #2B1A3E.",
+        "Average sampled motion delta 117.5.",
+        "Detected from detected-cut transition at 00:12.00."
+      ],
+      "editorialRole": "proof",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-05",
+      "order": 5,
+      "sourceSceneIndex": 4,
+      "startSeconds": 16,
+      "endSeconds": 26,
+      "durationSeconds": 10,
+      "keyframeRelativePath": "keyframes/scene-05.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #DABEF9.",
+        "Average sampled motion delta 16.9.",
+        "Detected from detected-cut transition at 00:16.00."
+      ],
+      "editorialRole": "proof",
+      "motionProfile": "medium",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-06",
+      "order": 6,
+      "sourceSceneIndex": 5,
+      "startSeconds": 26,
+      "endSeconds": 30,
+      "durationSeconds": 4,
+      "keyframeRelativePath": "keyframes/scene-06.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #DFDAE4.",
+        "Average sampled motion delta 29.1.",
+        "Detected from detected-cut transition at 00:26.00."
+      ],
+      "editorialRole": "proof",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-07",
+      "order": 7,
+      "sourceSceneIndex": 6,
+      "startSeconds": 30,
+      "endSeconds": 34,
+      "durationSeconds": 4,
+      "keyframeRelativePath": "keyframes/scene-07.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #BAA8CB.",
+        "Average sampled motion delta 117.4.",
+        "Detected from detected-cut transition at 00:30.00."
+      ],
+      "editorialRole": "proof",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-08",
+      "order": 8,
+      "sourceSceneIndex": 7,
+      "startSeconds": 34,
+      "endSeconds": 38,
+      "durationSeconds": 4,
+      "keyframeRelativePath": "keyframes/scene-08.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #2E233B.",
+        "Average sampled motion delta 96.7.",
+        "Detected from detected-cut transition at 00:34.00."
+      ],
+      "editorialRole": "proof",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-09",
+      "order": 9,
+      "sourceSceneIndex": 8,
+      "startSeconds": 38,
+      "endSeconds": 42,
+      "durationSeconds": 4,
+      "keyframeRelativePath": "keyframes/scene-09.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #F1EBFB.",
+        "Average sampled motion delta 125.3.",
+        "Detected from detected-cut transition at 00:38.00."
+      ],
+      "editorialRole": "proof",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-10",
+      "order": 10,
+      "sourceSceneIndex": 9,
+      "startSeconds": 42,
+      "endSeconds": 48,
+      "durationSeconds": 6,
+      "keyframeRelativePath": "keyframes/scene-10.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #3D1962.",
+        "Average sampled motion delta 22.3.",
+        "Detected from detected-cut transition at 00:42.00."
+      ],
+      "editorialRole": "proof",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-11",
+      "order": 11,
+      "sourceSceneIndex": 10,
+      "startSeconds": 48,
+      "endSeconds": 52,
+      "durationSeconds": 4,
+      "keyframeRelativePath": "keyframes/scene-11.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #251635.",
+        "Average sampled motion delta 47.9.",
+        "Detected from detected-cut transition at 00:48.00."
+      ],
+      "editorialRole": "proof",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-12",
+      "order": 12,
+      "sourceSceneIndex": 11,
+      "startSeconds": 52,
+      "endSeconds": 56,
+      "durationSeconds": 4,
+      "keyframeRelativePath": "keyframes/scene-12.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #9674B6.",
+        "Average sampled motion delta 85.7.",
+        "Detected from detected-cut transition at 00:52.00."
+      ],
+      "editorialRole": "proof",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-13",
+      "order": 13,
+      "sourceSceneIndex": 12,
+      "startSeconds": 56,
+      "endSeconds": 62,
+      "durationSeconds": 6,
+      "keyframeRelativePath": "keyframes/scene-13.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #D9C5EB.",
+        "Average sampled motion delta 17.5.",
+        "Detected from detected-cut transition at 00:56.00."
+      ],
+      "editorialRole": "proof",
+      "motionProfile": "medium",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-14",
+      "order": 14,
+      "sourceSceneIndex": 13,
+      "startSeconds": 62,
+      "endSeconds": 66,
+      "durationSeconds": 4,
+      "keyframeRelativePath": "keyframes/scene-14.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #6321A7.",
+        "Average sampled motion delta 71.4.",
+        "Detected from detected-cut transition at 01:02.00."
+      ],
+      "editorialRole": "proof",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "momentum",
+        "secondary": "focus",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-15",
+      "order": 15,
+      "sourceSceneIndex": 14,
+      "startSeconds": 66,
+      "endSeconds": 73.36666666666666,
+      "durationSeconds": 7.37,
+      "keyframeRelativePath": "keyframes/scene-15.jpg",
+      "intent": "Advance the launch narrative with a concrete proof beat.",
+      "visualNotes": [
+        "Dominant color cue #692AA6.",
+        "Average sampled motion delta 33.4.",
+        "Detected from detected-cut transition at 01:06.00."
+      ],
+      "editorialRole": "payoff",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "confidence",
+        "secondary": "urgency",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    },
+    {
+      "sceneId": "scene-16",
+      "order": 16,
+      "sourceSceneIndex": 15,
+      "startSeconds": 73.36666666666666,
+      "endSeconds": 73.4,
+      "durationSeconds": 0.03,
+      "keyframeRelativePath": "keyframes/scene-16.jpg",
+      "intent": "Land the offer and close with a direct action.",
+      "visualNotes": [
+        "Dominant color cue #F9F9FC.",
+        "Average sampled motion delta 242.9.",
+        "Detected from closing transition at 01:13.37."
+      ],
+      "editorialRole": "cta",
+      "motionProfile": "high",
+      "emotion": {
+        "primary": "confidence",
+        "secondary": "urgency",
+        "confidence": "placeholder"
+      },
+      "performance": {
+        "delivery": "support with supers, motion, or b-roll overlays",
+        "shotDirection": "match the reference composition first, then replace with product assets later",
+        "placeholder": true
+      }
+    }
+  ],
+  "audio": {
+    "sourceAudioRelativePath": "audio/reference-audio.m4a",
+    "transcriptRelativePath": "transcript/transcript.json",
+    "strategy": "Use extracted audio as the transcript source for the next iteration.",
+    "notes": [
+      "Transcript file is persisted even if speech-to-text is not wired yet.",
+      "Keep timing anchored to source scene boundaries when replacing narration."
+    ]
+  },
+  "editorial": {
+    "beatStructure": ["hook", "problem", "proof", "payoff", "cta"],
+    "cutPattern": "steady-escalation with scene-first reuse from the reference artifact set",
+    "transitions": [
+      "hard cuts",
+      "speed ramps if asset motion supports it",
+      "title-card punctuation"
+    ],
+    "placeholders": ["headline copy", "proof stat", "customer quote", "final CTA line"]
+  },
+  "performance": {
+    "presenterMode": "voiceover-ready",
+    "captureNeeds": ["product UI footage", "brand text system", "logo lockup"]
+  },
+  "emotion": {
+    "intendedArc": ["curiosity", "clarity", "belief", "urgency"],
+    "notes": [
+      "Current emotion/performance fields are placeholders for later judge/build loops.",
+      "Use the detected scene cadence as the timing backbone before refining tone."
+    ]
+  }
+}
