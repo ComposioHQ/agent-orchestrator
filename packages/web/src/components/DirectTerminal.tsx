@@ -156,6 +156,8 @@ export function DirectTerminal({
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
   const [fontSize, setFontSize] = useState(getStoredFontSize());
+  const followOutputRef = useRef(true);
+  const [followOutput, setFollowOutput] = useState(true);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -314,10 +316,16 @@ export function DirectTerminal({
           }
         }, 100);
 
-        // Attach touch scroll for mobile
+        // Grab viewport element for manual follow-output scroll
+        const viewport = terminal.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
+
+        // Attach touch scroll for mobile — disable follow-output while user is scrolling
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const cleanupTouchScroll = attachTouchScroll(terminal as any, (data) => {
           writeTerminal(sessionId, data);
+        }, {
+          onScrollAway: () => { followOutputRef.current = false; setFollowOutput(false); },
+          onScrollTowardLatest: () => { followOutputRef.current = true; setFollowOutput(true); },
         });
 
         // Set up ResizeObserver to handle flex layout changes
@@ -410,8 +418,31 @@ export function DirectTerminal({
             }
           } else {
             terminal.write(data);
+            if (followOutputRef.current && viewport) {
+              programmaticScroll = true;
+              viewport.scrollTop = viewport.scrollHeight;
+            }
           }
         });
+
+        // Track whether our own write()-driven scrollTop change triggered this event
+        let programmaticScroll = false;
+        const handleViewportScroll = () => {
+          if (!viewport) return;
+          if (programmaticScroll) {
+            programmaticScroll = false;
+            return;
+          }
+          const distFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+          if (distFromBottom < 24) {
+            followOutputRef.current = true;
+            setFollowOutput(true);
+          } else {
+            followOutputRef.current = false;
+            setFollowOutput(false);
+          }
+        };
+        viewport?.addEventListener("scroll", handleViewportScroll, { passive: true });
 
         // Handle window resize
         const handleResize = () => {
@@ -439,6 +470,7 @@ export function DirectTerminal({
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
           window.removeEventListener("resize", handleResize);
+          viewport?.removeEventListener("scroll", handleViewportScroll);
           inputDisposable?.dispose();
           inputDisposable = null;
           unsubscribe?.();
@@ -619,22 +651,22 @@ export function DirectTerminal({
   const isDarkChrome = appearance === "dark" || resolvedTheme !== "light";
 
   const fontSizeControls = (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center">
       <button
         onClick={() => setFontSize((prev) => Math.max(FONT_SIZE_MIN, prev - 1))}
         disabled={fontSize <= FONT_SIZE_MIN}
-        className="w-6 h-6 text-xs flex items-center justify-center rounded hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="w-5 h-5 text-xs flex items-center justify-center rounded hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         aria-label="Decrease font size"
       >
         −
       </button>
-      <span className="w-12 text-center text-xs font-medium text-[var(--color-text-secondary)]">
+      <span className="w-9 text-center text-xs font-medium text-[var(--color-text-secondary)]">
         {fontSize}px
       </span>
       <button
         onClick={() => setFontSize((prev) => Math.min(FONT_SIZE_MAX, prev + 1))}
         disabled={fontSize >= FONT_SIZE_MAX}
-        className="w-6 h-6 text-xs flex items-center justify-center rounded hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="w-5 h-5 text-xs flex items-center justify-center rounded hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         aria-label="Increase font size"
       >
         +
@@ -812,17 +844,40 @@ export function DirectTerminal({
         </div>
       ) : null}
       {/* Terminal area — flex:1 so it fills remaining space after the chrome bar */}
-      <div
-        ref={terminalRef}
-        className={cn("w-full p-1.5")}
-        style={{
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-          flex: 1,
-          minHeight: 0,
-        }}
-      />
+      <div className="relative flex-1 min-h-0 flex flex-col">
+        {!followOutput ? (
+          <button
+            type="button"
+            onClick={() => {
+              followOutputRef.current = true;
+              setFollowOutput(true);
+              const t = terminalInstance.current;
+              if (t) {
+                const vp = t.element?.querySelector<HTMLElement>(".xterm-viewport");
+                if (vp) vp.scrollTop = vp.scrollHeight;
+              }
+            }}
+            className="absolute bottom-3 right-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] shadow-md active:scale-95"
+            aria-label="Jump to latest"
+            title="Jump to latest"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
+          </button>
+        ) : null}
+        <div
+          ref={terminalRef}
+          className={cn("w-full p-1.5")}
+          style={{
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            flex: 1,
+            minHeight: 0,
+          }}
+        />
+      </div>
     </div>
   );
 }

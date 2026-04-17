@@ -180,10 +180,11 @@ export default function SessionPage() {
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(undefined);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[]>([]);
+  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[] | null>(() => cachedSidebarSessions);
   const [loading, setLoading] = useState(cachedSession === null);
   const [routeError, setRouteError] = useState<Error | null>(null);
   const [sessionMissing, setSessionMissing] = useState(false);
+  const [sidebarError, setSidebarError] = useState(false);
   const [prefixByProject, setPrefixByProject] = useState<Map<string, string>>(new Map());
   const sessionProjectId = session?.projectId ?? null;
   const allPrefixes = [...prefixByProject.values()];
@@ -195,6 +196,7 @@ export default function SessionPage() {
   const resolvedProjectSessionsKeyRef = useRef<string | null>(null);
   const prefixByProjectRef = useRef<Map<string, string>>(new Map());
   const hasLoadedSessionRef = useRef(cachedSession !== null);
+  const pendingMuxSessionsRef = useRef<SessionPatch[] | null>(null);
   // In-flight guards — prevent concurrent duplicate fetches
   const fetchingSessionRef = useRef(false);
   const fetchingProjectSessionsRef = useRef(false);
@@ -349,9 +351,18 @@ export default function SessionPage() {
         throw new Error(`HTTP ${res.status}`);
       }
       const body = (await res.json()) as { sessions?: DashboardSession[] } | null;
-      setSidebarSessions(body?.sessions ?? []);
-    } catch {
-      // non-critical
+      const restSessions = body?.sessions ?? [];
+      const nextSessions =
+        applyMuxSessionPatches(restSessions, pendingMuxSessionsRef.current ?? []) ?? restSessions;
+      cachedSidebarSessions = nextSessions;
+      setSidebarError(false);
+      setSidebarSessions((current) => (
+        areSidebarSessionsEqual(current, nextSessions) ? current : nextSessions
+      ));
+    } catch (err) {
+      console.error("Failed to fetch sidebar sessions:", err);
+      setSidebarError(true);
+      setSidebarSessions((current) => (current === null ? [] : current));
     } finally {
       fetchingSidebarRef.current = false;
     }

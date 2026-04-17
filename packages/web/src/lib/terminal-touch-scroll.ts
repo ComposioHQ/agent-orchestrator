@@ -69,10 +69,15 @@ export function attachTouchScroll(
     return () => {};
   }
 
-  // Set touch-action on viewport so browser doesn't steal vertical gestures
+  // touch-action:none on the outer element (and all descendants) prevents the
+  // browser from taking over the gesture mid-swipe as a native pan. Without
+  // this, xterm@5's canvas overlay combined with pan-y causes pointermove to
+  // stop firing after the first event, giving the "scrolls once per swipe" bug.
+  const prevTouchAction = touchRoot.style.touchAction;
+  touchRoot.style.touchAction = "none";
   const viewport = touchRoot.querySelector<HTMLElement>(".xterm-viewport");
   if (viewport) {
-    viewport.style.touchAction = "pan-y";
+    viewport.style.touchAction = "none";
   }
 
   let startX = 0;
@@ -184,5 +189,6 @@ export function attachTouchScroll(
     touchRoot.removeEventListener("pointermove", onPointerMove, moveCaptureOpts);
     touchRoot.removeEventListener("pointerup", onPointerEnd, captureOpts);
     touchRoot.removeEventListener("pointercancel", onPointerEnd, captureOpts);
+    touchRoot.style.touchAction = prevTouchAction;
   };
 }

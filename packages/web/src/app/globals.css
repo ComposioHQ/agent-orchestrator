@@ -3518,6 +3518,12 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   letter-spacing: 0.02em;
   color: var(--color-text-muted);
   text-transform: uppercase;
+  text-decoration: none;
+}
+.project-sidebar__collapsed-session-btn:hover,
+.project-sidebar__collapsed-session-btn:focus,
+.project-sidebar__collapsed-session-btn:visited {
+  text-decoration: none;
 }
 
 .project-sidebar__collapsed-session-btn:hover {
@@ -3551,18 +3557,34 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   padding: 1px 0;
 }
 
+.project-sidebar__collapsed-divider {
+  width: 22px;
+  height: 1px;
+  background: var(--color-border-subtle);
+  margin: 6px 0 4px;
+}
+
 /* Session row: dot + label + status */
 .project-sidebar__sess-row {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 4px 12px 4px 26px;
+  padding: 0 12px 0 26px;
   width: 100%;
   border: 0;
   background: transparent;
   cursor: pointer;
   transition: background 80ms;
   text-align: left;
+  text-decoration: none;
+  color: inherit;
+}
+
+.project-sidebar__sess-row:hover,
+.project-sidebar__sess-row:focus,
+.project-sidebar__sess-row:visited {
+  text-decoration: none;
+  color: inherit;
 }
 
 .project-sidebar__sess-row:hover {
@@ -3585,20 +3607,79 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__sess-label--active {
-  color: var(--color-text-primary);
+  color: var(--color-accent-amber);
   font-weight: 500;
+}
+
+/* Session meta row: ID + status on one line */
+.project-sidebar__sess-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: -4px;
+}
+
+.project-sidebar__sess-id {
+  font-size: 9px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 
 /* Session status text */
 .project-sidebar__sess-status {
-  font-size: 10px;
+  font-size: 9px;
   font-family: var(--font-mono);
   color: var(--color-text-muted);
   flex-shrink: 0;
-  max-width: 56px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Inline status (compact variant — name + status on one line) */
+.project-sidebar__sess-status--inline {
+  font-size: 10px;
+  margin-left: 6px;
+  text-transform: lowercase;
+}
+
+/* Sidebar settings popover */
+.project-sidebar__settings-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.project-sidebar__settings-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 180px;
+  /* Secondary guard: popover never wider than the viewport.
+     usePopoverClamp() hook nudges it horizontally to stay on-screen. */
+  max-width: calc(100vw - 16px);
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+
+.project-sidebar__settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.project-sidebar__settings-row input[type="checkbox"] {
+  accent-color: var(--color-accent-amber);
 }
 
 /* Empty state inside project */

@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
 import type { ProjectInfo } from "@/lib/project-name";
 import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@/lib/types";
 import { isOrchestratorSession } from "@aoagents/ao-core/types";
-import { getSessionTitle } from "@/lib/format";
+import { getSessionTitle, humanizeBranch } from "@/lib/format";
+import { usePopoverClamp } from "@/hooks/usePopoverClamp";
 import { ThemeToggle } from "./ThemeToggle";
 
 interface ProjectSidebarProps {
@@ -49,6 +50,17 @@ function SessionDot({ level }: { level: SessionDotLevel }) {
 // in practice. The entry is kept for exhaustiveness — TypeScript requires
 // every `AttentionLevel` variant to be present in this `Record` — and
 // as forward-compat in case the sidebar ever opts into simple mode.
+const SHOW_SESSION_ID_KEY = "ao:sidebar:show-session-id";
+
+function loadShowSessionId(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(SHOW_SESSION_ID_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 const LEVEL_LABELS: Record<AttentionLevel, string> = {
   working: "working",
   pending: "pending",
@@ -87,6 +99,39 @@ function ProjectSidebarInner({
   );
   const [showKilled, setShowKilled] = useState(false);
   const [showDone, setShowDone] = useState(false);
+  const [showSessionId, setShowSessionId] = useState<boolean>(loadShowSessionId);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
+  const settingsPopoverRef = useRef<HTMLDivElement>(null);
+  usePopoverClamp(settingsOpen, settingsPopoverRef);
+
+  // Persist the session-id preference across reloads.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SHOW_SESSION_ID_KEY, String(showSessionId));
+    } catch {
+      // localStorage unavailable — accept the in-memory state for this session.
+    }
+  }, [showSessionId]);
+
+  // Close the settings popover on outside click or Escape.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const handlePointer = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        setSettingsOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSettingsOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [settingsOpen]);
 
   useEffect(() => {
     if (activeProjectId && activeProjectId !== "all") {
@@ -109,7 +154,7 @@ function ProjectSidebarInner({
     // Build a set of valid project IDs to filter sessions strictly
     const validProjectIds = new Set(projects.map((p) => p.id));
 
-    for (const s of sessions) {
+    for (const s of sessions ?? []) {
       // Only include sessions whose projectId matches a configured project
       if (!validProjectIds.has(s.projectId)) continue;
       if (isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes)) continue;
@@ -152,12 +197,13 @@ function ProjectSidebarInner({
       <aside className={cn(
         "project-sidebar project-sidebar--collapsed flex flex-col h-full items-center py-2 gap-1 overflow-y-auto",
       )}>
-        {projects.map((project) => {
+        {projects.map((project, idx) => {
           const workerSessions = sessionsByProject.get(project.id) ?? [];
           const visibleSessions = showDone ? workerSessions : workerSessions.filter(s => getAttentionLevel(s) !== "done");
           const projectAbbr = project.name.slice(0, 2).toUpperCase();
           return (
             <div key={project.id} className="flex flex-col items-center gap-0.5 w-full px-1">
+              {idx > 0 && <div className="project-sidebar__collapsed-divider" aria-hidden="true" />}
               <a
                 href={`/?project=${encodeURIComponent(project.id)}`}
                 className={cn(
@@ -171,25 +217,31 @@ function ProjectSidebarInner({
               </a>
               {visibleSessions.slice(0, 5).map((session) => {
                 const level = getAttentionLevel(session);
-                const title = session.branch ?? getSessionTitle(session);
-                const abbr = title.slice(0, 3).toUpperCase();
+                const rawTitle = session.branch ?? getSessionTitle(session);
+                const displayTitle = session.branch ? humanizeBranch(session.branch) || rawTitle : rawTitle;
+                const abbr = displayTitle.replace(/\s+/g, "").slice(0, 3).toUpperCase();
                 const isActive = activeSessionId === session.id;
+                const sessionHref = `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`;
                 return (
-                  <button
+                  <a
                     key={session.id}
-                    type="button"
-                    onClick={() => navigate(`/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`)}
+                    href={sessionHref}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                      e.preventDefault();
+                      navigate(sessionHref, session);
+                    }}
                     className={cn(
                       "project-sidebar__collapsed-session-btn",
                       isActive && "project-sidebar__collapsed-session-btn--active",
                     )}
                     data-level={level}
-                    title={title}
-                    aria-label={title}
+                    title={rawTitle}
+                    aria-label={rawTitle}
                   >
                     <span className="project-sidebar__session-abbr-first">{abbr[0]}</span>
                     <span className="project-sidebar__session-abbr-rest">{abbr.slice(1)}</span>
-                  </button>
+                  </a>
                 );
               })}
               {visibleSessions.length > 5 && (
@@ -246,7 +298,7 @@ function ProjectSidebarInner({
             );
             const hasActiveSessions = visibleSessions.length > 0;
 
-            const orchestratorSession = sessions.find(
+            const orchestratorSession = sessions?.find(
               (s) => isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes) && s.projectId === project.id
             );
 
@@ -342,16 +394,16 @@ function ProjectSidebarInner({
                         const level = getAttentionLevel(session);
                         const isSessionActive = activeSessionId === session.id;
                         const title = session.branch ?? getSessionTitle(session);
+                        const sessionHref = `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`;
                         return (
-                          <button
+                          <a
                             key={session.id}
-                            type="button"
-                            onClick={() =>
-                              navigate(
-                                `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`,
-                                session,
-                              )
-                            }
+                            href={sessionHref}
+                            onClick={(e) => {
+                              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                              e.preventDefault();
+                              navigate(sessionHref, session);
+                            }}
                             className={cn(
                               "project-sidebar__sess-row",
                               isSessionActive && "project-sidebar__sess-row--active",
@@ -369,14 +421,21 @@ function ProjectSidebarInner({
                               >
                                 {title}
                               </span>
-                              <div className="text-xs text-[var(--color-text-muted)]">
-                                {session.id}
-                              </div>
+                              {showSessionId ? (
+                                <div className="project-sidebar__sess-meta">
+                                  <span className="project-sidebar__sess-id">{session.id}</span>
+                                  <span className="project-sidebar__sess-status">
+                                    {LEVEL_LABELS[level]}
+                                  </span>
+                                </div>
+                              ) : null}
                             </div>
-                            <span className="project-sidebar__sess-status">
-                              {LEVEL_LABELS[level]}
-                            </span>
-                          </button>
+                            {!showSessionId ? (
+                              <span className="project-sidebar__sess-status project-sidebar__sess-status--inline">
+                                {LEVEL_LABELS[level]}
+                              </span>
+                            ) : null}
+                          </a>
                         );
                       })
                     ) : error ? (
@@ -438,6 +497,43 @@ function ProjectSidebarInner({
               </svg>
             </button>
             <div className="flex-1" />
+            {/* Sidebar display settings (gear) */}
+            <div className="project-sidebar__settings-wrap" ref={settingsRef}>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen((v) => !v)}
+                className={cn(
+                  "project-sidebar__footer-btn",
+                  settingsOpen && "project-sidebar__footer-btn--active",
+                )}
+                aria-expanded={settingsOpen}
+                aria-haspopup="dialog"
+                title="Sidebar settings"
+                aria-label="Sidebar settings"
+              >
+                <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+              </button>
+              {settingsOpen ? (
+                <div
+                  ref={settingsPopoverRef}
+                  className="project-sidebar__settings-popover"
+                  role="dialog"
+                  aria-label="Sidebar settings"
+                >
+                  <label className="project-sidebar__settings-row">
+                    <input
+                      type="checkbox"
+                      checked={showSessionId}
+                      onChange={(e) => setShowSessionId(e.target.checked)}
+                    />
+                    <span>Show session ID</span>
+                  </label>
+                </div>
+              ) : null}
+            </div>
             <ThemeToggle className="project-sidebar__theme-toggle" />
           </div>
         </div>
