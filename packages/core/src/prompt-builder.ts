@@ -12,7 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ProjectConfig } from "./types.js";
+import type { BasePromptMode, ProjectConfig } from "./types.js";
 
 // =============================================================================
 // LAYER 1: BASE AGENT PROMPT
@@ -56,6 +56,13 @@ Rules:
 - If the repo has CI checks, make sure they pass before requesting review.
 - Respond to every review comment, even if just to acknowledge it.`;
 
+export const PLANNING_ADDITION = `## Planning Mode
+- Your default mode is PLANNING, not coding. Do not write or edit any source files until the user explicitly asks you to implement.
+- Analyse the issue, explore the codebase, and produce a detailed implementation plan.
+- Store the plan under \`.feature-plans/wip/{slug}.md\` where \`{slug}\` is a short kebab-case label for the issue.
+- Once the plan file is written, stop and wait. Reply with: "Plan written to .feature-plans/wip/{slug}.md — please review and let me know when to proceed."
+- Only implement code when the user explicitly requests it (e.g. "go ahead", "implement it", "start coding").`;
+
 /** Trimmed base prompt for projects without a configured repo/remote. */
 export const BASE_AGENT_PROMPT_NO_REPO = `You are an AI coding agent managed by the Agent Orchestrator (ao).
 
@@ -94,6 +101,12 @@ export interface PromptBuildConfig {
 
   /** Explicit user prompt (appended last) */
   userPrompt?: string;
+
+  /** Controls which base prompt variant is used (default, planning, or custom). */
+  basePromptMode?: BasePromptMode;
+
+  /** Custom base prompt text. Only used when basePromptMode === "custom". */
+  basePromptCustom?: string;
 }
 
 // =============================================================================
@@ -186,9 +199,16 @@ export function buildPrompt(config: PromptBuildConfig): string {
   const userRules = readUserRules(config.project);
   const sections: string[] = [];
 
-  // Layer 1: Base prompt is always included for every managed session.
-  // Use trimmed prompt when no repo is configured (PR/CI instructions don't apply).
-  sections.push(config.project.repo ? BASE_AGENT_PROMPT : BASE_AGENT_PROMPT_NO_REPO);
+  // Layer 1: Base prompt — controlled by basePromptMode.
+  const mode = config.basePromptMode ?? "default";
+  if (mode === "custom" && config.basePromptCustom) {
+    sections.push(config.basePromptCustom);
+  } else if (mode === "planning") {
+    sections.push(config.project.repo ? BASE_AGENT_PROMPT : BASE_AGENT_PROMPT_NO_REPO);
+    sections.push(PLANNING_ADDITION);
+  } else {
+    sections.push(config.project.repo ? BASE_AGENT_PROMPT : BASE_AGENT_PROMPT_NO_REPO);
+  }
 
   // Layer 2: Config-derived context
   sections.push(buildConfigLayer(config));
