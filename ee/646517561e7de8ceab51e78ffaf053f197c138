@@ -1,0 +1,59 @@
+packages/web/src/components/Dashboard.tsx
+  fbca54827902268f 12,39-40,50-51,53-62,71-73,265,269-272,276,279-280,282-283,285-286,388,390,423,431,434,462,471,483,495-498,506,673,819,826,962-966,972,1026,1049,1140,1152,1181-1192,1249-1253,1262,1266,1268-1272
+packages/web/src/components/PullRequestsPage.tsx
+  fbca54827902268f 3-4,10,30-31,51,55-58,62,65-66,68-69,71-72,75-78
+packages/web/src/app/api/events/route.ts
+  fbca54827902268f 90,99,166,175
+packages/web/src/lib/dashboard-page-data.ts
+  fbca54827902268f 4-9,31,34-36,66
+packages/web/src/components/ProjectSessionPageClient.tsx
+  fbca54827902268f 38,113
+packages/web/src/app/globals.css
+  fbca54827902268f 1409-1411,1460-1467,4147-4149,4160-4162,4627-4629,4646-4648,4844-4846,5478
+packages/web/src/components/DashboardShell.tsx
+  fbca54827902268f 56-59
+packages/web/src/lib/project-color.ts
+  fbca54827902268f 1-18
+packages/web/src/components/ActionItemRow.tsx
+  fbca54827902268f 16,27
+packages/web/server/mux-websocket.ts
+  fbca54827902268f 38-47,52
+packages/web/src/lib/portfolio-page-data.ts
+  fbca54827902268f 24,35
+packages/web/src/__tests__/get-attention-level.test.ts
+  fbca54827902268f 274-405
+packages/web/src/components/PortfolioPage.tsx
+  fbca54827902268f 54
+packages/web/src/lib/mux-protocol.ts
+  fbca54827902268f 1-2,28-31
+packages/core/src/config.ts
+  fbca54827902268f 247-250,259
+packages/core/src/types.ts
+  fbca54827902268f 1051-1053,1101-1114
+packages/web/src/app/api/sessions/patches/route.ts
+  fbca54827902268f 28-29,35
+packages/web/server/__tests__/mux-websocket.test.ts
+  fbca54827902268f 25
+packages/web/src/lib/types.ts
+  fbca54827902268f 18,34,41,43,50-53,55-62,208-232,349
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "ee646517561e7de8ceab51e78ffaf053f197c138",
+  "prompts": {
+    "fbca54827902268f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8220e47f-9895-4774-8f6e-5a40c417b074",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 9147,
+      "total_deletions": 1746,
+      "accepted_lines": 8708,
+      "overriden_lines": 22
+    }
+  }
+}
