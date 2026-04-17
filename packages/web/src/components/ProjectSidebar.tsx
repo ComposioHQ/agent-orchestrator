@@ -22,6 +22,7 @@ interface ProjectSidebarProps {
   onToggleCollapsed?: () => void;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
+  onAddProject?: () => void;
 }
 
 type SessionDotLevel = "respond" | "review" | "pending" | "working" | "merge" | "done";
@@ -48,7 +49,10 @@ const LEVEL_LABELS: Record<AttentionLevel, string> = {
 };
 
 export function ProjectSidebar(props: ProjectSidebarProps) {
-  if (props.projects.length === 0) {
+  // Render even when empty so the "+ Add Project" affordance is reachable
+  // in portfolio mode. Session-detail/dashboard callers without that
+  // affordance can hide the sidebar themselves.
+  if (props.projects.length === 0 && !props.onAddProject) {
     return null;
   }
   return <ProjectSidebarInner {...props} />;
@@ -66,6 +70,7 @@ function ProjectSidebarInner({
   onToggleCollapsed: _onToggleCollapsed,
   mobileOpen = false,
   onMobileClose,
+  onAddProject,
 }: ProjectSidebarProps) {
   const router = useRouter();
   const isLoading = loading || sessions === null;
@@ -182,7 +187,13 @@ function ProjectSidebarInner({
       >
         <div className="project-sidebar__compact-hdr">
           <span className="project-sidebar__sect-label">Projects</span>
-          <button type="button" className="project-sidebar__add-btn" aria-label="New project">
+          <button
+            type="button"
+            className="project-sidebar__add-btn"
+            aria-label="New project"
+            onClick={onAddProject}
+            disabled={!onAddProject}
+          >
             <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path d="M12 5v14M5 12h14" />
             </svg>
