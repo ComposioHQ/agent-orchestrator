@@ -212,24 +212,33 @@ describe("global-config", () => {
   });
 
   describe("syncProjectShadow", () => {
-    it("creates new project entry when none exists", () => {
-      syncProjectShadow(
-        "new-proj",
-        { repo: "acme/new", agent: "codex" },
+    function preRegister(projectId: string, path = "/some/path"): void {
+      saveGlobalConfig(
+        {
+          port: 3000,
+          readyThresholdMs: 300_000,
+          defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          projects: { [projectId]: { path } },
+          notifiers: {},
+          notificationRouting: {},
+          reactions: {},
+        },
         configPath,
       );
+    }
 
-      const config = loadGlobalConfig(configPath);
-      expect(config).not.toBeNull();
-      expect(config!.projects["new-proj"]).toMatchObject({
-        path: "",
-        repo: "acme/new",
-        agent: "codex",
-      });
-      expect(config!.projects["new-proj"]["_shadowSyncedAt"]).toBeDefined();
+    it("throws when project is not already registered", () => {
+      expect(() =>
+        syncProjectShadow(
+          "new-proj",
+          { repo: "acme/new", agent: "codex" },
+          configPath,
+        ),
+      ).toThrow(/not registered in the global config/);
     });
 
     it("excludes secret-like fields with warning", () => {
+      preRegister("proj");
       const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
       syncProjectShadow(
@@ -248,6 +257,7 @@ describe("global-config", () => {
     });
 
     it("excludes internal fields starting with _", () => {
+      preRegister("proj");
       syncProjectShadow(
         "proj",
         { repo: "acme/foo", _internal: "hidden" } as Record<string, unknown> as Parameters<typeof syncProjectShadow>[1],

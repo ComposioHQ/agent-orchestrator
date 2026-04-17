@@ -330,6 +330,13 @@ export function syncProjectShadow(
     | (GlobalProjectEntry & Record<string, unknown>)
     | undefined;
 
+  if (!existing || !existing.path) {
+    throw new Error(
+      `syncProjectShadow: project "${projectId}" is not registered in the global config. ` +
+        `Call registerProjectInGlobalConfig() first.`,
+    );
+  }
+
   // Build shadow from local config fields
   const shadowFields: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(localConfig as Record<string, unknown>)) {
@@ -347,9 +354,9 @@ export function syncProjectShadow(
 
   // Rebuild project entry: preserve identity, overwrite behavior
   globalConfig.projects[projectId] = {
-    ...(existing?.name !== null && existing?.name !== undefined ? { name: existing.name } : {}),
-    path: existing?.path ?? "",
-    ...(typeof existing?.sessionPrefix === "string"
+    ...(existing.name !== null && existing.name !== undefined ? { name: existing.name } : {}),
+    path: existing.path,
+    ...(typeof existing.sessionPrefix === "string"
       ? { sessionPrefix: existing.sessionPrefix }
       : {}),
     ...shadowFields,
