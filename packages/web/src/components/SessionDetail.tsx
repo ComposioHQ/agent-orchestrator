@@ -559,7 +559,7 @@ export function SessionDetail({
           ) : null}
           <div className="dashboard-app-header__spacer" />
           <div className="dashboard-app-header__actions">
-            {orchestratorHref ? (
+            {!isOrchestrator && orchestratorHref ? (
               <a
                 href={orchestratorHref}
                 className="dashboard-app-btn dashboard-app-btn--amber"

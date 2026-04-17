@@ -90,6 +90,31 @@ describe("readLastJsonlEntry", () => {
     const result = await readLastJsonlEntry(path);
     expect(result!.modifiedAt).toBeInstanceOf(Date);
   });
+
+  it("extracts payloadType from nested payload.type", async () => {
+    // Real Codex writes records like {"type":"event_msg","payload":{"type":"error",...}}
+    // Consumers need the inner payload.type to classify activity correctly.
+    const path = setup(
+      '{"type":"event_msg","payload":{"type":"error","message":"bad"}}\n',
+    );
+    const result = await readLastJsonlEntry(path);
+    expect(result!.lastType).toBe("event_msg");
+    expect(result!.payloadType).toBe("error");
+  });
+
+  it("returns payloadType null when payload has no type field", async () => {
+    const path = setup('{"type":"session_meta","payload":{"cwd":"/workspace"}}\n');
+    const result = await readLastJsonlEntry(path);
+    expect(result!.lastType).toBe("session_meta");
+    expect(result!.payloadType).toBeNull();
+  });
+
+  it("returns payloadType null when payload is not an object", async () => {
+    const path = setup('{"type":"x","payload":"string"}\n');
+    const result = await readLastJsonlEntry(path);
+    expect(result!.lastType).toBe("x");
+    expect(result!.payloadType).toBeNull();
+  });
 });
 
 describe("isGitBranchNameSafe", () => {

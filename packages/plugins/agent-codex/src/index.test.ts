@@ -135,15 +135,23 @@ function mockTmuxWithProcess(processName: string, found = true) {
 }
 
 /**
- * Create a mock file handle for `open()` that returns `content` from `read()`.
- * Used by sessionFileMatchesCwd which reads only the first 4 KB.
+ * Create a mock file handle for `open()` that streams `content` across
+ * successive `read()` calls. Tracks an internal cursor so sequential reads
+ * advance through the buffer and eventually return `bytesRead: 0` at EOF.
+ * Without position tracking, readJsonlPrefixLines would loop forever on
+ * lines larger than its chunk size.
  */
 function makeFakeFileHandle(content: string) {
   const buf = Buffer.from(content, "utf-8");
+  let cursor = 0;
   return {
     read: vi.fn().mockImplementation((buffer: Buffer, offset: number, length: number, _position: number) => {
-      const bytesToCopy = Math.min(length, buf.length);
-      buf.copy(buffer, offset, 0, bytesToCopy);
+      if (cursor >= buf.length) {
+        return Promise.resolve({ bytesRead: 0, buffer });
+      }
+      const bytesToCopy = Math.min(length, buf.length - cursor);
+      buf.copy(buffer, offset, cursor, cursor + bytesToCopy);
+      cursor += bytesToCopy;
       return Promise.resolve({ bytesRead: bytesToCopy, buffer });
     }),
     close: vi.fn().mockResolvedValue(undefined),
@@ -168,7 +176,7 @@ function makeContentStream(content: string): Readable {
 
 /**
  * Set up mockCreateReadStream to return a readable stream with the given content.
- * Used by getSessionInfo/getRestoreCommand which now stream files line-by-line.
+ * Used by getSessionInfo/getRestoreCommand which stream files line-by-line.
  */
 function setupMockStream(content: string) {
   mockCreateReadStream.mockReturnValue(makeContentStream(content));
@@ -739,6 +747,149 @@ describe("getActivityState", () => {
     expect(result?.state).toBe("ready");
   });
 
+  it("returns waiting_input when payload.type is approval_request on event_msg", async () => {
+    // Real Codex writes {"type":"event_msg","payload":{"type":"approval_request",...}}
+    // Without payloadType handling, this decays to ready/idle via the event_msg case.
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      payloadType: "approval_request",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for exec_approval_request payload type", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      payloadType: "exec_approval_request",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("waiting_input");
+  });
+
+  it("returns blocked when payload.type is error on event_msg", async () => {
+    // Real Codex writes {"type":"event_msg","payload":{"type":"error",...}}
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      payloadType: "error",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("blocked");
+  });
+
+  it("returns active when payload.type is task_started on a recent event_msg", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      payloadType: "task_started",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("active");
+  });
+
+  it("returns ready when payload.type is task_complete on a recent event_msg", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      payloadType: "task_complete",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("ready");
+  });
+
+  it("detects activity from payload-wrapped Codex session_meta files", async () => {
+    mockTmuxWithProcess("codex");
+    const content =
+      `${JSON.stringify({
+        type: "session_meta",
+        payload: {
+          cwd: "/workspace/test",
+          id: "thread-123",
+          base_instructions: "x".repeat(8_000),
+        },
+      })}\n`;
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("ready");
+  });
+
+  it("handles multi-byte UTF-8 characters straddling an 8KB chunk boundary", async () => {
+    mockTmuxWithProcess("codex");
+    // Each 日 is 3 bytes. Padding with enough CJK chars to push the json
+    // payload past the 8192-byte chunk size, guaranteeing a multi-byte
+    // character will straddle a read boundary. Without StringDecoder,
+    // the split character decodes to U+FFFD and JSON.parse fails.
+    const padding = "日".repeat(3_000); // 9000 bytes of padding
+    const content =
+      `${JSON.stringify({
+        type: "session_meta",
+        payload: {
+          cwd: "/workspace/test",
+          id: "thread-utf8",
+          base_instructions: padding,
+        },
+      })}\n`;
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    // If UTF-8 boundary handling is broken, JSON.parse fails, cwd never
+    // matches, no session file is selected, and state falls through to null.
+    expect(result?.state).toBe("ready");
+  });
+
   it("returns exited when process handle has dead PID", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
       throw new Error("ESRCH");
@@ -814,6 +965,75 @@ describe("getSessionInfo", () => {
     expect(result!.cost!.inputTokens).toBe(3000);
     expect(result!.cost!.outputTokens).toBe(800);
     expect(result!.cost!.estimatedCostUsd).toBeGreaterThan(0);
+  });
+
+  it("parses payload-wrapped Codex session files", async () => {
+    const sessionContent = jsonl(
+      {
+        type: "session_meta",
+        payload: {
+          cwd: "/workspace/test",
+          id: "thread-payload-123",
+          model_provider: "openai",
+        },
+      },
+      {
+        type: "turn_context",
+        payload: {
+          model: "gpt-5.3-codex",
+          cwd: "/workspace/test",
+        },
+      },
+      {
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 3000,
+              output_tokens: 800,
+              cached_input_tokens: 200,
+              reasoning_output_tokens: 100,
+            },
+          },
+        },
+      },
+    );
+
+    mockReaddir.mockResolvedValue(["rollout-abc.jsonl"]);
+    setupMockOpen(sessionContent);
+    setupMockStream(sessionContent);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+
+    expect(result).not.toBeNull();
+    expect(result!.agentSessionId).toBe("rollout-abc");
+    expect(result!.summary).toBe("Codex session (gpt-5.3-codex)");
+    expect(result!.cost).toBeDefined();
+    expect(result!.cost!.inputTokens).toBe(3000);
+    expect(result!.cost!.outputTokens).toBe(800);
+  });
+
+  it("does not treat model_provider as the session model", async () => {
+    const sessionContent = jsonl({
+      type: "session_meta",
+      payload: {
+        cwd: "/workspace/test",
+        id: "thread-payload-123",
+        model_provider: "openai",
+      },
+    });
+
+    mockReaddir.mockResolvedValue(["rollout-abc.jsonl"]);
+    setupMockOpen(sessionContent);
+    setupMockStream(sessionContent);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+
+    expect(result).not.toBeNull();
+    expect(result!.summary).toBeNull();
   });
 
   it("picks the most recently modified matching session file", async () => {
@@ -1073,6 +1293,57 @@ describe("getRestoreCommand", () => {
     expect(cmd).toContain("'codex' resume");
     expect(cmd).toContain("-c check_for_update_on_startup=false");
     expect(cmd).toContain("thread-abc-123");
+  });
+
+  it("builds native resume command from payload-wrapped Codex session id", async () => {
+    const content = jsonl(
+      {
+        type: "session_meta",
+        payload: {
+          cwd: "/workspace/test",
+          id: "thread-payload-999",
+          model_provider: "openai",
+        },
+      },
+      {
+        type: "turn_context",
+        payload: {
+          model: "gpt-5.3-codex",
+        },
+      },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
+
+    expect(cmd).not.toBeNull();
+    expect(cmd).toContain("'codex' resume");
+    expect(cmd).toContain("thread-payload-999");
+  });
+
+  it("does not append --model from model_provider-only payload data", async () => {
+    const content = jsonl({
+      type: "session_meta",
+      payload: {
+        cwd: "/workspace/test",
+        id: "thread-payload-999",
+        model_provider: "openai",
+      },
+    });
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
+
+    expect(cmd).not.toBeNull();
+    expect(cmd).not.toContain("--model 'openai'");
   });
 
   it("includes bypass flag when project config permissions=permissionless", async () => {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { type Session, type SessionManager, getProjectBaseDir } from "@aoagents/ao-core";
 
-const { mockExec, mockConfigRef, mockSessionManager, mockEnsureLifecycleWorker } = vi.hoisted(
+const { mockExec, mockConfigRef, mockSessionManager, mockGetRunning } = vi.hoisted(
   () => ({
     mockExec: vi.fn(),
     mockConfigRef: { current: null as Record<string, unknown> | null },
@@ -18,7 +18,7 @@ const { mockExec, mockConfigRef, mockSessionManager, mockEnsureLifecycleWorker }
       send: vi.fn(),
       claimPR: vi.fn(),
     },
-    mockEnsureLifecycleWorker: vi.fn(),
+    mockGetRunning: vi.fn(),
   }),
 );
 
@@ -57,8 +57,8 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
 }));
 
-vi.mock("../../src/lib/lifecycle-service.js", () => ({
-  ensureLifecycleWorker: (...args: unknown[]) => mockEnsureLifecycleWorker(...args),
+vi.mock("../../src/lib/running-state.js", () => ({
+  getRunning: () => mockGetRunning(),
 }));
 
 vi.mock("../../src/lib/metadata.js", () => ({
@@ -122,14 +122,8 @@ beforeEach(() => {
   mockSessionManager.spawn.mockReset();
   mockSessionManager.claimPR.mockReset();
   mockExec.mockReset();
-  mockEnsureLifecycleWorker.mockReset();
-  mockEnsureLifecycleWorker.mockResolvedValue({
-    running: true,
-    started: true,
-    pid: 12345,
-    pidFile: "/tmp/lifecycle-worker.pid",
-    logFile: "/tmp/lifecycle-worker.log",
-  });
+  mockGetRunning.mockReset();
+  mockGetRunning.mockResolvedValue({ pid: 1234, port: 3000, startedAt: "", projects: ["my-app"] });
 });
 
 afterEach(() => {
@@ -165,11 +159,6 @@ describe("spawn command", () => {
 
     // Single arg = issue; project is auto-detected (only one project in config)
     await program.parseAsync(["node", "test", "spawn", "INT-100"]);
-
-    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
-      expect.objectContaining({ configPath: expect.any(String) }),
-      "my-app",
-    );
 
     expect(mockSessionManager.spawn).toHaveBeenCalledWith({
       projectId: "my-app",
@@ -249,10 +238,6 @@ describe("spawn command", () => {
 
     await program.parseAsync(["node", "test", "spawn", "INT-42"]);
 
-    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
-      expect.objectContaining({ configPath: expect.any(String) }),
-      "backend",
-    );
     expect(mockSessionManager.spawn).toHaveBeenCalledWith({
       projectId: "backend",
       issueId: "INT-42",

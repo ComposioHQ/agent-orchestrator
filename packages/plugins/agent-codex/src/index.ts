@@ -28,6 +28,7 @@ import { createReadStream } from "node:fs";
 import { readdir, stat, lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 
@@ -55,25 +56,47 @@ export const manifest = {
 
 /** Codex session directory: ~/.codex/sessions/ */
 const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
+const SESSION_MATCH_SCAN_CHUNK_BYTES = 8192;
+const SESSION_MATCH_SCAN_LINE_LIMIT = 10;
 
-/** Typed representation of a line in a Codex JSONL session file */
-interface CodexJsonlLine {
-  type?: string;
+interface CodexTokenUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cached_input_tokens?: number;
+  cached_tokens?: number;
+  reasoning_output_tokens?: number;
+  reasoning_tokens?: number;
+}
+
+interface CodexJsonlPayload extends CodexTokenUsage {
+  id?: string;
   cwd?: string;
+  model_provider?: string;
   model?: string;
-  // Thread ID from thread_started notifications
+  turn_id?: string;
   threadId?: string;
-  // User message content (from user input events)
   content?: string;
   role?: string;
-  // event_msg with token_count subtype
-  msg?: {
-    type?: string;
-    input_tokens?: number;
-    output_tokens?: number;
-    cached_tokens?: number;
-    reasoning_tokens?: number;
+  type?: string;
+  info?: {
+    total_token_usage?: CodexTokenUsage;
+    last_token_usage?: CodexTokenUsage;
   };
+}
+
+/**
+ * Recent Codex versions wrap event fields in `payload`, while older fixtures
+ * used a flat shape. Accept both so session discovery works against real
+ * Codex JSONL and existing tests remain valid.
+ */
+interface CodexJsonlLine extends CodexJsonlPayload {
+  type?: string;
+  payload?: CodexJsonlPayload;
+  msg?: CodexTokenUsage & { type?: string };
+}
+
+function getCodexPayload(entry: CodexJsonlLine): CodexJsonlPayload {
+  return entry.payload ?? entry;
 }
 
 /**
@@ -119,41 +142,64 @@ async function collectJsonlFiles(dir: string, depth = 0): Promise<string[]> {
   return results;
 }
 
+async function readJsonlPrefixLines(filePath: string, maxLines: number): Promise<string[]> {
+  const handle = await open(filePath, "r");
+  const lines: string[] = [];
+  let partialLine = "";
+  // Reuse a single decoder across reads so multi-byte UTF-8 sequences that
+  // straddle a chunk boundary (e.g. CJK characters in base_instructions) get
+  // buffered correctly instead of producing U+FFFD replacement characters.
+  const decoder = new StringDecoder("utf8");
+
+  try {
+    while (lines.length < maxLines) {
+      const buffer = Buffer.allocUnsafe(SESSION_MATCH_SCAN_CHUNK_BYTES);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+
+      if (bytesRead === 0) {
+        partialLine += decoder.end();
+        const finalLine = partialLine.trim();
+        if (finalLine) lines.push(finalLine);
+        break;
+      }
+
+      partialLine += decoder.write(buffer.subarray(0, bytesRead));
+
+      let newlineIndex = partialLine.indexOf("\n");
+      while (newlineIndex !== -1 && lines.length < maxLines) {
+        const line = partialLine.slice(0, newlineIndex).trim();
+        if (line) lines.push(line);
+        partialLine = partialLine.slice(newlineIndex + 1);
+        newlineIndex = partialLine.indexOf("\n");
+      }
+    }
+  } finally {
+    await handle.close();
+  }
+
+  return lines;
+}
+
 /**
- * Check if the first few lines of a JSONL file contain a session_meta
- * entry matching the given workspace path. Reads only the first 4 KB
- * to avoid loading large rollout files into memory.
+ * Check if the first few complete JSONL records of a session file contain a
+ * session_meta entry matching the given workspace path. This avoids parsing a
+ * truncated session_meta line when Codex embeds large base_instructions.
  */
 async function sessionFileMatchesCwd(
   filePath: string,
   workspacePath: string,
 ): Promise<boolean> {
   try {
-    // Read only the first 4 KB — session_meta is always in the first few lines.
-    // Avoids loading large rollout files (100 MB+) into memory.
-    const handle = await open(filePath, "r");
-    let content: string;
-    try {
-      const buffer = Buffer.allocUnsafe(4096);
-      const { bytesRead } = await handle.read(buffer, 0, 4096, 0);
-      content = buffer.subarray(0, bytesRead).toString("utf-8");
-    } finally {
-      await handle.close();
-    }
-    const lines = content.split("\n").slice(0, 10);
+    const lines = await readJsonlPrefixLines(filePath, SESSION_MATCH_SCAN_LINE_LIMIT);
     for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
       try {
-        const parsed: unknown = JSON.parse(trimmed);
-        if (
-          typeof parsed === "object" &&
-          parsed !== null &&
-          !Array.isArray(parsed) &&
-          (parsed as CodexJsonlLine).type === "session_meta" &&
-          (parsed as CodexJsonlLine).cwd === workspacePath
-        ) {
-          return true;
+        const parsed: unknown = JSON.parse(line);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          const entry = parsed as CodexJsonlLine;
+          const payload = getCodexPayload(entry);
+          if (entry.type === "session_meta" && payload.cwd === workspacePath) {
+            return true;
+          }
         }
       } catch {
         // Skip malformed lines
@@ -222,12 +268,54 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
         const entry = parsed as CodexJsonlLine;
 
-        if (entry.type === "session_meta" && typeof entry.model === "string") {
-          data.model = entry.model;
+        const payload = getCodexPayload(entry);
+
+        if (entry.type === "session_meta") {
+          if (typeof payload.id === "string" && payload.id) {
+            data.threadId = payload.id;
+          } else if (typeof payload.threadId === "string" && payload.threadId) {
+            data.threadId = payload.threadId;
+          }
         }
-        if (typeof entry.threadId === "string" && entry.threadId) {
-          data.threadId = entry.threadId;
+
+        if (!data.threadId) {
+          if (typeof payload.threadId === "string" && payload.threadId) {
+            data.threadId = payload.threadId;
+          } else if (typeof entry.threadId === "string" && entry.threadId) {
+            data.threadId = entry.threadId;
+          }
         }
+
+        if (entry.type === "turn_context" && typeof payload.model === "string" && payload.model) {
+          data.model = payload.model;
+        } else if (!data.model && typeof payload.model === "string" && payload.model) {
+          data.model = payload.model;
+        }
+
+        // Token sources are precedence-ordered: total → last → flat → legacy.
+        // `continue` ensures only one source is counted per entry.
+        // `total_token_usage` is a cumulative snapshot (last-write-wins, so `=`);
+        // the rest are per-turn deltas (accumulate with `+=`). Do not "fix" this.
+        const totalUsage = payload.info?.total_token_usage;
+        if (typeof totalUsage?.input_tokens === "number") {
+          data.inputTokens = totalUsage.input_tokens;
+          data.outputTokens = totalUsage.output_tokens ?? 0;
+          continue;
+        }
+
+        const lastUsage = payload.info?.last_token_usage;
+        if (typeof lastUsage?.input_tokens === "number") {
+          data.inputTokens += lastUsage.input_tokens;
+          data.outputTokens += lastUsage.output_tokens ?? 0;
+          continue;
+        }
+
+        if (typeof payload.input_tokens === "number") {
+          data.inputTokens += payload.input_tokens;
+          data.outputTokens += payload.output_tokens ?? 0;
+          continue;
+        }
+
         if (entry.type === "event_msg" && entry.msg?.type === "token_count") {
           data.inputTokens += entry.msg.input_tokens ?? 0;
           data.outputTokens += entry.msg.output_tokens ?? 0;
@@ -430,26 +518,46 @@ function createCodexAgent(): Agent {
           const ageMs = Date.now() - entry.modifiedAt.getTime();
           const timestamp = entry.modifiedAt;
 
+          // Real Codex wraps the semantic type in `payload.type` on event_msg
+          // records (e.g. `{"type":"event_msg","payload":{"type":"error",...}}`).
+          // Prefer payloadType when present so approval_request/error surface
+          // correctly instead of decaying to ready/idle via the event_msg case.
+          const effectiveType = entry.payloadType ?? entry.lastType;
+
           // Map Codex JSONL entry types to activity states.
           // Confirmed types: session_meta, event_msg. Others are best-effort.
           const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
-          switch (entry.lastType) {
-            case "user_input":
-            case "tool_call":
-            case "exec_command":
-              if (ageMs <= activeWindowMs) return { state: "active", timestamp };
-              return { state: ageMs > threshold ? "idle" : "ready", timestamp };
-
-            case "assistant_message":
-            case "session_meta":
-            case "event_msg":
-              return { state: ageMs > threshold ? "idle" : "ready", timestamp };
-
+          switch (effectiveType) {
             case "approval_request":
+            case "exec_approval_request":
+            case "apply_patch_approval_request":
               return { state: "waiting_input", timestamp };
 
             case "error":
+            case "stream_error":
               return { state: "blocked", timestamp };
+
+            case "task_started":
+            case "agent_reasoning":
+            case "response_item":
+            case "turn_context":
+            case "user_input":
+            case "tool_call":
+            case "exec_command":
+            case "exec_command_begin":
+            case "exec_command_end":
+              if (ageMs <= activeWindowMs) return { state: "active", timestamp };
+              return { state: ageMs > threshold ? "idle" : "ready", timestamp };
+
+            case "task_complete":
+            case "turn_aborted":
+            case "agent_message":
+            case "assistant_message":
+            case "session_meta":
+            case "event_msg":
+            case "compacted":
+            case "token_count":
+              return { state: ageMs > threshold ? "idle" : "ready", timestamp };
 
             default:
               if (ageMs <= activeWindowMs) return { state: "active", timestamp };

@@ -233,11 +233,23 @@ const InstalledPluginConfigSchema = z
     }
   });
 
+const PowerConfigSchema = z
+  .object({
+    /**
+     * Prevent macOS idle sleep while AO is running.
+     * Uses `caffeinate -i -w <pid>` to hold an assertion.
+     * Defaults to true on macOS, no-op on other platforms.
+     */
+    preventIdleSleep: z.boolean().default(process.platform === "darwin"),
+  })
+  .default({});
+
 const OrchestratorConfigSchema = z.object({
   port: z.number().default(3000),
   terminalPort: z.number().optional(),
   directTerminalPort: z.number().optional(),
   readyThresholdMs: z.number().nonnegative().default(300_000),
+  power: PowerConfigSchema,
   defaults: DefaultPluginsSchema.default({}),
   plugins: z.array(InstalledPluginConfigSchema).default([]),
   projects: z.record(

@@ -59,7 +59,7 @@ export { createLifecycleManager } from "./lifecycle-manager.js";
 export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 
 // Prompt builder — layered prompt composition
-export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
+export { buildPrompt, BASE_AGENT_PROMPT, BASE_AGENT_PROMPT_NO_REPO } from "./prompt-builder.js";
 export type { PromptBuildConfig } from "./prompt-builder.js";
 
 // Orchestrator prompt — generates orchestrator context for `ao start`
@@ -84,6 +84,10 @@ export {
   parseWebhookBranchRef,
 } from "./scm-webhook-utils.js";
 export { asValidOpenCodeSessionId } from "./opencode-session-id.js";
+export {
+  getWorkspaceAgentsMdPath,
+  writeWorkspaceOpenCodeAgentsMd,
+} from "./opencode-agents-md.js";
 export { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 
 // Activity log — JSONL activity tracking for agents without native JSONL

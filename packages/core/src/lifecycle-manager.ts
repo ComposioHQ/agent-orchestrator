@@ -336,11 +336,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
-    const hasPersistedRuntimeIdentity =
-      typeof session.metadata["runtimeHandle"] === "string" ||
-      typeof session.metadata["tmuxName"] === "string";
+    // Never probe runtime/agent liveness while a session is still spawning —
+    // tmux may not be initialized and the agent process hasn't started yet.
+    // A persisted runtimeHandle alone is insufficient to gate on because spawn
+    // writes it to metadata before leaving "spawning" status (#1035).
     const canProbeRuntimeIdentity =
-      hasPersistedRuntimeIdentity || session.status !== SESSION_STATUS.SPAWNING;
+      session.status !== SESSION_STATUS.SPAWNING;
 
     // 1. Check if runtime is alive
     if (session.runtimeHandle && canProbeRuntimeIdentity) {
@@ -382,7 +383,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
         if (activityState) {
           if (activityState.state === "waiting_input") return "needs_input";
-          if (activityState.state === "exited") return "killed";
+          if (activityState.state === "exited" && canProbeRuntimeIdentity) return "killed";
 
           if (
             (activityState.state === "idle" || activityState.state === "blocked") &&

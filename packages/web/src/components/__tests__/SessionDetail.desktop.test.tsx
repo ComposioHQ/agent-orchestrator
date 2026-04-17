@@ -186,4 +186,29 @@ describe("SessionDetail desktop layout", () => {
     expect(screen.getByText(/Terminal session has ended/i)).toBeInTheDocument();
     expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
   });
+
+  it("hides the desktop orchestrator button on orchestrator session pages", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "my-app-orchestrator",
+          summary: "Project orchestrator",
+        })}
+        isOrchestrator
+        orchestratorZones={{
+          merge: 1,
+          respond: 0,
+          review: 0,
+          pending: 0,
+          working: 2,
+          done: 3,
+        }}
+        projectOrchestratorId="my-app-orchestrator"
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: "Orchestrator" })).not.toBeInTheDocument();
+    expect(screen.getByText("orchestrator")).toBeInTheDocument();
+  });
 });
