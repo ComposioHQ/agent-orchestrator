@@ -331,6 +331,19 @@ export function DirectTerminal({
           return true;
         });
 
+        // Propagate wheel events to the page when terminal is at scroll limits.
+        // xterm.js consumes all wheel events, so when the user scrolls past the
+        // end of the scrollback buffer the page never receives them.
+        const handleWheel = (e: WheelEvent) => {
+          const buf = terminal.buffer.active;
+          const atBottom = buf.viewportY >= buf.length - terminal.rows;
+          const atTop = buf.viewportY === 0;
+          if ((e.deltaY > 0 && atBottom) || (e.deltaY < 0 && atTop)) {
+            window.scrollBy({ top: e.deltaY, behavior: "auto" });
+          }
+        };
+        terminalRef.current?.addEventListener("wheel", handleWheel, { passive: true });
+
         // Open terminal via mux
         openTerminal(sessionId);
 
@@ -369,6 +382,7 @@ export function DirectTerminal({
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
+          terminalRef.current?.removeEventListener("wheel", handleWheel);
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
           window.removeEventListener("resize", handleResize);
