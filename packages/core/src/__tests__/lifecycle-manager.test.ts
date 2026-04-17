@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { createLifecycleManager } from "../lifecycle-manager.js";
 import {
-  createLifecycleManager,
   resolvePREnrichmentDecision,
   resolvePRLiveDecision,
   resolveProbeDecision,
-} from "../lifecycle-manager.js";
+} from "../lifecycle-status-decisions.js";
 import { createSessionManager } from "../session-manager.js";
 import { writeMetadata, readMetadataRaw } from "../metadata.js";
 import { readObservabilitySummary } from "../observability.js";
