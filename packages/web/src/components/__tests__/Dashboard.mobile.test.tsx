@@ -218,6 +218,77 @@ describe("Dashboard unified layout (mobile viewport)", () => {
     });
   });
 
+  it("kill button requires a two-click confirmation before firing", async () => {
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve({ ok: true, text: () => Promise.resolve("") } as Response),
+    );
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    render(
+      <Dashboard
+        initialSessions={[
+          makeSession({
+            id: "working-kill",
+            status: "running",
+            activity: "active",
+            summary: "Live session",
+            branch: "feat/live",
+          }),
+        ]}
+      />,
+    );
+
+    const killButtons = screen.getAllByRole("button", { name: "Terminate session" });
+    expect(killButtons.length).toBeGreaterThan(0);
+
+    // First click → enters confirming state; does not fire the kill request
+    fireEvent.click(killButtons[0]);
+    expect(fetchSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("/kill"),
+      expect.anything(),
+    );
+
+    // Button now advertises the confirm affordance
+    const confirm = screen.getByRole("button", { name: "Confirm terminate session" });
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/sessions/working-kill/kill",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("shows CI check chips on cards with enriched PRs", () => {
+    render(
+      <Dashboard
+        initialSessions={[
+          makeSession({
+            id: "merge-ci",
+            status: "approved",
+            activity: "idle",
+            summary: "Green PR",
+            branch: "feat/green",
+            pr: makePR({
+              number: 301,
+              ciStatus: "passing",
+              ciChecks: [
+                { name: "build", status: "passed" },
+                { name: "lint", status: "passed" },
+              ],
+              reviewDecision: "approved",
+            }),
+          }),
+        ]}
+      />,
+    );
+
+    // Passing CI checks render as chips by name
+    expect(screen.getByText("build")).toBeInTheDocument();
+    expect(screen.getByText("lint")).toBeInTheDocument();
+  });
+
   it("preserves sessions across live updates", () => {
     const { rerender } = render(
       <Dashboard

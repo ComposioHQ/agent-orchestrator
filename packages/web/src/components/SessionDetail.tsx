@@ -656,7 +656,6 @@ export function SessionDetail({
               activeSessionId={session.id}
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-              mobileOpen={mobileSidebarOpen}
               onMobileClose={() => setMobileSidebarOpen(false)}
             />
           </div>

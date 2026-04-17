@@ -110,17 +110,21 @@ export function PullRequestsPage({
         className={`dashboard-shell flex h-screen${!isMobile && sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
       >
       {showSidebar ? (
-        <ProjectSidebar
-          projects={projects}
-          sessions={sessions}
-          activeProjectId={projectId}
-          activeSessionId={undefined}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-          mobileOpen={mobileMenuOpen}
-          onMobileClose={() => setMobileMenuOpen(false)}
-        />
+        <div className={`sidebar-wrapper${mobileMenuOpen ? " sidebar-wrapper--mobile-open" : ""}`}>
+          <ProjectSidebar
+            projects={projects}
+            sessions={sessions}
+            activeProjectId={projectId}
+            activeSessionId={undefined}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+            onMobileClose={() => setMobileMenuOpen(false)}
+          />
+        </div>
       ) : null}
+      {mobileMenuOpen && (
+        <div className="sidebar-mobile-backdrop" onClick={() => setMobileMenuOpen(false)} />
+      )}
       <div className="dashboard-main flex-1 overflow-y-auto px-4 py-4 md:px-7 md:py-6">
         <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName ? `${projectName} PRs` : "Pull Requests"} />
         {isMobile ? (

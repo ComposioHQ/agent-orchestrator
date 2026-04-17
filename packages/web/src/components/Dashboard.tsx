@@ -506,7 +506,6 @@ function DashboardInner({
                   activeSessionId={activeSessionId}
                   collapsed={sidebarCollapsed}
                   onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-                  mobileOpen={mobileMenuOpen}
                   onMobileClose={() => setMobileMenuOpen(false)}
                 />
               </div>

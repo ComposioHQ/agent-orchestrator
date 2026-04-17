@@ -20,7 +20,6 @@ interface ProjectSidebarProps {
   onRetry?: () => void;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
-  mobileOpen?: boolean;
   onMobileClose?: () => void;
 }
 
@@ -88,7 +87,6 @@ function ProjectSidebarInner({
   onRetry,
   collapsed = false,
   onToggleCollapsed: _onToggleCollapsed,
-  mobileOpen: _mobileOpen = false,
   onMobileClose,
 }: ProjectSidebarProps) {
   const router = useRouter();
