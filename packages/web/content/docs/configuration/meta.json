@@ -1,9 +1,5 @@
 {
   "title": "Configuration",
-  "pages": [
-    "overview",
-    "projects",
-    "reactions",
-    "remote-access"
-  ]
+  "defaultOpen": false,
+  "pages": ["projects", "reactions", "remote-access", "storage"]
 }

@@ -1,25 +1,29 @@
 ---
 title: Projects
-description: All options for a project entry in agent-orchestrator.yaml.
+description: Every per-project field in agent-orchestrator.yaml — agents, workspace, tracker, reactions, per-role overrides, and more.
 ---
 
-# Projects
-
-The `projects` key is a map of project IDs to project configs. Each key is the project's identifier — used in session names, log paths, and the dashboard. Keys must match `[a-zA-Z0-9_-]+` (letters, numbers, hyphens, underscores — no dots or slashes).
+The `projects` key is a map of project IDs to project configs. Each entry tells AO which repo to watch, which agents to use, and how to isolate work. AO spawns one agent session per issue per project — running them in parallel, each in its own git worktree with its own PR.
 
 ```yaml
 projects:
-  my-app:          # project ID
+  my-app:          # project ID — used in session names and dashboard
     repo: org/my-app
-    path: ~/my-app
+    path: ~/projects/my-app
 ```
+
+Project IDs must match `^[a-zA-Z0-9_-]+$` (letters, numbers, hyphens, underscores — no dots or slashes).
 
 ## Required fields
 
+Two fields must be present for a functional project:
+
 | Field | Type | Description |
 |-------|------|-------------|
-| `repo` | `string` | GitHub/GitLab repository in `org/repo` format. Used by the SCM plugin to open PRs and check CI. |
-| `path` | `string` | Absolute path to the local checkout. `~` is expanded to `$HOME`. |
+| `path` | `string` | Absolute path to the local checkout. `~` expands to `$HOME`. |
+| `repo` | `string` | GitHub/GitLab repository in `owner/repo` format. Used by the SCM and tracker plugins to open PRs and fetch issues. |
+
+Without `repo`, AO cannot create PRs or listen for issues. Without `path`, AO cannot find the codebase to create worktrees.
 
 ## All project fields
 
@@ -27,17 +31,27 @@ projects:
 
 **Type:** `string` **Default:** project ID
 
-Human-readable name shown in the dashboard. Defaults to the project key if not set.
+Human-readable display name shown in the dashboard. Defaults to the map key if not set.
 
 ```yaml
 name: My App
+```
+
+### `repo`
+
+**Type:** `string` **Default:** none
+
+The GitHub or GitLab repository in `owner/repo` format. AO infers whether to use the `github` or `gitlab` SCM/tracker plugins from this value (and from explicit `scm.plugin` / `tracker.plugin` if set).
+
+```yaml
+repo: acme-org/my-app
 ```
 
 ### `defaultBranch`
 
 **Type:** `string` **Default:** `"main"`
 
-The branch agents target when opening PRs. Agents create feature branches off this branch.
+The branch agents create feature branches off of and target for PRs.
 
 ```yaml
 defaultBranch: main
@@ -47,29 +61,36 @@ defaultBranch: main
 
 **Type:** `string` — must match `[a-zA-Z0-9_-]+` **Default:** derived from `path` basename
 
-Short prefix used in tmux session names and worktree paths. AO auto-derives one from the directory name if not set. Set this explicitly when two projects would otherwise collide:
+Short prefix used in tmux session names and worktree directory names. AO auto-derives one from the project directory basename using the following rules (see `/docs/configuration/storage#session-prefix` for details):
+
+- 4 chars or fewer: used as-is (lowercased)
+- CamelCase: uppercase initials — `PyTorch` → `pt`
+- kebab/snake case: first letter of each word — `agent-orchestrator` → `ao`
+- Single long word: first 3 chars — `integrator` → `int`
+
+Set this explicitly when two projects would otherwise derive the same prefix:
 
 ```yaml
-sessionPrefix: app
+sessionPrefix: app1
 ```
 
 ### `agent`
 
-**Type:** `string` **Default:** `defaults.agent` (built-in default: `claude-code`)
+**Type:** `string` **Default:** `defaults.agent` (built-in: `claude-code`)
 
-The AI agent to use for this project. Overrides `defaults.agent`.
+The AI agent plugin to use for this project. Overrides `defaults.agent`.
 
 ```yaml
 agent: codex
 ```
 
-Available values: `claude-code`, `codex`, `aider`, `opencode`.
+Available built-in values: `claude-code`, `codex`, `aider`, `opencode`.
 
 ### `runtime`
 
-**Type:** `string` **Default:** `defaults.runtime` (built-in default: `tmux`)
+**Type:** `string` **Default:** `defaults.runtime` (built-in: `tmux`)
 
-Where agent processes run. `tmux` gives you persistent sessions you can attach to from any terminal. `process` is lighter but sessions are lost on restart.
+Where agent processes run. `tmux` gives you persistent sessions you can attach to from any terminal. `process` is lighter but sessions are lost if AO restarts.
 
 ```yaml
 runtime: tmux
@@ -77,9 +98,9 @@ runtime: tmux
 
 ### `workspace`
 
-**Type:** `string` **Default:** `defaults.workspace` (built-in default: `worktree`)
+**Type:** `string` **Default:** `defaults.workspace` (built-in: `worktree`)
 
-How code is isolated per session. `worktree` is fast — it uses `git worktree add` on your existing clone. `clone` does a full `git clone`, which is slower but fully isolated.
+How code is isolated per session. `worktree` uses `git worktree add` on your existing clone — fast and disk-efficient. `clone` does a full `git clone` — slower but completely independent.
 
 ```yaml
 workspace: worktree
@@ -89,28 +110,28 @@ workspace: worktree
 
 **Type:** object **Default:** inferred from `repo`
 
-Issue tracker configuration. AO infers `github` or `gitlab` from the repo URL if omitted.
+Issue tracker configuration. When `repo` is set, AO infers `github` or `gitlab` automatically. Override by setting `plugin`:
 
 ```yaml
 tracker:
   plugin: linear
-  teamId: "your-linear-team-id"
+  teamId: "ENG"
 ```
 
-For built-in trackers, specify `plugin`. For external trackers, specify `package` (npm) or `path` (local):
+For external tracker plugins, specify `package` (npm) or `path` (local) instead of `plugin`:
 
 ```yaml
 tracker:
   package: "@acme/ao-plugin-tracker-jira"
-  version: "^1.0.0"
 ```
 
 Built-in tracker values: `github`, `linear`, `gitlab`.
 
-#### trackerConfig — labels, assignee, milestone
+#### Extra keys under `tracker` (trackerConfig)
 
-Extra keys under `tracker` are passed to the tracker plugin as config. Common fields (GitHub tracker):
+The tracker schema is open (`passthrough`) — any extra keys you provide are forwarded to the tracker plugin as its config. Common fields vary by plugin:
 
+**GitHub tracker:**
 ```yaml
 tracker:
   plugin: github
@@ -119,23 +140,42 @@ tracker:
   milestone: "Q1 2025"
 ```
 
+**GitLab tracker:**
+```yaml
+tracker:
+  plugin: gitlab
+  host: https://gitlab.example.com
+  labels: [agent]
+```
+
+**Linear tracker:**
+```yaml
+tracker:
+  plugin: linear
+  teamId: "ENG"
+  priority: 2
+```
+
+Check each tracker plugin's documentation for the full list of supported keys.
+
 ### `scm`
 
 **Type:** object **Default:** inferred from `repo`
 
-Source control management configuration. AO infers `github` or `gitlab` from the repo URL if omitted.
+Source control management configuration. AO infers `github` or `gitlab` from the `repo` value if omitted.
 
 ```yaml
 scm:
   plugin: github
 ```
 
-**Webhook acceleration (optional):** Instead of polling GitHub every 30 seconds, configure a webhook to receive instant CI and review events:
+**Webhook acceleration (optional):** Instead of polling every 30 seconds, configure a webhook to receive instant CI and review events:
 
 ```yaml
 scm:
   plugin: github
   webhook:
+    enabled: true
     path: /api/webhooks/github
     secretEnvVar: GITHUB_WEBHOOK_SECRET
     signatureHeader: x-hub-signature-256
@@ -150,7 +190,7 @@ Set `GITHUB_WEBHOOK_SECRET` in your environment. Point the GitHub webhook at `ht
 
 **Type:** `string[]` **Default:** none
 
-Files or directories to symlink from the project root into each workspace. Useful for `.env` files and agent config directories that agents need but should not be committed.
+Files or directories to symlink from the project root into each workspace. Useful for `.env` files and agent config directories that agents need but that should not be committed or duplicated.
 
 ```yaml
 symlinks:
@@ -158,13 +198,13 @@ symlinks:
   - .claude
 ```
 
-Paths are relative to `path`.
+Paths are relative to `path`. AO logs a warning and skips symlinks that do not exist.
 
 ### `postCreate`
 
 **Type:** `string[]` **Default:** none
 
-Shell commands to run after a workspace is created but before the agent starts. Run in the workspace directory.
+Shell commands to run inside the workspace after it is created, before the agent starts. If any command fails, AO logs the error and does not start the agent.
 
 ```yaml
 postCreate:
@@ -176,18 +216,18 @@ postCreate:
 
 **Type:** object **Default:** `{}`
 
-Agent-specific configuration applied to all agents for this project.
+Agent-specific settings applied to all agents for this project.
 
 #### `agentConfig.permissions`
 
 **Type:** `"permissionless" | "default" | "auto-edit" | "suggest"` **Default:** `"permissionless"`
 
-Controls how strictly the agent asks for permission before making changes.
+Controls how strictly the agent asks for permission before making changes. The legacy value `"skip"` is accepted and treated as `"permissionless"`.
 
 | Value | Behavior |
 |-------|----------|
-| `permissionless` | Agent makes all edits without asking (also accepts the legacy alias `skip`) |
-| `default` | Agent uses the tool's own default permission behavior |
+| `permissionless` | Agent makes all edits and runs commands without prompting |
+| `default` | Agent uses the tool's own built-in permission behavior |
 | `auto-edit` | Agent auto-approves file edits but asks for other actions |
 | `suggest` | Agent only suggests changes, never applies them |
 
@@ -200,7 +240,7 @@ agentConfig:
 
 **Type:** `string` **Default:** agent's built-in default
 
-Override the model the agent uses. The accepted values depend on the agent:
+Override the model the agent uses. Accepted values depend on the agent:
 
 ```yaml
 agentConfig:
@@ -208,37 +248,65 @@ agentConfig:
 ```
 
 For Claude Code: `claude-opus-4`, `claude-sonnet-4-5`, `claude-haiku-3-5`, etc.
-For Codex: `gpt-5-codex`, `o3`, etc.
+For Codex: any model string supported by the Codex CLI.
 
 #### `agentConfig.orchestratorModel`
 
 **Type:** `string` **Default:** same as `model`
 
-When using the decomposer or multi-agent mode, the model used by the orchestrator agent specifically.
+When using multi-agent mode, the model used specifically by the orchestrator agent. Lets you run a capable model for planning and a faster one for worker tasks.
 
-### `orchestrator` and `worker`
+```yaml
+agentConfig:
+  model: claude-haiku-3-5
+  orchestratorModel: claude-opus-4
+```
+
+### `orchestrator`
 
 **Type:** object **Default:** none
 
-Per-role agent overrides. Useful when you want the orchestrator to use a more capable model and workers to use a faster one:
+Per-role config overrides for the orchestrator agent. This is a headline feature of multi-agent mode — it lets you assign a different agent or model to the orchestrator role without changing the global `agent` setting.
 
 ```yaml
 orchestrator:
   agent: claude-code
   agentConfig:
     model: claude-opus-4
+```
 
+<Callout type="info">
+See [Per-role agent overrides](/docs/guides/per-role-agents) for a full walkthrough of setting up orchestrator/worker role splits.
+</Callout>
+
+Fields available under `orchestrator`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `agent` | `string` | Agent plugin name for this role |
+| `agentConfig.permissions` | enum | Permission mode for this role (same values as top-level) |
+| `agentConfig.model` | `string` | Model override for this role |
+| `agentConfig.orchestratorModel` | `string` | Nested orchestrator model (advanced) |
+
+### `worker`
+
+**Type:** object **Default:** none
+
+Per-role config overrides for worker agents. Same shape as `orchestrator`. Use this to run a faster or cheaper model for routine coding tasks:
+
+```yaml
 worker:
   agent: codex
   agentConfig:
-    model: gpt-5-codex
+    model: gpt-4o
+    permissions: permissionless
 ```
 
 ### `agentRules`
 
 **Type:** `string` **Default:** none
 
-Inline instructions included in every agent prompt for this project. Written as a multi-line YAML string. This is the fastest way to add project-specific rules:
+Inline instructions included in every agent prompt for this project (Layer 3 of the three-layer prompt system). Written as a multi-line YAML string. This is the fastest way to add project-specific rules:
 
 ```yaml
 agentRules: |
@@ -252,7 +320,7 @@ agentRules: |
 
 **Type:** `string` **Default:** none
 
-Path to a rules file relative to `path`. Use this when your rules are long or you want to version-control them separately:
+Path to a Markdown rules file, relative to `path`. Use this when your rules are long or you want to version-control them separately:
 
 ```yaml
 agentRulesFile: .agent-rules.md
@@ -264,56 +332,56 @@ If both `agentRules` and `agentRulesFile` are set, both are included in the prom
 
 **Type:** `string` **Default:** none
 
-Rules applied only to the orchestrator agent (reserved for future multi-agent features). Same format as `agentRules`.
-
-### `decomposer`
-
-**Type:** object **Default:** disabled
-
-Experimental issue decomposer. When enabled, AO uses a separate model to break down complex issues into sub-tasks before spawning agents.
+Rules applied only to the orchestrator agent. Same multi-line string format as `agentRules`. Useful for giving the orchestrator specific decomposition or delegation instructions:
 
 ```yaml
-decomposer:
-  enabled: true
-  maxDepth: 3
-  model: claude-sonnet-4-20250514
-  requireApproval: true
+orchestratorRules: |
+  Break each issue into at most 3 sub-tasks.
+  Delegate implementation to workers; review their output before merging.
 ```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable the decomposer |
-| `maxDepth` | `1–5` | `3` | Maximum decomposition depth |
-| `model` | `string` | `claude-sonnet-4-20250514` | Model used for decomposition |
-| `requireApproval` | `boolean` | `true` | Pause for human approval of the decomposition plan |
 
 ### `opencodeIssueSessionStrategy`
 
 **Type:** `"reuse" | "delete" | "ignore"` **Default:** none
 
-Only relevant when `agent: opencode`. Controls what AO does with an existing OpenCode session when re-spawning for the same issue:
+Only relevant when `agent: opencode`. Controls what AO does when an existing OpenCode session is found for the same issue on re-spawn:
 
 | Value | Behavior |
 |-------|----------|
-| `reuse` | Attach to the existing session |
-| `delete` | Delete the old session and create a fresh one |
-| `ignore` | Ignore the old session and create a new one |
+| `reuse` | Attach to the existing session and continue |
+| `delete` | Delete the old session and start fresh |
+| `ignore` | Leave the old session running and create a new one |
 
-### `reactions` (per-project override)
+### `orchestratorSessionStrategy`
+
+**Type:** `"reuse" | "delete" | "ignore" | "delete-new" | "ignore-new" | "kill-previous"` **Default:** none
+
+Controls what AO does when an existing orchestrator session is found for the same issue. Useful for recovering from restarts without losing work.
+
+| Value | Behavior |
+|-------|----------|
+| `reuse` | Attach to the existing orchestrator session |
+| `delete` | Delete the old session, start a new one |
+| `ignore` | Leave the old session, start a second one alongside it |
+| `delete-new` | Delete any new session if one is found (keep old) |
+| `ignore-new` | Ignore any new session if one is found |
+| `kill-previous` | Kill the previous session before starting the new one |
+
+### `reactions`
 
 **Type:** `Record<string, partial ReactionConfig>` **Default:** none
 
-Override specific reaction settings for this project only. Keys match the global `reactions` keys. Only the fields you specify are overridden — unset fields fall through to the global reaction config.
+Per-project overrides for reaction settings. Keys correspond to the global `reactions` keys. Only the fields you specify are overridden — everything else falls through to the global reaction config.
 
 ```yaml
 reactions:
   approved-and-green:
-    auto: true      # enable auto-merge for this project
+    auto: true       # auto-merge enabled for this project only
   ci-failed:
-    retries: 5      # more retries for this project
+    retries: 5       # more retries than the global default
 ```
 
-See [Reactions](/docs/configuration/reactions) for the full list of reaction events and fields.
+See [Reactions](/docs/configuration/reactions) for the full list of reaction events and available fields.
 
 ## Complete example
 
@@ -321,7 +389,7 @@ See [Reactions](/docs/configuration/reactions) for the full list of reaction eve
 projects:
   my-app:
     name: My App
-    repo: org/my-app
+    repo: acme-org/my-app
     path: ~/projects/my-app
     defaultBranch: main
     sessionPrefix: app
@@ -331,51 +399,65 @@ projects:
     workspace: worktree
 
     tracker:
-      plugin: linear
-      teamId: "ENG"
+      plugin: github
+      labels: [agent, automated]
+      assignee: octocat
 
     scm:
       plugin: github
       webhook:
+        enabled: true
         path: /api/webhooks/github
         secretEnvVar: GITHUB_WEBHOOK_SECRET
 
-    symlinks: [.env, .claude]
+    symlinks:
+      - .env
+      - .claude
+
     postCreate:
       - "pnpm install"
+      - "cp .env.example .env"
 
     agentConfig:
       permissions: permissionless
       model: claude-sonnet-4-5
 
     orchestrator:
+      agent: claude-code
       agentConfig:
         model: claude-opus-4
 
+    worker:
+      agentConfig:
+        model: claude-haiku-3-5
+
     agentRules: |
       Run `pnpm test` before every commit.
-      Use conventional commits.
+      Use conventional commits (feat:, fix:, chore:, etc.).
+      Never push directly to main.
 
     agentRulesFile: .agent-rules.md
+
+    orchestratorRules: |
+      Break large issues into at most 3 sub-tasks.
 
     reactions:
       approved-and-green:
         auto: true
+      ci-failed:
+        retries: 5
 ```
 
 ## Common failure modes
 
-**"Project ID must match `[a-zA-Z0-9_-]+`"** — your project key contains a dot or slash. Rename `org.my-app` to `my-app`.
+**"Project ID must match `[a-zA-Z0-9_-]+`"** — the project map key contains a dot, slash, or other special character. Rename `org.my-app` to `org-my-app` or `my-app`.
 
-**"Duplicate session prefix detected"** — two projects auto-derive the same prefix from their directory names. Add an explicit `sessionPrefix` to one of them.
+**Duplicate map key silently collapsed** — if you list the same project ID twice in YAML, standard YAML parsers keep only the last definition. AO will run with the second entry and silently drop the first. Use unique keys.
 
-**`symlinks` pointing at non-existent files** — AO logs a warning and skips the missing symlink. The workspace is still created.
+**"Duplicate session prefix detected"** — two projects auto-derive the same prefix from their directory basenames (e.g. both `~/work/api` and `~/personal/api` produce prefix `api`). Add an explicit `sessionPrefix` to at least one of them to resolve the conflict — AO prints a suggested fix in the error message.
 
-**`postCreate` command fails** — AO logs the error and does not start the agent. Fix the command or check that dependencies are available.
+**"Duplicate project ID detected"** — two project paths share the same directory basename. AO uses the basename as an internal project ID for storage paths. Rename one of the directories, or set `sessionPrefix` explicitly (which resolves the storage collision).
 
-**`tracker: plugin: linear` but no `teamId`** — the Linear plugin will throw at spawn time with "teamId is required". Add `teamId` under `tracker`.
+**Missing `GITHUB_TOKEN` / `GITLAB_TOKEN`** — the SCM and tracker plugins require an auth token in the environment. Without it, issue fetch and PR creation will fail at spawn time with an authentication error.
 
-## Next steps
-
-- [Reactions](/docs/configuration/reactions) — configure automatic CI/review responses
-- [Remote Access](/docs/configuration/remote-access) — access the dashboard from another device
+**`postCreate` command fails** — AO logs the error and skips starting the agent. Check that all dependencies (e.g. `pnpm`) are available on `$PATH` and that any referenced files (e.g. `.env.example`) exist.

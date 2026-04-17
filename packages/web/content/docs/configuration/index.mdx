@@ -1,0 +1,188 @@
+---
+title: Configuration
+description: The shape of agent-orchestrator.yaml — where AO looks for it, every top-level key, and how to register external plugins.
+---
+
+AO is configured through a single YAML file named `agent-orchestrator.yaml`. The only required top-level key is `projects` — everything else has a sensible default. AO validates the file with Zod on startup and reports errors with the exact field path and a human-readable message before the process exits.
+
+## Where AO looks for config
+
+AO searches for the config file in this order:
+
+1. **`AO_CONFIG_PATH` environment variable** — if set, the file at that path is used immediately (absolute path required).
+2. **Directory tree walk from the current working directory** — like `git`, AO walks upward from `cwd` checking for `agent-orchestrator.yaml` and then `agent-orchestrator.yml` at each level until it reaches the filesystem root.
+3. **Home directory fallbacks** (checked last, in order):
+   - `~/.agent-orchestrator.yaml`
+   - `~/.agent-orchestrator.yml`
+   - `~/.config/agent-orchestrator/config.yaml`
+
+The recommended location is the root of the repository you run `ao` from. AO will find it automatically without any environment variable.
+
+## Minimal config that just works
+
+```yaml title="agent-orchestrator.yaml"
+projects:
+  myapp:
+    path: ~/code/myapp
+    repo: myorg/myapp
+```
+
+That's all. AO infers the SCM and tracker plugins from the `repo` slug (GitHub by default), defaults to `claude-code` as the agent, `tmux` as the runtime, and `worktree` for code isolation.
+
+## Full annotated example
+
+```yaml title="agent-orchestrator.yaml"
+# ─── Ports ───────────────────────────────────────────────────────────────────
+# HTTP port for the web dashboard (default: 3000)
+port: 3000
+
+# WebSocket ports for tmux-based and direct PTY terminals.
+# Both default to 14800/14801 if omitted; override here only when those
+# ports are already in use on your machine.
+terminalPort: 14800
+directTerminalPort: 14801
+
+# ─── Timing ──────────────────────────────────────────────────────────────────
+# How long (ms) an agent can be in the "ready" state before AO considers it
+# idle and fires the agent-idle reaction. Default: 300000 (5 minutes).
+readyThresholdMs: 300000
+
+# ─── Power management ────────────────────────────────────────────────────────
+# Prevent macOS from sleeping while AO is running agents.
+# Uses `caffeinate -i -w <pid>` under the hood.
+# Defaults to true on macOS, no-op on other platforms.
+power:
+  preventIdleSleep: true
+
+# ─── Global defaults ─────────────────────────────────────────────────────────
+# Plugin defaults that apply to every project unless overridden at the project level.
+defaults:
+  runtime: tmux          # tmux | process
+  agent: claude-code     # claude-code | codex | aider | opencode
+  workspace: worktree    # worktree | clone
+  notifiers: [desktop]   # fallback notifier(s) when no routing rule matches
+
+  # Global defaults for the orchestrator role (the agent that coordinates workers).
+  # Per-project orchestrator blocks can override these.
+  orchestrator:
+    agent: claude-code
+
+  # Global defaults for the worker role.
+  worker:
+    agent: claude-code
+
+# ─── Named notifiers ─────────────────────────────────────────────────────────
+# Define one or more notifier instances. Each key becomes the notifier's name,
+# which you can reference in notificationRouting below.
+notifiers:
+  desktop:
+    plugin: desktop
+  slack:
+    plugin: slack
+    # Slack-specific config goes here (e.g. webhookUrl, channel)
+
+# ─── Notification routing ────────────────────────────────────────────────────
+# Route notifications by priority level to specific notifier(s).
+# Valid priority keys: urgent | action | warning | info
+notificationRouting:
+  urgent: [slack, desktop]
+  action: [slack]
+  info: [desktop]
+
+# ─── External plugins ────────────────────────────────────────────────────────
+# Explicitly registered plugins (npm or local). See "Inline external plugins"
+# below for the alternative inline approach.
+plugins:
+  - name: my-tracker
+    source: npm
+    package: "@acme/ao-plugin-tracker-jira"
+    version: "^1.0.0"
+    enabled: true
+
+  - name: local-dev
+    source: local
+    path: ./plugins/local-dev
+    enabled: true
+
+# ─── Reactions ───────────────────────────────────────────────────────────────
+# Override or extend AO's built-in lifecycle reactions globally.
+# See /docs/configuration/reactions for the full list of events and fields.
+reactions:
+  approved-and-green:
+    auto: true
+    action: auto-merge
+
+# ─── Projects ────────────────────────────────────────────────────────────────
+# At least one project is required. See /docs/configuration/projects for all
+# per-project fields.
+projects:
+  myapp:
+    path: ~/code/myapp
+    repo: myorg/myapp
+```
+
+## Top-level keys reference
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `port` | `number` | `3000` | HTTP port for the web dashboard. |
+| `terminalPort` | `number` | `14800` | WebSocket port for tmux PTY streaming. |
+| `directTerminalPort` | `number` | `14801` | WebSocket port for the direct PTY connection. |
+| `readyThresholdMs` | `number` | `300000` | Milliseconds an agent stays in the "ready" state before AO treats it as idle. |
+| `power.preventIdleSleep` | `boolean` | `true` on macOS | Prevent the OS from sleeping while agents are running. |
+| `defaults.runtime` | `string` | `"tmux"` | Default runtime plugin for all projects. |
+| `defaults.agent` | `string` | `"claude-code"` | Default agent plugin for all projects. |
+| `defaults.workspace` | `string` | `"worktree"` | Default workspace isolation strategy. |
+| `defaults.notifiers` | `string[]` | `[]` | Notifier names used when no routing rule matches. |
+| `defaults.orchestrator` | `object` | — | Global agent defaults for the orchestrator role. |
+| `defaults.worker` | `object` | — | Global agent defaults for the worker role. |
+| `notifiers` | `Record<string, NotifierConfig>` | `{}` | Named notifier instances, each with a `plugin` key and plugin-specific config. |
+| `notificationRouting` | `Record<string, string[]>` | `{}` | Maps priority levels (`urgent`, `action`, `warning`, `info`) to notifier names. |
+| `plugins` | `InstalledPluginConfig[]` | `[]` | Explicitly registered external plugins (npm or local path). |
+| `reactions` | `Record<string, ReactionConfig>` | built-in defaults | Global reaction overrides. See [Reactions](/docs/configuration/reactions). |
+| `projects` | `Record<string, ProjectConfig>` | — | **Required.** One entry per project. See [Projects](/docs/configuration/projects). |
+
+## Inline external plugins
+
+Rather than adding an entry to the top-level `plugins` array, you can reference an external plugin directly inside a `tracker`, `scm`, or `notifier` block using `package` (npm) or `path` (local). AO automatically promotes the block into the `plugins` array at load time.
+
+```yaml title="agent-orchestrator.yaml"
+projects:
+  myapp:
+    path: ~/code/myapp
+    tracker:
+      package: "@acme/ao-plugin-tracker-jira"
+      version: "^1.0.0"
+      # Any other config fields the Jira plugin expects go here.
+      projectKey: MYAPP
+```
+
+The `plugin` name field is optional when using `package` or `path` — AO derives a temporary name from the package identifier and replaces it with `manifest.name` after the plugin loads. You cannot combine `package` and `path` in the same block.
+
+## Project ID constraints
+
+Project keys (the map keys under `projects:`) must match the regex `^[a-zA-Z0-9_-]+$` — letters, digits, underscores, and hyphens only. No dots, slashes, or spaces.
+
+Two additional uniqueness checks run at startup:
+
+- **Duplicate project IDs** — if two projects share the same directory basename (the last segment of `path`), AO throws. Use distinct directory names to resolve this.
+- **Duplicate session prefixes** — AO derives a short session prefix from each project's path basename. If two projects generate the same prefix, AO throws with a suggested fix: add an explicit `sessionPrefix` to one of the projects.
+
+```yaml title="agent-orchestrator.yaml"
+projects:
+  frontend:
+    path: ~/code/myapp
+    sessionPrefix: fe   # Override the derived prefix to avoid collisions
+  backend:
+    path: ~/code/myapp-api
+    sessionPrefix: be
+```
+
+## Next steps
+
+<Cards>
+  <Card title="Projects" href="/docs/configuration/projects" description="Every per-project field in detail." />
+  <Card title="Reactions" href="/docs/configuration/reactions" description="Automatic responses to lifecycle events." />
+  <Card title="Remote access" href="/docs/configuration/remote-access" description="Access the dashboard over Tailscale or a reverse proxy." />
+  <Card title="Storage" href="/docs/configuration/storage" description="Where AO keeps session data, worktrees, and traces." />
+</Cards>

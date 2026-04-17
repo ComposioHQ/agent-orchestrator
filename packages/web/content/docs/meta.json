@@ -3,19 +3,22 @@
   "pages": [
     "---Getting Started---",
     "index",
-    "getting-started",
     "installation",
     "quickstart",
-    "---Using AO---",
-    "workflows",
-    "configuration",
+    "platforms",
+    "---Learn---",
+    "guides",
+    "plugins",
     "---Reference---",
     "cli",
-    "plugins",
+    "configuration",
+    "architecture",
+    "examples",
+    "dashboard",
     "---Help---",
     "troubleshooting",
     "faq",
-    "changelog",
-    "migration"
+    "migration",
+    "changelog"
   ]
 }

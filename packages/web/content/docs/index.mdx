@@ -1,54 +1,65 @@
 ---
 title: Introduction
-description: Run parallel AI coding agents that autonomously open PRs, fix CI failures, and respond to review comments.
+description: Agent Orchestrator spawns parallel AI coding agents — one per issue, each in its own worktree with its own PR — and gives you one dashboard to supervise them all.
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
-import { Step, Steps } from "fumadocs-ui/components/steps";
 
-Agent Orchestrator (AO) spawns multiple AI coding agents simultaneously — each in its own git worktree with its own PR — and gives you a single dashboard to supervise them all.
+Agent Orchestrator (**AO**) runs many AI coding agents at once. Point it at a repo, hand it an issue, and it spawns an agent in an isolated git worktree. You watch the work on a Kanban-style dashboard, merge when ready.
 
-<Callout type="info" title="New to AO?">
-  Start with [Installation](/docs/installation), then follow the [Quickstart](/docs/quickstart/first-run) to spawn your first agent in under 5 minutes.
+Every interesting piece is a plugin — the agent (Claude Code, Codex, Cursor, Aider, OpenCode), the runtime (tmux or a plain child process), the tracker (GitHub, GitLab, Linear), the notifier (Slack, Discord, desktop, webhook). You pick what you want in `agent-orchestrator.yaml` and AO wires it together.
+
+AO can also run **different agents per role** — a reasoning-heavy model for the orchestrator that supervises sessions, and a fast one for the workers that actually write code. See [Per-role agents](/docs/guides/per-role-agents).
+
+<Callout type="info" title="Fastest path">
+  Install with [one command](/docs/installation), then [spawn your first agent](/docs/quickstart) in under five minutes.
 </Callout>
 
-## What AO does for you
+## What it does for you
 
-| Problem | What AO does |
-|---------|-------------|
-| Waiting for one agent to finish before starting another | Runs agents in parallel — one per GitHub issue |
-| Manually re-running agents after CI fails | Automatically detects CI failures and re-runs the agent |
-| Chasing down review comments | Wakes the agent when "changes requested" lands; agent pushes fixes |
-| Losing context when you close your laptop | Persists sessions in `~/.agent-orchestrator`; resumes across reboots |
+| Instead of… | AO does this |
+|---|---|
+| Running one agent at a time, waiting for it to finish | Runs N agents in parallel, one per issue, each isolated |
+| Babysitting CI and manually re-running agents when red | Detects CI failures and wakes the agent to fix them |
+| Copy-pasting review comments back to the agent | Spots "changes requested" and nudges the agent automatically |
+| Losing your place every time you close your laptop | Persists everything under `~/.agent-orchestrator`, resumable across reboots |
 
-## How it works
+## How it fits together
 
-<Steps>
-  <Step>
-    ### Point AO at your repo
-    Create a config or just run `ao start` — AO auto-generates `agent-orchestrator.yaml` for you.
-  </Step>
-  <Step>
-    ### Spawn agents for issues
-    Run `ao spawn --issue 42` — AO creates an isolated git worktree and launches Claude Code inside it.
-  </Step>
-  <Step>
-    ### Watch the dashboard
-    Each agent gets a card on the Kanban board. Cards move through columns automatically: **Spawning** → **Working** → **PR Open** → **Mergeable**.
-  </Step>
-  <Step>
-    ### Merge when ready
-    AO handles CI failures and review comments automatically. You just review and merge.
-  </Step>
-</Steps>
+```
+issue  ─►  AO spawn  ─►  worktree + agent  ─►  PR  ─►  CI / review loop  ─►  merged
+                              │                                  ▲
+                              └──────── dashboard (SSE) ─────────┘
+```
 
-## Explore the docs
+Each moving part is swappable:
+
+- **Agent** — which AI tool actually writes code
+- **Runtime** — where it runs (tmux window on macOS/Linux, child process on Windows)
+- **Workspace** — worktree or full clone
+- **Tracker** — where the issues and PRs live
+- **Notifier** — who gets pinged when the agent needs you
+
+See [Plugins](/docs/plugins) for the full catalog.
+
+## Works on your machine
+
+<PlatformSupport
+  macos="full"
+  linux="full"
+  windows="partial"
+  note={<>On Windows, set <code>runtime: process</code> in your config — tmux isn&apos;t available. Everything else works the same. See <a href="/docs/platforms">Platforms</a>.</>}
+/>
+
+## Where to start
 
 <Cards>
-  <Card title="Installation" description="Prerequisites, install steps, and first-run verification." href="/docs/installation" />
-  <Card title="Quickstart" description="Spawn your first agent and watch it open a PR." href="/docs/quickstart/first-run" />
-  <Card title="Workflows" description="Parallel issues, CI recovery, review loops, multi-project." href="/docs/workflows/parallel-issues" />
-  <Card title="Configuration" description="All config options with examples." href="/docs/configuration/overview" />
-  <Card title="CLI Reference" description="Every ao command with flags and examples." href="/docs/cli" />
-  <Card title="Troubleshooting" description="Common issues and concrete fixes." href="/docs/troubleshooting" />
+  <Card title="Install" description="Prerequisites, install, verify." href="/docs/installation" />
+  <Card title="Quickstart" description="Spawn your first agent and watch it open a PR." href="/docs/quickstart" />
+  <Card title="Guides" description="Parallel issues, CI recovery, review loops, multi-project." href="/docs/guides" />
+  <Card title="Plugins" description="Agents, runtimes, trackers, notifiers — the full catalog." href="/docs/plugins" />
+  <Card title="CLI Reference" description="Every `ao` command with flags and behavior." href="/docs/cli" />
+  <Card title="Configuration" description="The `agent-orchestrator.yaml` schema." href="/docs/configuration" />
+  <Card title="Architecture" description="Plugin slots, state machine, event bus, prompt assembly." href="/docs/architecture" />
+  <Card title="Examples" description="Five annotated starter configs for common setups." href="/docs/examples" />
 </Cards>
