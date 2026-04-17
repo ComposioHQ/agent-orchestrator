@@ -506,11 +506,20 @@ export function SessionDetail({
         {showHeaderProjectLabel && (
           <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />
         )}
-        {/* Project name + pills: stacked column on mobile, inline on desktop */}
+        {/* Project name + pills: stacked column on mobile, inline on desktop.
+            On mobile the project name + session id share line 1 (so ao-N stays
+            visually bound to the project), pills stack below on line 2. */}
         <div className="topbar-project-pills-group">
-          {showHeaderProjectLabel && (
-            <span className="dashboard-app-header__project">{headerProjectLabel}</span>
-          )}
+          <div className="topbar-project-line">
+            {showHeaderProjectLabel && (
+              <span className="dashboard-app-header__project">{headerProjectLabel}</span>
+            )}
+            {!isOrchestrator && (
+              <span className="dashboard-app-header__session-id topbar-mobile-only">
+                {session.id}
+              </span>
+            )}
+          </div>
           {!isOrchestrator && (
             <div className="topbar-session-pills">
               <div className={cn("topbar-status-pill", `topbar-status-pill--${normalizeActivityLabelForClass(activity.label)}`)}>
@@ -534,22 +543,33 @@ export function SessionDetail({
             </div>
           )}
         </div>
-        {/* Desktop-only session title + sep */}
+        {/* Desktop-only session title + session id.
+            On mobile the session id lives next to the project name (above). */}
         {!isOrchestrator && (
           <>
             <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />
             <span className="dashboard-app-header__session-title topbar-desktop-only">{headline}</span>
+            <span className="dashboard-app-header__session-id topbar-desktop-only">{session.id}</span>
           </>
         )}
         <div className="dashboard-app-header__spacer" />
         <div className="dashboard-app-header__actions">
           {pr ? (
             <div className="topbar-pr-btn-wrap" ref={prPopoverRef}>
-              <button
-                type="button"
+              {/* Anchored to the actual PR URL so ctrl/cmd-click opens the PR on
+                  GitHub in a new tab. Plain click toggles the details popover. */}
+              <a
+                href={pr.url}
+                target="_blank"
+                rel="noopener noreferrer"
                 className={cn("dashboard-app-btn topbar-pr-btn", prPopoverOpen && "topbar-pr-btn--open")}
-                onClick={() => setPrPopoverOpen((v) => !v)}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                  e.preventDefault();
+                  setPrPopoverOpen((v) => !v);
+                }}
                 aria-expanded={prPopoverOpen}
+                aria-label={`PR #${pr.number}`}
               >
                 <span className={cn(
                   "topbar-pr-dot",
@@ -564,7 +584,7 @@ export function SessionDetail({
                      viewBox="0 0 24 24" aria-hidden="true">
                   <path d={prPopoverOpen ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
                 </svg>
-              </button>
+              </a>
 
               {prPopoverOpen && (
                 <div className="topbar-pr-popover">
@@ -594,10 +614,10 @@ export function SessionDetail({
             ) : null
           )}
 
-          {orchestratorHref ? (
+          {!isOrchestrator && orchestratorHref ? (
             <a
               href={orchestratorHref}
-              className="dashboard-app-btn dashboard-app-btn--amber"
+              className="dashboard-app-btn dashboard-app-btn--amber topbar-desktop-only"
               aria-label="Orchestrator"
             >
               <svg

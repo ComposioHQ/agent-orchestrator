@@ -1,6 +1,6 @@
 "use client";
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionDetail } from "../SessionDetail";
 import { makePR, makeSession } from "../../__tests__/helpers";
@@ -58,7 +58,9 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
       />,
     );
 
-    expect(screen.getByText("worker-stable-title")).toBeInTheDocument();
+    // Session id is rendered twice (mobile + desktop copies, media-query toggled);
+    // jsdom ignores media queries so both appear. Assert at least one is present.
+    expect(screen.getAllByText("worker-stable-title").length).toBeGreaterThan(0);
   });
 
   it("shows PR info for sessions with a PR", () => {
@@ -75,7 +77,7 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
       />,
     );
 
-    expect(screen.getByText("worker-2")).toBeInTheDocument();
+    expect(screen.getAllByText("worker-2").length).toBeGreaterThan(0);
     expect(screen.getAllByRole("link", { name: /PR #77/i }).length).toBeGreaterThan(0);
   });
 
@@ -110,7 +112,7 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
     );
 
     // The terminal section is always rendered; terminal mounts after rAF
-    expect(screen.getByText("worker-terminal")).toBeInTheDocument();
+    expect(screen.getAllByText("worker-terminal").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("Toggle sidebar")).toBeInTheDocument();
   });
 
@@ -122,7 +124,8 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: /orchestrator/i })).toBeInTheDocument();
+    // Scope to the topbar since MobileBottomNav also has an orchestrator link
+    expect(within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" })).toBeInTheDocument();
   });
 
   it("does not show orchestrator button when no orchestrator exists", () => {
@@ -133,7 +136,7 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
       />,
     );
 
-    expect(screen.queryByRole("link", { name: /orchestrator/i })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("banner")).queryByRole("link", { name: "Orchestrator" })).not.toBeInTheDocument();
   });
 
   it("shows merged PR link for merged sessions", () => {
@@ -149,6 +152,6 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
     );
 
     expect(screen.getAllByRole("link", { name: /PR #89/i }).length).toBeGreaterThan(0);
-    expect(screen.getByText("worker-merged")).toBeInTheDocument();
+    expect(screen.getAllByText("worker-merged").length).toBeGreaterThan(0);
   });
 });

@@ -999,6 +999,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   max-width: 220px;
 }
 
+.dashboard-app-header__session-id {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  margin-left: 6px;
+}
+
 /* Status pill — compact topbar variant */
 .topbar-status-pill {
   display: inline-flex;
@@ -6184,8 +6192,23 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   min-width: 0;
 }
 
+/* Line 1 of the mobile topbar: project name + session id side-by-side.
+   On desktop the session id sits in a separate span further along the row,
+   so this inner .topbar-project-line only exists to group them on mobile. */
+.topbar-project-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* topbar-mobile-only is the inverse of topbar-desktop-only; hidden on
+   desktop, shown below the mobile breakpoint. */
+.topbar-mobile-only { display: none; }
+
 @media (max-width: 640px) {
   .topbar-desktop-only { display: none; }
+  .topbar-mobile-only { display: inline; }
 
   /* Stack project name above pills in the same 48px topbar */
   .topbar-project-pills-group {
@@ -6203,6 +6226,19 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Mobile session id hugs the project name */
+  .topbar-project-line .dashboard-app-header__session-id {
+    font-size: 10px;
+    line-height: 1.2;
+    margin-left: 0;
+    color: var(--color-text-muted);
+  }
+  .topbar-project-line .dashboard-app-header__session-id::before {
+    content: "·";
+    margin-right: 6px;
+    color: var(--color-text-tertiary);
   }
 
   /* Tiny pills on mobile */
