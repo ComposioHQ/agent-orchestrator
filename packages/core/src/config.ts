@@ -19,7 +19,7 @@ import { ConfigNotFoundError, type ExternalPluginEntryRef, type OrchestratorConf
 import { generateSessionPrefix } from "./paths.js";
 
 function inferScmPlugin(project: {
-  repo: string;
+  repo?: string;
   scm?: Record<string, unknown>;
   tracker?: Record<string, unknown>;
 }): "github" | "gitlab" {
@@ -165,7 +165,7 @@ const RoleAgentConfigSchema = z
 
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
-  repo: z.string(),
+  repo: z.string().optional(),
   path: z.string(),
   defaultBranch: z.string().default("main"),
   sessionPrefix: z
@@ -228,11 +228,23 @@ const InstalledPluginConfigSchema = z
     }
   });
 
+const PowerConfigSchema = z
+  .object({
+    /**
+     * Prevent macOS idle sleep while AO is running.
+     * Uses `caffeinate -i -w <pid>` to hold an assertion.
+     * Defaults to true on macOS, no-op on other platforms.
+     */
+    preventIdleSleep: z.boolean().default(process.platform === "darwin"),
+  })
+  .default({});
+
 const OrchestratorConfigSchema = z.object({
   port: z.number().default(3000),
   terminalPort: z.number().optional(),
   directTerminalPort: z.number().optional(),
   readyThresholdMs: z.number().nonnegative().default(300_000),
+  power: PowerConfigSchema,
   defaults: DefaultPluginsSchema.default({}),
   plugins: z.array(InstalledPluginConfigSchema).default([]),
   projects: z.record(
@@ -463,12 +475,12 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
     const inferredPlugin = inferScmPlugin(project);
 
     // Infer SCM from repo if not set
-    if (!project.scm && project.repo.includes("/")) {
+    if (!project.scm && project.repo?.includes("/")) {
       project.scm = { plugin: inferredPlugin };
     }
 
     // Infer tracker from repo if not set (default to github issues)
-    if (!project.tracker) {
+    if (!project.tracker && project.repo?.includes("/")) {
       project.tracker = { plugin: inferredPlugin };
     }
   }

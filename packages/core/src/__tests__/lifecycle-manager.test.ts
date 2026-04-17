@@ -135,6 +135,44 @@ describe("check (single session)", () => {
     expect(plugins.runtime.isAlive).not.toHaveBeenCalled();
   });
 
+  it("does not kill a spawning session even when runtimeHandle IS persisted in metadata (#1035)", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "spawning",
+        runtimeHandle: { id: "app-1", runtimeName: "mock", data: {} },
+        metadata: {},
+      }),
+      // runtimeHandle IS in metadata — this is the production scenario
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("working");
+    expect(plugins.runtime.isAlive).not.toHaveBeenCalled();
+  });
+
+  it("does not kill a spawning session when agent reports exited activity (#1035)", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "exited" as ActivityState,
+      timestamp: new Date(),
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "spawning",
+        runtimeHandle: { id: "app-1", runtimeName: "mock", data: {} },
+        metadata: {},
+      }),
+    });
+
+    await lm.check("app-1");
+
+    // Should transition to working, not killed
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
   it("still probes a working session when it relies on a synthesized runtime handle", async () => {
     vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
 

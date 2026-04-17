@@ -157,6 +157,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
       configPath, // This enables hash-based architecture
       port: 3000,
       readyThresholdMs: 300_000,
+      power: { preventIdleSleep: false },
       defaults: {
         runtime: "tmux",
         agent: "claude-code",
@@ -217,6 +218,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
       configPath,
       port: 3000,
       readyThresholdMs: 300_000,
+      power: { preventIdleSleep: false },
       defaults: {
         runtime: "tmux",
         agent: "claude-code",

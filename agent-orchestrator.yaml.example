@@ -13,6 +13,13 @@ port: 3000
 # terminalPort: 14800
 # directTerminalPort: 14801
 
+# Power management — controls system sleep while AO is running
+# power:
+#   preventIdleSleep: true  # Default on macOS, no-op on Linux
+#                           # Keeps Mac awake for remote dashboard access (e.g., via Tailscale)
+#                           # Uses caffeinate -i -w <pid> — auto-releases when AO exits
+#                           # Note: lid-close sleep is enforced by hardware and cannot be prevented
+
 # Default plugins (these are the defaults — you can omit this section)
 defaults:
   runtime: tmux           # tmux | process

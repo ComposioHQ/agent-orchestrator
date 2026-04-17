@@ -207,6 +207,7 @@ export function createTestEnvironment(): TestEnvironment {
   const config: OrchestratorConfig = {
     configPath,
     port: 3000,
+    power: { preventIdleSleep: false },
     defaults: {
       runtime: "mock",
       agent: "mock-agent",
@@ -278,6 +279,7 @@ export function setupTestContext(): TestContext {
   const config: OrchestratorConfig = {
     configPath,
     port: 3000,
+    power: { preventIdleSleep: false },
     defaults: {
       runtime: "mock",
       agent: "mock-agent",

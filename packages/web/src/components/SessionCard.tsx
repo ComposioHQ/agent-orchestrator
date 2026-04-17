@@ -571,14 +571,32 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
 
         {visiblePassingChecks.length > 0 && (
           <div className="card__ci">
-            {visiblePassingChecks.map((check) => (
-              <span key={check.name} className="ci-chip ci-chip--pass">
-                <svg width="8" height="8" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-                {check.name}
-              </span>
-            ))}
+            {visiblePassingChecks.map((check) => {
+              const chipContent = (
+                <>
+                  <svg width="8" height="8" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                  {check.name}
+                </>
+              );
+              return check.url ? (
+                <a
+                  key={check.name}
+                  href={check.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ci-chip ci-chip--pass"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {chipContent}
+                </a>
+              ) : (
+                <span key={check.name} className="ci-chip ci-chip--pass">
+                  {chipContent}
+                </span>
+              );
+            })}
           </div>
         )}
 

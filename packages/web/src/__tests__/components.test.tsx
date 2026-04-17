@@ -208,7 +208,7 @@ describe("SessionCard", () => {
     const session = makeSession({ id: "backend-5" });
     render(<SessionCard session={session} />);
     const link = screen.getByText("terminal");
-    expect(link).toHaveAttribute("href", "/sessions/backend-5");
+    expect(link).toHaveAttribute("href", "/sessions/backend-5#session-terminal-section");
   });
 
   it("shows restore button when agent has exited", () => {
@@ -267,6 +267,68 @@ describe("SessionCard", () => {
     render(<SessionCard session={session} onMerge={onMerge} />);
     fireEvent.click(screen.getByRole("button", { name: /merge/i }));
     expect(onMerge).toHaveBeenCalledWith(42);
+  });
+
+  it("renders passing CI check chips as hyperlinks when url is present", () => {
+    const pr = makePR({
+      state: "open",
+      ciStatus: "passing",
+      ciChecks: [
+        { name: "lint-and-type-checks", status: "passed", url: "https://github.com/owner/repo/runs/111" },
+        { name: "tests", status: "passed", url: "https://github.com/owner/repo/runs/222" },
+        { name: "no-url-check", status: "passed" },
+      ],
+      reviewDecision: "approved",
+      mergeability: {
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      },
+    });
+    const session = makeSession({ status: "mergeable", activity: "idle", pr });
+    render(<SessionCard session={session} />);
+
+    const lintLink = screen.getByRole("link", { name: /lint-and-type-checks/ });
+    expect(lintLink).toHaveAttribute("href", "https://github.com/owner/repo/runs/111");
+    expect(lintLink).toHaveAttribute("target", "_blank");
+    expect(lintLink).toHaveAttribute("rel", "noopener noreferrer");
+
+    const testsLink = screen.getByRole("link", { name: /^tests$/ });
+    expect(testsLink).toHaveAttribute("href", "https://github.com/owner/repo/runs/222");
+
+    // Check without url should still render as plain text, not a link
+    expect(screen.queryByRole("link", { name: /no-url-check/ })).not.toBeInTheDocument();
+    expect(screen.getByText("no-url-check")).toBeInTheDocument();
+  });
+
+  it("stops propagation when clicking a passing CI chip link", () => {
+    const onClick = vi.fn();
+    const pr = makePR({
+      state: "open",
+      ciStatus: "passing",
+      ciChecks: [
+        { name: "build", status: "passed", url: "https://github.com/owner/repo/runs/333" },
+      ],
+      reviewDecision: "approved",
+      mergeability: {
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      },
+    });
+    const session = makeSession({ status: "mergeable", activity: "idle", pr });
+    render(
+      <div onClick={onClick}>
+        <SessionCard session={session} />
+      </div>,
+    );
+    const link = screen.getByRole("link", { name: /build/ });
+    fireEvent.click(link);
+    expect(onClick).not.toHaveBeenCalled();
   });
 
   it("shows CI failing alert", () => {

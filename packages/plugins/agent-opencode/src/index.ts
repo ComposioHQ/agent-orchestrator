@@ -214,34 +214,23 @@ function createOpenCodeAgent(): Agent {
     getLaunchCommand(config: AgentLaunchConfig): string {
       const options: string[] = [];
       const sharedOptions: string[] = [];
+      const agentConfig = config.projectConfig.agentConfig;
 
       const existingSessionId = asValidOpenCodeSessionId(
-        (config.projectConfig.agentConfig as OpenCodeAgentConfig | undefined)?.opencodeSessionId,
+        agentConfig?.opencodeSessionId,
       );
 
       if (existingSessionId) {
         options.push("--session", shellEscape(existingSessionId));
       }
 
-      // Select specific OpenCode subagent if configured
-      if (config.subagent) {
-        sharedOptions.push("--agent", shellEscape(config.subagent));
+      const selectedAgentName = config.subagent;
+
+      if (selectedAgentName) {
+        sharedOptions.push("--agent", shellEscape(selectedAgentName));
       }
 
-      let promptValue: string | undefined;
-      if (config.prompt) {
-        if (config.systemPromptFile) {
-          promptValue = `"$(cat ${shellEscape(config.systemPromptFile)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt)})"`;
-        } else if (config.systemPrompt) {
-          promptValue = shellEscape(`${config.systemPrompt}\n\n${config.prompt}`);
-        } else {
-          promptValue = shellEscape(config.prompt);
-        }
-      } else if (config.systemPromptFile) {
-        promptValue = `"$(cat ${shellEscape(config.systemPromptFile)})"`;
-      } else if (config.systemPrompt) {
-        promptValue = shellEscape(config.systemPrompt);
-      }
+      const promptValue = config.prompt ? shellEscape(config.prompt) : undefined;
 
       if (config.model) {
         sharedOptions.push("--model", shellEscape(config.model));

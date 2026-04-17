@@ -244,7 +244,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     for (const pr of uniquePRs) {
       // Find the project for this PR
       const project = Object.values(config.projects).find((p) => {
-        const [owner, repo] = p.repo.split("/");
+        if (!p.repo) return false;
+        // Use lastIndexOf to correctly handle GitLab subgroup paths (group/subgroup/repo)
+        const slashIdx = p.repo.lastIndexOf("/");
+        if (slashIdx < 0) return false;
+        const owner = p.repo.slice(0, slashIdx);
+        const repo = p.repo.slice(slashIdx + 1);
         return owner === pr.owner && repo === pr.repo;
       });
       if (!project?.scm?.plugin) continue;
@@ -371,11 +376,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
-    const hasPersistedRuntimeIdentity =
-      typeof session.metadata["runtimeHandle"] === "string" ||
-      typeof session.metadata["tmuxName"] === "string";
+    // Never probe runtime/agent liveness while a session is still spawning —
+    // tmux may not be initialized and the agent process hasn't started yet.
+    // A persisted runtimeHandle alone is insufficient to gate on because spawn
+    // writes it to metadata before leaving "spawning" status (#1035).
     const canProbeRuntimeIdentity =
-      hasPersistedRuntimeIdentity || session.status !== SESSION_STATUS.SPAWNING;
+      session.status !== SESSION_STATUS.SPAWNING;
 
     // 1. Check if runtime is alive
     if (session.runtimeHandle && canProbeRuntimeIdentity) {
@@ -417,7 +423,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
         if (activityState) {
           if (activityState.state === "waiting_input") return "needs_input";
-          if (activityState.state === "exited") return "killed";
+          if (activityState.state === "exited" && canProbeRuntimeIdentity) return "killed";
 
           if (
             (activityState.state === "idle" || activityState.state === "blocked") &&

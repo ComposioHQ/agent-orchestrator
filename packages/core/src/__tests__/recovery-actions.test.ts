@@ -20,6 +20,7 @@ function makeConfig(rootDir: string): OrchestratorConfig {
     configPath: join(rootDir, "agent-orchestrator.yaml"),
     port: 3000,
     readyThresholdMs: 300_000,
+    power: { preventIdleSleep: false },
     defaults: {
       runtime: "tmux",
       agent: "claude-code",

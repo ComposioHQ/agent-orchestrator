@@ -39,6 +39,17 @@ export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agen
 - If the repo has CI checks, make sure they pass before requesting review.
 - Respond to every review comment, even if just to acknowledge it.`;
 
+/** Trimmed base prompt for projects without a configured repo/remote. */
+export const BASE_AGENT_PROMPT_NO_REPO = `You are an AI coding agent managed by the Agent Orchestrator (ao).
+
+## Session Lifecycle
+- You are running inside a managed session. Focus on the assigned task.
+- No remote repository is configured — work locally. PR, CI, and review features are unavailable.
+
+## Git Workflow
+- Always create a feature branch from the default branch (never commit directly to it).
+- Use conventional commit messages (feat:, fix:, chore:, etc.).`;
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -70,7 +81,9 @@ function buildConfigLayer(config: PromptBuildConfig): string {
 
   lines.push("## Project Context");
   lines.push(`- Project: ${project.name ?? projectId}`);
-  lines.push(`- Repository: ${project.repo}`);
+  if (project.repo) {
+    lines.push(`- Repository: ${project.repo}`);
+  }
   lines.push(`- Default branch: ${project.defaultBranch}`);
 
   if (project.tracker) {
@@ -149,7 +162,8 @@ export function buildPrompt(config: PromptBuildConfig): string {
   const sections: string[] = [];
 
   // Layer 1: Base prompt is always included for every managed session.
-  sections.push(BASE_AGENT_PROMPT);
+  // Use trimmed prompt when no repo is configured (PR/CI instructions don't apply).
+  sections.push(config.project.repo ? BASE_AGENT_PROMPT : BASE_AGENT_PROMPT_NO_REPO);
 
   // Layer 2: Config-derived context
   sections.push(buildConfigLayer(config));
