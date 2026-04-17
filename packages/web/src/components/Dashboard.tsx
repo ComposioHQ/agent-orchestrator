@@ -162,6 +162,7 @@ function DashboardInner({
   const { showToast } = useToast();
   const [doneExpanded, setDoneExpanded] = useState(false);
   const [spawnOpen, setSpawnOpen] = useState(false);
+  const [spawnProjectId, setSpawnProjectId] = useState<string | undefined>(undefined);
   const [optimisticSessions, setOptimisticSessions] = useState<DashboardSession[]>([]);
   const sessionsRef = useRef(sessions);
 
@@ -479,15 +480,6 @@ function DashboardInner({
             ) : null}
             <div className="dashboard-app-header__spacer" />
             <div className="dashboard-app-header__actions">
-              {!allProjectsView && projectId ? (
-                <button
-                  type="button"
-                  onClick={() => setSpawnOpen(true)}
-                  className="dashboard-app-btn"
-                >
-                  New Session
-                </button>
-              ) : null}
               {!allProjectsView && orchestratorHref ? (
                 <a
                   href={orchestratorHref}
@@ -528,6 +520,10 @@ function DashboardInner({
                   collapsed={sidebarCollapsed}
                   onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
                   onMobileClose={() => setMobileMenuOpen(false)}
+                  onSpawnSession={(pid) => {
+                    setSpawnProjectId(pid);
+                    setSpawnOpen(true);
+                  }}
                 />
               </div>
             )}
@@ -644,12 +640,12 @@ function DashboardInner({
           </div>
         </div>
       </>
-      {projectId ? (
+      {(spawnProjectId ?? projectId) ? (
         <SpawnSessionModal
-          projectId={projectId}
-          projectName={projectName}
+          projectId={(spawnProjectId ?? projectId)!}
+          projectName={spawnProjectId === projectId ? projectName : spawnProjectId}
           open={spawnOpen}
-          onClose={() => setSpawnOpen(false)}
+          onClose={() => { setSpawnOpen(false); setSpawnProjectId(undefined); }}
           onSessionCreated={handleSessionCreated}
         />
       ) : null}
