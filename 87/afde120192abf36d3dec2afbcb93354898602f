@@ -1,0 +1,23 @@
+packages/web/src/app/api/sessions/route.ts
+  217f1626f81f86ab 1,95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "87afde120192abf36d3dec2afbcb93354898602f",
+  "prompts": {
+    "217f1626f81f86ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cab90bfd-dedb-459d-96c1-0408a6081035",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 1,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
