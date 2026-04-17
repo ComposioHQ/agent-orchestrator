@@ -331,6 +331,31 @@ export function DirectTerminal({
           return true;
         });
 
+        // ── Scroll chaining ───────────────────────────────────────────
+        // xterm.js's viewport consumes all wheel events, which prevents
+        // the page from scrolling once the terminal hits its scroll
+        // boundary. Intercept wheel in the capture phase: if the terminal
+        // buffer is at the boundary in the event's direction, stop xterm's
+        // handler and let the page scroll instead.
+        const handleWheelCapture = (e: WheelEvent) => {
+          const buf = terminal.buffer.active;
+          const atTop = buf.viewportY <= 0;
+          const atBottom = buf.viewportY >= buf.baseY;
+          const goingDown = e.deltaY > 0;
+          const goingUp = e.deltaY < 0;
+          if ((goingDown && atBottom) || (goingUp && atTop)) {
+            e.stopPropagation();
+            const scroller =
+              document.scrollingElement ?? document.documentElement;
+            scroller.scrollBy({ top: e.deltaY, left: e.deltaX, behavior: "auto" });
+          }
+        };
+        const wheelTarget = terminalRef.current;
+        wheelTarget.addEventListener("wheel", handleWheelCapture, {
+          capture: true,
+          passive: true,
+        });
+
         // Open terminal via mux
         openTerminal(sessionId);
 
@@ -371,6 +396,9 @@ export function DirectTerminal({
         cleanup = () => {
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
+          wheelTarget.removeEventListener("wheel", handleWheelCapture, {
+            capture: true,
+          } as EventListenerOptions);
           window.removeEventListener("resize", handleResize);
           inputDisposable?.dispose();
           inputDisposable = null;
