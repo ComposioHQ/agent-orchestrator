@@ -1,0 +1,94 @@
+---
+title: Platforms
+description: Per-OS support notes — what works, what doesn't, and how to configure each.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+<PlatformSupport
+  macos="full"
+  linux="full"
+  windows="partial"
+/>
+
+AO is designed to be platform-neutral in concept — agents open PRs the same way everywhere — but a few plugins lean on platform-specific tooling. Here's what that means in practice.
+
+## macOS
+
+<PlatformSupport macos="full" linux="none" windows="none" />
+
+Every plugin works. The default stack (`runtime: tmux`, `terminal: iterm2`) is optimised for macOS.
+
+| Plugin | Notes |
+|---|---|
+| `runtime-tmux` | Default. Requires `brew install tmux`. |
+| `terminal-iterm2` | Opens attached tabs in iTerm2 via AppleScript. |
+| `notifier-desktop` | Uses `osascript` for native notifications. |
+
+## Linux
+
+<PlatformSupport macos="none" linux="full" windows="none" />
+
+Same as macOS minus iTerm2. Use `terminal: web` or skip the terminal plugin entirely — the dashboard's built-in xterm.js is always available.
+
+| Plugin | Notes |
+|---|---|
+| `runtime-tmux` | Default. Install via your distro's package manager. |
+| `terminal-iterm2` | No-op on Linux. |
+| `terminal-web` | Opens the dashboard session URL for attach. |
+| `notifier-desktop` | Uses `notify-send` (from `libnotify-bin`). |
+
+## Windows
+
+<PlatformSupport macos="none" linux="none" windows="partial" />
+
+<Callout type="warn" title="Windows support is actively being improved">
+  AO works on Windows with `runtime: process` today. From your perspective as a user, the spawn → PR → review loop behaves identically. The pieces that don't work yet are `runtime-tmux`, `terminal-iterm2`, and desktop notifications.
+</Callout>
+
+### Required config on Windows
+
+Override the runtime in your `agent-orchestrator.yaml`:
+
+```yaml title="agent-orchestrator.yaml"
+runtime: process
+terminal: web   # or omit — dashboard always has an xterm.js session
+notifier: desktop  # no-op on Windows; use discord/slack/webhook for real alerts
+```
+
+### What works on Windows
+
+| Area | Status | Notes |
+|---|---|---|
+| `ao start` / `ao stop` / `ao dashboard` | ✅ | |
+| `ao spawn` / `ao batch-spawn` | ✅ | Uses `runtime-process` instead of tmux |
+| Agents | ✅ | All five agents work — they run as child processes |
+| Trackers / SCM / workspaces | ✅ | `gh`, `glab`, `git` all work cross-platform |
+| Dashboard + xterm.js terminal | ✅ | WebSocket terminal works fine |
+| `notifier-discord` / `notifier-slack` / `notifier-webhook` | ✅ | HTTP-only, cross-platform |
+| `ao doctor` / `ao status` / `ao session ...` | ✅ | |
+
+### What's limited on Windows
+
+| Area | Status | Workaround |
+|---|---|---|
+| `runtime-tmux` | ❌ | Use `runtime: process` |
+| `terminal-iterm2` | ❌ | Use `terminal: web` (or the dashboard's built-in terminal) |
+| `notifier-desktop` | ❌ (no-op) | Use Discord / Slack / webhook notifiers |
+| `ao open` | ⚠️ | Prints the dashboard URL instead of opening an iTerm2 tab |
+
+### Known gotchas
+
+- **Path separators in logs.** Some plugins print Unix-style paths; these are cosmetic — the underlying file operations use Node's path API.
+- **Shell quoting.** `ao send <session> "some message"` works in both PowerShell and Git Bash. If you pipe large payloads, prefer `--file`.
+- **File watchers.** AO reads native agent JSONLs directly; no `fs.watch` is involved, so Windows' missing inotify isn't an issue.
+
+If you hit a Windows-specific bug that isn't listed here, open an issue — Windows support is being actively worked on.
+
+## Docker / remote
+
+You can run `ao start` inside a container or on a remote host. The dashboard is a plain Next.js app — forward port 3000 over SSH or expose it behind your reverse proxy.
+
+- Use `runtime: process` inside containers unless you've explicitly set up tmux.
+- Mount `~/.agent-orchestrator` (or set `AO_DATA_DIR`) on a persistent volume so sessions survive container restarts.
+- For public exposure, put it behind auth (AO has no built-in login).

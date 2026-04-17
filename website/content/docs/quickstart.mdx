@@ -1,0 +1,113 @@
+---
+title: Quickstart
+description: From "brand-new install" to "agent opened my PR" in five minutes.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Step, Steps } from "fumadocs-ui/components/steps";
+
+This walks through spawning your first agent on a real GitHub issue. By the end you'll have an open PR from an agent and a dashboard showing it move through its lifecycle.
+
+<Callout type="info">
+  Assumes you've already done the [Installation](/docs/installation) steps — `ao`, `gh`, and your agent binary are installed and authenticated.
+</Callout>
+
+<Steps>
+<Step>
+
+### Pick a repo and an issue
+
+Pick a GitHub repo you own and an open issue that has a clear, self-contained fix. Something small — a typo, a failing test, a small refactor. The goal is to see the loop work end-to-end, not to stress-test the agent.
+
+Note the issue number. We'll use `42` below.
+
+</Step>
+<Step>
+
+### Start AO
+
+```bash
+cd ~/projects/my-repo
+ao start
+```
+
+On first run with no config, AO auto-generates `agent-orchestrator.yaml` and opens the dashboard at `http://localhost:3000`.
+
+If the dashboard doesn't open automatically, copy the URL from the `ao start` output.
+
+</Step>
+<Step>
+
+### Spawn an agent
+
+In a second terminal, from the same directory:
+
+```bash
+ao spawn 42
+```
+
+AO will:
+
+1. Look up issue #42 via `gh`
+2. Create an isolated worktree under `~/.agent-orchestrator/...`
+3. Launch your default agent in it with a prompt built from the issue
+
+The dashboard card moves through **Spawning → Working** within a few seconds.
+
+</Step>
+<Step>
+
+### Watch it work
+
+Open the session on the dashboard to see:
+
+- A live terminal (xterm.js + WebSocket) showing what the agent is doing
+- The current activity state (active / ready / idle / waiting_input)
+- Issue link, worktree path, session id
+
+When the agent pushes a commit and opens a PR, the card moves to **PR Open**. AO picks up the PR via the `gh` CLI — no webhook setup needed.
+
+</Step>
+<Step>
+
+### Let the loop run
+
+- **CI fails?** AO notices and wakes the agent to investigate and push a fix.
+- **Review requested changes?** AO spots the `REQUEST_CHANGES` review and nudges the agent with the review body.
+- **CI green, no reviewers blocking?** Card moves to **Mergeable**.
+
+You merge when you're ready — AO doesn't auto-merge (on purpose).
+
+</Step>
+<Step>
+
+### Clean up
+
+After the PR merges:
+
+```bash
+ao session cleanup
+```
+
+Removes worktrees whose PR merged or whose issue closed. Nothing is destructive — archived metadata stays under `~/.agent-orchestrator/.../archive/`.
+
+</Step>
+</Steps>
+
+## What just happened
+
+| Step | Under the hood |
+|---|---|
+| `ao start` | Starts the orchestrator agent + dashboard (Next.js + two WebSocket servers) |
+| `ao spawn 42` | Creates a worktree via the **workspace** plugin, launches your **agent** via the **runtime** plugin, seeds it with issue #42 fetched by the **tracker** plugin |
+| CI / review polling | The **SCM** plugin checks PR state every few seconds; state transitions fire events to the **notifier** plugin |
+| Dashboard updates | SSE stream at 5s intervals (terminal is WebSocket) |
+
+## Where to go next
+
+<Cards>
+  <Card title="Parallel issues" description="Spawn agents on several issues at once." href="/docs/guides/parallel-issues" />
+  <Card title="CI recovery" description="How AO reacts when checks fail." href="/docs/guides/ci-recovery" />
+  <Card title="Review loop" description="Automatic responses to requested changes." href="/docs/guides/review-loop" />
+  <Card title="Configuration" description="All the knobs in `agent-orchestrator.yaml`." href="/docs/configuration" />
+</Cards>

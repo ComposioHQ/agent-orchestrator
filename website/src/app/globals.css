@@ -1,0 +1,191 @@
+@import "tailwindcss";
+
+:root {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --color-bg-base: #121110;
+  --color-bg-surface: #1a1918;
+  --color-bg-elevated: #242220;
+  --color-bg-subtle: #2b2826;
+  --color-bg-inset: #161514;
+  --color-bg-sidebar: #161514;
+
+  --color-text-primary: #f0ece8;
+  --color-text-secondary: #a8a29e;
+  --color-text-tertiary: #8b8682;
+
+  --color-border-default: rgba(255, 240, 220, 0.14);
+  --color-border-subtle: rgba(255, 240, 220, 0.08);
+
+  --color-accent: #8b9cf7;
+  --color-accent-amber: #f97316;
+  --color-accent-amber-dim: rgba(249, 115, 22, 0.12);
+  --color-accent-amber-border: rgba(249, 115, 22, 0.4);
+
+  --color-scrollbar: rgba(255, 240, 220, 0.15);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+}
+
+a {
+  color: inherit;
+}
+
+/* ── Landing Page ─────────────────────────────────────────────────── */
+.landing-page {
+  --landing-bg: #121110;
+  --landing-fg: #f0ece8;
+  --landing-muted: #a8a29e;
+  --landing-muted-dim: #57534e;
+  --landing-accent: #f97316;
+  --landing-border-subtle: rgba(255, 240, 220, 0.07);
+  --landing-border-default: rgba(255, 240, 220, 0.13);
+  --landing-border-strong: rgba(255, 240, 220, 0.24);
+  --landing-surface: #1a1918;
+  --landing-card-bg: #1c1b19;
+  background: var(--landing-bg);
+  color: var(--landing-fg);
+  font-family: var(--font-sans, -apple-system, "SF Pro Text", system-ui, sans-serif);
+}
+
+.liquid-glass-solid {
+  background: var(--landing-accent);
+  color: #121110;
+  font-weight: 500;
+  border: none;
+}
+
+.liquid-glass-solid:hover {
+  opacity: 0.9;
+}
+
+.landing-card {
+  background: var(--landing-card-bg);
+  border: 1px solid var(--landing-border-subtle);
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.landing-card:hover {
+  border-color: var(--landing-border-default);
+}
+
+.landing-hero-grid {
+  background-image: radial-gradient(rgba(255, 240, 220, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
+}
+
+@keyframes landing-fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes landing-pulse-dot {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.landing-fade-rise {
+  animation: landing-fade-rise 0.8s ease-out both;
+}
+
+.landing-fade-rise-d1 {
+  animation: landing-fade-rise 0.8s ease-out 0.2s both;
+}
+
+.landing-fade-rise-d2 {
+  animation: landing-fade-rise 0.8s ease-out 0.4s both;
+}
+
+.landing-reveal {
+  opacity: 0;
+  transform: translateY(32px);
+  transition: opacity 0.8s ease-out, transform 0.8s ease-out;
+}
+
+.landing-reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.landing-agent-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(134, 239, 172, 0.7);
+  animation: landing-pulse-dot 2s ease-in-out infinite;
+}
+
+/* Terminal typing animations */
+.landing-line-appear {
+  animation: landing-fade-rise 0.3s ease-out both;
+}
+
+@keyframes landing-cursor-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
+}
+
+.landing-cursor-blink {
+  animation: landing-cursor-blink 0.8s step-end infinite;
+}
+
+/* Workflow pipeline pulse */
+@keyframes landing-node-pulse {
+  0% {
+    box-shadow: 0 0 0 0 currentColor;
+    opacity: 0.6;
+  }
+
+  70% {
+    box-shadow: 0 0 0 10px transparent;
+    opacity: 0;
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    opacity: 0;
+  }
+}
+
+.landing-node-pulse {
+  border: 1.5px solid;
+  animation: landing-node-pulse 1.5s ease-out infinite;
+}

@@ -1,0 +1,264 @@
+---
+title: Reactions
+description: AO's automatic responses to lifecycle events — CI failures, review comments, approvals, and agent state changes.
+---
+
+Reactions are the core of AO's autonomous loop. When a lifecycle event occurs — CI fails, a reviewer requests changes, an agent goes idle, a PR becomes mergeable — AO fires the matching reaction automatically. Each reaction can send a message directly to the agent, notify your team, or (in future) trigger an auto-merge. You do not need to configure anything to get started: AO ships with ten built-in reactions that cover every common event.
+
+## Default reactions
+
+All ten reactions are active out of the box. The table below shows their default configuration.
+
+| Key | Action | Priority | Notable defaults |
+|-----|--------|----------|-----------------|
+| `ci-failed` | `send-to-agent` | — | `retries: 2`, `escalateAfter: 2` (attempts) |
+| `changes-requested` | `send-to-agent` | — | `escalateAfter: "30m"` |
+| `bugbot-comments` | `send-to-agent` | — | `escalateAfter: "30m"` |
+| `merge-conflicts` | `send-to-agent` | — | `escalateAfter: "15m"` |
+| `approved-and-green` | `notify` | `action` | `auto: false` by default — opt-in only |
+| `agent-idle` | `send-to-agent` | — | `retries: 2`, `escalateAfter: "15m"` (reserved) |
+| `agent-stuck` | `notify` | `urgent` | `threshold: "10m"` |
+| `agent-needs-input` | `notify` | `urgent` | — |
+| `agent-exited` | `notify` | `urgent` | — |
+| `all-complete` | `notify` | `info` | `includeSummary: true` |
+
+`approved-and-green` defaults to `auto: false` so that AO notifies you but does not attempt any merge-related action until you explicitly opt in.
+
+## Reaction config schema
+
+Each reaction key in your `agent-orchestrator.yaml` accepts the following fields.
+
+### `auto`
+
+**Type:** `boolean`
+**Default:** `true`
+
+Controls whether this reaction fires automatically. Setting `auto: false` silences the automated `action` (no message to the agent, no auto-merge attempt) but still allows the `notify` path when the action is `notify`. Use this to watch events without letting AO act on them.
+
+```yaml
+reactions:
+  ci-failed:
+    auto: false   # AO will not message the agent on CI failure
+```
+
+### `action`
+
+**Type:** `"send-to-agent" | "notify" | "auto-merge"`
+**Default:** `"notify"`
+
+What AO does when the reaction fires:
+
+- `send-to-agent` — delivers `message` to the running agent's terminal via `ao send`.
+- `notify` — routes an event to all configured notifiers at the configured `priority`.
+- `auto-merge` — see [Auto-merge warning](#auto-merge-warning) below.
+
+### `message`
+
+**Type:** `string`
+**Default:** (built-in default per reaction key)
+
+The text delivered to the agent (`send-to-agent`) or included in the notification body (`notify`). Each built-in reaction ships with a default message. Override it here to customise the instruction the agent receives.
+
+```yaml
+reactions:
+  ci-failed:
+    message: |
+      CI is failing. Run `gh pr checks --watch`, identify the root cause,
+      fix it locally, and push. Do not guess — read the logs.
+```
+
+### `priority`
+
+**Type:** `"urgent" | "action" | "warning" | "info"`
+**Default:** varies by reaction key
+
+Notification priority used when routing events to notifiers. Maps directly to the `notificationRouting` keys in your config. Higher-priority events are routed to more intrusive notifiers (e.g. SMS vs. email).
+
+```yaml
+reactions:
+  agent-stuck:
+    priority: urgent
+```
+
+### `retries`
+
+**Type:** `number`
+**Default:** undefined (no retry limit)
+
+Maximum number of times to re-send the reaction message before escalating. After `retries` failed attempts, AO fires a `reaction.escalated` event and notifies you instead of continuing to message the agent.
+
+```yaml
+reactions:
+  ci-failed:
+    retries: 3
+```
+
+### `escalateAfter`
+
+**Type:** `number | string`
+**Default:** undefined
+
+Trigger escalation either after a number of retry attempts (integer) or after a duration (string like `"30m"`, `"1h"`). When both `retries` and `escalateAfter` are set, whichever limit is hit first triggers escalation.
+
+```yaml
+reactions:
+  changes-requested:
+    escalateAfter: "45m"   # escalate if unresolved after 45 minutes
+
+  ci-failed:
+    retries: 2
+    escalateAfter: 2       # same: escalate after 2 failed send attempts
+```
+
+### `threshold`
+
+**Type:** `string`
+**Default:** undefined
+
+Duration string used exclusively by `agent-stuck`. If the agent has been idle for longer than `threshold`, the session transitions to `stuck` status and the `agent-stuck` reaction fires.
+
+```yaml
+reactions:
+  agent-stuck:
+    threshold: "15m"   # fire stuck reaction after 15 minutes of inactivity
+```
+
+### `includeSummary`
+
+**Type:** `boolean`
+**Default:** undefined
+
+When `true`, AO appends the full session summary (cost, model, final status, PR link) to the notification payload. Intended for `all-complete` so your team gets a one-line digest of every finished session.
+
+```yaml
+reactions:
+  all-complete:
+    includeSummary: true
+```
+
+## Action semantics
+
+### `send-to-agent`
+
+Calls `sessionManager.send(sessionId, message)` to deliver text directly to the agent's terminal. The agent receives the message mid-session and responds as if a human typed it. This is the primary mechanism for AO's autonomous recovery loop.
+
+Used by the four work-recovery reactions: `ci-failed`, `changes-requested`, `bugbot-comments`, and `merge-conflicts`.
+
+### `notify`
+
+Fires an `OrchestratorEvent` through `notifyHuman()`, which routes to every notifier configured for that priority level via `notificationRouting`. Does not send anything to the agent — the agent remains unaware.
+
+Used by `approved-and-green`, `agent-stuck`, `agent-needs-input`, `agent-exited`, and `all-complete`.
+
+### `auto-merge`
+
+<Callout type="warning">
+The `auto-merge` action currently calls `notifyHuman()` internally — it does not perform a merge. It is named for future intent. Actual merging depends on your SCM's branch protection rules, an enabled "Allow auto-merge" setting on the repository, and a fully green CI. AO does not bypass these gates. Use `auto-merge` as an opt-in signal that you intend to enable real auto-merge once the SCM plugin supports it.
+</Callout>
+
+## Event reference
+
+The table below maps lifecycle events to the reaction they trigger. For the full `EventType` catalogue see the [webhook notifier reference](/docs/plugins/notifiers/webhook).
+
+| Event | Triggers reaction |
+|-------|------------------|
+| `ci.failing` | `ci-failed` |
+| `review.changes_requested` | `changes-requested` |
+| `automated_review.found` | `bugbot-comments` |
+| `merge.conflicts` | `merge-conflicts` |
+| `merge.ready` | `approved-and-green` |
+| `session.stuck` | `agent-stuck` |
+| `session.needs_input` | `agent-needs-input` |
+| `session.killed` | `agent-exited` |
+| `summary.all_complete` | `all-complete` |
+
+`agent-idle` is defined in the default config but does not currently have a corresponding lifecycle event. It is reserved for a future idle-detection pass that will fire before the `agent-stuck` threshold is reached.
+
+## Per-project overrides
+
+Any reaction can be overridden per project inside the `projects` block. The project-level config is merged with the global config; the project value wins.
+
+```yaml
+projects:
+  my-api:
+    reactions:
+      ci-failed:
+        auto: false          # disable automated CI recovery for this project only
+        message: "CI failed — notify #eng-alerts manually"
+      agent-stuck:
+        threshold: "20m"     # give agents in this project more time before escalating
+```
+
+See [Projects](/docs/configuration/projects) for the full per-project config syntax.
+
+## Escalation behavior
+
+When a `send-to-agent` reaction exhausts its `retries` budget or the `escalateAfter` duration elapses, AO escalates:
+
+1. A `reaction.escalated` event fires with the reaction key and attempt count.
+2. `notifyHuman()` is called at the reaction's configured `priority` (defaulting to `"urgent"`).
+3. No further agent messages are sent for that reaction until the underlying event clears (e.g. CI passes, conflicts resolve).
+
+When both `retries` and `escalateAfter` are configured, whichever limit is reached first triggers escalation. This means a reaction with `retries: 2, escalateAfter: "30m"` escalates after two failed send attempts even if fewer than 30 minutes have passed.
+
+## Two-pass CI failure
+
+When CI fails, AO sends the agent two messages:
+
+**Pass 1 — static message (transition).** When the session first transitions to `ci_failed` status, AO fires the `ci-failed` reaction with the configured `message` (the human-readable instruction like "run `gh pr checks`..."). This consumes one retry from the budget.
+
+**Pass 2 — detailed follow-up (next poll cycle).** On the following poll cycle, AO fetches the individual CI check results and sends a second message listing every failing check by name, status, and URL. This message is sent via `sessionManager.send()` directly — it does not consume the `ci-failed` retry budget. It fires regardless of your custom `message` override.
+
+The two-pass design means the agent always receives both a directive (what to do) and structured data (which checks failed and where to find the logs), without you having to craft a prompt that embeds live check URLs.
+
+When the failing check set changes (new check names or statuses), the fingerprint resets and AO re-dispatches both passes.
+
+## Review backlog throttle
+
+`getPendingComments` and `getAutomatedComments` API calls are throttled to at most once every **2 minutes** per session (`REVIEW_BACKLOG_THROTTLE_MS`). This prevents hammering the GitHub API on every poll tick.
+
+To bypass the throttle and force an immediate review check, run:
+
+```bash
+ao review-check <session-id>
+```
+
+## `auto: false` use cases
+
+A common pattern is to run AO in watch-only mode during onboarding or in sensitive projects: keep the notification pipeline fully active but disable all automated agent messages.
+
+```yaml
+reactions:
+  ci-failed:
+    auto: false
+  changes-requested:
+    auto: false
+  bugbot-comments:
+    auto: false
+  merge-conflicts:
+    auto: false
+  agent-idle:
+    auto: false
+  agent-stuck:
+    auto: false
+```
+
+Reactions with `action: notify` (like `agent-stuck`, `agent-exited`, `all-complete`) will continue to fire their notifications regardless of `auto`. The `auto` flag suppresses the agent-directed action, not the human-directed one.
+
+<Callout type="warning">
+Setting `auto: false` on `agent-stuck` or `agent-needs-input` only suppresses any future `send-to-agent` action you might configure. The default action for both is `notify`, which is unaffected by `auto: false`.
+</Callout>
+
+## Next steps
+
+<Cards>
+  <Card title="Projects" href="/docs/configuration/projects">
+    Per-project reaction overrides and the full project config reference.
+  </Card>
+  <Card title="Webhook notifier" href="/docs/plugins/notifiers/webhook">
+    Full EventType catalogue and notification routing reference.
+  </Card>
+  <Card title="Configuration overview" href="/docs/configuration">
+    Top-level config structure and all config sections.
+  </Card>
+</Cards>

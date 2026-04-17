@@ -1,0 +1,198 @@
+---
+title: Installation
+description: Install AO, authenticate GitHub and your agent, and run a smoke test.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Tab, Tabs } from "fumadocs-ui/components/tabs";
+import { Step, Steps } from "fumadocs-ui/components/steps";
+import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
+
+AO is a single npm package. The install flow is:
+
+1. Prereqs
+2. `npm install -g @aoagents/ao`
+3. Authenticate GitHub + your agent CLI
+4. `ao doctor` to verify
+
+## Prerequisites
+
+<PlatformSupport
+  macos="full"
+  linux="full"
+  windows="partial"
+  note={<>On Windows, skip <code>tmux</code> and use <code>runtime: process</code>. See <a href="/docs/platforms">Platforms</a> for the full story.</>}
+/>
+
+| Tool | Version | Required? | Why |
+|---|---|---|---|
+| [Node.js](https://nodejs.org) | 20+ | required | AO is a Node CLI |
+| [git](https://git-scm.com) | 2.30+ | required | worktrees, commits |
+| [GitHub CLI (`gh`)](https://cli.github.com) | latest | required (GitHub repos) | authenticates as you, used by the `github` tracker + SCM plugins |
+| [tmux](https://github.com/tmux/tmux) | 3.2+ | recommended on macOS/Linux | default runtime (skip on Windows) |
+| An agent binary | — | required | `claude`, `codex`, `cursor-agent`, `aider`, or `opencode` |
+
+## Install
+
+<Tabs items={["npm", "pnpm", "yarn", "from source"]}>
+  <Tab value="npm">
+  ```bash
+  npm install -g @aoagents/ao
+  ```
+  </Tab>
+  <Tab value="pnpm">
+  ```bash
+  pnpm add -g @aoagents/ao
+  ```
+  </Tab>
+  <Tab value="yarn">
+  ```bash
+  yarn global add @aoagents/ao
+  ```
+  </Tab>
+  <Tab value="from source">
+  ```bash
+  git clone https://github.com/ComposioHQ/agent-orchestrator
+  cd agent-orchestrator
+  pnpm install && pnpm build
+  pnpm link --global
+  ```
+  </Tab>
+</Tabs>
+
+Confirm the binary is on your `PATH`:
+
+```bash
+ao --version
+```
+
+## Authenticate
+
+<Steps>
+<Step>
+
+### GitHub CLI
+
+AO uses the `gh` CLI for issues, PRs, reviews, and CI status. Log in once:
+
+```bash
+gh auth login
+```
+
+Pick **GitHub.com → HTTPS → Login with a web browser**, then verify:
+
+```bash
+gh auth status
+```
+
+If you use GitLab instead, authenticate with [`glab`](https://gitlab.com/gitlab-org/cli):
+
+```bash
+glab auth login
+```
+
+</Step>
+<Step>
+
+### Your agent
+
+AO supports five agents today. Install whichever one you want to use by default — you can mix and match per-project later.
+
+<Tabs items={["Claude Code", "Codex", "Cursor", "Aider", "OpenCode"]}>
+  <Tab value="Claude Code">
+    Install [Claude Code](https://docs.anthropic.com/en/docs/claude-code), then run `claude` once to sign in.
+    ```bash
+    npm install -g @anthropic-ai/claude-code
+    claude
+    ```
+  </Tab>
+  <Tab value="Codex">
+    Install [OpenAI Codex CLI](https://github.com/openai/codex):
+    ```bash
+    npm install -g @openai/codex
+    codex
+    ```
+  </Tab>
+  <Tab value="Cursor">
+    Install [Cursor Agent CLI](https://cursor.com/docs):
+    ```bash
+    curl https://cursor.com/install -fsS | bash
+    ```
+    Verify `agent --help` prints the Cursor Agent help text.
+  </Tab>
+  <Tab value="Aider">
+    Install [Aider](https://aider.chat):
+    ```bash
+    pip install aider-install && aider-install
+    ```
+  </Tab>
+  <Tab value="OpenCode">
+    Install [OpenCode](https://opencode.ai):
+    ```bash
+    npm install -g opencode-ai
+    ```
+  </Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### First config
+
+Run `ao start` in any git repo. If no `agent-orchestrator.yaml` exists, AO drops a starter config in your cwd and opens the dashboard.
+
+```bash
+cd ~/projects/my-repo
+ao start
+```
+
+You can also point AO at a repo by path or URL:
+
+```bash
+ao start ~/projects/my-repo
+ao start https://github.com/ComposioHQ/agent-orchestrator
+```
+
+The dashboard opens at `http://localhost:3000` (or the next free port).
+
+</Step>
+<Step>
+
+### Verify
+
+```bash
+ao doctor
+```
+
+`ao doctor` runs launcher, environment, plugin-resolution, and notifier checks. Use `ao doctor --fix` to auto-repair common issues.
+
+</Step>
+</Steps>
+
+## Common install issues
+
+<Accordions>
+  <Accordion title="tmux not found (and you're on Windows)">
+    Expected. Set `runtime: process` in `agent-orchestrator.yaml`. See [Platforms › Windows](/docs/platforms#windows).
+  </Accordion>
+  <Accordion title="gh not authenticated">
+    Run `gh auth login`. AO uses `gh` for all GitHub calls (tracker, SCM, CI).
+  </Accordion>
+  <Accordion title="Port 3000 already in use">
+    AO picks the next available port automatically. You'll see the final URL in the `ao start` output.
+  </Accordion>
+  <Accordion title="Node version too old">
+    AO needs Node 20+. Use [nvm](https://github.com/nvm-sh/nvm) or [volta](https://volta.sh/) to upgrade.
+  </Accordion>
+  <Accordion title="Dashboard error after install">
+    Run `ao dashboard --rebuild` to rebuild stale Next.js artifacts. If it persists, see [Troubleshooting](/docs/troubleshooting).
+  </Accordion>
+</Accordions>
+
+## Next
+
+<Cards>
+  <Card title="Quickstart" description="Spawn your first agent and watch it open a PR." href="/docs/quickstart" />
+  <Card title="Configuration" description="What lives in `agent-orchestrator.yaml`." href="/docs/configuration" />
+  <Card title="Platforms" description="Windows, macOS, Linux caveats." href="/docs/platforms" />
+</Cards>

@@ -1,0 +1,33 @@
+---
+title: Changelog
+description: Where to track AO changes between releases.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+AO uses [Changesets](https://github.com/changesets/changesets) for versioning. Every package in the monorepo has its own changelog.
+
+## Canonical sources
+
+- **All packages**: [CHANGELOG files on GitHub](https://github.com/ComposioHQ/agent-orchestrator/tree/main/packages)
+- **Releases**: [GitHub Releases](https://github.com/ComposioHQ/agent-orchestrator/releases) — grouped notes per release tag
+- **PRs merged into main**: [`main` commit history](https://github.com/ComposioHQ/agent-orchestrator/commits/main)
+
+## Current release
+
+```bash
+ao --version
+ao update --check      # prints version info as JSON
+```
+
+## Upgrading
+
+```bash
+ao update
+```
+
+See [Migration](/docs/migration) for breaking-change notes.
+
+<Callout type="info">
+  A rendered changelog page is planned — tracked alongside the docs revamp. For now, GitHub is authoritative.
+</Callout>
