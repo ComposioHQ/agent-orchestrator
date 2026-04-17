@@ -1,0 +1,31 @@
+packages/web/src/app/sessions/[id]/page.tsx
+  37d1d3cf600fc8c4 14-17
+packages/core/src/session-manager.ts
+  37d1d3cf600fc8c4 248-251,253,2436
+packages/core/src/__tests__/session-manager/restore.test.ts
+  37d1d3cf600fc8c4 260-287
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  37d1d3cf600fc8c4 1136-1154
+packages/web/src/components/ProjectSidebar.tsx
+  37d1d3cf600fc8c4 204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "5f286a7b2ebf4cc98853fee3b8368cff67fe1971",
+  "prompts": {
+    "37d1d3cf600fc8c4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8519867f-0146-41dc-8125-dcfbbff9f49a",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 58,
+      "total_deletions": 4,
+      "accepted_lines": 58,
+      "overriden_lines": 0
+    }
+  }
+}
