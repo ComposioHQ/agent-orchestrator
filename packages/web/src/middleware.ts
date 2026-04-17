@@ -15,10 +15,10 @@ function isAllowedOrigin(request: NextRequest): boolean {
     const hostHeader = request.headers.get("host");
     return hostHeader === expectedHost;
   }
+  const candidate = origin ?? referer;
+  if (!candidate) return false;
   try {
-    const candidate = origin ?? referer!;
-    const url = new URL(candidate);
-    return url.host === expectedHost;
+    return new URL(candidate).host === expectedHost;
   } catch {
     return false;
   }

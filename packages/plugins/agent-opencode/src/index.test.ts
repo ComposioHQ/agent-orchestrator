@@ -276,10 +276,13 @@ describe("getLaunchCommand", () => {
   });
 
   it("handles very long systemPrompt", () => {
+    // systemPrompt is written to a config file (not embedded in the command)
+    // so the command shape stays constant regardless of prompt length.
     const longPrompt = "A".repeat(500);
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPrompt: longPrompt }));
     expect(cmd).toContain("opencode run --format json --title 'AO:sess-1'");
-    expect(cmd.length).toBeGreaterThan(500);
+    expect(cmd).toContain('exec opencode --session "$SES_ID"');
+    expect(cmd).not.toContain(longPrompt);
   });
 
   it("generates command with systemPromptFile via shell substitution", () => {

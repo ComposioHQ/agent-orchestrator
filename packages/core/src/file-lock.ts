@@ -24,7 +24,9 @@ export function withFileLockSync<T>(
     try {
       fd = openSync(lockPath, "wx");
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw new Error(`Failed to acquire file lock: ${lockPath}`, { cause: err });
+      }
       try {
         const info = statSync(lockPath);
         if (Date.now() - info.mtimeMs > staleMs) {
@@ -36,7 +38,7 @@ export function withFileLockSync<T>(
         continue;
       }
       if (Date.now() > deadline) {
-        throw new Error(`Timed out waiting for file lock: ${lockPath}`);
+        throw new Error(`Timed out waiting for file lock: ${lockPath}`, { cause: err });
       }
       const until = Date.now() + 50;
       while (Date.now() < until) {
