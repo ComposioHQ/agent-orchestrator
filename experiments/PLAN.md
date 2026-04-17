@@ -97,10 +97,14 @@ Track B ── Fix bugs ──────────────────�
        — Verified: 100% guard 304 rate, 0 graphql-batch calls in quiet-steady
        — Awaiting Adil's independent verification (PR comment posted)
   B2   Structural reductions (detectPR dedup, batch)  ⏳ Blocked on B1 verification
-  B3   Scale-up validation (10, 20 sessions)          ✅ Done — sub-linear scaling confirmed
-       5→260, 10→640, 20→680 GraphQL pts/hr
-       50-session projection: ~800-1000 pts/hr (16-20% budget)
-       B2 structural reductions NOT required for quiet-steady
+  B3   Scale-up validation (5→50 sessions)             ✅ Done — full capacity discovery complete
+       5→260, 10→640, 20→680, 30→900, 40→1140, 50→~1400 GraphQL pts/hr
+       Rate limit target MET: 50 sessions = ~28% of GraphQL budget
+       ETag guard 304 rate: 100% at every scale, 0 batch calls
+       First bottleneck: poll cycle lag (66s at 50 sessions vs 30s target)
+       Second bottleneck: API latency (p50=3.4s, p99=9.7s at 50 sessions)
+       B2 structural reductions NOT required for quiet-steady rate limits
+  B4   Poll cycle optimization (NEW)                  ⏳ Next — lifecycle processes sessions sequentially
 
 Track C ── Octokit migration (optional) ─────────────────────────────────
   C1   OctokitRunner behind flag + compare            ⏳ Blocked on B scorecard

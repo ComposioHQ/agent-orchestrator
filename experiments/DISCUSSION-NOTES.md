@@ -176,17 +176,87 @@ Scaling is slightly super-linear for GraphQL (2.46x for 2x sessions). Guard chec
 **Scorecard:** `experiments/out/scorecard-quiet-steady.single-repo.20-1776424159.json`
 **Trace:** `experiments/out/gh-trace-bench-1776423135.jsonl`
 
-### Key Finding: Sub-Linear Scaling
+### 30-Session Benchmark (2026-04-17, B1 fix applied)
 
-GraphQL cost barely increased from 10→20 sessions (640→680, +6%). The guard-pr-list check is repo-scoped (constant 30 checks regardless of session count), and graphql-batch stays at 0 during steady state. Most of the per-session cost comes from opaque `gh pr view/checks` subcommands which are individually cheap.
+| Metric | Value |
+|--------|-------|
+| GraphQL points/hr | 900 / 5,000 (18%) |
+| REST core requests/hr | 0 / 5,000 (0%) |
+| Total GH calls | 857 (57.1/min) |
+| graphql-batch count | **0** |
+| guard-pr-list 304s | 16 (100.0%) |
+| Poll cycle (mean) | **53s** (1.8x the 30s target) |
+| p50 / p95 / p99 latency | 787 / 4,317 / 5,437 ms |
 
-**Revised 50-session projection:** ~800–1,000 GraphQL pts/hr (16–20% of budget). Far better than the earlier 64% estimate. **B2 structural reductions are NOT required for quiet-steady state.** The 50-session target is safely achievable with B1 alone.
+**Scorecard:** `experiments/out/scorecard-quiet-steady.single-repo.30-1776439031.json`
+**Trace:** `experiments/out/gh-trace-bench-1776438003.jsonl` (983 rows)
+
+### 40-Session Benchmark (2026-04-17, B1 fix applied)
+
+| Metric | Value |
+|--------|-------|
+| GraphQL points/hr | 1,140 / 5,000 (23%) |
+| REST core requests/hr | 0 / 5,000 (0%) |
+| Total GH calls | 1,094 (72.9/min) |
+| graphql-batch count | **0** |
+| guard-pr-list 304s | 15 (100.0%) |
+| Poll cycle (mean) | **58s** (1.9x the 30s target) |
+| p50 / p95 / p99 latency | 1,014 / 4,910 / 5,147 ms |
+
+**Scorecard:** `experiments/out/scorecard-quiet-steady.single-repo.40-1776440122.json`
+**Trace:** `experiments/out/gh-trace-bench-1776439097.jsonl` (1,255 rows)
+
+### 50-Session Benchmark (2026-04-17, B1 fix applied)
+
+| Metric | Value |
+|--------|-------|
+| GraphQL points/hr | ~1,400 / 5,000 (28%) — estimated (rate limit reset straddled window) |
+| REST core requests/hr | 0 / 5,000 (0%) |
+| Total GH calls | 1,338 (89.2/min) |
+| graphql-batch count | **0** |
+| guard-pr-list 304s | 12 (100.0%) |
+| Poll cycle (mean) | **66s** (2.2x the 30s target) |
+| p50 / p95 / p99 latency | 3,441 / 7,610 / 9,684 ms |
+
+**Scorecard:** `experiments/out/scorecard-quiet-steady.single-repo.50-1776441230.json`
+**Trace:** `experiments/out/gh-trace-bench-1776440201.jsonl` (1,519 rows)
+
+### Complete Scaling Curve (5 → 50 sessions)
+
+| Sessions | Calls/min | GraphQL pts/hr | Poll cycle | Batch calls | Guard 304% | p50 | p99 |
+|----------|-----------|----------------|------------|-------------|------------|-----|-----|
+| 5 | 16.7 | 260 (5%) | ~30s | 0 | 100% | 746ms | 1,261ms |
+| 10 | 31.3 | 640 (13%) | ~30s | 0 | 100% | 803ms | 2,509ms |
+| 20 | 60.7 | 680 (14%) | ~30s | 0 | 100% | 761ms | 3,052ms |
+| 30 | 57.1 | 900 (18%) | 53s | 0 | 100% | 787ms | 5,437ms |
+| 40 | 72.9 | 1,140 (23%) | 58s | 0 | 100% | 1,014ms | 5,147ms |
+| 50 | 89.2 | ~1,400 (28%) | 66s | 0 | 100% | 3,441ms | 9,684ms |
+
+### Key Findings: Capacity Discovery
+
+**1. Rate limit is NOT the bottleneck.** Even at 50 sessions, GraphQL consumption is ~28% of budget. The B1 fix + ETag guards eliminated the original problem completely. ETag guard hit rate is 100% at every scale — zero batch calls during steady state.
+
+**2. Poll cycle lag is the first real bottleneck.** The lifecycle manager runs a sequential loop processing all sessions. At 30+ sessions, it can no longer complete a cycle within the 30s target:
+
+| Sessions | Poll cycle | Ratio to target |
+|----------|-----------|-----------------|
+| 5-20 | ~30s | 1.0x |
+| 30 | 53s | 1.8x |
+| 40 | 58s | 1.9x |
+| 50 | 66s | 2.2x |
+
+**3. API latency degrades at scale.** p50 latency goes from <1s at 5-20 sessions to 3.4s at 50 sessions. p99 goes from 1.3s to 9.7s. This is likely subprocess contention from running 50+ `gh` CLI processes.
+
+**4. Per-session opaque calls are the dominant cost.** At 50 sessions, 700 of 1,338 calls (52%) are per-session `gh.api.repos` and `gh.api.graphql` calls. `guard-commit-status` contributes another 700+ calls. The batch/guard-pr-list system is repo-scoped and barely contributes.
+
+**5. The 50-session target is achieved for rate limits.** The original goal (50+ sessions on a single PAT) is safely met. The remaining bottlenecks are local infrastructure (poll cycle, latency), not GitHub API limits.
 
 **Key harness implementation notes:**
 - Creates placeholder tmux sessions with a `claude` symlink → `/bin/sleep 86400` so lifecycle polls sessions instead of short-circuiting to "killed"
 - macOS `/bin/sleep` doesn't accept `infinity` — use `86400` (24h)
 - Must set `AO_CONFIG_PATH` to the todo-app config when running from the AO repo directory
 - The todo-app config auto-infers `scm: { plugin: "github" }` from the `repo` field
+- **Harness bug found:** measure mode doesn't reset `status=killed` in session metadata. Must manually `sed` before re-runs if sessions were marked killed by a prior run.
 
 ---
 
@@ -214,5 +284,7 @@ GraphQL cost barely increased from 10→20 sessions (640→680, +6%). The guard-
 1. ~~**B1 PR comment to Adil** — drafted, not yet posted.~~ ✅ Posted. Awaiting Adil's independent verification run.
 2. **Benchmark with bugbot/CI** — Dhruv enabled bugbot on todo-app. Want to verify empirically that CI/reviews don't change polling cost.
 3. **Blocker #5 (sessionId/projectId threading)** — deferred. Needed for per-session attribution in the remaining A2 matrix cells.
-4. **Scale-up validation (10, 20 sessions)** — next step. Can run locally now without waiting for Adil. Replaces extrapolation with measured data.
-5. **50-session validation** — target tier, not first measurement tier. Get real data at 5/10/20 first.
+4. ~~**Scale-up validation (10, 20 sessions)**~~ ✅ Done. Full curve 5→50 measured.
+5. ~~**50-session validation**~~ ✅ Done. Rate limit target met; poll cycle lag identified as next bottleneck.
+6. **Poll cycle optimization** — lifecycle manager processes sessions sequentially. At 30+ sessions, the cycle exceeds the 30s target. Potential fixes: parallelize per-session checks, reduce per-session work, or make poll interval adaptive.
+7. **Harness bug: session status reset** — measure mode should reset `status=killed` to `status=mergeable` before starting.
