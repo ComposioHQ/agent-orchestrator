@@ -10,8 +10,18 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("../DirectTerminal", () => ({
-  DirectTerminal: ({ sessionId }: { sessionId: string }) => (
-    <div data-testid="direct-terminal">{sessionId}</div>
+  DirectTerminal: ({
+    sessionId,
+    appearance,
+  }: {
+    sessionId: string;
+    appearance?: string;
+  }) => (
+    <div
+      data-testid="direct-terminal"
+      data-session-id={sessionId}
+      data-appearance={appearance ?? ""}
+    />
   ),
 }));
 
@@ -210,5 +220,18 @@ describe("SessionDetail desktop layout", () => {
 
     expect(screen.queryByRole("link", { name: "Orchestrator" })).not.toBeInTheDocument();
     expect(screen.getByText("orchestrator")).toBeInTheDocument();
+  });
+
+  it("lets the terminal inherit the active app theme on desktop", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-themed",
+          projectId: "my-app",
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("direct-terminal")).toHaveAttribute("data-appearance", "");
   });
 });

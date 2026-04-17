@@ -654,7 +654,6 @@ export function SessionDetail({
                         sessionId={session.id}
                         startFullscreen={startFullscreen}
                         variant={terminalVariant}
-                        appearance="dark"
                         height={terminalHeight}
                         isOpenCodeSession={isOpenCodeSession}
                         reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
@@ -715,7 +714,6 @@ export function SessionDetail({
             sessionId={session.id}
             startFullscreen={startFullscreen}
             variant={terminalVariant}
-            appearance="dark"
             height="100%"
             chromeless
             isOpenCodeSession={isOpenCodeSession}

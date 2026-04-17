@@ -8,8 +8,18 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("../DirectTerminal", () => ({
-  DirectTerminal: ({ sessionId }: { sessionId: string }) => (
-    <div data-testid="direct-terminal">{sessionId}</div>
+  DirectTerminal: ({
+    sessionId,
+    appearance,
+  }: {
+    sessionId: string;
+    appearance?: string;
+  }) => (
+    <div
+      data-testid="direct-terminal"
+      data-session-id={sessionId}
+      data-appearance={appearance ?? ""}
+    />
   ),
 }));
 
@@ -32,6 +42,11 @@ function mockMobileViewport() {
 describe("SessionDetail mobile navbar", () => {
   beforeEach(() => {
     mockMobileViewport();
+    window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    window.cancelAnimationFrame = vi.fn();
   });
 
   it("shows dashboard, PRs, and orchestrator nav on orchestrator pages", () => {
@@ -187,5 +202,19 @@ describe("SessionDetail mobile navbar", () => {
 
     expect(screen.getByRole("link", { name: /PR #89/i })).toBeInTheDocument();
     expect(screen.getByText("worker-merged")).toBeInTheDocument();
+  });
+
+  it("lets the terminal inherit the active app theme on mobile", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-mobile-theme",
+          projectId: "my-app",
+        })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    expect(screen.getByTestId("direct-terminal")).toHaveAttribute("data-appearance", "");
   });
 });
