@@ -1,0 +1,39 @@
+packages/web/src/components/AttentionZone.tsx
+  0981ab0c92739679 281-286,289,293-295,299-302
+packages/web/src/components/__tests__/AttentionZone.actionChip.test.ts
+  0981ab0c92739679 149-171
+packages/web/server/mux-websocket.ts
+  0981ab0c92739679 38-47,52
+packages/web/src/hooks/__tests__/useSessionEvents.mux.test.ts
+  0981ab0c92739679 27-28
+packages/web/src/hooks/useSessionEvents.ts
+  0981ab0c92739679 100
+packages/web/server/__tests__/mux-websocket.test.ts
+  0981ab0c92739679 25
+packages/web/src/providers/__tests__/MuxProvider.test.tsx
+  0981ab0c92739679 422
+packages/web/src/app/globals.css
+  0981ab0c92739679 1461-1466
+packages/web/src/lib/mux-protocol.ts
+  0981ab0c92739679 1-2,28-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "8da6848981cd385102d0e962b7f0d6682269dbff",
+  "prompts": {
+    "0981ab0c92739679": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1cdda099-ff18-4273-825f-5ba04679f035",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 3538,
+      "total_deletions": 18,
+      "accepted_lines": 3528,
+      "overriden_lines": 6
+    }
+  }
+}
