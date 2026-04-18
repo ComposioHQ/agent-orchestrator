@@ -190,32 +190,13 @@ export function buildPrompt(
   // Use trimmed prompt when no repo is configured (PR/CI instructions don't apply).
   systemSections.push(config.project.repo ? BASE_AGENT_PROMPT : BASE_AGENT_PROMPT_NO_REPO);
 
-  // Layer 2: Persistent project context excludes task-specific sections.
-  systemSections.push(
-    buildConfigLayer({
-      ...config,
-      issueId: undefined,
-      issueContext: undefined,
-    }),
-  );
+  // Layer 2: Worker sessions are scoped to a single issue, so issue/task
+  // context belongs in the system prompt with the rest of the session context.
+  systemSections.push(buildConfigLayer(config));
 
   // Layer 3: User rules
   if (userRules) {
     systemSections.push(`## Project Rules\n${userRules}`);
-  }
-
-  if (config.issueId) {
-    taskSections.push(
-      [
-        "## Task",
-        `Work on issue: ${config.issueId}`,
-        `Create a branch named so that it auto-links to the issue tracker (e.g. feat/${config.issueId}).`,
-      ].join("\n"),
-    );
-  }
-
-  if (config.issueContext) {
-    taskSections.push(`## Issue Details\n${config.issueContext}`);
   }
 
   // Explicit user prompt (appended last, highest priority)
@@ -228,3 +209,5 @@ export function buildPrompt(
     taskPrompt: taskSections.length > 0 ? taskSections.join("\n\n") : undefined,
   };
 }
+
+export const buildLayeredPrompt = buildPrompt;

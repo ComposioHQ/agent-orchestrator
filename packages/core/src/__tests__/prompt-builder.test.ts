@@ -56,14 +56,14 @@ describe("buildLayeredPrompt", () => {
     expect(systemPrompt).toContain(BASE_AGENT_PROMPT);
     expect(systemPrompt).toContain("## Project Context");
     expect(systemPrompt).toContain("## Project Rules");
-    expect(systemPrompt).not.toContain("## Task");
-    expect(systemPrompt).not.toContain("## Issue Details");
+    expect(systemPrompt).toContain("## Task");
+    expect(systemPrompt).toContain("## Issue Details");
     expect(systemPrompt).not.toContain("## Additional Instructions");
 
-    expect(taskPrompt).toContain("Work on issue: INT-1343");
-    expect(taskPrompt).toContain("Layered Prompt System");
     expect(taskPrompt).toContain("## Additional Instructions");
     expect(taskPrompt).toContain("Focus on the API layer only.");
+    expect(taskPrompt).not.toContain("Work on issue: INT-1343");
+    expect(taskPrompt).not.toContain("Layered Prompt System");
   });
 
   it("omits taskPrompt for bare spawns", () => {
@@ -107,7 +107,8 @@ describe("buildPrompt", () => {
       issueId: "INT-1343",
     });
     expect(systemPrompt).toContain(BASE_AGENT_PROMPT);
-    expect(taskPrompt).toContain("Work on issue: INT-1343");
+    expect(systemPrompt).toContain("Work on issue: INT-1343");
+    expect(taskPrompt).toBeUndefined();
   });
 
   it("includes project context", () => {
@@ -137,21 +138,22 @@ describe("buildPrompt", () => {
       projectId: "test-app",
       issueId: "INT-1343",
     });
-    expect(systemPrompt).not.toContain("Work on issue: INT-1343");
-    expect(taskPrompt).toContain("Work on issue: INT-1343");
-    expect(taskPrompt).toContain("feat/INT-1343");
+    expect(systemPrompt).toContain("Work on issue: INT-1343");
+    expect(systemPrompt).toContain("feat/INT-1343");
+    expect(taskPrompt).toBeUndefined();
   });
 
   it("includes issue context when provided", () => {
-    const { taskPrompt } = buildPrompt({
+    const { systemPrompt, taskPrompt } = buildPrompt({
       project,
       projectId: "test-app",
       issueId: "INT-1343",
       issueContext: "## Linear Issue INT-1343\nTitle: Layered Prompt System\nPriority: High",
     });
-    expect(taskPrompt).toContain("## Issue Details");
-    expect(taskPrompt).toContain("Layered Prompt System");
-    expect(taskPrompt).toContain("Priority: High");
+    expect(systemPrompt).toContain("## Issue Details");
+    expect(systemPrompt).toContain("Layered Prompt System");
+    expect(systemPrompt).toContain("Priority: High");
+    expect(taskPrompt).toBeUndefined();
   });
 
   it("includes inline agentRules", () => {
