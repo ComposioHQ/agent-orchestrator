@@ -1,0 +1,46 @@
+packages/cli/__tests__/commands/start.test.ts
+  b9395e960022219f 823-825,1548-1550
+packages/web/server/__tests__/direct-terminal-ws.integration.test.ts
+  b9395e960022219f 178,182,224-227,231,245,248,260,263,294,297
+packages/web/src/app/api/setup-labels/__tests__/route.test.ts
+  b9395e960022219f 2,14
+packages/web/src/lib/__tests__/serialize.test.ts
+  b9395e960022219f 6-15
+packages/cli/__tests__/commands/spawn.test.ts
+  b9395e960022219f 297,429
+eslint.config.js
+  b9395e960022219f 15-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "61f1b60dea91a988b586ec2b58715fa5629223a9",
+  "prompts": {
+    "b9395e960022219f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019da074-4a2f-74c1-bddf-70fbf3d6ee92",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 36,
+      "total_deletions": 22,
+      "accepted_lines": 5075,
+      "overriden_lines": 0
+    },
+    "c73d1b75965fd5ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d9cdd-31b5-7103-bcb9-b6e0ae4ad11d",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1028,
+      "overriden_lines": 0
+    }
+  }
+}
