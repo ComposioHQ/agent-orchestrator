@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import {
   buildPrompt,
-  buildLayeredPrompt,
   BASE_AGENT_PROMPT,
   BASE_AGENT_PROMPT_NO_REPO,
 } from "../prompt-builder.js";
@@ -41,11 +40,11 @@ function combinePrompt({
   return taskPrompt ? `${systemPrompt}\n\n${taskPrompt}` : systemPrompt;
 }
 
-describe("buildLayeredPrompt", () => {
+describe("buildPrompt split output", () => {
   it("splits persistent instructions from task-specific text", () => {
     project.agentRules = "Always run pnpm test before pushing.";
 
-    const { systemPrompt, taskPrompt } = buildLayeredPrompt({
+    const { systemPrompt, taskPrompt } = buildPrompt({
       project,
       projectId: "test-app",
       issueId: "INT-1343",
@@ -60,34 +59,18 @@ describe("buildLayeredPrompt", () => {
     expect(systemPrompt).toContain("## Issue Details");
     expect(systemPrompt).not.toContain("## Additional Instructions");
 
-    expect(taskPrompt).toContain("## Additional Instructions");
     expect(taskPrompt).toContain("Focus on the API layer only.");
     expect(taskPrompt).not.toContain("Work on issue: INT-1343");
     expect(taskPrompt).not.toContain("Layered Prompt System");
   });
 
   it("omits taskPrompt for bare spawns", () => {
-    const { taskPrompt } = buildLayeredPrompt({
+    const { taskPrompt } = buildPrompt({
       project,
       projectId: "test-app",
     });
 
     expect(taskPrompt).toBeUndefined();
-  });
-
-  it("matches the buildLayeredPrompt alias", () => {
-    project.agentRules = "Project rule.";
-
-    const config = {
-      project,
-      projectId: "test-app",
-      issueId: "INT-1343",
-      issueContext: "Issue context",
-      userPrompt: "Focus on the API layer only.",
-    };
-    const { systemPrompt, taskPrompt } = buildLayeredPrompt(config);
-
-    expect(buildPrompt(config)).toEqual({ systemPrompt, taskPrompt });
   });
 });
 
@@ -221,7 +204,6 @@ describe("buildPrompt", () => {
     const rulesIdx = prompt.indexOf("Project rule.");
     const userIdx = prompt.indexOf("Focus on the API layer only.");
     expect(rulesIdx).toBeLessThan(userIdx);
-    expect(prompt).toContain("## Additional Instructions");
   });
 
   it("builds prompt from rules alone (no issue)", () => {
