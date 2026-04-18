@@ -65,6 +65,9 @@ export async function generateMetadata({
   return {
     title: page.data.title,
     description: page.data.description,
+    alternates: {
+      canonical: `https://aoagents.dev${page.url}`,
+    },
     openGraph: {
       title: page.data.title,
       description: page.data.description,

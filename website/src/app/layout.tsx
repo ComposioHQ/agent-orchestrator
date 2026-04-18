@@ -15,13 +15,44 @@ const jetbrainsMono = JetBrains_Mono({
   weight: ["400", "500"],
 });
 
+const siteUrl = "https://aoagents.dev";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: {
     template: "%s | Agent Orchestrator",
     default: "Agent Orchestrator",
   },
   description:
-    "Open-source platform for running parallel AI coding agents, with docs and guides for real workflows.",
+    "Open-source platform for running parallel AI coding agents. Spawn Claude Code, Codex, Aider, and more in isolated worktrees — all managed from one dashboard.",
+  keywords: ["AI agents", "coding agents", "Claude Code", "agent orchestration", "parallel agents", "open source"],
+  authors: [{ name: "ComposioHQ", url: "https://github.com/ComposioHQ" }],
+  creator: "ComposioHQ",
+  openGraph: {
+    type: "website",
+    url: siteUrl,
+    siteName: "Agent Orchestrator",
+    title: "Agent Orchestrator",
+    description:
+      "Open-source platform for running parallel AI coding agents. Spawn Claude Code, Codex, Aider, and more in isolated worktrees — all managed from one dashboard.",
+    images: [{ url: "/og-image.png", width: 1024, height: 1024, alt: "Agent Orchestrator" }],
+  },
+  twitter: {
+    card: "summary",
+    site: "@aoagents",
+    creator: "@aoagents",
+    title: "Agent Orchestrator",
+    description:
+      "Open-source platform for running parallel AI coding agents. Spawn Claude Code, Codex, Aider, and more in isolated worktrees — all managed from one dashboard.",
+    images: ["/og-image.png"],
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
+  alternates: {
+    canonical: siteUrl,
+  },
 };
 
 export const viewport: Viewport = {

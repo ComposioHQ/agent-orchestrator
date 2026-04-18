@@ -29,8 +29,9 @@ export function LandingNav() {
     <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-8 py-6 max-w-[80rem] mx-auto bg-[var(--landing-bg)]/90 backdrop-blur-sm">
       <a
         href="#"
-        className="text-base font-semibold text-white no-underline font-sans font-[680] tracking-tight"
+        className="inline-flex items-center gap-2 text-base font-semibold text-white no-underline font-sans font-[680] tracking-tight"
       >
+        <img src="/ao-logo.svg" alt="" aria-hidden="true" width={28} height={28} className="h-7 w-7" />
         Agent Orchestrator
       </a>
       <ul className="hidden md:flex items-center gap-8 list-none">

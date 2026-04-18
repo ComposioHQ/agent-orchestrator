@@ -84,10 +84,7 @@ async function GitHubStars() {
 export default function Layout({ children }: { children: ReactNode }) {
   return (
     <RootProvider
-      theme={{
-        enabled: true,
-        defaultTheme: "dark",
-      }}
+      theme={{ enabled: true, defaultTheme: "dark" }}
       search={{ options: { type: "static" } }}
     >
       <DocsLayout
@@ -96,24 +93,15 @@ export default function Layout({ children }: { children: ReactNode }) {
         nav={{
           title: (
             <span className="flex items-center gap-2 font-semibold">
-              <svg
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="text-[var(--color-accent-amber)]"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 6v6l4 2" />
-              </svg>
-              <span className="text-[var(--color-text-primary)]">ao</span>
-              <span className="text-[var(--color-text-tertiary,var(--color-text-secondary))] font-normal text-xs tracking-wider uppercase">
-                docs
-              </span>
+              <img
+                src="/ao-logo.svg"
+                alt=""
+                aria-hidden="true"
+                width={22}
+                height={22}
+                className="h-[22px] w-[22px]"
+              />
+              <span className="text-[var(--color-text-primary)]">AO</span>
             </span>
           ),
         }}
