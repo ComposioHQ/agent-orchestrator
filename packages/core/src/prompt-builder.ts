@@ -6,9 +6,8 @@
  *   2. Config-derived context — project name, repo, default branch, tracker info, reaction rules
  *   3. User rules — inline agentRules and/or agentRulesFile content
  *
- * buildPrompt() remains the combined wrapper so existing callers and tests keep
- * their current behavior, while buildLayeredPrompt() exposes the split between
- * persistent instructions and task-specific text.
+ * buildPrompt() returns the split between persistent system instructions and
+ * task-specific text so callers can route them to agents separately.
  */
 
 import { readFileSync } from "node:fs";
@@ -101,8 +100,8 @@ export interface PromptBuildConfig {
 // LAYER 2: CONFIG-DERIVED CONTEXT
 // =============================================================================
 
-function buildProjectContext(config: PromptBuildConfig): string {
-  const { project, projectId } = config;
+function buildConfigLayer(config: PromptBuildConfig): string {
+  const { project, projectId, issueId, issueContext } = config;
   const lines: string[] = [];
 
   lines.push("## Project Context");
@@ -114,6 +113,19 @@ function buildProjectContext(config: PromptBuildConfig): string {
 
   if (project.tracker) {
     lines.push(`- Tracker: ${project.tracker.plugin}`);
+  }
+
+  if (issueId) {
+    lines.push(`\n## Task`);
+    lines.push(`Work on issue: ${issueId}`);
+    lines.push(
+      `Create a branch named so that it auto-links to the issue tracker (e.g. feat/${issueId}).`,
+    );
+  }
+
+  if (issueContext) {
+    lines.push(`\n## Issue Details`);
+    lines.push(issueContext);
   }
 
   // Include reaction rules so the agent knows what to expect
@@ -132,27 +144,6 @@ function buildProjectContext(config: PromptBuildConfig): string {
   }
 
   return lines.join("\n");
-}
-
-function buildTaskContext(config: PromptBuildConfig): string | null {
-  const { issueId, issueContext } = config;
-  const sections: string[] = [];
-
-  if (issueId) {
-    sections.push(
-      [
-        "## Task",
-        `Work on issue: ${issueId}`,
-        `Create a branch named so that it auto-links to the issue tracker (e.g. feat/${issueId}).`,
-      ].join("\n"),
-    );
-  }
-
-  if (issueContext) {
-    sections.push(`## Issue Details\n${issueContext}`);
-  }
-
-  return sections.length > 0 ? sections.join("\n\n") : null;
 }
 
 // =============================================================================
@@ -186,32 +177,48 @@ function readUserRules(project: ProjectConfig): string | null {
 // =============================================================================
 
 /**
- * Compose a layered prompt for an agent session, split between persistent
- * instructions and task-specific text.
+ * Compose a layered prompt for an agent session.
  */
-export function buildLayeredPrompt(
+export function buildPrompt(
   config: PromptBuildConfig,
 ): { systemPrompt: string; taskPrompt?: string } {
   const userRules = readUserRules(config.project);
   const systemSections: string[] = [];
+  const taskSections: string[] = [];
 
   // Layer 1: Base prompt is always included for every managed session.
-  systemSections.push(BASE_AGENT_PROMPT);
+  // Use trimmed prompt when no repo is configured (PR/CI instructions don't apply).
+  systemSections.push(config.project.repo ? BASE_AGENT_PROMPT : BASE_AGENT_PROMPT_NO_REPO);
 
-  // Layer 2: Config-derived context
-  systemSections.push(buildProjectContext(config));
+  // Layer 2: Persistent project context excludes task-specific sections.
+  systemSections.push(
+    buildConfigLayer({
+      ...config,
+      issueId: undefined,
+      issueContext: undefined,
+    }),
+  );
 
   // Layer 3: User rules
   if (userRules) {
     systemSections.push(`## Project Rules\n${userRules}`);
   }
 
-  const taskSections: string[] = [];
-  const taskContext = buildTaskContext(config);
-  if (taskContext) {
-    taskSections.push(taskContext);
+  if (config.issueId) {
+    taskSections.push(
+      [
+        "## Task",
+        `Work on issue: ${config.issueId}`,
+        `Create a branch named so that it auto-links to the issue tracker (e.g. feat/${config.issueId}).`,
+      ].join("\n"),
+    );
   }
 
+  if (config.issueContext) {
+    taskSections.push(`## Issue Details\n${config.issueContext}`);
+  }
+
+  // Explicit user prompt (appended last, highest priority)
   if (config.userPrompt) {
     taskSections.push(`## Additional Instructions\n${config.userPrompt}`);
   }
@@ -220,15 +227,4 @@ export function buildLayeredPrompt(
     systemPrompt: systemSections.join("\n\n"),
     taskPrompt: taskSections.length > 0 ? taskSections.join("\n\n") : undefined,
   };
-}
-
-/**
- * Compose a layered prompt for an agent session as a single string.
- *
- * Always returns the AO base guidance plus project context, then layers on
- * user rules, issue context, and explicit instructions when available.
- */
-export function buildPrompt(config: PromptBuildConfig): string {
-  const { systemPrompt, taskPrompt } = buildLayeredPrompt(config);
-  return taskPrompt ? `${systemPrompt}\n\n${taskPrompt}` : systemPrompt;
 }

@@ -55,7 +55,7 @@ import {
   listMetadata,
   reserveSessionId,
 } from "./metadata.js";
-import { buildLayeredPrompt } from "./prompt-builder.js";
+import { buildPrompt } from "./prompt-builder.js";
 import {
   getSessionsDir,
   getWorktreesDir,
@@ -1280,7 +1280,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     };
 
-    const { systemPrompt, taskPrompt } = buildLayeredPrompt({
+    const { systemPrompt, taskPrompt } = buildPrompt({
       project,
       projectId: spawnConfig.projectId,
       issueId: spawnConfig.issueId,
