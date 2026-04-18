@@ -251,6 +251,88 @@ Scaling is slightly super-linear for GraphQL (2.46x for 2x sessions). Guard chec
 
 **5. The 50-session target is achieved for rate limits.** The original goal (50+ sessions on a single PAT) is safely met. The remaining bottlenecks are local infrastructure (poll cycle, latency), not GitHub API limits.
 
+---
+
+## Real-Agent Benchmark (2026-04-18) — High-Value Warning, Not Final Attribution
+
+5 real Claude Code agents on `illegalcall/todo-app` (CI workflow active), 31min run.
+
+| Metric | Value |
+|--------|-------|
+| Sessions spawned | 5 (ta-51..ta-55, issues #108–112) |
+| PRs created | 4 (#113, #114, #115, #116); ta-54 failed |
+| Sessions reaching terminal state | 0 |
+| GraphQL: before | remaining=4938, used=62 |
+| GraphQL: after | **remaining=0, used=5006** |
+| GraphQL consumed | **4944 points in 31min ≈ 9572 pts/hr ≈ 191% of budget** |
+| Core REST consumed | 11 (negligible) |
+| Trace file | 0 rows (**critical limitation**) |
+| AO lifecycle worker | only ~4 GraphQL batches recorded in window |
+
+**Scorecard:** `experiments/out/real-benchmark-1776503624.txt`
+
+### What this run validly proves
+
+- The shared token really did consume ~4944 GraphQL points in ~31 minutes.
+- End-to-end real-agent work can therefore exhaust the GraphQL bucket quickly.
+- The current benchmark stack does **not** attribute that burn, because the AO trace file was empty.
+
+### Working hypothesis (not yet proven)
+
+AO's lifecycle worker was running but only completed ~4 polls during the window (≤10 GraphQL calls). The plausible explanation is that the remaining ~4934 points were consumed by the **agents themselves** via `gh issue view`, `gh pr view`, `gh pr checks`, `gh api graphql`, etc.
+
+**The PATH wrapper at `~/.ao/bin/gh` does NOT trace.** It only intercepts `pr/create` and `pr/merge` for metadata updates. All other agent gh invocations pass through transparently and are invisible to `execGhObserved`.
+
+### Comparison
+
+| | quiet-steady (5 placeholder sessions) | real agents (5 active sessions) |
+|---|---|---|
+| GraphQL/hr | 260 (5% budget) | ~9572 (191% budget) |
+| Source | AO polling | Mostly agents |
+| Outcome | Safely under budget | **Throttled in 31 min** |
+| Multiplier | 1× | **~37× more consumption per session** |
+
+### Implication
+
+The "rate limit problem solved" conclusion holds for **AO-side polling only**. This run is strong evidence that real-world capacity may be bounded by **per-agent gh consumption**, not AO polling, but it does **not** establish a hard "~5 concurrent active agents" ceiling because the per-call trace is missing. The 50-session number from quiet-steady is for placeholder sessions doing nothing — not a real-world ceiling.
+
+### What we cannot answer yet
+
+- Per-call breakdown of what consumed the 4944 points
+- Split between agent's own gh calls vs AO polling
+- Which gh subcommands dominate (issue view? pr checks? graphql?)
+- Whether the calls are duplicated (cacheable) or unique (irreducible)
+
+The wrapper at `~/.ao/bin/gh` would need to log every invocation to capture this.
+
+### Why this experiment is still valuable
+
+Even with the missing trace, this run is high-value because it falsifies an over-broad conclusion. We can no longer say "rate limits are solved" without qualification. The correct statement is:
+
+- **AO polling rate limits are solved after B1**
+- **end-to-end real-agent capacity is still unknown**
+- **the missing measurement is agent-side `gh` traffic**
+
+That is exactly what Track D measures next.
+
+## Track D — Next tests
+
+The next tests are observability-first, then optimization:
+
+1. **D1 — patch `~/.ao/bin/gh` to trace every invocation**
+   - zero behavior change
+   - JSONL rows with timestamp, cwd, args, exit code, duration
+2. **D2 — rerun the 5-real-agent benchmark locally**
+   - collect AO trace + agent-wrapper trace + `/rate_limit` before/after
+3. **D3 — ask Adil to rerun the same benchmark on his machine**
+   - same patch, same outputs, compare whether dominant commands match
+4. **D4 — classify the hot path**
+   - duplicated/cacheable
+   - command-specific and prompt-fixable
+   - or fundamentally irreducible and requiring token/model changes
+
+Detailed procedure: `experiments/track-d-runbook.md`
+
 **Key harness implementation notes:**
 - Creates placeholder tmux sessions with a `claude` symlink → `/bin/sleep 86400` so lifecycle polls sessions instead of short-circuiting to "killed"
 - macOS `/bin/sleep` doesn't accept `infinity` — use `86400` (24h)

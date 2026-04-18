@@ -104,11 +104,25 @@ Track B ── Fix bugs ──────────────────�
        First bottleneck: poll cycle lag (66s at 50 sessions vs 30s target)
        Second bottleneck: API latency (p50=3.4s, p99=9.7s at 50 sessions)
        B2 structural reductions NOT required for quiet-steady rate limits
-  B4   Poll cycle optimization (NEW)                  ⏳ Next — lifecycle processes sessions sequentially
+  B4   Poll cycle optimization (NEW)                  ⏸ Deprioritized — see Track D
+  B5   Migrate CLI/web callsites to execGhObserved    ⏳ Pending — closes the visibility gap
 
 Track C ── Octokit migration (optional) ─────────────────────────────────
   C1   OctokitRunner behind flag + compare            ⏳ Blocked on B scorecard
+
+Track D ── Agent-side gh consumption (NEW, 2026-04-18) ──────────────────
+  D1   Add tracing to ~/.ao/bin/gh wrapper            ⏳ Next — log every agent invocation
+  D2   Re-run real-agent benchmark locally with D1    ⏳ Blocked on D1
+  D3   Re-run same benchmark on Adil's machine        ⏳ Blocked on D1
+  D4   Categorize agent gh calls (which dominate?)    ⏳ Blocked on D2/D3
+  D5   Decide reduction strategy based on D4          ⏳ Blocked on D4
+       Options: wrapper-side cache, GraphQL coalescing,
+       agent prompt guidance, GitHub App tokens, MCP server
 ```
+
+**Why Track D exists.** A 5-real-agent benchmark (2026-04-18) consumed 4944 GraphQL points in 31 min (191%/hr of budget) and exhausted the bucket. That part is hard fact from `/rate_limit`. The per-call attribution is **not** hard fact yet because the AO trace file was empty. The working hypothesis is that AO's lifecycle worker accounted for only a small fraction of the burn and the rest came from agents directly invoking `gh`, because the PATH wrapper at `~/.ao/bin/gh` only intercepts `pr/create` and `pr/merge` for metadata — other agent gh calls are invisible to `execGhObserved`. **The "rate limit solved" conclusion (Track B) therefore only holds for AO polling, not yet for end-to-end real-agent workloads.** Track D closes that observability gap first, then reduces the hidden cost.
+
+**Why B4 is deprioritized.** Poll cycle lag (66s at 50 sessions vs 30s target) only matters after AO becomes the practical bottleneck. The first real-agent run strongly suggests active-agent GitHub usage dominates before that point, but it does **not** yet prove a hard "~5 active agents per token" ceiling because we lack per-call agent traces. Until D1-D4 measure that directly, B4 optimizes a regime that may still be unreachable in real workloads.
 
 **Why sequential:**
 - **A before B:** B fixes bugs, but without A's baseline numbers there's no "before" to prove the fix helped. Every B fix lands with a before/after trace delta.
