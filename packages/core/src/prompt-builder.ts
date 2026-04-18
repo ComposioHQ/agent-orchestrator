@@ -184,7 +184,6 @@ export function buildPrompt(
 ): { systemPrompt: string; taskPrompt?: string } {
   const userRules = readUserRules(config.project);
   const systemSections: string[] = [];
-  const taskSections: string[] = [];
 
   // Layer 1: Base prompt is always included for every managed session.
   // Use trimmed prompt when no repo is configured (PR/CI instructions don't apply).
@@ -199,15 +198,8 @@ export function buildPrompt(
     systemSections.push(`## Project Rules\n${userRules}`);
   }
 
-  // Explicit user prompt (appended last, highest priority)
-  if (config.userPrompt) {
-    taskSections.push(`## Additional Instructions\n${config.userPrompt}`);
-  }
-
   return {
     systemPrompt: systemSections.join("\n\n"),
-    taskPrompt: taskSections.length > 0 ? taskSections.join("\n\n") : undefined,
+    taskPrompt: config.userPrompt ? config.userPrompt : undefined,
   };
 }
-
-export const buildLayeredPrompt = buildPrompt;
