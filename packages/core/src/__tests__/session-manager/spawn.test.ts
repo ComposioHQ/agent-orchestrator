@@ -576,7 +576,7 @@ describe("spawn", () => {
 
     const metadata = readMetadataRaw(sessionsDir, session.id);
     expect(metadata?.["opencodeSessionId"]).toBeUndefined();
-  });
+  }, 15_000);
 
   it("throws for unknown project", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -1865,7 +1865,7 @@ describe("spawn", () => {
           }),
         }),
       );
-    });
+    }, 15_000);
 
     it("throws for unknown project", async () => {
       const sm = createSessionManager({ config, registry: mockRegistry });

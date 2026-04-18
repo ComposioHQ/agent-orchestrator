@@ -7,6 +7,8 @@ export interface ProjectInfo {
   id: string;
   name: string;
   sessionPrefix?: string;
+  degraded?: boolean;
+  degradedReason?: string;
 }
 
 function getPrimaryProject(): ProjectInfo | null {
@@ -17,7 +19,13 @@ function getPrimaryProject(): ProjectInfo | null {
         const portfolio = getPortfolio();
         const found = portfolio.find((p) => p.id === prefs.defaultProjectId);
         if (found && found.enabled !== false) {
-          return { id: found.id, name: found.name };
+          return {
+            id: found.id,
+            name: found.name,
+            ...(found.sessionPrefix ? { sessionPrefix: found.sessionPrefix } : {}),
+            ...(found.degraded !== undefined ? { degraded: found.degraded } : {}),
+            ...(found.degradedReason ? { degradedReason: found.degradedReason } : {}),
+          };
         }
       }
     } catch {
@@ -34,6 +42,9 @@ function getPrimaryProject(): ProjectInfo | null {
         id,
         name: project.name ?? id,
         ...(project.sessionPrefix ? { sessionPrefix: project.sessionPrefix } : {}),
+        ...(typeof project.resolveError === "string" && project.resolveError.length > 0
+          ? { degraded: true, degradedReason: project.resolveError }
+          : {}),
       };
     }
   } catch {
@@ -57,7 +68,13 @@ export const getAllProjects = cache((): ProjectInfo[] => {
       if (portfolio.length > 0) {
         return portfolio
           .filter((project) => project.enabled !== false)
-          .map((p) => ({ id: p.id, name: p.name }));
+          .map((p) => ({
+            id: p.id,
+            name: p.name,
+            ...(p.sessionPrefix ? { sessionPrefix: p.sessionPrefix } : {}),
+            ...(p.degraded !== undefined ? { degraded: p.degraded } : {}),
+            ...(p.degradedReason ? { degradedReason: p.degradedReason } : {}),
+          }));
       }
     } catch {
       // Portfolio not available
@@ -72,6 +89,9 @@ export const getAllProjects = cache((): ProjectInfo[] => {
         id,
         name: project.name ?? id,
         ...(project.sessionPrefix ? { sessionPrefix: project.sessionPrefix } : {}),
+        ...(typeof project.resolveError === "string" && project.resolveError.length > 0
+          ? { degraded: true, degradedReason: project.resolveError }
+          : {}),
       }));
   } catch {
     return [];

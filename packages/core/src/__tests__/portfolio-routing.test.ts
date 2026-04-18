@@ -6,6 +6,8 @@ vi.mock("../portfolio-session-service.js", () => ({
 
 import { listPortfolioSessions } from "../portfolio-session-service.js";
 import type { PortfolioProject, PortfolioSession, Session } from "../types.js";
+import { createActivitySignal } from "../activity-signal.js";
+import { createInitialCanonicalLifecycle } from "../lifecycle-state.js";
 import {
   resolvePortfolioProject,
   resolvePortfolioSession,
@@ -29,19 +31,22 @@ function makeProject(overrides: Partial<PortfolioProject> = {}): PortfolioProjec
 }
 
 function makeSession(id: string, projectId: string): Session {
+  const createdAt = new Date();
   return {
     id,
     projectId,
     status: "working",
     activity: null,
+    activitySignal: createActivitySignal("unavailable"),
+    lifecycle: createInitialCanonicalLifecycle("worker", createdAt),
     branch: null,
     issueId: null,
     pr: null,
     workspacePath: null,
     runtimeHandle: null,
     agentInfo: null,
-    createdAt: new Date(),
-    lastActivityAt: new Date(),
+    createdAt,
+    lastActivityAt: createdAt,
     metadata: {} as Record<string, string>,
   };
 }

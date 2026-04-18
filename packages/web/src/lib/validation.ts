@@ -44,7 +44,23 @@ export function validateConfiguredProject(
   if (!Object.hasOwn(projects, projectId)) {
     return `Unknown project: ${projectId}`;
   }
+
+  const project = projects[projectId];
+  if (
+    project &&
+    typeof project === "object" &&
+    "resolveError" in project &&
+    typeof (project as { resolveError?: unknown }).resolveError === "string" &&
+    (project as { resolveError: string }).resolveError.length > 0
+  ) {
+    return `Project "${projectId}" is degraded: ${(project as { resolveError: string }).resolveError}`;
+  }
+
   return null;
+}
+
+export function statusForConfiguredProjectError(error: string): 404 | 409 {
+  return error.startsWith('Project "') ? 409 : 404;
 }
 
 /**

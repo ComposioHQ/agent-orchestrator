@@ -64,6 +64,7 @@ export default async function SettingsRoute() {
                     projects={portfolio.map((project) => ({
                       id: project.id,
                       name: project.name,
+                      repo: project.repo,
                       repoPath: project.repoPath,
                       configPath: project.configPath,
                       defaultBranch: project.defaultBranch,
@@ -71,6 +72,8 @@ export default async function SettingsRoute() {
                       enabled: project.enabled,
                       pinned: project.pinned,
                       source: project.source,
+                      degraded: project.degraded,
+                      degradedReason: project.degradedReason,
                     }))}
                   />
                 </section>

@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 export const dynamic = "force-dynamic";
 
-import { isPortfolioEnabled } from "@aoagents/ao-core";
 import { redirect } from "next/navigation";
 import { Dashboard } from "@/components/Dashboard";
 import { DashboardShell } from "@/components/DashboardShell";
-import { getAllProjects } from "@/lib/project-name";
-import { loadProjectPageData } from "@/lib/project-page-data";
-import { loadPortfolioPageData } from "@/lib/portfolio-page-data";
+import { ProjectDegradedState } from "@/components/ProjectDegradedState";
 import { getDefaultCloneLocation } from "@/lib/default-location";
+import { getAllProjects } from "@/lib/project-name";
+import { loadPortfolioPageData } from "@/lib/portfolio-page-data";
+import { loadProjectPageData } from "@/lib/project-page-data";
 
 export async function generateMetadata(props: {
   params: Promise<{ projectId: string }>;
@@ -23,7 +23,6 @@ export async function generateMetadata(props: {
 export default async function ProjectPage(props: {
   params: Promise<{ projectId: string }>;
 }) {
-  const portfolioEnabled = isPortfolioEnabled();
   const params = await props.params;
   const projectFilter = params.projectId;
   const projects = getAllProjects();
@@ -33,28 +32,37 @@ export default async function ProjectPage(props: {
     redirect("/");
   }
 
-  const [pageData, { projectSummaries, sessions: allSessions }] = await Promise.all([
-    loadProjectPageData(projectFilter),
-    loadPortfolioPageData(),
-  ]);
+  const portfolioData = await loadPortfolioPageData();
+  if (project.degraded) {
+    return (
+      <DashboardShell
+        projects={portfolioData.projectSummaries}
+        sessions={portfolioData.sessions}
+        activeProjectId={projectFilter}
+        defaultLocation={getDefaultCloneLocation()}
+        portfolioEnabled
+      >
+        <ProjectDegradedState
+          projectId={project.id}
+          projectName={project.name}
+          reason={project.degradedReason}
+        />
+      </DashboardShell>
+    );
+  }
+
+  const pageData = await loadProjectPageData(projectFilter);
   const projectName = project.name;
 
   return (
-    <DashboardShell
-      projects={projectSummaries}
-      sessions={allSessions}
-      activeProjectId={projectFilter}
-      defaultLocation={getDefaultCloneLocation()}
-      portfolioEnabled={portfolioEnabled}
-    >
-      <Dashboard
-        initialSessions={pageData.sessions}
-        projectId={projectFilter}
-        projectName={projectName}
-        projects={projects}
-        initialGlobalPause={pageData.globalPause}
-        orchestrators={pageData.orchestrators}
-      />
-    </DashboardShell>
+    <Dashboard
+      initialSessions={pageData.sessions}
+      sidebarSessions={portfolioData.sessions}
+      projectId={projectFilter}
+      projectName={projectName}
+      projects={projects}
+      initialGlobalPause={pageData.globalPause}
+      orchestrators={pageData.orchestrators}
+    />
   );
 }

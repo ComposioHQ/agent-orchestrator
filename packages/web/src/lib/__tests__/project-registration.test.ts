@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockRegisterProject = vi.fn();
 const mockGetPortfolio = vi.fn(() => []);
 const mockUpdatePreferences = vi.fn();
-const mockStopPortfolioBackgroundRefresh = vi.fn();
+const mockInvalidatePortfolioServicesCache = vi.fn();
 const mockInvalidateServicesCache = vi.fn();
 
 vi.mock("@aoagents/ao-core", () => ({
@@ -13,7 +13,7 @@ vi.mock("@aoagents/ao-core", () => ({
 }));
 
 vi.mock("@/lib/portfolio-services", () => ({
-  stopPortfolioBackgroundRefresh: () => mockStopPortfolioBackgroundRefresh(),
+  invalidatePortfolioServicesCache: () => mockInvalidatePortfolioServicesCache(),
 }));
 
 vi.mock("@/lib/services", () => ({
@@ -35,16 +35,16 @@ beforeEach(() => {
 });
 
 describe("invalidatePortfolioCache", () => {
-  it("calls stopPortfolioBackgroundRefresh", () => {
+  it("calls invalidatePortfolioServicesCache", () => {
     invalidatePortfolioCache();
-    expect(mockStopPortfolioBackgroundRefresh).toHaveBeenCalled();
+    expect(mockInvalidatePortfolioServicesCache).toHaveBeenCalled();
   });
 });
 
 describe("invalidateProjectCaches", () => {
   it("calls both invalidatePortfolioCache and invalidateServicesCache", () => {
     invalidateProjectCaches();
-    expect(mockStopPortfolioBackgroundRefresh).toHaveBeenCalled();
+    expect(mockInvalidatePortfolioServicesCache).toHaveBeenCalled();
     expect(mockInvalidateServicesCache).toHaveBeenCalled();
   });
 });

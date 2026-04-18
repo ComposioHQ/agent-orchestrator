@@ -43,6 +43,7 @@ import pluginWorkspaceWorktree from "@aoagents/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@aoagents/ao-plugin-scm-github";
 import pluginTrackerGithub from "@aoagents/ao-plugin-tracker-github";
 import pluginTrackerLinear from "@aoagents/ao-plugin-tracker-linear";
+import { invalidatePortfolioServicesCache } from "./portfolio-services";
 
 export interface Services {
   config: OrchestratorConfig;
@@ -81,6 +82,12 @@ export function invalidateServicesCache(): void {
   }
   globalForServices._aoServices = undefined;
   globalForServices._aoServicesInit = undefined;
+}
+
+export async function reloadServices(): Promise<Services> {
+  invalidatePortfolioServicesCache();
+  invalidateServicesCache();
+  return getServices();
 }
 
 function loadCanonicalConfig(): OrchestratorConfig {
@@ -165,7 +172,12 @@ async function labelIssuesForVerification(
   >();
 
   for (const session of sessions) {
-    if (session.status !== "merged" || !session.issueId) continue;
+    if (
+      (session.status !== "merged" && session.lifecycle.pr.state !== "merged") ||
+      !session.issueId
+    ) {
+      continue;
+    }
     const key = `${session.projectId}:${session.issueId}`;
     if (processedIssues.has(key)) continue;
 
@@ -222,7 +234,13 @@ function getEnabledTrackerProjects(
   registry: PluginRegistry,
 ): Array<{ projectId: string; project: ProjectConfig; tracker: Tracker }> {
   return Object.entries(config.projects).flatMap(([projectId, project]) => {
-    if (project.enabled === false || !project.tracker?.plugin) return [];
+    if (
+      project.enabled === false ||
+      !project.tracker?.plugin ||
+      (typeof project.resolveError === "string" && project.resolveError.length > 0)
+    ) {
+      return [];
+    }
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
     if (!tracker) return [];
     return [{ projectId, project, tracker }];
@@ -385,6 +403,7 @@ export async function getBacklogIssues(): Promise<Array<Issue & { projectId: str
   try {
     const { config, registry } = await getServices();
     for (const [projectId, project] of Object.entries(config.projects)) {
+      if (typeof project.resolveError === "string" && project.resolveError.length > 0) continue;
       if (!project.tracker?.plugin) continue;
       const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
       if (!tracker?.listIssues) continue;
@@ -413,6 +432,7 @@ export async function getVerifyIssues(): Promise<Array<Issue & { projectId: stri
   try {
     const { config, registry } = await getServices();
     for (const [projectId, project] of Object.entries(config.projects)) {
+      if (typeof project.resolveError === "string" && project.resolveError.length > 0) continue;
       if (!project.tracker?.plugin) continue;
       const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
       if (!tracker?.listIssues) continue;

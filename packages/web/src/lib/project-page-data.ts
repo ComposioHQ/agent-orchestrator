@@ -20,7 +20,21 @@ export interface ProjectPageData {
   orchestrators: Array<{ id: string; projectId: string; projectName: string }>;
 }
 
-export async function loadProjectPageData(projectFilter: string): Promise<ProjectPageData> {
+interface LoadProjectPageDataOptions {
+  ensureOrchestrator?: boolean;
+  includeMetadata?: boolean;
+  includePullRequests?: boolean;
+}
+
+export async function loadProjectPageData(
+  projectFilter: string,
+  options: LoadProjectPageDataOptions = {},
+): Promise<ProjectPageData> {
+  const {
+    ensureOrchestrator = true,
+    includeMetadata = true,
+    includePullRequests = true,
+  } = options;
   const pageData: ProjectPageData = {
     sessions: [],
     sidebarSessions: [],
@@ -37,11 +51,13 @@ export async function loadProjectPageData(projectFilter: string): Promise<Projec
       return pageData;
     }
 
-    try {
-      await ensureProjectOrchestrator(projectFilter);
-    } catch {
-      // Best-effort self-heal: if orchestrator startup fails, continue to render
-      // the page using whatever sessions currently exist.
+    if (ensureOrchestrator) {
+      try {
+        await ensureProjectOrchestrator(projectFilter);
+      } catch {
+        // Best-effort self-heal: if orchestrator startup fails, continue to render
+        // the page using whatever sessions currently exist.
+      }
     }
 
     const allSessions = await sessionManager.list();
@@ -51,11 +67,13 @@ export async function loadProjectPageData(projectFilter: string): Promise<Projec
     pageData.orchestrators = listDashboardOrchestrators(visibleSessions, enabledProjects);
     pageData.sidebarSessions = visibleSessions.map(sessionToDashboard);
 
-    const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
-    await Promise.race([
-      enrichSessionsMetadata(visibleSessions, pageData.sidebarSessions, config, registry),
-      metaTimeout,
-    ]);
+    if (includeMetadata) {
+      const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
+      await Promise.race([
+        enrichSessionsMetadata(visibleSessions, pageData.sidebarSessions, config, registry),
+        metaTimeout,
+      ]);
+    }
 
     const workerSessions: DashboardSession[] = [];
     const workerEntries = visibleSessions
@@ -66,53 +84,55 @@ export async function loadProjectPageData(projectFilter: string): Promise<Projec
     }
     pageData.sessions = workerSessions;
 
-    const terminalStatuses = new Set(["merged", "killed", "cleanup", "done", "terminated"]);
-    const enrichPromises = workerEntries.map(({ core, dashboard }) => {
-      if (!core.pr) return Promise.resolve();
-      const cacheKey = prCacheKey(core.pr.owner, core.pr.repo, core.pr.number);
-      const cached = prCache.get(cacheKey);
+    if (includePullRequests) {
+      const terminalStatuses = new Set(["merged", "killed", "cleanup", "done", "terminated"]);
+      const enrichPromises = workerEntries.map(({ core, dashboard }) => {
+        if (!core.pr) return Promise.resolve();
+        const cacheKey = prCacheKey(core.pr.owner, core.pr.repo, core.pr.number);
+        const cached = prCache.get(cacheKey);
 
-      if (cached) {
-        if (dashboard.pr) {
-          dashboard.pr.state = cached.state;
-          dashboard.pr.title = cached.title;
-          dashboard.pr.additions = cached.additions;
-          dashboard.pr.deletions = cached.deletions;
-          dashboard.pr.ciStatus = cached.ciStatus as
-            | "none"
-            | "pending"
-            | "passing"
-            | "failing";
-          dashboard.pr.reviewDecision = cached.reviewDecision as
-            | "none"
-            | "pending"
-            | "approved"
-            | "changes_requested";
-          dashboard.pr.ciChecks = cached.ciChecks.map((c) => ({
-            name: c.name,
-            status: c.status as "pending" | "running" | "passed" | "failed" | "skipped",
-            url: c.url,
-          }));
-          dashboard.pr.mergeability = cached.mergeability;
-          dashboard.pr.unresolvedThreads = cached.unresolvedThreads;
-          dashboard.pr.unresolvedComments = cached.unresolvedComments;
+        if (cached) {
+          if (dashboard.pr) {
+            dashboard.pr.state = cached.state;
+            dashboard.pr.title = cached.title;
+            dashboard.pr.additions = cached.additions;
+            dashboard.pr.deletions = cached.deletions;
+            dashboard.pr.ciStatus = cached.ciStatus as
+              | "none"
+              | "pending"
+              | "passing"
+              | "failing";
+            dashboard.pr.reviewDecision = cached.reviewDecision as
+              | "none"
+              | "pending"
+              | "approved"
+              | "changes_requested";
+            dashboard.pr.ciChecks = cached.ciChecks.map((c) => ({
+              name: c.name,
+              status: c.status as "pending" | "running" | "passed" | "failed" | "skipped",
+              url: c.url,
+            }));
+            dashboard.pr.mergeability = cached.mergeability;
+            dashboard.pr.unresolvedThreads = cached.unresolvedThreads;
+            dashboard.pr.unresolvedComments = cached.unresolvedComments;
+          }
+          if (
+            terminalStatuses.has(core.status) ||
+            cached.state === "merged" ||
+            cached.state === "closed"
+          ) {
+            return Promise.resolve();
+          }
         }
-        if (
-          terminalStatuses.has(core.status) ||
-          cached.state === "merged" ||
-          cached.state === "closed"
-        ) {
-          return Promise.resolve();
-        }
-      }
 
-      const project = resolveProject(core, enabledProjects);
-      const scm = getSCM(registry, project);
-      if (!scm) return Promise.resolve();
-      return enrichSessionPR(dashboard, scm, core.pr);
-    });
-    const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
-    await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
+        const project = resolveProject(core, enabledProjects);
+        const scm = getSCM(registry, project);
+        if (!scm) return Promise.resolve();
+        return enrichSessionPR(dashboard, scm, core.pr);
+      });
+      const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
+      await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
+    }
   } catch {
     pageData.sessions = [];
     pageData.sidebarSessions = [];

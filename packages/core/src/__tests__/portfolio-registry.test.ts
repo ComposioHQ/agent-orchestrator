@@ -509,6 +509,41 @@ describe("portfolio-registry", () => {
     expect(portfolio[0].defaultBranch).toBeUndefined();
   });
 
+  it("surfaces degraded state from broken local project config in the portfolio projection", () => {
+    const repoPath = join(tempRoot, "repos", "degraded");
+    mkdirSync(repoPath, { recursive: true });
+    writeFileSync(
+      join(repoPath, "agent-orchestrator.yaml"),
+      [
+        "repo: acme/degraded",
+        "defaultBranch:",
+        "  - not",
+        "  - valid",
+        "runtime: tmux",
+        "agent: claude-code",
+        "workspace: worktree",
+      ].join("\n"),
+    );
+
+    saveGlobalConfig(makeGlobalConfig({
+      degraded: {
+        name: "Degraded",
+        path: repoPath,
+        repo: "acme/degraded",
+        defaultBranch: "main",
+        sessionPrefix: "deg",
+      },
+    }));
+
+    const portfolio = getPortfolio();
+    expect(portfolio[0]).toMatchObject({
+      id: "degraded",
+      degraded: true,
+    });
+    expect(portfolio[0].degradedReason).toContain("failed validation");
+    expect(portfolio[0].degradedReason).toContain("defaultBranch");
+  });
+
   it("generates sessionPrefix when not provided or empty", () => {
     saveGlobalConfig(makeGlobalConfig({
       alpha: { name: "Alpha", path: "/tmp/alpha", sessionPrefix: "" },

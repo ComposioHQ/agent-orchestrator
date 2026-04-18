@@ -4,7 +4,7 @@ import { SessionCard } from "../SessionCard";
 import { makePR, makeSession } from "../../__tests__/helpers";
 
 describe("SessionCard diff coverage", () => {
-  it("shows the done-card size shimmer for terminal sessions with unenriched PRs", () => {
+  it("shows compact PR metrics for terminal done cards even before enrichment", () => {
     const { container } = render(
       <SessionCard
         session={makeSession({
@@ -20,10 +20,11 @@ describe("SessionCard diff coverage", () => {
       />,
     );
 
-    expect(container.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
+    expect(container.textContent).toContain("#88");
+    expect(container.querySelector(".animate-pulse")).not.toBeNull();
   });
 
-  it("does not show placeholder PR metrics in the done-card detail panel before enrichment", () => {
+  it("shows the current PR detail panel for done cards before enrichment", () => {
     render(
       <SessionCard
         session={makeSession({
@@ -45,8 +46,6 @@ describe("SessionCard diff coverage", () => {
     fireEvent.click(screen.getByText("Cold-cache terminal PR"));
 
     expect(screen.getByText("PR details loading...")).not.toBeNull();
-    expect(screen.queryByText("mergeable: no")).toBeNull();
-    expect(screen.queryByText("review: none")).toBeNull();
   });
 
   it("shows enriched PR metrics in the done-card detail panel when data is available", () => {

@@ -57,12 +57,16 @@ describe("ProjectSessionPageClient", () => {
     render(<ProjectSessionPageClient projectId="my-app" sessionId="worker-1" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/sessions/worker-1");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/sessions/worker-1",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
     });
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/sessions?project=my-app&orchestratorOnly=true",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
       expect(screen.getByText("my-app-orchestrator")).toBeInTheDocument();
     }, { timeout: 4_000 });

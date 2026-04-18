@@ -36,6 +36,7 @@ interface ProjectSessionPageClientProps {
 
 interface ZoneCounts {
   merge: number;
+  action: number;
   respond: number;
   review: number;
   pending: number;
@@ -54,10 +55,18 @@ export function ProjectSessionPageClient({
   const [error, setError] = useState<string | null>(null);
   const sessionIsOrchestrator = session ? isOrchestratorSession(session) : false;
   const sessionIsOrchestratorRef = useRef(sessionIsOrchestrator);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
     sessionIsOrchestratorRef.current = sessionIsOrchestrator;
   }, [sessionIsOrchestrator]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (session) {
@@ -67,9 +76,10 @@ export function ProjectSessionPageClient({
     }
   }, [session, sessionId]);
 
-  const fetchSession = useCallback(async () => {
+  const fetchSession = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { signal });
+      if (signal?.aborted || !mountedRef.current) return;
       if (res.status === 404) {
         setError("Session not found");
         setLoading(false);
@@ -77,6 +87,7 @@ export function ProjectSessionPageClient({
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as DashboardSession;
+      if (signal?.aborted || !mountedRef.current) return;
       if (data.projectId !== projectId) {
         setError("Session not found");
         setLoading(false);
@@ -85,32 +96,39 @@ export function ProjectSessionPageClient({
       setSession(data);
       setError(null);
     } catch (err) {
-      console.error("Failed to fetch session:", err);
-      setError("Failed to load session");
+      if (signal?.aborted || !mountedRef.current) return;
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (mountedRef.current) {
+        setError("Failed to load session");
+      }
     } finally {
-      setLoading(false);
+      if (!signal?.aborted && mountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [projectId, sessionId]);
 
-  const fetchProjectContext = useCallback(async () => {
+  const fetchProjectContext = useCallback(async (signal?: AbortSignal) => {
     try {
       const isOrchestrator = sessionIsOrchestratorRef.current;
       const params = new URLSearchParams({ project: projectId });
       if (!isOrchestrator) {
         params.set("orchestratorOnly", "true");
       }
-      const res = await fetch(`/api/sessions?${params.toString()}`);
-      if (!res.ok) return;
+      const res = await fetch(`/api/sessions?${params.toString()}`, { signal });
+      if (signal?.aborted || !mountedRef.current || !res.ok) return;
       const body = (await res.json()) as {
         sessions: DashboardSession[];
         orchestratorId?: string | null;
       };
+      if (signal?.aborted || !mountedRef.current) return;
       setProjectOrchestratorId(body.orchestratorId ?? null);
       if (!isOrchestrator) return;
 
       const sessions = body.sessions ?? [];
       const counts: ZoneCounts = {
         merge: 0,
+        action: 0,
         respond: 0,
         review: 0,
         pending: 0,
@@ -122,26 +140,40 @@ export function ProjectSessionPageClient({
           counts[getAttentionLevel(s) as AttentionLevel]++;
         }
       }
-      setZoneCounts(counts);
-    } catch {
+      if (mountedRef.current) {
+        setZoneCounts(counts);
+      }
+    } catch (err) {
+      if (signal?.aborted || !mountedRef.current) return;
+      if (err instanceof DOMException && err.name === "AbortError") return;
       // non-critical
     }
   }, [projectId]);
 
   useEffect(() => {
-    void fetchSession();
+    const controller = new AbortController();
+    void fetchSession(controller.signal);
     const t = setTimeout(() => {
-      void fetchProjectContext();
+      void fetchProjectContext(controller.signal);
     }, 2_000);
-    return () => clearTimeout(t);
+    return () => {
+      controller.abort();
+      clearTimeout(t);
+    };
   }, [fetchProjectContext, fetchSession]);
 
   useEffect(() => {
+    let controller: AbortController | null = null;
     const interval = setInterval(() => {
-      void fetchSession();
-      void fetchProjectContext();
+      controller?.abort();
+      controller = new AbortController();
+      void fetchSession(controller.signal);
+      void fetchProjectContext(controller.signal);
     }, 5_000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      controller?.abort();
+    };
   }, [fetchProjectContext, fetchSession]);
 
   if (loading) {

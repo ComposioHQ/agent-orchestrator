@@ -6,15 +6,15 @@ import { describe, it, expect } from "vitest";
 import { validateConfig } from "../config.js";
 
 describe("Config Validation - Project Uniqueness", () => {
-  it("rejects duplicate project IDs (same basename)", () => {
+  it("allows projects with the same path basename when config keys are distinct", () => {
     const config = {
       projects: {
-        proj1: {
+        alpha: {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
         },
-        proj2: {
+        backend: {
           path: "/other/integrator", // Same basename!
           repo: "org/integrator",
           defaultBranch: "main",
@@ -22,45 +22,18 @@ describe("Config Validation - Project Uniqueness", () => {
       },
     };
 
-    expect(() => validateConfig(config)).toThrow(/Duplicate project ID/);
-    expect(() => validateConfig(config)).toThrow(/integrator/);
+    expect(() => validateConfig(config)).not.toThrow();
   });
 
-  it("error message shows conflicting paths", () => {
+  it("still validates distinct config keys normally", () => {
     const config = {
       projects: {
-        proj1: {
+        alpha: {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
         },
-        proj2: {
-          path: "/other/integrator",
-          repo: "org/integrator",
-          defaultBranch: "main",
-        },
-      },
-    };
-
-    try {
-      validateConfig(config);
-      expect.fail("Should have thrown");
-    } catch (err) {
-      const message = (err as Error).message;
-      expect(message).toContain("/repos/integrator");
-      expect(message).toContain("/other/integrator");
-    }
-  });
-
-  it("accepts unique basenames", () => {
-    const config = {
-      projects: {
-        proj1: {
-          path: "/repos/integrator",
-          repo: "org/integrator",
-          defaultBranch: "main",
-        },
-        proj2: {
+        backend: {
           path: "/repos/backend",
           repo: "org/backend",
           defaultBranch: "main",
@@ -102,19 +75,19 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
-          // Auto-generates: "int"
+          // Auto-generates: "pro"
         },
         proj2: {
-          path: "/repos/international",
-          repo: "org/international",
+          path: "/repos/proj2-service",
+          repo: "org/proj2-service",
           defaultBranch: "main",
-          // Auto-generates: "int" (collision!)
+          // Auto-generates: "pro" (collision!)
         },
       },
     };
 
     expect(() => validateConfig(config)).toThrow(/Duplicate session prefix/);
-    expect(() => validateConfig(config)).toThrow(/"int"/);
+    expect(() => validateConfig(config)).toThrow(/"pro"/);
   });
 
   it("error shows both conflicting projects", () => {
@@ -126,8 +99,8 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
           defaultBranch: "main",
         },
         proj2: {
-          path: "/repos/international",
-          repo: "org/international",
+          path: "/repos/proj2-service",
+          repo: "org/proj2-service",
           defaultBranch: "main",
         },
       },
@@ -138,8 +111,8 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
       expect.fail("Should have thrown");
     } catch (err) {
       const message = (err as Error).message;
-      expect(message).toContain("integrator");
-      expect(message).toContain("international");
+      expect(message).toContain("proj1");
+      expect(message).toContain("proj2");
     }
   });
 
@@ -204,7 +177,7 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
           path: "/repos/backend",
           repo: "org/backend",
           defaultBranch: "main",
-          // Auto-generates: "bac"
+          // Auto-generates from config key: "pro"
         },
       },
     };
@@ -219,13 +192,13 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
-          // Auto-generates: "int"
+          // Auto-generates from config key: "pro"
         },
         proj2: {
           path: "/repos/backend",
           repo: "org/backend",
           defaultBranch: "main",
-          sessionPrefix: "int", // Explicit collision with auto-generated
+          sessionPrefix: "pro", // Explicit collision with auto-generated
         },
       },
     };
@@ -442,7 +415,7 @@ describe("Config Schema Validation", () => {
 
     const validated = validateConfig(config);
     expect(validated.projects.proj1.sessionPrefix).toBeDefined();
-    expect(validated.projects.proj1.sessionPrefix).toBe("test"); // "test" is 4 chars, used as-is
+    expect(validated.projects.proj1.sessionPrefix).toBe("pro");
   });
 
   it("accepts orchestratorModel in agentConfig", () => {
@@ -544,7 +517,7 @@ describe("Config Defaults", () => {
     };
 
     const validated = validateConfig(config);
-    expect(validated.projects.proj1.sessionPrefix).toBe("int");
+    expect(validated.projects.proj1.sessionPrefix).toBe("pro");
   });
 
   it("applies default project name from config key", () => {

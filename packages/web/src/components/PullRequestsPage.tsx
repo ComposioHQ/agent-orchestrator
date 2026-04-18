@@ -36,12 +36,17 @@ export function PullRequestsPage({
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
   const initialAttentionLevels = useMemo(() => {
     const levels: Record<string, ReturnType<typeof getAttentionLevel>> = {};
-  for (const s of initialSessions) {
-      levels[s.id] = getAttentionLevel(s);
+    for (const s of initialSessions) {
+      levels[s.id] = getAttentionLevel(s, "simple");
     }
     return levels;
   }, [initialSessions]);
-  const { sessions, sseAttentionLevels } = useSessionEvents(initialSessions, null, projectId, initialAttentionLevels);
+  const { sessions, sseAttentionLevels } = useSessionEvents({
+    initialSessions,
+    project: projectId,
+    initialAttentionLevels,
+    attentionZones: "simple",
+  });
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const allProjectsView = projects.length > 1 && projectId === undefined;
   const currentProjectOrchestrator = useMemo(
@@ -69,7 +74,6 @@ export function PullRequestsPage({
     <div className="dashboard-shell flex h-screen">
       <div className="dashboard-main flex-1 overflow-y-auto px-4 py-4 md:px-7 md:py-6">
         <DynamicFavicon
-          sessions={sessions}
           sseAttentionLevels={sseAttentionLevels}
           projectName={projectName ? `${projectName} PRs` : "Pull Requests"}
         />

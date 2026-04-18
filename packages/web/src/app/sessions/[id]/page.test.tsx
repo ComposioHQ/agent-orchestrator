@@ -52,6 +52,19 @@ describe("LegacySessionPage redirects", () => {
     expect(redirect).toHaveBeenCalledWith("/projects/my-app/sessions/worker-5");
   });
 
+  it("prefers the longest matching session prefix for overlapping projects", async () => {
+    vi.mocked(getPortfolioServices).mockReturnValue({
+      portfolio: [
+        { id: "app", sessionPrefix: "app" },
+        { id: "app-admin", sessionPrefix: "app-admin" },
+      ],
+    } as ReturnType<typeof getPortfolioServices>);
+
+    await LegacySessionPage({ params: Promise.resolve({ id: "app-admin-7" }) }).catch(() => {});
+
+    expect(redirect).toHaveBeenCalledWith("/projects/app-admin/sessions/app-admin-7");
+  });
+
   it("redirects to / when nothing matches", async () => {
     await LegacySessionPage({ params: Promise.resolve({ id: "unknown-99" }) }).catch(() => {});
 

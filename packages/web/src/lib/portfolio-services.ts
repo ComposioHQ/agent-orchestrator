@@ -47,6 +47,11 @@ export function stopPortfolioBackgroundRefresh(): void {
   }
 }
 
+export function invalidatePortfolioServicesCache(): void {
+  delete globalForPortfolio._aoPortfolioCache;
+  stopPortfolioBackgroundRefresh();
+}
+
 function isCacheFresh(): boolean {
   const cached = globalForPortfolio._aoPortfolioCache;
   if (!cached) return false;
@@ -69,6 +74,8 @@ function fallbackPortfolioFromConfig(): PortfolioProject[] {
       enabled: true,
       pinned: false,
       lastSeenAt: new Date().toISOString(),
+      degraded: typeof project.resolveError === "string" && project.resolveError.length > 0,
+      degradedReason: project.resolveError,
     }));
   } catch {
     return [];
@@ -106,6 +113,10 @@ async function refreshSessionsCache(): Promise<void> {
   }
 }
 
+function triggerSessionsRefresh(): void {
+  void refreshSessionsCache();
+}
+
 // Start background refresh timer (idempotent)
 function ensureBackgroundRefresh(): void {
   if (globalForPortfolio._aoPortfolioRefreshTimer) return;
@@ -134,11 +145,10 @@ export async function getCachedPortfolioSessions(): Promise<PortfolioSession[]> 
   if (cached && cached.sessionsLoaded && isCacheFresh()) {
     return cached.sessions;
   }
-  // Cache miss or stale — refresh synchronously
   if (!cached || !isCacheFresh()) {
     refreshCache();
   }
-  await refreshSessionsCache();
+  triggerSessionsRefresh();
   return globalForPortfolio._aoPortfolioCache?.sessions ?? [];
 }
 

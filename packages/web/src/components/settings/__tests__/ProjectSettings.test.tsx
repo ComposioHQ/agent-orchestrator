@@ -2,6 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ProjectSettings } from "../ProjectSettings";
 
+const mockRefresh = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
+
+vi.mock("@/lib/client-project-reload", () => ({
+  refreshProjectsView: (...args: unknown[]) => mockRefresh(...args),
+}));
+
 // Mock AddProjectModal to avoid pulling in the full modal tree
 vi.mock("../../AddProjectModal", () => ({
   AddProjectModal: ({ open, onClose }: { open: boolean; onClose: () => void }) =>
@@ -18,6 +27,7 @@ function makeProject(overrides: Record<string, unknown> = {}) {
     sessionPrefix: "mp",
     enabled: true,
     pinned: false,
+    repo: "acme/my-project",
     source: "local",
     ...overrides,
   };
@@ -26,6 +36,7 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 describe("ProjectSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRefresh.mockResolvedValue(undefined);
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({}),
@@ -50,6 +61,7 @@ describe("ProjectSettings", () => {
     render(<ProjectSettings projects={[makeProject()]} />);
 
     expect(screen.getByText("My Project")).toBeInTheDocument();
+    expect(screen.getByText("acme/my-project")).toBeInTheDocument();
     expect(screen.getByText("/home/user/repos/my-project")).toBeInTheDocument();
     expect(screen.getByText("Branch: main")).toBeInTheDocument();
     expect(screen.getByText("Prefix: mp")).toBeInTheDocument();
@@ -66,6 +78,13 @@ describe("ProjectSettings", () => {
     render(<ProjectSettings projects={[makeProject({ enabled: false })]} />);
 
     expect(screen.getByText("DISABLED")).toBeInTheDocument();
+  });
+
+  it("shows degraded state when present", () => {
+    render(<ProjectSettings projects={[makeProject({ degraded: true, degradedReason: "Malformed local config" })]} />);
+
+    expect(screen.getByText("DEGRADED")).toBeInTheDocument();
+    expect(screen.getByText("Malformed local config")).toBeInTheDocument();
   });
 
   it("toggles pin state when Pin button is clicked", async () => {
@@ -145,5 +164,29 @@ describe("ProjectSettings", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "+ Add Project" }));
     expect(screen.getByTestId("add-project-modal")).toBeInTheDocument();
+  });
+
+  it("edits project behavior via PATCH", async () => {
+    render(<ProjectSettings projects={[makeProject()]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Behavior" }));
+    fireEvent.change(screen.getByLabelText("Repo"), { target: { value: "acme/renamed-project" } });
+    fireEvent.change(screen.getByLabelText("Default Branch"), { target: { value: "develop" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/projects/proj-1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ repo: "acme/renamed-project", defaultBranch: "develop" }),
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("acme/renamed-project")).toBeInTheDocument();
+      expect(screen.getByText("Branch: develop")).toBeInTheDocument();
+    });
   });
 });

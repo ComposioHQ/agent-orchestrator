@@ -15,6 +15,7 @@ import { CloneProjectSchema } from "@/lib/api-schemas";
 import { extractFlatLocalConfig } from "@/lib/local-project-config";
 import { assertPathWithinHome, isWithinDirectory } from "@/lib/path-security";
 import { registerAndResolveProject } from "@/lib/project-registration";
+import { reloadServices } from "@/lib/services";
 
 const SAFE_REPO_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -114,6 +115,8 @@ export async function POST(request: Request) {
     const project = registerAndResolveProject(targetDir, {
       configProjectKey: projectKey,
     });
+
+    await reloadServices();
 
     return NextResponse.json({
       project: {

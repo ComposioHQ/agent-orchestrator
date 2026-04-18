@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { generateOrchestratorPrompt, generateSessionPrefix } from "@aoagents/ao-core";
 import { getServices } from "@/lib/services";
-import { validateIdentifier, validateConfiguredProject } from "@/lib/validation";
+import { statusForConfiguredProjectError, validateConfiguredProject, validateIdentifier } from "@/lib/validation";
 import { mapSessionsToOrchestrators } from "@/lib/orchestrator-utils";
 
 /**
@@ -24,7 +24,10 @@ export async function GET(request: NextRequest) {
     const { config, sessionManager } = await getServices();
     const configProjectErr = validateConfiguredProject(config.projects, projectId);
     if (configProjectErr) {
-      return NextResponse.json({ error: configProjectErr }, { status: 404 });
+      return NextResponse.json(
+        { error: configProjectErr },
+        { status: statusForConfiguredProjectError(configProjectErr) },
+      );
     }
     const project = config.projects[projectId];
     const sessionPrefix = project.sessionPrefix ?? projectId;
@@ -60,7 +63,10 @@ export async function POST(request: NextRequest) {
     const projectId = body.projectId as string;
     const configProjectErr = validateConfiguredProject(config.projects, projectId);
     if (configProjectErr) {
-      return NextResponse.json({ error: configProjectErr }, { status: 404 });
+      return NextResponse.json(
+        { error: configProjectErr },
+        { status: statusForConfiguredProjectError(configProjectErr) },
+      );
     }
     const project = config.projects[projectId];
 

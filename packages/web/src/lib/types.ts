@@ -11,10 +11,18 @@
 export type {
   SessionStatus,
   ActivityState,
+  ActivitySignalState,
+  ActivitySignalSource,
   CIStatus,
   ReviewDecision,
   MergeReadiness,
   PRState,
+  CanonicalSessionState,
+  CanonicalSessionReason,
+  CanonicalPRState,
+  CanonicalPRReason,
+  CanonicalRuntimeState,
+  CanonicalRuntimeReason,
   DashboardAttentionZoneMode,
 } from "@aoagents/ao-core/types";
 
@@ -30,9 +38,18 @@ import {
   type CIStatus,
   type SessionStatus,
   type ActivityState,
+  type ActivitySignalState,
+  type ActivitySignalSource,
   type ReviewDecision,
+  type CanonicalSessionState,
+  type CanonicalSessionReason,
+  type CanonicalPRState,
+  type CanonicalPRReason,
+  type CanonicalRuntimeState,
+  type CanonicalRuntimeReason,
   type DashboardAttentionZoneMode,
 } from "@aoagents/ao-core/types";
+import type { AgentReportedState } from "@aoagents/ao-core";
 
 // Re-export for use in client components
 export { CI_STATUS, TERMINAL_STATUSES, TERMINAL_ACTIVITIES, NON_RESTORABLE_STATUSES };
@@ -74,6 +91,8 @@ export interface DashboardSession {
   projectId: string;
   status: SessionStatus;
   activity: ActivityState | null;
+  activitySignal?: DashboardActivitySignal;
+  lifecycle?: DashboardLifecycle;
   branch: string | null;
   issueId: string | null; // Deprecated: use issueUrl instead
   issueUrl: string | null; // Full issue URL
@@ -87,6 +106,74 @@ export interface DashboardSession {
   lastActivityAt: string;
   pr: DashboardPR | null;
   metadata: Record<string, string>;
+  agentReportAudit?: DashboardAgentReportAuditEntry[];
+  attentionLevel?: AttentionLevel;
+}
+
+export interface DashboardAgentReportAuditSnapshot {
+  legacyStatus: SessionStatus;
+  sessionState: CanonicalSessionState;
+  sessionReason: CanonicalSessionReason;
+  lastTransitionAt: string | null;
+}
+
+export interface DashboardAgentReportAuditEntry {
+  timestamp: string;
+  actor: string;
+  source: "acknowledge" | "report";
+  reportState: AgentReportedState;
+  note?: string;
+  accepted: boolean;
+  rejectionReason?: string;
+  before: DashboardAgentReportAuditSnapshot;
+  after: DashboardAgentReportAuditSnapshot;
+}
+
+export interface DashboardActivitySignal {
+  state: ActivitySignalState;
+  activity: ActivityState | null;
+  timestamp: string | null;
+  source: ActivitySignalSource;
+  detail?: string;
+}
+
+export interface DashboardLifecycleFacet<
+  TState extends string = string,
+  TReason extends string = string,
+> {
+  state: TState;
+  reason: TReason;
+  label: string;
+  reasonLabel: string;
+}
+
+export interface DashboardLifecycle {
+  sessionState: CanonicalSessionState;
+  sessionReason: CanonicalSessionReason;
+  prState: CanonicalPRState;
+  prReason: CanonicalPRReason;
+  runtimeState: CanonicalRuntimeState;
+  runtimeReason: CanonicalRuntimeReason;
+  session: DashboardLifecycleFacet<CanonicalSessionState, CanonicalSessionReason> & {
+    startedAt?: string | null;
+    completedAt?: string | null;
+    terminatedAt?: string | null;
+    lastTransitionAt?: string | null;
+  };
+  pr: DashboardLifecycleFacet<CanonicalPRState, CanonicalPRReason> & {
+    number?: number | null;
+    url?: string | null;
+    lastObservedAt?: string | null;
+  };
+  runtime: DashboardLifecycleFacet<CanonicalRuntimeState, CanonicalRuntimeReason> & {
+    lastObservedAt?: string | null;
+  };
+  legacyStatus: SessionStatus;
+  evidence: string | null;
+  detectingAttempts: number;
+  detectingEscalatedAt: string | null;
+  summary: string;
+  guidance: string | null;
 }
 
 /**
@@ -205,6 +292,162 @@ export function isPRMergeReady(pr: DashboardPR): boolean {
   );
 }
 
+function humanizeLifecycleToken(token: string): string {
+  return token.replace(/_/g, " ");
+}
+
+export function getSessionTruthLabel(session: DashboardSession): string {
+  return session.lifecycle?.session?.label ?? humanizeLifecycleToken(session.status);
+}
+
+export function getSessionTruthReasonLabel(session: DashboardSession): string | null {
+  return session.lifecycle?.session?.reasonLabel ?? null;
+}
+
+export function getPRTruthLabel(session: DashboardSession): string {
+  if (session.lifecycle?.pr?.label) return session.lifecycle.pr.label;
+  return session.pr?.state ? humanizeLifecycleToken(session.pr.state) : "not created";
+}
+
+export function getPRTruthReasonLabel(session: DashboardSession): string | null {
+  return session.lifecycle?.pr?.reasonLabel ?? null;
+}
+
+export function getRuntimeTruthLabel(session: DashboardSession): string {
+  return session.lifecycle?.runtime?.label ?? "unknown";
+}
+
+export function getRuntimeTruthReasonLabel(session: DashboardSession): string | null {
+  return session.lifecycle?.runtime?.reasonLabel ?? null;
+}
+
+export function getLifecycleGuidance(session: DashboardSession): string | null {
+  return session.lifecycle?.guidance ?? null;
+}
+
+export function getLifecycleEvidence(session: DashboardSession): string | null {
+  return session.lifecycle?.evidence ?? session.metadata["lifecycleEvidence"] ?? null;
+}
+
+function resolveActivitySignal(session: DashboardSession): DashboardActivitySignal {
+  if (session.activitySignal) {
+    return session.activitySignal;
+  }
+
+  if (session.activity === null) {
+    return {
+      state: "unavailable",
+      activity: null,
+      timestamp: null,
+      source: "none",
+    };
+  }
+
+  if (session.activity === "idle" || session.activity === "blocked") {
+    return {
+      state: "stale",
+      activity: session.activity,
+      timestamp: null,
+      source: "none",
+      detail: "missing_timestamp",
+    };
+  }
+
+  return {
+    state: "valid",
+    activity: session.activity,
+    timestamp: null,
+    source: "none",
+  };
+}
+
+export function getActivitySignalLabel(session: DashboardSession): string {
+  const signal = resolveActivitySignal(session);
+  switch (signal.state) {
+    case "valid":
+      return signal.activity ? humanizeLifecycleToken(signal.activity) : "valid";
+    case "stale":
+      return signal.activity ? `${humanizeLifecycleToken(signal.activity)} (stale)` : "stale";
+    case "null":
+      return "no activity signal";
+    case "unavailable":
+      return "activity unavailable";
+    case "probe_failure":
+      return "activity probe failed";
+  }
+}
+
+export function getActivitySignalReasonLabel(session: DashboardSession): string | null {
+  const signal = resolveActivitySignal(session);
+  const parts = [
+    signal.source !== "none" ? `source ${signal.source}` : null,
+    signal.timestamp ? `observed ${signal.timestamp}` : null,
+    signal.detail ? humanizeLifecycleToken(signal.detail) : null,
+  ].filter((value): value is string => value !== null);
+  return parts.length > 0 ? parts.join(" • ") : null;
+}
+
+export function isDashboardSessionDone(session: DashboardSession): boolean {
+  if (session.lifecycle) {
+    return (
+      session.lifecycle.sessionState === "done" ||
+      session.lifecycle.sessionState === "terminated" ||
+      session.lifecycle.prState === "merged"
+    );
+  }
+  if (
+    session.status === "merged" ||
+    session.status === "killed" ||
+    session.status === "cleanup" ||
+    session.status === "done" ||
+    session.status === "terminated"
+  ) {
+    return true;
+  }
+  return session.pr?.state === "merged";
+}
+
+export function isDashboardSessionTerminal(session: DashboardSession): boolean {
+  if (session.lifecycle) {
+    return (
+      isDashboardSessionDone(session) ||
+      session.lifecycle.runtimeState === "missing" ||
+      session.lifecycle.runtimeState === "exited"
+    );
+  }
+  return (
+    TERMINAL_STATUSES.has(session.status) ||
+    (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity))
+  );
+}
+
+export function isDashboardRuntimeEnded(session: DashboardSession): boolean {
+  if (session.lifecycle) {
+    return (
+      session.lifecycle.runtimeState === "missing" || session.lifecycle.runtimeState === "exited"
+    );
+  }
+  return (
+    TERMINAL_STATUSES.has(session.status) ||
+    (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity))
+  );
+}
+
+export function isDashboardSessionRestorable(session: DashboardSession): boolean {
+  if (session.lifecycle) {
+    const terminalByCoreTruth =
+      session.lifecycle.sessionState === "done" ||
+      session.lifecycle.sessionState === "terminated" ||
+      session.lifecycle.runtimeState === "missing" ||
+      session.lifecycle.runtimeState === "exited";
+    return (
+      terminalByCoreTruth && session.lifecycle.prState !== "merged" && session.status !== "merged"
+    );
+  }
+  if (!isDashboardSessionTerminal(session)) return false;
+  return session.pr?.state !== "merged" && session.status !== "merged";
+}
+
 /**
  * Determines which attention zone a session belongs to.
  *
@@ -231,25 +474,19 @@ export function getAttentionLevel(
 
 function getDetailedAttentionLevel(session: DashboardSession): AttentionLevel {
   // ── Done: terminal states ─────────────────────────────────────────
-  if (
-    session.status === "merged" ||
-    session.status === "killed" ||
-    session.status === "cleanup" ||
-    session.status === "done" ||
-    session.status === "terminated"
-  ) {
+  if (isDashboardSessionDone(session)) {
     return "done";
-  }
-  if (session.pr) {
-    if (session.pr.state === "merged" || session.pr.state === "closed") {
-      return "done";
-    }
   }
 
   // ── Merge: PR is ready — one click to clear ───────────────────────
   // Check this early: if the PR is mergeable, that's the most valuable
   // action for the human regardless of agent activity.
-  if (session.status === "mergeable" || session.status === "approved") {
+  if (
+    session.lifecycle?.prReason === "merge_ready" ||
+    session.lifecycle?.prReason === "approved" ||
+    session.status === "mergeable" ||
+    session.status === "approved"
+  ) {
     return "merge";
   }
   if (session.pr && !isPRUnenriched(session.pr) && session.pr.mergeability.mergeable) {
@@ -260,6 +497,9 @@ function getDetailedAttentionLevel(session: DashboardSession): AttentionLevel {
   // Check status-based error conditions first — these are authoritative
   // and should not be masked by a stale activity value.
   if (
+    session.lifecycle?.sessionState === "detecting" ||
+    session.lifecycle?.sessionState === "needs_input" ||
+    session.lifecycle?.sessionState === "stuck" ||
     session.status === SESSION_STATUS.ERRORED ||
     session.status === SESSION_STATUS.NEEDS_INPUT ||
     session.status === SESSION_STATUS.STUCK
@@ -278,7 +518,12 @@ function getDetailedAttentionLevel(session: DashboardSession): AttentionLevel {
   }
 
   // ── Review: problems that need investigation ──────────────────────
-  if (session.status === "ci_failed" || session.status === "changes_requested") {
+  if (
+    session.lifecycle?.prReason === "ci_failing" ||
+    session.lifecycle?.prReason === "changes_requested" ||
+    session.status === "ci_failed" ||
+    session.status === "changes_requested"
+  ) {
     return "review";
   }
   if (session.pr && !isPRRateLimited(session.pr) && !isPRUnenriched(session.pr)) {
@@ -289,7 +534,11 @@ function getDetailedAttentionLevel(session: DashboardSession): AttentionLevel {
   }
 
   // ── Pending: waiting on external (reviewer, CI) ───────────────────
-  if (session.status === "review_pending") {
+  if (
+    session.lifecycle?.prReason === "review_pending" ||
+    session.lifecycle?.prReason === "closed_unmerged" ||
+    session.status === "review_pending"
+  ) {
     return "pending";
   }
   if (session.pr && !isPRRateLimited(session.pr) && !isPRUnenriched(session.pr)) {
@@ -346,6 +595,7 @@ export interface PortfolioProjectSummary {
 
 /** Triage ranking for portfolio attention center — lower = more urgent */
 const TRIAGE_RANK: Record<AttentionLevel, number> = {
+  action: 0,
   respond: 0,
   review: 1,
   merge: 2,

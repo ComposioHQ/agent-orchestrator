@@ -1,5 +1,5 @@
 import { type NextRequest } from "next/server";
-import { validateIdentifier } from "@/lib/validation";
+import { statusForConfiguredProjectError, validateConfiguredProject, validateIdentifier } from "@/lib/validation";
 import { getServices } from "@/lib/services";
 import { SessionNotFoundError } from "@aoagents/ao-core";
 import {
@@ -21,6 +21,25 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   try {
     const { config, sessionManager } = await getServices();
     const projectId = resolveProjectIdForSessionId(config, id);
+    if (projectId) {
+      const projectErr = validateConfiguredProject(config.projects, projectId);
+      if (projectErr) {
+        const status = statusForConfiguredProjectError(projectErr);
+        recordApiObservation({
+          config,
+          method: "POST",
+          path: "/api/sessions/[id]/remap",
+          correlationId,
+          startedAt,
+          outcome: "failure",
+          statusCode: status,
+          projectId,
+          sessionId: id,
+          reason: projectErr,
+        });
+        return jsonWithCorrelation({ error: projectErr }, { status }, correlationId);
+      }
+    }
     const opencodeSessionId = await sessionManager.remap(id, true);
     recordApiObservation({
       config,

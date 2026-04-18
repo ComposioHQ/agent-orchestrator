@@ -60,15 +60,15 @@ describe("getDashboardPageData fast path", () => {
     hoisted.enrichSessionsMetadataFastMock.mockResolvedValue(undefined);
   });
 
-  it("runs fast enrichment, uses cache-only PR hydration, and infers merged/closed state for terminal cache misses even without SCM", async () => {
+  it("runs fast enrichment, uses cache-only PR hydration, and preserves canonical PR state on cache misses even without SCM", async () => {
     const noPrCore = { id: "session-no-pr", status: "working", pr: null };
-    const closedCore = { id: "session-closed", status: "killed", pr: { number: 2 } };
-    const mergedCore = { id: "session-merged", status: "merged", pr: { number: 3 } };
+    const closedCore = { id: "session-closed", status: "idle", pr: { number: 2 } };
+    const mergedCore = { id: "session-merged", status: "idle", pr: { number: 3 } };
     const allSessions = [noPrCore, closedCore, mergedCore];
 
     const dashboardNoPr = { id: "session-no-pr", pr: null };
-    const dashboardClosed = { id: "session-closed", pr: { state: "open", enriched: false } };
-    const dashboardMerged = { id: "session-merged", pr: { state: "open", enriched: false } };
+    const dashboardClosed = { id: "session-closed", pr: { state: "closed", enriched: false } };
+    const dashboardMerged = { id: "session-merged", pr: { state: "merged", enriched: false } };
 
     hoisted.getServicesMock.mockResolvedValue({
       config: { projects: { docs: { id: "docs" } } },

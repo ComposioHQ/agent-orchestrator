@@ -15,7 +15,14 @@ interface PortfolioPageProps {
 }
 
 /** Attention levels that require human action, ordered by urgency */
-const ACTIVE_LEVELS: AttentionLevel[] = ["merge", "respond", "review", "pending", "working"];
+const ACTIVE_LEVELS: AttentionLevel[] = [
+  "merge",
+  "action",
+  "respond",
+  "review",
+  "pending",
+  "working",
+];
 
 export function PortfolioPage({
   projectSummaries,
@@ -51,7 +58,13 @@ function AttentionHome({ projectSummaries, orphanedSessionCount = 0, orphanedPro
 
   // Aggregate attention counts across all projects
   const globalCounts: Record<AttentionLevel, number> = {
-    merge: 0, respond: 0, review: 0, pending: 0, working: 0, done: 0,
+    merge: 0,
+    action: 0,
+    respond: 0,
+    review: 0,
+    pending: 0,
+    working: 0,
+    done: 0,
   };
   for (const p of projectSummaries) {
     for (const level of ACTIVE_LEVELS) {

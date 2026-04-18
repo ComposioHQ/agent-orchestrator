@@ -106,6 +106,9 @@ Shows when you have registered projects:
   review, pending, working
 - **Project cards**: grid of all projects, each showing name, repo, session
   ratio (active/total), and colored attention badges
+- **Degraded projects**: if a repo's local `agent-orchestrator.yaml` becomes
+  invalid, the project still appears in the portfolio with a degraded state
+  instead of disappearing or crashing the dashboard
 - Click any card to go to that project's dashboard
 
 When no projects are registered, shows the launcher screen instead.
@@ -116,6 +119,8 @@ When no projects are registered, shows the launcher screen instead.
 - Stats bar: total sessions, working, open PRs, needs review
 - Session cards with status, PR info, CI checks, review state
 - Global pause controls
+- If the project is degraded, the page shows the config error and blocks
+  project-scoped actions until the local config is fixed
 - Invalid project IDs return a 404 page
 
 ### Session Detail (`/projects/<id>/sessions/<id>`)
@@ -124,6 +129,9 @@ When no projects are registered, shows the launcher screen instead.
 - Terminal output (live or recorded)
 - PR details card with CI status, review decision, merge state
 - Action buttons: kill, send message, restore, remap
+
+If a project's config becomes degraded, historical sessions may still be listed,
+but new project-scoped mutations are blocked until the config resolves cleanly.
 
 ### Activity Feed (`/activity`)
 
@@ -197,6 +205,9 @@ Click any resource to spawn an agent session targeting it.
 **Dashboard**: click the **+** button in the sidebar → "Open project" → browse
 to directory → submit.
 
+The dashboard registers the project and reloads portfolio state in place, so
+you do not need to restart AO or manually refresh the page.
+
 **CLI**:
 ```bash
 ao project add /path/to/project
@@ -212,6 +223,28 @@ confirm. The directory is not deleted from disk.
 ```bash
 ao project rm <project-id>
 ```
+
+### Editing Project Behavior
+
+Open **Settings** to update per-project behavior fields such as:
+
+- `repo`
+- `defaultBranch`
+
+Identity-owned fields like project ID, path, session prefix, and storage key are
+not editable from the dashboard settings flow.
+
+### Degraded Projects
+
+If a registered repo's local `agent-orchestrator.yaml` is missing or invalid:
+
+- The project remains visible in the portfolio
+- The dashboard and settings page show the degraded reason
+- Spawn/recovery/project-scoped mutation actions are blocked
+- You can still remove the project from the portfolio
+
+This is deliberate: one broken repo should not take down the rest of the
+portfolio.
 
 ### Reordering Projects
 
@@ -275,7 +308,9 @@ config file is newer than `_shadowSyncedAt`.
 | GET | `/api/projects?scope=portfolio` | List with portfolio metadata (pinned, degraded, etc.) |
 | POST | `/api/projects` | Register a project `{ path, name? }` |
 | PUT | `/api/projects/<id>` | Update preferences `{ pinned?, enabled?, displayName? }` |
+| PATCH | `/api/projects/<id>` | Update behavior fields such as `{ repo?, defaultBranch?, runtime?, agent?, workspace? }` |
 | DELETE | `/api/projects/<id>` | Remove from portfolio |
+| POST | `/api/projects/reload` | Reload services and portfolio state after project changes |
 | GET | `/api/projects/<id>/resources` | Get PR/branch/issue resources |
 
 ### Sessions

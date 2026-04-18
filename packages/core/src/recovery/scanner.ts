@@ -21,6 +21,7 @@ export function scanAllSessions(
 
   for (const [projectKey, project] of Object.entries(config.projects)) {
     if (projectIdFilter && projectKey !== projectIdFilter) continue;
+    if (typeof project.resolveError === "string" && project.resolveError.length > 0) continue;
 
     const sessionsDir = getSessionsDir(config.configPath, project.path, project.storageKey);
     if (!existsSync(sessionsDir)) continue;

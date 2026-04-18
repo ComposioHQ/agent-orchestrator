@@ -34,7 +34,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { withFileLockSync } from "./file-lock.js";
-import { generateProjectHash } from "./paths.js";
+import { generateProjectHash, generateSessionPrefix } from "./paths.js";
 
 function globalConfigLockPath(configPath: string): string {
   return `${configPath}.lock`;
@@ -221,6 +221,12 @@ export const LocalProjectConfigSchema = z
 
 export type LocalProjectConfig = z.infer<typeof LocalProjectConfigSchema>;
 
+export interface LocalProjectConfigLoadResult {
+  kind: "loaded" | "missing" | "old-format" | "malformed" | "invalid";
+  config?: LocalProjectConfig;
+  error?: string;
+}
+
 // =============================================================================
 // LOAD / SAVE
 // =============================================================================
@@ -269,6 +275,11 @@ export function saveGlobalConfig(config: GlobalConfig, configPath?: string): voi
  *   - File is empty or malformed
  */
 export function loadLocalProjectConfig(projectPath: string): LocalProjectConfig | null {
+  const result = loadLocalProjectConfigDetailed(projectPath);
+  return result.kind === "loaded" ? result.config ?? null : null;
+}
+
+export function loadLocalProjectConfigDetailed(projectPath: string): LocalProjectConfigLoadResult {
   const candidates = [
     join(projectPath, "agent-orchestrator.yaml"),
     join(projectPath, "agent-orchestrator.yml"),
@@ -281,23 +292,42 @@ export function loadLocalProjectConfig(projectPath: string): LocalProjectConfig 
     try {
       const raw = readFileSync(path, "utf-8");
       parsed = parseYaml(raw);
-    } catch {
-      return null;
+    } catch (error) {
+      return {
+        kind: "malformed",
+        error: `Failed to parse local config at ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      };
     }
 
-    if (!parsed || typeof parsed !== "object") return null;
+    if (!parsed || typeof parsed !== "object") {
+      return {
+        kind: "invalid",
+        error: `Local config at ${path} must parse to an object`,
+      };
+    }
 
     // Old format: has `projects:` wrapper → not a flat local config
-    if ("projects" in (parsed as Record<string, unknown>)) return null;
+    if ("projects" in (parsed as Record<string, unknown>)) {
+      return {
+        kind: "old-format",
+        error: `Local config at ${path} still uses a wrapped projects: format`,
+      };
+    }
 
     try {
-      return LocalProjectConfigSchema.parse(parsed);
-    } catch {
-      return null;
+      return {
+        kind: "loaded",
+        config: LocalProjectConfigSchema.parse(parsed),
+      };
+    } catch (error) {
+      return {
+        kind: "invalid",
+        error: `Local config at ${path} failed validation: ${error instanceof Error ? error.message : String(error)}`,
+      };
     }
   }
 
-  return null;
+  return { kind: "missing" };
 }
 
 // =============================================================================
@@ -310,7 +340,7 @@ export function loadLocalProjectConfig(projectPath: string): LocalProjectConfig 
  * Called by `ao start` after validating local config.
  *
  * Rules:
- *   - Identity fields (name, path, sessionPrefix) are never overwritten
+ *   - Identity fields (name, path, sessionPrefix, storageKey) are never overwritten
  *   - Fields starting with `_` (internal) are excluded
  *   - Fields matching *Token/*Key/*Secret/*Password are excluded (warn)
  *   - All other fields from localConfig are written verbatim (passthrough)
@@ -359,6 +389,9 @@ export function syncProjectShadow(
     ...(typeof existing.sessionPrefix === "string"
       ? { sessionPrefix: existing.sessionPrefix }
       : {}),
+    ...(typeof existing.storageKey === "string"
+      ? { storageKey: existing.storageKey }
+      : {}),
     ...shadowFields,
     _shadowSyncedAt: Math.floor(Date.now() / 1000),
   };
@@ -389,35 +422,36 @@ export function registerProjectInGlobalConfig(
 ): void {
   const configPath = globalConfigPath ?? getGlobalConfigPath();
   withFileLockSync(globalConfigLockPath(configPath), () => {
-  const globalConfig = loadGlobalConfig(configPath) ?? makeEmptyGlobalConfig();
+    const globalConfig = loadGlobalConfig(configPath) ?? makeEmptyGlobalConfig();
 
-  const existing = globalConfig.projects[projectId] as
-    | (GlobalProjectEntry & Record<string, unknown>)
-    | undefined;
+    const existing = globalConfig.projects[projectId] as
+      | (GlobalProjectEntry & Record<string, unknown>)
+      | undefined;
 
-  for (const [existingProjectId, entry] of Object.entries(globalConfig.projects)) {
-    if (existingProjectId === projectId) continue;
-    if (entry.path === projectPath) {
-      throw new Error(
-        `Project path "${projectPath}" is already registered as "${existingProjectId}"`,
-      );
+    for (const [existingProjectId, entry] of Object.entries(globalConfig.projects)) {
+      if (existingProjectId === projectId) continue;
+      if (entry.path === projectPath) {
+        throw new Error(
+          `Project path "${projectPath}" is already registered as "${existingProjectId}"`,
+        );
+      }
     }
-  }
 
-  // Preserve existing shadow behavior fields; update identity.
-  // storageKey is assigned once at registration and never recomputed —
-  // this decouples storage identity from the current filesystem path.
-  const storageKey =
-    (existing?.storageKey as string | undefined) ?? generateProjectHash(projectPath);
+    // Preserve existing shadow behavior fields; update identity.
+    // storageKey is assigned once at registration and never recomputed —
+    // this decouples storage identity from the current filesystem path and
+    // keeps existing session/worktree directories reachable across path moves.
+    const storageKey =
+      (existing?.storageKey as string | undefined) ?? generateProjectHash(projectPath);
 
-  globalConfig.projects[projectId] = {
-    ...(existing ?? {}),
-    name,
-    path: projectPath,
-    storageKey,
-  };
+    globalConfig.projects[projectId] = {
+      ...(existing ?? {}),
+      name,
+      path: projectPath,
+      storageKey,
+    };
 
-  saveGlobalConfig(globalConfig, configPath);
+    saveGlobalConfig(globalConfig, configPath);
   });
 
   if (localConfig) {
@@ -446,6 +480,31 @@ export function buildEffectiveProjectConfig(
   globalConfig: GlobalConfig,
   globalConfigPath?: string,
 ): (Record<string, unknown> & { name: string; path: string; storageKey: string }) | null {
+  const resolved = resolveProjectIdentity(projectId, globalConfig, globalConfigPath);
+  return resolved ?? null;
+}
+
+/**
+ * Resolve a single project from the canonical global registry.
+ *
+ * Behavior precedence:
+ *   1. Identity always comes from the global registry entry
+ *   2. Local flat config overrides shadow behavior when it loads cleanly
+ *   3. Shadow behavior is used when local config is missing or broken
+ *   4. When local config is broken, resolveError is attached instead of throwing
+ */
+export function resolveProjectIdentity(
+  projectId: string,
+  globalConfig: GlobalConfig,
+  globalConfigPath?: string,
+): (Record<string, unknown> & {
+  name: string;
+  path: string;
+  storageKey: string;
+  defaultBranch: string;
+  sessionPrefix: string;
+  resolveError?: string;
+}) | null {
   const entry = globalConfig.projects[projectId] as
     | (GlobalProjectEntry & Record<string, unknown>)
     | undefined;
@@ -477,33 +536,46 @@ export function buildEffectiveProjectConfig(
     }
   }
 
-  const localConfig = loadLocalProjectConfig(projectPath);
+  const localConfigResult = loadLocalProjectConfigDetailed(projectPath);
+  const { name: _name, path: _path, storageKey: _sk, _shadowSyncedAt: _ts, ...shadowBehavior } = entry;
+  void _name;
+  void _path;
+  void _sk;
+  void _ts;
 
-  if (localConfig) {
+  const sessionPrefix =
+    typeof entry.sessionPrefix === "string" && entry.sessionPrefix.length > 0
+      ? entry.sessionPrefix
+      : generateSessionPrefix(projectId);
+  const defaultBranch =
+    typeof entry.defaultBranch === "string" && entry.defaultBranch.length > 0
+      ? entry.defaultBranch
+      : "main";
+
+  if (localConfigResult.kind === "loaded" && localConfigResult.config) {
     // In-project mode: global identity + local behavior (override shadow)
-    const { name: _name, path: _path, storageKey: _sk, _shadowSyncedAt: _ts, ...shadowBehavior } = entry;
-    void _name;
-    void _path;
-    void _sk;
-    void _ts;
-
     return {
       name,
       path: projectPath,
       storageKey,
+      sessionPrefix,
+      defaultBranch,
       ...shadowBehavior,
-      ...(localConfig as Record<string, unknown>),
+      ...(localConfigResult.config as Record<string, unknown>),
     };
   }
 
-  // Shadow-fallback mode: use shadow as-is
-  const { _shadowSyncedAt: _ts, ...rest } = entry;
-  void _ts;
+  const resolveError =
+    localConfigResult.kind !== "missing" ? localConfigResult.error ?? "Failed to load local config" : undefined;
+
   return {
-    ...rest,
     name,
     path: projectPath,
     storageKey,
+    sessionPrefix,
+    defaultBranch,
+    ...shadowBehavior,
+    ...(resolveError ? { resolveError } : {}),
   };
 }
 

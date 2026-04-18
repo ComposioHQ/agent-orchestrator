@@ -1,6 +1,6 @@
 import type { Session } from "@aoagents/ao-core";
-import { isOrchestratorSession, isTerminalSession } from "@aoagents/ao-core/types";
 import type { Orchestrator } from "@/components/OrchestratorSelector";
+import { isCurrentProjectOrchestrator } from "@/lib/orchestrator-selection";
 
 /**
  * Filter and map sessions to orchestrator DTOs.
@@ -13,7 +13,9 @@ export function mapSessionsToOrchestrators(
   allSessionPrefixes?: string[],
 ): Orchestrator[] {
   return sessions
-    .filter((s) => isOrchestratorSession(s, sessionPrefix, allSessionPrefixes) && !isTerminalSession(s))
+    .filter((session) =>
+      isCurrentProjectOrchestrator(session, sessionPrefix, allSessionPrefixes),
+    )
     .map((s) => ({
       id: s.id,
       projectId: s.projectId,

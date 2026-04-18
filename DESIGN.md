@@ -309,6 +309,119 @@ These are the concrete token names used in `packages/web/src/app/globals.css`. N
 - Blue-white text (#eef3ff) — use cream (#f0ece8) to maintain warmth
 - `outline: none` without a visible focus replacement
 
+## Multi-Project UI
+
+A single localhost instance hosts many projects. The UI must always tell the user *which* project a thing belongs to, without repetition inside a single-project view.
+
+### Project Identity
+
+**Color:** Deterministic hash (FNV-1a) of `project.id` → one of 6 warm hues. No user control. The palette is constrained so project colors never fight status colors.
+
+| Hue | Hex (dark) | Hex (light) |
+|-----|------------|-------------|
+| periwinkle | #8b9cf7 | #5c64b5 |
+| amber      | #e2a336 | #b8860b |
+| cyan       | #06b6d4 | #0891b2 |
+| sage       | #84a98c | #52796f |
+| rose-muted | #c08497 | #8e5365 |
+| stone      | #a8a29e | #78716c |
+
+Tokens: `--color-project-1` through `--color-project-6`. Resolver lives in `lib/project-color.ts`: `getProjectColor(projectId: string): string`.
+
+**Rule:** Periwinkle and amber overlap with accent/attention semantics. A project hashing to those hues is still fine — the chip always pairs the color with the project name, so meaning is unambiguous.
+
+### Project Chip (primitive)
+
+The atom of cross-project identity. Used anywhere a session, PR, or event appears outside its project's view.
+
+- **Layout:** 2px left border (project color) + mono project name.
+- **Font:** JetBrains Mono, weight 400, 11px, tabular-nums.
+- **Color:** text-secondary.
+- **Background:** bg-subtle.
+- **Padding:** 2px 8px, left border adds 2px.
+- **Border-radius:** 0.
+- **Sizes:** `xs` (10px font, 2px 6px padding), `sm` (11px, default), `md` (13px, 4px 10px).
+
+**When to show:**
+- Portfolio project cards: yes (project *is* the subject).
+- Cross-project surfaces (activity feed, global PR list): yes.
+- Single-project kanban / session detail: **no**. The header + sidebar already name the project. Repetition is noise.
+
+Prop: `<SessionCard showProjectChip={boolean} />` — default false.
+
+### Project Switcher (header)
+
+Replaces the static project label in the dashboard app header.
+
+- **Trigger:** inline chip: project color dot (6px) + mono name + chevron. Same height as `.dashboard-app-btn` (27px), padding 0 10px, border 1px border-default, radius 5px.
+- **Popover:** 320px wide, bg-elevated, 1px border-default, 0 radius, 2px gap below trigger, offset flush-left.
+- **Filter input:** at top of popover, 32px tall, bg-base, border-bottom only. Auto-focus on open.
+- **Row:** 36px tall, padding 0 12px. Layout: `[dot 6px][mono name, flex-1][count pill]`. Current project has bg-subtle + 2px left border in project color.
+- **Footer row:** "+ Add project" with `⌘N` kbd hint, border-top.
+- **Keyboard:** ⌘K globally opens the switcher. ↑↓ navigates, Enter selects, Esc closes, typing filters.
+
+### Portfolio Project Card
+
+Unit of the `/` landing when `projects.length > 1`.
+
+```
+┌─ 2px left border (project color) ──────────────────┐
+│ agent-orchestrator                 7 ● respond     │  ← 15px primary + attention pill
+│ 49 sessions · 12 PRs                               │  ← 11px secondary mono
+│ ─────────────────────────────────────────────────  │
+│ ▰▰▰▰▰▱ ▰▰▰▰▰▰▰▰▰ ▰▰                                │  ← 4px stacked status bar
+│                                                    │
+│ 2m ago · feat/issue-1220 needs input  →            │  ← urgent pin row
+└────────────────────────────────────────────────────┘
+```
+
+- Padding: 16px.
+- Background: bg-surface, 1px border-default, inset highlight in dark.
+- Hover: bg-elevated-hover, border-color transition 0.12s.
+- Click: navigates to `/projects/{id}`.
+- **Stacked status bar:** 4px tall, full width, segmented by column counts. Segment color matches `--color-status-*`. Empty projects show a single `bg-subtle` segment.
+- **Urgent pin row:** shown only when at least one session is in `respond` or `error`. Shows relative time, branch name, single-line reason, arrow. Clicking the row deep-links to the session.
+- **Grid:** 3 columns desktop (>1024px), 2 tablet, 1 mobile. Gap 16px.
+
+### Sidebar PROJECTS Section
+
+- **Section header row:** 10px, weight 600, uppercase, letter-spacing 0.06em, text-tertiary. `+` icon button right-aligned, 27×27px hit area, hover bg-elevated-hover.
+- **Current project row:** 2px left border (project color), bg-subtle, text-primary 13px, count pill right-aligned (text-tertiary, mono, 11px, tabular-nums).
+- **Non-current project row:** no fill, no left border, text-secondary, chevron 12px at left. Click expands/collapses inline.
+- **Session list under a project:** indented 12px, standard session rows, `ProjectSidebar.tsx` existing styles.
+- **State:** expanded set persisted in `localStorage` as `ao.sidebar.projects.expanded` (JSON array of project ids). Current project auto-expanded on mount.
+- **Empty state within project:** "No sessions" 11px text-tertiary, 8px padding.
+
+### Empty State (0 projects)
+
+Rendered in the main area when no projects exist (portfolio page, also any project route as fallback).
+
+- **Container:** centered, max-width 420px, 1px dashed border-default, 48px padding, bg-base.
+- **Title:** "No projects yet" — 17px text-primary, weight 500.
+- **Description:** "Add a folder or paste a Git URL to start spawning agents." — 13px text-secondary, max 2 lines.
+- **CTA:** amber button (`.dashboard-app-btn--amber` tokens, 40px tall, padding 0 16px) reading "+ Add project".
+- **Keyboard:** `⌘N` bound globally to open the Add Project modal.
+
+### Add Project Modal
+
+Already implemented. Conventions locked:
+
+- Primary CTA uses the amber header-button palette: 1px border `--color-accent-amber-border`, bg `--color-accent-amber-dim`, text `--color-accent-amber`, hover 20% amber mix. 5px radius (matches header button), 40px height.
+- Cancel: secondary button, bg-elevated, border-default, text-secondary.
+- Disabled primary: `opacity: 0.5`, not a color change.
+- Inputs: 0 radius, bg-base, border-default (per DESIGN.md input spec).
+
+### Cross-Project Components Index
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `ProjectChip` | `components/ProjectChip.tsx` (new) | Project identity atom, cross-project surfaces only |
+| `ProjectSwitcher` | `components/ProjectSwitcher.tsx` (new) | Header dropdown, ⌘K globally |
+| `PortfolioPage` | `components/PortfolioPage.tsx` (exists, upgrade) | `/` when >1 project |
+| `ProjectSidebar` | `components/ProjectSidebar.tsx` (exists, tighten) | Persistent nav |
+| `EmptyProjectState` | `components/EmptyProjectState.tsx` (new) | 0-projects fallback |
+| `getProjectColor` | `lib/project-color.ts` (new) | Hash → hue resolver |
+
 ## Decisions Log
 | Date | Decision | Rationale |
 |------|----------|-----------|
@@ -331,3 +444,8 @@ These are the concrete token names used in `packages/web/src/app/globals.css`. N
 | 2026-04-07 | Remove column shadows | P3: `18px/42px` column box-shadow created competing depth layers with card shadows. Border + background contrast does separation. No column-level shadow needed. |
 | 2026-04-07 | Topbar shows page name only, not project name | Minor: Topbar "vinesight-rn / kanban" duplicated project name visible in sidebar. Topbar now shows "Kanban" + freshness. |
 | 2026-04-07 | Diff size badges use `<abbr>` with tooltip | Minor: S/M/L diff badges were opaque. `<abbr title="Small (<100 lines)">` gives meaning on hover without adding visual noise. |
+| 2026-04-17 | Multi-project identity = 2px left border + mono chip | Single localhost hosts many projects. Users must always know which project a thing belongs to, but repetition inside a single-project view is noise. Chip shows only in cross-project surfaces. |
+| 2026-04-17 | Project color = FNV-1a hash → 6 warm hues | Deterministic, no user config. Constrained palette (periwinkle, amber, cyan, sage, rose-muted, stone) prevents clashes with status colors. The chip always pairs color with name so semantic overlap with accent/attention is unambiguous. |
+| 2026-04-17 | Portfolio cards pin the most urgent session | A status rollup alone is a display. Pinning the single urgent session makes the portfolio actionable — one click from "which project needs me" to the exact session. |
+| 2026-04-17 | Project switcher replaces static header label | ⌘K + inline dropdown is how users context-switch 50×/day. A static label is a waste of the most-used surface in the app. |
+| 2026-04-17 | Amber header-button tokens for modal primary CTAs | Primary CTAs in modals (Initialize Project, etc.) match the Orchestrator header button: amber-dim bg, amber border, amber text. Ties modal actions visually to the app's existing amber attention vocabulary. |

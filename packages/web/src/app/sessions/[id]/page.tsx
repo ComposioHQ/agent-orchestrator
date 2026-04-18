@@ -3,6 +3,14 @@ import { getPortfolioServices, getCachedPortfolioSessions } from "@/lib/portfoli
 
 export const dynamic = "force-dynamic";
 
+function matchesSessionPrefix(sessionId: string, prefix: string | undefined): boolean {
+  if (!prefix) return false;
+  if (sessionId === prefix) return true;
+  if (!sessionId.startsWith(prefix)) return false;
+  if (prefix.endsWith("-")) return true;
+  return sessionId[prefix.length] === "-";
+}
+
 export default async function LegacySessionPage(props: {
   params: Promise<{ id: string }>;
 }) {
@@ -17,9 +25,9 @@ export default async function LegacySessionPage(props: {
   }
 
   const { portfolio } = getPortfolioServices();
-  const projectFromPrefix = portfolio.find(
-    (project) => project.sessionPrefix && params.id.startsWith(project.sessionPrefix + "-"),
-  );
+  const projectFromPrefix = [...portfolio]
+    .filter((project) => matchesSessionPrefix(params.id, project.sessionPrefix))
+    .sort((a, b) => (b.sessionPrefix?.length ?? 0) - (a.sessionPrefix?.length ?? 0))[0];
 
   if (projectFromPrefix) {
     redirect(

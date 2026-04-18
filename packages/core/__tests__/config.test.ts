@@ -69,17 +69,15 @@ describe("Config Loading", () => {
       expect(found).toBe(customConfig);
     });
 
-    it("should ignore AO_CONFIG_PATH when it points to a flat local config", () => {
+    it("should return AO_CONFIG_PATH when it points to a flat local config", () => {
       const flatConfig = join(testDir, "flat-config.yaml");
-      const wrappedConfig = join(testDir, "agent-orchestrator.yaml");
 
       writeFileSync(flatConfig, "repo: test/repo\nagent: claude-code\nruntime: tmux\n");
-      writeFileSync(wrappedConfig, "projects: {}");
 
       process.env["AO_CONFIG_PATH"] = flatConfig;
 
       const found = findConfigFile();
-      expect(realpathSync(found!)).toBe(realpathSync(wrappedConfig));
+      expect(realpathSync(found!)).toBe(realpathSync(flatConfig));
     });
 
     it("should return null if no config found", () => {
@@ -87,14 +85,13 @@ describe("Config Loading", () => {
       expect(found).toBeNull();
     });
 
-    it("should skip flat local configs (no projects: wrapper) when searching up tree", () => {
+    it("should return flat local configs when searching up tree", () => {
       // Write a flat behavior-only config (post-migration format)
       const flatConfig = join(testDir, "agent-orchestrator.yaml");
       writeFileSync(flatConfig, "repo: org/my-project\nagent: claude-code\nruntime: tmux\n");
 
-      // Should NOT return the flat config — it has no `projects:` key
       const found = findConfigFile();
-      expect(found).toBeNull();
+      expect(realpathSync(found!)).toBe(realpathSync(flatConfig));
     });
 
     it("should return an old-format config that has a projects: wrapper", () => {
@@ -108,6 +105,37 @@ describe("Config Loading", () => {
   });
 
   describe("loadConfig", () => {
+    it("should merge a flat local config with the matching global registry entry", () => {
+      const localConfigPath = join(testDir, "agent-orchestrator.yaml");
+      const globalDir = join(testDir, ".agent-orchestrator");
+      const globalConfigPath = join(globalDir, "config.yaml");
+      mkdirSync(globalDir, { recursive: true });
+
+      writeFileSync(localConfigPath, "repo: test/repo\nagent: codex\nruntime: tmux\n");
+      writeFileSync(
+        globalConfigPath,
+        `
+projects:
+  test-project:
+    name: Test Project
+    path: ${testDir}
+    sessionPrefix: tp
+`,
+      );
+      process.env["AO_GLOBAL_CONFIG"] = globalConfigPath;
+
+      const config = loadConfig(localConfigPath);
+      expect(config.configPath).toBe(localConfigPath);
+      expect(config.projects["test-project"]).toMatchObject({
+        name: "Test Project",
+        path: testDir,
+        repo: "test/repo",
+        agent: "codex",
+        runtime: "tmux",
+        sessionPrefix: "tp",
+      });
+    });
+
     it("should load config from AO_CONFIG_PATH env var", () => {
       const configPath = join(testDir, "test-config.yaml");
       writeFileSync(

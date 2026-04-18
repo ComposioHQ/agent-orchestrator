@@ -53,6 +53,7 @@ ao open {{projectId}}{{REPO_CONFIGURED_SECTION_END}}
 ```
 
 {{REPO_NOT_CONFIGURED_SECTION_START}}
+
 > **Note:** No repository remote is configured. Issue tracking, PR, and CI features are unavailable.
 > Add a `repo` field (owner/repo) to `agent-orchestrator.yaml` to enable them.
 {{REPO_NOT_CONFIGURED_SECTION_END}}
@@ -61,12 +62,12 @@ ao open {{projectId}}{{REPO_CONFIGURED_SECTION_END}}
 
 - `ao status`: Show all sessions{{REPO_CONFIGURED_SECTION_START}} with PR/CI/review status{{REPO_CONFIGURED_SECTION_END}}
 - `ao spawn [issue] [--prompt <text>]{{REPO_CONFIGURED_SECTION_START}} [--claim-pr <pr>]{{REPO_CONFIGURED_SECTION_END}}`: Spawn a worker session{{REPO_CONFIGURED_SECTION_START}}; use issue ID or --prompt for freeform tasks{{REPO_CONFIGURED_SECTION_END}}{{REPO_NOT_CONFIGURED_SECTION_START}} with --prompt for freeform tasks{{REPO_NOT_CONFIGURED_SECTION_END}}
-{{REPO_CONFIGURED_SECTION_START}}- `ao batch-spawn <issues...>`: Spawn multiple sessions in parallel (project auto-detected)
-{{REPO_CONFIGURED_SECTION_END}}- `ao session ls [-p project]`: List all sessions (optionally filter by project)
-{{REPO_CONFIGURED_SECTION_START}}- `ao session claim-pr <pr> [session]`: Attach an existing PR to a worker session
-{{REPO_CONFIGURED_SECTION_END}}- `ao session attach <session>`: Attach to a session's tmux window
+  {{REPO_CONFIGURED_SECTION_START}}- `ao batch-spawn <issues...>`: Spawn multiple sessions in parallel (project auto-detected)
+  {{REPO_CONFIGURED_SECTION_END}}- `ao session ls [-p project]`: List all sessions (optionally filter by project)
+  {{REPO_CONFIGURED_SECTION_START}}- `ao session claim-pr <pr> [session]`: Attach an existing PR to a worker session
+  {{REPO_CONFIGURED_SECTION_END}}- `ao session attach <session>`: Attach to a session's tmux window
 - `ao session kill <session>`: Kill a specific session
-- `ao session cleanup [-p project]`: Kill completed/merged sessions
+- `ao session cleanup [-p project]`: Kill cleanup-eligible sessions (closed work or dead runtimes)
 - `ao send <session> <message>`: Send a message to a running session
 - `ao send --no-wait <session> <message>`: Send without waiting for session to become idle
 - `ao dashboard`: Start the web dashboard (http://localhost:{{dashboardPort}})
@@ -95,11 +96,20 @@ ao spawn --prompt "Add rate limiting to the /api/upload endpoint"
 Use `ao status` to see:
 
 - Current session status (working, pr_open, review_pending, etc.)
-{{REPO_CONFIGURED_SECTION_START}}- PR state (open/merged/closed)
+  {{REPO_CONFIGURED_SECTION_START}}- PR state (open/merged/closed)
 - CI status (passing/failing/pending)
 - Review decision (approved/changes_requested/pending)
 - Unresolved comments count
-{{REPO_CONFIGURED_SECTION_END}}
+  {{REPO_CONFIGURED_SECTION_END}}
+
+### Explicit Agent Reports
+
+Worker agents self-declare their workflow phase using `ao acknowledge` and `ao report <state>` (started, working, waiting, needs-input, fixing-ci, addressing-reviews, pr-created, draft-pr-created, ready-for-review, completed). These reports are persisted alongside the canonical lifecycle and may inform lifecycle inference, but do not replace runtime/activity/SCM-derived truth.
+
+- Never run `ao acknowledge` or `ao report` from the orchestrator session - they are worker-only commands.
+- Fresh reports (<5 min) are useful hints when inference is weak, but runtime death, activity-based waiting_input, and SCM truth (merged/closed PR, CI failure, review decisions) still take precedence.
+- Use `--pr-url` / `--pr-number` on PR workflow reports when the agent knows them; merged/closed remain SCM-owned.
+- If an agent reports `waiting` but a PR actually merged, trust the PR state and follow up.
 
 ### Sending Messages
 
@@ -138,7 +148,7 @@ When debugging or triaging from the orchestrator session:
 Remove completed sessions:
 
 ```bash
-ao session cleanup -p {{projectId}}  # Kill sessions where PR is merged or issue is closed
+ao session cleanup -p {{projectId}}  # Kill sessions whose work closed or runtime has exited
 ```
 
 ## Dashboard
@@ -170,7 +180,7 @@ The system automatically handles these events:
 2. Use `ao batch-spawn` to spawn sessions for each issue
 3. Monitor with `ao status` or the dashboard
 4. Agents will fetch, implement, test, PR, and respond to reviews
-5. Use `ao session cleanup` when PRs are merged
+5. Use `ao session cleanup` when work is truly finished or the runtime is gone
 
 {{REPO_CONFIGURED_SECTION_END}}### Handling Stuck Agents
 
@@ -209,7 +219,7 @@ When an agent needs human judgment:
 
 5. **Use the dashboard for overview** - Terminal for details, dashboard for at-a-glance status.
 
-6. **Cleanup regularly** - `ao session cleanup` removes merged/closed sessions and keeps things tidy.
+6. **Cleanup regularly** - `ao session cleanup` removes sessions that are truly cleanup-eligible and keeps things tidy.
 
 7. **Monitor the event log** - Full system activity is logged for debugging and auditing.
 

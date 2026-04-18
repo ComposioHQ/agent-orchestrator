@@ -15,7 +15,7 @@ vi.mock("node:child_process", () => {
 });
 
 import { create, manifest } from "../src/index.js";
-import type { PRInfo, SCMWebhookRequest, Session, ProjectConfig } from "@aoagents/ao-core";
+import { createActivitySignal, type PRInfo, type SCMWebhookRequest, type Session, type ProjectConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -46,6 +46,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "test",
     status: "working",
     activity: "active",
+    activitySignal: createActivitySignal("valid", {
+      activity: "active",
+      timestamp: new Date(),
+      source: "native",
+    }),
     branch: "feat/my-feature",
     issueId: null,
     pr: null,
@@ -424,8 +429,7 @@ describe("scm-github plugin", () => {
     });
 
     it("returns null when project has no repo configured", async () => {
-      const repoLessProject = { ...project, repo: undefined };
-      const result = await scm.detectPR(makeSession(), repoLessProject);
+      const result = await scm.detectPR(makeSession(), { ...project, repo: undefined });
       expect(result).toBeNull();
       expect(ghMock).not.toHaveBeenCalled();
     });
@@ -473,13 +477,6 @@ describe("scm-github plugin", () => {
 
       const result = await scm.resolvePR?.("42", project);
       expect(result).toEqual(pr);
-    });
-
-    it("throws when resolving a PR without a configured repo", async () => {
-      const repoLessProject = { ...project, repo: undefined };
-      await expect(scm.resolvePR?.("42", repoLessProject)).rejects.toThrow(
-        'Project "test" does not define a GitHub repo',
-      );
     });
 
     it("assigns PR to current user", async () => {

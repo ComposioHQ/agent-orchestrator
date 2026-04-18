@@ -101,13 +101,13 @@ describe("getProjectName", () => {
 describe("getAllProjects", () => {
   it("returns portfolio projects when available", async () => {
     mockGetPortfolio.mockReturnValue([
-      { id: "a", name: "Alpha" },
+      { id: "a", name: "Alpha", sessionPrefix: "alpha", degraded: true, degradedReason: "Broken local config" },
       { id: "b", name: "Bravo" },
     ]);
 
     const { getAllProjects } = await import("../project-name");
     expect(getAllProjects()).toEqual([
-      { id: "a", name: "Alpha" },
+      { id: "a", name: "Alpha", sessionPrefix: "alpha", degraded: true, degradedReason: "Broken local config" },
       { id: "b", name: "Bravo" },
     ]);
   });
@@ -115,12 +115,12 @@ describe("getAllProjects", () => {
   it("falls back to config projects when portfolio is empty", async () => {
     mockGetPortfolio.mockReturnValue([]);
     mockLoadConfig.mockReturnValue({
-      projects: { "my-app": { name: "My App" }, docs: {} },
+      projects: { "my-app": { name: "My App", sessionPrefix: "my", resolveError: "Invalid config" }, docs: {} },
     });
 
     const { getAllProjects } = await import("../project-name");
     expect(getAllProjects()).toEqual([
-      { id: "my-app", name: "My App" },
+      { id: "my-app", name: "My App", sessionPrefix: "my", degraded: true, degradedReason: "Invalid config" },
       { id: "docs", name: "docs" },
     ]);
   });

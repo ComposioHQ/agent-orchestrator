@@ -11,13 +11,17 @@
  */
 
 import { readFileSync, existsSync } from "node:fs";
-import { resolve, join, basename } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ConfigNotFoundError, type ExternalPluginEntryRef, type OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
-import { getGlobalConfigPath } from "./global-config.js";
+import {
+  getGlobalConfigPath,
+  loadGlobalConfig,
+  resolveProjectIdentity,
+} from "./global-config.js";
 
 function inferScmPlugin(project: {
   repo?: string;
@@ -45,6 +49,22 @@ function inferScmPlugin(project: {
   }
 
   return "github";
+}
+
+function classifyConfigShape(
+  configPath: string,
+): "wrapped" | "flat-or-nonobject" | "missing" {
+  if (!existsSync(configPath)) {
+    return "missing";
+  }
+
+  const raw = readFileSync(configPath, "utf-8");
+  const parsed = parseYaml(raw);
+  return parsed &&
+    typeof parsed === "object" &&
+    "projects" in (parsed as Record<string, unknown>)
+    ? "wrapped"
+    : "flat-or-nonobject";
 }
 
 // =============================================================================
@@ -177,6 +197,8 @@ const ProjectConfigSchema = z.object({
   _shadowSyncedAt: z.number().optional(),
   /** Stable storage identity hash — set once at registration, never recomputed. */
   storageKey: z.string().optional(),
+  /** Per-project resolution failure captured without aborting global load. */
+  resolveError: z.string().optional(),
   runtime: z.string().optional(),
   agent: z.string().optional(),
   workspace: z.string().optional(),
@@ -476,10 +498,9 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
       project.name = id;
     }
 
-    // Derive session prefix from project path basename if not set
+    // Derive session prefix from the canonical project ID if not set
     if (!project.sessionPrefix) {
-      const projectId = basename(project.path);
-      project.sessionPrefix = generateSessionPrefix(projectId);
+      project.sessionPrefix = generateSessionPrefix(id);
     }
 
     const inferredPlugin = inferScmPlugin(project);
@@ -500,38 +521,12 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
 
 /** Validate project uniqueness and session prefix collisions */
 function validateProjectUniqueness(config: OrchestratorConfig): void {
-  // Check for duplicate project IDs (basenames)
-  const projectIds = new Set<string>();
-  const projectIdToPaths: Record<string, string[]> = {};
-
-  for (const [_configKey, project] of Object.entries(config.projects)) {
-    const projectId = basename(project.path);
-
-    if (!projectIdToPaths[projectId]) {
-      projectIdToPaths[projectId] = [];
-    }
-    projectIdToPaths[projectId].push(project.path);
-
-    if (projectIds.has(projectId)) {
-      const paths = projectIdToPaths[projectId].join(", ");
-      throw new Error(
-        `Duplicate project ID detected: "${projectId}"\n` +
-          `Multiple projects have the same directory basename:\n` +
-          `  ${paths}\n\n` +
-          `To fix this, ensure each project path has a unique directory name.\n` +
-          `Alternatively, you can use the config key as a unique identifier.`,
-      );
-    }
-    projectIds.add(projectId);
-  }
-
   // Check for duplicate session prefixes
   const prefixes = new Set<string>();
   const prefixToProject: Record<string, string> = {};
 
   for (const [configKey, project] of Object.entries(config.projects)) {
-    const projectId = basename(project.path);
-    const prefix = project.sessionPrefix || generateSessionPrefix(projectId);
+    const prefix = project.sessionPrefix || generateSessionPrefix(configKey);
 
     if (prefixes.has(prefix)) {
       const firstProjectKey = prefixToProject[prefix];
@@ -558,6 +553,13 @@ function validateProjectUniqueness(config: OrchestratorConfig): void {
 /** Apply default reactions */
 function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
   const defaults: Record<string, (typeof config.reactions)[string]> = {
+    "pr-closed": {
+      auto: true,
+      action: "notify",
+      priority: "action",
+      message:
+        "A PR was closed without merging. Decide whether to learn from the closure, resume the work, or terminate the session.",
+    },
     "ci-failed": {
       auto: true,
       action: "send-to-agent",
@@ -639,63 +641,21 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
  * 4. Home directory locations
  */
 export function findConfigFile(startDir?: string): string | null {
-  const classifyConfigShape = (
-    configPath: string,
-  ): "wrapped" | "flat-or-nonobject" | "missing" => {
-    if (!existsSync(configPath)) {
-      return "missing";
-    }
-
-    const raw = readFileSync(configPath, "utf-8");
-    const parsed = parseYaml(raw);
-    return parsed &&
-      typeof parsed === "object" &&
-      "projects" in (parsed as Record<string, unknown>)
-      ? "wrapped"
-      : "flat-or-nonobject";
-  };
-
-  const hasProjectsWrapper = (configPath: string): boolean => {
-    try {
-      return classifyConfigShape(configPath) === "wrapped";
-    } catch {
-      return false;
-    }
-  };
-
   // 1. Check environment variable override
   if (process.env["AO_CONFIG_PATH"]) {
     const envPath = resolve(process.env["AO_CONFIG_PATH"]);
-    try {
-      const shape = classifyConfigShape(envPath);
-      if (shape === "wrapped") {
-        return envPath;
-      }
-    } catch {
-      if (existsSync(envPath)) {
-        return envPath;
-      }
+    if (existsSync(envPath)) {
+      return envPath;
     }
   }
 
   // 2. Search up directory tree from CWD (like git)
-  //    Skip flat local configs (behavior-only, no `projects:` wrapper) — they are
-  //    read via loadLocalProjectConfig(), not through this search path. After
-  //    migration to the hybrid model, the per-project agent-orchestrator.yaml is a
-  //    flat behavior file; the authoritative registry is the global config.
   const searchUpTree = (dir: string): string | null => {
     const configFiles = ["agent-orchestrator.yaml", "agent-orchestrator.yml"];
 
     for (const filename of configFiles) {
       const configPath = resolve(dir, filename);
       if (!existsSync(configPath)) continue;
-
-      // Peek at file: skip flat local configs (no top-level `projects:` key)
-      if (!hasProjectsWrapper(configPath)) {
-        // Flat local config — skip, keep searching upward
-        continue;
-      }
-
       return configPath;
     }
 
@@ -715,18 +675,11 @@ export function findConfigFile(startDir?: string): string | null {
   }
 
   // 3. Check explicit startDir if provided
-  //    Same flat-config check as step 2: after migration, project directories
-  //    contain a flat behavior-only config that should not be returned here.
   if (startDir) {
     const files = ["agent-orchestrator.yaml", "agent-orchestrator.yml"];
     for (const filename of files) {
       const path = resolve(startDir, filename);
       if (!existsSync(path)) continue;
-
-      if (!hasProjectsWrapper(path)) {
-        continue;
-      }
-
       return path;
     }
   }
@@ -755,6 +708,81 @@ export function findConfigFile(startDir?: string): string | null {
   return null;
 }
 
+function buildEffectiveConfigFromFlatLocalPath(
+  configPath: string,
+  localParsed: unknown,
+): OrchestratorConfig | null {
+  const globalConfigPath = getGlobalConfigPath();
+  const globalConfig = loadGlobalConfig(globalConfigPath);
+  if (!globalConfig) return null;
+
+  const projectDir = resolve(dirname(configPath));
+  const entry = Object.entries(globalConfig.projects).find(([, project]) => {
+    if (typeof project.path !== "string") return false;
+    return resolve(project.path) === projectDir;
+  });
+  if (!entry) return null;
+
+  const [projectId, globalEntry] = entry;
+  const { _shadowSyncedAt: _shadowSyncedAt, ...shadowFields } = globalEntry;
+  void _shadowSyncedAt;
+
+  const localConfig =
+    localParsed && typeof localParsed === "object"
+      ? (localParsed as Record<string, unknown>)
+      : null;
+  if (!localConfig) return null;
+
+  return validateConfig({
+    port: globalConfig.port,
+    terminalPort: globalConfig.terminalPort,
+    directTerminalPort: globalConfig.directTerminalPort,
+    readyThresholdMs: globalConfig.readyThresholdMs,
+    defaults: globalConfig.defaults,
+    notifiers: globalConfig.notifiers,
+    notificationRouting: globalConfig.notificationRouting,
+    reactions: globalConfig.reactions,
+    projects: {
+      [projectId]: {
+        ...shadowFields,
+        ...localConfig,
+        name: typeof globalEntry.name === "string" ? globalEntry.name : projectId,
+        path: globalEntry.path,
+        ...(typeof globalEntry.sessionPrefix === "string"
+          ? { sessionPrefix: globalEntry.sessionPrefix }
+          : {}),
+        ...(typeof globalEntry.storageKey === "string"
+          ? { storageKey: globalEntry.storageKey }
+          : {}),
+      },
+    },
+  });
+}
+
+function buildEffectiveConfigFromGlobalConfigPath(configPath: string): OrchestratorConfig | null {
+  const globalConfig = loadGlobalConfig(configPath);
+  if (!globalConfig) return null;
+
+  const projects = Object.fromEntries(
+    Object.keys(globalConfig.projects).map((projectId) => [
+      projectId,
+      resolveProjectIdentity(projectId, globalConfig, configPath),
+    ]),
+  );
+
+  return validateConfig({
+    port: globalConfig.port,
+    terminalPort: globalConfig.terminalPort,
+    directTerminalPort: globalConfig.directTerminalPort,
+    readyThresholdMs: globalConfig.readyThresholdMs,
+    defaults: globalConfig.defaults,
+    notifiers: globalConfig.notifiers,
+    notificationRouting: globalConfig.notificationRouting,
+    reactions: globalConfig.reactions,
+    projects,
+  });
+}
+
 // =============================================================================
 // PUBLIC API
 // =============================================================================
@@ -776,7 +804,14 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
 
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
-  const config = validateConfig(parsed);
+  const shape = classifyConfigShape(path);
+  const isCanonicalGlobalConfig = resolve(path) === resolve(getGlobalConfigPath());
+  const config =
+    isCanonicalGlobalConfig
+      ? buildEffectiveConfigFromGlobalConfigPath(path) ?? validateConfig(parsed)
+      : shape === "wrapped"
+      ? validateConfig(parsed)
+      : buildEffectiveConfigFromFlatLocalPath(path, parsed) ?? validateConfig(parsed);
 
   // Set the config path in the config object for hash generation
   config.configPath = path;
@@ -797,7 +832,14 @@ export function loadConfigWithPath(configPath?: string): {
 
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
-  const config = validateConfig(parsed);
+  const shape = classifyConfigShape(path);
+  const isCanonicalGlobalConfig = resolve(path) === resolve(getGlobalConfigPath());
+  const config =
+    isCanonicalGlobalConfig
+      ? buildEffectiveConfigFromGlobalConfigPath(path) ?? validateConfig(parsed)
+      : shape === "wrapped"
+      ? validateConfig(parsed)
+      : buildEffectiveConfigFromFlatLocalPath(path, parsed) ?? validateConfig(parsed);
 
   // Set the config path in the config object for hash generation
   config.configPath = path;

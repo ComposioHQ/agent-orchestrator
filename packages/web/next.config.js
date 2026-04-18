@@ -4,6 +4,7 @@ const nextConfig = {
   transpilePackages: [
     "@aoagents/ao-core",
     "@aoagents/ao-plugin-agent-claude-code",
+    "@aoagents/ao-plugin-agent-codex",
     "@aoagents/ao-plugin-agent-opencode",
     "@aoagents/ao-plugin-runtime-tmux",
     "@aoagents/ao-plugin-scm-github",

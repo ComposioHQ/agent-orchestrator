@@ -13,6 +13,7 @@ interface ActionItemRowProps {
 }
 
 const LEVEL_STYLES: Record<AttentionLevel, { tone: string; tint: string }> = {
+  action: { tone: "var(--color-status-error)", tint: "var(--color-tint-red)" },
   respond: { tone: "var(--color-status-error)", tint: "var(--color-tint-red)" },
   review: { tone: "var(--color-accent-orange)", tint: "var(--color-tint-orange)" },
   merge: { tone: "var(--color-status-ready)", tint: "var(--color-tint-green)" },
@@ -23,6 +24,7 @@ const LEVEL_STYLES: Record<AttentionLevel, { tone: string; tint: string }> = {
 
 function getStatusText(level: AttentionLevel): string {
   switch (level) {
+    case "action": return "Needs action";
     case "respond": return "Needs input";
     case "review": return "Needs review";
     case "merge": return "Ready to merge";

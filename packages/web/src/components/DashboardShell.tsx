@@ -53,9 +53,18 @@ export function DashboardShell({
   const toggleSidebarCollapse = useCallback(() => setSidebarCollapsed((v) => !v), []);
   const addProjectModal = useModal();
   const cloneModal = useModal();
-  const { sessions: liveSessions } = useSessionEvents(sessions ?? []);
+  const { sessions: liveSessions } = useSessionEvents({
+    initialSessions: sessions ?? [],
+    attentionZones: "simple",
+  });
   const projectInfos = useMemo<ProjectInfo[]>(
-    () => projects.map((p) => ({ id: p.id, name: p.name })),
+    () =>
+      projects.map((p) => ({
+        id: p.id,
+        name: p.name,
+        ...(p.degraded !== undefined ? { degraded: p.degraded } : {}),
+        ...(p.degradedReason ? { degradedReason: p.degradedReason } : {}),
+      })),
     [projects],
   );
   const controls = useMemo<DashboardShellControls>(
@@ -68,7 +77,7 @@ export function DashboardShell({
 
   return (
     <DashboardShellContext.Provider value={controls}>
-      <div className="min-h-screen bg-[var(--color-bg-base)] text-[var(--color-text-primary)] lg:flex">
+      <div className="dashboard-app-shell text-[var(--color-text-primary)]">
         <ProjectSidebar
           projects={projectInfos}
           sessions={liveSessions}
@@ -81,7 +90,7 @@ export function DashboardShell({
           onToggleCollapsed={toggleSidebarCollapse}
         />
 
-        <div className="min-w-0 flex-1">
+        <div className="dashboard-app-shell__col">
           {/* Mobile hamburger — fixed top-right on small screens */}
           <button
             type="button"

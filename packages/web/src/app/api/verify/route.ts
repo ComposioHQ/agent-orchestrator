@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getVerifyIssues, getServices } from "@/lib/services";
-import { validateConfiguredProject } from "@/lib/validation";
+import { statusForConfiguredProjectError, validateConfiguredProject } from "@/lib/validation";
 import type { Tracker } from "@aoagents/ao-core";
 
 export const dynamic = "force-dynamic";
@@ -61,7 +61,10 @@ export async function POST(req: NextRequest) {
     const { config, registry } = await getServices();
     const projectErr = validateConfiguredProject(config.projects, projectId);
     if (projectErr) {
-      return NextResponse.json({ error: projectErr }, { status: 404 });
+      return NextResponse.json(
+        { error: projectErr },
+        { status: statusForConfiguredProjectError(projectErr) },
+      );
     }
     const project = config.projects[projectId];
     if (!project.tracker?.plugin) {

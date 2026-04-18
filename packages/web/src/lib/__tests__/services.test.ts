@@ -7,6 +7,8 @@ const mockCreatePluginRegistry = vi.fn();
 const mockCreateSessionManager = vi.fn();
 const mockCreateLifecycleManager = vi.fn();
 const mockExistsSync = vi.fn();
+const mockInvalidatePortfolioServicesCache = vi.fn();
+const mockIsPortfolioEnabled = vi.fn(() => true);
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<NodeFsModule>();
@@ -27,8 +29,14 @@ vi.mock("@aoagents/ao-core", () => ({
   getSiblings: vi.fn(),
   formatPlanTree: vi.fn(),
   DEFAULT_DECOMPOSER_CONFIG: {},
+  isPortfolioEnabled: () => mockIsPortfolioEnabled(),
   isOrchestratorSession: vi.fn(),
   TERMINAL_STATUSES: new Set(["merged", "done"]),
+}));
+
+vi.mock("../portfolio-services", () => ({
+  invalidatePortfolioServicesCache: (...args: unknown[]) =>
+    mockInvalidatePortfolioServicesCache(...args),
 }));
 
 // Stub all plugin imports
@@ -45,6 +53,7 @@ vi.mock("@aoagents/ao-plugin-tracker-linear", () => ({ default: { manifest: { sl
 describe("services", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsPortfolioEnabled.mockReturnValue(true);
     // Reset module-level globalThis caches between tests
     const g = globalThis as Record<string, unknown>;
     delete g._aoServices;
@@ -137,6 +146,45 @@ describe("services", () => {
       const result = await getServices();
 
       expect(result).toBe(fakeServices);
+    });
+  });
+
+  describe("reloadServices", () => {
+    it("invalidates portfolio/services caches and reinitializes services", async () => {
+      const g = globalThis as Record<string, unknown>;
+      const mockStop = vi.fn();
+      g._aoServices = {
+        lifecycleManager: { stop: mockStop },
+      };
+
+      mockLoadConfig.mockReturnValue({
+        configPath: "/tmp/agent-orchestrator.yaml",
+        port: 3000,
+        readyThresholdMs: 300_000,
+        defaults: {
+          runtime: "tmux",
+          agent: "claude-code",
+          workspace: "worktree",
+          notifiers: [],
+        },
+        projects: {},
+        notifiers: {},
+        notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+        reactions: {},
+      });
+      const mockLifecycleManager = { start: vi.fn(), stop: vi.fn() };
+      mockCreatePluginRegistry.mockReturnValue({ register: vi.fn() });
+      mockCreateSessionManager.mockReturnValue({});
+      mockCreateLifecycleManager.mockReturnValue(mockLifecycleManager);
+
+      const { reloadServices } = await import("../services");
+      const result = await reloadServices();
+
+      expect(mockInvalidatePortfolioServicesCache).toHaveBeenCalledTimes(1);
+      expect(mockStop).toHaveBeenCalledTimes(1);
+      expect(mockLoadConfig).toHaveBeenCalledTimes(1);
+      expect(mockCreateSessionManager).toHaveBeenCalledTimes(1);
+      expect(result.lifecycleManager).toBe(mockLifecycleManager);
     });
   });
 });

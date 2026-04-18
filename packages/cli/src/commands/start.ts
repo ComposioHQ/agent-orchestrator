@@ -65,7 +65,7 @@ import { isHumanCaller } from "../lib/caller-context.js";
 import { detectEnvironment } from "../lib/detect-env.js";
 import { detectAgentRuntime, detectAvailableAgents, type DetectedAgent } from "../lib/detect-agent.js";
 import { detectDefaultBranch } from "../lib/git-utils.js";
-import { promptSelect, promptText } from "../lib/prompts.js";
+import { promptConfirm, promptSelect, promptText } from "../lib/prompts.js";
 import { extractOwnerRepo, isValidRepoString } from "../lib/repo-utils.js";
 import {
   detectProjectType,
@@ -1042,14 +1042,21 @@ async function runStartup(
   // Start dashboard (unless --no-dashboard)
   if (opts?.dashboard !== false) {
     if (!(await isPortAvailable(port))) {
-      const newPort = await findFreePort(port + 1);
-      if (newPort === null) {
-        throw new Error(
-          `Port ${port} is busy and no free port found in range ${port + 1}–${port + MAX_PORT_SCAN}. Free port ${port} or set a different 'port' in agent-orchestrator.yaml.`,
-        );
+      const cleanedStaleDashboard = await cleanupStaleDashboardOnPort(port);
+      if (cleanedStaleDashboard) {
+        console.log(chalk.yellow(`Found stale AO dashboard on port ${port} — cleaning it up.`));
       }
-      console.log(chalk.yellow(`Port ${port} is busy — using ${newPort} instead.`));
-      port = newPort;
+
+      if (!(cleanedStaleDashboard && await isPortAvailable(port))) {
+        const newPort = await findFreePort(port + 1);
+        if (newPort === null) {
+          throw new Error(
+            `Port ${port} is busy and no free port found in range ${port + 1}–${port + MAX_PORT_SCAN}. Free port ${port} or set a different 'port' in agent-orchestrator.yaml.`,
+          );
+        }
+        console.log(chalk.yellow(`Port ${port} is busy — using ${newPort} instead.`));
+        port = newPort;
+      }
     }
     const webDir = findWebDir(); // throws with install-specific guidance if not found
     // Dev mode (HMR) only works in the monorepo where `server/` source exists.
@@ -1261,6 +1268,68 @@ async function runStartup(
 /** Pattern matching AO dashboard processes (production and dev mode). */
 const DASHBOARD_CMD_PATTERN = /next-server|start-all\.js|next dev|ao-web/;
 
+interface DashboardProcessInfo {
+  pid: string;
+  ppid: number;
+  command: string;
+}
+
+async function getDashboardProcessesOnPort(port: number): Promise<DashboardProcessInfo[]> {
+  try {
+    const { stdout } = await exec("lsof", ["-ti", `:${port}`]);
+    const pids = stdout
+      .trim()
+      .split("\n")
+      .map((pid) => pid.trim())
+      .filter((pid) => pid.length > 0);
+
+    const processes = await Promise.all(
+      pids.map(async (pid) => {
+        try {
+          const { stdout: psOutput } = await exec("ps", ["-p", pid, "-o", "ppid=,args="]);
+          const trimmed = psOutput.trim();
+          if (!trimmed) return null;
+
+          const match = trimmed.match(/^(\d+)\s+(.*)$/s);
+          const [, ppid, command] = match ?? ["", "0", trimmed];
+          return {
+            pid,
+            ppid: Number.parseInt(ppid, 10),
+            command: command.trim(),
+          };
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    return processes.filter((processInfo): processInfo is DashboardProcessInfo => processInfo !== null);
+  } catch {
+    return [];
+  }
+}
+
+function isAODashboardProcess(processInfo: DashboardProcessInfo): boolean {
+  return DASHBOARD_CMD_PATTERN.test(processInfo.command);
+}
+
+function isOrphanedDashboardProcess(processInfo: DashboardProcessInfo): boolean {
+  return processInfo.ppid <= 1;
+}
+
+async function cleanupStaleDashboardOnPort(port: number): Promise<boolean> {
+  const running = await getRunning();
+  if (running) return false;
+
+  const dashboardProcesses = (await getDashboardProcessesOnPort(port)).filter(
+    (processInfo) => isAODashboardProcess(processInfo) && isOrphanedDashboardProcess(processInfo),
+  );
+  if (dashboardProcesses.length === 0) return false;
+
+  await exec("kill", dashboardProcesses.map((processInfo) => processInfo.pid));
+  return true;
+}
+
 /**
  * Check whether a process listening on the given port is an AO dashboard
  * (next-server, start-all.js, or next dev).  Only kills matching PIDs,
@@ -1268,25 +1337,9 @@ const DASHBOARD_CMD_PATTERN = /next-server|start-all\.js|next dev|ao-web/;
  */
 async function killDashboardOnPort(port: number): Promise<boolean> {
   try {
-    const { stdout } = await exec("lsof", ["-ti", `:${port}`]);
-    const pids = stdout
-      .trim()
-      .split("\n")
-      .filter((p) => p.length > 0);
-    if (pids.length === 0) return false;
-
-    // Filter to only dashboard PIDs
-    const dashboardPids: string[] = [];
-    for (const pid of pids) {
-      try {
-        const { stdout: cmdline } = await exec("ps", ["-p", pid, "-o", "args="]);
-        if (DASHBOARD_CMD_PATTERN.test(cmdline)) {
-          dashboardPids.push(pid);
-        }
-      } catch {
-        // process vanished — skip
-      }
-    }
+    const dashboardPids = (await getDashboardProcessesOnPort(port))
+      .filter(isAODashboardProcess)
+      .map((processInfo) => processInfo.pid);
     if (dashboardPids.length === 0) return false;
 
     await exec("kill", dashboardPids);
@@ -1707,6 +1760,7 @@ export function registerStop(program: Command): void {
               );
               console.log(chalk.dim(`  Projects: ${running.projects.join(", ")}\n`));
             } else {
+              await stopDashboard(DEFAULT_PORT);
               console.log(chalk.yellow("No running AO instance found in running.json."));
             }
             return;

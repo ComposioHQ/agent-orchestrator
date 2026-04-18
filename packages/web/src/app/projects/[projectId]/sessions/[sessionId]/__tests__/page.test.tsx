@@ -24,6 +24,16 @@ vi.mock("@/components/ProjectSessionPageClient", () => ({
   ),
 }));
 
+vi.mock("@/components/ProjectDegradedState", () => ({
+  ProjectDegradedState: (props: { projectId: string; reason?: string }) => (
+    <div
+      data-testid="project-degraded"
+      data-project-id={props.projectId}
+      data-reason={props.reason ?? ""}
+    />
+  ),
+}));
+
 vi.mock("@/lib/default-location", () => ({
   getDefaultCloneLocation: vi.fn().mockReturnValue("/home/user"),
 }));
@@ -96,7 +106,11 @@ describe("ProjectSessionPage", () => {
       }),
     );
 
-    expect(mockLoadProjectPageData).toHaveBeenCalledWith("proj-2");
+    expect(mockLoadProjectPageData).toHaveBeenCalledWith("proj-2", {
+      ensureOrchestrator: false,
+      includeMetadata: false,
+      includePullRequests: false,
+    });
     expect(mockLoadPortfolioPageData).toHaveBeenCalled();
   });
 
@@ -110,5 +124,21 @@ describe("ProjectSessionPage", () => {
     expect(mockRedirect).toHaveBeenCalledWith("/");
     expect(mockLoadProjectPageData).not.toHaveBeenCalled();
     expect(mockLoadPortfolioPageData).not.toHaveBeenCalled();
+  });
+
+  it("renders degraded project state instead of session client for degraded projects", async () => {
+    mockGetAllProjects.mockReturnValue([
+      { id: "my-app", name: "My App", degraded: true, degradedReason: "Broken config" },
+    ]);
+
+    render(
+      await ProjectSessionPage({
+        params: Promise.resolve({ projectId: "my-app", sessionId: "sess-1" }),
+      }),
+    );
+
+    expect(screen.getByTestId("dashboard-shell")).toBeInTheDocument();
+    expect(screen.getByTestId("project-degraded")).toHaveAttribute("data-project-id", "my-app");
+    expect(screen.queryByTestId("session-client")).not.toBeInTheDocument();
   });
 });

@@ -35,10 +35,10 @@ vi.mock("@/lib/portfolio-services", () => ({ getPortfolioServices: vi.fn(() => (
 vi.mock("@aoagents/ao-core", () => ({ findConfigFile: vi.fn(() => null), readOriginRemoteUrl: vi.fn(() => null), parseRepoUrl: vi.fn(() => ({ owner: "acme", repo: "my-repo", cloneUrl: "https://github.com/acme/my-repo.git" })), generateConfigFromUrl: vi.fn(() => ({ projects: { "my-repo": {} } })), configToYaml: vi.fn(() => "yaml"), sanitizeProjectId: vi.fn((n: string) => n.toLowerCase().replace(/\s+/g, "-")), generateOrchestratorPrompt: vi.fn(() => "prompt"), isPortfolioEnabled: () => mockIsPortfolioEnabled() }));
 vi.mock("@/lib/api-schemas", async () => { const { z } = await import("zod"); return { RegisterProjectSchema: z.object({ path: z.string().min(1), name: z.string().optional(), configProjectKey: z.string().optional() }) }; });
 vi.mock("@/lib/local-project-config", () => ({ buildFlatLocalConfig: vi.fn(() => ({})), extractFlatLocalConfig: vi.fn(() => ({})) }));
-vi.mock("@/lib/path-security", () => ({ assertPathWithinHome: vi.fn(async (p: string) => p) }));
+vi.mock("@/lib/filesystem-access", () => ({ assertWorkspacePathAllowed: vi.fn((p: string) => p) }));
 vi.mock("@/lib/project-registration", () => ({ registerAndResolveProject: vi.fn((_d: string, opts?: { displayName?: string }) => ({ id: "my-repo", name: opts?.displayName ?? "my-repo" })) }));
 vi.mock("@/lib/legacy-config-migration", () => ({ migrateLegacyConfigForPortfolioRegistration: vi.fn(() => ({ migrated: false })) }));
-vi.mock("@/lib/services", () => ({ getServices: vi.fn(async () => ({ config: { projects: { "my-repo": { name: "my-repo", repo: "acme/my-repo", path: "/tmp/my-repo", defaultBranch: "main", sessionPrefix: "my-repo", scm: { plugin: "github" } } } }, sessionManager: { spawnOrchestrator: vi.fn(async () => ({ id: "orch-1", projectId: "my-repo" })) } })) }));
+vi.mock("@/lib/services", () => ({ reloadServices: vi.fn(async () => ({ config: { projects: { "my-repo": { name: "my-repo", repo: "acme/my-repo", path: "/tmp/my-repo", defaultBranch: "main", sessionPrefix: "my-repo", scm: { plugin: "github" } } } }, sessionManager: { spawnOrchestrator: vi.fn(async () => ({ id: "orch-1", projectId: "my-repo" })) } })) }));
 
 import { GET, POST } from "../route";
 function makeRequest(url: string, init?: RequestInit): NextRequest { return new NextRequest(new URL(url, "http://localhost:3000"), init as ConstructorParameters<typeof NextRequest>[1]); }
@@ -86,8 +86,10 @@ describe("POST /api/projects", () => {
   });
 
   it("returns 500 when path security fails", async () => {
-    const { assertPathWithinHome } = await import("@/lib/path-security");
-    (assertPathWithinHome as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("outside"));
+    const { assertWorkspacePathAllowed } = await import("@/lib/filesystem-access");
+    (assertWorkspacePathAllowed as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+      throw new Error("outside");
+    });
     const res = await POST(makeRequest("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: "/etc/passwd" }) }));
     expect(res.status).toBe(500);
   });
@@ -146,7 +148,6 @@ describe("POST /api/projects", () => {
     // All existsSync calls return false (no config file, no .git dir)
     mockExistsSync.mockReturnValue(false);
 
-    const { buildFlatLocalConfig } = await import("@/lib/local-project-config");
     const { configToYaml } = await import("@aoagents/ao-core");
 
     const res = await POST(makeRequest("/api/projects", {
@@ -164,7 +165,6 @@ describe("POST /api/projects", () => {
 
     // Should have written config file
     expect(mockWriteFile).toHaveBeenCalled();
-    expect(buildFlatLocalConfig).toHaveBeenCalled();
     expect(configToYaml).toHaveBeenCalled();
   });
 
@@ -218,8 +218,6 @@ describe("POST /api/projects", () => {
     (parseRepoUrl as ReturnType<typeof vi.fn>).mockReturnValueOnce({ owner: "acme", repo: "my-repo", cloneUrl: "https://github.com/acme/my-repo.git" });
     (generateConfigFromUrl as ReturnType<typeof vi.fn>).mockReturnValueOnce({ projects: { "my-repo": {} } });
 
-    const { extractFlatLocalConfig } = await import("@/lib/local-project-config");
-
     const res = await POST(makeRequest("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -230,7 +228,7 @@ describe("POST /api/projects", () => {
     const data = await res.json();
     expect(data.project.id).toBe("my-repo");
 
-    expect(extractFlatLocalConfig).toHaveBeenCalled();
+    expect(generateConfigFromUrl).toHaveBeenCalled();
     expect(mockWriteFile).toHaveBeenCalled();
   });
 
@@ -298,8 +296,8 @@ describe("POST /api/projects", () => {
     expect(data.orchestrator.projectId).toBe("my-repo");
     expect(data.orchestrator.projectName).toBe("my-repo");
 
-    const { getServices } = await import("@/lib/services");
-    expect(getServices).toHaveBeenCalled();
+    const { reloadServices } = await import("@/lib/services");
+    expect(reloadServices).toHaveBeenCalled();
 
     const { generateOrchestratorPrompt } = await import("@aoagents/ao-core");
     expect(generateOrchestratorPrompt).toHaveBeenCalled();
@@ -311,8 +309,8 @@ describe("POST /api/projects", () => {
       return false;
     });
 
-    const { getServices } = await import("@/lib/services");
-    (getServices as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("spawn failed"));
+    const { reloadServices } = await import("@/lib/services");
+    (reloadServices as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("spawn failed"));
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -337,8 +335,8 @@ describe("POST /api/projects", () => {
       return false;
     });
 
-    const { getServices } = await import("@/lib/services");
-    (getServices as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    const { reloadServices } = await import("@/lib/services");
+    (reloadServices as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       config: { projects: {} },
       sessionManager: { spawnOrchestrator: vi.fn() },
     });
@@ -413,8 +411,8 @@ describe("POST /api/projects", () => {
 
     expect(res.status).toBe(200);
     // Should auto-generate a flat local config, not use the parent config
-    const { buildFlatLocalConfig } = await import("@/lib/local-project-config");
-    expect(buildFlatLocalConfig).toHaveBeenCalled();
+    const { configToYaml } = await import("@aoagents/ao-core");
+    expect(configToYaml).toHaveBeenCalled();
   });
 });
 

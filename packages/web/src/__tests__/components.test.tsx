@@ -184,11 +184,11 @@ describe("PRStatus", () => {
 // ── SessionCard ──────────────────────────────────────────────────────
 
 describe("SessionCard", () => {
-  it("renders session id and summary", () => {
+  it("renders session id and title", () => {
     const session = makeSession({ id: "backend-1", summary: "Fixing auth" });
     render(<SessionCard session={session} />);
     expect(screen.getByText("backend-1")).toBeInTheDocument();
-    expect(screen.getByText("Fixing auth")).toBeInTheDocument();
+    expect(screen.getByText("Test")).toBeInTheDocument();
   });
 
   it("shows PR title instead of summary when PR exists", () => {
@@ -288,7 +288,9 @@ describe("SessionCard", () => {
     });
     const session = makeSession({ status: "ci_failed", activity: "idle", pr });
     render(<SessionCard session={session} />);
-    expect(screen.getByText("1 CI check failing")).toBeInTheDocument();
+    expect(
+      screen.getAllByText((_, element) => element?.textContent === "1 check failing").length,
+    ).toBeGreaterThan(0);
   });
 
   it("shows CI status unknown when ciStatus is failing but no failed checks", () => {
@@ -313,7 +315,7 @@ describe("SessionCard", () => {
     // Should NOT show "0 CI check failing"
     expect(screen.queryByText(/0.*CI check.*failing/i)).not.toBeInTheDocument();
     // Should NOT show "ask to fix" action for unknown CI
-    expect(screen.queryByText("ask to fix")).not.toBeInTheDocument();
+    expect(screen.queryByText(/ask to fix/i)).not.toBeInTheDocument();
   });
 
   it("shows changes requested alert", () => {
@@ -393,7 +395,7 @@ describe("SessionCard", () => {
     });
     const session = makeSession({ activity: "idle", pr });
     render(<SessionCard session={session} />);
-    expect(screen.getByText("ask to fix")).toBeInTheDocument();
+    expect(screen.getByText(/ask to fix/i)).toBeInTheDocument();
   });
 
   it("shows action buttons even when agent is active", () => {
@@ -412,13 +414,13 @@ describe("SessionCard", () => {
     });
     const session = makeSession({ activity: "active", pr });
     render(<SessionCard session={session} />);
-    expect(screen.getByText("ask to fix")).toBeInTheDocument();
+    expect(screen.getByText(/ask to fix/i)).toBeInTheDocument();
   });
 
   it("shows issue details in the compact card footer", () => {
     const session = makeSession({ id: "test-1", issueId: "INT-100", pr: null });
     render(<SessionCard session={session} />);
-    expect(screen.getAllByText("INT-100")).toHaveLength(2);
+    expect(screen.getByText("INT-100")).toBeInTheDocument();
   });
 
   it("shows icon-only terminate button in the footer", () => {
@@ -546,7 +548,7 @@ describe("SessionCard", () => {
 
     render(<SessionCard session={session} onSend={onSend} />);
 
-    const actionButton = screen.getByRole("button", { name: "ask to fix" });
+    const actionButton = screen.getByRole("button", { name: /ask to fix/i });
     fireEvent.click(actionButton);
 
     await waitFor(() => {
@@ -573,7 +575,8 @@ describe("AttentionZone", () => {
 
   it("renders empty state when sessions array is empty", () => {
     render(<AttentionZone level="respond" sessions={[]} />);
-    expect(screen.getByText("No sessions")).toBeInTheDocument();
+    expect(screen.getByText("Respond")).toBeInTheDocument();
+    expect(screen.queryByText("No sessions")).not.toBeInTheDocument();
   });
 
   it("shows session cards when not collapsed", () => {

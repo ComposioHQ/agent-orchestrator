@@ -28,6 +28,7 @@ const HOME = "/Users/testuser";
 function makeBrowseResult(overrides?: Record<string, unknown>) {
   return {
     path: HOME,
+    rootPath: HOME,
     parent: null,
     directories: [
       { name: "project-a", path: `${HOME}/project-a`, hasChildren: true },
@@ -59,7 +60,7 @@ beforeEach(() => {
   mockPush.mockClear();
   // jsdom doesn't implement scrollTo
   Element.prototype.scrollTo = vi.fn();
-  // Default: browse returns home directory
+  // Default: browse returns the workspace root
   (global.fetch as Mock) = vi.fn().mockImplementation((url: string) => {
     if (typeof url === "string" && url.startsWith("/api/browse-directory")) {
       return fetchJsonOk(makeBrowseResult());
@@ -674,13 +675,13 @@ describe("AddProjectModal", () => {
     });
   });
 
-  describe("home path guidance", () => {
-    it("shows guidance when at home directory", async () => {
+  describe("workspace root guidance", () => {
+    it("shows guidance when at the workspace root", async () => {
       renderModal();
 
       await waitFor(() => {
         expect(
-          screen.getByText("Choose a repository folder inside your home directory to continue."),
+          screen.getByText("Choose a repository folder inside the allowed workspace root to continue."),
         ).toBeInTheDocument();
       });
     });
@@ -706,7 +707,7 @@ describe("AddProjectModal", () => {
 
       await waitFor(() => {
         expect(
-          screen.queryByText("Choose a repository folder inside your home directory to continue."),
+          screen.queryByText("Choose a repository folder inside the allowed workspace root to continue."),
         ).not.toBeInTheDocument();
       });
     });

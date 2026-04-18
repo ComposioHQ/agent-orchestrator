@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { isOrchestratorSession, type PortfolioProject, type PortfolioSession, type Session, type SessionMetadata } from "./types.js";
 import { getSessionsDir } from "./paths.js";
 import { parseKeyValueContent } from "./key-value.js";
-import { parsePrFromUrl } from "./utils/pr.js";
+import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 
 const DEFAULT_PER_PROJECT_TIMEOUT_MS = 3_000;
 const VALID_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
@@ -99,6 +99,18 @@ function rawToMetadata(raw: Record<string, string>): SessionMetadata {
   };
 }
 
+function metadataToRecord(metadata: SessionMetadata): Record<string, string> {
+  const record: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(metadata)) {
+    if (typeof value === "string") {
+      record[key] = value;
+    }
+  }
+
+  return record;
+}
+
 /** Convert raw metadata to a Session object (lightweight, no plugin init) */
 function metadataToSession(sessionId: string, project: PortfolioProject, metadata: SessionMetadata): Session {
   // Use the most recent timestamp available as lastActivityAt
@@ -107,36 +119,17 @@ function metadataToSession(sessionId: string, project: PortfolioProject, metadat
     ? new Date(Math.max(...timestamps.map(t => new Date(t!).getTime())))
     : new Date();
 
-  return {
-    id: sessionId,
+  return sessionFromMetadata(sessionId, metadataToRecord(metadata), {
     projectId: project.id,
     status: (metadata.status as Session["status"]) || "spawning",
-    activity: null, // Not available without agent plugin
-    branch: metadata.branch || null,
-    issueId: metadata.issue || null,
-    pr: metadata.pr
-      ? (() => {
-          const parsed = parsePrFromUrl(metadata.pr);
-          return {
-            number: parsed?.number ?? 0,
-            url: metadata.pr,
-            title: "",
-            owner: parsed?.owner ?? "",
-            repo: parsed?.repo ?? "",
-            branch: metadata.branch ?? "",
-            baseBranch: "",
-            isDraft: false,
-          };
-        })()
+    activity: null,
+    runtimeHandle: metadata.runtimeHandle
+      ? { id: metadata.runtimeHandle, runtimeName: "tmux", data: {} }
       : null,
-    workspacePath: metadata.worktree || null,
-    runtimeHandle: metadata.runtimeHandle ? { id: metadata.runtimeHandle, runtimeName: "tmux", data: {} } : null,
-    agentInfo: metadata.summary ? { summary: metadata.summary, agentSessionId: null } : null,
     createdAt: metadata.createdAt ? new Date(metadata.createdAt) : new Date(),
     lastActivityAt: lastActivity,
     restoredAt: metadata.restoredAt ? new Date(metadata.restoredAt) : undefined,
-    metadata: {} as Record<string, string>,
-  };
+  });
 }
 
 export async function getPortfolioSessionCounts(portfolio: PortfolioProject[]): Promise<Record<string, { total: number; active: number }>> {

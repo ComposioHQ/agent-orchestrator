@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Modal } from "./Modal";
+import { refreshProjectsView } from "@/lib/client-project-reload";
 
 interface CloneFromUrlModalProps {
   open: boolean;
@@ -16,6 +18,7 @@ export function CloneFromUrlModal({
   defaultLocation,
   onProjectCreated,
 }: CloneFromUrlModalProps) {
+  const router = useRouter();
   const [url, setUrl] = useState("");
   const [location, setLocation] = useState(defaultLocation);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +60,7 @@ export function CloneFromUrlModal({
         throw new Error("Repository cloned but no project id was returned");
       }
 
+      await refreshProjectsView(router);
       onProjectCreated(projectId);
       onClose();
     } catch (err) {

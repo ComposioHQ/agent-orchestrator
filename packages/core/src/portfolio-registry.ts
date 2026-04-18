@@ -24,6 +24,7 @@ import {
   loadGlobalConfig,
   loadLocalProjectConfig,
   registerProjectInGlobalConfig,
+  resolveProjectIdentity,
   saveGlobalConfig,
 } from "./global-config.js";
 import { atomicWriteFileSync } from "./atomic-write.js";
@@ -230,24 +231,33 @@ function projectFromGlobalConfig(): PortfolioProject[] {
   if (!globalConfig) return [];
 
   const globalConfigPath = getGlobalConfigPath();
-  return Object.entries(globalConfig.projects).map(([id, entry]) => ({
-    id,
-    name: (typeof entry.name === "string" && entry.name.length > 0) ? entry.name : id,
-    configPath: globalConfigPath,
-    configProjectKey: id,
-    repoPath: entry.path,
-    storageKey: typeof entry.storageKey === "string" ? entry.storageKey : undefined,
-    repo: typeof entry.repo === "string" ? entry.repo : undefined,
-    defaultBranch: typeof entry.defaultBranch === "string" ? entry.defaultBranch : undefined,
-    sessionPrefix:
-      typeof entry.sessionPrefix === "string" && entry.sessionPrefix.length > 0
-        ? entry.sessionPrefix
-        : generateSessionPrefix(id),
-    source: "config",
-    enabled: true,
-    pinned: false,
-    lastSeenAt: new Date().toISOString(),
-  }));
+  return Object.entries(globalConfig.projects).map(([id, entry]) => {
+    const resolved = resolveProjectIdentity(id, globalConfig, globalConfigPath);
+    return {
+      id,
+      name: (typeof entry.name === "string" && entry.name.length > 0) ? entry.name : id,
+      configPath: globalConfigPath,
+      configProjectKey: id,
+      repoPath: entry.path,
+      storageKey: typeof entry.storageKey === "string" ? entry.storageKey : undefined,
+      repo: typeof entry.repo === "string" ? entry.repo : undefined,
+      defaultBranch: typeof entry.defaultBranch === "string" ? entry.defaultBranch : undefined,
+      sessionPrefix:
+        typeof entry.sessionPrefix === "string" && entry.sessionPrefix.length > 0
+          ? entry.sessionPrefix
+          : generateSessionPrefix(id),
+      source: "config",
+      enabled: true,
+      pinned: false,
+      lastSeenAt: new Date().toISOString(),
+      ...(resolved?.resolveError
+        ? {
+            degraded: true,
+            degradedReason: resolved.resolveError,
+          }
+        : {}),
+    };
+  });
 }
 
 function fallbackPortfolioFromLoadedConfig(): PortfolioProject[] {
@@ -267,6 +277,8 @@ function fallbackPortfolioFromLoadedConfig(): PortfolioProject[] {
       enabled: true,
       pinned: false,
       lastSeenAt: new Date().toISOString(),
+      degraded: typeof project.resolveError === "string" && project.resolveError.length > 0,
+      degradedReason: project.resolveError,
     }));
   } catch {
     return [];

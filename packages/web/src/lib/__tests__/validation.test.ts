@@ -25,4 +25,14 @@ describe("validateConfiguredProject", () => {
   it("rejects '__proto__'", () => {
     expect(validateConfiguredProject(projects, "__proto__")).toBe("Unknown project: __proto__");
   });
+
+  it("rejects degraded projects", () => {
+    const degradedProjects = {
+      "my-app": { name: "My App", resolveError: "Malformed local config" },
+    };
+
+    expect(validateConfiguredProject(degradedProjects, "my-app")).toBe(
+      'Project "my-app" is degraded: Malformed local config',
+    );
+  });
 });

@@ -170,6 +170,23 @@ describe("portfolio-projects", () => {
       expect(result).toBeNull();
     });
 
+    it("returns null when the resolved project is degraded", () => {
+      vi.mocked(getGlobalConfigPath).mockReturnValue("/home/user/.agent-orchestrator/config.yaml");
+
+      const project = makeProject({
+        configPath: "/tmp/project/agent-orchestrator.yaml",
+      });
+      const degradedConfig = makeConfig("test-project");
+      degradedConfig.projects["test-project"] = {
+        ...degradedConfig.projects["test-project"],
+        resolveError: "Broken local config",
+      } as ProjectConfig;
+      vi.mocked(loadConfig).mockReturnValue(degradedConfig);
+
+      const result = resolveProjectConfig(project);
+      expect(result).toBeNull();
+    });
+
     it("uses cached config on second call", () => {
       vi.mocked(getGlobalConfigPath).mockReturnValue("/home/user/.agent-orchestrator/config.yaml");
 

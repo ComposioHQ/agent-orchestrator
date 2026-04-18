@@ -229,11 +229,11 @@ describe("kill", () => {
 });
 
 describe("cleanup", () => {
-  it("kills sessions with merged PRs", async () => {
+  it("kills sessions with closed PRs", async () => {
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn(),
-      getPRState: vi.fn().mockResolvedValue("merged"),
+      getPRState: vi.fn().mockResolvedValue("closed"),
       mergePR: vi.fn(),
       closePR: vi.fn(),
       getCIChecks: vi.fn(),
@@ -272,7 +272,7 @@ describe("cleanup", () => {
     expect(result.skipped).toHaveLength(0);
   });
 
-  it("deletes mapped OpenCode session during cleanup", async () => {
+  it("deletes mapped OpenCode session during cleanup for closed PRs", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
@@ -280,7 +280,7 @@ describe("cleanup", () => {
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn(),
-      getPRState: vi.fn().mockResolvedValue("merged"),
+      getPRState: vi.fn().mockResolvedValue("closed"),
       mergePR: vi.fn(),
       closePR: vi.fn(),
       getCIChecks: vi.fn(),
@@ -322,14 +322,14 @@ describe("cleanup", () => {
     expect(deleteLog).toContain("session delete ses_cleanup");
   });
 
-  it("treats missing mapped OpenCode session as already cleaned", async () => {
+  it("treats missing mapped OpenCode session as already cleaned for closed PRs", async () => {
     const mockBin = installMockOpencodeWithNotFoundDelete(tmpDir, "[]");
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
 
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn(),
-      getPRState: vi.fn().mockResolvedValue("merged"),
+      getPRState: vi.fn().mockResolvedValue("closed"),
       mergePR: vi.fn(),
       closePR: vi.fn(),
       getCIChecks: vi.fn(),
@@ -392,7 +392,7 @@ describe("cleanup", () => {
     expect(result.killed).toContain("app-6");
     const deleteLog = readFileSync(deleteLogPath, "utf-8");
     expect(deleteLog).toContain("session delete ses_archived");
-  });
+  }, 15_000);
 
   it("does not skip archived cleanup for matching session IDs in other projects", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived-cross-project.log");

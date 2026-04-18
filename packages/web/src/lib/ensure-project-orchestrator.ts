@@ -1,7 +1,7 @@
 import { generateOrchestratorPrompt, isOrchestratorSession } from "@aoagents/ao-core";
 import type { DashboardOrchestratorLink } from "@/lib/types";
 import { getServices } from "@/lib/services";
-import { listDashboardOrchestrators } from "@/lib/serialize";
+import { filterCurrentProjectOrchestrators } from "@/lib/orchestrator-selection";
 
 const globalForProjectOrchestrator = globalThis as typeof globalThis & {
   _aoEnsureProjectOrchestratorLocks?: Map<string, Promise<DashboardOrchestratorLink | null>>;
@@ -28,15 +28,27 @@ export async function ensureProjectOrchestrator(
   const task = (async (): Promise<DashboardOrchestratorLink | null> => {
     const { config, sessionManager } = await getServices();
     const project = config.projects[projectId];
-    if (!project || project.enabled === false) return null;
+    if (
+      !project ||
+      project.enabled === false ||
+      (typeof project.resolveError === "string" && project.resolveError.length > 0)
+    ) {
+      return null;
+    }
 
     const allSessions = await sessionManager.list();
-    const existing = listDashboardOrchestrators(
+    const existingSession = filterCurrentProjectOrchestrators(
       allSessions.filter((session) => isOrchestratorSession(session)),
       config.projects,
     ).find((orchestrator) => orchestrator.projectId === projectId);
 
-    if (existing) return existing;
+    if (existingSession) {
+      return {
+        id: existingSession.id,
+        projectId,
+        projectName: project.name ?? projectId,
+      };
+    }
 
     const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
     const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt });

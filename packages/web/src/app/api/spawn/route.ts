@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
 import {
+  statusForConfiguredProjectError,
   validateIdentifier,
   validateString,
   stripControlChars,
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
     const projectId = body.projectId as string;
     const projectErr = validateConfiguredProject(config.projects, projectId);
     if (projectErr) {
+      const status = statusForConfiguredProjectError(projectErr);
       recordApiObservation({
         config,
         method: "POST",
@@ -63,12 +65,12 @@ export async function POST(request: NextRequest) {
         correlationId,
         startedAt,
         outcome: "failure",
-        statusCode: 404,
+        statusCode: status,
         projectId,
         reason: projectErr,
         data: { issueId: body.issueId },
       });
-      return jsonWithCorrelation({ error: projectErr }, { status: 404 }, correlationId);
+      return jsonWithCorrelation({ error: projectErr }, { status }, correlationId);
     }
 
     const session = await sessionManager.spawn({

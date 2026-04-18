@@ -34,21 +34,6 @@ const mockGetServices = vi.hoisted(() =>
   })),
 );
 
-const mockGetPortfolioServices = vi.hoisted(() =>
-  vi.fn(() => ({
-    portfolio: [
-      {
-        id: "proj-a",
-        name: "Project A",
-        degraded: false,
-        degradedReason: null,
-      },
-    ],
-  })),
-);
-
-const mockGetCachedPortfolioSessions = vi.hoisted(() => vi.fn(async () => []));
-
 const mockSessionToDashboard = vi.hoisted(() =>
   vi.fn((s: Record<string, unknown>) => ({
     id: s.id,
@@ -83,10 +68,7 @@ const mockResolveGlobalPause = vi.hoisted(() => vi.fn(() => null));
 const mockFilterProjectSessions = vi.hoisted(() =>
   vi.fn((sessions: unknown[]) => sessions),
 );
-const mockGetAttentionLevel = vi.hoisted(() => vi.fn(() => "working" as const));
-const mockGetTriageRank = vi.hoisted(() => vi.fn(() => 5));
 const mockIsOrchestratorSession = vi.hoisted(() => vi.fn(() => false));
-const mockResolveProjectConfig = vi.hoisted(() => vi.fn(() => null));
 const mockGetSCM = vi.hoisted(() => vi.fn(() => null));
 
 /* ------------------------------------------------------------------ */
@@ -96,17 +78,11 @@ const mockGetSCM = vi.hoisted(() => vi.fn(() => null));
 vi.mock("@aoagents/ao-core", () => ({
   ACTIVITY_STATE: { EXITED: "exited", ACTIVE: "active", IDLE: "idle" },
   isOrchestratorSession: mockIsOrchestratorSession,
-  resolveProjectConfig: mockResolveProjectConfig,
 }));
 
 vi.mock("@/lib/services", () => ({
   getServices: mockGetServices,
   getSCM: mockGetSCM,
-}));
-
-vi.mock("@/lib/portfolio-services", () => ({
-  getPortfolioServices: mockGetPortfolioServices,
-  getCachedPortfolioSessions: mockGetCachedPortfolioSessions,
 }));
 
 vi.mock("@/lib/serialize", () => ({
@@ -130,11 +106,6 @@ vi.mock("@/lib/global-pause", () => ({
 
 vi.mock("@/lib/project-utils", () => ({
   filterProjectSessions: mockFilterProjectSessions,
-}));
-
-vi.mock("@/lib/types", () => ({
-  getAttentionLevel: mockGetAttentionLevel,
-  getTriageRank: mockGetTriageRank,
 }));
 
 /* ------------------------------------------------------------------ */
@@ -182,7 +153,6 @@ beforeEach(() => {
 
   // Defaults
   mockSessionManager.list.mockResolvedValue([]);
-  mockGetCachedPortfolioSessions.mockResolvedValue([]);
   mockFilterProjectSessions.mockImplementation((sessions: unknown[]) => sessions);
   mockListDashboardOrchestrators.mockReturnValue([]);
   mockIsOrchestratorSession.mockReturnValue(false);
@@ -192,24 +162,21 @@ beforeEach(() => {
 });
 
 describe("GET /api/sessions — portfolio scope", () => {
-  it("returns portfolio sessions, action items, stats, and project summaries", async () => {
+  it("returns the standard sessions payload shape", async () => {
     const session = makeSession({ id: "ps-1", status: "working" });
-    mockGetCachedPortfolioSessions.mockResolvedValue([
-      { session, project: { id: "proj-a", name: "Project A" } },
-    ]);
-    mockGetAttentionLevel.mockReturnValue("working");
-    mockGetTriageRank.mockReturnValue(5);
+    mockSessionManager.list.mockResolvedValue([session]);
+    mockFilterProjectSessions.mockReturnValue([session]);
 
     const res = await GET(makeRequest("/api/sessions?scope=portfolio"));
     expect(res.status).toBe(200);
 
-    // jsonWithCorrelation was called with portfolio payload
     expect(mockJsonWithCorrelation).toHaveBeenCalledWith(
       expect.objectContaining({
         sessions: expect.any(Array),
-        actionItems: expect.any(Array),
         stats: expect.any(Object),
-        projectSummaries: expect.any(Array),
+        orchestratorId: null,
+        orchestrators: expect.any(Array),
+        globalPause: null,
       }),
       { status: 200 },
       "test-corr-id",
@@ -224,33 +191,14 @@ describe("GET /api/sessions — portfolio scope", () => {
       .mockReturnValueOnce(false) // second call: keep worker
       .mockReturnValueOnce(true) // PR enrichment: skip orch
       .mockReturnValueOnce(false); // PR enrichment: keep worker
-    mockGetCachedPortfolioSessions.mockResolvedValue([
-      { session: orchSession, project: { id: "proj-a", name: "Project A" } },
-      { session: workerSession, project: { id: "proj-a", name: "Project A" } },
-    ]);
+    mockSessionManager.list.mockResolvedValue([orchSession, workerSession]);
+    mockFilterProjectSessions.mockReturnValue([orchSession, workerSession]);
 
     await GET(makeRequest("/api/sessions?scope=portfolio"));
 
     // sessionToDashboard should only be called for the worker session
     expect(mockSessionToDashboard).toHaveBeenCalledTimes(1);
-    expect(mockSessionToDashboard).toHaveBeenCalledWith(workerSession);
-  });
-
-  it("enriches PR data for portfolio sessions with timeout", async () => {
-    const sessionWithPR = makeSession({
-      id: "pr-1",
-      pr: { url: "https://github.com/acme/repo/pull/1" },
-    });
-    const project = { id: "proj-a", name: "Project A" };
-    mockGetCachedPortfolioSessions.mockResolvedValue([
-      { session: sessionWithPR, project },
-    ]);
-    mockResolveProjectConfig.mockReturnValue({ project: mockConfig.projects["my-project"] });
-    mockGetSCM.mockReturnValue({ getPRStatus: vi.fn() });
-
-    await GET(makeRequest("/api/sessions?scope=portfolio"));
-
-    expect(mockEnrichSessionPR).toHaveBeenCalled();
+    expect(mockSessionToDashboard).toHaveBeenCalledWith(workerSession, 0, [workerSession]);
   });
 
   it("handles PR enrichment failure gracefully", async () => {
@@ -258,73 +206,13 @@ describe("GET /api/sessions — portfolio scope", () => {
       id: "pr-1",
       pr: { url: "https://github.com/acme/repo/pull/1" },
     });
-    mockGetCachedPortfolioSessions.mockResolvedValue([
-      { session: sessionWithPR, project: { id: "proj-a", name: "Project A" } },
-    ]);
-    // getServices throws during enrichment
-    mockGetServices.mockRejectedValueOnce(new Error("service unavailable"));
-    // But the first call (inside handlePortfolioScope) should succeed, so reset
-    mockGetServices.mockResolvedValue({
-      config: mockConfig,
-      registry: mockRegistry,
-      sessionManager: mockSessionManager,
-    });
+    mockSessionManager.list.mockResolvedValue([sessionWithPR]);
+    mockFilterProjectSessions.mockReturnValue([sessionWithPR]);
+    mockGetSCM.mockReturnValue({ getPRStatus: vi.fn() });
+    mockEnrichSessionPR.mockRejectedValueOnce(new Error("service unavailable"));
 
-    // Should not throw
     const res = await GET(makeRequest("/api/sessions?scope=portfolio"));
     expect(res.status).toBe(200);
-  });
-
-  it("sorts action items by triage rank then by last activity", async () => {
-    const s1 = makeSession({ id: "s1" });
-    const s2 = makeSession({ id: "s2" });
-    mockGetCachedPortfolioSessions.mockResolvedValue([
-      { session: s1, project: { id: "proj-a", name: "A" } },
-      { session: s2, project: { id: "proj-b", name: "B" } },
-    ]);
-    mockGetTriageRank.mockReturnValueOnce(3).mockReturnValueOnce(1);
-
-    await GET(makeRequest("/api/sessions?scope=portfolio"));
-
-    const callArgs = mockJsonWithCorrelation.mock.calls[0][0] as {
-      actionItems: Array<{ triageRank: number }>;
-    };
-    // Lower triage rank should come first
-    expect(callArgs.actionItems[0].triageRank).toBeLessThanOrEqual(
-      callArgs.actionItems[1].triageRank,
-    );
-  });
-
-  it("maps portfolio to project summaries", async () => {
-    mockGetPortfolioServices.mockReturnValue({
-      portfolio: [
-        { id: "proj-a", name: "Project A", degraded: true, degradedReason: "config error" },
-      ],
-    });
-
-    await GET(makeRequest("/api/sessions?scope=portfolio"));
-
-    const callArgs = mockJsonWithCorrelation.mock.calls[0][0] as {
-      projectSummaries: Array<{ id: string; degraded: boolean; degradedReason: string | null }>;
-    };
-    expect(callArgs.projectSummaries).toEqual([
-      { id: "proj-a", name: "Project A", degraded: true, degradedReason: "config error" },
-    ]);
-  });
-
-  it("skips PR enrichment when resolveProjectConfig returns null", async () => {
-    const sessionWithPR = makeSession({
-      id: "pr-1",
-      pr: { url: "https://github.com/acme/repo/pull/1" },
-    });
-    mockGetCachedPortfolioSessions.mockResolvedValue([
-      { session: sessionWithPR, project: { id: "proj-a", name: "Project A" } },
-    ]);
-    mockResolveProjectConfig.mockReturnValue(null);
-
-    await GET(makeRequest("/api/sessions?scope=portfolio"));
-
-    expect(mockEnrichSessionPR).not.toHaveBeenCalled();
   });
 
   it("skips PR enrichment when getSCM returns null", async () => {
@@ -332,36 +220,13 @@ describe("GET /api/sessions — portfolio scope", () => {
       id: "pr-1",
       pr: { url: "https://github.com/acme/repo/pull/1" },
     });
-    mockGetCachedPortfolioSessions.mockResolvedValue([
-      { session: sessionWithPR, project: { id: "proj-a", name: "Project A" } },
-    ]);
-    mockResolveProjectConfig.mockReturnValue({ project: mockConfig.projects["my-project"] });
+    mockSessionManager.list.mockResolvedValue([sessionWithPR]);
+    mockFilterProjectSessions.mockReturnValue([sessionWithPR]);
     mockGetSCM.mockReturnValue(null);
 
     await GET(makeRequest("/api/sessions?scope=portfolio"));
 
     expect(mockEnrichSessionPR).not.toHaveBeenCalled();
-  });
-
-  it("recomputes attention levels after PR enrichment", async () => {
-    const sessionWithPR = makeSession({
-      id: "pr-1",
-      pr: { url: "https://github.com/acme/repo/pull/1" },
-    });
-    mockGetCachedPortfolioSessions.mockResolvedValue([
-      { session: sessionWithPR, project: { id: "proj-a", name: "Project A" } },
-    ]);
-    mockResolveProjectConfig.mockReturnValue({ project: mockConfig.projects["my-project"] });
-    mockGetSCM.mockReturnValue({ getPRStatus: vi.fn() });
-
-    // First call returns "working", second (after enrichment) returns "merge"
-    mockGetAttentionLevel.mockReturnValueOnce("working").mockReturnValueOnce("merge");
-    mockGetTriageRank.mockReturnValueOnce(5).mockReturnValueOnce(1);
-
-    await GET(makeRequest("/api/sessions?scope=portfolio"));
-
-    // getAttentionLevel should be called twice — once initially, once after enrichment
-    expect(mockGetAttentionLevel).toHaveBeenCalledTimes(2);
   });
 });
 

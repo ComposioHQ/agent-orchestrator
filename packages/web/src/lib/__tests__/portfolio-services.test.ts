@@ -87,6 +87,33 @@ describe("getPortfolioServices", () => {
     stopPortfolioBackgroundRefresh();
   });
 
+  it("surfaces degraded projects in the config fallback", () => {
+    mockGetPortfolio.mockReturnValue([]);
+    mockLoadConfig.mockReturnValue({
+      configPath: "/home/user/config.yaml",
+      projects: {
+        "broken-app": {
+          name: "Broken App",
+          path: "/home/user/broken-app",
+          repo: "org/broken-app",
+          defaultBranch: "main",
+          resolveError: "Local config is malformed",
+        },
+      },
+    });
+
+    const services = getPortfolioServices();
+    expect(services.portfolio).toEqual([
+      expect.objectContaining({
+        id: "broken-app",
+        degraded: true,
+        degradedReason: "Local config is malformed",
+      }),
+    ]);
+
+    stopPortfolioBackgroundRefresh();
+  });
+
   it("uses legacy config fallback when portfolio mode is disabled", () => {
     mockIsPortfolioEnabled.mockReturnValue(false);
     mockLoadConfig.mockReturnValue({
@@ -157,6 +184,8 @@ describe("getCachedPortfolioSessions", () => {
     const sessions = [{ id: "s1" }];
     mockListPortfolioSessions.mockResolvedValue(sessions);
 
+    await getCachedPortfolioSessions();
+    await Promise.resolve();
     const result = await getCachedPortfolioSessions();
     expect(result).toEqual(sessions);
 
@@ -179,6 +208,7 @@ describe("getCachedPortfolioSessions", () => {
     mockListPortfolioSessions.mockResolvedValue(sessions);
 
     await getCachedPortfolioSessions();
+    await Promise.resolve();
     // Second call should use cache
     const result = await getCachedPortfolioSessions();
     expect(result).toEqual(sessions);

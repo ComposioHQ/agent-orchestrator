@@ -212,6 +212,7 @@ vi.mock("node:process", async (importOriginal) => {
 
 import { Command } from "commander";
 import { registerStart, registerStop, createConfigOnly } from "../../src/commands/start.js";
+import * as webDir from "../../src/lib/web-dir.js";
 
 let tmpDir: string;
 let program: Command;
@@ -262,6 +263,14 @@ beforeEach(() => {
     running: true,
     started: true,
   });
+  vi.mocked(webDir.findWebDir).mockReset();
+  vi.mocked(webDir.findWebDir).mockReturnValue("/fake/web");
+  vi.mocked(webDir.buildDashboardEnv).mockReset();
+  vi.mocked(webDir.buildDashboardEnv).mockResolvedValue({});
+  vi.mocked(webDir.isPortAvailable).mockReset();
+  vi.mocked(webDir.isPortAvailable).mockResolvedValue(true);
+  vi.mocked(webDir.findFreePort).mockReset();
+  vi.mocked(webDir.findFreePort).mockResolvedValue(3000);
   mockDetectOpenClawInstallation.mockReset();
   mockDetectOpenClawInstallation.mockResolvedValue({
     state: "missing",
@@ -289,6 +298,8 @@ afterEach(() => {
   } else {
     process.env.AO_GLOBAL_CONFIG = previousAoGlobalConfig;
   }
+  process.removeAllListeners("SIGINT");
+  process.removeAllListeners("SIGTERM");
   rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -802,7 +813,15 @@ describe("start command — browser open waits for port", () => {
     mockSessionManager.get.mockResolvedValue(null);
     mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "app-orchestrator" });
 
-    await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
+    try {
+      await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
+    } catch (error) {
+      const errors = vi
+        .mocked(console.error)
+        .mock.calls.map((c) => c.join(" "))
+        .join("\n");
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\n${errors}`);
+    }
 
     // waitForPortAndOpen should have been called with orchestrator URL and AbortSignal
     expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
@@ -1201,6 +1220,19 @@ describe("stop command", () => {
       .join("\n");
     expect(output).toContain("Dashboard stopped");
   });
+
+  it("cleans up dashboard listeners even when --all has no running.json entry", async () => {
+    mockDashboardOnPort(3000, "77777");
+
+    await program.parseAsync(["node", "test", "stop", "--all"]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("Dashboard stopped");
+    expect(output).toContain("No running AO instance found in running.json.");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1473,6 +1505,54 @@ describe("start command — already-running detection", () => {
     // YAML should be unchanged — no duplicate entry added
     const afterYaml = readFileSync(configPath, "utf-8");
     expect(afterYaml).toBe(originalYaml);
+  });
+});
+
+describe("start command — stale dashboard cleanup", () => {
+  it("reclaims the configured port from an orphaned AO dashboard", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const webDir = await import("../../src/lib/web-dir.js");
+    vi.mocked(webDir.isPortAvailable)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    const findFreePortSpy = vi.mocked(webDir.findFreePort);
+    findFreePortSpy.mockResolvedValue(3001);
+
+    mockExec.mockImplementation(async (cmd: string, args: string[] = []) => {
+      if (cmd === "kill") {
+        expect(args).toEqual(["11111"]);
+        return { stdout: "", stderr: "" };
+      }
+      if (cmd === "lsof") {
+        const portArg = args.find((a) => a.startsWith(":"));
+        if (portArg === ":3000") return { stdout: "11111", stderr: "" };
+      }
+      if (cmd === "ps") {
+        expect(args).toEqual(["-p", "11111", "-o", "ppid=,args="]);
+        return { stdout: "1 node /fake/web/dist-server/start-all.js", stderr: "" };
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    try {
+      await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
+    } catch (error) {
+      const errors = vi
+        .mocked(console.error)
+        .mock.calls.map((c) => c.join(" "))
+        .join("\n");
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\n${errors}`);
+    }
+
+    expect(findFreePortSpy).not.toHaveBeenCalled();
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("Found stale AO dashboard on port 3000");
+    expect(output).toContain("Dashboard: http://localhost:3000");
   });
 });
 

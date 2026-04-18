@@ -22,6 +22,7 @@ import {
 
 const ATTENTION_LEVELS: AttentionLevel[] = [
   "merge",
+  "action",
   "respond",
   "review",
   "pending",
@@ -32,6 +33,7 @@ const ATTENTION_LEVELS: AttentionLevel[] = [
 function emptyAttentionCounts(): Record<AttentionLevel, number> {
   return {
     merge: 0,
+    action: 0,
     respond: 0,
     review: 0,
     pending: 0,

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig } from "@aoagents/ao-core";
+import { createActivitySignal, type Session, type RuntimeHandle, type AgentLaunchConfig } from "@aoagents/ao-core";
 
 const { mockAppendActivityEntry, mockReadLastActivityEntry, mockRecordTerminalActivity } =
   vi.hoisted(() => ({
@@ -42,6 +42,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "test-project",
     status: "working",
     activity: "active",
+    activitySignal: createActivitySignal("valid", {
+      activity: "active",
+      timestamp: new Date(),
+      source: "native",
+    }),
     branch: "feat/test",
     issueId: null,
     pr: null,

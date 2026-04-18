@@ -1,6 +1,7 @@
 import { isPortfolioEnabled } from "@aoagents/ao-core";
 import { redirect } from "next/navigation";
 import { DashboardShell } from "@/components/DashboardShell";
+import { ProjectDegradedState } from "@/components/ProjectDegradedState";
 import { ProjectSessionPageClient } from "@/components/ProjectSessionPageClient";
 import { getDefaultCloneLocation } from "@/lib/default-location";
 import { loadProjectPageData } from "@/lib/project-page-data";
@@ -22,8 +23,32 @@ export default async function ProjectSessionPage(props: {
 
   const [{ projectSummaries, sessions: allSessions }] = await Promise.all([
     loadPortfolioPageData(),
-    loadProjectPageData(params.projectId),
+    loadProjectPageData(params.projectId, {
+      ensureOrchestrator: false,
+      includeMetadata: false,
+      includePullRequests: false,
+    }),
   ]);
+
+  if (project.degraded) {
+    return (
+      <DashboardShell
+        projects={projectSummaries}
+        sessions={allSessions}
+        activeProjectId={params.projectId}
+        activeSessionId={params.sessionId}
+        defaultLocation={getDefaultCloneLocation()}
+        portfolioEnabled={portfolioEnabled}
+      >
+        <ProjectDegradedState
+          projectId={project.id}
+          projectName={project.name}
+          reason={project.degradedReason}
+          compact
+        />
+      </DashboardShell>
+    );
+  }
 
   return (
     <DashboardShell

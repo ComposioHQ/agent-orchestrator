@@ -22,6 +22,20 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     }
 
     const project = config.projects[session.projectId];
+    if (!project) {
+      return jsonWithCorrelation(
+        { error: `Unknown project: ${session.projectId}` },
+        { status: 404 },
+        correlationId,
+      );
+    }
+    if (typeof project.resolveError === "string" && project.resolveError.length > 0) {
+      return jsonWithCorrelation(
+        { error: `Project "${session.projectId}" is degraded: ${project.resolveError}` },
+        { status: 409 },
+        correlationId,
+      );
+    }
     const scm = getSCM(registry, project);
     if (!scm) {
       return jsonWithCorrelation(

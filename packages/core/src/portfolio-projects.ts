@@ -46,7 +46,9 @@ export function resolveProjectConfig(entry: PortfolioProject): { config: Orchest
       config.configPath = entry.configPath;
 
       const project = config.projects[entry.configProjectKey];
-      if (!project) return null;
+      if (!project || (typeof project.resolveError === "string" && project.resolveError.length > 0)) {
+        return null;
+      }
       return { config, project };
     }
 
@@ -59,7 +61,9 @@ export function resolveProjectConfig(entry: PortfolioProject): { config: Orchest
       configCache.set(entry.configPath, { config, expiresAt: Date.now() + CACHE_TTL_MS });
     }
     const project = config.projects[entry.configProjectKey];
-    if (!project) return null;
+    if (!project || (typeof project.resolveError === "string" && project.resolveError.length > 0)) {
+      return null;
+    }
     return { config, project };
   } catch {
     return null;

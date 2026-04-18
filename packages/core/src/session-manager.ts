@@ -19,7 +19,6 @@ import { promisify } from "node:util";
 import {
   isIssueNotFoundError,
   isRestorable,
-  NON_RESTORABLE_STATUSES,
   SessionNotFoundError,
   SessionNotRestorableError,
   WorkspaceMissingError,
@@ -53,7 +52,15 @@ import {
   listMetadata,
   reserveSessionId,
 } from "./metadata.js";
+import {
+  buildLifecycleMetadataPatch,
+  cloneLifecycle,
+  createInitialCanonicalLifecycle,
+  deriveLegacyStatus,
+  parseCanonicalLifecycle,
+} from "./lifecycle-state.js";
 import { buildPrompt } from "./prompt-builder.js";
+import { classifyActivitySignal, createActivitySignal } from "./activity-signal.js";
 import {
   getSessionsDir,
   getWorktreesDir,
@@ -67,7 +74,7 @@ import {
 } from "./opencode-agents-md.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
-import { safeJsonParse } from "./utils/validation.js";
+import { safeJsonParse, validateStatus } from "./utils/validation.js";
 import { isGitBranchNameSafe } from "./utils.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 
@@ -282,6 +289,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return getSessionsDir(config.configPath, project.path, project.storageKey);
   }
 
+  function isDegradedProject(
+    project: ProjectConfig | undefined,
+  ): project is ProjectConfig & { resolveError: string } {
+    return typeof project?.resolveError === "string" && project.resolveError.length > 0;
+  }
+
   function normalizePath(path: string): string {
     return resolve(path).replace(/\/$/, "");
   }
@@ -372,6 +385,28 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return next;
   }
 
+  function buildUpdatedLifecycle(
+    sessionId: string,
+    raw: Record<string, string>,
+    updater: (lifecycle: ReturnType<typeof parseCanonicalLifecycle>) => void,
+  ) {
+    const lifecycle = cloneLifecycle(
+      parseCanonicalLifecycle(raw, {
+        sessionId,
+        status: validateStatus(raw["status"]),
+      }),
+    );
+    updater(lifecycle);
+    return lifecycle;
+  }
+
+  function lifecycleMetadataUpdates(
+    raw: Record<string, string>,
+    lifecycle: ReturnType<typeof parseCanonicalLifecycle>,
+  ): Partial<Record<string, string>> {
+    return buildLifecycleMetadataPatch(lifecycle, validateStatus(raw["status"]));
+  }
+
   function updateMetadataPreservingMtime(
     sessionsDir: string,
     sessionName: string,
@@ -423,13 +458,28 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     if (Object.keys(updates).length > 0) {
+      const lifecycle = buildUpdatedLifecycle(repaired.sessionName, repaired.raw, (next) => {
+        next.session.kind = "orchestrator";
+        next.pr.state = "none";
+        next.pr.reason = "not_created";
+        next.pr.number = null;
+        next.pr.url = null;
+        next.pr.lastObservedAt = null;
+        if (updates["status"] === "working") {
+          next.session.state = "working";
+          next.session.reason = "task_in_progress";
+        }
+      });
       updateMetadataPreservingMtime(
         sessionsDir,
         repaired.sessionName,
-        updates,
+        { ...updates, ...lifecycleMetadataUpdates(repaired.raw, lifecycle) },
         repaired.modifiedAt,
       );
-      repaired.raw = applyMetadataUpdatesToRaw(repaired.raw, updates);
+      repaired.raw = applyMetadataUpdatesToRaw(repaired.raw, {
+        ...updates,
+        ...lifecycleMetadataUpdates(repaired.raw, lifecycle),
+      });
     }
 
     return repaired;
@@ -450,6 +500,24 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const duplicatePRAttachments = new Map<string, ActiveSessionRecord[]>();
 
     for (const record of repaired) {
+      if (record.raw["stateVersion"] !== "2" || !record.raw["statePayload"]) {
+        const lifecycle = cloneLifecycle(
+          parseCanonicalLifecycle(record.raw, {
+            sessionId: record.sessionName,
+            status: validateStatus(record.raw["status"]),
+            createdAt: record.raw["createdAt"] ? new Date(record.raw["createdAt"]) : undefined,
+          }),
+        );
+        const canonicalUpdates = lifecycleMetadataUpdates(record.raw, lifecycle);
+        updateMetadataPreservingMtime(
+          sessionsDir,
+          record.sessionName,
+          canonicalUpdates,
+          record.modifiedAt,
+        );
+        record.raw = applyMetadataUpdatesToRaw(record.raw, canonicalUpdates);
+      }
+
       if (isOrchestratorSessionRecord(record.sessionName, record.raw, sessionPrefix)) {
         record.raw = repairSingleSessionMetadataOnRead(sessionsDir, record, sessionPrefix).raw;
         continue;
@@ -486,8 +554,25 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           prAutoDetect: "off",
           ...(PR_TRACKING_STATUSES.has(record.raw["status"] ?? "") ? { status: "working" } : {}),
         };
-        updateMetadataPreservingMtime(sessionsDir, record.sessionName, updates, record.modifiedAt);
-        record.raw = applyMetadataUpdatesToRaw(record.raw, updates);
+        const lifecycle = buildUpdatedLifecycle(record.sessionName, record.raw, (next) => {
+          next.pr.state = "none";
+          next.pr.reason = "not_created";
+          next.pr.number = null;
+          next.pr.url = null;
+          next.pr.lastObservedAt = null;
+          if (updates["status"] === "working") {
+            next.session.state = "working";
+            next.session.reason = "task_in_progress";
+          }
+        });
+        const lifecycleUpdates = lifecycleMetadataUpdates(record.raw, lifecycle);
+        updateMetadataPreservingMtime(
+          sessionsDir,
+          record.sessionName,
+          { ...updates, ...lifecycleUpdates },
+          record.modifiedAt,
+        );
+        record.raw = applyMetadataUpdatesToRaw(record.raw, { ...updates, ...lifecycleUpdates });
       }
     }
 
@@ -801,6 +886,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
   function findSessionRecord(sessionId: SessionId): LocatedSession | null {
     for (const [projectId, project] of Object.entries(config.projects)) {
+      if (isDegradedProject(project)) continue;
       const sessionsDir = getProjectSessionsDir(project);
       const raw = readMetadataRaw(sessionsDir, sessionId);
       if (!raw) continue;
@@ -897,16 +983,35 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       try {
         const alive = await plugins.runtime.isAlive(session.runtimeHandle);
         if (!alive) {
+          session.lifecycle.runtime.state = "missing";
+          session.lifecycle.runtime.reason =
+            session.runtimeHandle.runtimeName === "tmux" ? "tmux_missing" : "process_missing";
+          session.lifecycle.runtime.lastObservedAt = new Date().toISOString();
+          if (
+            session.lifecycle.session.state !== "done" &&
+            session.lifecycle.session.state !== "terminated"
+          ) {
+            session.lifecycle.session.state = "detecting";
+            session.lifecycle.session.reason = "runtime_lost";
+            session.lifecycle.session.lastTransitionAt = new Date().toISOString();
+          }
           // Process is confirmed dead — set activity to exited.
           // Only update status to "killed" if not already in a terminal state.
           if (!TERMINAL_SESSION_STATUSES.has(session.status)) {
             session.status = "killed";
           }
           session.activity = "exited";
+          session.activitySignal = createActivitySignal("valid", {
+            activity: "exited",
+            source: "runtime",
+          });
           return;
         }
       } catch {
         // Can't check liveness — continue to activity detection
+        session.lifecycle.runtime.state = "probe_failed";
+        session.lifecycle.runtime.reason = "probe_error";
+        session.lifecycle.runtime.lastObservedAt = new Date().toISOString();
       }
     }
 
@@ -916,17 +1021,24 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // external scripts (which don't store runtimeHandle) to always show "unknown".
     // This now runs for ALL sessions, including terminal statuses, so a merged
     // session with a live agent shows accurate activity (ready/idle/waiting_input).
+    session.activitySignal = createActivitySignal("unavailable");
     if (plugins.agent) {
       try {
         const detected = await plugins.agent.getActivityState(session, config.readyThresholdMs);
         if (detected !== null) {
+          session.activitySignal = classifyActivitySignal(detected, "native");
           session.activity = detected.state;
+          session.lifecycle.runtime.state = "alive";
+          session.lifecycle.runtime.reason = "process_running";
+          session.lifecycle.runtime.lastObservedAt = new Date().toISOString();
           if (detected.timestamp && detected.timestamp > session.lastActivityAt) {
             session.lastActivityAt = detected.timestamp;
           }
+        } else {
+          session.activitySignal = createActivitySignal("null", { source: "native" });
         }
       } catch {
-        // Can't detect activity — keep existing value
+        session.activitySignal = createActivitySignal("probe_failure", { source: "native" });
       }
 
       // Enrich with live agent session info (summary, cost).
@@ -946,6 +1058,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const project = config.projects[spawnConfig.projectId];
     if (!project) {
       throw new Error(`Unknown project: ${spawnConfig.projectId}`);
+    }
+    if (isDegradedProject(project)) {
+      throw new Error(`Project "${spawnConfig.projectId}" is degraded: ${project.resolveError}`);
     }
 
     const selection = resolveAgentSelection({
@@ -1145,19 +1260,30 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     // Write metadata and run post-launch setup — clean up on failure
+    const createdAt = new Date();
+    const lifecycle = createInitialCanonicalLifecycle("worker", createdAt);
+    lifecycle.runtime.handle = handle;
+    lifecycle.runtime.tmuxName = tmuxName ?? null;
+
     const session: Session = {
       id: sessionId,
       projectId: spawnConfig.projectId,
-      status: "spawning",
+      status: deriveLegacyStatus(lifecycle),
       activity: "active",
+      activitySignal: createActivitySignal("valid", {
+        activity: "active",
+        timestamp: createdAt,
+        source: "runtime",
+      }),
+      lifecycle,
       branch,
       issueId: spawnConfig.issueId ?? null,
       pr: null,
       workspacePath,
       runtimeHandle: handle,
       agentInfo: null,
-      createdAt: new Date(),
-      lastActivityAt: new Date(),
+      createdAt,
+      lastActivityAt: createdAt,
       metadata: {
         ...(reusedOpenCodeSessionId ? { opencodeSessionId: reusedOpenCodeSessionId } : {}),
         ...(spawnConfig.prompt ? { userPrompt: spawnConfig.prompt } : {}),
@@ -1168,12 +1294,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       writeMetadata(sessionsDir, sessionId, {
         worktree: workspacePath,
         branch,
-        status: "spawning",
+        status: deriveLegacyStatus(lifecycle),
+        ...buildLifecycleMetadataPatch(lifecycle),
         tmuxName, // Store tmux name for mapping
         issue: spawnConfig.issueId,
         project: spawnConfig.projectId,
         agent: selection.agentName, // Persist agent name for lifecycle manager
-        createdAt: new Date().toISOString(),
+        createdAt: createdAt.toISOString(),
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusedOpenCodeSessionId,
         userPrompt: spawnConfig.prompt,
@@ -1274,6 +1401,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const project = config.projects[orchestratorConfig.projectId];
     if (!project) {
       throw new Error(`Unknown project: ${orchestratorConfig.projectId}`);
+    }
+    if (isDegradedProject(project)) {
+      throw new Error(`Project "${orchestratorConfig.projectId}" is degraded: ${project.resolveError}`);
     }
 
     const selection = resolveAgentSelection({
@@ -1468,19 +1598,34 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     // Write metadata and run post-launch setup
+    const createdAt = new Date();
+    const lifecycle = createInitialCanonicalLifecycle("orchestrator", createdAt);
+    lifecycle.session.state = "working";
+    lifecycle.session.reason = "task_in_progress";
+    lifecycle.session.startedAt = createdAt.toISOString();
+    lifecycle.session.lastTransitionAt = createdAt.toISOString();
+    lifecycle.runtime.handle = handle;
+    lifecycle.runtime.tmuxName = tmuxName ?? null;
+
     const session: Session = {
       id: sessionId,
       projectId: orchestratorConfig.projectId,
-      status: "working",
+      status: deriveLegacyStatus(lifecycle),
       activity: "active",
+      activitySignal: createActivitySignal("valid", {
+        activity: "active",
+        timestamp: createdAt,
+        source: "runtime",
+      }),
+      lifecycle,
       branch,
       issueId: null,
       pr: null,
       workspacePath,
       runtimeHandle: handle,
       agentInfo: null,
-      createdAt: new Date(),
-      lastActivityAt: new Date(),
+      createdAt,
+      lastActivityAt: createdAt,
       metadata: {
         ...(reusableOpenCodeSessionId ? { opencodeSessionId: reusableOpenCodeSessionId } : {}),
       },
@@ -1490,12 +1635,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       writeMetadata(sessionsDir, sessionId, {
         worktree: workspacePath,
         branch,
-        status: "working",
+        status: deriveLegacyStatus(lifecycle),
+        ...buildLifecycleMetadataPatch(lifecycle),
         role: "orchestrator",
         tmuxName,
         project: orchestratorConfig.projectId,
         agent: selection.agentName,
-        createdAt: new Date().toISOString(),
+        createdAt: createdAt.toISOString(),
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusableOpenCodeSessionId,
       });
@@ -1538,6 +1684,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   async function list(projectId?: string): Promise<Session[]> {
     const allSessions = Object.entries(config.projects).flatMap(([entryProjectId, project]) => {
       if (projectId && entryProjectId !== projectId) return [];
+      if (isDegradedProject(project)) return [];
       return loadActiveSessionRecords(project).map((record) => ({
         sessionName: record.sessionName,
         projectId: entryProjectId,
@@ -1603,6 +1750,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   async function get(sessionId: SessionId): Promise<Session | null> {
     // Try to find the session in any project's sessions directory
     for (const [projectId, project] of Object.entries(config.projects)) {
+      if (isDegradedProject(project)) continue;
       const sessionsDir = getProjectSessionsDir(project);
       const raw = readMetadataRaw(sessionsDir, sessionId);
       if (!raw) continue;
@@ -1702,6 +1850,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
+    const terminatedLifecycle = buildUpdatedLifecycle(sessionId, raw, (next) => {
+      next.session.state = "terminated";
+      next.session.reason = "manually_killed";
+      next.session.terminatedAt = new Date().toISOString();
+      next.session.lastTransitionAt = next.session.terminatedAt;
+      next.runtime.state = raw["runtimeHandle"] || raw["tmuxName"] ? "missing" : "exited";
+      next.runtime.reason = "manual_kill_requested";
+      next.runtime.lastObservedAt = new Date().toISOString();
+    });
+    updateMetadata(sessionsDir, sessionId, {
+      ...lifecycleMetadataUpdates(raw, terminatedLifecycle),
+    });
+
     // Archive metadata
     deleteMetadata(sessionsDir, sessionId, true);
     if (didPurgeOpenCodeSession) {
@@ -1764,11 +1925,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         const plugins = resolvePlugins(project);
         let shouldKill = false;
 
-        // Check if PR is merged
+        // Check if PR was closed without merging.
         if (session.pr && plugins.scm) {
           try {
             const prState = await plugins.scm.getPRState(session.pr);
-            if (prState === PR_STATE.MERGED || prState === PR_STATE.CLOSED) {
+            if (prState === PR_STATE.CLOSED) {
               shouldKill = true;
             }
           } catch {
@@ -1814,6 +1975,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     for (const [projectKey, project] of Object.entries(config.projects)) {
       if (projectId && projectKey !== projectId) continue;
+      if (isDegradedProject(project)) continue;
 
       const sessionsDir = getProjectSessionsDir(project);
       for (const archivedId of listArchivedSessionIds(sessionsDir)) {
@@ -2019,7 +2181,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     };
 
     const restoreForDelivery = async (reason: string, session: Session): Promise<Session> => {
-      if (NON_RESTORABLE_STATUSES.has(session.status)) {
+      if (session.lifecycle.session.state === "done") {
         throw new Error(`Cannot send to session ${sessionId}: ${reason}`);
       }
 
@@ -2129,8 +2291,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     try {
       await sendWithConfirmation(prepared);
     } catch (err) {
-      const shouldRetryWithRestore =
-        prepared.restoredAt === undefined && !NON_RESTORABLE_STATUSES.has(prepared.status);
+      const shouldRetryWithRestore = prepared.restoredAt === undefined && isRestorable(prepared);
 
       if (!shouldRetryWithRestore) {
         if (err instanceof Error) {
@@ -2207,21 +2368,43 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     const branchChanged = await scm.checkoutPR(pr, workspacePath);
 
+    const claimLifecycle = buildUpdatedLifecycle(sessionId, raw, (next) => {
+      next.pr.state = "open";
+      next.pr.reason = "in_progress";
+      next.pr.number = pr.number;
+      next.pr.url = pr.url;
+      next.pr.lastObservedAt = new Date().toISOString();
+    });
     updateMetadata(sessionsDir, sessionId, {
       pr: pr.url,
-      status: "pr_open",
+      status: deriveLegacyStatus(claimLifecycle, validateStatus(raw["status"])),
       branch: pr.branch,
       prAutoDetect: "",
+      ...lifecycleMetadataUpdates(raw, claimLifecycle),
     });
 
     for (const previousSessionId of takenOverFrom) {
       const previousRaw = readMetadataRaw(sessionsDir, previousSessionId);
       if (!previousRaw) continue;
 
+      const previousLifecycle = buildUpdatedLifecycle(previousSessionId, previousRaw, (next) => {
+        next.pr.state = "none";
+        next.pr.reason = "not_created";
+        next.pr.number = null;
+        next.pr.url = null;
+        next.pr.lastObservedAt = null;
+        if (PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "")) {
+          next.session.state = "working";
+          next.session.reason = "task_in_progress";
+        }
+      });
       updateMetadata(sessionsDir, previousSessionId, {
         pr: "",
         prAutoDetect: "off",
-        ...(PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "") ? { status: "working" } : {}),
+        ...(PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "")
+          ? { status: "working" }
+          : {}),
+        ...lifecycleMetadataUpdates(previousRaw, previousLifecycle),
       });
     }
 
@@ -2295,6 +2478,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // Fall back to archived metadata (killed/cleaned sessions)
     if (!raw) {
       for (const [key, proj] of Object.entries(config.projects)) {
+        if (isDegradedProject(proj)) continue;
         const dir = getProjectSessionsDir(proj);
         const archived = readArchivedMetadataRaw(dir, sessionId);
         if (archived) {
@@ -2338,8 +2522,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // 3. Validate restorability
     if (!isRestorable(session)) {
-      if (NON_RESTORABLE_STATUSES.has(session.status)) {
-        throw new SessionNotRestorableError(sessionId, `status is "${session.status}"`);
+      if (session.lifecycle.session.state === "done") {
+        throw new SessionNotRestorableError(
+          sessionId,
+          `session state is "${session.lifecycle.session.state}"`,
+        );
       }
       throw new SessionNotRestorableError(sessionId, "session is not in a terminal state");
     }
@@ -2348,7 +2535,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       writeMetadata(sessionsDir, sessionId, {
         worktree: raw["worktree"] ?? "",
         branch: raw["branch"] ?? "",
-        status: raw["status"] ?? "killed",
+        status: raw["status"] ?? "terminated",
+        stateVersion: raw["stateVersion"],
+        statePayload: raw["statePayload"],
         role: raw["role"],
         tmuxName: raw["tmuxName"],
         issue: raw["issue"],

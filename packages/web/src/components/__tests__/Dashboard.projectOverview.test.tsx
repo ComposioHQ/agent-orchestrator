@@ -3,14 +3,18 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Dashboard } from "@/components/Dashboard";
 import { makeSession } from "@/__tests__/helpers";
 
+const mockPush = vi.fn();
+
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push: mockPush, replace: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/",
   useSearchParams: () => new URLSearchParams(),
 }));
 
 describe("Dashboard project overview cards", () => {
   beforeEach(() => {
+    mockPush.mockReset();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     global.EventSource = vi.fn(
       () =>
         ({
@@ -68,6 +72,53 @@ describe("Dashboard project overview cards", () => {
     );
 
     expect(screen.queryByRole("link", { name: "PRs" })).not.toBeInTheDocument();
+  });
+
+  it("does not show a header orchestrator action for project-scoped dashboards without an orchestrator", () => {
+    render(
+      <Dashboard
+        initialSessions={[]}
+        projectId="my-app"
+        projectName="My App"
+        projects={[{ id: "my-app", name: "My App" }]}
+        orchestrators={[]}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Spawn Orchestrator" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Orchestrator" })).not.toBeInTheDocument();
+  });
+
+  it("shows a delete workspace button for project-scoped dashboards", () => {
+    render(
+      <Dashboard
+        initialSessions={[]}
+        projectId="my-app"
+        projectName="My App"
+        projects={[{ id: "my-app", name: "My App" }]}
+        orchestrators={[]}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Delete Workspace" })).toBeInTheDocument();
+  });
+
+  it("shows a header orchestrator link for project-scoped dashboards with an orchestrator", () => {
+    render(
+      <Dashboard
+        initialSessions={[]}
+        projectId="my-app"
+        projectName="My App"
+        projects={[{ id: "my-app", name: "My App" }]}
+        orchestrators={[{ id: "my-app-orchestrator", projectId: "my-app", projectName: "My App" }]}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Orchestrator" })).toHaveAttribute(
+      "href",
+      "/projects/my-app/sessions/my-app-orchestrator",
+    );
+    expect(screen.queryByRole("button", { name: "Spawn Orchestrator" })).not.toBeInTheDocument();
   });
 
   it("omits the desktop PRs link for all-projects dashboards", () => {
@@ -135,6 +186,32 @@ describe("Dashboard project overview cards", () => {
 
     expect(screen.queryByText("Spawning...")).not.toBeInTheDocument();
     expect(screen.getAllByText("No running orchestrator")).toHaveLength(1);
+  });
+
+  it("removes the workspace and returns home", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ok: true }),
+    } as Response);
+
+    render(
+      <Dashboard
+        initialSessions={[]}
+        projectId="my-app"
+        projectName="My App"
+        projects={[{ id: "my-app", name: "My App" }]}
+        orchestrators={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Workspace" }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith("/api/projects/my-app", { method: "DELETE" });
+    });
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith("/");
+    });
   });
 
   it("shows the API error when spawning fails", async () => {

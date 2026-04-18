@@ -27,23 +27,94 @@ describe("findConfigFile", () => {
     }
   });
 
-  it("ignores AO_CONFIG_PATH when it points to a flat local config", () => {
+  it("returns AO_CONFIG_PATH when it points to a flat local config", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "config-test-"));
     try {
       process.chdir(tempRoot);
       const flatPath = join(tempRoot, "agent-orchestrator.yaml");
-      const fallbackDir = join(tempRoot, "fallback");
-      const wrappedPath = join(fallbackDir, "agent-orchestrator.yaml");
       writeFileSync(flatPath, "repo: acme/demo\nagent: codex\n");
-      // Create a separate discovery location with a wrapped config.
-      // `startDir` participates after search-up from cwd, so it must be a directory.
-      // The temp root itself intentionally contains only a flat config.
-      // The fallback dir simulates a valid wrapped config available via explicit startDir.
-      mkdirSync(fallbackDir, { recursive: true });
-      writeFileSync(wrappedPath, "projects: {}\n");
       process.env = { ...originalEnv, AO_CONFIG_PATH: flatPath };
 
-      expect(findConfigFile(fallbackDir)).toBe(wrappedPath);
+      expect(findConfigFile()).toBe(flatPath);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("loads an effective config when AO_CONFIG_PATH points to a flat local config", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "config-test-"));
+    try {
+      process.chdir(tempRoot);
+      const flatPath = join(tempRoot, "agent-orchestrator.yaml");
+      const globalDir = join(tempRoot, ".agent-orchestrator");
+      const globalPath = join(globalDir, "config.yaml");
+      mkdirSync(globalDir, { recursive: true });
+
+      writeFileSync(flatPath, "repo: acme/demo\nagent: codex\nruntime: tmux\n");
+      writeFileSync(
+        globalPath,
+        `projects:\n  demo:\n    name: Demo\n    path: ${tempRoot}\n    sessionPrefix: dm\n`,
+      );
+
+      process.env = {
+        ...originalEnv,
+        AO_CONFIG_PATH: flatPath,
+        AO_GLOBAL_CONFIG: globalPath,
+      };
+
+      const config = loadConfig();
+      expect(config.configPath).toBe(flatPath);
+      expect(config.projects.demo).toMatchObject({
+        name: "Demo",
+        path: tempRoot,
+        repo: "acme/demo",
+        agent: "codex",
+        runtime: "tmux",
+        sessionPrefix: "dm",
+      });
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("loads degraded project entries from the canonical global config without aborting the whole config", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "config-test-"));
+    try {
+      const projectDir = join(tempRoot, "broken-project");
+      const globalDir = join(tempRoot, ".agent-orchestrator");
+      const globalPath = join(globalDir, "config.yaml");
+      mkdirSync(projectDir, { recursive: true });
+      mkdirSync(globalDir, { recursive: true });
+
+      writeFileSync(join(projectDir, "agent-orchestrator.yaml"), "{{invalid yaml::");
+      writeFileSync(
+        globalPath,
+        [
+          "projects:",
+          "  demo:",
+          `    path: ${projectDir}`,
+          "    name: Demo",
+          "    sessionPrefix: dm",
+          "    repo: acme/demo",
+          "    agent: codex",
+          "",
+        ].join("\n"),
+      );
+
+      process.env = {
+        ...originalEnv,
+        AO_GLOBAL_CONFIG: globalPath,
+      };
+
+      const config = loadConfig(globalPath);
+      expect(config.projects.demo).toMatchObject({
+        name: "Demo",
+        path: projectDir,
+        sessionPrefix: "dm",
+        repo: "acme/demo",
+        agent: "codex",
+      });
+      expect(config.projects.demo?.resolveError).toContain("Failed to parse local config");
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }

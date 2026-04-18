@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "./Modal";
+import { refreshProjectsView } from "@/lib/client-project-reload";
 
 interface AddProjectModalProps {
   open: boolean;
@@ -18,6 +19,7 @@ interface BrowseEntry {
 
 interface BrowseResult {
   path: string;
+  rootPath: string;
   parent: string | null;
   directories: BrowseEntry[];
   isGitRepo: boolean;
@@ -56,18 +58,18 @@ function parseMigrationError(error: string): ParsedMigrationError | null {
   };
 }
 
-function normalizePathForBrowse(rawPath: string, homePath: string): string | null {
+function normalizePathForBrowse(rawPath: string, rootPath: string): string | null {
   const trimmed = rawPath.trim();
   if (!trimmed) return null;
 
   const expanded =
     trimmed === "~"
-      ? homePath
+      ? rootPath
       : trimmed.startsWith("~/")
-        ? `${homePath}/${trimmed.slice(2)}`
+        ? `${rootPath}/${trimmed.slice(2)}`
         : trimmed.startsWith("/")
           ? trimmed
-          : `${homePath}/${trimmed}`;
+          : `${rootPath}/${trimmed}`;
 
   const segments = expanded.split("/");
   const normalizedSegments: string[] = [];
@@ -82,19 +84,19 @@ function normalizePathForBrowse(rawPath: string, homePath: string): string | nul
   }
 
   const normalizedPath = `/${normalizedSegments.join("/")}`;
-  return normalizedPath === homePath || normalizedPath.startsWith(`${homePath}/`)
+  return normalizedPath === rootPath || normalizedPath.startsWith(`${rootPath}/`)
     ? normalizedPath
     : null;
 }
 
-function isSelectableProjectPath(path: string, homePath: string): boolean {
-  return Boolean(path) && path !== homePath;
+function isSelectableProjectPath(path: string, rootPath: string): boolean {
+  return Boolean(path) && path !== rootPath;
 }
 
 export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectModalProps) {
   const router = useRouter();
   const [selectedPath, setSelectedPath] = useState("");
-  const [homePath, setHomePath] = useState("");
+  const [rootPath, setRootPath] = useState("");
   const [name, setName] = useState("");
   const [nameManuallySet, setNameManuallySet] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,24 +108,24 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [pathInput, setPathInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
-  const homePathRef = useRef(homePath);
+  const rootPathRef = useRef(rootPath);
 
   useEffect(() => {
-    homePathRef.current = homePath;
-  }, [homePath]);
+    rootPathRef.current = rootPath;
+  }, [rootPath]);
 
   const browse = useCallback(async (dirPath?: string, options?: { selectCurrent?: boolean }) => {
     setBrowsing(true);
     setBrowseError(null);
     try {
-      const currentHomePath = homePathRef.current;
-      if (dirPath && !currentHomePath) {
-        throw new Error("Loading your home directory. Try again in a moment.");
+      const currentRootPath = rootPathRef.current;
+      if (dirPath && !currentRootPath) {
+        throw new Error("Loading your workspace root. Try again in a moment.");
       }
       const normalizedPath =
-        dirPath && currentHomePath ? normalizePathForBrowse(dirPath, currentHomePath) : dirPath;
-      if (dirPath && currentHomePath && !normalizedPath) {
-        throw new Error(`Path must stay within ${currentHomePath}`);
+        dirPath && currentRootPath ? normalizePathForBrowse(dirPath, currentRootPath) : dirPath;
+      if (dirPath && currentRootPath && !normalizedPath) {
+        throw new Error(`Path must stay within ${currentRootPath}`);
       }
 
       const params = normalizedPath ? `?path=${encodeURIComponent(normalizedPath)}` : "";
@@ -133,15 +135,15 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
       setBrowseResult(data as BrowseResult);
       setPathInput(data.path);
       const shouldSelectCurrent = options?.selectCurrent ?? Boolean(dirPath);
-      const nextHomePath = currentHomePath || data.path;
-      homePathRef.current = nextHomePath;
-      if (shouldSelectCurrent && isSelectableProjectPath(data.path, nextHomePath)) {
+      const nextRootPath = currentRootPath || data.rootPath;
+      rootPathRef.current = nextRootPath;
+      if (shouldSelectCurrent && isSelectableProjectPath(data.path, nextRootPath)) {
         setSelectedPath(data.path);
-      } else if (!isSelectableProjectPath(data.path, nextHomePath)) {
+      } else if (!isSelectableProjectPath(data.path, nextRootPath)) {
         setSelectedPath("");
       }
-      if (!currentHomePath) {
-        setHomePath(data.path);
+      if (!currentRootPath) {
+        setRootPath(data.rootPath);
       }
       setError(null);
       // Scroll to top when navigating
@@ -153,7 +155,7 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
     }
   }, []);
 
-  // Load home directory when modal opens
+  // Load workspace root when modal opens
   useEffect(() => {
     if (open) {
       void browse(undefined, { selectCurrent: false });
@@ -172,9 +174,9 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
   // Reset form when modal closes
   useEffect(() => {
     if (!open) {
-      homePathRef.current = "";
+      rootPathRef.current = "";
       setSelectedPath("");
-      setHomePath("");
+      setRootPath("");
       setName("");
       setNameManuallySet(false);
       setError(null);
@@ -186,13 +188,13 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
   }, [open]);
 
   const handleSubmit = useCallback(async () => {
-    const path = homePath ? normalizePathForBrowse(selectedPath, homePath) : selectedPath.trim();
+    const path = rootPath ? normalizePathForBrowse(selectedPath, rootPath) : selectedPath.trim();
     if (!path) {
-      setError(homePath ? `Path must stay within ${homePath}` : "Select a directory first");
+      setError(rootPath ? `Path must stay within ${rootPath}` : "Select a directory first");
       return;
     }
-    if (homePath && !isSelectableProjectPath(path, homePath)) {
-      setError("Choose a repository folder inside your home directory");
+    if (rootPath && !isSelectableProjectPath(path, rootPath)) {
+      setError("Choose a repository folder inside the allowed workspace root");
       return;
     }
 
@@ -218,10 +220,11 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
 
       const projectId = body?.project?.id;
       if (typeof projectId === "string" && projectId.length > 0) {
+        await refreshProjectsView(router);
         onProjectAdded?.(projectId);
         router.push(`/projects/${encodeURIComponent(projectId)}`);
       } else {
-        window.location.reload();
+        await refreshProjectsView(router);
       }
       onClose();
     } catch (err) {
@@ -229,7 +232,7 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
     } finally {
       setSubmitting(false);
     }
-  }, [selectedPath, homePath, name, onProjectAdded, onClose, router]);
+  }, [selectedPath, rootPath, name, onProjectAdded, onClose, router]);
 
   const parsedError = error ? parseMigrationError(error) : null;
 
@@ -264,8 +267,8 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
             <button
               type="button"
               onClick={onClose}
-              className="border border-[var(--color-border-default)] px-4 py-2 text-[12px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)]"
-              style={{ borderRadius: "2px", minHeight: 40 }}
+              className="rounded-[var(--radius-sm)] border border-[var(--color-border-default)] px-4 py-2 text-[12px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)]"
+              style={{ minHeight: 40 }}
             >
               Cancel
             </button>
@@ -273,12 +276,12 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
               type="button"
               onClick={handleSubmit}
               disabled={submitting || !selectedPath.trim()}
-              className="inline-flex items-center gap-2 bg-[var(--color-accent)] px-4 py-2 text-[12px] font-semibold text-[var(--color-text-inverse)] transition-colors hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
-              style={{ borderRadius: "2px", minHeight: 40 }}
+              className="inline-flex items-center gap-2 rounded-[5px] border border-[var(--color-accent-amber-border)] bg-[var(--color-accent-amber-dim)] px-4 py-2 text-[12px] font-semibold text-[var(--color-accent-amber)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-accent-amber)_20%,transparent)] disabled:cursor-not-allowed disabled:opacity-50"
+              style={{ minHeight: 40 }}
             >
               {submitting ? (
                 <>
-                  <InlineSpinner inverse />
+                  <InlineSpinner />
                   Opening...
                 </>
               ) : (
@@ -298,7 +301,7 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
         style={{ opacity: submitting ? 0.72 : 1 }}
       >
         {submitting ? (
-          <div className="rounded-[6px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-3.5 py-2.5">
+          <div className="rounded-[var(--radius-sm)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-3.5 py-2.5">
             <div className="flex items-center gap-2.5">
               <InlineSpinner />
               <div className="min-w-0">
@@ -315,7 +318,7 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
 
         {error ? (
           parsedError ? (
-            <div className="rounded-[6px] border border-[var(--color-border-default)] bg-[var(--color-tint-orange)]/60 px-3.5 py-3 text-[var(--color-text-secondary)]">
+            <div className="rounded-[var(--radius-sm)] border border-[var(--color-border-default)] bg-[var(--color-tint-orange)]/60 px-3.5 py-3 text-[var(--color-text-secondary)]">
               <div className="flex items-start gap-2.5">
                 <div className="mt-0.5 shrink-0 rounded-full bg-[var(--color-bg-surface)] p-1 text-[var(--color-accent-orange)]">
                   <MigrationNoticeIcon />
@@ -329,7 +332,7 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
                   </p>
 
                   {parsedError.filePath ? (
-                    <div className="mt-3 rounded-[4px] bg-[var(--color-bg-surface)] px-2.5 py-2">
+                    <div className="mt-3 rounded-[var(--radius-sm)] bg-[var(--color-bg-surface)] px-2.5 py-2">
                       <div className="text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">
                         File to edit
                       </div>
@@ -388,14 +391,13 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
               }
             }}
             placeholder="/path/to/directory"
-            className="min-w-0 flex-1 border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-3 py-1.5 text-[12px] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
-            style={{ fontFamily: "var(--font-mono)", borderRadius: "2px" }}
+            className="min-w-0 flex-1 rounded-[var(--radius-sm)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-3 py-1.5 text-[12px] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
+            style={{ fontFamily: "var(--font-mono)" }}
           />
           <button
             type="button"
             onClick={() => pathInput.trim() && browse(pathInput.trim())}
-            className="shrink-0 border border-[var(--color-border-default)] px-3 py-1.5 text-[12px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)]"
-            style={{ borderRadius: "2px" }}
+            className="shrink-0 rounded-[var(--radius-sm)] border border-[var(--color-border-default)] px-3 py-1.5 text-[12px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)]"
           >
             Go
           </button>
@@ -404,8 +406,7 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
         {/* Directory browser */}
         <div
           ref={scrollRef}
-          className="h-[300px] overflow-y-auto border border-[var(--color-border-default)] bg-[var(--color-bg-surface)]"
-          style={{ borderRadius: "2px" }}
+          className="h-[300px] overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)]"
         >
           {browsing && !browseResult ? (
             <div className="flex h-full items-center justify-center text-[12px] text-[var(--color-text-tertiary)]">
@@ -491,15 +492,14 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
                 setNameManuallySet(true);
               }}
               placeholder="my-project"
-              className="w-full border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-3 py-1.5 text-[12px] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
-              style={{ borderRadius: "2px" }}
+              className="w-full rounded-[var(--radius-sm)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-3 py-1.5 text-[12px] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
             />
           </div>
         )}
 
-        {browseResult && homePath && browseResult.path === homePath ? (
+        {browseResult && rootPath && browseResult.path === rootPath ? (
           <p className="text-[11px] text-[var(--color-text-tertiary)]">
-            Choose a repository folder inside your home directory to continue.
+            Choose a repository folder inside the allowed workspace root to continue.
           </p>
         ) : null}
       </div>

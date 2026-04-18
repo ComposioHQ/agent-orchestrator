@@ -33,6 +33,7 @@ vi.mock("@/lib/api-schemas", async () => { const { z } = await import("zod"); re
 vi.mock("@/lib/local-project-config", () => ({ extractFlatLocalConfig: vi.fn(() => ({})) }));
 vi.mock("@/lib/path-security", () => ({ assertPathWithinHome: vi.fn(async (p: string) => p), isWithinDirectory: vi.fn(() => true) }));
 vi.mock("@/lib/project-registration", () => ({ registerAndResolveProject: vi.fn(() => ({ id: "my-repo", name: "my-repo" })) }));
+vi.mock("@/lib/services", () => ({ reloadServices: vi.fn(async () => ({ config: { projects: {} } })) }));
 
 import { POST } from "../route";
 

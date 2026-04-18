@@ -4,7 +4,7 @@ import {
   registerProject,
   updatePreferences,
 } from "@aoagents/ao-core";
-import { stopPortfolioBackgroundRefresh } from "./portfolio-services";
+import { invalidatePortfolioServicesCache } from "./portfolio-services";
 import { invalidateServicesCache } from "./services";
 
 function normalizePath(path: string): string {
@@ -12,12 +12,7 @@ function normalizePath(path: string): string {
 }
 
 export function invalidatePortfolioCache(): void {
-  const globalForPortfolio = globalThis as typeof globalThis & {
-    _aoPortfolioCache?: unknown;
-    _aoPortfolioRefreshTimer?: ReturnType<typeof setInterval>;
-  };
-  delete globalForPortfolio._aoPortfolioCache;
-  stopPortfolioBackgroundRefresh();
+  invalidatePortfolioServicesCache();
 }
 
 export function invalidateProjectCaches(): void {

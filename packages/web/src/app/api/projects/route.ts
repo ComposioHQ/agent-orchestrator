@@ -20,7 +20,7 @@ import { getPortfolioServices } from "@/lib/portfolio-services";
 import { assertWorkspacePathAllowed } from "@/lib/filesystem-access";
 import { migrateLegacyConfigForPortfolioRegistration } from "@/lib/legacy-config-migration";
 import { registerAndResolveProject } from "@/lib/project-registration";
-import { getServices } from "@/lib/services";
+import { reloadServices } from "@/lib/services";
 
 const execFileAsync = promisify(execFile);
 
@@ -223,7 +223,7 @@ export async function POST(request: NextRequest) {
       | undefined;
 
     try {
-      const { config, sessionManager } = await getServices();
+      const { config, sessionManager } = await reloadServices();
       const projectConfig = config.projects[project.id];
       if (projectConfig) {
         const systemPrompt = generateOrchestratorPrompt({

@@ -109,7 +109,7 @@ describe("PullRequestsPage", () => {
     expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=all");
   });
 
-  it("renders merged and closed desktop sections when the default all filter is active", () => {
+  it("shows only open pull requests on desktop", () => {
     mockDesktopViewport();
 
     render(
@@ -127,18 +127,24 @@ describe("PullRequestsPage", () => {
             status: "killed",
             pr: makePR({ number: 102, title: "Closed PR", state: "closed" }),
           }),
+          makeSession({
+            id: "open-1",
+            projectId: "my-app",
+            status: "approved",
+            pr: makePR({ number: 103, title: "Open PR", state: "open" }),
+          }),
         ]}
         projectId="my-app"
         projectName="My App"
       />,
     );
 
-    expect(screen.getAllByText("Merged")).toHaveLength(2);
-    expect(screen.getAllByText("Closed")).toHaveLength(2);
-    expect(screen.getByRole("link", { name: "#101" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "#102" })).toBeInTheDocument();
-    expect(screen.getByText("Merged PR")).toBeInTheDocument();
-    expect(screen.getByText("Closed PR")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "#103" })).toBeInTheDocument();
+    expect(screen.getByText("Open PR")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "#101" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "#102" })).toBeNull();
+    expect(screen.queryByText("Merged PR")).toBeNull();
+    expect(screen.queryByText("Closed PR")).toBeNull();
   });
 
   it("shows the empty desktop state when there are no pull requests", () => {
@@ -146,6 +152,6 @@ describe("PullRequestsPage", () => {
 
     render(<PullRequestsPage initialSessions={[]} projectId="my-app" projectName="My App" />);
 
-    expect(screen.getByText("No pull requests yet.")).toBeInTheDocument();
+    expect(screen.getByText("No open pull requests right now.")).toBeInTheDocument();
   });
 });

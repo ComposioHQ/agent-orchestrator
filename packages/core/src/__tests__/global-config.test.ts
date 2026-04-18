@@ -9,7 +9,9 @@ import {
   syncProjectShadow,
   registerProjectInGlobalConfig,
   buildEffectiveProjectConfig,
+  resolveProjectIdentity,
   loadLocalProjectConfig,
+  loadLocalProjectConfigDetailed,
   isProjectShadowStale,
   isOldConfigFormat,
   migrateToGlobalConfig,
@@ -75,6 +77,50 @@ describe("global-config", () => {
       defaultBranch: "main",
       agent: "codex",
       runtime: "tmux",
+    });
+  });
+
+  it("preserves storageKey when syncing a flat local project shadow", () => {
+    saveGlobalConfig(
+      {
+        port: 3000,
+        readyThresholdMs: 300_000,
+        defaults: {
+          runtime: "tmux",
+          agent: "claude-code",
+          workspace: "worktree",
+          notifiers: ["desktop"],
+        },
+        projects: {
+          demo: {
+            name: "Demo",
+            path: "/tmp/demo",
+            storageKey: "demo-storage-key",
+            repo: "acme/demo",
+          },
+        },
+        notifiers: {},
+        notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+        reactions: {},
+      },
+      configPath,
+    );
+
+    syncProjectShadow(
+      "demo",
+      {
+        repo: "acme/demo",
+        defaultBranch: "main",
+        agent: "codex",
+        runtime: "tmux",
+      },
+      configPath,
+    );
+
+    const globalConfig = loadGlobalConfig(configPath);
+    expect(globalConfig?.projects["demo"]).toMatchObject({
+      path: "/tmp/demo",
+      storageKey: "demo-storage-key",
     });
   });
 
@@ -211,6 +257,30 @@ describe("global-config", () => {
     });
   });
 
+  describe("loadLocalProjectConfigDetailed", () => {
+    it("reports malformed YAML distinctly from missing config", () => {
+      writeFileSync(
+        join(tempRoot, "agent-orchestrator.yaml"),
+        "{{invalid yaml::",
+      );
+
+      const result = loadLocalProjectConfigDetailed(tempRoot);
+      expect(result.kind).toBe("malformed");
+      expect(result.error).toContain("Failed to parse local config");
+    });
+
+    it("reports old wrapped format distinctly", () => {
+      writeFileSync(
+        join(tempRoot, "agent-orchestrator.yaml"),
+        "projects:\n  myproj:\n    path: /tmp/foo\n",
+      );
+
+      const result = loadLocalProjectConfigDetailed(tempRoot);
+      expect(result.kind).toBe("old-format");
+      expect(result.error).toContain("wrapped projects: format");
+    });
+  });
+
   describe("syncProjectShadow", () => {
     function preRegister(projectId: string, path = "/some/path"): void {
       saveGlobalConfig(
@@ -307,7 +377,7 @@ describe("global-config", () => {
       });
     });
 
-    it("preserves existing shadow fields on re-registration", () => {
+    it("preserves existing shadow fields on re-registration for the same path", () => {
       // First register with local config
       registerProjectInGlobalConfig(
         "proj",
@@ -318,11 +388,11 @@ describe("global-config", () => {
       );
 
       // Re-register with new name but no local config
-      registerProjectInGlobalConfig("proj", "Updated Name", "/tmp/proj-new", undefined, configPath);
+      registerProjectInGlobalConfig("proj", "Updated Name", "/tmp/proj", undefined, configPath);
 
       const config = loadGlobalConfig(configPath);
       expect(config!.projects["proj"].name).toBe("Updated Name");
-      expect(config!.projects["proj"].path).toBe("/tmp/proj-new");
+      expect(config!.projects["proj"].path).toBe("/tmp/proj");
       // Shadow fields preserved from first registration
       expect(config!.projects["proj"]["repo"]).toBe("acme/proj");
     });
@@ -347,6 +417,22 @@ describe("global-config", () => {
       expect(() =>
         registerProjectInGlobalConfig("proj-b", "Project B", "/tmp/shared", undefined, configPath),
       ).toThrow('Project path "/tmp/shared" is already registered as "proj-a"');
+    });
+
+    it("preserves storageKey when the same project id is re-registered at a new path", () => {
+      registerProjectInGlobalConfig("proj", "Project A", "/tmp/proj-a", undefined, configPath);
+
+      const before = loadGlobalConfig(configPath);
+      const originalStorageKey = before?.projects["proj"]?.storageKey;
+
+      registerProjectInGlobalConfig("proj", "Project B", "/tmp/proj-b", undefined, configPath);
+
+      const after = loadGlobalConfig(configPath);
+      expect(after!.projects["proj"]).toMatchObject({
+        name: "Project B",
+        path: "/tmp/proj-b",
+        storageKey: originalStorageKey,
+      });
     });
   });
 
@@ -455,6 +541,44 @@ describe("global-config", () => {
       // Identity from global
       expect(result!.name).toBe("My Proj");
       expect(result!.path).toBe(projectDir);
+    });
+
+    it("returns degraded shadow-backed config when local config is malformed", () => {
+      const projectDir = join(tempRoot, "project-with-broken-local");
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(
+        join(projectDir, "agent-orchestrator.yaml"),
+        "{{invalid yaml::",
+      );
+
+      const globalConfig: GlobalConfig = {
+        port: 3000,
+        readyThresholdMs: 300_000,
+        defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+        projects: {
+          proj: {
+            path: projectDir,
+            name: "Broken Project",
+            repo: "acme/shadow",
+            agent: "codex",
+            sessionPrefix: "bp",
+          },
+        },
+        notifiers: {},
+        notificationRouting: {},
+        reactions: {},
+      };
+
+      const result = resolveProjectIdentity("proj", globalConfig);
+      expect(result).not.toBeNull();
+      expect(result).toMatchObject({
+        name: "Broken Project",
+        path: projectDir,
+        repo: "acme/shadow",
+        agent: "codex",
+        sessionPrefix: "bp",
+      });
+      expect(result?.resolveError).toContain("Failed to parse local config");
     });
   });
 

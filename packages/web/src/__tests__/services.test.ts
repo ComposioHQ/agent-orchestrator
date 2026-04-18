@@ -103,6 +103,14 @@ describe("services", () => {
     expect(mockRegister).toHaveBeenCalledWith(opencodePlugin);
   });
 
+  it("registers the Codex agent plugin with web services", async () => {
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockRegister).toHaveBeenCalledWith(codexPlugin);
+  });
+
   it("caches initialized services across repeated calls", async () => {
     const { getServices } = await import("../lib/services");
 
@@ -212,5 +220,52 @@ describe("pollBacklog", () => {
       },
       expect.objectContaining({ tracker: { plugin: "github" } }),
     );
+  });
+
+  it("skips degraded projects during backlog polling", async () => {
+    mockLoadConfig.mockReturnValue({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      port: 3000,
+      readyThresholdMs: 300_000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      projects: {
+        "healthy-project": {
+          path: "/tmp/healthy-project",
+          tracker: { plugin: "github" },
+        },
+        "broken-project": {
+          path: "/tmp/broken-project",
+          tracker: { plugin: "github" },
+          resolveError: "Malformed local config",
+        },
+      },
+      notifiers: {},
+      notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+      reactions: {},
+    });
+
+    mockListIssues.mockResolvedValue([]);
+    mockRegistry.get.mockImplementation((slot: string) => {
+      if (slot === "tracker") {
+        return {
+          name: "github",
+          listIssues: mockListIssues,
+          updateIssue: mockUpdateIssue,
+        };
+      }
+      if (slot === "agent") return { name: "claude-code" };
+      if (slot === "runtime") return { name: "tmux" };
+      if (slot === "workspace") return { name: "worktree" };
+      return null;
+    });
+
+    const { pollBacklog } = await import("../lib/services");
+    await pollBacklog();
+
+    expect(mockListIssues).toHaveBeenCalled();
+    expect(mockListIssues.mock.calls).toHaveLength(2);
+    for (const call of mockListIssues.mock.calls) {
+      expect(call[1]).toMatchObject({ path: "/tmp/healthy-project" });
+    }
   });
 });

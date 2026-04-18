@@ -176,6 +176,20 @@ describe("restore", () => {
     await expect(sm.restore("app-1")).rejects.toThrow(SessionNotRestorableError);
   });
 
+  it("throws SessionNotRestorableError for legacy merged sessions with a PR URL", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "merged",
+      pr: "https://github.com/org/my-app/pull/10",
+      project: "my-app",
+      createdAt: "2025-01-01T00:00:00.000Z",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.restore("app-1")).rejects.toThrow(SessionNotRestorableError);
+  });
+
   it("throws SessionNotRestorableError for working sessions", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",

@@ -39,6 +39,16 @@ export async function recoverSession(
     const preservedStatus = validateStatus(rawMetadata["status"]);
 
     const project = config.projects[projectId];
+    if (!project || (typeof project.resolveError === "string" && project.resolveError.length > 0)) {
+      return {
+        success: false,
+        sessionId,
+        action: "recover",
+        error: project?.resolveError
+          ? `Project "${projectId}" is degraded: ${project.resolveError}`
+          : `Unknown project: ${projectId}`,
+      };
+    }
     const sessionsDir = getSessionsDir(config.configPath, project.path, project.storageKey);
 
     if (recoveryCount > context.recoveryConfig.maxRecoveryAttempts) {
@@ -113,6 +123,16 @@ export async function cleanupSession(
 
   try {
     const project = config.projects[projectId];
+    if (!project || (typeof project.resolveError === "string" && project.resolveError.length > 0)) {
+      return {
+        success: false,
+        sessionId,
+        action: "cleanup",
+        error: project?.resolveError
+          ? `Project "${projectId}" is degraded: ${project.resolveError}`
+          : `Unknown project: ${projectId}`,
+      };
+    }
     const runtimeName = project.runtime ?? config.defaults.runtime;
     const workspaceName = project.workspace ?? config.defaults.workspace;
     const runtime = registry.get<Runtime>("runtime", runtimeName);
@@ -180,6 +200,17 @@ export async function escalateSession(
 
   try {
     const project = config.projects[projectId];
+    if (!project || (typeof project.resolveError === "string" && project.resolveError.length > 0)) {
+      return {
+        success: false,
+        sessionId,
+        action: "escalate",
+        error: project?.resolveError
+          ? `Project "${projectId}" is degraded: ${project.resolveError}`
+          : `Unknown project: ${projectId}`,
+        requiresManualIntervention: true,
+      };
+    }
     const sessionsDir = getSessionsDir(config.configPath, project.path, project.storageKey);
 
     updateMetadata(sessionsDir, sessionId, {

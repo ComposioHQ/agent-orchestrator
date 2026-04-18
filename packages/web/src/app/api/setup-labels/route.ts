@@ -24,6 +24,7 @@ export async function POST() {
     const results: Array<{ repo: string; label: string; status: string }> = [];
 
     for (const project of Object.values(config.projects)) {
+      if (typeof project.resolveError === "string" && project.resolveError.length > 0) continue;
       if (!project.repo) continue;
 
       for (const label of LABELS) {

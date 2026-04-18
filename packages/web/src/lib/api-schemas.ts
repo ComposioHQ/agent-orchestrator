@@ -23,6 +23,32 @@ export const UpdateProjectPrefsSchema = z.object({
 });
 export type UpdateProjectPrefsInput = z.infer<typeof UpdateProjectPrefsSchema>;
 
+/** PATCH /api/projects/[id] — update project behavior (not identity/preferences) */
+export const UpdateProjectBehaviorSchema = z.object({
+  repo: z.string().optional(),
+  defaultBranch: z.string().optional(),
+  runtime: z.string().optional(),
+  agent: z.string().optional(),
+  workspace: z.string().optional(),
+  tracker: z.record(z.unknown()).optional(),
+  scm: z.record(z.unknown()).optional(),
+  symlinks: z.array(z.string()).optional(),
+  postCreate: z.array(z.string()).optional(),
+  agentConfig: z.record(z.unknown()).optional(),
+  orchestrator: z.record(z.unknown()).optional(),
+  worker: z.record(z.unknown()).optional(),
+  reactions: z.record(z.record(z.unknown())).optional(),
+  agentRules: z.string().optional(),
+  agentRulesFile: z.string().optional(),
+  orchestratorRules: z.string().optional(),
+  orchestratorSessionStrategy: z
+    .enum(["reuse", "delete", "ignore", "delete-new", "ignore-new", "kill-previous"])
+    .optional(),
+  opencodeIssueSessionStrategy: z.enum(["reuse", "delete", "ignore"]).optional(),
+  decomposer: z.record(z.unknown()).optional(),
+});
+export type UpdateProjectBehaviorInput = z.infer<typeof UpdateProjectBehaviorSchema>;
+
 /** PUT /api/settings/preferences — update portfolio preferences */
 export const UpdatePreferencesSchema = z.object({
   projectOrder: z.array(z.string()).optional(),

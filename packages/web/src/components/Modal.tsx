@@ -86,7 +86,7 @@ export function Modal({ open, onClose, title, size = "md", children, footer }: M
         className="relative z-[1] flex max-h-[85vh] w-full flex-col border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] shadow-[0_24px_70px_rgba(0,0,0,0.24)] motion-safe:animate-[modal-slide-up_0.25s_ease-out]"
         style={{
           maxWidth,
-          borderRadius: "var(--radius-lg)",
+          borderRadius: "var(--radius-sm)",
           boxShadow: "var(--card-inset), 0 24px 70px rgba(0,0,0,0.24)",
         }}
         tabIndex={-1}
@@ -97,7 +97,7 @@ export function Modal({ open, onClose, title, size = "md", children, footer }: M
           <button
             type="button"
             onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-md text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)] hover:text-[var(--color-text-secondary)]"
+            className="flex h-9 w-9 items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)] hover:text-[var(--color-text-secondary)]"
             style={{ minWidth: 44, minHeight: 44, padding: "4px" }}
             aria-label="Close"
           >

@@ -2,7 +2,7 @@
  * Tests for session serialization and PR enrichment
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type {
   Session,
   PRInfo,
@@ -13,6 +13,7 @@ import type {
   OrchestratorConfig,
   PluginRegistry,
 } from "@aoagents/ao-core";
+import { createInitialCanonicalLifecycle } from "@aoagents/ao-core";
 import {
   sessionToDashboard,
   resolveProject,
@@ -22,17 +23,31 @@ import {
   enrichSessionsMetadata,
   enrichSessionsMetadataFast,
   computeStats,
+  listDashboardOrchestrators,
 } from "../serialize";
 import { prCache, prCacheKey } from "../cache";
 import type { DashboardSession } from "../types";
 
 // Helper to create a minimal Session for testing
 function createCoreSession(overrides?: Partial<Session>): Session {
+  const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
+  lifecycle.session.state = "working";
+  lifecycle.session.reason = "task_in_progress";
+  lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+  lifecycle.runtime.state = "alive";
+  lifecycle.runtime.reason = "process_running";
   return {
     id: "test-1",
     projectId: "test",
     status: "working",
     activity: "active",
+    activitySignal: {
+      state: "valid",
+      activity: "active",
+      timestamp: new Date("2025-01-01T01:00:00Z"),
+      source: "native",
+    },
+    lifecycle,
     branch: "feat/test",
     issueId: null,
     pr: null,
@@ -122,9 +137,29 @@ describe("sessionToDashboard", () => {
     expect(dashboard.projectId).toBe("test");
     expect(dashboard.status).toBe("working");
     expect(dashboard.activity).toBe("active");
+    expect(dashboard.activitySignal).toEqual({
+      state: "valid",
+      activity: "active",
+      timestamp: "2025-01-01T01:00:00.000Z",
+      source: "native",
+      detail: undefined,
+    });
     expect(dashboard.branch).toBe("feat/test");
     expect(dashboard.createdAt).toBe("2025-01-01T00:00:00.000Z");
     expect(dashboard.lastActivityAt).toBe("2025-01-01T01:00:00.000Z");
+  });
+
+  it("should expose canonical lifecycle fields", () => {
+    const coreSession = createCoreSession();
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.lifecycle?.sessionState).toBe("working");
+    expect(dashboard.lifecycle?.sessionReason).toBe("task_in_progress");
+    expect(dashboard.lifecycle?.prState).toBe("none");
+    expect(dashboard.lifecycle?.prReason).toBe("not_created");
+    expect(dashboard.lifecycle?.runtimeState).toBe("alive");
+    expect(dashboard.lifecycle?.runtimeReason).toBe("process_running");
+    expect(dashboard.attentionLevel).toBe("working");
   });
 
   it("should use agentInfo summary with summaryIsFallback false", () => {
@@ -259,6 +294,100 @@ describe("sessionToDashboard", () => {
     const dashboard = sessionToDashboard(coreSession);
 
     expect(dashboard.pr).toBeNull();
+  });
+});
+
+describe("listDashboardOrchestrators", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-18T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("excludes exited orchestrator terminal sessions", () => {
+    const projects = {
+      docs: { name: "Docs" } as ProjectConfig,
+    };
+
+    const active = createCoreSession({
+      id: "docs-orchestrator-1",
+      projectId: "docs",
+      status: "working",
+      activity: "active",
+    });
+    const exited = createCoreSession({
+      id: "docs-orchestrator-2",
+      projectId: "docs",
+      status: "exited",
+      activity: "exited",
+    });
+
+    expect(listDashboardOrchestrators([active, exited], projects)).toEqual([
+      { id: "docs-orchestrator-1", projectId: "docs", projectName: "Docs" },
+      { id: "docs-orchestrator-2", projectId: "docs", projectName: "Docs" },
+    ]);
+  });
+
+  it("excludes stuck orchestrators from the canonical list", () => {
+    const projects = {
+      docs: { name: "Docs" } as ProjectConfig,
+    };
+
+    const healthy = createCoreSession({
+      id: "docs-orchestrator-1",
+      projectId: "docs",
+      status: "working",
+      activity: "ready",
+      lastActivityAt: new Date("2026-04-18T11:58:00.000Z"),
+    });
+    const stuck = createCoreSession({
+      id: "docs-orchestrator-2",
+      projectId: "docs",
+      status: "stuck",
+      activity: "idle",
+      lastActivityAt: new Date("2026-04-18T11:59:00.000Z"),
+    });
+
+    expect(listDashboardOrchestrators([healthy, stuck], projects)).toEqual([
+      { id: "docs-orchestrator-1", projectId: "docs", projectName: "Docs" },
+    ]);
+  });
+
+  it("keeps recently idle orchestrators in the canonical list", () => {
+    const projects = {
+      docs: { name: "Docs" } as ProjectConfig,
+    };
+
+    const idle = createCoreSession({
+      id: "docs-orchestrator-1",
+      projectId: "docs",
+      status: "working",
+      activity: "idle",
+      lastActivityAt: new Date("2026-04-18T11:55:30.000Z"),
+    });
+
+    expect(listDashboardOrchestrators([idle], projects)).toEqual([
+      { id: "docs-orchestrator-1", projectId: "docs", projectName: "Docs" },
+    ]);
+  });
+
+  it("excludes stale idle orchestrators from the canonical list", () => {
+    const projects = {
+      docs: { name: "Docs" } as ProjectConfig,
+    };
+
+    const idle = createCoreSession({
+      id: "docs-orchestrator-1",
+      projectId: "docs",
+      status: "working",
+      activity: "idle",
+      lastActivityAt: new Date("2026-04-18T11:49:59.000Z"),
+    });
+
+    expect(listDashboardOrchestrators([idle], projects)).toEqual([]);
   });
 });
 

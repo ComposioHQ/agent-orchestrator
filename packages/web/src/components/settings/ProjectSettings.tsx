@@ -1,12 +1,15 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { useModal } from "@/hooks/useModal";
 import { AddProjectModal } from "../AddProjectModal";
+import { refreshProjectsView } from "@/lib/client-project-reload";
 
 interface ProjectEntry {
   id: string;
   name: string;
+  repo?: string;
   repoPath?: string;
   configPath?: string;
   defaultBranch?: string;
@@ -14,6 +17,8 @@ interface ProjectEntry {
   enabled: boolean;
   pinned: boolean;
   source: string;
+  degraded?: boolean;
+  degradedReason?: string;
 }
 
 interface ProjectSettingsProps {
@@ -21,7 +26,11 @@ interface ProjectSettingsProps {
 }
 
 export function ProjectSettings({ projects: initialProjects }: ProjectSettingsProps) {
+  const router = useRouter();
   const [projects, setProjects] = useState(initialProjects);
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [behaviorDraft, setBehaviorDraft] = useState({ repo: "", defaultBranch: "" });
+  const [isSavingBehavior, setIsSavingBehavior] = useState(false);
   const addModal = useModal();
 
   const handleTogglePin = useCallback(async (id: string, pinned: boolean) => {
@@ -32,8 +41,9 @@ export function ProjectSettings({ projects: initialProjects }: ProjectSettingsPr
     });
     if (res.ok) {
       setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, pinned } : p)));
+      await refreshProjectsView(router);
     }
-  }, []);
+  }, [router]);
 
   const handleToggleEnabled = useCallback(async (id: string, enabled: boolean) => {
     const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
@@ -43,16 +53,62 @@ export function ProjectSettings({ projects: initialProjects }: ProjectSettingsPr
     });
     if (res.ok) {
       setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, enabled } : p)));
+      await refreshProjectsView(router);
     }
-  }, []);
+  }, [router]);
 
   const handleRemove = useCallback(async (id: string, name: string) => {
     if (!confirm(`Remove "${name}" from portfolio? This won't delete the project.`)) return;
     const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (res.ok) {
       setProjects((prev) => prev.filter((p) => p.id !== id));
+      await refreshProjectsView(router);
     }
+  }, [router]);
+
+  const handleStartEdit = useCallback((project: ProjectEntry) => {
+    setEditingProjectId(project.id);
+    setBehaviorDraft({
+      repo: project.repo ?? "",
+      defaultBranch: project.defaultBranch ?? "",
+    });
   }, []);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingProjectId(null);
+    setBehaviorDraft({ repo: "", defaultBranch: "" });
+  }, []);
+
+  const handleSaveBehavior = useCallback(async (id: string) => {
+    setIsSavingBehavior(true);
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repo: behaviorDraft.repo.trim(),
+          defaultBranch: behaviorDraft.defaultBranch.trim(),
+        }),
+      });
+      if (!res.ok) return;
+
+      setProjects((prev) =>
+        prev.map((project) =>
+          project.id === id
+            ? {
+                ...project,
+                repo: behaviorDraft.repo.trim() || undefined,
+                defaultBranch: behaviorDraft.defaultBranch.trim() || undefined,
+              }
+            : project,
+        ),
+      );
+      handleCancelEdit();
+      await refreshProjectsView(router);
+    } finally {
+      setIsSavingBehavior(false);
+    }
+  }, [behaviorDraft.defaultBranch, behaviorDraft.repo, handleCancelEdit, router]);
 
   return (
     <div>
@@ -94,19 +150,89 @@ export function ProjectSettings({ projects: initialProjects }: ProjectSettingsPr
                     {!project.enabled && (
                       <span className="text-[10px] font-medium text-[var(--color-text-tertiary)]">DISABLED</span>
                     )}
+                    {project.degraded && (
+                      <span className="text-[10px] font-medium text-[var(--color-status-error)]">DEGRADED</span>
+                    )}
                   </div>
+                  {project.repo && (
+                    <p className="mt-1 text-[12px] text-[var(--color-text-secondary)]">{project.repo}</p>
+                  )}
                   {project.repoPath && (
                     <p className="mt-1 truncate text-[12px] text-[var(--color-text-tertiary)]" style={{ fontFamily: "var(--font-mono)" }}>
                       {project.repoPath}
                     </p>
+                  )}
+                  {project.degradedReason && (
+                    <p className="mt-2 text-[12px] text-[var(--color-status-error)]">{project.degradedReason}</p>
                   )}
                   <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[var(--color-text-tertiary)]">
                     {project.defaultBranch && <span>Branch: {project.defaultBranch}</span>}
                     {project.sessionPrefix && <span>Prefix: {project.sessionPrefix}</span>}
                     <span>Source: {project.source}</span>
                   </div>
+                  {editingProjectId === project.id && (
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-1 block text-[11px] font-medium text-[var(--color-text-secondary)]">Repo</span>
+                        <input
+                          type="text"
+                          value={behaviorDraft.repo}
+                          onChange={(event) =>
+                            setBehaviorDraft((prev) => ({ ...prev, repo: event.target.value }))
+                          }
+                          placeholder="owner/repo"
+                          className="w-full border border-[var(--color-border-default)] bg-[var(--color-bg-base)] px-3 py-2 text-[12px] text-[var(--color-text-primary)] outline-none transition-colors focus:border-[var(--color-accent)]"
+                          style={{ borderRadius: "2px" }}
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-[11px] font-medium text-[var(--color-text-secondary)]">Default Branch</span>
+                        <input
+                          type="text"
+                          value={behaviorDraft.defaultBranch}
+                          onChange={(event) =>
+                            setBehaviorDraft((prev) => ({ ...prev, defaultBranch: event.target.value }))
+                          }
+                          placeholder="main"
+                          className="w-full border border-[var(--color-border-default)] bg-[var(--color-bg-base)] px-3 py-2 text-[12px] text-[var(--color-text-primary)] outline-none transition-colors focus:border-[var(--color-accent)]"
+                          style={{ borderRadius: "2px" }}
+                        />
+                      </label>
+                    </div>
+                  )}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
+                  {editingProjectId === project.id ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveBehavior(project.id)}
+                        disabled={isSavingBehavior}
+                        className="border border-[var(--color-accent)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-accent)] transition-colors hover:bg-[var(--color-bg-elevated-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                        style={{ borderRadius: "2px" }}
+                      >
+                        {isSavingBehavior ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelEdit}
+                        disabled={isSavingBehavior}
+                        className="border border-[var(--color-border-default)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                        style={{ borderRadius: "2px" }}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleStartEdit(project)}
+                      className="border border-[var(--color-border-default)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)]"
+                      style={{ borderRadius: "2px" }}
+                    >
+                      Edit Behavior
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => handleTogglePin(project.id, !project.pinned)}
@@ -141,7 +267,9 @@ export function ProjectSettings({ projects: initialProjects }: ProjectSettingsPr
       <AddProjectModal
         open={addModal.isOpen}
         onClose={addModal.close}
-        onProjectAdded={() => window.location.reload()}
+        onProjectAdded={() => {
+          void refreshProjectsView(router);
+        }}
       />
     </div>
   );

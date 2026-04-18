@@ -2,7 +2,6 @@ import "server-only";
 
 import { cache } from "react";
 import {
-  TERMINAL_STATUSES,
   type DashboardSession,
   type DashboardOrchestratorLink,
   type DashboardAttentionZoneMode,
@@ -87,8 +86,7 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
       FAST_METADATA_ENRICH_TIMEOUT_MS,
     );
 
-    // PR cache hits only (in-memory lookup, no SCM API calls)
-    // TERMINAL_STATUSES includes merged, killed, cleanup, done, terminated, errored
+    // PR cache hits only (in-memory lookup, no SCM API calls).
     for (let i = 0; i < coreSessions.length; i++) {
       const core = coreSessions[i];
       if (!core.pr) continue;
@@ -96,17 +94,6 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
       const scm = getSCM(registry, projectConfig);
       if (scm) {
         await enrichSessionPR(pageData.sessions[i], scm, core.pr, { cacheOnly: true });
-      }
-
-      // For cache-miss PRs, infer terminal PR state from lifecycle status
-      // to avoid showing merged/closed PRs as "open" until client refresh.
-      const sessionPR = pageData.sessions[i].pr;
-      if (sessionPR && !sessionPR.enriched && TERMINAL_STATUSES.has(core.status)) {
-        if (core.status === "merged") {
-          sessionPR.state = "merged";
-        } else if (core.status === "killed") {
-          sessionPR.state = "closed";
-        }
       }
     }
   } catch {

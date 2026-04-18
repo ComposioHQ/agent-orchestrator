@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
-const { mockReaddir, mockStat } = vi.hoisted(() => ({
+const {
+  mockReaddir,
+  mockStat,
+  mockResolveWorkspaceBrowsePath,
+  mockIsPortfolioEnabled,
+} = vi.hoisted(() => ({
   mockReaddir: vi.fn(),
   mockStat: vi.fn(),
+  mockResolveWorkspaceBrowsePath: vi.fn(),
+  mockIsPortfolioEnabled: vi.fn(),
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -12,13 +19,12 @@ vi.mock("node:fs/promises", () => ({
   default: { readdir: mockReaddir, stat: mockStat },
 }));
 
-vi.mock("@/lib/path-security", () => ({
-  resolveHomeScopedPath: vi.fn(async (rawPath?: string | null) => {
-    const homePath = "/Users/test";
-    const resolvedPath = rawPath ? `/Users/test/${rawPath.replace("~/", "")}` : homePath;
-    return { homePath, resolvedPath };
-  }),
-  isWithinDirectory: vi.fn((parent: string, child: string) => child.startsWith(parent)),
+vi.mock("@aoagents/ao-core", () => ({
+  isPortfolioEnabled: mockIsPortfolioEnabled,
+}));
+
+vi.mock("@/lib/filesystem-access", () => ({
+  resolveWorkspaceBrowsePath: mockResolveWorkspaceBrowsePath,
 }));
 
 import { GET } from "../route";
@@ -30,55 +36,90 @@ function makeRequest(path?: string): NextRequest {
 }
 
 function makeDirEntry(name: string, isDir = true) {
-  return { name, isDirectory: () => isDir, isFile: () => !isDir, isBlockDevice: () => false, isCharacterDevice: () => false, isFIFO: () => false, isSocket: () => false, isSymbolicLink: () => false, path: "", parentPath: "" };
+  return {
+    name,
+    isDirectory: () => isDir,
+    isFile: () => !isDir,
+    isBlockDevice: () => false,
+    isCharacterDevice: () => false,
+    isFIFO: () => false,
+    isSocket: () => false,
+    isSymbolicLink: () => false,
+    path: "",
+    parentPath: "",
+  };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockStat.mockImplementation(async () => ({ isDirectory: () => true }));
+  mockIsPortfolioEnabled.mockReturnValue(true);
+  mockResolveWorkspaceBrowsePath.mockImplementation((rawPath?: string | null) => ({
+    rootPath: "/Users/test",
+    resolvedPath: rawPath ? rawPath : "/Users/test",
+  }));
+  mockStat.mockResolvedValue({ isDirectory: () => true });
   mockReaddir.mockResolvedValue([]);
 });
 
 describe("GET /api/browse-directory", () => {
-  it("returns 403 when path is outside home", async () => {
-    const { isWithinDirectory } = await import("@/lib/path-security");
-    (isWithinDirectory as ReturnType<typeof vi.fn>).mockReturnValueOnce(false);
+  it("returns 404 when portfolio mode is disabled", async () => {
+    mockIsPortfolioEnabled.mockReturnValueOnce(false);
 
-    const res = await GET(makeRequest("projects"));
+    const res = await GET(makeRequest());
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "Portfolio mode is disabled",
+    });
+  });
+
+  it("returns 403 when path is outside the allowed root", async () => {
+    mockResolveWorkspaceBrowsePath.mockImplementationOnce(() => {
+      throw new Error("Access denied: Directory must be inside an allowed workspace root");
+    });
+
+    const res = await GET(makeRequest("/tmp/outside"));
+
     expect(res.status).toBe(403);
-    const data = await res.json();
-    expect(data.error).toContain("outside");
+    await expect(res.json()).resolves.toMatchObject({
+      error: "Access denied: Directory must be inside an allowed workspace root",
+    });
   });
 
   it("returns 400 when path is not a directory", async () => {
-    mockStat.mockImplementation(async () => ({ isDirectory: () => false }));
-    const res = await GET(makeRequest("some-file.txt"));
+    mockStat.mockResolvedValueOnce({ isDirectory: () => false });
+
+    const res = await GET(makeRequest("/Users/test/file.txt"));
+
     expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toContain("Not a directory");
+    await expect(res.json()).resolves.toMatchObject({
+      error: "Not a directory: /Users/test/file.txt",
+    });
   });
 
-  it("returns 400 when stat returns null (path does not exist)", async () => {
-    mockStat.mockImplementation(async () => { throw new Error("ENOENT"); });
-    const res = await GET(makeRequest("nonexistent"));
+  it("returns 400 when stat throws", async () => {
+    mockStat.mockRejectedValueOnce(new Error("ENOENT"));
+
+    const res = await GET(makeRequest("/Users/test/missing"));
+
     expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toContain("Not a directory");
+    await expect(res.json()).resolves.toMatchObject({
+      error: "Not a directory: /Users/test/missing",
+    });
   });
 
-  it("returns 500 when resolveHomeScopedPath throws", async () => {
-    const { resolveHomeScopedPath } = await import("@/lib/path-security");
-    (resolveHomeScopedPath as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error("cannot resolve"),
-    );
+  it("returns 500 for unexpected browse-path resolution errors", async () => {
+    mockResolveWorkspaceBrowsePath.mockImplementationOnce(() => {
+      throw new Error("cannot resolve");
+    });
 
     const res = await GET(makeRequest("bad"));
+
     expect(res.status).toBe(500);
-    const data = await res.json();
-    expect(data.error).toBe("cannot resolve");
+    await expect(res.json()).resolves.toMatchObject({ error: "cannot resolve" });
   });
 
-  it("lists directories and skips files and hidden entries", async () => {
+  it("lists visible directories in sorted order", async () => {
     mockReaddir
       .mockResolvedValueOnce([
         makeDirEntry("projects"),
@@ -87,85 +128,95 @@ describe("GET /api/browse-directory", () => {
         makeDirEntry("node_modules"),
         makeDirEntry("docs"),
       ])
-      // Children peek for "projects"
       .mockResolvedValueOnce([])
-      // Children peek for "docs"
       .mockResolvedValueOnce([]);
 
-    const res = await GET(makeRequest("code"));
-    expect(res.status).toBe(200);
+    const res = await GET(makeRequest("/Users/test/code"));
     const data = await res.json();
-    expect(data.directories).toHaveLength(2);
-    expect(data.directories.map((d: { name: string }) => d.name)).toEqual(["docs", "projects"]);
+
+    expect(res.status).toBe(200);
+    expect(data.directories.map((entry: { name: string }) => entry.name)).toEqual(["docs", "projects"]);
   });
 
-  it("detects hasChildren when sub-directory has visible directories", async () => {
+  it("detects hasChildren when a visible subdirectory exists", async () => {
     mockReaddir
       .mockResolvedValueOnce([makeDirEntry("parent")])
       .mockResolvedValueOnce([makeDirEntry("child")]);
 
-    const res = await GET(makeRequest("code"));
-    expect(res.status).toBe(200);
+    const res = await GET(makeRequest("/Users/test/code"));
     const data = await res.json();
-    expect(data.directories[0].hasChildren).toBe(true);
+
+    expect(res.status).toBe(200);
+    expect(data.directories[0]).toMatchObject({ name: "parent", hasChildren: true });
   });
 
-  it("sets hasChildren false when sub-directory peek throws", async () => {
+  it("treats unreadable children as leaf directories", async () => {
     mockReaddir
       .mockResolvedValueOnce([makeDirEntry("locked-dir")])
       .mockRejectedValueOnce(new Error("EACCES"));
 
-    const res = await GET(makeRequest("code"));
-    expect(res.status).toBe(200);
+    const res = await GET(makeRequest("/Users/test/code"));
     const data = await res.json();
-    expect(data.directories[0].hasChildren).toBe(false);
+
+    expect(res.status).toBe(200);
+    expect(data.directories[0]).toMatchObject({ name: "locked-dir", hasChildren: false });
   });
 
-  it("detects .git and config markers", async () => {
+  it("detects git and config markers", async () => {
     mockReaddir
       .mockResolvedValueOnce([
         makeDirEntry(".git"),
         makeDirEntry("agent-orchestrator.yaml", false),
         makeDirEntry("src"),
       ])
-      // Children peek for "src"
       .mockResolvedValueOnce([]);
 
-    const res = await GET(makeRequest("my-repo"));
-    expect(res.status).toBe(200);
+    const res = await GET(makeRequest("/Users/test/my-repo"));
     const data = await res.json();
+
+    expect(res.status).toBe(200);
     expect(data.isGitRepo).toBe(true);
     expect(data.hasConfig).toBe(true);
   });
 
-  it("returns parent as null when at home directory", async () => {
-    const { resolveHomeScopedPath } = await import("@/lib/path-security");
-    (resolveHomeScopedPath as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      homePath: "/Users/test",
+  it("returns rootPath and null parent at the root", async () => {
+    mockResolveWorkspaceBrowsePath.mockImplementationOnce(() => ({
+      rootPath: "/Users/test",
       resolvedPath: "/Users/test",
-    });
+    }));
 
     const res = await GET(makeRequest());
-    expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.parent).toBeNull();
+
+    expect(res.status).toBe(200);
     expect(data.path).toBe("/Users/test");
+    expect(data.rootPath).toBe("/Users/test");
+    expect(data.parent).toBeNull();
   });
 
-  it("returns parent path when not at home directory", async () => {
-    const res = await GET(makeRequest("code"));
-    expect(res.status).toBe(200);
+  it("returns the root as parent for one-level-deep paths", async () => {
+    mockResolveWorkspaceBrowsePath.mockImplementationOnce(() => ({
+      rootPath: "/Users/test",
+      resolvedPath: "/Users/test/code",
+    }));
+
+    const res = await GET(makeRequest("/Users/test/code"));
     const data = await res.json();
-    expect(data.parent).toBeTruthy();
+
+    expect(res.status).toBe(200);
+    expect(data.parent).toBe("/Users/test");
   });
 
   it("returns generic error message for non-Error throws", async () => {
-    const { resolveHomeScopedPath } = await import("@/lib/path-security");
-    (resolveHomeScopedPath as ReturnType<typeof vi.fn>).mockRejectedValueOnce("string error");
+    mockResolveWorkspaceBrowsePath.mockImplementationOnce(() => {
+      throw "string error";
+    });
 
     const res = await GET(makeRequest("bad"));
+
     expect(res.status).toBe(500);
-    const data = await res.json();
-    expect(data.error).toBe("Failed to browse directory");
+    await expect(res.json()).resolves.toMatchObject({
+      error: "Failed to browse directory",
+    });
   });
 });

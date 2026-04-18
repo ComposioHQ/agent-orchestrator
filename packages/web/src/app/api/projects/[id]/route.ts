@@ -2,14 +2,19 @@ import { NextResponse } from "next/server";
 import {
   getPortfolio,
   isPortfolioEnabled,
+  loadGlobalConfig,
   loadPreferences,
+  saveGlobalConfig,
   updatePreferences,
   unregisterProject,
 } from "@aoagents/ao-core";
-import { UpdateProjectPrefsSchema } from "@/lib/api-schemas";
+import { UpdateProjectBehaviorSchema, UpdateProjectPrefsSchema } from "@/lib/api-schemas";
 import { invalidateProjectCaches } from "@/lib/project-registration";
+import { reloadServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
+
+const IDENTITY_FIELD_KEYS = new Set(["name", "path", "sessionPrefix", "storageKey", "_shadowSyncedAt"]);
 
 function removeProjectFromPreferences(
   preferences: {
@@ -71,6 +76,7 @@ export async function PUT(
       };
     });
     invalidateProjectCaches();
+    await reloadServices();
 
     const updatedPrefs = loadPreferences();
     return NextResponse.json({
@@ -83,6 +89,78 @@ export async function PUT(
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to update project" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function PATCH(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  try {
+    if (!isPortfolioEnabled()) {
+      return NextResponse.json({ error: "Portfolio mode is disabled" }, { status: 404 });
+    }
+
+    const { id } = await context.params;
+    const portfolio = getPortfolio();
+    const project = portfolio.find((entry) => entry.id === id);
+
+    if (!project) {
+      return NextResponse.json({ error: `Project "${id}" not found` }, { status: 404 });
+    }
+
+    const rawBody = (await request.json()) as Record<string, unknown>;
+    const forbiddenField = Object.keys(rawBody).find((key) => IDENTITY_FIELD_KEYS.has(key));
+    if (forbiddenField) {
+      return NextResponse.json(
+        { error: `Field "${forbiddenField}" is identity-owned and cannot be edited here` },
+        { status: 400 },
+      );
+    }
+
+    const parsed = UpdateProjectBehaviorSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid project behavior" },
+        { status: 400 },
+      );
+    }
+
+    const globalConfig = loadGlobalConfig();
+    if (!globalConfig) {
+      return NextResponse.json({ error: "Global config not found" }, { status: 404 });
+    }
+
+    const existing = globalConfig.projects[project.configProjectKey];
+    if (!existing) {
+      return NextResponse.json(
+        { error: `Project "${project.configProjectKey}" not found in global config` },
+        { status: 404 },
+      );
+    }
+
+    globalConfig.projects[project.configProjectKey] = {
+      ...existing,
+      ...parsed.data,
+    };
+    saveGlobalConfig(globalConfig);
+
+    invalidateProjectCaches();
+    await reloadServices();
+
+    return NextResponse.json({
+      ok: true,
+      project: {
+        id,
+        configProjectKey: project.configProjectKey,
+        ...parsed.data,
+      },
+    });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to update project behavior" },
       { status: 500 },
     );
   }
@@ -111,6 +189,7 @@ export async function DELETE(
     });
 
     invalidateProjectCaches();
+    await reloadServices();
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(

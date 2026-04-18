@@ -62,7 +62,7 @@ describe("buildPrompt", () => {
     expect(result).not.toContain(BASE_AGENT_PROMPT);
     expect(result).not.toContain("create a PR");
     expect(result).not.toContain("PR Best Practices");
-    expect(result).not.toContain("Repository:");
+    expect(result).toContain("Repository: local-only workspace (no remote configured yet)");
   });
 
   it("includes issue ID in task section", () => {

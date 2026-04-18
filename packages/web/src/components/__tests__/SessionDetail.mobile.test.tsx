@@ -32,6 +32,11 @@ function mockMobileViewport() {
 describe("SessionDetail mobile navbar", () => {
   beforeEach(() => {
     mockMobileViewport();
+    window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    window.cancelAnimationFrame = vi.fn();
   });
 
   it("shows dashboard, PRs, and orchestrator nav on orchestrator pages", () => {
@@ -122,7 +127,7 @@ describe("SessionDetail mobile navbar", () => {
       />,
     );
 
-    expect(screen.getByText("worker-2")).toBeInTheDocument();
+    expect(screen.getAllByText("worker-2").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: /PR #77/i })).toBeInTheDocument();
   });
 
@@ -140,7 +145,7 @@ describe("SessionDetail mobile navbar", () => {
       />,
     );
 
-    expect(screen.getByText("worker-stable-title")).toBeInTheDocument();
+    expect(screen.getAllByText("worker-stable-title").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("Back to dashboard")).toBeInTheDocument();
   });
 
@@ -186,6 +191,28 @@ describe("SessionDetail mobile navbar", () => {
     );
 
     expect(screen.getByRole("link", { name: /PR #89/i })).toBeInTheDocument();
-    expect(screen.getByText("worker-merged")).toBeInTheDocument();
+    expect(screen.getAllByText("worker-merged").length).toBeGreaterThan(0);
+  });
+
+  it("shows a recovery link for ended orchestrator sessions on mobile", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "my-app-orchestrator-9",
+          projectId: "my-app",
+          status: "terminated",
+          activity: "exited",
+          metadata: { role: "orchestrator" },
+        })}
+        isOrchestrator
+        projectOrchestratorId="my-app-orchestrator-11"
+      />,
+    );
+
+    expect(screen.getByText("This orchestrator has already ended.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open current orchestrator" })).toHaveAttribute(
+      "href",
+      "/projects/my-app/sessions/my-app-orchestrator-11",
+    );
   });
 });
