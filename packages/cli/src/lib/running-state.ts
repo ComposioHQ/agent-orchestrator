@@ -6,7 +6,6 @@ import {
   openSync,
   closeSync,
   constants,
-  statSync,
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -24,37 +23,23 @@ const STATE_DIR = join(homedir(), ".agent-orchestrator");
 const STATE_FILE = join(STATE_DIR, "running.json");
 const STATE_LOCK_FILE = join(STATE_DIR, "running.lock");
 const STARTUP_LOCK_FILE = join(STATE_DIR, "startup.lock");
-const UNPARSEABLE_LOCK_GRACE_MS = 5_000;
 
 interface LockMetadata {
   pid: number;
   acquiredAt: string;
 }
 
-type ProcessProbeResult = "alive" | "forbidden" | "missing";
-
 function ensureDir(): void {
   mkdirSync(STATE_DIR, { recursive: true });
 }
 
-function probeProcess(pid: number): ProcessProbeResult {
+function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return "alive";
-  } catch (error: unknown) {
-    if ((error as { code?: string }).code === "EPERM") {
-      return "forbidden";
-    }
-    return "missing";
+    return true;
+  } catch {
+    return false;
   }
-}
-
-function isLockOwnerAlive(pid: number): boolean {
-  return probeProcess(pid) !== "missing";
-}
-
-function isRunningProcessAlive(pid: number): boolean {
-  return probeProcess(pid) !== "missing";
 }
 
 function readLockMetadata(lockFile: string): LockMetadata | null {
@@ -72,15 +57,6 @@ function readLockMetadata(lockFile: string): LockMetadata | null {
   }
 }
 
-function isStaleUnparseableLock(lockFile: string): boolean {
-  try {
-    const mtimeMs = statSync(lockFile).mtimeMs;
-    return Date.now() - mtimeMs > UNPARSEABLE_LOCK_GRACE_MS;
-  } catch {
-    return false;
-  }
-}
-
 /** Try to create the lockfile atomically. Returns a release function on success, null on failure. */
 function tryAcquire(lockFile: string): (() => void) | null {
   try {
@@ -89,14 +65,8 @@ function tryAcquire(lockFile: string): (() => void) | null {
       pid: process.pid,
       acquiredAt: new Date().toISOString(),
     };
-    try {
-      writeFileSync(fd, JSON.stringify(metadata), "utf-8");
-    } catch {
-      try { unlinkSync(lockFile); } catch { /* best effort */ }
-      return null;
-    } finally {
-      try { closeSync(fd); } catch { /* best effort */ }
-    }
+    writeFileSync(fd, JSON.stringify(metadata), "utf-8");
+    closeSync(fd);
     return () => {
       try { unlinkSync(lockFile); } catch { /* best effort */ }
     };
@@ -124,16 +94,14 @@ async function acquireLock(
     const release = tryAcquire(lockFile);
     if (release) return release;
 
-    const owner = readLockMetadata(lockFile);
-    if ((!owner && isStaleUnparseableLock(lockFile))
-      || (owner && !isLockOwnerAlive(owner.pid))) {
-      try { unlinkSync(lockFile); } catch { /* ignore */ }
-      const retryRelease = tryAcquire(lockFile);
-      if (retryRelease) return retryRelease;
-    }
-
     if (Date.now() - start > timeoutMs) {
-      throw new Error(`Could not acquire ${resourceName} (${lockFile})`);
+      const owner = readLockMetadata(lockFile);
+      if (!owner || !isProcessAlive(owner.pid)) {
+        try { unlinkSync(lockFile); } catch { /* ignore */ }
+        const finalRelease = tryAcquire(lockFile);
+        if (finalRelease) return finalRelease;
+      }
+      throw new Error(`Could not acquire ${resourceName}`);
     }
 
     // Jittered backoff: 30-70ms base, growing with attempts (capped at 200ms)
@@ -199,7 +167,7 @@ export async function getRunning(): Promise<RunningState | null> {
     const state = readState();
     if (!state) return null;
 
-    if (!isRunningProcessAlive(state.pid)) {
+    if (!isProcessAlive(state.pid)) {
       // Stale entry — process is dead, clean up
       writeState(null);
       return null;
@@ -228,14 +196,14 @@ export async function acquireStartupLock(timeoutMs = 30000): Promise<() => void>
 }
 
 /**
- * Wait for a process to exit, polling isRunningProcessAlive.
+ * Wait for a process to exit, polling isProcessAlive.
  * Returns true if the process exited, false if timeout reached.
  */
 export async function waitForExit(pid: number, timeoutMs = 5000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (!isRunningProcessAlive(pid)) return true;
+    if (!isProcessAlive(pid)) return true;
     await sleep(100);
   }
-  return !isRunningProcessAlive(pid);
+  return !isProcessAlive(pid);
 }
