@@ -77,7 +77,7 @@ describe("ProjectSidebar", () => {
     );
   });
 
-  it("navigates to the project query param when clicking a project", () => {
+  it("links to the project dashboard via the per-row dashboard button", () => {
     render(
       <ProjectSidebar
         projects={projects}
@@ -87,14 +87,12 @@ describe("ProjectSidebar", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Project Two/ }));
-
-    expect(mockPush).toHaveBeenCalledWith("/?project=project-2");
+    // Per-row "Dashboard" anchor (separate from the expand/collapse toggle)
+    const dashboardLink = screen.getByRole("link", { name: /Open Project Two dashboard/ });
+    expect(dashboardLink).toHaveAttribute("href", "/?project=project-2");
   });
 
-  it("navigates to the dashboard root from session pages", () => {
-    mockPathname = "/sessions/ao-143";
-
+  it("project toggle expands/collapses without navigating", () => {
     render(
       <ProjectSidebar
         projects={projects}
@@ -104,9 +102,9 @@ describe("ProjectSidebar", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Project Two/ }));
-
-    expect(mockPush).toHaveBeenCalledWith("/?project=project-2");
+    const toggle = screen.getByRole("button", { name: /Project Two/ });
+    fireEvent.click(toggle);
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it("shows non-done worker sessions for the expanded active project", () => {
@@ -135,8 +133,9 @@ describe("ProjectSidebar", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Open Review API changes" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open feat/test" })).not.toBeInTheDocument();
+    // Session rows are now anchors (support ctrl/cmd-click to open in new tab)
+    expect(screen.getByRole("link", { name: "Open Review API changes" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open feat/test" })).not.toBeInTheDocument();
   });
 
   it("navigates session rows to the selected session detail route", () => {
@@ -168,7 +167,7 @@ describe("ProjectSidebar", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Open Implement sidebar polish" }));
+    fireEvent.click(screen.getByRole("link", { name: "Open Implement sidebar polish" }));
 
     expect(mockPush).toHaveBeenCalledWith("/sessions/worker-2?project=project-1");
   });
@@ -211,5 +210,20 @@ describe("ProjectSidebar", () => {
 
     expect(container.querySelector(".project-sidebar--collapsed")).not.toBeNull();
     expect(screen.queryByText("Projects")).not.toBeInTheDocument();
+  });
+
+  it("shows loading skeletons instead of the empty state while sessions are loading", () => {
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={null}
+        loading
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+      />,
+    );
+
+    expect(screen.getByLabelText("Loading sessions")).toBeInTheDocument();
+    expect(screen.queryByText("No active sessions")).not.toBeInTheDocument();
   });
 });

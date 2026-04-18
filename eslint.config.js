@@ -79,11 +79,11 @@ export default tseslint.config(
     },
   },
 
-  // Relaxed rules for Next.js pages/components
+  // Web package uses console for server-side logging
   {
-    files: ["packages/web/**/*.tsx", "packages/web/**/*.ts"],
+    files: ["packages/web/**/*.ts", "packages/web/**/*.tsx"],
     rules: {
-      "no-console": "off", // Next.js uses console for server logs
+      "no-console": "off",
     },
   },
 

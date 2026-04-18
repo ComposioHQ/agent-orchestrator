@@ -56,7 +56,8 @@ import { isHumanCaller } from "../lib/caller-context.js";
 import { detectEnvironment } from "../lib/detect-env.js";
 import { detectAgentRuntime, detectAvailableAgents, type DetectedAgent } from "../lib/detect-agent.js";
 import { detectDefaultBranch } from "../lib/git-utils.js";
-import { promptConfirm, promptSelect } from "../lib/prompts.js";
+import { promptConfirm, promptSelect, promptText } from "../lib/prompts.js";
+import { extractOwnerRepo, isValidRepoString } from "../lib/repo-utils.js";
 import {
   detectProjectType,
   generateRulesFromTemplates,
@@ -535,6 +536,15 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
   console.log(chalk.dim("  Detecting project and generating config...\n"));
 
   const env = await detectEnvironment(workingDir);
+
+  if (!env.isGitRepo) {
+    throw new Error(
+      `"${workingDir}" is not a git repository.\n` +
+        `  ao requires a git repo to manage worktrees and branches.\n` +
+        `  Run \`git init\` first, then try again.`,
+    );
+  }
+
   const projectType = detectProjectType(workingDir);
 
   // Show detection results
@@ -561,10 +571,28 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
   const agentRules = generateRulesFromTemplates(projectType);
 
   // Build config with smart defaults
-  const projectId = env.isGitRepo ? basename(workingDir) : "my-project";
-  const repo = env.ownerRepo || "owner/repo";
-  const path = env.isGitRepo ? workingDir : `~/${projectId}`;
+  const projectId = basename(workingDir);
+  let repo: string | undefined = env.ownerRepo ?? undefined;
+  const path = workingDir;
   const defaultBranch = env.defaultBranch || "main";
+
+  // If no repo detected, inform the user and ask
+  /* c8 ignore start -- interactive prompt, tested via onboarding integration */
+  if (!repo && isHumanCaller()) {
+    console.log(chalk.yellow("  ⚠ Could not auto-detect a GitHub/GitLab remote."));
+    const entered = await promptText(
+      "  Enter repo (owner/repo or group/subgroup/repo) or leave empty to skip:",
+      "owner/repo",
+    );
+    const trimmed = (entered || "").trim();
+    if (trimmed && isValidRepoString(trimmed)) {
+      repo = trimmed;
+      console.log(chalk.green(`  ✓ Repo: ${repo}`));
+    } else if (trimmed) {
+      console.log(chalk.yellow(`  ⚠ "${trimmed}" doesn't look like a valid repo path — skipping.`));
+    }
+  }
+  /* c8 ignore stop */
 
   // Detect available agent runtimes via plugin registry
   let detectedAgents = await detectAvailableAgents();
@@ -589,7 +617,7 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
       [projectId]: {
         name: projectId,
         sessionPrefix: generateSessionPrefix(projectId),
-        repo,
+        ...(repo ? { repo } : {}),
         path,
         defaultBranch,
         ...(agentRules ? { agentRules } : {}),
@@ -608,9 +636,9 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
 
   console.log(chalk.green(`✓ Config created: ${outputPath}\n`));
 
-  if (repo === "owner/repo") {
-    console.log(chalk.yellow("⚠ Could not detect GitHub remote."));
-    console.log(chalk.dim("  Update the 'repo' field in the config before spawning agents.\n"));
+  if (!repo) {
+    console.log(chalk.yellow("⚠ No repo configured — issue tracking and PR features will be unavailable."));
+    console.log(chalk.dim("  Add a 'repo' field (owner/repo) to the config to enable them.\n"));
   }
 
   if (!env.hasTmux) {
@@ -691,9 +719,26 @@ async function addProjectToConfig(
   let ownerRepo: string | null = null;
   const gitRemote = await git(["remote", "get-url", "origin"], resolvedPath);
   if (gitRemote) {
-    const match = gitRemote.match(/github\.com[:/]([^/]+\/[^/]+?)(\.git)?$/);
-    if (match) ownerRepo = match[1];
+    ownerRepo = extractOwnerRepo(gitRemote);
   }
+
+  // If no repo detected, prompt the user (same as autoCreateConfig)
+  /* c8 ignore start -- interactive prompt */
+  if (!ownerRepo && isHumanCaller()) {
+    console.log(chalk.yellow("  ⚠ Could not auto-detect a GitHub/GitLab remote."));
+    const entered = await promptText(
+      "  Enter repo (owner/repo or group/subgroup/repo) or leave empty to skip:",
+      "owner/repo",
+    );
+    const trimmed = (entered || "").trim();
+    if (trimmed && isValidRepoString(trimmed)) {
+      ownerRepo = trimmed;
+      console.log(chalk.green(`  ✓ Repo: ${ownerRepo}`));
+    } else if (trimmed) {
+      console.log(chalk.yellow(`  ⚠ "${trimmed}" doesn't look like a valid repo path — skipping.`));
+    }
+  }
+  /* c8 ignore stop */
 
   const defaultBranch = await detectDefaultBranch(resolvedPath, ownerRepo);
 
@@ -737,7 +782,7 @@ async function addProjectToConfig(
 
   rawConfig.projects[projectId] = {
     name: projectId,
-    repo: ownerRepo || "owner/repo",
+    ...(ownerRepo ? { repo: ownerRepo } : {}),
     path: resolvedPath,
     defaultBranch,
     sessionPrefix: prefix,
@@ -748,8 +793,8 @@ async function addProjectToConfig(
   console.log(chalk.green(`\n✓ Added "${projectId}" to ${config.configPath}\n`));
 
   if (!ownerRepo) {
-    console.log(chalk.yellow("⚠ Could not detect GitHub remote."));
-    console.log(chalk.dim("  Update the 'repo' field in the config before spawning agents.\n"));
+    console.log(chalk.yellow("⚠ No repo configured — issue tracking and PR features will be unavailable."));
+    console.log(chalk.dim("  Add a 'repo' field (owner/repo) to the config to enable them.\n"));
   }
 
   return projectId;
@@ -1362,17 +1407,14 @@ export function registerStart(program: Command): void {
             }
 
             if (!configPath) {
-              // No config anywhere — auto-create in cwd, then add the path as project
-              config = await autoCreateConfig(cwd());
-              // If the path is different from cwd, add it as a second project
               if (resolve(cwd()) !== resolvedPath) {
-                const addedId = await addProjectToConfig(config, resolvedPath);
-                config = loadConfig(config.configPath);
-                projectId = addedId;
-                project = config.projects[projectId];
+                // Target path differs from cwd — create config at the target repo
+                config = await autoCreateConfig(resolvedPath);
               } else {
-                ({ projectId, project } = await resolveProject(config));
+                // cwd is the target — auto-create config here
+                config = await autoCreateConfig(cwd());
               }
+              ({ projectId, project } = await resolveProject(config));
             } else {
               config = loadConfig(configPath);
 

@@ -859,12 +859,16 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 .dashboard-shell {
   position: relative;
+  flex: 1;
+  min-height: 0;
 }
 
 .dashboard-app-shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   flex-direction: column;
+  overflow: hidden;
   background: var(--color-bg-base);
 }
 
@@ -984,33 +988,160 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   color: var(--color-accent-amber);
 }
 
+/* Session headline in topbar */
+.dashboard-app-header__session-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.dashboard-app-header__session-id {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  margin-left: 6px;
+}
+
+/* Status pill — compact topbar variant */
+.topbar-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+/* State-specific tint backgrounds */
+.topbar-status-pill--active    { background: color-mix(in srgb, var(--color-status-working)   10%, transparent); }
+.topbar-status-pill--ready     { background: color-mix(in srgb, var(--color-status-ready)     10%, transparent); }
+.topbar-status-pill--idle      { background: color-mix(in srgb, var(--color-text-tertiary)    10%, transparent); }
+.topbar-status-pill--waiting-for-input { background: color-mix(in srgb, var(--color-status-attention) 10%, transparent); }
+.topbar-status-pill--blocked,
+.topbar-status-pill--exited    { background: color-mix(in srgb, var(--color-status-error)     10%, transparent); }
+
+.topbar-status-pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.topbar-status-pill__label { color: inherit; }
+
+/* Branch pill — compact topbar variant */
+.topbar-branch-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topbar-branch-pill--link { color: var(--color-accent); }
+.topbar-branch-pill--link:hover { text-decoration: underline; }
+
+/* Danger button variant (kill) */
+.dashboard-app-btn--danger {
+  color: var(--color-status-error);
+}
+.dashboard-app-btn--danger:hover {
+  background: color-mix(in srgb, var(--color-status-error) 15%, transparent);
+  color: var(--color-status-error);
+}
+
+/* PR button wrapper — positioned for popover anchor */
+.topbar-pr-btn-wrap {
+  position: relative;
+}
+
+/* PR button extras (base styles come from .dashboard-app-btn) */
+.topbar-pr-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.topbar-pr-btn--open {
+  background: var(--color-bg-elevated);
+}
+
+/* Status dot on PR button */
+.topbar-pr-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.topbar-pr-dot--green  { background: var(--color-status-ready); }
+.topbar-pr-dot--red    { background: var(--color-status-error); }
+.topbar-pr-dot--amber  { background: var(--color-status-attention); }
+
+/* Popover panel */
+.topbar-pr-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: 540px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  padding: 0;
+}
+
+/* Session title hidden on mobile (pills move to second row instead) */
+@media (max-width: 640px) {
+  .dashboard-app-header__session-title { display: none; }
+}
+
+/* Mobile: popover anchors from left edge (topbar is narrow) */
+@media (max-width: 640px) {
+  .topbar-pr-popover {
+    right: auto;
+    left: 0;
+    width: calc(100vw - 16px);
+  }
+}
+
 .dashboard-shell--desktop {
-  display: grid;
-  grid-template-columns: auto 1fr;
+  display: flex;
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 
-.dashboard-shell--desktop.dashboard-shell--sidebar-collapsed {
-  grid-template-columns: 0 minmax(0, 1fr);
-}
-
-.dashboard-shell--desktop > .project-sidebar {
-  width: 224px;
-  height: auto;
-  min-height: 0;
-  align-self: stretch;
+.sidebar-wrapper {
+  display: flex;
+  flex-direction: column;
   flex-shrink: 0;
+  height: 100%;
+  width: 224px;
+  transition: width 0.2s ease;
 }
 
-.dashboard-shell--desktop > .project-sidebar.project-sidebar--collapsed {
-  width: 0;
-  border-right-color: transparent;
+.dashboard-shell--desktop.dashboard-shell--sidebar-collapsed .sidebar-wrapper {
+  width: 44px;
 }
 
 .dashboard-shell--desktop > .dashboard-main--desktop {
   min-width: 0;
+  flex: 1;
   align-self: stretch;
 }
 
@@ -1061,7 +1192,6 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__footer {
-  padding: 8px 12px;
   border-top: 1px solid var(--sidebar-border);
   display: flex;
   align-items: center;
@@ -1069,20 +1199,18 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__footer-btn {
-  width: 100%;
-  height: 29px;
-  padding: 0 10px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border-radius: 5px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--color-text-muted);
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
   transition: background 100ms, color 100ms, border-color 100ms;
 }
 
@@ -1092,10 +1220,15 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-color: color-mix(in srgb, var(--color-border-default) 72%, transparent);
 }
 
-.project-sidebar__footer-btn svg {
-  width: 15px;
-  height: 15px;
-  flex-shrink: 0;
+.project-sidebar__footer-btn--active {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+.project-sidebar__footer-btn--active:hover {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
 }
 
 .dashboard-hero {
@@ -1406,6 +1539,9 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .sidebar-session-dot[data-level="respond"] {
   background: var(--color-status-respond);
 }
+.sidebar-session-dot[data-level="action"] {
+  background: var(--color-status-respond);
+}
 .sidebar-session-dot[data-level="merge"] {
   background: var(--color-status-ready);
 }
@@ -1453,6 +1589,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 .kanban-column__dot[data-level="respond"] {
   background: var(--color-status-respond);
+}
+.kanban-column__dot[data-level="action"] {
+  /* Yellow-severity to match DynamicFavicon.computeHealthFromLevels: the
+     collapsed bucket includes routine review work (ci_failed,
+     changes_requested) that used to be orange. Painting it at
+     --color-status-respond (red) would disagree with the favicon and make
+     every typical review PR scream critical. */
+  background: var(--color-accent-orange);
 }
 .kanban-column__dot[data-level="merge"] {
   background: var(--color-status-ready);
@@ -1830,6 +1974,42 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   height: 6px;
   border-radius: 999px;
   flex-shrink: 0;
+  background: currentColor;
+}
+
+.session-detail-tone--working {
+  color: var(--color-status-working);
+  background: var(--color-status-working);
+}
+
+.session-detail-tone--ready {
+  color: var(--color-status-ready);
+  background: var(--color-status-ready);
+}
+
+.session-detail-tone--idle {
+  color: var(--color-status-idle);
+  background: var(--color-status-idle);
+}
+
+.session-detail-tone--attention {
+  color: var(--color-status-attention);
+  background: var(--color-status-attention);
+}
+
+.session-detail-tone--error {
+  color: var(--color-status-error);
+  background: var(--color-status-error);
+}
+
+.session-detail-tone--muted {
+  color: var(--color-text-muted);
+  background: var(--color-text-muted);
+}
+
+.session-detail-tone--accent {
+  color: var(--color-accent);
+  background: var(--color-accent);
 }
 
 .session-detail-status-pill--active {
@@ -1926,6 +2106,69 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border: 1px solid var(--color-border-default);
   border-radius: 6px;
   background: color-mix(in srgb, var(--color-bg-elevated) 92%, transparent);
+}
+
+.session-detail-height--worker {
+  height: clamp(380px, 48vh, 560px);
+}
+
+.session-detail-height--orchestrator {
+  height: clamp(400px, 52vh, 620px);
+}
+
+.session-detail-height--full {
+  height: 100%;
+}
+
+.session-detail-zone-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.session-detail-zone-pill__value {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-detail-zone-pill__label {
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.session-detail-zone-pill--merge {
+  color: var(--color-status-ready);
+  background: color-mix(in srgb, var(--color-status-ready) 10%, transparent);
+}
+
+.session-detail-zone-pill--respond {
+  color: var(--color-status-error);
+  background: color-mix(in srgb, var(--color-status-error) 10%, transparent);
+}
+
+.session-detail-zone-pill--review {
+  color: var(--color-accent-orange);
+  background: color-mix(in srgb, var(--color-accent-orange) 10%, transparent);
+}
+
+.session-detail-zone-pill--working {
+  color: var(--color-accent-blue);
+  background: color-mix(in srgb, var(--color-accent-blue) 10%, transparent);
+}
+
+.session-detail-zone-pill--pending {
+  color: var(--color-status-attention);
+  background: color-mix(in srgb, var(--color-status-attention) 10%, transparent);
+}
+
+.session-detail-zone-pill--done {
+  color: var(--color-text-tertiary);
+  background: color-mix(in srgb, var(--color-text-tertiary) 14%, transparent);
 }
 
 /* ── Session cards — Emil design vision ──────────────────────────────── */
@@ -3153,10 +3396,9 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar--collapsed {
-  width: 0;
-  border-right-color: transparent;
-  opacity: 0;
-  pointer-events: none;
+  width: 44px;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .project-sidebar__compact-hdr {
@@ -3222,6 +3464,17 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-bottom: none;
 }
 
+/* Project row container */
+.project-sidebar__proj-row {
+  display: flex;
+  align-items: center;
+}
+
+.project-sidebar__proj-row > .project-sidebar__proj-toggle {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Project toggle row */
 .project-sidebar__proj-toggle {
   width: 100%;
@@ -3257,6 +3510,25 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 .project-sidebar__proj-chevron--open {
   transform: rotate(90deg);
+}
+
+/* Project action buttons (dashboard, orchestrator) */
+.project-sidebar__proj-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  border-radius: 4px;
+  transition: background 80ms, color 80ms;
+  text-decoration: none;
+}
+
+.project-sidebar__proj-action:hover {
+  background: var(--sidebar-row-hover);
+  color: var(--color-text-primary);
 }
 
 /* Project name */
@@ -3296,18 +3568,130 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   padding: 2px 0 4px;
 }
 
+/* Collapsed icon styles */
+.project-sidebar__collapsed-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  transition: background 80ms;
+  position: relative;
+  text-decoration: none;
+}
+
+.project-sidebar__collapsed-icon:hover {
+  background: var(--sidebar-row-hover);
+}
+
+.project-sidebar__collapsed-icon--active {
+  background: var(--sidebar-row-active);
+}
+
+.project-sidebar__collapsed-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+}
+
+.project-sidebar__collapsed-dot--active {
+  background: var(--color-accent-amber);
+}
+
+.project-sidebar__collapsed-abbr {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--color-text-secondary);
+}
+
+.project-sidebar__collapsed-session-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 22px;
+  border-radius: 4px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: background 80ms;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  text-decoration: none;
+}
+.project-sidebar__collapsed-session-btn:hover,
+.project-sidebar__collapsed-session-btn:focus,
+.project-sidebar__collapsed-session-btn:visited {
+  text-decoration: none;
+}
+
+.project-sidebar__collapsed-session-btn:hover {
+  background: var(--sidebar-row-hover);
+  color: var(--color-text-secondary);
+}
+
+.project-sidebar__collapsed-session-btn--active {
+  background: var(--sidebar-row-active);
+  color: var(--color-text-primary);
+}
+
+.project-sidebar__collapsed-session-btn[data-level="respond"] { color: var(--color-status-attention); }
+.project-sidebar__collapsed-session-btn[data-level="review"] { color: var(--color-status-review); }
+.project-sidebar__collapsed-session-btn[data-level="working"] { color: var(--color-status-active); }
+
+.project-sidebar__session-abbr-first {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.project-sidebar__session-abbr-rest {
+  font-size: 8px;
+  font-weight: 600;
+}
+
+.project-sidebar__collapsed-overflow {
+  font-size: 9px;
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: 1px 0;
+}
+
+.project-sidebar__collapsed-divider {
+  width: 22px;
+  height: 1px;
+  background: var(--color-border-subtle);
+  margin: 6px 0 4px;
+}
+
 /* Session row: dot + label + status */
 .project-sidebar__sess-row {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 4px 12px 4px 26px;
+  padding: 0 12px 0 26px;
   width: 100%;
   border: 0;
   background: transparent;
   cursor: pointer;
   transition: background 80ms;
   text-align: left;
+  text-decoration: none;
+  color: inherit;
+}
+
+.project-sidebar__sess-row:hover,
+.project-sidebar__sess-row:focus,
+.project-sidebar__sess-row:visited {
+  text-decoration: none;
+  color: inherit;
 }
 
 .project-sidebar__sess-row:hover {
@@ -3330,16 +3714,79 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__sess-label--active {
-  color: var(--color-text-primary);
+  color: var(--color-accent-amber);
   font-weight: 500;
+}
+
+/* Session meta row: ID + status on one line */
+.project-sidebar__sess-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: -4px;
+}
+
+.project-sidebar__sess-id {
+  font-size: 9px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 
 /* Session status text */
 .project-sidebar__sess-status {
-  font-size: 10px;
+  font-size: 9px;
   font-family: var(--font-mono);
   color: var(--color-text-muted);
   flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Inline status (compact variant — name + status on one line) */
+.project-sidebar__sess-status--inline {
+  font-size: 10px;
+  margin-left: 6px;
+  text-transform: lowercase;
+}
+
+/* Sidebar settings popover */
+.project-sidebar__settings-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.project-sidebar__settings-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 180px;
+  /* Secondary guard: popover never wider than the viewport.
+     usePopoverClamp() hook nudges it horizontally to stay on-screen. */
+  max-width: calc(100vw - 16px);
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+
+.project-sidebar__settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.project-sidebar__settings-row input[type="checkbox"] {
+  accent-color: var(--color-accent-amber);
 }
 
 /* Empty state inside project */
@@ -3352,12 +3799,6 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 .project-sidebar__footer {
   margin-top: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border-top: 1px solid var(--sidebar-border);
-  padding: 8px 12px;
-  flex-shrink: 0;
 }
 
 .project-sidebar__theme-toggle {
@@ -3808,16 +4249,15 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     display: inline-flex;
   }
 
-  /* -- Sidebar: off-canvas drawer -- */
-  .project-sidebar,
-  .project-sidebar.project-sidebar--collapsed {
+  /* -- Sidebar wrapper: off-canvas drawer on mobile -- */
+  .sidebar-wrapper {
     position: fixed;
     top: 0;
     left: 0;
     z-index: var(--z-overlay);
     height: 100vh;
     height: 100dvh;
-    width: 280px;
+    width: 280px !important;
     transform: translateX(-100%);
     transition: transform 0.25s ease;
     padding-top: env(safe-area-inset-top, 0px);
@@ -3825,7 +4265,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     padding-left: env(safe-area-inset-left, 0px);
   }
 
-  .project-sidebar.project-sidebar--mobile-open {
+  .sidebar-wrapper--mobile-open {
     transform: translateX(0);
   }
 
@@ -4110,6 +4550,9 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   .mobile-action-pill__dot[data-level="respond"] {
     background: var(--color-status-respond);
   }
+  .mobile-action-pill__dot[data-level="action"] {
+    background: var(--color-status-respond);
+  }
   .mobile-action-pill__dot[data-level="merge"] {
     background: var(--color-status-ready);
   }
@@ -4118,6 +4561,9 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   }
 
   .mobile-action-pill__count[data-level="respond"] {
+    color: var(--color-status-respond);
+  }
+  .mobile-action-pill__count[data-level="action"] {
     color: var(--color-status-respond);
   }
   .mobile-action-pill__count[data-level="merge"] {
@@ -4584,6 +5030,9 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   .accordion-header__dot[data-level="respond"] {
     background: var(--color-status-respond);
   }
+  .accordion-header__dot[data-level="action"] {
+    background: var(--color-status-respond);
+  }
   .accordion-header__dot[data-level="merge"] {
     background: var(--color-status-ready);
   }
@@ -4598,6 +5047,9 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     background: var(--color-accent-orange);
   }
   .mobile-session-row__dot[data-level="respond"] {
+    background: var(--color-status-respond);
+  }
+  .mobile-session-row__dot[data-level="action"] {
     background: var(--color-status-respond);
   }
   .mobile-session-row__dot[data-level="merge"] {
@@ -4795,6 +5247,9 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   .mobile-feed-card__strip[data-level="respond"] {
     background: var(--color-status-respond);
   }
+  .mobile-feed-card__strip[data-level="action"] {
+    background: var(--color-status-respond);
+  }
   .mobile-feed-card__strip[data-level="merge"] {
     background: var(--color-status-ready);
   }
@@ -4930,27 +5385,24 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   /* ── Mobile Session Detail: Terminal First ──────────────────────────── */
 
   .session-detail--terminal-first {
-    position: relative;
-    height: 100vh;
-    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
     overflow: hidden;
     background: var(--color-bg-base);
   }
 
   .session-detail__floating-header {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
     display: flex;
+    height: 48px;
     align-items: center;
     gap: 10px;
-    padding: max(env(safe-area-inset-top, 8px), 8px) 16px 8px;
-    background: color-mix(in srgb, var(--color-bg-base) 84%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    padding: 0 14px;
+    border-bottom: 1px solid var(--color-border-subtle);
+    background: var(--color-bg-base);
+    flex-shrink: 0;
     z-index: 10;
+    position: relative;
   }
 
   .session-detail__back {
@@ -4986,6 +5438,31 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     border-radius: 10px;
   }
 
+  .session-detail__status-pill--active {
+    color: var(--color-status-working);
+    background: color-mix(in srgb, var(--color-status-working) 12%, transparent);
+  }
+
+  .session-detail__status-pill--ready {
+    color: var(--color-status-ready);
+    background: color-mix(in srgb, var(--color-status-ready) 12%, transparent);
+  }
+
+  .session-detail__status-pill--waiting {
+    color: var(--color-status-attention);
+    background: color-mix(in srgb, var(--color-status-attention) 12%, transparent);
+  }
+
+  .session-detail__status-pill--error {
+    color: var(--color-status-error);
+    background: color-mix(in srgb, var(--color-status-error) 12%, transparent);
+  }
+
+  .session-detail__status-pill--idle {
+    color: var(--color-text-muted);
+    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  }
+
   .session-detail__time {
     margin-left: auto;
     font-family: var(--font-mono);
@@ -4995,17 +5472,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   }
 
   .session-detail__terminal-full {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    padding-top: calc(max(env(safe-area-inset-top, 8px), 8px) + 40px);
-    padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
   }
 
   .session-detail__terminal-full--with-sheet {
-    padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+    /* Space reserved for bottom sheet */
   }
 
   .session-detail__terminal-full .direct-terminal,
@@ -5019,14 +5493,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   }
 
   .session-detail__bottom-sheet {
-    position: absolute;
-    bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+    position: fixed;
+    bottom: 0;
     left: 0;
     right: 0;
     background: color-mix(in srgb, var(--color-bg-surface) 96%, var(--color-bg-base));
     border-top: 1px solid color-mix(in srgb, var(--color-border-default) 88%, transparent);
     border-radius: 12px 12px 0 0;
-    padding: 8px 16px 12px;
+    padding: 8px 16px calc(12px + env(safe-area-inset-bottom, 0px));
     box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.22);
     z-index: 10;
   }
@@ -5066,6 +5540,22 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     height: 6px;
     border-radius: 50%;
     flex-shrink: 0;
+  }
+
+  .session-detail-ci-tone--neutral {
+    background: var(--color-text-tertiary);
+  }
+
+  .session-detail-ci-tone--pass {
+    background: var(--color-accent-green);
+  }
+
+  .session-detail-ci-tone--fail {
+    background: var(--color-accent-red);
+  }
+
+  .session-detail-ci-tone--pending {
+    background: var(--color-status-attention);
   }
 
   /* ── Mobile PR Dense Rows enhancements ─────────────────────────────── */
@@ -5426,6 +5916,10 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: var(--color-status-respond);
 }
 
+.bottom-sheet__preview-strip[data-level="action"] {
+  background: var(--color-status-respond);
+}
+
 .bottom-sheet__preview-strip[data-level="merge"] {
   background: var(--color-status-ready);
 }
@@ -5735,6 +6229,13 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   }
 }
 
+.sidebar-mobile-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.4);
+  z-index: 40;
+}
+
 /* ── Reduced motion ─────────────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
@@ -5744,5 +6245,158 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Mobile: hide brand, icon-only buttons */
+@media (max-width: 640px) {
+  .dashboard-app-header__brand--hide-mobile { display: none; }
+  .topbar-btn-label { display: none; }
+}
+
+/* Mobile bottom nav is position:fixed so no padding-bottom needed on session-detail-page */
+
+/* ── Terminal chrome bar ──────────────────────────────────────────── */
+
+/* "TERMINAL" pane label on the left of the chrome bar.
+   Styling mirrors the workspace-pane-header used in ao-142's file/preview
+   panes so the terminal reads as another labelled pane. */
+.terminal-chrome-pane-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary);
+  padding: 0 10px 0 2px;
+  border-right: 1px solid var(--color-border-subtle);
+  margin-right: 4px;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+
+/* Desktop: identity group is inline (single row) */
+.terminal-chrome-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.terminal-chrome-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 640px) {
+  .terminal-chrome-bar { padding: 4px 8px; gap: 4px; }
+
+  /* Compact pane label on mobile */
+  .terminal-chrome-pane-label {
+    font-size: 9px;
+    padding: 0 6px 0 0;
+    margin-right: 2px;
+  }
+
+  /* Stack: session name on top, status+XDA row below */
+  .terminal-chrome-identity {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+  }
+  .terminal-chrome-session-id {
+    font-size: 9px !important;
+    line-height: 1.2;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .terminal-chrome-status-row {
+    gap: 4px;
+  }
+  .terminal-chrome-status-row .rounded-full { width: 5px; height: 5px; min-width: 5px; min-height: 5px; }
+  .terminal-chrome-status-row span { font-size: 8px !important; }
+}
+
+/* ── Topbar session pills ──────────────────────────────────────────── */
+.topbar-session-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Project name + pills: inline on desktop, stacked column on mobile */
+.topbar-project-pills-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Line 1 of the mobile topbar: project name + session id side-by-side.
+   On desktop the session id sits in a separate span further along the row,
+   so this inner .topbar-project-line only exists to group them on mobile. */
+.topbar-project-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* topbar-mobile-only is the inverse of topbar-desktop-only; hidden on
+   desktop, shown below the mobile breakpoint. */
+.topbar-mobile-only { display: none; }
+
+@media (max-width: 640px) {
+  .topbar-desktop-only { display: none; }
+  .topbar-mobile-only { display: inline; }
+
+  /* Stack project name above pills in the same 48px topbar */
+  .topbar-project-pills-group {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 1px;
+  }
+
+  /* Smaller project name on mobile */
+  .topbar-project-pills-group .dashboard-app-header__project {
+    font-size: 10px;
+    line-height: 1.2;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Mobile session id hugs the project name */
+  .topbar-project-line .dashboard-app-header__session-id {
+    font-size: 10px;
+    line-height: 1.2;
+    margin-left: 0;
+    color: var(--color-text-muted);
+  }
+  .topbar-project-line .dashboard-app-header__session-id::before {
+    content: "·";
+    margin-right: 6px;
+    color: var(--color-text-tertiary);
+  }
+
+  /* Tiny pills on mobile */
+  .topbar-session-pills {
+    gap: 3px;
+  }
+  .topbar-session-pills .topbar-status-pill {
+    font-size: 9px;
+    padding: 1px 5px;
+    gap: 3px;
+  }
+  .topbar-session-pills .topbar-status-pill__dot {
+    width: 5px;
+    height: 5px;
+  }
+  .topbar-session-pills .topbar-branch-pill {
+    font-size: 9px;
+    padding: 1px 5px;
+    max-width: 90px;
   }
 }

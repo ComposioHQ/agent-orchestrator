@@ -81,6 +81,7 @@ export async function GET(request: Request): Promise<Response> {
           const dashboardSessions = workerSessions.map(sessionToDashboard);
           const projectObserver = ensureObserver(config);
 
+          const attentionZones = config.dashboard?.attentionZones ?? "simple";
           const initialEvent = {
             type: "snapshot",
             correlationId,
@@ -89,7 +90,7 @@ export async function GET(request: Request): Promise<Response> {
               id: s.id,
               status: s.status,
               activity: s.activity,
-              attentionLevel: getAttentionLevel(s),
+              attentionLevel: getAttentionLevel(s, attentionZones),
               lastActivityAt: s.lastActivityAt,
             })),
           };
@@ -155,6 +156,7 @@ export async function GET(request: Request): Promise<Response> {
             }
 
             try {
+              const attentionZones = config.dashboard?.attentionZones ?? "simple";
               const event = {
                 type: "snapshot",
                 correlationId,
@@ -163,7 +165,7 @@ export async function GET(request: Request): Promise<Response> {
                   id: s.id,
                   status: s.status,
                   activity: s.activity,
-                  attentionLevel: getAttentionLevel(s),
+                  attentionLevel: getAttentionLevel(s, attentionZones),
                   lastActivityAt: s.lastActivityAt,
                 })),
               };

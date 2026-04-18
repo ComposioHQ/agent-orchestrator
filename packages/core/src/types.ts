@@ -24,10 +24,97 @@ import type { ObservabilityLevel } from "./observability.js";
 /** Unique session identifier, e.g. "my-app-1", "backend-12" */
 export type SessionId = string;
 
+export type SessionKind = "worker" | "orchestrator";
+
+export type CanonicalSessionState =
+  | "not_started"
+  | "working"
+  | "idle"
+  | "needs_input"
+  | "stuck"
+  | "detecting"
+  | "done"
+  | "terminated";
+
+export type CanonicalSessionReason =
+  | "spawn_requested"
+  | "agent_acknowledged"
+  | "task_in_progress"
+  | "pr_created"
+  | "pr_closed_waiting_decision"
+  | "fixing_ci"
+  | "resolving_review_comments"
+  | "awaiting_user_input"
+  | "awaiting_external_review"
+  | "research_complete"
+  | "merged_waiting_decision"
+  | "manually_killed"
+  | "runtime_lost"
+  | "agent_process_exited"
+  | "probe_failure"
+  | "error_in_process";
+
+export type CanonicalPRState = "none" | "open" | "merged" | "closed";
+
+export type CanonicalPRReason =
+  | "not_created"
+  | "in_progress"
+  | "ci_failing"
+  | "review_pending"
+  | "changes_requested"
+  | "approved"
+  | "merge_ready"
+  | "merged"
+  | "closed_unmerged";
+
+export type CanonicalRuntimeState = "unknown" | "alive" | "exited" | "missing" | "probe_failed";
+
+export type CanonicalRuntimeReason =
+  | "spawn_incomplete"
+  | "process_running"
+  | "process_missing"
+  | "tmux_missing"
+  | "manual_kill_requested"
+  | "probe_error";
+
+export interface SessionStateRecord {
+  kind: SessionKind;
+  state: CanonicalSessionState;
+  reason: CanonicalSessionReason;
+  startedAt: string | null;
+  completedAt: string | null;
+  terminatedAt: string | null;
+  lastTransitionAt: string;
+}
+
+export interface PRStateRecord {
+  state: CanonicalPRState;
+  reason: CanonicalPRReason;
+  number: number | null;
+  url: string | null;
+  lastObservedAt: string | null;
+}
+
+export interface RuntimeStateRecord {
+  state: CanonicalRuntimeState;
+  reason: CanonicalRuntimeReason;
+  lastObservedAt: string | null;
+  handle: RuntimeHandle | null;
+  tmuxName: string | null;
+}
+
+export interface CanonicalSessionLifecycle {
+  version: 2;
+  session: SessionStateRecord;
+  pr: PRStateRecord;
+  runtime: RuntimeStateRecord;
+}
+
 /** Session lifecycle states */
 export type SessionStatus =
   | "spawning"
   | "working"
+  | "detecting"
   | "pr_open"
   | "ci_failed"
   | "review_pending"
@@ -63,6 +150,23 @@ export const ACTIVITY_STATE = {
   EXITED: "exited" as const,
 } satisfies Record<string, ActivityState>;
 
+export type ActivitySignalState = "valid" | "stale" | "null" | "unavailable" | "probe_failure";
+
+export type ActivitySignalSource = "native" | "terminal" | "runtime" | "none";
+
+export interface ActivitySignal {
+  /** Confidence bucket for the activity probe result. */
+  state: ActivitySignalState;
+  /** The observed activity value, if one was surfaced. */
+  activity: ActivityState | null;
+  /** Timestamp that makes timing-based inferences safe, when available. */
+  timestamp?: Date;
+  /** Where the activity signal came from. */
+  source: ActivitySignalSource;
+  /** Optional extra detail for stale / failed probes. */
+  detail?: string;
+}
+
 /** Result of activity detection, carrying both the state and an optional timestamp. */
 export interface ActivityDetection {
   state: ActivityState;
@@ -92,6 +196,7 @@ export const DEFAULT_ACTIVE_WINDOW_MS = 30_000; // 30 seconds
 export const SESSION_STATUS = {
   SPAWNING: "spawning" as const,
   WORKING: "working" as const,
+  DETECTING: "detecting" as const,
   PR_OPEN: "pr_open" as const,
   CI_FAILED: "ci_failed" as const,
   REVIEW_PENDING: "review_pending" as const,
@@ -125,11 +230,32 @@ export const TERMINAL_ACTIVITIES: ReadonlySet<ActivityState> = new Set(["exited"
 /** Statuses that must never be restored (e.g. already merged). */
 export const NON_RESTORABLE_STATUSES: ReadonlySet<SessionStatus> = new Set(["merged"]);
 
+/** Check whether lifecycle metadata indicates the session's PR is already merged. */
+function hasMergedLifecyclePR(lifecycle: CanonicalSessionLifecycle): boolean {
+  return (
+    (
+      lifecycle as CanonicalSessionLifecycle & {
+        pr?: { state?: string | null } | null;
+      }
+    ).pr?.state === "merged"
+  );
+}
+
 /** Check if a session is in a terminal (dead) state. */
 export function isTerminalSession(session: {
   status: SessionStatus;
   activity: ActivityState | null;
+  lifecycle?: CanonicalSessionLifecycle;
 }): boolean {
+  if (session.lifecycle) {
+    return (
+      session.lifecycle.session.state === "done" ||
+      session.lifecycle.session.state === "terminated" ||
+      session.lifecycle.pr.state === "merged" ||
+      session.lifecycle.runtime.state === "missing" ||
+      session.lifecycle.runtime.state === "exited"
+    );
+  }
   return (
     TERMINAL_STATUSES.has(session.status) ||
     (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity))
@@ -140,7 +266,15 @@ export function isTerminalSession(session: {
 export function isRestorable(session: {
   status: SessionStatus;
   activity: ActivityState | null;
+  lifecycle?: CanonicalSessionLifecycle;
 }): boolean {
+  if (session.lifecycle) {
+    return (
+      isTerminalSession(session) &&
+      !NON_RESTORABLE_STATUSES.has(session.status) &&
+      !hasMergedLifecyclePR(session.lifecycle)
+    );
+  }
   return isTerminalSession(session) && !NON_RESTORABLE_STATUSES.has(session.status);
 }
 
@@ -157,6 +291,12 @@ export interface Session {
 
   /** Activity state from agent plugin (null = not yet determined) */
   activity: ActivityState | null;
+
+  /** Explicit confidence/availability contract for the current activity signal. */
+  activitySignal: ActivitySignal;
+
+  /** Canonical lifecycle truth persisted in metadata. */
+  lifecycle: CanonicalSessionLifecycle;
 
   /** Git branch name */
   branch: string | null;
@@ -1046,6 +1186,9 @@ export interface OrchestratorConfig {
   /** Project configurations */
   projects: Record<string, ProjectConfig>;
 
+  /** Dashboard UI configuration */
+  dashboard?: DashboardConfig;
+
   /** Notification channel configs */
   notifiers: Record<string, NotifierConfig>;
 
@@ -1093,6 +1236,22 @@ export interface ExternalPluginEntryRef {
   expectedPluginName?: string;
 }
 
+/**
+ * Dashboard attention zone display mode.
+ *
+ * - "simple" (default): collapses the 5 detailed zones into 4 by merging
+ *   REVIEW + RESPOND into a single ACTION column. The card-level badges
+ *   still expose the underlying state (ci_failed, needs_input, changes_requested).
+ * - "detailed": preserves the original 5-zone Kanban layout for power users
+ *   who want REVIEW and RESPOND as distinct columns.
+ */
+export type DashboardAttentionZoneMode = "simple" | "detailed";
+
+export interface DashboardConfig {
+  /** Attention zone layout (defaults to "simple") */
+  attentionZones?: DashboardAttentionZoneMode;
+}
+
 export interface DefaultPlugins {
   runtime: string;
   agent: string;
@@ -1137,8 +1296,8 @@ export interface ProjectConfig {
   /** Display name */
   name: string;
 
-  /** GitHub repo in "owner/repo" format */
-  repo: string;
+  /** Repository path for the configured SCM provider, e.g. "owner/repo" or "group/subgroup/repo" (optional — omitted when no remote detected) */
+  repo?: string;
 
   /** Local path to the repo */
   path: string;
@@ -1374,6 +1533,8 @@ export interface SessionMetadata {
   worktree: string;
   branch: string;
   status: string;
+  stateVersion?: string;
+  statePayload?: string;
   tmuxName?: string; // Globally unique tmux session name (includes hash)
   issue?: string;
   pr?: string;
@@ -1403,6 +1564,14 @@ export interface SessionManager {
   spawnOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
+  /** Fast cache-served list. Falls back to list() on first call or after TTL. */
+  listCached(projectId?: string): Promise<Session[]>;
+  /**
+   * Drop the listCached() cache. Call after any metadata mutation made
+   * outside of the session manager's own mutation APIs (e.g. when another
+   * module imports updateMetadata from ./metadata directly).
+   */
+  invalidateCache(): void;
   get(sessionId: SessionId): Promise<Session | null>;
   kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void>;
   cleanup(

@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createLifecycleManager } from "../lifecycle-manager.js";
+import {
+  resolvePREnrichmentDecision,
+  resolvePRLiveDecision,
+  resolveProbeDecision,
+} from "../lifecycle-status-decisions.js";
 import { createSessionManager } from "../session-manager.js";
 import { writeMetadata, readMetadataRaw } from "../metadata.js";
+import { readObservabilitySummary } from "../observability.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -39,6 +45,82 @@ beforeEach(() => {
 
 afterEach(() => {
   env.cleanup();
+});
+
+describe("status decision helpers", () => {
+  it("promotes conflicting runtime evidence into detecting instead of terminating", () => {
+    const decision = resolveProbeDecision({
+      currentAttempts: 1,
+      runtimeProbe: { state: "dead", failed: false },
+      processProbe: { state: "alive", failed: false },
+      canProbeRuntimeIdentity: true,
+      activitySignal: {
+        state: "valid",
+        activity: "active",
+        timestamp: new Date(),
+        source: "native",
+      },
+      activityEvidence: "activity_signal=valid via_native activity=active",
+      idleWasBlocked: false,
+    });
+
+    expect(decision).toEqual(
+      expect.objectContaining({
+        status: "detecting",
+        sessionState: "detecting",
+        sessionReason: "runtime_lost",
+        detectingAttempts: 2,
+      }),
+    );
+  });
+
+  it("maps merged enrichment data to merged lifecycle state", () => {
+    const decision = resolvePREnrichmentDecision(
+      {
+        state: "merged",
+        ciStatus: "none",
+        reviewDecision: "none",
+        mergeable: false,
+      },
+      {
+        shouldEscalateIdleToStuck: false,
+        idleWasBlocked: false,
+        activityEvidence: "activity_signal=valid",
+      },
+    );
+
+    expect(decision).toEqual(
+      expect.objectContaining({
+        status: "merged",
+        prState: "merged",
+        prReason: "merged",
+        sessionState: "idle",
+        sessionReason: "merged_waiting_decision",
+      }),
+    );
+  });
+
+  it("maps live PR checks to review_pending without mutating other state", () => {
+    const decision = resolvePRLiveDecision({
+      prState: "open",
+      ciStatus: "passing",
+      reviewDecision: "pending",
+      mergeable: false,
+      shouldEscalateIdleToStuck: false,
+      idleWasBlocked: false,
+      activityEvidence: "activity_signal=valid",
+    });
+
+    expect(decision).toEqual(
+      expect.objectContaining({
+        status: "review_pending",
+        prState: "open",
+        prReason: "review_pending",
+        sessionState: "idle",
+        sessionReason: "awaiting_external_review",
+      }),
+    );
+  });
 });
 
 /** Helper: write standard session metadata and return a lifecycle manager */
@@ -112,6 +194,128 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("working");
     const meta = readMetadataRaw(env.sessionsDir, "app-1");
     expect(meta!["status"]).toBe("working");
+  });
+
+  it("records split lifecycle observability for transitions", async () => {
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "spawning" }),
+    });
+
+    await lm.check("app-1");
+
+    const summary = readObservabilitySummary(config);
+    const trace = summary.projects["my-app"]?.recentTraces.find(
+      (entry) => entry.operation === "lifecycle.transition" && entry.sessionId === "app-1",
+    );
+
+    expect(trace?.reason).toBe("task_in_progress");
+    expect(trace?.data).toMatchObject({
+      oldStatus: "spawning",
+      newStatus: "working",
+      previousSessionState: "not_started",
+      newSessionState: "working",
+      previousPRState: "none",
+      newPRState: "none",
+      previousRuntimeState: "alive",
+      newRuntimeState: "alive",
+      primaryReason: "task_in_progress",
+      evidence: "activity_signal=valid via_native activity=active",
+      signalsConsulted: ["activity_signal=valid", "via_native", "activity=active"],
+      recoveryAction: null,
+    });
+  });
+
+  it("does not mirror lifecycle transition observability logs to stderr during polling", async () => {
+    const originalAoObservabilityStderr = process.env["AO_OBSERVABILITY_STDERR"];
+    delete process.env["AO_OBSERVABILITY_STDERR"];
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+    try {
+      const lm = setupCheck("app-1", {
+        session: makeSession({ status: "spawning" }),
+      });
+
+      await lm.check("app-1");
+
+      expect(stderrSpy).not.toHaveBeenCalled();
+    } finally {
+      stderrSpy.mockRestore();
+      if (originalAoObservabilityStderr === undefined) {
+        delete process.env["AO_OBSERVABILITY_STDERR"];
+      } else {
+        process.env["AO_OBSERVABILITY_STDERR"] = originalAoObservabilityStderr;
+      }
+    }
+  });
+
+  it("clears stale lifecycle compatibility metadata in memory and on disk", async () => {
+    const session = makeSession({
+      status: "working",
+      lifecycle: {
+        ...makeSession().lifecycle,
+        pr: {
+          state: "none",
+          reason: "not_created",
+          number: null,
+          url: null,
+          lastObservedAt: null,
+        },
+        runtime: {
+          state: "alive",
+          reason: "process_running",
+          lastObservedAt: null,
+          handle: null,
+          tmuxName: null,
+        },
+      },
+      runtimeHandle: null,
+      pr: null,
+      metadata: {
+        pr: "https://github.com/org/repo/pull/42",
+        runtimeHandle: JSON.stringify({ id: "stale", runtimeName: "mock", data: {} }),
+        tmuxName: "stale-tmux",
+        role: "orchestrator",
+      },
+    });
+    const persistedMetadata = {
+      worktree: "/tmp",
+      branch: session.branch ?? "main",
+      status: session.status,
+      project: "my-app",
+      pr: "https://github.com/org/repo/pull/42",
+      runtimeHandle: JSON.stringify({ id: "stale", runtimeName: "mock", data: {} }),
+      tmuxName: "stale-tmux",
+      role: "orchestrator",
+    };
+    const currentSession = {
+      ...session,
+      metadata: {
+        ...session.metadata,
+        ...persistedMetadata,
+      },
+    };
+
+    vi.mocked(mockSessionManager.get).mockResolvedValue(currentSession);
+    writeMetadata(env.sessionsDir, "app-1", persistedMetadata);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    const metadata = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(metadata?.["pr"]).toBeUndefined();
+    expect(metadata?.["runtimeHandle"]).toBeUndefined();
+    expect(metadata?.["tmuxName"]).toBeUndefined();
+    expect(metadata?.["role"]).toBeUndefined();
+    expect(currentSession.metadata["pr"]).toBeUndefined();
+    expect(currentSession.metadata["runtimeHandle"]).toBeUndefined();
+    expect(currentSession.metadata["tmuxName"]).toBeUndefined();
+    expect(currentSession.metadata["role"]).toBeUndefined();
   });
 
   it("does not kill a spawning session when its runtime handle has not been persisted yet", async () => {
@@ -195,7 +399,7 @@ describe("check (single session)", () => {
       runtimeName: "mock",
       data: {},
     });
-    expect(lm.getStates().get("app-1")).toBe("killed");
+    expect(lm.getStates().get("app-1")).toBe("detecting");
   });
 
   it("uses worker-specific agent fallback when metadata does not persist an agent", async () => {
@@ -244,6 +448,8 @@ describe("check (single session)", () => {
 
   it("detects killed state when runtime is dead", async () => {
     vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "idle" });
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
 
     const lm = setupCheck("app-1", {
       session: makeSession({ status: "working" }),
@@ -255,6 +461,21 @@ describe("check (single session)", () => {
 
   it("detects killed state when getActivityState returns exited", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "exited" });
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(true);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("detecting");
+  });
+
+  it("detects killed via terminal fallback when getActivityState returns null", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
+    vi.mocked(plugins.agent.detectActivity).mockReturnValue("idle");
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
 
     const lm = setupCheck("app-1", {
       session: makeSession({ status: "working" }),
@@ -264,9 +485,12 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
-  it("detects killed via terminal fallback when getActivityState returns null", async () => {
-    vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
-    vi.mocked(plugins.agent.detectActivity).mockReturnValue("idle");
+  it("enters detecting when runtime is dead but recent activity is still fresh", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "active",
+      timestamp: new Date(Date.now() - 30_000),
+    });
     vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
 
     const lm = setupCheck("app-1", {
@@ -274,7 +498,62 @@ describe("check (single session)", () => {
     });
 
     await lm.check("app-1");
-    expect(lm.getStates().get("app-1")).toBe("killed");
+
+    expect(lm.getStates().get("app-1")).toBe("detecting");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["detectingAttempts"]).toBe("1");
+    expect(meta?.["lifecycleEvidence"]).toContain("signal_disagreement");
+  });
+
+  it("enters detecting when runtime is dead but process state is unknown", async () => {
+    const registryWithoutAgent = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+    });
+    vi.mocked(registryWithoutAgent.get).mockImplementation((slot: string, _name?: string) => {
+      if (slot === "runtime") return plugins.runtime;
+      if (slot === "agent") return null;
+      return null;
+    });
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+      registry: registryWithoutAgent,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("detecting");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).toContain("runtime_dead process_unknown");
+    expect(meta?.["detectingAttempts"]).toBe("1");
+  });
+
+  it("escalates detecting to stuck after bounded retries", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "active",
+      timestamp: new Date(Date.now() - 30_000),
+    });
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "detecting",
+        metadata: { detectingAttempts: "3" },
+      }),
+      metaOverrides: {
+        detectingAttempts: "3",
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("stuck");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["detectingAttempts"]).toBe("4");
+    expect(meta?.["detectingEscalatedAt"]).toBeDefined();
   });
 
   it("stays working when agent is idle but process is still running (fallback path)", async () => {
@@ -288,6 +567,81 @@ describe("check (single session)", () => {
 
     await lm.check("app-1");
     expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
+  it("does not mark a session stuck from terminal-only idle evidence without a timestamp", async () => {
+    config.reactions = {
+      "agent-stuck": { auto: true, action: "notify", threshold: "1m" },
+    };
+
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
+    vi.mocked(plugins.agent.detectActivity).mockReturnValue("idle");
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(true);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("working");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).toContain("activity_signal=stale");
+    expect(meta?.["lifecycleEvidence"]).toContain("activity=idle");
+  });
+
+  it("does not treat stale activity as recent liveness evidence during runtime-loss detection", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "active",
+      timestamp: new Date(Date.now() - 10 * 60_000),
+    });
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("killed");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).toContain("activity_signal=stale");
+  });
+
+  it("records explicit probe-failure activity evidence", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockRejectedValue(new Error("boom"));
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("detecting");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).toContain("activity_signal=probe_failure");
+  });
+
+  it("degrades stuck probe-failure sessions to detecting when runtime is alive but activity is unavailable", async () => {
+    const registryWithoutAgent: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return plugins.runtime;
+        return null;
+      }),
+    };
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "stuck" }),
+      registry: registryWithoutAgent,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("detecting");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).toContain("activity_signal=unavailable");
   });
 
   it("detects needs_input from agent", async () => {
@@ -423,6 +777,69 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("stuck");
   });
 
+  it("preserves needs_input state when getActivityState returns null with no terminal evidence", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
+    vi.mocked(plugins.runtime.getOutput).mockResolvedValue("");
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "needs_input" }),
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("needs_input");
+  });
+
+  it("preserves stuck state across repeated polls with unchanged weak evidence", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
+    vi.mocked(plugins.runtime.getOutput).mockResolvedValue("");
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "stuck" }),
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("stuck");
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("stuck");
+  });
+
+  it("preserves needs_input across repeated polls with unchanged weak evidence", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
+    vi.mocked(plugins.runtime.getOutput).mockResolvedValue("");
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "needs_input" }),
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("needs_input");
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("needs_input");
+  });
+
+  it("preserves canonical needs_input when persisted status is stale working", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
+    vi.mocked(plugins.runtime.getOutput).mockResolvedValue("");
+
+    const session = makeSession({ status: "working" });
+    session.lifecycle.session.state = "needs_input";
+    session.lifecycle.session.reason = "awaiting_user_input";
+
+    const lm = setupCheck("app-1", {
+      session,
+      metaOverrides: {
+        status: "working",
+      },
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("needs_input");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["status"]).toBe("needs_input");
+  });
+
   it("detects PR states from SCM", async () => {
     const mockSCM = createMockSCM({ getCISummary: vi.fn().mockResolvedValue("failing") });
     const registry = createMockRegistry({
@@ -438,6 +855,38 @@ describe("check (single session)", () => {
 
     await lm.check("app-1");
     expect(lm.getStates().get("app-1")).toBe("ci_failed");
+  });
+
+  it("keeps canonical session state idle while waiting on external review", async () => {
+    const mockSCM = createMockSCM({ getReviewDecision: vi.fn().mockResolvedValue("pending") });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(env.sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: session.branch ?? "main",
+      status: session.status,
+      project: "my-app",
+      pr: session.pr?.url,
+      runtimeHandle: session.runtimeHandle ? JSON.stringify(session.runtimeHandle) : undefined,
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("review_pending");
+    expect(session.lifecycle.session.state).toBe("idle");
+    expect(session.lifecycle.session.reason).toBe("awaiting_external_review");
   });
 
   it("skips PR auto-detection when metadata disables it", async () => {
@@ -558,6 +1007,104 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("merged");
   });
 
+  it("preserves merged PR truth in metadata instead of regressing to no-pr lifecycle state", async () => {
+    const pr = makePR();
+    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr }),
+      registry,
+    });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(lm.getStates().get("app-1")).toBe("merged");
+    expect(meta?.["status"]).toBe("merged");
+    expect(meta?.["pr"]).toBe(pr.url);
+    expect(meta?.["statePayload"]).toContain('"state":"merged"');
+    expect(meta?.["statePayload"]).toContain('"reason":"merged"');
+    expect(meta?.["statePayload"]).not.toContain('"reason":"not_created"');
+  });
+
+  it("keeps closed PR sessions idle and emits a PR-closed notification", async () => {
+    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("closed") });
+    const notifier = createMockNotifier();
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+      notifier,
+    });
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    const lm = setupCheck("app-1", {
+      session,
+      registry,
+      configOverride: {
+        ...config,
+        notificationRouting: {
+          ...config.notificationRouting,
+          info: ["desktop"],
+        },
+      },
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("idle");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["status"]).toBe("idle");
+    expect(meta?.["statePayload"]).toContain('"state":"closed"');
+    expect(meta?.["statePayload"]).toContain('"reason":"pr_closed_waiting_decision"');
+    expect(notifier.notify).toHaveBeenCalledWith(expect.objectContaining({ type: "pr.closed" }));
+  });
+
+  it("routes closed PR transitions through the pr-closed reaction key", async () => {
+    const notifier = createMockNotifier();
+    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("closed") });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+      notifier,
+    });
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    const lm = setupCheck("app-1", {
+      session,
+      registry,
+      configOverride: {
+        ...config,
+        reactions: {
+          ...config.reactions,
+          "pr-closed": {
+            auto: true,
+            action: "notify",
+            priority: "action",
+          },
+        },
+        notificationRouting: {
+          ...config.notificationRouting,
+          action: ["desktop"],
+        },
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "reaction.triggered",
+        data: expect.objectContaining({ reactionKey: "pr-closed" }),
+      }),
+    );
+  });
+
   it("detects mergeable when approved + CI green", async () => {
     const mockSCM = createMockSCM({
       getReviewDecision: vi.fn().mockResolvedValue("approved"),
@@ -611,6 +1158,58 @@ describe("check (single session)", () => {
 });
 
 describe("reactions", () => {
+  it("fires report watcher reactions only once per active trigger", async () => {
+    vi.useFakeTimers();
+
+    const notifier = createMockNotifier();
+    const registryWithNotifier = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      notifier,
+    });
+    const staleSession = makeSession({
+      id: "app-1",
+      status: "working",
+      createdAt: new Date("2025-01-01T11:40:00.000Z"),
+      metadata: {
+        createdAt: "2025-01-01T11:40:00.000Z",
+      },
+    });
+
+    config.reactions = {
+      "report-no-acknowledge": { auto: true, action: "notify", priority: "urgent" },
+    };
+    vi.mocked(mockSessionManager.list).mockResolvedValue([staleSession]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    try {
+      vi.setSystemTime(new Date("2025-01-01T12:00:00.000Z"));
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const reactionNotifications = vi.mocked(notifier.notify).mock.calls.filter((call) => {
+        const event = call[0] as { type?: string; data?: Record<string, unknown> } | undefined;
+        return (
+          event?.type === "reaction.triggered" &&
+          event.data?.["reactionKey"] === "report-no-acknowledge"
+        );
+      });
+
+      expect(reactionNotifications).toHaveLength(1);
+      expect(staleSession.metadata["reportWatcherTriggerCount"]).toBe("2");
+      expect(staleSession.metadata["reportWatcherActiveTrigger"]).toBe("no_acknowledge");
+    } finally {
+      lm.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it("triggers send-to-agent reaction on CI failure", async () => {
     config.reactions = {
       "ci-failed": {
@@ -1400,6 +1999,42 @@ describe("reactions", () => {
     expect(metadata?.["lastMergeConflictDispatched"]).toBeFalsy();
   });
 
+  it("clears merge conflict tracking when PR is closed", async () => {
+    config.reactions = {
+      "merge-conflicts": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Resolve merge conflicts.",
+      },
+    };
+
+    const getMergeability = vi.fn();
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("closed"),
+      getMergeability,
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "pr_open",
+        pr: makePR(),
+        metadata: { lastMergeConflictDispatched: "true" },
+      }),
+      registry,
+    });
+
+    await lm.check("app-1");
+
+    const metadata = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(metadata?.["lastMergeConflictDispatched"]).toBeFalsy();
+    expect(getMergeability).not.toHaveBeenCalled();
+  });
+
   it("notifies humans on significant transitions without reaction config", async () => {
     const notifier = createMockNotifier();
     const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
@@ -1904,6 +2539,49 @@ describe("rate limiting optimizations", () => {
     // Third check: throttle expired — API called again
     await lm.check("app-1");
     expect(getPendingMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears review backlog tracking when PR is closed", async () => {
+    const getPendingMock = vi.fn();
+    const getAutomatedMock = vi.fn();
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("closed"),
+      getPendingComments: getPendingMock,
+      getAutomatedComments: getAutomatedMock,
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "pr_open",
+        pr: makePR(),
+        metadata: {
+          lastPendingReviewFingerprint: "fingerprint",
+          lastPendingReviewDispatchHash: "dispatch",
+          lastPendingReviewDispatchAt: "2025-01-01T00:00:00.000Z",
+          lastAutomatedReviewFingerprint: "auto-fingerprint",
+          lastAutomatedReviewDispatchHash: "auto-dispatch",
+          lastAutomatedReviewDispatchAt: "2025-01-01T00:00:00.000Z",
+        },
+      }),
+      registry,
+    });
+
+    await lm.check("app-1");
+
+    const metadata = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(metadata?.["lastPendingReviewFingerprint"]).toBeFalsy();
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBeFalsy();
+    expect(metadata?.["lastPendingReviewDispatchAt"]).toBeFalsy();
+    expect(metadata?.["lastAutomatedReviewFingerprint"]).toBeFalsy();
+    expect(metadata?.["lastAutomatedReviewDispatchHash"]).toBeFalsy();
+    expect(metadata?.["lastAutomatedReviewDispatchAt"]).toBeFalsy();
+    expect(getPendingMock).not.toHaveBeenCalled();
+    expect(getAutomatedMock).not.toHaveBeenCalled();
   });
 });
 describe("summary pinning", () => {

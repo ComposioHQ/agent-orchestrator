@@ -3,7 +3,7 @@
  * native hook systems (Codex, Aider, OpenCode).
  *
  * Installs ~/.ao/bin/gh and ~/.ao/bin/git wrappers that intercept
- * PR creation, PR merge, and branch operations to auto-update session metadata.
+ * PR creation and branch operations to auto-update session metadata.
  *
  * Claude Code uses its own PostToolUse hook system instead.
  */
@@ -32,7 +32,7 @@ function getAoBinDir(): string {
 }
 
 /** Current version of wrapper scripts — bump when scripts change */
-const WRAPPER_VERSION = "0.2.0";
+const WRAPPER_VERSION = "0.3.0";
 
 // =============================================================================
 // PATH Builder
@@ -134,8 +134,9 @@ update_ao_metadata() {
 `;
 
 /**
- * gh wrapper — intercepts `gh pr create` and `gh pr merge` to auto-update
- * session metadata. All other commands pass through transparently.
+ * gh wrapper — intercepts `gh pr create` to auto-update session metadata.
+ * Merge/close state remains SCM-owned, so `gh pr merge` is not used to set
+ * terminal session state directly.
  */
 export const GH_WRAPPER = `#!/usr/bin/env bash
 # ao gh wrapper — auto-updates session metadata on PR operations
@@ -167,10 +168,10 @@ fi
 # Source the metadata helper
 source "\$ao_bin_dir/ao-metadata-helper.sh" 2>/dev/null || true
 
-# Only capture output for commands we need to parse (pr/create, pr/merge).
+# Only capture output for commands we need to parse (pr/create).
 # All other commands pass through transparently without stream merging.
 case "\$1/\$2" in
-  pr/create|pr/merge)
+  pr/create)
     tmpout="\$(mktemp)"
     trap 'rm -f "\$tmpout"' EXIT
 
@@ -179,18 +180,27 @@ case "\$1/\$2" in
 
     if [[ \$exit_code -eq 0 ]]; then
       output="\$(cat "\$tmpout")"
-      case "\$1/\$2" in
-        pr/create)
-          pr_url="\$(echo "\$output" | grep -Eo 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' | head -1)"
-          if [[ -n "\$pr_url" ]]; then
-            update_ao_metadata pr "\$pr_url"
-            update_ao_metadata status pr_open
-          fi
-          ;;
-        pr/merge)
-          update_ao_metadata status merged
-          ;;
-      esac
+      pr_url="\$(echo "\$output" | grep -Eo 'https?://[^/]+/[^/]+/[^/]+/pull/[0-9]+' | head -1)"
+      report_state="pr_created"
+      report_draft="false"
+      for arg in "\$@"; do
+        if [[ "\$arg" == "--draft" || "\$arg" == "-d" ]]; then
+          report_state="draft_pr_created"
+          report_draft="true"
+          break
+        fi
+      done
+      if [[ -n "\$pr_url" ]]; then
+        update_ao_metadata pr "\$pr_url"
+        update_ao_metadata agentReportedPrUrl "\$pr_url"
+      fi
+      pr_number="\$(printf '%s' "\$pr_url" | grep -Eo '[0-9]+$' | head -1)"
+      if [[ -n "\$pr_number" ]]; then
+        update_ao_metadata agentReportedPrNumber "\$pr_number"
+      fi
+      update_ao_metadata agentReportedState "\$report_state"
+      update_ao_metadata agentReportedAt "\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      update_ao_metadata agentReportedPrIsDraft "\$report_draft"
     fi
 
     exit \$exit_code
@@ -317,11 +327,7 @@ export async function setupPathWrapperWorkspace(workspacePath: string): Promise<
   }
 
   if (needsUpdate) {
-    await atomicWriteFile(
-      join(getAoBinDir(), "ao-metadata-helper.sh"),
-      AO_METADATA_HELPER,
-      0o755,
-    );
+    await atomicWriteFile(join(getAoBinDir(), "ao-metadata-helper.sh"), AO_METADATA_HELPER, 0o755);
     // Write wrappers atomically, then write the version marker last.
     // If we crash between wrapper writes and marker write, the next
     // invocation will redo the writes (safe: wrappers are idempotent).

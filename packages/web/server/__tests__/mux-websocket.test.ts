@@ -22,7 +22,7 @@ describe("SessionBroadcaster", () => {
     id,
     status: "working",
     activity: "active",
-    attentionLevel: "none",
+    attentionLevel: "working" as const,
     lastActivityAt: new Date().toISOString(),
   });
 

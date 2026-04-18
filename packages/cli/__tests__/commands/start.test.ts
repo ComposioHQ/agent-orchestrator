@@ -1202,11 +1202,11 @@ describe("start command — autoCreateConfig", () => {
   it("generates config with empty notifiers array (no desktop notifier added by default)", async () => {
     const { detectEnvironment } = await import("../../src/lib/detect-env.js");
     vi.mocked(detectEnvironment).mockResolvedValue({
-      isGitRepo: false,
+      isGitRepo: true,
       gitRemote: null,
       ownerRepo: null,
-      currentBranch: null,
-      defaultBranch: null,
+      currentBranch: "main",
+      defaultBranch: "main",
       hasTmux: true,
       hasGh: false,
       ghAuthed: false,
@@ -1227,6 +1227,10 @@ describe("start command — autoCreateConfig", () => {
     // start.ts uses `import { cwd } from "node:process"` which is intercepted
     // by the node:process mock defined at the top of this file.
     mockProcessCwd.mockReturnValue(tmpDir);
+
+    // Non-interactive — skip the repo prompt (no ownerRepo detected)
+    const callerContext = await import("../../src/lib/caller-context.js");
+    vi.spyOn(callerContext, "isHumanCaller").mockReturnValue(false);
 
     await createConfigOnly();
 

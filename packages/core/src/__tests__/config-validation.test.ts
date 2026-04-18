@@ -373,9 +373,59 @@ describe("Config Schema Validation", () => {
     };
 
     expect(() => validateConfig(missingPath)).toThrow();
-    expect(() => validateConfig(missingRepo)).toThrow();
+    // repo is optional — projects without a detected remote should still load
+    expect(() => validateConfig(missingRepo)).not.toThrow();
     // missingBranch should work (defaults to "main")
     expect(() => validateConfig(missingBranch)).not.toThrow();
+  });
+
+  it("does not infer SCM or tracker when repo is missing", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          defaultBranch: "main",
+          // No repo — SCM and tracker should not be inferred
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.repo).toBeUndefined();
+    expect(validated.projects.proj1.scm).toBeUndefined();
+    expect(validated.projects.proj1.tracker).toBeUndefined();
+  });
+
+  it("infers SCM and tracker when repo has owner/repo format", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.scm).toEqual({ plugin: "github" });
+    expect(validated.projects.proj1.tracker).toEqual({ plugin: "github" });
+  });
+
+  it("does not infer SCM or tracker when repo has no slash", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "notaslash",
+          defaultBranch: "main",
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.scm).toBeUndefined();
+    expect(validated.projects.proj1.tracker).toBeUndefined();
   });
 
   it("sessionPrefix is optional", () => {

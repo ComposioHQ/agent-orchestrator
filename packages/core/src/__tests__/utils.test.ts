@@ -187,10 +187,28 @@ describe("parsePrFromUrl", () => {
 
   it("falls back to trailing number for non-GitHub URLs", () => {
     expect(parsePrFromUrl("https://gitlab.com/foo/bar/-/merge_requests/456")).toEqual({
-      owner: "",
-      repo: "",
+      owner: "foo",
+      repo: "bar",
       number: 456,
       url: "https://gitlab.com/foo/bar/-/merge_requests/456",
+    });
+  });
+
+  it("parses GitHub Enterprise pull request URLs", () => {
+    expect(parsePrFromUrl("https://github.example.com/foo/bar/pull/789")).toEqual({
+      owner: "foo",
+      repo: "bar",
+      number: 789,
+      url: "https://github.example.com/foo/bar/pull/789",
+    });
+  });
+
+  it("parses GitHub pull request URLs with trailing path segments", () => {
+    expect(parsePrFromUrl("https://github.com/foo/bar/pull/123/files")).toEqual({
+      owner: "foo",
+      repo: "bar",
+      number: 123,
+      url: "https://github.com/foo/bar/pull/123/files",
     });
   });
 
