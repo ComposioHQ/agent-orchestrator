@@ -1299,6 +1299,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw err;
     }
 
+    if (plugins.agent.name === "opencode" && systemPromptFile) {
+      try {
+        writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile);
+      } catch (err) {
+        await cleanupSpawnWorkspaceAndMetadata(systemPromptFile);
+        throw err;
+      }
+    }
+
     // Get agent launch config and create runtime — clean up workspace on failure
     const opencodeIssueSessionStrategy = project.opencodeIssueSessionStrategy ?? "reuse";
     let reusedOpenCodeSessionId: string | undefined;
