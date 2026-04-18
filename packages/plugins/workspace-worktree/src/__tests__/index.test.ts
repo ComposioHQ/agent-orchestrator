@@ -31,6 +31,7 @@ vi.mock("node:os", () => ({
 
 import * as childProcess from "node:child_process";
 import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { create, manifest } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -917,5 +918,26 @@ describe("workspace.postCreate()", () => {
       "/mock-home/my-repo/data",
       "/mock-home/.worktrees/myproject/session-1/data",
     );
+  });
+
+  it("produces an absolute symlink source when project.path is relative", async () => {
+    // Regression: a relative project.path like "." produced a relative
+    // sourcePath such as "node_modules". Symlinks resolve relative to the
+    // symlink's own location, so `<worktree>/node_modules -> node_modules`
+    // loops back to itself and breaks the next `pnpm install` with ELOOP.
+    const ws = create();
+    const project = makeProject({ path: ".", symlinks: ["node_modules"] });
+
+    mockExistsSync.mockReturnValueOnce(true);
+    mockLstatSync.mockImplementationOnce(() => {
+      throw new Error("ENOENT");
+    });
+
+    await ws.postCreate!(workspaceInfo, project);
+
+    expect(mockSymlinkSync).toHaveBeenCalledTimes(1);
+    const [sourcePath] = mockSymlinkSync.mock.calls[0] as [string, string];
+    expect(isAbsolute(sourcePath)).toBe(true);
+    expect(sourcePath.endsWith("/node_modules")).toBe(true);
   });
 });

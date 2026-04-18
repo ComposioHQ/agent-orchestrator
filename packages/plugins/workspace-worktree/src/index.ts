@@ -323,7 +323,12 @@ export function create(config?: Record<string, unknown>): Workspace {
             );
           }
 
-          const sourcePath = join(repoPath, symlinkPath);
+          // Use resolve() (not join()) so that a relative project.path like
+          // "." produces an absolute sourcePath. Symlinks resolve relative to
+          // the symlink's own directory, so a relative source like
+          // "node_modules" becomes `<worktree>/node_modules -> node_modules` —
+          // a self-referential loop that breaks pnpm install with ELOOP.
+          const sourcePath = resolve(repoPath, symlinkPath);
           const targetPath = resolve(info.path, symlinkPath);
 
           // Verify resolved target is still within the workspace
