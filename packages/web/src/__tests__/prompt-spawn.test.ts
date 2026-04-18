@@ -14,22 +14,36 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
-import type {
-  Session,
-  SessionManager,
-  OrchestratorConfig,
-  PluginRegistry,
-  SCM,
+import {
+  createInitialCanonicalLifecycle,
+  createActivitySignal,
+  type Session,
+  type SessionManager,
+  type OrchestratorConfig,
+  type PluginRegistry,
+  type SCM,
 } from "@aoagents/ao-core";
 import { sessionToDashboard } from "@/lib/serialize";
 
 // ── Shared test fixtures ──────────────────────────────────────────────
 
 function makeSession(overrides: Partial<Session> & { id: string }): Session {
+  const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
+  lifecycle.session.state = "working";
+  lifecycle.session.reason = "task_in_progress";
+  lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+  lifecycle.runtime.state = "alive";
+  lifecycle.runtime.reason = "process_running";
   return {
     projectId: "my-app",
     status: "working",
     activity: "active",
+    activitySignal: createActivitySignal("valid", {
+      activity: "active",
+      timestamp: new Date("2025-01-01T00:00:00Z"),
+      source: "native",
+    }),
+    lifecycle,
     branch: null,
     issueId: null,
     pr: null,

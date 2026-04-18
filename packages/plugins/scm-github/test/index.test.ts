@@ -15,7 +15,7 @@ vi.mock("node:child_process", () => {
 });
 
 import { create, manifest } from "../src/index.js";
-import type { PRInfo, SCMWebhookRequest, Session, ProjectConfig } from "@aoagents/ao-core";
+import { createActivitySignal, type PRInfo, type SCMWebhookRequest, type Session, type ProjectConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -46,6 +46,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "test",
     status: "working",
     activity: "active",
+    activitySignal: createActivitySignal("valid", {
+      activity: "active",
+      timestamp: new Date(),
+      source: "native",
+    }),
     branch: "feat/my-feature",
     issueId: null,
     pr: null,
@@ -419,6 +424,12 @@ describe("scm-github plugin", () => {
 
     it("returns null when session has no branch", async () => {
       const result = await scm.detectPR(makeSession({ branch: null }), project);
+      expect(result).toBeNull();
+      expect(ghMock).not.toHaveBeenCalled();
+    });
+
+    it("returns null when project has no repo configured", async () => {
+      const result = await scm.detectPR(makeSession(), { ...project, repo: undefined });
       expect(result).toBeNull();
       expect(ghMock).not.toHaveBeenCalled();
     });

@@ -1974,6 +1974,42 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   height: 6px;
   border-radius: 999px;
   flex-shrink: 0;
+  background: currentColor;
+}
+
+.session-detail-tone--working {
+  color: var(--color-status-working);
+  background: var(--color-status-working);
+}
+
+.session-detail-tone--ready {
+  color: var(--color-status-ready);
+  background: var(--color-status-ready);
+}
+
+.session-detail-tone--idle {
+  color: var(--color-status-idle);
+  background: var(--color-status-idle);
+}
+
+.session-detail-tone--attention {
+  color: var(--color-status-attention);
+  background: var(--color-status-attention);
+}
+
+.session-detail-tone--error {
+  color: var(--color-status-error);
+  background: var(--color-status-error);
+}
+
+.session-detail-tone--muted {
+  color: var(--color-text-muted);
+  background: var(--color-text-muted);
+}
+
+.session-detail-tone--accent {
+  color: var(--color-accent);
+  background: var(--color-accent);
 }
 
 .session-detail-status-pill--active {
@@ -2070,6 +2106,69 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border: 1px solid var(--color-border-default);
   border-radius: 6px;
   background: color-mix(in srgb, var(--color-bg-elevated) 92%, transparent);
+}
+
+.session-detail-height--worker {
+  height: clamp(380px, 48vh, 560px);
+}
+
+.session-detail-height--orchestrator {
+  height: clamp(400px, 52vh, 620px);
+}
+
+.session-detail-height--full {
+  height: 100%;
+}
+
+.session-detail-zone-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.session-detail-zone-pill__value {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-detail-zone-pill__label {
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.session-detail-zone-pill--merge {
+  color: var(--color-status-ready);
+  background: color-mix(in srgb, var(--color-status-ready) 10%, transparent);
+}
+
+.session-detail-zone-pill--respond {
+  color: var(--color-status-error);
+  background: color-mix(in srgb, var(--color-status-error) 10%, transparent);
+}
+
+.session-detail-zone-pill--review {
+  color: var(--color-accent-orange);
+  background: color-mix(in srgb, var(--color-accent-orange) 10%, transparent);
+}
+
+.session-detail-zone-pill--working {
+  color: var(--color-accent-blue);
+  background: color-mix(in srgb, var(--color-accent-blue) 10%, transparent);
+}
+
+.session-detail-zone-pill--pending {
+  color: var(--color-status-attention);
+  background: color-mix(in srgb, var(--color-status-attention) 10%, transparent);
+}
+
+.session-detail-zone-pill--done {
+  color: var(--color-text-tertiary);
+  background: color-mix(in srgb, var(--color-text-tertiary) 14%, transparent);
 }
 
 /* ── Session cards — Emil design vision ──────────────────────────────── */
@@ -5339,6 +5438,31 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     border-radius: 10px;
   }
 
+  .session-detail__status-pill--active {
+    color: var(--color-status-working);
+    background: color-mix(in srgb, var(--color-status-working) 12%, transparent);
+  }
+
+  .session-detail__status-pill--ready {
+    color: var(--color-status-ready);
+    background: color-mix(in srgb, var(--color-status-ready) 12%, transparent);
+  }
+
+  .session-detail__status-pill--waiting {
+    color: var(--color-status-attention);
+    background: color-mix(in srgb, var(--color-status-attention) 12%, transparent);
+  }
+
+  .session-detail__status-pill--error {
+    color: var(--color-status-error);
+    background: color-mix(in srgb, var(--color-status-error) 12%, transparent);
+  }
+
+  .session-detail__status-pill--idle {
+    color: var(--color-text-muted);
+    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  }
+
   .session-detail__time {
     margin-left: auto;
     font-family: var(--font-mono);
@@ -5416,6 +5540,22 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     height: 6px;
     border-radius: 50%;
     flex-shrink: 0;
+  }
+
+  .session-detail-ci-tone--neutral {
+    background: var(--color-text-tertiary);
+  }
+
+  .session-detail-ci-tone--pass {
+    background: var(--color-accent-green);
+  }
+
+  .session-detail-ci-tone--fail {
+    background: var(--color-accent-red);
+  }
+
+  .session-detail-ci-tone--pending {
+    background: var(--color-status-attention);
   }
 
   /* ── Mobile PR Dense Rows enhancements ─────────────────────────────── */

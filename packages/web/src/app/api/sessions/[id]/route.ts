@@ -1,4 +1,5 @@
 import { type NextRequest } from "next/server";
+import { getSessionsDir, readAgentReportAuditTrailAsync } from "@aoagents/ao-core";
 import { getServices, getSCM } from "@/lib/services";
 import {
   sessionToDashboard,
@@ -21,13 +22,20 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     }
 
     const dashboardSession = sessionToDashboard(coreSession);
+    const project = resolveProject(coreSession, config.projects);
+    if (project) {
+      const sessionsDir = getSessionsDir(config.configPath, project.path);
+      dashboardSession.agentReportAudit = await readAgentReportAuditTrailAsync(
+        sessionsDir,
+        coreSession.id,
+      );
+    }
 
     // Enrich metadata (issue labels, agent summaries, issue titles)
     await enrichSessionsMetadata([coreSession], [dashboardSession], config, registry);
 
     // Enrich PR — serve cache immediately, refresh in background if stale
     if (coreSession.pr) {
-      const project = resolveProject(coreSession, config.projects);
       const scm = getSCM(registry, project);
       if (scm) {
         const cached = await enrichSessionPR(dashboardSession, scm, coreSession.pr, {

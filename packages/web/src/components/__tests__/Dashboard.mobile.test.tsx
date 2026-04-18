@@ -193,7 +193,7 @@ describe("Dashboard unified layout (mobile viewport)", () => {
             issueTitle: "Restore completed agent",
             branch: null,
             lastActivityAt: "2026-04-11T09:07:00.000Z",
-            pr: makePR({ number: 209, state: "merged", title: "Wrapped up work" }),
+            pr: makePR({ number: 209, state: "closed", title: "Wrapped up work" }),
           }),
         ]}
       />,
@@ -206,7 +206,7 @@ describe("Dashboard unified layout (mobile viewport)", () => {
       "href",
       "https://github.com/acme/app/pull/100",
     );
-    expect(screen.getByText("merged")).toBeInTheDocument();
+    expect(screen.getByText("terminated")).toBeInTheDocument();
     expect(screen.getByText("2h ago")).toBeInTheDocument();
 
     await act(async () => {

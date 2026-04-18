@@ -553,6 +553,13 @@ function validateProjectUniqueness(config: OrchestratorConfig): void {
 /** Apply default reactions */
 function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
   const defaults: Record<string, (typeof config.reactions)[string]> = {
+    "pr-closed": {
+      auto: true,
+      action: "notify",
+      priority: "action",
+      message:
+        "A PR was closed without merging. Decide whether to learn from the closure, resume the work, or terminate the session.",
+    },
     "ci-failed": {
       auto: true,
       action: "send-to-agent",

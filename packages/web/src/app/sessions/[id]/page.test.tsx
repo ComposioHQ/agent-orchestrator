@@ -45,6 +45,7 @@ function makeWorkerSession(): DashboardSession {
     lastActivityAt: new Date().toISOString(),
     pr: null,
     metadata: {},
+    agentReportAudit: [],
   };
 }
 

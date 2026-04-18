@@ -32,9 +32,16 @@ import {
   constants,
 } from "node:fs";
 import { join, dirname } from "node:path";
-import type { SessionId, SessionMetadata } from "./types.js";
+import type { CanonicalSessionLifecycle, SessionId, SessionMetadata, SessionStatus } from "./types.js";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { parseKeyValueContent } from "./key-value.js";
+import {
+  buildLifecycleMetadataPatch,
+  cloneLifecycle,
+  parseCanonicalLifecycle,
+} from "./lifecycle-state.js";
+import { assertValidSessionIdComponent, SESSION_ID_COMPONENT_PATTERN } from "./utils/session-id.js";
+import { validateStatus } from "./utils/validation.js";
 
 /** Serialize a record back to key=value format. Newlines in values are replaced to prevent injection. */
 function serializeMetadata(data: Record<string, string>): string {
@@ -46,13 +53,8 @@ function serializeMetadata(data: Record<string, string>): string {
   );
 }
 
-/** Validate sessionId to prevent path traversal. */
-const VALID_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
-
 function validateSessionId(sessionId: SessionId): void {
-  if (!VALID_SESSION_ID.test(sessionId)) {
-    throw new Error(`Invalid session ID: ${sessionId}`);
-  }
+  assertValidSessionIdComponent(sessionId);
 }
 
 /** Get the metadata file path for a session. */
@@ -85,6 +87,8 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     agent: raw["agent"],
     createdAt: raw["createdAt"],
     runtimeHandle: raw["runtimeHandle"],
+    stateVersion: raw["stateVersion"],
+    statePayload: raw["statePayload"],
     restoredAt: raw["restoredAt"],
     role: raw["role"],
     dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
@@ -136,6 +140,8 @@ export function writeMetadata(
   if (metadata.agent) data["agent"] = metadata.agent;
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
+  if (metadata.stateVersion) data["stateVersion"] = metadata.stateVersion;
+  if (metadata.statePayload) data["statePayload"] = metadata.statePayload;
   if (metadata.restoredAt) data["restoredAt"] = metadata.restoredAt;
   if (metadata.role) data["role"] = metadata.role;
   if (metadata.dashboardPort !== undefined) data["dashboardPort"] = String(metadata.dashboardPort);
@@ -159,26 +165,95 @@ export function updateMetadata(
   sessionId: SessionId,
   updates: Partial<Record<string, string>>,
 ): void {
+  mutateMetadata(dataDir, sessionId, (existing) => {
+    return applyMetadataUpdates(existing, updates);
+  }, { createIfMissing: true });
+}
+
+function applyMetadataUpdates(
+  existing: Record<string, string>,
+  updates: Partial<Record<string, string>>,
+): Record<string, string> {
+  let next = { ...existing };
+  // Merge updates — remove keys set to empty string
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) continue;
+    if (value === "") {
+      const { [key]: _removed, ...rest } = next;
+      void _removed;
+      next = rest;
+    } else {
+      next[key] = value;
+    }
+  }
+  return next;
+}
+
+function normalizeMetadataRecord(data: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(data).filter(([, value]) => value !== undefined && value !== ""),
+  );
+}
+
+export function mutateMetadata(
+  dataDir: string,
+  sessionId: SessionId,
+  updater: (existing: Record<string, string>) => Record<string, string>,
+  options: { createIfMissing?: boolean } = {},
+): Record<string, string> | null {
   const path = metadataPath(dataDir, sessionId);
   let existing: Record<string, string> = {};
 
   if (existsSync(path)) {
     existing = parseKeyValueContent(readFileSync(path, "utf-8"));
+  } else if (!options.createIfMissing) {
+    return null;
   }
 
-  // Merge updates — remove keys set to empty string
-  for (const [key, value] of Object.entries(updates)) {
-    if (value === undefined) continue;
-    if (value === "") {
-      const { [key]: _, ...rest } = existing;
-      existing = rest;
-    } else {
-      existing[key] = value;
-    }
-  }
+  const next = normalizeMetadataRecord(updater({ ...existing }));
 
   mkdirSync(dirname(path), { recursive: true });
-  atomicWriteFileSync(path, serializeMetadata(existing));
+  atomicWriteFileSync(path, serializeMetadata(next));
+  return next;
+}
+
+export function readCanonicalLifecycle(
+  dataDir: string,
+  sessionId: SessionId,
+): CanonicalSessionLifecycle | null {
+  const raw = readMetadataRaw(dataDir, sessionId);
+  if (!raw) return null;
+  return parseCanonicalLifecycle(raw, { sessionId, status: validateStatus(raw["status"]) });
+}
+
+export function writeCanonicalLifecycle(
+  dataDir: string,
+  sessionId: SessionId,
+  lifecycle: CanonicalSessionLifecycle,
+  previousStatus?: SessionStatus,
+): void {
+  updateMetadata(
+    dataDir,
+    sessionId,
+    buildLifecycleMetadataPatch(cloneLifecycle(lifecycle), previousStatus),
+  );
+}
+
+export function updateCanonicalLifecycle(
+  dataDir: string,
+  sessionId: SessionId,
+  updater: (current: CanonicalSessionLifecycle) => CanonicalSessionLifecycle,
+  previousStatus?: SessionStatus,
+): CanonicalSessionLifecycle | null {
+  const raw = readMetadataRaw(dataDir, sessionId);
+  if (!raw) return null;
+  const current = parseCanonicalLifecycle(raw, {
+    sessionId,
+    status: validateStatus(raw["status"]),
+  });
+  const next = updater(cloneLifecycle(current));
+  writeCanonicalLifecycle(dataDir, sessionId, next, previousStatus);
+  return next;
 }
 
 /**
@@ -288,7 +363,7 @@ export function listMetadata(dataDir: string): SessionId[] {
 
   return readdirSync(dir).filter((name) => {
     if (name === "archive" || name.startsWith(".")) return false;
-    if (!VALID_SESSION_ID.test(name)) return false;
+    if (!SESSION_ID_COMPONENT_PATTERN.test(name)) return false;
     try {
       return statSync(join(dir, name)).isFile();
     } catch {

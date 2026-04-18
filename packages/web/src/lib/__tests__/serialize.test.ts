@@ -3,15 +3,16 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type {
-  Session,
-  PRInfo,
-  SCM,
-  Agent,
-  Tracker,
-  ProjectConfig,
-  OrchestratorConfig,
-  PluginRegistry,
+import {
+  createInitialCanonicalLifecycle,
+  type Session,
+  type PRInfo,
+  type SCM,
+  type Agent,
+  type Tracker,
+  type ProjectConfig,
+  type OrchestratorConfig,
+  type PluginRegistry,
 } from "@aoagents/ao-core";
 import {
   sessionToDashboard,
@@ -28,11 +29,24 @@ import type { DashboardSession } from "../types";
 
 // Helper to create a minimal Session for testing
 function createCoreSession(overrides?: Partial<Session>): Session {
+  const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
+  lifecycle.session.state = "working";
+  lifecycle.session.reason = "task_in_progress";
+  lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+  lifecycle.runtime.state = "alive";
+  lifecycle.runtime.reason = "process_running";
   return {
     id: "test-1",
     projectId: "test",
     status: "working",
     activity: "active",
+    activitySignal: {
+      state: "valid",
+      activity: "active",
+      timestamp: new Date("2025-01-01T01:00:00Z"),
+      source: "native",
+    },
+    lifecycle,
     branch: "feat/test",
     issueId: null,
     pr: null,
@@ -122,9 +136,76 @@ describe("sessionToDashboard", () => {
     expect(dashboard.projectId).toBe("test");
     expect(dashboard.status).toBe("working");
     expect(dashboard.activity).toBe("active");
+    expect(dashboard.activitySignal).toEqual({
+      state: "valid",
+      activity: "active",
+      timestamp: "2025-01-01T01:00:00.000Z",
+      source: "native",
+      detail: undefined,
+    });
     expect(dashboard.branch).toBe("feat/test");
     expect(dashboard.createdAt).toBe("2025-01-01T00:00:00.000Z");
     expect(dashboard.lastActivityAt).toBe("2025-01-01T01:00:00.000Z");
+  });
+
+  it("should expose canonical lifecycle fields", () => {
+    const coreSession = createCoreSession();
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.lifecycle?.sessionState).toBe("working");
+    expect(dashboard.lifecycle?.sessionReason).toBe("task_in_progress");
+    expect(dashboard.lifecycle?.prState).toBe("none");
+    expect(dashboard.lifecycle?.prReason).toBe("not_created");
+    expect(dashboard.lifecycle?.runtimeState).toBe("alive");
+    expect(dashboard.lifecycle?.runtimeReason).toBe("process_running");
+    expect(dashboard.lifecycle?.session.label).toBe("working");
+    expect(dashboard.lifecycle?.pr.label).toBe("not created");
+    expect(dashboard.lifecycle?.runtime.label).toBe("alive");
+    expect(dashboard.lifecycle?.summary).toContain("Session working");
+    expect(dashboard.attentionLevel).toBe("working");
+  });
+
+  it("should expose detecting guidance and evidence from legacy metadata", () => {
+    const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
+    lifecycle.session.state = "detecting";
+    lifecycle.session.reason = "probe_failure";
+    lifecycle.runtime.state = "probe_failed";
+    lifecycle.runtime.reason = "probe_error";
+    const coreSession = createCoreSession({
+      lifecycle,
+      status: "detecting",
+      metadata: {
+        lifecycleEvidence: "signal_disagreement runtime_alive process_unknown",
+        detectingAttempts: "2",
+      },
+    });
+
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.lifecycle?.guidance).toContain("Retry 2");
+    expect(dashboard.lifecycle?.evidence).toContain("signal_disagreement");
+    expect(dashboard.attentionLevel).toBe("respond");
+  });
+
+  it("should seed dashboard PR state from canonical lifecycle truth", () => {
+    const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
+    lifecycle.session.state = "idle";
+    lifecycle.session.reason = "merged_waiting_decision";
+    lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+    lifecycle.pr.state = "merged";
+    lifecycle.pr.reason = "merged";
+    lifecycle.runtime.state = "alive";
+    lifecycle.runtime.reason = "process_running";
+
+    const coreSession = createCoreSession({
+      status: "idle",
+      lifecycle,
+      pr: createPRInfo(),
+    });
+
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.pr?.state).toBe("merged");
   });
 
   it("should use agentInfo summary with summaryIsFallback false", () => {
@@ -442,6 +523,12 @@ describe("enrichSessionPR", () => {
       projectId: "test",
       status: "working",
       activity: "active",
+      activitySignal: {
+        state: "valid",
+        activity: "active",
+        timestamp: new Date().toISOString(),
+        source: "native",
+      },
       branch: "feat/test",
       issueId: null,
       issueUrl: null,
@@ -649,6 +736,12 @@ describe("enrichSessionIssueTitle", () => {
       projectId: "test",
       status: "working",
       activity: "active",
+      activitySignal: {
+        state: "valid",
+        activity: "active",
+        timestamp: new Date().toISOString(),
+        source: "native",
+      },
       branch: "feat/test",
       issueId: null,
       issueUrl: null,

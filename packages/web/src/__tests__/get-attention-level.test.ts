@@ -245,29 +245,72 @@ describe("getAttentionLevel", () => {
   describe("done zone", () => {
     it("returns done when PR is merged", () => {
       const pr = makePR({ state: "merged" });
-      const session = makeSession({ status: "merged", activity: "exited", pr });
+      const session = makeSession({
+        status: "merged",
+        activity: "exited",
+        pr,
+        lifecycle: {
+          ...makeSession().lifecycle!,
+          sessionState: "idle",
+          sessionReason: "merged_waiting_decision",
+          prState: "merged",
+          prReason: "merged",
+        },
+      });
       expect(getAttentionLevel(session)).toBe("done");
     });
 
-    it("returns done when PR is closed (not merged)", () => {
-      const pr = makePR({ state: "closed" });
-      const session = makeSession({ status: "working", activity: "idle", pr });
-      expect(getAttentionLevel(session)).toBe("done");
+    it("returns pending when the PR is closed without merge but runtime is still alive", () => {
+      const pr = makePR({
+        state: "closed",
+        reviewDecision: "none",
+        mergeability: {
+          mergeable: false,
+          ciPassing: false,
+          approved: false,
+          noConflicts: true,
+          blockers: [],
+        },
+      });
+      const session = makeSession({
+        status: "idle",
+        activity: "idle",
+        pr,
+        lifecycle: {
+          ...makeSession().lifecycle!,
+          sessionState: "idle",
+          sessionReason: "pr_closed_waiting_decision",
+          prState: "closed",
+          prReason: "closed_unmerged",
+          runtimeState: "alive",
+        },
+      });
+      expect(getAttentionLevel(session)).toBe("pending");
     });
 
     it("returns done when session status is merged (even with open PR state)", () => {
       const pr = makePR({ state: "merged" });
-      const session = makeSession({ status: "merged", activity: "idle", pr });
+      const session = makeSession({ status: "merged", activity: "idle", pr, lifecycle: undefined });
       expect(getAttentionLevel(session)).toBe("done");
     });
 
     it("returns done when session is killed", () => {
-      const session = makeSession({ status: "killed", activity: "exited", pr: null });
+      const session = makeSession({
+        status: "killed",
+        activity: "exited",
+        pr: null,
+        lifecycle: undefined,
+      });
       expect(getAttentionLevel(session)).toBe("done");
     });
 
     it("returns done when agent has exited with cleanup status", () => {
-      const session = makeSession({ status: "cleanup", activity: "exited", pr: null });
+      const session = makeSession({
+        status: "cleanup",
+        activity: "exited",
+        pr: null,
+        lifecycle: undefined,
+      });
       expect(getAttentionLevel(session)).toBe("done");
     });
   });

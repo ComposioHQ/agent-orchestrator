@@ -208,7 +208,7 @@ export function registerSession(program: Command): void {
 
   session
     .command("cleanup")
-    .description("Kill sessions where PR is merged or issue is closed")
+    .description("Kill cleanup-eligible sessions with closed work or dead runtimes")
     .option("-p, --project <id>", "Filter by project ID")
     .option("--dry-run", "Show what would be cleaned up without doing it")
     .action(async (opts: { project?: string; dryRun?: boolean }) => {
