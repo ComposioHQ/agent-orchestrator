@@ -20,7 +20,11 @@ describe("opencode-agents-md", () => {
     const promptFile = join(root, "prompt.md");
     writeFileSync(promptFile, "Use worker sessions only.\n", "utf-8");
 
-    const agentsMdPath = writeWorkspaceOpenCodeAgentsMd(workspacePath, promptFile);
+    const agentsMdPath = writeWorkspaceOpenCodeAgentsMd(
+      workspacePath,
+      promptFile,
+      "orchestrator",
+    );
 
     expect(agentsMdPath).toBe(getWorkspaceAgentsMdPath(workspacePath));
     expect(readFileSync(agentsMdPath, "utf-8")).toBe(
@@ -39,7 +43,7 @@ describe("opencode-agents-md", () => {
     const promptFile = join(root, "prompt.md");
     writeFileSync(promptFile, "Merged orchestrator instructions.\n", "utf-8");
 
-    writeWorkspaceOpenCodeAgentsMd(workspacePath, promptFile);
+    writeWorkspaceOpenCodeAgentsMd(workspacePath, promptFile, "orchestrator");
 
     expect(readFileSync(join(workspacePath, "AGENTS.md"), "utf-8")).toBe(
       "# Existing\n\nDo keep this.\n\n<!-- AO_ORCHESTRATOR_PROMPT_START -->\n## Agent Orchestrator\n\nMerged orchestrator instructions.\n<!-- AO_ORCHESTRATOR_PROMPT_END -->\n",
@@ -57,10 +61,22 @@ describe("opencode-agents-md", () => {
     const promptFile = join(root, "prompt.md");
     writeFileSync(promptFile, "New prompt.\n", "utf-8");
 
-    writeWorkspaceOpenCodeAgentsMd(workspacePath, promptFile);
+    writeWorkspaceOpenCodeAgentsMd(workspacePath, promptFile, "orchestrator");
 
     expect(readFileSync(join(workspacePath, "AGENTS.md"), "utf-8")).toBe(
       "# Existing\n\nBefore.\n\nAfter.\n\n<!-- AO_ORCHESTRATOR_PROMPT_START -->\n## Agent Orchestrator\n\nNew prompt.\n<!-- AO_ORCHESTRATOR_PROMPT_END -->\n",
+    );
+  });
+
+  it("writes a worker-specific heading when requested", () => {
+    const workspacePath = join(root, "workspace");
+    const promptFile = join(root, "prompt.md");
+    writeFileSync(promptFile, "Handle issue INT-100.\n", "utf-8");
+
+    writeWorkspaceOpenCodeAgentsMd(workspacePath, promptFile, "worker");
+
+    expect(readFileSync(join(workspacePath, "AGENTS.md"), "utf-8")).toBe(
+      "<!-- AO_ORCHESTRATOR_PROMPT_START -->\n## Agent Worker\n\nHandle issue INT-100.\n<!-- AO_ORCHESTRATOR_PROMPT_END -->\n",
     );
   });
 });

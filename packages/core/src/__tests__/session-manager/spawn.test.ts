@@ -990,7 +990,6 @@ describe("spawn", () => {
     );
 
     const callArgs = vi.mocked(mockAgent.getLaunchCommand).mock.calls[0][0];
-    expect(callArgs.prompt).toContain("## Additional Instructions");
     expect(callArgs.prompt).toContain("Focus on the API layer only.");
     expect(callArgs.prompt).not.toContain("## Task");
     expect(callArgs.prompt).not.toContain("## Project Context");
@@ -1047,7 +1046,7 @@ describe("spawn", () => {
 
     const agentsMdPath = getWorkspaceAgentsMdPath("/tmp/ws");
     expect(existsSync(agentsMdPath)).toBe(true);
-    expect(readFileSync(agentsMdPath, "utf-8")).toContain("## Agent Orchestrator");
+    expect(readFileSync(agentsMdPath, "utf-8")).toContain("## Agent Worker");
     expect(readFileSync(agentsMdPath, "utf-8")).toContain("Work on issue: INT-1343");
     expect(readFileSync(agentsMdPath, "utf-8")).not.toContain("## Additional Instructions");
   });

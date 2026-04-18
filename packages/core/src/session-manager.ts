@@ -1301,7 +1301,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     if (plugins.agent.name === "opencode" && systemPromptFile) {
       try {
-        writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile);
+        writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile, "worker");
       } catch (err) {
         await cleanupSpawnWorkspaceAndMetadata(systemPromptFile);
         throw err;
@@ -1616,7 +1616,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     if (plugins.agent.name === "opencode" && systemPromptFile) {
       try {
-        writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile);
+        writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile, "orchestrator");
       } catch (err) {
         await cleanupWorktreeAndMetadata(systemPromptFile);
         throw err;
@@ -2747,7 +2747,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const systemPromptFile = join(baseDir, `orchestrator-prompt-${sessionId}.md`);
       if (existsSync(systemPromptFile)) {
         try {
-          writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile);
+          writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile, "orchestrator");
         } catch (err) {
           throw new Error(
             `failed to restore OpenCode orchestrator AGENTS.md: ${err instanceof Error ? err.message : String(err)}`,
