@@ -1,0 +1,27 @@
+packages/web/src/components/PortfolioPage.tsx
+  c73d1b75965fd5ab 10,20,31,45,101-112
+packages/web/src/lib/portfolio-page-data.ts
+  c73d1b75965fd5ab 41,47,67-70,90
+packages/web/src/components/DashboardShell.tsx
+  c73d1b75965fd5ab 14,54,68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "0a17072313ed03bd456116a3b750dad553f250f6",
+  "prompts": {
+    "c73d1b75965fd5ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d9cdd-31b5-7103-bcb9-b6e0ae4ad11d",
+        "model": "gpt-5.4"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 5620,
+      "total_deletions": 29,
+      "accepted_lines": 26,
+      "overriden_lines": 0
+    }
+  }
+}

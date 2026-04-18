@@ -1,0 +1,11 @@
+packages/core/src/config.ts
+  fbca54827902268f 245-248,257
+packages/core/src/types.ts
+  fbca54827902268f 1103-1105,1153-1166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "71ec6560312c19b436504c6c655b55c31ae5ddef",
+  "prompts": {}
+}

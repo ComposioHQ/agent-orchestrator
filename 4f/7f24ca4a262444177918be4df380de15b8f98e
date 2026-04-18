@@ -1,0 +1,23 @@
+packages/web/src/components/DashboardShell.tsx
+  c73d1b75965fd5ab 30,46,59-60,62,75,97-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "4f7f24ca4a262444177918be4df380de15b8f98e",
+  "prompts": {
+    "c73d1b75965fd5ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d9cdd-31b5-7103-bcb9-b6e0ae4ad11d",
+        "model": "gpt-5.4"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 2224,
+      "total_deletions": 43,
+      "accepted_lines": 22,
+      "overriden_lines": 0
+    }
+  }
+}

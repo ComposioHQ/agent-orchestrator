@@ -1,0 +1,9 @@
+packages/web/src/components/PullRequestsPage.tsx
+  fbca54827902268f 3-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "b6cc4cd39bfa546ee2c48b06416cd7b4e3360d30",
+  "prompts": {}
+}

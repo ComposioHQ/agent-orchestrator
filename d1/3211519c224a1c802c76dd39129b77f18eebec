@@ -1,0 +1,23 @@
+packages/web/src/components/ProjectSessionPageClient.tsx
+  c73d1b75965fd5ab 88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "d13211519c224a1c802c76dd39129b77f18eebec",
+  "prompts": {
+    "c73d1b75965fd5ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d9cdd-31b5-7103-bcb9-b6e0ae4ad11d",
+        "model": "gpt-5.4"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 180,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}

@@ -1,0 +1,23 @@
+packages/web/src/components/Dashboard.tsx
+  c73d1b75965fd5ab 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "147d13bcca514e4da32198890f97cb6554c987e9",
+  "prompts": {
+    "c73d1b75965fd5ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d9cdd-31b5-7103-bcb9-b6e0ae4ad11d",
+        "model": "gpt-5.4"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 1607,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}

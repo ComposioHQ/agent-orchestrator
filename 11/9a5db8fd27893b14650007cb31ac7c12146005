@@ -1,0 +1,9 @@
+packages/web/src/lib/types.ts
+  fbca54827902268f 18,34,41,43,50-53,55-62,208-232
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "119a5db8fd27893b14650007cb31ac7c12146005",
+  "prompts": {}
+}

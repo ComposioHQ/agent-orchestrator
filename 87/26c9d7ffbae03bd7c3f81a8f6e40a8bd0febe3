@@ -1,0 +1,25 @@
+packages/web/src/components/DashboardShell.tsx
+  c73d1b75965fd5ab 12,18,57-60,72-73,81
+packages/web/src/lib/portfolio-page-data.ts
+  c73d1b75965fd5ab 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "8726c9d7ffbae03bd7c3f81a8f6e40a8bd0febe3",
+  "prompts": {
+    "c73d1b75965fd5ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d9cdd-31b5-7103-bcb9-b6e0ae4ad11d",
+        "model": "gpt-5.4"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 837,
+      "total_deletions": 1,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}

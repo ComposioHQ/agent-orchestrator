@@ -1,0 +1,9 @@
+packages/core/src/config.ts
+  fbca54827902268f 247-250,259,665
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "2b3098a1f57cd0cbbe13f4e580ea8208500b7e9c",
+  "prompts": {}
+}
