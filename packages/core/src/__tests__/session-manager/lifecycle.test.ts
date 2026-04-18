@@ -160,7 +160,10 @@ describe("kill", () => {
 
     const sm = createSessionManager({ config, registry: registryWithFail });
     // Should not throw even though runtime.destroy fails
-    await expect(sm.kill("app-1")).resolves.toBeUndefined();
+    await expect(sm.kill("app-1")).resolves.toEqual({
+      cleaned: true,
+      alreadyTerminated: false,
+    });
   });
 
   it("does not purge mapped OpenCode session on default kill", async () => {

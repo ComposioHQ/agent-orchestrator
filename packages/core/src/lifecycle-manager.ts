@@ -1553,6 +1553,91 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /**
+   * When a session's PR is merged, tear down its tmux runtime, remove its
+   * worktree, and archive its metadata. Guarded by an idleness check so we
+   * don't kill an agent mid-task; deferred cases set `mergedPendingCleanupSince`
+   * in metadata and retry on subsequent polls until the agent idles or the
+   * grace window elapses.
+   */
+  async function maybeAutoCleanupOnMerge(session: Session): Promise<void> {
+    if (session.status !== SESSION_STATUS.MERGED) return;
+
+    const lifecycleConfig = config.lifecycle;
+    if (lifecycleConfig && lifecycleConfig.autoCleanupOnMerge === false) return;
+    const graceMs = lifecycleConfig?.mergeCleanupIdleGraceMs ?? 300_000;
+
+    // Check for idleness: if the agent is still working, defer cleanup.
+    const nowIso = new Date().toISOString();
+    const pendingSince = session.metadata["mergedPendingCleanupSince"] || nowIso;
+    const pendingSinceMs = Date.parse(pendingSince);
+    const graceElapsed = Number.isFinite(pendingSinceMs)
+      ? Date.now() - pendingSinceMs >= graceMs
+      : false;
+
+    const activity = session.activity;
+    const agentIsBusy = activity === "active" || activity === "waiting_input" || activity === "blocked";
+
+    if (agentIsBusy && !graceElapsed) {
+      if (!session.metadata["mergedPendingCleanupSince"]) {
+        updateSessionMetadata(session, { mergedPendingCleanupSince: nowIso });
+      }
+      observer.recordOperation({
+        metric: "lifecycle_poll",
+        operation: "lifecycle.merge_cleanup.deferred",
+        outcome: "success",
+        correlationId: createCorrelationId("lifecycle-merge-cleanup"),
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: primaryLifecycleReason(session.lifecycle),
+        data: { activity, pendingSince, graceMs },
+        level: "info",
+      });
+      return;
+    }
+
+    const correlationId = createCorrelationId("lifecycle-merge-cleanup");
+    try {
+      const result = await sessionManager.kill(session.id, {
+        purgeOpenCode: true,
+        reason: "pr_merged",
+      });
+      observer.recordOperation({
+        metric: "lifecycle_poll",
+        operation: "lifecycle.merge_cleanup.completed",
+        outcome: "success",
+        correlationId,
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: primaryLifecycleReason(session.lifecycle),
+        data: {
+          cleaned: result.cleaned,
+          alreadyTerminated: result.alreadyTerminated,
+          graceElapsed,
+          activity,
+        },
+        level: "info",
+      });
+      states.delete(session.id);
+    } catch (err) {
+      // Leave `merged` status in place so the next poll retries. Preserve the
+      // deferral marker so idempotent retries don't restart the grace clock.
+      if (!session.metadata["mergedPendingCleanupSince"]) {
+        updateSessionMetadata(session, { mergedPendingCleanupSince: nowIso });
+      }
+      observer.recordOperation({
+        metric: "lifecycle_poll",
+        operation: "lifecycle.merge_cleanup.failed",
+        outcome: "failure",
+        correlationId,
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: err instanceof Error ? err.message : String(err),
+        level: "warn",
+      });
+    }
+  }
+
   /** Poll a single session and handle state transitions. */
   async function checkSession(session: Session): Promise<void> {
     // Use tracked state if available; otherwise use the persisted metadata status
@@ -1785,6 +1870,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // Report watcher: audit agent reports for issues (#140)
     await auditAndReactToReports(session);
+
+    // PR-merge auto-cleanup: tear down runtime + worktree + archive metadata
+    // once the agent is idle (or grace window elapses). Runs last so reactions
+    // and notifications observe the live session before it is destroyed.
+    await maybeAutoCleanupOnMerge(session);
   }
 
   /**

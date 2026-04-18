@@ -49,6 +49,8 @@ export type CanonicalSessionReason =
   | "research_complete"
   | "merged_waiting_decision"
   | "manually_killed"
+  | "pr_merged"
+  | "auto_cleanup"
   | "runtime_lost"
   | "agent_process_exited"
   | "probe_failure"
@@ -75,6 +77,8 @@ export type CanonicalRuntimeReason =
   | "process_missing"
   | "tmux_missing"
   | "manual_kill_requested"
+  | "pr_merged_cleanup"
+  | "auto_cleanup"
   | "probe_error";
 
 export interface SessionStateRecord {
@@ -1153,6 +1157,22 @@ export interface PowerConfig {
   preventIdleSleep: boolean;
 }
 
+/** Lifecycle-level orchestration configuration. */
+export interface LifecycleConfig {
+  /**
+   * When a session's PR is detected as merged, automatically tear down the
+   * tmux runtime, remove the worktree, and archive the session metadata.
+   * Defaults to true so `ao status` does not retain stale merged entries.
+   */
+  autoCleanupOnMerge: boolean;
+  /**
+   * Maximum time (ms) to wait after a session enters `merged` before forcing
+   * cleanup regardless of agent activity. If the agent becomes idle sooner,
+   * cleanup happens then. Defaults to 5 minutes.
+   */
+  mergeCleanupIdleGraceMs: number;
+}
+
 /** Top-level orchestrator configuration (from agent-orchestrator.yaml) */
 export interface OrchestratorConfig {
   /**
@@ -1176,6 +1196,9 @@ export interface OrchestratorConfig {
 
   /** Power management settings (idle sleep prevention, etc.). Populated with defaults post-validation. */
   power?: PowerConfig;
+
+  /** Lifecycle-level orchestration settings. Populated with defaults post-validation. */
+  lifecycle?: LifecycleConfig;
 
   /** Default plugin selections */
   defaults: DefaultPlugins;
@@ -1558,6 +1581,27 @@ export interface SessionMetadata {
 // SERVICE INTERFACES (core, not pluggable)
 // =============================================================================
 
+/**
+ * Why a session was killed. Recorded as the lifecycle reason so observability
+ * can distinguish human action from automated teardown (e.g. PR merge cleanup).
+ */
+export type LifecycleKillReason = "manually_killed" | "pr_merged" | "auto_cleanup";
+
+/**
+ * Outcome of a kill() call. `cleaned` means resources were torn down this
+ * invocation; `alreadyTerminated` means the session was already archived and
+ * kill() was a no-op. Callers can use this to avoid double-notifying.
+ */
+export interface KillResult {
+  cleaned: boolean;
+  alreadyTerminated: boolean;
+}
+
+export interface KillOptions {
+  purgeOpenCode?: boolean;
+  reason?: LifecycleKillReason;
+}
+
 /** Session manager — CRUD for sessions */
 export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
@@ -1565,7 +1609,7 @@ export interface SessionManager {
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
-  kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void>;
+  kill(sessionId: SessionId, options?: KillOptions): Promise<KillResult>;
   cleanup(
     projectId?: string,
     options?: { dryRun?: boolean; purgeOpenCode?: boolean },

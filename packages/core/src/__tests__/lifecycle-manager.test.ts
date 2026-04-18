@@ -2686,3 +2686,143 @@ describe("summary pinning", () => {
     await expect(lm.check("app-1")).resolves.not.toThrow();
   });
 });
+
+describe("auto-cleanup on merge (#1309)", () => {
+  function mergedScm() {
+    return createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+  }
+
+  function configWithLifecycle(
+    overrides: Partial<{ autoCleanupOnMerge: boolean; mergeCleanupIdleGraceMs: number }>,
+  ): OrchestratorConfig {
+    return {
+      ...config,
+      lifecycle: {
+        autoCleanupOnMerge: overrides.autoCleanupOnMerge ?? true,
+        mergeCleanupIdleGraceMs: overrides.mergeCleanupIdleGraceMs ?? 300_000,
+      },
+    };
+  }
+
+  it("kills session with reason=pr_merged when PR merges and agent is idle", async () => {
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mergedScm(),
+    });
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "approved", pr: makePR(), activity: "idle" }),
+      registry,
+      configOverride: configWithLifecycle({}),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-1", {
+      purgeOpenCode: true,
+      reason: "pr_merged",
+    });
+  });
+
+  it("defers cleanup when agent is still active and records pending marker", async () => {
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mergedScm(),
+    });
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "approved", pr: makePR(), activity: "active" }),
+      registry,
+      configOverride: configWithLifecycle({}),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.kill).not.toHaveBeenCalled();
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["mergedPendingCleanupSince"]).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(meta?.["status"]).toBe("merged");
+  });
+
+  it("forces cleanup after grace window elapses even if agent is still active", async () => {
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mergedScm(),
+    });
+    const pendingSince = new Date(Date.now() - 10 * 60_000).toISOString(); // 10min ago
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "approved",
+        pr: makePR(),
+        activity: "active",
+        metadata: { mergedPendingCleanupSince: pendingSince },
+      }),
+      registry,
+      configOverride: configWithLifecycle({ mergeCleanupIdleGraceMs: 300_000 }),
+      metaOverrides: { mergedPendingCleanupSince: pendingSince },
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-1", {
+      purgeOpenCode: true,
+      reason: "pr_merged",
+    });
+  });
+
+  it("does not trigger cleanup when autoCleanupOnMerge is disabled", async () => {
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mergedScm(),
+    });
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "approved", pr: makePR(), activity: "idle" }),
+      registry,
+      configOverride: configWithLifecycle({ autoCleanupOnMerge: false }),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.kill).not.toHaveBeenCalled();
+    expect(lm.getStates().get("app-1")).toBe("merged");
+  });
+
+  it("does not trigger cleanup for terminated/killed sessions (no self-recursion)", async () => {
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+    });
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "killed", activity: "exited" }),
+      registry,
+      configOverride: configWithLifecycle({}),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.kill).not.toHaveBeenCalled();
+  });
+
+  it("retains merged status when kill() fails so the next poll retries", async () => {
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mergedScm(),
+    });
+    vi.mocked(mockSessionManager.kill).mockRejectedValueOnce(new Error("tmux busy"));
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "approved", pr: makePR(), activity: "idle" }),
+      registry,
+      configOverride: configWithLifecycle({}),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.kill).toHaveBeenCalledTimes(1);
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["status"]).toBe("merged");
+    expect(meta?.["mergedPendingCleanupSince"]).toMatch(/\d{4}-\d{2}-\d{2}T/);
+  });
+});

@@ -243,12 +243,29 @@ const DashboardConfigSchema = z.object({
   attentionZones: z.enum(["simple", "detailed"]).default("simple"),
 });
 
+const LifecycleConfigSchema = z
+  .object({
+    /**
+     * When a session's PR is detected as merged, automatically tear down the
+     * tmux runtime, remove the worktree, and archive the session metadata.
+     * Defaults to true so `ao status` does not retain stale merged entries.
+     */
+    autoCleanupOnMerge: z.boolean().default(true),
+    /**
+     * Maximum time (ms) to wait after a session enters `merged` before forcing
+     * cleanup regardless of agent activity. Defaults to 5 minutes.
+     */
+    mergeCleanupIdleGraceMs: z.number().nonnegative().default(300_000),
+  })
+  .default({});
+
 const OrchestratorConfigSchema = z.object({
   port: z.number().default(3000),
   terminalPort: z.number().optional(),
   directTerminalPort: z.number().optional(),
   readyThresholdMs: z.number().nonnegative().default(300_000),
   power: PowerConfigSchema,
+  lifecycle: LifecycleConfigSchema,
   defaults: DefaultPluginsSchema.default({}),
   plugins: z.array(InstalledPluginConfigSchema).default([]),
   dashboard: DashboardConfigSchema.optional(),
