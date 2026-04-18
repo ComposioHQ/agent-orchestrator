@@ -1076,7 +1076,21 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       userPrompt: spawnConfig.prompt,
     });
 
-    // Get agent launch config and create runtime — clean up workspace on failure
+    // Write composed prompt to file for long prompts to avoid shell/tmux truncation.
+    // Mirrors spawnOrchestrator()'s systemPromptFile pattern.
+    let promptFile: string | undefined;
+    if (composedPrompt.length > 500) {
+      try {
+        const baseDir = getProjectBaseDir(config.configPath, project.path, project.storageKey);
+        mkdirSync(baseDir, { recursive: true });
+        promptFile = join(baseDir, `worker-prompt-${sessionId}.md`);
+        writeFileSync(promptFile, composedPrompt, "utf-8");
+      } catch {
+        // Non-fatal: fall back to inline prompt
+        promptFile = undefined;
+      }
+    }
+// Get agent launch config and create runtime — clean up workspace on failure
     const opencodeIssueSessionStrategy = project.opencodeIssueSessionStrategy ?? "reuse";
     const reusedOpenCodeSessionId =
       plugins.agent.name === "opencode" && spawnConfig.issueId
@@ -1096,7 +1110,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
       },
       issueId: spawnConfig.issueId,
-      prompt: composedPrompt,
+      ...(promptFile
+        ? { systemPromptFile: promptFile, prompt: spawnConfig.prompt }
+        : { prompt: composedPrompt }),
       permissions: selection.permissions,
       model: selection.model,
       subagent: spawnConfig.subagent ?? selection.subagent,
