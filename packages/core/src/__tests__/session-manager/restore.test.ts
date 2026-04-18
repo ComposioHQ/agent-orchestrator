@@ -649,7 +649,73 @@ describe("restore", () => {
     expect(existsSync(agentsMdPath)).toBe(true);
     const written = readFileSync(agentsMdPath, "utf-8");
     expect(written).toContain(promptContent);
-    expect(written).toContain("<!-- AO_ORCHESTRATOR_PROMPT_START -->");
+    expect(written).toContain("<!-- AO_SYSTEM_PROMPT_START -->");
+  });
+
+  it("re-materializes AGENTS.md for restored OpenCode workers", async () => {
+    const wsPath = join(tmpDir, "ws-app-worker-opencode-agentsmd");
+    mkdirSync(wsPath, { recursive: true });
+
+    const projectPath = join(tmpDir, "my-app");
+    const baseDir = getProjectBaseDir(ctx.configPath, projectPath);
+    mkdirSync(baseDir, { recursive: true });
+    const promptFile = join(baseDir, "worker-prompt-app-1.md");
+    const promptContent = "Work on issue: TEST-1\nFix the failing tests.";
+    writeFileSync(promptFile, promptContent, "utf-8");
+
+    const agentsMdPath = getWorkspaceAgentsMdPath(wsPath);
+    expect(existsSync(agentsMdPath)).toBe(false);
+
+    const mockOpenCodeAgent: Agent = {
+      ...mockAgent,
+      name: "opencode",
+      getRestoreCommand: vi.fn().mockResolvedValue("opencode --session 'ses_restore'"),
+    };
+
+    const registryWithOpenCode: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockOpenCodeAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      agent: "opencode",
+      opencodeSessionId: "ses_restore",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    const configWithOpenCode: OrchestratorConfig = {
+      ...config,
+      defaults: { ...config.defaults, agent: "opencode" },
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          worker: {
+            agent: "opencode",
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({
+      config: configWithOpenCode,
+      registry: registryWithOpenCode,
+    });
+    await sm.restore("app-1");
+
+    expect(existsSync(agentsMdPath)).toBe(true);
+    const written = readFileSync(agentsMdPath, "utf-8");
+    expect(written).toContain(promptContent);
+    expect(written).toContain("## Agent Worker");
   });
 
   it("preserves original createdAt/issue/PR metadata", async () => {

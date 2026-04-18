@@ -2742,15 +2742,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    if (plugins.agent.name === "opencode" && selection.role === "orchestrator") {
+    if (plugins.agent.name === "opencode") {
       const baseDir = getProjectBaseDir(config.configPath, project.path);
-      const systemPromptFile = join(baseDir, `orchestrator-prompt-${sessionId}.md`);
+      const promptPrefix = selection.role === "orchestrator" ? "orchestrator-prompt" : "worker-prompt";
+      const systemPromptFile = join(baseDir, `${promptPrefix}-${sessionId}.md`);
       if (existsSync(systemPromptFile)) {
         try {
-          writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile, "orchestrator");
+          writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile, selection.role);
         } catch (err) {
           throw new Error(
-            `failed to restore OpenCode orchestrator AGENTS.md: ${err instanceof Error ? err.message : String(err)}`,
+            `failed to restore OpenCode ${selection.role} AGENTS.md: ${err instanceof Error ? err.message : String(err)}`,
             { cause: err },
           );
         }

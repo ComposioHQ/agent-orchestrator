@@ -1931,9 +1931,10 @@ describe("spawn", () => {
 
       const agentsMdPath = getWorkspaceAgentsMdPath("/tmp/ws");
       expect(existsSync(agentsMdPath)).toBe(true);
-      expect(readFileSync(agentsMdPath, "utf-8")).toBe(
-        "<!-- AO_ORCHESTRATOR_PROMPT_START -->\n## Agent Orchestrator\n\nYou are the orchestrator.\n<!-- AO_ORCHESTRATOR_PROMPT_END -->\n",
-      );
+      const written = readFileSync(agentsMdPath, "utf-8");
+      expect(written).toContain("<!-- AO_SYSTEM_PROMPT_START -->");
+      expect(written).toContain("## Agent Orchestrator");
+      expect(written).toContain("You are the orchestrator.");
 
       expect(mockRuntime.create).toHaveBeenCalledWith(
         expect.objectContaining({
