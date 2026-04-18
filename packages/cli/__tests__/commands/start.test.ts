@@ -1078,6 +1078,93 @@ describe("start command — orchestrator session strategy display", () => {
     expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
   });
 
+  it("restores the latest restorable orchestrator when tmux is gone", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const now = new Date();
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-1",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now.getTime() - 1000),
+        lifecycle: {
+          version: 2,
+          session: {
+            kind: "orchestrator",
+            state: "working",
+            reason: "task_in_progress",
+            startedAt: now.toISOString(),
+            completedAt: null,
+            terminatedAt: null,
+            lastTransitionAt: now.toISOString(),
+          },
+          pr: {
+            state: "none",
+            reason: "not_created",
+            number: null,
+            url: null,
+            lastObservedAt: null,
+          },
+          runtime: {
+            state: "missing",
+            reason: "tmux_missing",
+            lastObservedAt: now.toISOString(),
+            handle: null,
+            tmuxName: "tmux-old-1",
+          },
+        },
+      },
+      {
+        id: "app-orchestrator-2",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: now,
+        lifecycle: {
+          version: 2,
+          session: {
+            kind: "orchestrator",
+            state: "working",
+            reason: "task_in_progress",
+            startedAt: now.toISOString(),
+            completedAt: null,
+            terminatedAt: null,
+            lastTransitionAt: now.toISOString(),
+          },
+          pr: {
+            state: "none",
+            reason: "not_created",
+            number: null,
+            url: null,
+            lastObservedAt: null,
+          },
+          runtime: {
+            state: "missing",
+            reason: "tmux_missing",
+            lastObservedAt: now.toISOString(),
+            handle: null,
+            tmuxName: "tmux-old-2",
+          },
+        },
+      },
+    ]);
+    mockSessionManager.restore.mockResolvedValue({
+      id: "app-orchestrator-2",
+      runtimeHandle: { id: "tmux-restored-2" },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    const output = getLoggedOutput();
+    expect(output).toContain("ao session attach app-orchestrator-2");
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("app-orchestrator-2");
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
   it("navigates directly to session page when one existing orchestrator found with dashboard enabled", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 
