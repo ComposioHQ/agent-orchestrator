@@ -18,6 +18,9 @@ import type {
   CodeReviewRun,
 } from "@aoagents/ao-core";
 
+// Don't prerender at build time — getServices() requires a live config.
+export const dynamic = "force-dynamic";
+
 interface EnrichedRun extends CodeReviewRun {
   projectId: string;
   findings: CodeReviewFinding[];
