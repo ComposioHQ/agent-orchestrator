@@ -123,6 +123,122 @@ describe("send", () => {
     }
   });
 
+  it("triggers restore when runtime.isAlive throws (fails closed)", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "working",
+      project: "my-app",
+      issue: "TEST-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    // prepareSession's probe throws -> restore is triggered.
+    // During restore, enrichSessionWithRuntimeState's probe returns false so
+    // the session is marked killed and restore can proceed.
+    vi.mocked(mockRuntime.isAlive)
+      .mockRejectedValueOnce(new Error("tmux lookup failed"))
+      .mockImplementation(async (handle) => handle.id !== "rt-old");
+    vi.mocked(mockAgent.isProcessRunning).mockImplementation(
+      async (handle) => handle.id !== "rt-old",
+    );
+    vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
+    vi.mocked(mockRuntime.getOutput)
+      .mockResolvedValueOnce("restored prompt")
+      .mockResolvedValueOnce("before send")
+      .mockResolvedValueOnce("after send");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.send("app-1", "retry after probe failure");
+
+    expect(mockRuntime.create).toHaveBeenCalled();
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-restored"),
+      "retry after probe failure",
+    );
+  });
+
+  it("triggers restore when agent.isProcessRunning throws (fails closed)", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "working",
+      project: "my-app",
+      issue: "TEST-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    // prepareSession: isAlive(rt-old) returns true so the agent probe is the one
+    // that flags the session; when it throws, restore must be triggered.
+    // enrichSessionWithRuntimeState during restore sees isAlive=false for rt-old
+    // -> marks killed -> restore proceeds.
+    let aliveCallsForOld = 0;
+    vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => {
+      if (handle.id !== "rt-old") return true;
+      aliveCallsForOld += 1;
+      // first call is prepareSession probe (claim alive so only agent probe fails)
+      // subsequent call is inside restore -> mark as dead to allow restore.
+      return aliveCallsForOld === 1;
+    });
+    vi.mocked(mockAgent.isProcessRunning)
+      .mockRejectedValueOnce(new Error("process lookup failed"))
+      .mockImplementation(async (handle) => handle.id !== "rt-old");
+    vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
+    vi.mocked(mockRuntime.getOutput)
+      .mockResolvedValueOnce("restored prompt")
+      .mockResolvedValueOnce("before send")
+      .mockResolvedValueOnce("after send");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.send("app-1", "retry after agent probe failure");
+
+    expect(mockRuntime.create).toHaveBeenCalled();
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-restored"),
+      "retry after agent probe failure",
+    );
+  });
+
+  it("throws when restored session probes keep failing past the timeout", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "working",
+      project: "my-app",
+      issue: "TEST-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    // For the old handle: report dead so restore can mark it killed and proceed.
+    // For the restored handle: make every health probe throw so waitForRestoredSession
+    //   can't confirm readiness and must hit the deadline.
+    vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => {
+      if (handle.id === "rt-old") return false;
+      throw new Error("unavailable");
+    });
+    vi.mocked(mockAgent.isProcessRunning).mockImplementation(async (handle) => {
+      if (handle.id === "rt-old") return false;
+      throw new Error("unavailable");
+    });
+    vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
+    vi.mocked(mockRuntime.getOutput).mockResolvedValue("");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.send("app-1", "never reaches agent")).rejects.toThrow(
+      /restored session did not become ready/,
+    );
+    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+  }, 10_000);
+
   it("waits for spawning sessions to become interactive before considering restore", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
