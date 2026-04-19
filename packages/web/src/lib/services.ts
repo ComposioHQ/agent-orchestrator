@@ -17,11 +17,15 @@ import {
   createPluginRegistry,
   createSessionManager,
   createLifecycleManager,
+  createReviewManager,
+  createReviewTrigger,
   type OrchestratorConfig,
   type PluginRegistry,
   type OpenCodeSessionManager,
   type LifecycleManager,
+  type ReviewManager,
   type SCM,
+  type CodeReview,
   type ProjectConfig,
   type Tracker,
   type Issue,
@@ -40,12 +44,14 @@ import pluginWorkspaceWorktree from "@aoagents/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@aoagents/ao-plugin-scm-github";
 import pluginTrackerGithub from "@aoagents/ao-plugin-tracker-github";
 import pluginTrackerLinear from "@aoagents/ao-plugin-tracker-linear";
+import pluginCodeReviewCodex from "@aoagents/ao-plugin-code-review-codex";
 
 export interface Services {
   config: OrchestratorConfig;
   registry: PluginRegistry;
   sessionManager: OpenCodeSessionManager;
   lifecycleManager: LifecycleManager;
+  reviewManager: ReviewManager;
 }
 
 // Cache in globalThis for Next.js HMR stability
@@ -84,15 +90,37 @@ async function initServices(): Promise<Services> {
   registry.register(pluginScmGithub);
   registry.register(pluginTrackerGithub);
   registry.register(pluginTrackerLinear);
+  registry.register(pluginCodeReviewCodex);
 
   const sessionManager = createSessionManager({ config, registry });
 
+  // ReviewManager orchestrates the code-review loop on top of the session manager
+  // and the configured CodeReview plugin (e.g. codex).
+  const reviewManager = createReviewManager({
+    configPath: config.configPath,
+    getProject: (projectId: string) => config.projects[projectId],
+    resolveReviewPlugin: (projectId: string): CodeReview | null => {
+      const pluginName = config.projects[projectId]?.codeReview?.plugin;
+      if (!pluginName) return null;
+      return registry.get<CodeReview>("code-review", pluginName);
+    },
+    getSessionPrefix: (projectId: string) =>
+      config.projects[projectId]?.sessionPrefix ?? projectId,
+  });
+
   // Start the lifecycle manager — polls sessions every 30s, triggers reactions
   // (CI failure → send fix message, review comments → forward to agent, etc.)
-  const lifecycleManager = createLifecycleManager({ config, registry, sessionManager });
+  // and opportunistically triggers code reviews via the onSessionPolled hook.
+  const onSessionPolled = createReviewTrigger({ config, reviewManager });
+  const lifecycleManager = createLifecycleManager({
+    config,
+    registry,
+    sessionManager,
+    onSessionPolled,
+  });
   lifecycleManager.start(30_000);
 
-  const services = { config, registry, sessionManager, lifecycleManager };
+  const services = { config, registry, sessionManager, lifecycleManager, reviewManager };
   globalForServices._aoServices = services;
   return services;
 }

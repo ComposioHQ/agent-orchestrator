@@ -643,6 +643,9 @@ importers:
       '@aoagents/ao-plugin-agent-opencode':
         specifier: workspace:*
         version: link:../plugins/agent-opencode
+      '@aoagents/ao-plugin-code-review-codex':
+        specifier: workspace:*
+        version: link:../plugins/code-review-codex
       '@aoagents/ao-plugin-runtime-tmux':
         specifier: workspace:*
         version: link:../plugins/runtime-tmux
