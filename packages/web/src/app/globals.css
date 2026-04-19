@@ -3004,6 +3004,47 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   min-height: 0;
 }
 
+.session-detail-pr-card__merge-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.session-detail-pr-merge-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-decoration: none;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-status-attention) 35%, transparent);
+  background: color-mix(in srgb, var(--color-status-attention) 8%, transparent);
+  color: var(--color-status-attention);
+  transition: background-color 120ms;
+}
+
+.session-detail-pr-merge-action:hover {
+  background: color-mix(in srgb, var(--color-status-attention) 14%, transparent);
+}
+
+.session-detail-pr-merge-action--btn {
+  border-color: var(--color-border-default);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+}
+
+.session-detail-pr-merge-action--btn:hover {
+  background: var(--color-bg-elevated);
+}
+
 .session-detail-pr-card__title-link {
   font-size: 12.5px;
   font-weight: 600;

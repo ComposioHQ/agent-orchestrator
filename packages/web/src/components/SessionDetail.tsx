@@ -14,6 +14,7 @@ import { CI_STATUS } from "@aoagents/ao-core/types";
 import { cn } from "@/lib/cn";
 import dynamic from "next/dynamic";
 import { getSessionTitle } from "@/lib/format";
+import { buildGitHubCompareUrl } from "@/lib/github-links";
 import type { ProjectInfo } from "@/lib/project-name";
 import { SidebarContext } from "./workspace/SidebarContext";
 
@@ -724,6 +725,7 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
   const [sendingComments, setSendingComments] = useState<Set<string>>(new Set());
   const [sentComments, setSentComments] = useState<Set<string>>(new Set());
   const [errorComments, setErrorComments] = useState<Set<string>>(new Set());
+  const [branchCopied, setBranchCopied] = useState(false);
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
@@ -794,6 +796,22 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
   const blockerIssues = buildBlockerChips(pr, metadata);
   const fileCount = pr.changedFiles ?? 0;
 
+  const hasConflicts = pr.state !== "merged" && !pr.mergeability.noConflicts;
+  const showConflictActions = hasConflicts && pr.state === "open";
+  const compareUrl = showConflictActions ? buildGitHubCompareUrl(pr) : "";
+
+  const handleCopyBranch = () => {
+    void navigator.clipboard.writeText(pr.branch).then(
+      () => {
+        setBranchCopied(true);
+        window.setTimeout(() => setBranchCopied(false), 2000);
+      },
+      () => {
+        /* clipboard unavailable */
+      },
+    );
+  };
+
   return (
     <div className={cn("session-detail-pr-card", allGreen && "session-detail-pr-card--green")}>
       {/* Row 1: Title + diff stats */}
@@ -822,6 +840,31 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
           <span className="session-detail-pr-card__diff-label">Merged</span>
         )}
       </div>
+
+      {showConflictActions ? (
+        <div
+          className="session-detail-pr-card__merge-actions"
+          role="group"
+          aria-label="Resolve merge conflicts"
+        >
+          <a
+            href={compareUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="session-detail-pr-merge-action"
+          >
+            Compare with base branch
+          </a>
+          <button
+            type="button"
+            onClick={handleCopyBranch}
+            aria-label="Copy head branch name"
+            className="session-detail-pr-merge-action session-detail-pr-merge-action--btn"
+          >
+            {branchCopied ? "Copied branch name" : "Copy head branch name"}
+          </button>
+        </div>
+      ) : null}
 
       {/* Row 2: Blocker chips + CI chips inline */}
       <div className="session-detail-pr-card__details">
