@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { buildPrompt, BASE_AGENT_PROMPT } from "../prompt-builder.js";
+import { buildPrompt, BASE_AGENT_PROMPT, BASE_AGENT_PROMPT_NO_REPO } from "../prompt-builder.js";
 import type { ProjectConfig } from "../types.js";
 
 let tmpDir: string;
@@ -53,6 +53,16 @@ describe("buildPrompt", () => {
     expect(result).toContain("Test App");
     expect(result).toContain("org/test-app");
     expect(result).toContain("main");
+  });
+
+  it("uses trimmed base prompt when repo is not configured", () => {
+    const noRepoProject = { ...project, repo: undefined };
+    const result = buildPrompt({ project: noRepoProject, projectId: "test-app" });
+    expect(result).toContain(BASE_AGENT_PROMPT_NO_REPO);
+    expect(result).not.toContain(BASE_AGENT_PROMPT);
+    expect(result).not.toContain("create a PR");
+    expect(result).not.toContain("PR Best Practices");
+    expect(result).not.toContain("Repository:");
   });
 
   it("includes issue ID in task section", () => {

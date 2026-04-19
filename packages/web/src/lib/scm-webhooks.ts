@@ -36,7 +36,7 @@ export function findWebhookProjects(
   pathname: string,
 ): WebhookProjectMatch[] {
   return Object.entries(config.projects).flatMap(([projectId, project]) => {
-    if (!project.scm?.plugin) return [];
+    if (!project.repo || !project.scm?.plugin) return [];
     const webhookPath = getProjectWebhookPath(project);
     if (!webhookPath || webhookPath !== pathname) return [];
     const scm = registry.get<SCM>("scm", project.scm.plugin);
@@ -47,6 +47,7 @@ export function findWebhookProjects(
 
 export function eventMatchesProject(event: SCMWebhookEvent, project: ProjectConfig): boolean {
   if (!event.repository) return false;
+  if (!project.repo) return false;
   return (
     `${event.repository.owner}/${event.repository.name}`.toLowerCase() ===
     project.repo.toLowerCase()

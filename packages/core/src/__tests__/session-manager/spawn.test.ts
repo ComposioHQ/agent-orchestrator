@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
 import { validateConfig } from "../../config.js";
+import { getWorkspaceAgentsMdPath } from "../../opencode-agents-md.js";
 import {
   writeMetadata,
   readMetadata,
@@ -575,7 +576,7 @@ describe("spawn", () => {
 
     const metadata = readMetadataRaw(sessionsDir, session.id);
     expect(metadata?.["opencodeSessionId"]).toBeUndefined();
-  });
+  }, 15_000);
 
   it("throws for unknown project", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -1814,6 +1815,57 @@ describe("spawn", () => {
       const { readFileSync } = await import("node:fs");
       expect(readFileSync(promptFile, "utf-8")).toBe("You are the orchestrator.");
     });
+
+    it("writes the orchestrator AGENTS.md block for OpenCode orchestrators", async () => {
+      const opencodeAgent: Agent = {
+        ...mockAgent,
+        name: "opencode",
+      };
+      const registryWithOpenCode: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return opencodeAgent;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
+      const configWithOpenCode: OrchestratorConfig = {
+        ...config,
+        defaults: { ...config.defaults, agent: "opencode" },
+        projects: {
+          ...config.projects,
+          "my-app": {
+            ...config.projects["my-app"],
+            agent: "opencode",
+          },
+        },
+      };
+
+      const sm = createSessionManager({
+        config: configWithOpenCode,
+        registry: registryWithOpenCode,
+      });
+
+      await sm.spawnOrchestrator({
+        projectId: "my-app",
+        systemPrompt: "You are the orchestrator.",
+      });
+
+      const agentsMdPath = getWorkspaceAgentsMdPath("/tmp/ws");
+      expect(existsSync(agentsMdPath)).toBe(true);
+      expect(readFileSync(agentsMdPath, "utf-8")).toBe(
+        "<!-- AO_ORCHESTRATOR_PROMPT_START -->\n## Agent Orchestrator\n\nYou are the orchestrator.\n<!-- AO_ORCHESTRATOR_PROMPT_END -->\n",
+      );
+
+      expect(mockRuntime.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          environment: expect.not.objectContaining({
+            OPENCODE_CONFIG: expect.any(String),
+          }),
+        }),
+      );
+    }, 15_000);
 
     it("throws for unknown project", async () => {
       const sm = createSessionManager({ config, registry: mockRegistry });

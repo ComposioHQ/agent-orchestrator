@@ -6,9 +6,14 @@ import {
   getAttentionLevel,
   isPRRateLimited,
   isPRUnenriched,
-  TERMINAL_STATUSES,
-  TERMINAL_ACTIVITIES,
   CI_STATUS,
+  getSessionTruthLabel,
+  getPRTruthLabel,
+  getRuntimeTruthLabel,
+  getLifecycleGuidance,
+  isDashboardSessionDone,
+  isDashboardSessionTerminal,
+  isDashboardSessionRestorable,
 } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { getSessionTitle } from "@/lib/format";
@@ -33,7 +38,7 @@ function getDoneStatusInfo(session: DashboardSession): {
 } {
   const activity = session.activity;
   const status = session.status;
-  const prState = session.pr?.state;
+  const prState = session.lifecycle?.prState ?? session.pr?.state;
 
   if (prState === "merged" || status === "merged") {
     return {
@@ -53,9 +58,28 @@ function getDoneStatusInfo(session: DashboardSession): {
     };
   }
 
-  if (status === "killed" || status === "terminated") {
+  if (prState === "closed") {
     return {
-      label: status,
+      label: "closed",
+      pillClass: "done-status-pill--exited",
+      icon: (
+        <svg
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          viewBox="0 0 24 24"
+          className="h-3 w-3"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M9 12h6" />
+        </svg>
+      ),
+    };
+  }
+
+  if (session.lifecycle?.sessionState === "terminated" || status === "killed" || status === "terminated") {
+    return {
+      label: getSessionTruthLabel(session),
       pillClass: "done-status-pill--killed",
       icon: (
         <svg
@@ -72,7 +96,7 @@ function getDoneStatusInfo(session: DashboardSession): {
   }
 
   // Default: exited / done / cleanup / closed PR
-  const label = activity === "exited" ? "exited" : status;
+  const label = activity === "exited" ? "exited" : getSessionTruthLabel(session);
   return {
     label,
     pillClass: "done-status-pill--exited",
@@ -160,17 +184,23 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   const prUnenriched = pr ? isPRUnenriched(pr) : false;
   const alerts = getAlerts(session);
   const isReadyToMerge = !rateLimited && pr?.mergeability.mergeable && pr.state === "open";
-  const isTerminal =
-    TERMINAL_STATUSES.has(session.status) ||
-    (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity));
-  const isRestorable = isTerminal && session.status !== "merged";
+  const isTerminal = isDashboardSessionTerminal(session);
+  const isRestorable = isDashboardSessionRestorable(session);
 
   const title = getSessionTitle(session);
   const footerStatus = getFooterStatusLabel(session, level, Boolean(isReadyToMerge));
   const visiblePassingChecks = !rateLimited && pr && !prUnenriched
     ? pr.ciChecks.filter((check) => check.status === "passed").slice(0, 3)
     : [];
-  const isDone = level === "done";
+  const isDone = isDashboardSessionDone(session) || level === "done";
+  const truthLine = session.lifecycle
+    ? [
+        `Session ${getSessionTruthLabel(session)}`,
+        `PR ${getPRTruthLabel(session)}`,
+        `Runtime ${getRuntimeTruthLabel(session)}`,
+      ].join(" · ")
+    : null;
+  const lifecycleGuidance = getLifecycleGuidance(session);
   const secondaryText = session.issueLabel
     ? `${session.issueLabel}${session.issueTitle ? ` · ${session.issueTitle}` : ""}`
     : (session.issueTitle ??
@@ -551,6 +581,22 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           </div>
         )}
 
+        {truthLine && (
+          <div className="px-[10px] pb-[5px]">
+            <p className="text-[10px] leading-relaxed text-[var(--color-text-tertiary)]">
+              {truthLine}
+            </p>
+          </div>
+        )}
+
+        {lifecycleGuidance && (
+          <div className="px-[10px] pb-[6px]">
+            <p className="inline-flex items-center gap-1 rounded-full border border-[color-mix(in_srgb,var(--color-status-attention)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-status-attention)_9%,transparent)] px-2 py-1 text-[10px] leading-none text-[var(--color-status-attention)]">
+              {lifecycleGuidance}
+            </p>
+          </div>
+        )}
+
         {rateLimited && pr?.state === "open" && (
           <div className="px-[10px] pb-[5px]">
             <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
@@ -803,11 +849,12 @@ function getFooterStatusLabel(
   isReadyToMerge: boolean,
 ): string {
   if (isReadyToMerge || level === "merge") return "mergeable";
-  if (level === "respond") return "waiting_input";
-  if (session.status === "ci_failed") return "ci_failed";
-  if (level === "review") return "review_pending";
-  if (level === "working") return "working";
-  return session.status;
+  if (session.lifecycle?.sessionState === "detecting") return "detecting";
+  if (level === "respond") return getSessionTruthLabel(session);
+  if (session.lifecycle?.prReason === "ci_failing" || session.status === "ci_failed") return "ci failing";
+  if (level === "review") return getPRTruthLabel(session);
+  if (level === "working") return getSessionTruthLabel(session);
+  return getSessionTruthLabel(session);
 }
 
 interface Alert {
@@ -834,11 +881,17 @@ function getAlerts(session: DashboardSession): Alert[] {
   // The lifecycle manager's status is the most up-to-date source of truth.
   // PR enrichment data can be stale (5-min cache) or unavailable (rate limit/timeout).
   // Use lifecycle status as fallback when PR data hasn't caught up yet.
+  const lifecyclePrReason = session.lifecycle?.prReason ?? null;
   const lifecycleStatus = meta["status"];
 
-  const ciIsFailing = pr.ciStatus === CI_STATUS.FAILING || lifecycleStatus === "ci_failed";
+  const ciIsFailing =
+    pr.ciStatus === CI_STATUS.FAILING ||
+    lifecyclePrReason === "ci_failing" ||
+    lifecycleStatus === "ci_failed";
   const hasChangesRequested =
-    pr.reviewDecision === "changes_requested" || lifecycleStatus === "changes_requested";
+    pr.reviewDecision === "changes_requested" ||
+    lifecyclePrReason === "changes_requested" ||
+    lifecycleStatus === "changes_requested";
   const hasConflicts = !pr.mergeability.noConflicts;
 
   if (ciIsFailing) {

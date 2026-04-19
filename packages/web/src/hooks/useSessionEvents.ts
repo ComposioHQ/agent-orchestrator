@@ -4,6 +4,7 @@ import { useEffect, useReducer, useRef, useCallback } from "react";
 import {
   getAttentionLevel,
   type AttentionLevel,
+  type DashboardAttentionZoneMode,
   type DashboardSession,
   type SSESnapshotEvent,
 } from "@/lib/types";
@@ -93,13 +94,35 @@ function createMembershipKey(
     .join("\u0000");
 }
 
-export function useSessionEvents(
-  initialSessions: DashboardSession[],
-  project?: string,
-  muxSessions?: Array<{ id: string; status: string; activity: string | null; attentionLevel: string; lastActivityAt: string }>,
-  initialAttentionLevels?: SSEAttentionMap,
-  disabled = false,
-): State {
+export interface UseSessionEventsOptions {
+  initialSessions: DashboardSession[];
+  project?: string;
+  muxSessions?: Array<{ id: string; status: string; activity: string | null; attentionLevel: AttentionLevel; lastActivityAt: string }>;
+  initialAttentionLevels?: SSEAttentionMap;
+  disabled?: boolean;
+  /**
+   * REQUIRED. Callers must explicitly pass the mode that the server SSE
+   * route is using (read from `config.dashboard?.attentionZones` upstream).
+   *
+   * A default here would be a footgun: any default value disagrees with
+   * the server whenever the config is set to the opposite mode, causing
+   * `sseAttentionLevels` to oscillate between modes as server snapshots
+   * and client refreshes interleave. Forcing every caller to pass this
+   * explicitly prevents the next page from silently re-introducing the
+   * bug we already fixed once for `PullRequestsPage`.
+   */
+  attentionZones: DashboardAttentionZoneMode;
+}
+
+export function useSessionEvents(options: UseSessionEventsOptions): State {
+  const {
+    initialSessions,
+    project,
+    muxSessions,
+    initialAttentionLevels,
+    disabled = false,
+    attentionZones,
+  } = options;
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
     connectionStatus: "connected" as ConnectionStatus,
@@ -108,10 +131,10 @@ export function useSessionEvents(
   const sessionsRef = useRef(state.sessions);
   const initialAttentionLevelsRef = useRef(initialAttentionLevels);
   initialAttentionLevelsRef.current = initialAttentionLevels;
-  const refreshingRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMembershipKeyRef = useRef<string | null>(null);
   const lastRefreshAtRef = useRef(0);
+  const lastFetchStartedAtRef = useRef(0);
   const disconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRefreshControllerRef = useRef<AbortController | null>(null);
 
@@ -135,13 +158,22 @@ export function useSessionEvents(
 
   // Define scheduleRefresh with useCallback so both effects can use it
   const scheduleRefresh = useCallback(() => {
-    if (refreshingRef.current || refreshTimerRef.current) return;
+    // Skip scheduling if a timer is already pending
+    if (refreshTimerRef.current) return;
+    // Skip if a fetch was already started recently (< 500ms ago)
+    if (Date.now() - lastFetchStartedAtRef.current < 500) return;
+    // Skip if a fetch is currently in flight (use controller as authoritative signal)
+    if (activeRefreshControllerRef.current !== null) return;
+
     refreshTimerRef.current = setTimeout(() => {
       refreshTimerRef.current = null;
-      refreshingRef.current = true;
+      // Re-check in-flight state after the 120ms debounce window
+      if (activeRefreshControllerRef.current !== null) return;
       const requestedMembershipKey = pendingMembershipKeyRef.current;
       const refreshController = new AbortController();
       activeRefreshControllerRef.current = refreshController;
+
+      lastFetchStartedAtRef.current = Date.now();
 
       const sessionsUrl = project
         ? `/api/sessions?project=${encodeURIComponent(project)}`
@@ -161,7 +193,7 @@ export function useSessionEvents(
 
             lastRefreshAtRef.current = Date.now();
             const sseAttentionLevels = Object.fromEntries(
-              updated.sessions.map((s) => [s.id, getAttentionLevel(s)]),
+              updated.sessions.map((s) => [s.id, getAttentionLevel(s, attentionZones)]),
             ) as SSEAttentionMap;
             dispatch({
               type: "reset",
@@ -181,15 +213,12 @@ export function useSessionEvents(
             activeRefreshControllerRef.current = null;
           }
           if (refreshController.signal.aborted) {
-            refreshingRef.current = false;
             // If there's still a pending membership change, reschedule so it isn't lost
             if (pendingMembershipKeyRef.current !== null) {
               scheduleRefresh();
             }
             return;
           }
-
-          refreshingRef.current = false;
 
           if (
             pendingMembershipKeyRef.current !== null &&
@@ -202,7 +231,7 @@ export function useSessionEvents(
           pendingMembershipKeyRef.current = null;
         });
     }, MEMBERSHIP_REFRESH_DELAY_MS);
-  }, [project]);
+  }, [project, attentionZones]);
 
   // Mux-based session updates (replaces SSE when available)
   useEffect(() => {
@@ -255,7 +284,6 @@ export function useSessionEvents(
           refreshTimerRef.current = null;
         }
         pendingMembershipKeyRef.current = null;
-        refreshingRef.current = false;
         activeRefreshControllerRef.current?.abort();
         activeRefreshControllerRef.current = null;
       };
@@ -337,7 +365,6 @@ export function useSessionEvents(
       disposed = true;
       activeRefreshControllerRef.current?.abort();
       activeRefreshControllerRef.current = null;
-      refreshingRef.current = false;
       pendingMembershipKeyRef.current = null;
       clearRefreshTimer();
       clearDisconnectedTimer();

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
+import { createInitialCanonicalLifecycle, deriveLegacyStatus } from "../lifecycle-state.js";
+import { createActivitySignal } from "../activity-signal.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -28,11 +30,69 @@ export function makeHandle(id: string): RuntimeHandle {
 }
 
 export function makeSession(overrides: Partial<Session> = {}): Session {
-  return {
+  const lifecycle = createInitialCanonicalLifecycle("worker", new Date());
+  const requestedStatus = overrides.status ?? "working";
+  switch (requestedStatus) {
+    case "spawning":
+      lifecycle.session.state = "not_started";
+      lifecycle.session.reason = "spawn_requested";
+      break;
+    case "needs_input":
+      lifecycle.session.state = "needs_input";
+      lifecycle.session.reason = "awaiting_user_input";
+      lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+      break;
+    case "stuck":
+    case "errored":
+      lifecycle.session.state = "stuck";
+      lifecycle.session.reason = requestedStatus === "errored" ? "error_in_process" : "probe_failure";
+      lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+      break;
+    case "merged":
+      lifecycle.session.state = "idle";
+      lifecycle.session.reason = "merged_waiting_decision";
+      lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+      lifecycle.pr.state = "merged";
+      lifecycle.pr.reason = "merged";
+      break;
+    case "done":
+      lifecycle.session.state = "done";
+      lifecycle.session.reason = "research_complete";
+      lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+      lifecycle.session.completedAt = lifecycle.session.lastTransitionAt;
+      break;
+    case "killed":
+    case "terminated":
+    case "cleanup":
+      lifecycle.session.state = "terminated";
+      lifecycle.session.reason = "manually_killed";
+      lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+      lifecycle.session.terminatedAt = lifecycle.session.lastTransitionAt;
+      lifecycle.runtime.state = "missing";
+      lifecycle.runtime.reason = "manual_kill_requested";
+      break;
+    default:
+      lifecycle.session.state = "working";
+      lifecycle.session.reason = "task_in_progress";
+      lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+      break;
+  }
+  if (lifecycle.session.state !== "terminated") {
+    lifecycle.runtime.state = "alive";
+    lifecycle.runtime.reason = "process_running";
+  }
+  lifecycle.runtime.handle = { id: "rt-1", runtimeName: "mock", data: {} };
+  const base: Session = {
     id: "app-1",
     projectId: "my-app",
-    status: "spawning",
+    status: deriveLegacyStatus(lifecycle),
     activity: "active",
+    activitySignal: createActivitySignal("valid", {
+      activity: "active",
+      timestamp: new Date(),
+      source: "native",
+    }),
+    lifecycle,
     branch: "feat/test",
     issueId: null,
     pr: null,
@@ -42,7 +102,11 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
     createdAt: new Date(),
     lastActivityAt: new Date(),
     metadata: {},
+  };
+  return {
+    ...base,
     ...overrides,
+    lifecycle: overrides.lifecycle ?? lifecycle,
   };
 }
 
@@ -200,6 +264,8 @@ export interface TestEnvironment {
 export function createTestEnvironment(): TestEnvironment {
   const tmpDir = join(tmpdir(), `ao-test-lifecycle-${randomUUID()}`);
   mkdirSync(tmpDir, { recursive: true });
+  const previousHome = process.env["HOME"];
+  process.env["HOME"] = tmpDir;
 
   const configPath = join(tmpDir, "agent-orchestrator.yaml");
   writeFileSync(configPath, "projects: {}\n");
@@ -239,6 +305,11 @@ export function createTestEnvironment(): TestEnvironment {
   mkdirSync(sessionsDir, { recursive: true });
 
   const cleanup = () => {
+    if (previousHome === undefined) {
+      delete process.env["HOME"];
+    } else {
+      process.env["HOME"] = previousHome;
+    }
     const projectBaseDir = getProjectBaseDir(configPath, join(tmpDir, "my-app"));
     if (existsSync(projectBaseDir)) {
       rmSync(projectBaseDir, { recursive: true, force: true });
@@ -343,6 +414,8 @@ export function createMockSessionManager(): SessionManager {
     spawnOrchestrator: vi.fn().mockResolvedValue(makeSession({ id: "app-orchestrator", metadata: { role: "orchestrator" } })),
     restore: vi.fn().mockResolvedValue(makeSession()),
     list: vi.fn().mockResolvedValue([]),
+    listCached: vi.fn().mockResolvedValue([]),
+    invalidateCache: vi.fn(),
     get: vi.fn().mockResolvedValue(null),
     kill: vi.fn().mockResolvedValue(undefined),
     cleanup: vi.fn().mockResolvedValue({ killed: [], skipped: [], errors: [] }),

@@ -7,6 +7,7 @@ import {
   type DashboardSession,
   type DashboardPR,
   type DashboardOrchestratorLink,
+  type DashboardAttentionZoneMode,
   getAttentionLevel,
 } from "@/lib/types";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
@@ -25,6 +26,8 @@ interface PullRequestsPageProps {
   projectName?: string;
   projects?: ProjectInfo[];
   orchestrators?: DashboardOrchestratorLink[];
+  /** Dashboard attention zone mode (defaults to "simple" — 4 zones). */
+  attentionZones?: DashboardAttentionZoneMode;
 }
 
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
@@ -44,22 +47,28 @@ export function PullRequestsPage({
   projectName,
   projects = [],
   orchestrators,
+  attentionZones = "simple",
 }: PullRequestsPageProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
   const mux = useMuxOptional();
+  // Seed initial attention levels using the same mode the server SSE will
+  // use when it sends snapshots (read from `config.dashboard.attentionZones`
+  // upstream). This prevents the sseAttentionLevels map from oscillating
+  // between detailed (seed/refresh) and simple (server snapshot) values.
   const initialAttentionLevels = useMemo(() => {
     const levels: Record<string, ReturnType<typeof getAttentionLevel>> = {};
     for (const s of initialSessions) {
-      levels[s.id] = getAttentionLevel(s);
+      levels[s.id] = getAttentionLevel(s, attentionZones);
     }
     return levels;
-  }, [initialSessions]);
-  const { sessions, sseAttentionLevels } = useSessionEvents(
+  }, [initialSessions, attentionZones]);
+  const { sessions, sseAttentionLevels } = useSessionEvents({
     initialSessions,
-    projectId,
-    mux?.status === "connected" ? mux.sessions : undefined,
+    project: projectId,
+    muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
     initialAttentionLevels,
-  );
+    attentionZones,
+  });
   const searchParams = useSearchParams();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -101,17 +110,21 @@ export function PullRequestsPage({
         className={`dashboard-shell flex h-screen${!isMobile && sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
       >
       {showSidebar ? (
-        <ProjectSidebar
-          projects={projects}
-          sessions={sessions}
-          activeProjectId={projectId}
-          activeSessionId={undefined}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-          mobileOpen={mobileMenuOpen}
-          onMobileClose={() => setMobileMenuOpen(false)}
-        />
+        <div className={`sidebar-wrapper${mobileMenuOpen ? " sidebar-wrapper--mobile-open" : ""}`}>
+          <ProjectSidebar
+            projects={projects}
+            sessions={sessions}
+            activeProjectId={projectId}
+            activeSessionId={undefined}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+            onMobileClose={() => setMobileMenuOpen(false)}
+          />
+        </div>
       ) : null}
+      {mobileMenuOpen && (
+        <div className="sidebar-mobile-backdrop" onClick={() => setMobileMenuOpen(false)} />
+      )}
       <div className="dashboard-main flex-1 overflow-y-auto px-4 py-4 md:px-7 md:py-6">
         <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName ? `${projectName} PRs` : "Pull Requests"} />
         {isMobile ? (

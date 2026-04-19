@@ -442,7 +442,7 @@ export function createPluginRegistry(): PluginRegistry {
       orchestratorConfig?: OrchestratorConfig,
       importFn?: (pkg: string) => Promise<unknown>,
     ): Promise<void> {
-      const doImport = importFn ?? ((pkg: string) => import(pkg));
+      const doImport = importFn ?? ((pkg: string) => import(/* webpackIgnore: true */ pkg));
       for (const builtin of BUILTIN_PLUGINS) {
         let mod;
         try {
@@ -475,7 +475,7 @@ export function createPluginRegistry(): PluginRegistry {
       // Load built-ins with orchestrator config so plugins receive their settings
       await this.loadBuiltins(config, importFn);
 
-      const doImport = importFn ?? ((pkg: string) => import(pkg));
+      const doImport = importFn ?? ((pkg: string) => import(/* webpackIgnore: true */ pkg));
       // Build index once for O(1) lookups when matching plugins to external entries
       const externalIndex = buildExternalPluginIndex(config._externalPluginEntries);
 

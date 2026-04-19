@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { toClaudeProjectPath, create } from "../index.js";
-import type { Session, RuntimeHandle } from "@aoagents/ao-core";
+import { createActivitySignal, type Session, type RuntimeHandle } from "@aoagents/ao-core";
 
 // Mock homedir() so getActivityState looks in our temp dir
 vi.mock("node:os", async (importOriginal) => {
@@ -25,6 +25,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "test",
     status: "working",
     activity: "idle",
+    activitySignal: createActivitySignal("valid", {
+      activity: "idle",
+      timestamp: new Date(),
+      source: "native",
+    }),
     branch: "main",
     issueId: null,
     pr: null,
