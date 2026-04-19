@@ -3,6 +3,7 @@ import chalk from "chalk";
 import type { Command } from "commander";
 import {
   isOrchestratorSession,
+  isTerminalSession,
   loadConfig,
   SessionNotRestorableError,
   WorkspaceMissingError,
@@ -36,8 +37,17 @@ export function registerSession(program: Command): void {
     .description("List all sessions")
     .option("-p, --project <id>", "Filter by project ID")
     .option("-a, --all", "Include orchestrator sessions")
+    .option(
+      "--include-terminated",
+      "Include terminated sessions (killed/done/merged/terminated/errored/cleanup)",
+    )
     .option("--json", "Output as JSON")
-    .action(async (opts: { project?: string; all?: boolean; json?: boolean }) => {
+    .action(async (opts: {
+      project?: string;
+      all?: boolean;
+      includeTerminated?: boolean;
+      json?: boolean;
+    }) => {
       const config = loadConfig();
       if (opts.project && !config.projects[opts.project]) {
         console.error(chalk.red(`Unknown project: ${opts.project}`));
@@ -48,11 +58,20 @@ export function registerSession(program: Command): void {
       const allSessions = await sm.list(opts.project);
 
       // Filter out orchestrator sessions unless --all is passed
-      const sessions = opts.all
+      const withoutOrchestrators = opts.all
         ? allSessions
         : allSessions.filter(
             (s) => !isOrchestratorSessionName(config, s.id, s.projectId),
           );
+
+      // Count terminal sessions that would be hidden by default, then
+      // drop them unless --include-terminated is passed.
+      const hiddenTerminatedCount = opts.includeTerminated
+        ? 0
+        : withoutOrchestrators.filter(isTerminalSession).length;
+      const sessions = opts.includeTerminated
+        ? withoutOrchestrators
+        : withoutOrchestrators.filter((s) => !isTerminalSession(s));
 
       // Group sessions by project
       const byProject = new Map<string, typeof sessions>();
@@ -149,8 +168,22 @@ export function registerSession(program: Command): void {
       }
 
       if (opts.json) {
-        console.log(JSON.stringify(jsonOutput, null, 2));
+        console.log(
+          JSON.stringify(
+            { data: jsonOutput, meta: { hiddenTerminatedCount } },
+            null,
+            2,
+          ),
+        );
         return;
+      }
+
+      if (hiddenTerminatedCount > 0) {
+        console.log(
+          chalk.dim(
+            `  ${hiddenTerminatedCount} terminated session${hiddenTerminatedCount !== 1 ? "s" : ""} hidden. Use --include-terminated to show.`,
+          ),
+        );
       }
 
       console.log();

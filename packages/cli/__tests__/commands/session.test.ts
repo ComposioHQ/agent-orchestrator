@@ -17,6 +17,8 @@ import {
   type CleanupResult,
   type SessionManager,
   SessionNotFoundError,
+  createInitialCanonicalLifecycle,
+  createActivitySignal,
   getSessionsDir,
   getProjectBaseDir,
 } from "@aoagents/ao-core";
@@ -349,20 +351,23 @@ describe("session ls", () => {
     await program.parseAsync(["node", "test", "session", "ls", "--json"]);
 
     expect(consoleSpy).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toEqual([
-      {
-        id: "app-1",
-        projectId: "my-app",
-        projectName: "My App",
-        role: "worker",
-        branch: "live-branch",
-        status: "working",
-        issueId: "INT-100",
-        pr: "https://github.com/org/repo/pull/42",
-        workspacePath: "/tmp/wt",
-        lastActivityAt: "2024-03-09T16:00:00.000Z",
-      },
-    ]);
+    expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toEqual({
+      data: [
+        {
+          id: "app-1",
+          projectId: "my-app",
+          projectName: "My App",
+          role: "worker",
+          branch: "live-branch",
+          status: "working",
+          issueId: "INT-100",
+          pr: "https://github.com/org/repo/pull/42",
+          workspacePath: "/tmp/wt",
+          lastActivityAt: "2024-03-09T16:00:00.000Z",
+        },
+      ],
+      meta: { hiddenTerminatedCount: 0 },
+    });
   });
 
   it("marks metadata-based orchestrators correctly in JSON output", async () => {
@@ -377,29 +382,176 @@ describe("session ls", () => {
     await program.parseAsync(["node", "test", "session", "ls", "--json"]);
 
     expect(consoleSpy).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toEqual([
-      {
-        id: "app-control",
-        projectId: "my-app",
-        projectName: "My App",
-        role: "orchestrator",
-        branch: "control",
-        status: "working",
-        issueId: null,
-        pr: null,
-        workspacePath: null,
-        lastActivityAt: null,
-      },
-    ]);
+    expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toEqual({
+      data: [
+        {
+          id: "app-control",
+          projectId: "my-app",
+          projectName: "My App",
+          role: "orchestrator",
+          branch: "control",
+          status: "working",
+          issueId: null,
+          pr: null,
+          workspacePath: null,
+          lastActivityAt: null,
+        },
+      ],
+      meta: { hiddenTerminatedCount: 0 },
+    });
   });
 
-  it("returns an empty JSON array when there are no active sessions", async () => {
+  it("returns an empty JSON data array when there are no active sessions", async () => {
     mockTmux.mockResolvedValue(null);
 
     await program.parseAsync(["node", "test", "session", "ls", "--json"]);
 
     expect(consoleSpy).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toEqual([]);
+    expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toEqual({
+      data: [],
+      meta: { hiddenTerminatedCount: 0 },
+    });
+  });
+
+  it("hides terminated sessions by default and prints a footer", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=merged\n");
+    writeFileSync(join(sessionsDir, "app-3"), "branch=feat/c\nstatus=killed\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("app-1");
+    expect(output).not.toContain("app-2");
+    expect(output).not.toContain("app-3");
+    expect(output).toContain("2 terminated sessions hidden");
+    expect(output).toContain("--include-terminated");
+  });
+
+  it("shows terminated sessions when --include-terminated is passed", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=merged\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "session",
+      "ls",
+      "--include-terminated",
+    ]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("app-1");
+    expect(output).toContain("app-2");
+    expect(output).not.toContain("terminated sessions hidden");
+  });
+
+  it("reports hiddenTerminatedCount in JSON output when filtering terminal sessions", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=done\n");
+    writeFileSync(join(sessionsDir, "app-3"), "branch=feat/c\nstatus=killed\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls", "--json"]);
+
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(String(consoleSpy.mock.calls[0][0]));
+    expect(parsed.data).toHaveLength(1);
+    expect(parsed.data[0].id).toBe("app-1");
+    expect(parsed.meta.hiddenTerminatedCount).toBe(2);
+  });
+
+  it("returns hiddenTerminatedCount=0 in JSON when --include-terminated is passed", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=merged\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "session",
+      "ls",
+      "--json",
+      "--include-terminated",
+    ]);
+
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(String(consoleSpy.mock.calls[0][0]));
+    expect(parsed.data).toHaveLength(2);
+    expect(parsed.meta.hiddenTerminatedCount).toBe(0);
+  });
+
+  it("filters lifecycle-driven terminal sessions (runtime exited, pr merged, session terminated)", async () => {
+    // Seed three sessions whose legacy status is non-terminal ("working"), but
+    // whose canonical lifecycle marks them as terminal in three distinct ways.
+    // This exercises the lifecycle branch of isTerminalSession (types.ts:250),
+    // which short-circuits before TERMINAL_STATUSES is consulted.
+    const makeLifecycleSession = (
+      id: string,
+      mutate: (lc: ReturnType<typeof createInitialCanonicalLifecycle>) => void,
+    ): Session => {
+      const lifecycle = createInitialCanonicalLifecycle("worker", new Date());
+      lifecycle.session.state = "working";
+      lifecycle.session.reason = "task_in_progress";
+      lifecycle.runtime.state = "alive";
+      lifecycle.runtime.reason = "process_running";
+      mutate(lifecycle);
+      return {
+        id,
+        projectId: "my-app",
+        status: "working",
+        activity: null,
+        activitySignal: createActivitySignal("unavailable"),
+        lifecycle,
+        branch: null,
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: null,
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } satisfies Session;
+    };
+
+    mockSessionManager.list.mockResolvedValue([
+      makeLifecycleSession("app-1", (lc) => {
+        // alive — should remain visible
+      }),
+      makeLifecycleSession("app-2", (lc) => {
+        lc.runtime.state = "exited";
+        lc.runtime.reason = "process_not_running";
+      }),
+      makeLifecycleSession("app-3", (lc) => {
+        lc.pr.state = "merged";
+        lc.pr.reason = "merged_by_user";
+      }),
+      makeLifecycleSession("app-4", (lc) => {
+        lc.session.state = "terminated";
+        lc.session.reason = "manually_killed";
+      }),
+    ]);
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls", "--json"]);
+
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(String(consoleSpy.mock.calls[0][0]));
+    expect(parsed.data.map((e: { id: string }) => e.id)).toEqual(["app-1"]);
+    expect(parsed.meta.hiddenTerminatedCount).toBe(3);
   });
 });
 

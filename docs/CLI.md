@@ -23,11 +23,18 @@ ao spawn [issue]                       # Spawn an agent (project auto-detected f
 ao spawn 123 --agent codex             # Override agent for this session
 ao batch-spawn 101 102 103             # Spawn agents for multiple issues at once
 ao send <session> "Fix the tests"      # Send instructions to a running agent
-ao session ls                          # List sessions
-ao session ls --json                   # Machine-readable session inventory
+ao session ls                          # List active sessions (terminated hidden)
+ao session ls --include-terminated     # Include killed/done/merged/errored/cleanup sessions
+ao session ls --json                   # Machine-readable session inventory (see note below)
 ao session kill <session>              # Kill a session
 ao session restore <session>           # Revive a crashed agent
 ```
+
+> **JSON output:** `ao session ls --json` and `ao status --json` emit
+> `{ "data": [...], "meta": { "hiddenTerminatedCount": N } }`. Terminated sessions
+> (`killed`, `terminated`, `done`, `merged`, `errored`, `cleanup`) are filtered from
+> `data` by default; `meta.hiddenTerminatedCount` reports how many were dropped.
+> Pass `--include-terminated` to include them and reset the count to `0`.
 
 ## Maintenance commands
 
