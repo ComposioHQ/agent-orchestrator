@@ -573,6 +573,56 @@ describe("session ls", () => {
     expect(parsed.data.map((e: { id: string }) => e.id)).toEqual(["app-1"]);
     expect(parsed.meta.hiddenTerminatedCount).toBe(3);
   });
+
+  it("hides terminal-status sessions by default", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=main\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-done"), "branch=main\nstatus=merged\n");
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1\napp-done";
+      if (args[0] === "display-message") {
+        return String(Math.floor(Date.now() / 1000) - 60);
+      }
+      return null;
+    });
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("app-1");
+    expect(output).not.toContain("app-done");
+  });
+
+  it("lists terminal sessions when --include-terminated is set", async () => {
+    writeFileSync(join(sessionsDir, "app-done"), "branch=main\nstatus=merged\n");
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-done";
+      return null;
+    });
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls", "--include-terminated"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("app-done");
+  });
+
+  it("prints a hint when only terminal sessions exist", async () => {
+    writeFileSync(join(sessionsDir, "app-done"), "branch=main\nstatus=merged\n");
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-done";
+      return null;
+    });
+
+    await program.parseAsync(["node", "test", "session", "ls"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("--include-terminated");
+    expect(output).not.toContain("app-done");
+  });
 });
 
 describe("session kill", () => {

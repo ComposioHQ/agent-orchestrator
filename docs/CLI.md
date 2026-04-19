@@ -30,11 +30,8 @@ ao session kill <session>              # Kill a session
 ao session restore <session>           # Revive a crashed agent
 ```
 
-> **JSON output:** `ao session ls --json` and `ao status --json` emit
-> `{ "data": [...], "meta": { "hiddenTerminatedCount": N } }`. Terminated sessions
-> (`killed`, `terminated`, `done`, `merged`, `errored`, `cleanup`) are filtered from
-> `data` by default; `meta.hiddenTerminatedCount` reports how many were dropped.
-> Pass `--include-terminated` to include them and reset the count to `0`.
+> **JSON output:** `ao session ls --json` prints a JSON array of sessions and keeps
+> terminal sessions included by default for automation compatibility.
 
 ## Maintenance commands
 
