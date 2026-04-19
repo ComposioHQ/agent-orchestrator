@@ -578,7 +578,12 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
     "bugbot-comments": {
       auto: true,
       action: "send-to-agent",
-      message: "Automated review comments found on your PR. Fix the issues flagged by the bot.",
+      message:
+        "Automated review comments found on your PR. To find them reliably (without relying on `gh pr checks`, which can be stale, or on an unpaginated `gh api .../pulls/PR/comments`):\n" +
+        "  1. `gh api repos/OWNER/REPO/pulls/PR/reviews --paginate` — pick the most recent review whose `user.login` is a bot (e.g. `cursor[bot]`), by `submitted_at`.\n" +
+        "  2. `gh api repos/OWNER/REPO/pulls/PR/reviews/REVIEW_ID/comments` — the inline comments for that specific review.\n" +
+        "  3. `gh api repos/OWNER/REPO/pulls/PR/comments --paginate` — full comment list; a top-level comment is addressed only when some later comment has `in_reply_to_id` equal to its `id`.\n" +
+        "Fix each issue, push, and reply inline to resolve it.",
       escalateAfter: "30m",
     },
     "merge-conflicts": {

@@ -1436,10 +1436,20 @@ describe("reactions", () => {
 
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    expect(mockSessionManager.send).toHaveBeenCalledWith(
-      "app-1",
-      "Handle automated review findings.",
-    );
+    const [sentSessionId, sentMessage] = vi
+      .mocked(mockSessionManager.send)
+      .mock.calls[0] as [string, string];
+    expect(sentSessionId).toBe("app-1");
+    // Detailed message overrides the generic reaction text (see #895):
+    // it must include the comment details AND the correct-API guidance so
+    // the agent does not re-fetch with stale or unpaginated calls.
+    expect(sentMessage).toContain("cursor[bot]");
+    expect(sentMessage).toContain("src/worker.ts:9");
+    expect(sentMessage).toContain("Potential issue detected");
+    expect(sentMessage).toContain("https://example.com/comment/3");
+    expect(sentMessage).toContain("/reviews --paginate");
+    expect(sentMessage).toContain("/reviews/REVIEW_ID/comments");
+    expect(sentMessage).toContain("in_reply_to_id");
 
     vi.mocked(mockSessionManager.send).mockClear();
     await lm.check("app-1");
