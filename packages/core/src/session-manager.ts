@@ -250,11 +250,20 @@ function metadataToSession(
   sessionId: SessionId,
   meta: Record<string, string>,
   projectId: string,
+  sessionPrefix?: string,
   createdAt?: Date,
   modifiedAt?: Date,
 ): Session {
+  const sessionKind =
+    meta["role"] === "orchestrator" ||
+    (sessionPrefix
+      ? new RegExp(`^${escapeRegex(sessionPrefix)}-orchestrator-\\d+$`).test(sessionId)
+      : false)
+      ? "orchestrator"
+      : "worker";
   return sessionFromMetadata(sessionId, meta, {
     projectId,
+    sessionKind,
     createdAt,
     lastActivityAt: modifiedAt ?? new Date(),
   });
@@ -287,12 +296,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
    */
   function getProjectSessionsDir(project: ProjectConfig): string {
     return getSessionsDir(project.storageKey);
-  }
-
-  function isDegradedProject(
-    project: ProjectConfig | undefined,
-  ): project is ProjectConfig & { resolveError: string } {
-    return typeof project?.resolveError === "string" && project.resolveError.length > 0;
   }
 
   function normalizePath(path: string): string {
@@ -349,11 +352,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionPrefix?: string,
   ): boolean {
     if (!raw) return false;
-    if (raw["role"] === "orchestrator" || sessionId.endsWith("-orchestrator")) return true;
+    if (raw["role"] === "orchestrator") return true;
     // Check the -orchestrator-N pattern only when the prefix is known so the
     // regex is anchored to the project prefix, preventing false-positives when
     // the user-configured sessionPrefix itself ends with "-orchestrator".
     if (sessionPrefix) {
+      if (sessionId === `${sessionPrefix}-orchestrator`) {
+        return true;
+      }
       return new RegExp(`^${escapeRegex(sessionPrefix)}-orchestrator-\\d+$`).test(sessionId);
     }
     return false;
@@ -364,6 +370,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionId: string,
     metadata?: Record<string, string> | null,
   ): boolean {
+    if (sessionId === `${project.sessionPrefix}-orchestrator`) {
+      return true;
+    }
     return isOrchestratorSessionRecord(sessionId, metadata ?? {}, project.sessionPrefix);
   }
 
@@ -431,6 +440,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     } catch {
       void 0;
     }
+  }
+
+  const SESSION_CACHE_TTL_MS = 35_000;
+  let sessionCache:
+    | {
+        sessions: Session[];
+        expiresAt: number;
+      }
+    | null = null;
+
+  function invalidateCache(): void {
+    sessionCache = null;
   }
 
   function repairSingleSessionMetadataOnRead(
@@ -506,6 +527,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             sessionId: record.sessionName,
             status: validateStatus(record.raw["status"]),
             createdAt: record.raw["createdAt"] ? new Date(record.raw["createdAt"]) : undefined,
+            sessionKind: isOrchestratorSessionRecord(record.sessionName, record.raw, sessionPrefix)
+              ? "orchestrator"
+              : "worker",
           }),
         );
         const canonicalUpdates = lifecycleMetadataUpdates(record.raw, lifecycle);
@@ -886,7 +910,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
   function findSessionRecord(sessionId: SessionId): LocatedSession | null {
     for (const [projectId, project] of Object.entries(config.projects)) {
-      if (isDegradedProject(project)) continue;
       const sessionsDir = getProjectSessionsDir(project);
       const raw = readMetadataRaw(sessionsDir, sessionId);
       if (!raw) continue;
@@ -1058,9 +1081,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const project = config.projects[spawnConfig.projectId];
     if (!project) {
       throw new Error(`Unknown project: ${spawnConfig.projectId}`);
-    }
-    if (isDegradedProject(project)) {
-      throw new Error(`Project "${spawnConfig.projectId}" is degraded: ${project.resolveError}`);
     }
 
     const selection = resolveAgentSelection({
@@ -1327,6 +1347,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (Object.keys(session.metadata || {}).length > 0) {
         updateMetadata(sessionsDir, sessionId, session.metadata);
       }
+      invalidateCache();
     } catch (err) {
       // Clean up runtime and workspace on post-launch failure
       try {
@@ -1349,6 +1370,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       } catch {
         /* best effort */
       }
+      invalidateCache();
       throw err;
     }
 
@@ -1392,6 +1414,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     if (session.metadata["promptDelivered"]) {
       updateMetadata(sessionsDir, sessionId, session.metadata);
+      invalidateCache();
     }
 
     return session;
@@ -1401,9 +1424,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const project = config.projects[orchestratorConfig.projectId];
     if (!project) {
       throw new Error(`Unknown project: ${orchestratorConfig.projectId}`);
-    }
-    if (isDegradedProject(project)) {
-      throw new Error(`Project "${orchestratorConfig.projectId}" is degraded: ${project.resolveError}`);
     }
 
     const selection = resolveAgentSelection({
@@ -1667,6 +1687,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (Object.keys(session.metadata || {}).length > 0) {
         updateMetadata(sessionsDir, sessionId, session.metadata);
       }
+      invalidateCache();
     } catch (err) {
       // Clean up runtime on post-launch failure
       try {
@@ -1684,7 +1705,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   async function list(projectId?: string): Promise<Session[]> {
     const allSessions = Object.entries(config.projects).flatMap(([entryProjectId, project]) => {
       if (projectId && entryProjectId !== projectId) return [];
-      if (isDegradedProject(project)) return [];
+      if (!project.storageKey) return [];
       return loadActiveSessionRecords(project).map((record) => ({
         sessionName: record.sessionName,
         projectId: entryProjectId,
@@ -1710,7 +1731,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         // If stat fails, timestamps will fall back to current time
       }
 
-      const session = metadataToSession(sessionName, raw, sessionProjectId, createdAt, modifiedAt);
+      const session = metadataToSession(
+        sessionName,
+        raw,
+        sessionProjectId,
+        project.sessionPrefix,
+        createdAt,
+        modifiedAt,
+      );
       const selection = resolveSelectionForSession(project, sessionName, raw);
       const effectiveAgentName = selection.agentName;
       const plugins = resolvePlugins(project, effectiveAgentName);
@@ -1747,10 +1775,28 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return resolved.filter((session): session is Session => session !== null);
   }
 
+  async function listCached(projectId?: string): Promise<Session[]> {
+    if (sessionCache && Date.now() < sessionCache.expiresAt) {
+      return projectId
+        ? sessionCache.sessions.filter((session) => session.projectId === projectId)
+        : sessionCache.sessions;
+    }
+
+    const sessions = await list();
+    sessionCache = {
+      sessions,
+      expiresAt: Date.now() + SESSION_CACHE_TTL_MS,
+    };
+
+    return projectId
+      ? sessions.filter((session) => session.projectId === projectId)
+      : sessions;
+  }
+
   async function get(sessionId: SessionId): Promise<Session | null> {
     // Try to find the session in any project's sessions directory
     for (const [projectId, project] of Object.entries(config.projects)) {
-      if (isDegradedProject(project)) continue;
+      if (!project.storageKey) continue;
       const sessionsDir = getProjectSessionsDir(project);
       const raw = readMetadataRaw(sessionsDir, sessionId);
       if (!raw) continue;
@@ -1773,7 +1819,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         project.sessionPrefix,
       );
 
-      const session = metadataToSession(sessionId, repaired.raw, projectId, createdAt, modifiedAt);
+      const session = metadataToSession(
+        sessionId,
+        repaired.raw,
+        projectId,
+        project.sessionPrefix,
+        createdAt,
+        modifiedAt,
+      );
 
       const selection = resolveSelectionForSession(project, sessionId, repaired.raw);
       const effectiveAgentName = selection.agentName;
@@ -1865,6 +1918,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // Archive metadata
     deleteMetadata(sessionsDir, sessionId, true);
+    invalidateCache();
     if (didPurgeOpenCodeSession) {
       markArchivedOpenCodeCleanup(sessionsDir, sessionId);
     }
@@ -1975,7 +2029,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     for (const [projectKey, project] of Object.entries(config.projects)) {
       if (projectId && projectKey !== projectId) continue;
-      if (isDegradedProject(project)) continue;
 
       const sessionsDir = getProjectSessionsDir(project);
       for (const archivedId of listArchivedSessionIds(sessionsDir)) {
@@ -2046,6 +2099,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (discovered) {
         raw["opencodeSessionId"] = discovered;
         updateMetadata(sessionsDir, sessionId, { opencodeSessionId: discovered });
+        invalidateCache();
       }
     }
     const parsedHandle = raw["runtimeHandle"]
@@ -2382,6 +2436,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       prAutoDetect: "",
       ...lifecycleMetadataUpdates(raw, claimLifecycle),
     });
+    invalidateCache();
 
     for (const previousSessionId of takenOverFrom) {
       const previousRaw = readMetadataRaw(sessionsDir, previousSessionId);
@@ -2406,6 +2461,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           : {}),
         ...lifecycleMetadataUpdates(previousRaw, previousLifecycle),
       });
+      invalidateCache();
     }
 
     let githubAssigned = false;
@@ -2478,7 +2534,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // Fall back to archived metadata (killed/cleaned sessions)
     if (!raw) {
       for (const [key, proj] of Object.entries(config.projects)) {
-        if (isDegradedProject(proj)) continue;
         const dir = getProjectSessionsDir(proj);
         const archived = readArchivedMetadataRaw(dir, sessionId);
         if (archived) {
@@ -2516,7 +2571,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     //    metadataToSession sets activity: null, so without enrichment a crashed
     //    session (status "working", agent exited) would not be detected as terminal
     //    and isRestorable would reject it.
-    const session = metadataToSession(sessionId, raw, projectId);
+    const session = metadataToSession(sessionId, raw, projectId, project.sessionPrefix);
     const plugins = resolvePlugins(project, selection.agentName);
     await enrichSessionWithRuntimeState(session, plugins, true);
 
@@ -2679,6 +2734,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       runtimeHandle: JSON.stringify(handle),
       restoredAt: now,
     });
+    invalidateCache();
 
     // 10. Run postLaunchSetup (non-fatal)
     const restoredSession: Session = {
@@ -2704,6 +2760,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
         if (Object.keys(metadataUpdates).length > 0) {
           updateMetadata(sessionsDir, sessionId, metadataUpdates);
+          invalidateCache();
         }
       } catch {
         // Non-fatal — session is already running
@@ -2713,5 +2770,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR, remap };
+  return {
+    spawn,
+    spawnOrchestrator,
+    restore,
+    list,
+    listCached,
+    invalidateCache,
+    get,
+    kill,
+    cleanup,
+    send,
+    claimPR,
+    remap,
+  };
 }

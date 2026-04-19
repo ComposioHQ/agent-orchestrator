@@ -11,17 +11,24 @@
  */
 
 import { readFileSync, existsSync } from "node:fs";
-import { resolve, join, dirname } from "node:path";
+import { resolve, join, dirname, basename } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { ConfigNotFoundError, type ExternalPluginEntryRef, type OrchestratorConfig } from "./types.js";
+import {
+  ConfigNotFoundError,
+  ProjectResolveError,
+  type DegradedProjectEntry,
+  type ExternalPluginEntryRef,
+  type LoadedConfig,
+  type OrchestratorConfig,
+} from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
 import {
   getGlobalConfigPath,
   loadGlobalConfig,
-  resolveProjectIdentity,
 } from "./global-config.js";
+import { loadEffectiveProjectConfig } from "./project-resolver.js";
 
 function inferScmPlugin(project: {
   repo?: string;
@@ -193,8 +200,6 @@ const ProjectConfigSchema = z.object({
     .string()
     .regex(/^[a-zA-Z0-9_-]+$/, "sessionPrefix must match [a-zA-Z0-9_-]+")
     .optional(),
-  /** Unix timestamp of last shadow sync from local config (set by global config, read-only here). */
-  _shadowSyncedAt: z.number().optional(),
   /** Stable storage identity hash — set once at registration, never recomputed. */
   storageKey: z.string().optional(),
   /** Canonical git origin URL associated with the storage identity. */
@@ -500,9 +505,11 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
       project.name = id;
     }
 
-    // Derive session prefix from the canonical project ID if not set
+    // Derive session prefix from the project path basename if not set.
+    // This preserves the long-standing semantics on this branch, where
+    // `/repos/integrator` becomes `int` regardless of the config key.
     if (!project.sessionPrefix) {
-      project.sessionPrefix = generateSessionPrefix(id);
+      project.sessionPrefix = generateSessionPrefix(basename(project.path));
     }
 
     const inferredPlugin = inferScmPlugin(project);
@@ -523,32 +530,57 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
 
 /** Validate project uniqueness and session prefix collisions */
 function validateProjectUniqueness(config: OrchestratorConfig): void {
+  const projectIds = new Set<string>();
+  const storageKeys = new Map<string, string>();
+
+  for (const [projectId, project] of Object.entries(config.projects)) {
+    if (projectIds.has(projectId)) {
+      throw new Error(
+        `Duplicate project ID detected: "${projectId}"\n` +
+          `Each project entry must use a unique registry key.`,
+      );
+    }
+    projectIds.add(projectId);
+
+    if (!project.storageKey) continue;
+
+    const existingProjectId = storageKeys.get(project.storageKey);
+    if (existingProjectId && existingProjectId !== projectId) {
+      throw new Error(
+        `Duplicate storage key detected: "${project.storageKey}"\n` +
+          `Projects "${existingProjectId}" and "${projectId}" point at the same storage identity.\n\n` +
+          `This usually indicates a registration collision. Re-register or relink one of the projects so each projectId owns a unique storageKey.`,
+      );
+    }
+
+    storageKeys.set(project.storageKey, projectId);
+  }
+
   // Check for duplicate session prefixes
   const prefixes = new Set<string>();
   const prefixToProject: Record<string, string> = {};
 
-  for (const [configKey, project] of Object.entries(config.projects)) {
-    const prefix = project.sessionPrefix || generateSessionPrefix(configKey);
+  for (const [projectId, project] of Object.entries(config.projects)) {
+    const prefix = project.sessionPrefix || generateSessionPrefix(projectId);
 
     if (prefixes.has(prefix)) {
       const firstProjectKey = prefixToProject[prefix];
-      const firstProject = config.projects[firstProjectKey];
       throw new Error(
         `Duplicate session prefix detected: "${prefix}"\n` +
-          `Projects "${firstProjectKey}" and "${configKey}" would generate the same prefix.\n\n` +
+          `Projects "${firstProjectKey}" and "${projectId}" would generate the same prefix.\n\n` +
           `To fix this, add an explicit sessionPrefix to one of these projects:\n\n` +
           `projects:\n` +
           `  ${firstProjectKey}:\n` +
-          `    path: ${firstProject?.path}\n` +
+          `    path: ${config.projects[firstProjectKey]?.path}\n` +
           `    sessionPrefix: ${prefix}1  # Add explicit prefix\n` +
-          `  ${configKey}:\n` +
+          `  ${projectId}:\n` +
           `    path: ${project.path}\n` +
           `    sessionPrefix: ${prefix}2  # Add explicit prefix\n`,
       );
     }
 
     prefixes.add(prefix);
-    prefixToProject[prefix] = configKey;
+    prefixToProject[prefix] = projectId;
   }
 }
 
@@ -712,8 +744,8 @@ export function findConfigFile(startDir?: string): string | null {
 
 function buildEffectiveConfigFromFlatLocalPath(
   configPath: string,
-  localParsed: unknown,
-): OrchestratorConfig | null {
+  _localParsed: unknown,
+): LoadedConfig | null {
   const globalConfigPath = getGlobalConfigPath();
   const globalConfig = loadGlobalConfig(globalConfigPath);
   if (!globalConfig) return null;
@@ -725,20 +757,9 @@ function buildEffectiveConfigFromFlatLocalPath(
   });
   if (!entry) return null;
 
-  const [projectId, globalEntry] = entry;
-  const resolved = resolveProjectIdentity(projectId, globalConfig, globalConfigPath);
-  if (!resolved) return null;
-
-  const { _shadowSyncedAt: _shadowSyncedAt, ...shadowFields } = globalEntry;
-  void _shadowSyncedAt;
-
-  const localConfig =
-    localParsed && typeof localParsed === "object"
-      ? (localParsed as Record<string, unknown>)
-      : null;
-  if (!localConfig) return null;
-
-  return validateConfig({
+  const [projectId] = entry;
+  const project = loadEffectiveProjectConfig(projectId, globalConfig, globalConfigPath);
+  const config = validateConfig({
     port: globalConfig.port,
     terminalPort: globalConfig.terminalPort,
     directTerminalPort: globalConfig.directTerminalPort,
@@ -749,29 +770,37 @@ function buildEffectiveConfigFromFlatLocalPath(
     reactions: globalConfig.reactions,
     projects: {
       [projectId]: {
-        ...shadowFields,
-        ...localConfig,
-        name: resolved.name,
-        path: resolved.path,
-        sessionPrefix: resolved.sessionPrefix,
-        storageKey: resolved.storageKey,
+        ...project,
       },
     },
   });
+  return { ...config, degradedProjects: {} };
 }
 
-function buildEffectiveConfigFromGlobalConfigPath(configPath: string): OrchestratorConfig | null {
+function buildEffectiveConfigFromGlobalConfigPath(configPath: string): LoadedConfig | null {
   const globalConfig = loadGlobalConfig(configPath);
   if (!globalConfig) return null;
 
-  const projects = Object.fromEntries(
-    Object.keys(globalConfig.projects).map((projectId) => [
-      projectId,
-      resolveProjectIdentity(projectId, globalConfig, configPath),
-    ]),
-  );
+  const projects: Record<string, OrchestratorConfig["projects"][string]> = {};
+  const degradedProjects: Record<string, DegradedProjectEntry> = {};
 
-  return validateConfig({
+  for (const [projectId, entry] of Object.entries(globalConfig.projects)) {
+    try {
+      projects[projectId] = loadEffectiveProjectConfig(projectId, globalConfig, configPath);
+    } catch (error) {
+      if (!(error instanceof ProjectResolveError)) {
+        throw error;
+      }
+      degradedProjects[projectId] = {
+        projectId,
+        path: entry.path,
+        storageKey: entry.storageKey ?? "",
+        resolveError: error.message,
+      };
+    }
+  }
+
+  const config = validateConfig({
     port: globalConfig.port,
     terminalPort: globalConfig.terminalPort,
     directTerminalPort: globalConfig.directTerminalPort,
@@ -782,6 +811,7 @@ function buildEffectiveConfigFromGlobalConfigPath(configPath: string): Orchestra
     reactions: globalConfig.reactions,
     projects,
   });
+  return { ...config, degradedProjects };
 }
 
 // =============================================================================
@@ -794,7 +824,7 @@ export function findConfig(startDir?: string): string | null {
 }
 
 /** Load and validate config from a YAML file */
-export function loadConfig(configPath?: string): OrchestratorConfig {
+export function loadConfig(configPath?: string): LoadedConfig {
   // Priority: 1. Explicit param, 2. Search (including AO_CONFIG_PATH env var)
   // findConfigFile treats AO_CONFIG_PATH as authoritative when present.
   const path = configPath ?? findConfigFile();
@@ -816,13 +846,16 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
 
   // Set the config path in the config object for hash generation
   config.configPath = path;
+  if (!("degradedProjects" in config)) {
+    (config as LoadedConfig).degradedProjects = {};
+  }
 
-  return config;
+  return config as LoadedConfig;
 }
 
 /** Load config and return both config and resolved path */
 export function loadConfigWithPath(configPath?: string): {
-  config: OrchestratorConfig;
+  config: LoadedConfig;
   path: string;
 } {
   const path = configPath ?? findConfigFile();
@@ -844,8 +877,11 @@ export function loadConfigWithPath(configPath?: string): {
 
   // Set the config path in the config object for hash generation
   config.configPath = path;
+  if (!("degradedProjects" in config)) {
+    (config as LoadedConfig).degradedProjects = {};
+  }
 
-  return { config, path };
+  return { config: config as LoadedConfig, path };
 }
 
 /** Validate a raw config object */

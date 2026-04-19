@@ -17,7 +17,7 @@ import {
   createPluginRegistry,
   createSessionManager,
   createLifecycleManager,
-  type OrchestratorConfig,
+  type LoadedConfig,
   type PluginRegistry,
   type OpenCodeSessionManager,
   type LifecycleManager,
@@ -42,7 +42,7 @@ import pluginTrackerGithub from "@aoagents/ao-plugin-tracker-github";
 import pluginTrackerLinear from "@aoagents/ao-plugin-tracker-linear";
 
 export interface Services {
-  config: OrchestratorConfig;
+  config: LoadedConfig;
   registry: PluginRegistry;
   sessionManager: OpenCodeSessionManager;
   lifecycleManager: LifecycleManager;
@@ -126,7 +126,7 @@ const processedIssues = new Set<string>();
 /** Label GitHub issues for verification when their PRs have been merged. */
 async function labelIssuesForVerification(
   sessions: Session[],
-  config: OrchestratorConfig,
+  config: LoadedConfig,
   registry: PluginRegistry,
 ): Promise<void> {
   const mergedSessions = sessions.filter(
@@ -178,7 +178,7 @@ async function labelIssuesForVerification(
  * back to agent:backlog so pollBacklog picks them up on the next cycle.
  */
 async function relabelReopenedIssues(
-  config: OrchestratorConfig,
+  config: LoadedConfig,
   registry: PluginRegistry,
 ): Promise<void> {
   for (const [, project] of Object.entries(config.projects)) {

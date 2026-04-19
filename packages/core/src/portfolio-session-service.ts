@@ -23,7 +23,7 @@ export async function listPortfolioSessions(
   const results: PortfolioSession[] = [];
 
   for (const project of portfolio) {
-    if (!project.enabled || project.degraded) continue;
+    if (!project.enabled || project.resolveError) continue;
 
     try {
       let timerId: ReturnType<typeof setTimeout> | undefined;
@@ -137,7 +137,7 @@ export async function getPortfolioSessionCounts(portfolio: PortfolioProject[]): 
   const TERMINAL = new Set(["killed", "terminated", "done", "cleanup", "errored", "merged"]);
 
   for (const project of portfolio) {
-    if (!project.enabled || project.degraded) {
+    if (!project.enabled || project.resolveError) {
       counts[project.id] = { total: 0, active: 0 };
       continue;
     }

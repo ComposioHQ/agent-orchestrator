@@ -251,13 +251,11 @@ export {
   loadLocalProjectConfig,
   LocalProjectConfigSchema,
   loadLocalProjectConfigDetailed,
-  syncProjectShadow,
   registerProjectInGlobalConfig,
   relinkProjectInGlobalConfig,
   StorageKeyCollisionError,
   buildEffectiveProjectConfig,
   resolveProjectIdentity,
-  isProjectShadowStale,
   isOldConfigFormat,
   migrateToGlobalConfig,
 } from "./global-config.js";
@@ -269,6 +267,11 @@ export type {
   RegisterProjectOptions,
   RelinkProjectOptions,
 } from "./global-config.js";
+
+export {
+  loadEffectiveProjectConfig,
+  iterateAllProjects,
+} from "./project-resolver.js";
 
 // Config generator — auto-generate config from repo URL
 export {

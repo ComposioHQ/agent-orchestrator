@@ -181,6 +181,7 @@ describe("ProjectSidebar", () => {
             id: "project-1-orchestrator",
             projectId: "project-1",
             summary: "Orchestrator",
+            metadata: { role: "orchestrator" },
           }),
           makeSession({
             id: "worker-1",

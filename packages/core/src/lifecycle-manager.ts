@@ -348,7 +348,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     for (const session of sessions) {
       if (!session.pr) continue;
       const project = config.projects[session.projectId];
-      if (!project?.scm?.plugin || project.resolveError) continue;
+      if (!project?.scm?.plugin) continue;
 
       const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
       if (seenPRKeys.has(prKey)) continue;
@@ -462,13 +462,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       return {
         status: session.status,
         evidence: "project_missing",
-        detectingAttempts: parseAttemptCount(session.metadata["detectingAttempts"]),
-      };
-    }
-    if (typeof project.resolveError === "string" && project.resolveError.length > 0) {
-      return {
-        status: session.status,
-        evidence: "project_resolve_error",
         detectingAttempts: parseAttemptCount(session.metadata["detectingAttempts"]),
       };
     }
@@ -1050,7 +1043,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     reactionKey: string,
   ): ReactionConfig | null {
     const project = config.projects[session.projectId];
-    if (project?.resolveError) return null;
     const globalReaction = config.reactions[reactionKey];
     const projectReaction = project?.reactions?.[reactionKey];
     const reactionConfig = projectReaction
@@ -1065,7 +1057,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   ): void {
     const project = config.projects[session.projectId];
     if (!project) return;
-    if (typeof project.resolveError === "string" && project.resolveError.length > 0) return;
 
     const sessionsDir = getSessionsDir(project.storageKey);
     const lifecycleUpdates = buildLifecycleMetadataPatch(
@@ -1101,7 +1092,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   ): Promise<void> {
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
-    if (typeof project.resolveError === "string" && project.resolveError.length > 0) return;
 
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
@@ -1304,7 +1294,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   ): Promise<void> {
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
-    if (typeof project.resolveError === "string" && project.resolveError.length > 0) return;
 
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
@@ -1436,7 +1425,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   ): Promise<void> {
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
-    if (typeof project.resolveError === "string" && project.resolveError.length > 0) return;
 
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;

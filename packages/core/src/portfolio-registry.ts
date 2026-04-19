@@ -20,12 +20,10 @@ import {
   generateSessionPrefix,
 } from "./paths.js";
 import {
-  getGlobalConfigPath,
   loadGlobalConfig,
   loadLocalProjectConfig,
   registerProjectInGlobalConfig,
   relinkProjectInGlobalConfig,
-  resolveProjectIdentity,
   saveGlobalConfig,
   type RegisterProjectOptions,
   type RelinkProjectOptions,
@@ -230,59 +228,79 @@ function applyPreferences(
 }
 
 function projectFromGlobalConfig(): PortfolioProject[] {
-  const globalConfig = loadGlobalConfig();
-  if (!globalConfig) return [];
-
-  const globalConfigPath = getGlobalConfigPath();
-  return Object.entries(globalConfig.projects).map(([id, entry]) => {
-    const resolved = resolveProjectIdentity(id, globalConfig, globalConfigPath);
-    return {
-      id,
-      name: (typeof entry.name === "string" && entry.name.length > 0) ? entry.name : id,
-      configPath: globalConfigPath,
-      configProjectKey: id,
-      repoPath: entry.path,
-      storageKey: resolved?.storageKey ?? "",
-      repo: typeof entry.repo === "string" ? entry.repo : undefined,
-      defaultBranch: typeof entry.defaultBranch === "string" ? entry.defaultBranch : undefined,
-      sessionPrefix:
-        typeof entry.sessionPrefix === "string" && entry.sessionPrefix.length > 0
-          ? entry.sessionPrefix
-          : generateSessionPrefix(id),
-      source: "config",
-      enabled: true,
-      pinned: false,
-      lastSeenAt: new Date().toISOString(),
-      ...(resolved?.resolveError
-        ? {
-            degraded: true,
-            degradedReason: resolved.resolveError,
-          }
-        : {}),
-    };
-  });
+  try {
+    const config = loadConfig();
+    const allEntries = [
+      ...Object.entries(config.projects).map(([id, project]) => ({
+        id,
+        name: project.name ?? id,
+        configPath: config.configPath,
+        configProjectKey: id,
+        repoPath: project.path,
+        storageKey: project.storageKey,
+        repo: project.repo,
+        defaultBranch: project.defaultBranch,
+        sessionPrefix: project.sessionPrefix ?? generateSessionPrefix(id),
+        source: "config" as const,
+        enabled: true,
+        pinned: false,
+        lastSeenAt: new Date().toISOString(),
+      })),
+      ...Object.entries(config.degradedProjects).map(([id, project]) => ({
+        id,
+        name: id,
+        configPath: config.configPath,
+        configProjectKey: id,
+        repoPath: project.path,
+        storageKey: project.storageKey,
+        sessionPrefix: generateSessionPrefix(id),
+        source: "config" as const,
+        enabled: true,
+        pinned: false,
+        lastSeenAt: new Date().toISOString(),
+        resolveError: project.resolveError,
+      })),
+    ];
+    return allEntries;
+  } catch {
+    return [];
+  }
 }
 
 function fallbackPortfolioFromLoadedConfig(): PortfolioProject[] {
   try {
     const config = loadConfig();
-    return Object.entries(config.projects).map(([id, project]) => ({
-      id,
-      name: project.name ?? id,
-      configPath: config.configPath,
-      configProjectKey: id,
-      repoPath: project.path,
-      storageKey: project.storageKey,
-      repo: project.repo,
-      defaultBranch: project.defaultBranch,
-      sessionPrefix: project.sessionPrefix ?? generateSessionPrefix(id),
-      source: "config",
-      enabled: true,
-      pinned: false,
-      lastSeenAt: new Date().toISOString(),
-      degraded: typeof project.resolveError === "string" && project.resolveError.length > 0,
-      degradedReason: project.resolveError,
-    }));
+    return [
+      ...Object.entries(config.projects).map(([id, project]) => ({
+        id,
+        name: project.name ?? id,
+        configPath: config.configPath,
+        configProjectKey: id,
+        repoPath: project.path,
+        storageKey: project.storageKey,
+        repo: project.repo,
+        defaultBranch: project.defaultBranch,
+        sessionPrefix: project.sessionPrefix ?? generateSessionPrefix(id),
+        source: "config" as const,
+        enabled: true,
+        pinned: false,
+        lastSeenAt: new Date().toISOString(),
+      })),
+      ...Object.entries(config.degradedProjects).map(([id, project]) => ({
+        id,
+        name: id,
+        configPath: config.configPath,
+        configProjectKey: id,
+        repoPath: project.path,
+        storageKey: project.storageKey,
+        sessionPrefix: generateSessionPrefix(id),
+        source: "config" as const,
+        enabled: true,
+        pinned: false,
+        lastSeenAt: new Date().toISOString(),
+        resolveError: project.resolveError,
+      })),
+    ];
   } catch {
     return [];
   }

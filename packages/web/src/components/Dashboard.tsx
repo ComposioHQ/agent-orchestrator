@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
+  NON_RESTORABLE_STATUSES,
   type DashboardSession,
   type AttentionLevel,
   type DashboardOrchestratorLink,
@@ -82,6 +83,7 @@ function DoneCard({
     session.id;
   const isMerged = session.pr?.state === "merged";
   const isTerminated = session.status === "killed" || session.status === "terminated";
+  const canRestore = !NON_RESTORABLE_STATUSES.has(session.status);
   const badgeLabel = isMerged ? "merged" : isTerminated ? "terminated" : "done";
   const badgeClass = `done-card__badge ${isTerminated ? "done-card__badge--terminated" : "done-card__badge--merged"}`;
 
@@ -107,16 +109,18 @@ function DoneCard({
           </a>
         ) : null}
         <span className="done-card__age">{formatRelativeTimeCompact(session.lastActivityAt)}</span>
-        <button
-          type="button"
-          className="done-card__restore"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRestore(session.id);
-          }}
-        >
-          Restore
-        </button>
+        {canRestore ? (
+          <button
+            type="button"
+            className="done-card__restore"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRestore(session.id);
+            }}
+          >
+            Restore
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -746,4 +750,3 @@ function ProjectMetric({ label, value, tone }: { label: string; value: number; t
     </div>
   );
 }
-

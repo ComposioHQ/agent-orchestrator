@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { parse as parseYaml } from "yaml";
 import {
   loadGlobalConfig,
   registerProjectInGlobalConfig,
@@ -57,10 +58,10 @@ describe("global-config storage identity", () => {
     return createHash("sha256").update(resolve(projectPath)).digest("hex").slice(0, 12);
   }
 
-  it("preserves storage identity fields during shadow sync-friendly registration", () => {
+  it("registers identity fields without persisting behavior fields", () => {
     const repoPath = createRepo("demo", "git@github.com:OpenAI/demo.git");
 
-    registerProjectInGlobalConfig("demo", "Demo", repoPath, { agent: "codex" }, configPath);
+    registerProjectInGlobalConfig("demo", "Demo", repoPath, { agent: "codex", runtime: "tmux" }, configPath);
 
     const config = loadGlobalConfig(configPath);
     const expectedStorageKey = deriveStorageKey({
@@ -70,12 +71,22 @@ describe("global-config storage identity", () => {
     });
 
     expect(config?.projects["demo"]).toMatchObject({
-      name: "Demo",
+      projectId: "demo",
+      displayName: "Demo",
       path: repoPath,
       storageKey: expectedStorageKey,
-      originUrl: "https://github.com/OpenAI/demo",
-      agent: "codex",
+      defaultBranch: "main",
+      sessionPrefix: "demo",
+      source: "ao-project-add",
+      repo: {
+        owner: "OpenAI",
+        name: "demo",
+        platform: "github",
+        originUrl: "https://github.com/OpenAI/demo",
+      },
     });
+    expect(config?.projects["demo"]).not.toHaveProperty("agent");
+    expect(config?.projects["demo"]).not.toHaveProperty("runtime");
   });
 
   it("detects storage-key collisions for different project ids", () => {
@@ -133,7 +144,12 @@ describe("global-config storage identity", () => {
     expect(existsSync(getProjectBaseDir(result.storageKey))).toBe(true);
     expect(loadGlobalConfig(configPath)?.projects["demo"]).toMatchObject({
       storageKey: result.storageKey,
-      originUrl: "https://gitlab.com/OpenAI/demo",
+      repo: {
+        owner: "OpenAI",
+        name: "demo",
+        platform: "gitlab",
+        originUrl: "https://gitlab.com/OpenAI/demo",
+      },
     });
   });
 
@@ -149,7 +165,7 @@ describe("global-config storage identity", () => {
       saveGlobalConfig(
         makeGlobalConfig({
           legacy: {
-            name: "Legacy",
+            displayName: "Legacy",
             path: repoPath,
           },
         }),
@@ -166,7 +182,12 @@ describe("global-config storage identity", () => {
       expect(resolved?.storageKey).toBe(expectedStorageKey);
       expect(loadGlobalConfig(configPath)?.projects["legacy"]).toMatchObject({
         storageKey: expectedStorageKey,
-        originUrl: "https://github.com/OpenAI/legacy",
+        repo: {
+          owner: "OpenAI",
+          name: "legacy",
+          platform: "github",
+          originUrl: "https://github.com/OpenAI/legacy",
+        },
       });
       expect(existsSync(oldBaseDir)).toBe(false);
       expect(existsSync(getProjectBaseDir(expectedStorageKey))).toBe(true);
@@ -178,12 +199,63 @@ describe("global-config storage identity", () => {
     }
   });
 
-  it("uses the synthetic local url during migration when no origin can be read", () => {
+  it("strips stale shadow fields from legacy entries and rewrites the config", () => {
+    const repoPath = createRepo("legacy", "https://github.com/OpenAI/demo.git");
+    writeFileSync(
+      configPath,
+      [
+        "port: 3000",
+        "readyThresholdMs: 300000",
+        "defaults:",
+        "  runtime: tmux",
+        "  agent: claude-code",
+        "  workspace: worktree",
+        "  notifiers: []",
+        "projects:",
+        "  legacy:",
+        `    path: ${repoPath}`,
+        "    name: Legacy",
+        "    agent: codex",
+        "    runtime: docker",
+        "    _shadowSyncedAt: 123",
+        "notifiers: {}",
+        "notificationRouting: {}",
+        "reactions: {}",
+        "",
+      ].join("\n"),
+    );
+
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const config = loadGlobalConfig(configPath);
+      expect(config?.projects["legacy"]).toMatchObject({
+        projectId: "legacy",
+        displayName: "Legacy",
+        path: repoPath,
+      });
+      expect(config?.projects["legacy"]).not.toHaveProperty("agent");
+      expect(config?.projects["legacy"]).not.toHaveProperty("runtime");
+
+      const rewritten = parseYaml(readFileSync(configPath, "utf-8")) as {
+        projects: Record<string, Record<string, unknown>>;
+      };
+      expect(rewritten.projects.legacy).not.toHaveProperty("agent");
+      expect(rewritten.projects.legacy).not.toHaveProperty("runtime");
+      expect(rewritten.projects.legacy).not.toHaveProperty("_shadowSyncedAt");
+      expect(consoleInfo).toHaveBeenCalledWith(
+        "[ao] stripping 3 stale shadow fields from project legacy",
+      );
+    } finally {
+      consoleInfo.mockRestore();
+    }
+  });
+
+  it("uses the synthetic local storage key when no origin can be read", () => {
     const repoPath = createRepo("local-only");
     saveGlobalConfig(
       makeGlobalConfig({
         local: {
-          name: "Local",
+          displayName: "Local",
           path: repoPath,
         },
       }),
@@ -198,6 +270,6 @@ describe("global-config storage identity", () => {
     });
 
     expect(resolved?.storageKey).toBe(expectedStorageKey);
-    expect(loadGlobalConfig(configPath)?.projects["local"]?.originUrl).toBe(`local://${repoPath}`);
+    expect(loadGlobalConfig(configPath)?.projects["local"]?.repo).toBeUndefined();
   });
 });

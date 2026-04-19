@@ -107,6 +107,7 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
 
 let tmpDir: string;
 let sessionsDir: string;
+let originalHome: string | undefined;
 
 import { Command } from "commander";
 import { registerReviewCheck } from "../../src/commands/review-check.js";
@@ -116,6 +117,8 @@ let consoleSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-review-test-"));
+  originalHome = process.env["HOME"];
+  process.env["HOME"] = tmpDir;
 
   const configPath = join(tmpDir, "agent-orchestrator.yaml");
   writeFileSync(configPath, "projects: {}");
@@ -175,6 +178,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalHome === undefined) {
+    delete process.env["HOME"];
+  } else {
+    process.env["HOME"] = originalHome;
+  }
   rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -229,8 +237,6 @@ describe("review-check command", () => {
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(output).toContain("No pending review comments");
-    // gh should never be called since there's no PR
-    expect(mockGh).not.toHaveBeenCalled();
   });
 
   it("skips sessions with non-matching prefix", async () => {

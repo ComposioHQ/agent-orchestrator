@@ -1,32 +1,3 @@
-/**
- * Global config — the fixed-location registry + shadow copies.
- *
- * Option C (Hybrid Local + Shadow) architecture:
- *
- *   Global config  (~/.agent-orchestrator/config.yaml, XDG-aware)
- *     - Project registry: identity fields (name, path) per project
- *     - Shadow copies: behavior fields synced from local on `ao start`
- *     - Global operational settings: port, defaults, notifiers, reactions
- *
- *   Local config  (<project>/agent-orchestrator.yaml)
- *     - Behavior fields only (repo, agent, runtime, workspace, tracker, …)
- *     - No identity fields (name, path, sessionPrefix)
- *     - Flat YAML — no `projects:` wrapper
- *     - Source of truth; shadow is a convenience copy for remote/Docker use
- *
- * Load modes:
- *   In-project:  global (identity) + local (behavior) → merged effective config
- *   Remote:      global shadow only (no local config access needed)
- *   ao start:    validate local → sync shadow atomically → start daemon
- *
- * Sync rules:
- *   - Shadow updated ONLY on `ao start`
- *   - Fields matching *Token/*Key/*Secret/*Password excluded with warning
- *   - Identity fields (name, path) never overwritten by shadow sync
- *   - Unknown / future fields preserved as opaque passthrough
- *   - Write is always atomic (temp-file + rename)
- */
-
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -41,7 +12,9 @@ import { homedir } from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 import { atomicWriteFileSync } from "./atomic-write.js";
+import { detectScmPlatform } from "./config-generator.js";
 import { withFileLockSync } from "./file-lock.js";
+import { ProjectResolveError } from "./types.js";
 import {
   generateSessionPrefix,
   getAoBaseDir,
@@ -53,19 +26,6 @@ import { deriveStorageKey, normalizeOriginUrl } from "./storage-key.js";
 function globalConfigLockPath(configPath: string): string {
   return `${configPath}.lock`;
 }
-
-// =============================================================================
-// CONSTANTS
-// =============================================================================
-
-/** Identity fields owned by the global registry — never overwritten by shadow. */
-const IDENTITY_FIELDS = new Set(["name", "path", "sessionPrefix", "storageKey", "originUrl"]);
-
-/** Internal fields prefixed with underscore (e.g. _shadowSyncedAt). */
-const INTERNAL_FIELD_PREFIX = "_";
-
-/** Fields excluded from shadow sync (secret hygiene). Case-insensitive suffix match. */
-const SECRET_SUFFIX_PATTERN = /(token|key|secret|password)$/i;
 
 export class StorageKeyCollisionError extends Error {
   constructor(
@@ -105,7 +65,7 @@ export interface RelinkProjectOptions {
  * NOTE: This intentionally does NOT read AO_CONFIG_PATH. That env var is used
  * by findConfigFile() to locate any config (including project-local ones).
  * Using it here would risk overwriting a project-local config with global-format
- * YAML when syncProjectShadow/registerProjectInGlobalConfig call this function.
+ * YAML when registry helpers call this function.
  */
 export function getGlobalConfigPath(): string {
   if (process.env["AO_GLOBAL_CONFIG"]) {
@@ -124,31 +84,42 @@ export function getGlobalConfigPath(): string {
 // GLOBAL CONFIG SCHEMA
 // =============================================================================
 
-/**
- * Per-project entry in the global registry.
- * Contains identity fields + shadow behavior fields (passthrough).
- * Internal _shadowSyncedAt tracks last successful sync timestamp.
- */
-export const GlobalProjectEntrySchema = z
-  .object({
-    /** Display name (identity — never overwritten by shadow sync). */
-    name: z.string().optional(),
-    /** Absolute path to the project root (identity). */
-    path: z.string(),
-    /** Persisted storage hash — assigned once at registration, never recomputed. */
-    storageKey: z.string().optional(),
-    /** Canonical git origin URL used to derive the storage key. */
-    originUrl: z.string().optional(),
-    /** Unix timestamp of last successful shadow sync from local config. */
-    _shadowSyncedAt: z.number().optional(),
-  })
-  .passthrough();
+const GlobalRepoIdentitySchema = z.object({
+  owner: z.string(),
+  name: z.string(),
+  platform: z.enum(["github", "gitlab", "bitbucket"]),
+  originUrl: z.string(),
+});
+
+const GLOBAL_PROJECT_ENTRY_FIELDS = new Set([
+  "projectId",
+  "path",
+  "storageKey",
+  "repo",
+  "defaultBranch",
+  "source",
+  "registeredAt",
+  "displayName",
+  "sessionPrefix",
+]);
+
+export const GlobalProjectEntrySchema = z.object({
+  projectId: z.string().optional(),
+  path: z.string(),
+  storageKey: z.string().optional(),
+  repo: GlobalRepoIdentitySchema.optional(),
+  defaultBranch: z.string().optional(),
+  source: z.string().optional(),
+  registeredAt: z.number().optional(),
+  displayName: z.string().optional(),
+  sessionPrefix: z.string().optional(),
+});
 
 export type GlobalProjectEntry = z.infer<typeof GlobalProjectEntrySchema>;
 
 /**
  * Global config schema.
- * Operational settings + project registry with shadow behavior fields.
+ * Operational settings + project registry with identity fields only.
  */
 export const GlobalConfigSchema = z
   .object({
@@ -197,11 +168,9 @@ export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
  * Flat, behavior-only local project config.
  * Lives at <project>/agent-orchestrator.yaml.
  *
- * Does NOT contain identity fields: name, path, sessionPrefix.
+ * Does NOT contain identity fields: projectId, path, storageKey, repo,
+ * defaultBranch, source, registeredAt, displayName, sessionPrefix.
  * Those are owned by the global registry.
- *
- * Uses passthrough() for forward compatibility — unknown fields from
- * future ao versions are stored in the shadow without re-parsing.
  */
 export const LocalProjectConfigSchema = z
   .object({
@@ -266,6 +235,15 @@ export interface LocalProjectConfigLoadResult {
   error?: string;
 }
 
+interface RawGlobalConfigProjectSanitization {
+  strippedFieldCount: number;
+}
+
+interface RawGlobalConfigSanitization {
+  changed: boolean;
+  strippedProjects: Array<{ projectId: string; strippedFieldCount: number }>;
+}
+
 // =============================================================================
 // LOAD / SAVE
 // =============================================================================
@@ -281,6 +259,27 @@ export function loadGlobalConfig(configPath?: string): GlobalConfig | null {
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
   if (!parsed || typeof parsed !== "object") return null;
+
+  const sanitized = sanitizeRawGlobalConfig(parsed as Record<string, unknown>);
+  if (sanitized.changed) {
+    withFileLockSync(globalConfigLockPath(path), () => {
+      const freshRaw = readFileSync(path, "utf-8");
+      const freshParsed = parseYaml(freshRaw);
+      if (!freshParsed || typeof freshParsed !== "object") return;
+
+      const freshSanitized = sanitizeRawGlobalConfig(freshParsed as Record<string, unknown>);
+      if (!freshSanitized.changed) return;
+
+      for (const project of freshSanitized.strippedProjects) {
+        console.info(
+          `[ao] stripping ${project.strippedFieldCount} stale shadow fields from project ${project.projectId}`,
+        );
+      }
+
+      const rewrittenConfig = GlobalConfigSchema.parse(freshParsed);
+      saveGlobalConfig(rewrittenConfig, path);
+    });
+  }
 
   const config = GlobalConfigSchema.parse(parsed);
 
@@ -447,6 +446,33 @@ function deriveProjectStorageIdentity(projectPath: string, originUrlOverride?: s
   };
 }
 
+function normalizeRepoIdentity(originUrl: string | null): z.infer<typeof GlobalRepoIdentitySchema> | undefined {
+  if (!originUrl) return undefined;
+
+  const normalizedOriginUrl = normalizeOriginUrl(originUrl);
+  if (!normalizedOriginUrl.startsWith("https://")) return undefined;
+
+  try {
+    const parsed = new URL(normalizedOriginUrl);
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    if (segments.length < 2) return undefined;
+
+    const name = segments[segments.length - 1];
+    const owner = segments.slice(0, -1).join("/");
+    const platform = detectScmPlatform(parsed.host);
+    if (platform === "unknown") return undefined;
+
+    return {
+      owner,
+      name,
+      platform,
+      originUrl: normalizedOriginUrl,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function findStorageKeyOwner(
   globalConfig: GlobalConfig,
   storageKey: string,
@@ -487,7 +513,7 @@ function ensureProjectStorageIdentity(
   const entry = globalConfig.projects[projectId] as (GlobalProjectEntry & Record<string, unknown>) | undefined;
   if (!entry?.path) return null;
 
-  if (typeof entry.storageKey === "string" && typeof entry.originUrl === "string") {
+  if (typeof entry.storageKey === "string") {
     return entry;
   }
 
@@ -510,7 +536,7 @@ function ensureProjectStorageIdentity(
       typeof freshEntry.storageKey === "string" ? freshEntry.storageKey : legacyProjectHash(freshEntry.path);
     const freshIdentity = deriveProjectStorageIdentity(
       freshEntry.path,
-      typeof freshEntry.originUrl === "string" ? freshEntry.originUrl : undefined,
+      typeof freshEntry.repo?.originUrl === "string" ? freshEntry.repo.originUrl : undefined,
     );
 
     const collisionOwner = findStorageKeyOwner(fresh, freshIdentity.storageKey, projectId);
@@ -532,14 +558,17 @@ function ensureProjectStorageIdentity(
       moveStorageDirectory(legacyDir, targetDir);
     }
 
+    freshEntry.projectId = projectId;
     freshEntry.storageKey = freshIdentity.storageKey;
-    freshEntry.originUrl = freshIdentity.originUrl ?? `local://${resolve(freshIdentity.gitRoot)}`;
+    if (!freshEntry.repo) {
+      freshEntry.repo = normalizeRepoIdentity(freshIdentity.originUrl);
+    }
     saveGlobalConfig(fresh, configPath);
 
     entry.storageKey = freshEntry.storageKey;
-    entry.originUrl = freshEntry.originUrl;
+    entry.repo = freshEntry.repo;
     console.info(
-      `[ao] migrated storage identity for "${projectId}" to "${freshEntry.storageKey}" (${freshEntry.originUrl})`,
+      `[ao] migrated storage identity for "${projectId}" to "${freshEntry.storageKey}" (${freshEntry.repo?.originUrl ?? `local://${resolve(freshIdentity.gitRoot)}`})`,
     );
   };
 
@@ -553,79 +582,6 @@ function ensureProjectStorageIdentity(
 }
 
 // =============================================================================
-// SHADOW SYNC
-// =============================================================================
-
-/**
- * Sync local project behavior fields into the global config shadow, atomically.
- *
- * Called by `ao start` after validating local config.
- *
- * Rules:
- *   - Identity fields (name, path, sessionPrefix, storageKey) are never overwritten
- *   - Fields starting with `_` (internal) are excluded
- *   - Fields matching *Token/*Key/*Secret/*Password are excluded (warn)
- *   - All other fields from localConfig are written verbatim (passthrough)
- *   - _shadowSyncedAt is set to current Unix timestamp
- *   - Write is atomic
- */
-export function syncProjectShadow(
-  projectId: string,
-  localConfig: LocalProjectConfig,
-  globalConfigPath?: string,
-): void {
-  const configPath = globalConfigPath ?? getGlobalConfigPath();
-  withFileLockSync(globalConfigLockPath(configPath), () => {
-  const globalConfig = loadGlobalConfig(configPath) ?? makeEmptyGlobalConfig();
-
-  const existing = globalConfig.projects[projectId] as
-    | (GlobalProjectEntry & Record<string, unknown>)
-    | undefined;
-
-  if (!existing || !existing.path) {
-    throw new Error(
-      `syncProjectShadow: project "${projectId}" is not registered in the global config. ` +
-        `Call registerProjectInGlobalConfig() first.`,
-    );
-  }
-
-  // Build shadow from local config fields
-  const shadowFields: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(localConfig as Record<string, unknown>)) {
-    if (IDENTITY_FIELDS.has(key)) continue;
-    if (key.startsWith(INTERNAL_FIELD_PREFIX)) continue;
-    if (SECRET_SUFFIX_PATTERN.test(key)) {
-      process.stderr.write(
-        `ao: warning — excluding "${key}" from shadow sync (secret-like field name). ` +
-          `Use environment variables for secrets.\n`,
-      );
-      continue;
-    }
-    shadowFields[key] = value;
-  }
-
-  // Rebuild project entry: preserve identity, overwrite behavior
-  globalConfig.projects[projectId] = {
-    ...(existing.name !== null && existing.name !== undefined ? { name: existing.name } : {}),
-    path: existing.path,
-    ...(typeof existing.sessionPrefix === "string"
-      ? { sessionPrefix: existing.sessionPrefix }
-      : {}),
-    ...(typeof existing.storageKey === "string"
-      ? { storageKey: existing.storageKey }
-      : {}),
-    ...(typeof existing.originUrl === "string"
-      ? { originUrl: existing.originUrl }
-      : {}),
-    ...shadowFields,
-    _shadowSyncedAt: Math.floor(Date.now() / 1000),
-  };
-
-  saveGlobalConfig(globalConfig, configPath);
-  });
-}
-
-// =============================================================================
 // REGISTRATION
 // =============================================================================
 
@@ -634,8 +590,7 @@ export function syncProjectShadow(
  *
  * - If the project already exists, identity fields are preserved and only
  *   updated if explicitly provided.
- * - If localConfig is provided, the shadow is synced immediately after
- *   writing the registry entry.
+ * - Local behavior is never written into the registry.
  * - Write is atomic.
  */
 export function registerProjectInGlobalConfig(
@@ -682,22 +637,26 @@ export function registerProjectInGlobalConfig(
       throw new StorageKeyCollisionError(storageKey, collisionOwner, projectId);
     }
 
+    const repoIdentity = existing?.repo ?? normalizeRepoIdentity(identity.originUrl);
+    const defaultBranch = existing?.defaultBranch ?? localConfig?.defaultBranch ?? "main";
+    const sessionPrefix = existing?.sessionPrefix ?? generateSessionPrefix(basename(projectPath));
+    const source = existing?.source ?? (repoIdentity ? "ao-project-add" : "local");
+    const registeredAt = existing?.registeredAt ?? Math.floor(Date.now() / 1000);
+
     globalConfig.projects[projectId] = {
-      ...(existing ?? {}),
-      name,
+      projectId,
       path: projectPath,
       storageKey,
-      originUrl:
-        (existing?.originUrl as string | undefined) ??
-        (identity.originUrl ?? `local://${resolve(identity.gitRoot)}`),
+      ...(repoIdentity ? { repo: repoIdentity } : {}),
+      defaultBranch,
+      source,
+      registeredAt,
+      displayName: name,
+      sessionPrefix,
     };
 
     saveGlobalConfig(globalConfig, configPath);
   });
-
-  if (localConfig) {
-    syncProjectShadow(projectId, localConfig, configPath);
-  }
 }
 
 // =============================================================================
@@ -709,9 +668,9 @@ export function registerProjectInGlobalConfig(
  * with local behavior config.
  *
  * Load order:
- *   1. Global entry supplies identity (name, path) + shadow behavior
- *   2. Local flat config (if present) overrides shadow behavior with fresh fields
- *   3. Shadow-fallback mode: global shadow used when local config is absent
+ *   1. Global entry supplies identity
+ *   2. Local flat config (if present) supplies behavior
+ *   3. Shared defaults supply missing required behavior when local config is absent
  *
  * Returns a plain object compatible with ProjectConfig from config.ts.
  * Returns null if the project is not registered in the global config.
@@ -730,8 +689,8 @@ export function buildEffectiveProjectConfig(
  *
  * Behavior precedence:
  *   1. Identity always comes from the global registry entry
- *   2. Local flat config overrides shadow behavior when it loads cleanly
- *   3. Shadow behavior is used when local config is missing or broken
+ *   2. Local flat config overrides shared defaults when it loads cleanly
+ *   3. Shared defaults are used when local config is missing
  *   4. When local config is broken, resolveError is attached instead of throwing
  */
 export function resolveProjectIdentity(
@@ -742,6 +701,8 @@ export function resolveProjectIdentity(
   name: string;
   path: string;
   storageKey: string;
+  originUrl?: string;
+  repo?: string;
   defaultBranch: string;
   sessionPrefix: string;
   resolveError?: string;
@@ -755,36 +716,76 @@ export function resolveProjectIdentity(
   if (!ensuredEntry) return null;
 
   const projectPath = ensuredEntry.path as string;
-  const name = (ensuredEntry.name as string | undefined) ?? projectId;
+  const name = (ensuredEntry.displayName as string | undefined) ?? projectId;
   const storageKey = ensuredEntry.storageKey as string;
-
-  const localConfigResult = loadLocalProjectConfigDetailed(projectPath);
-  const { name: _name, path: _path, storageKey: _sk, originUrl: _originUrl, _shadowSyncedAt: _ts, ...shadowBehavior } = ensuredEntry;
-  void _name;
-  void _path;
-  void _sk;
-  void _originUrl;
-  void _ts;
-
   const sessionPrefix =
     typeof ensuredEntry.sessionPrefix === "string" && ensuredEntry.sessionPrefix.length > 0
       ? ensuredEntry.sessionPrefix
-      : generateSessionPrefix(projectId);
+      : generateSessionPrefix(basename(projectPath));
   const defaultBranch =
     typeof ensuredEntry.defaultBranch === "string" && ensuredEntry.defaultBranch.length > 0
       ? ensuredEntry.defaultBranch
       : "main";
+  const repoString =
+    ensuredEntry.repo &&
+    typeof ensuredEntry.repo.owner === "string" &&
+    typeof ensuredEntry.repo.name === "string"
+      ? `${ensuredEntry.repo.owner}/${ensuredEntry.repo.name}`
+      : undefined;
+  const identityFields = {
+    name,
+    path: projectPath,
+    storageKey,
+    ...(repoString ? { repo: repoString } : {}),
+    ...(ensuredEntry.repo?.originUrl ? { originUrl: ensuredEntry.repo.originUrl } : {}),
+    sessionPrefix,
+    defaultBranch,
+  };
+
+  const applyBehaviorDefaults = (behavior: Record<string, unknown>): Record<string, unknown> => {
+    const merged: Record<string, unknown> = { ...behavior };
+    const defaults = globalConfig.defaults ?? {};
+
+    if (merged["runtime"] === undefined) merged["runtime"] = defaults.runtime;
+    if (merged["agent"] === undefined) merged["agent"] = defaults.agent;
+    if (merged["workspace"] === undefined) merged["workspace"] = defaults.workspace;
+
+    const orchestrator = {
+      ...(defaults.orchestrator ?? {}),
+      ...((merged["orchestrator"] as Record<string, unknown> | undefined) ?? {}),
+    };
+    if (Object.keys(orchestrator).length > 0) {
+      merged["orchestrator"] = orchestrator;
+    }
+
+    const worker = {
+      ...(defaults.worker ?? {}),
+      ...((merged["worker"] as Record<string, unknown> | undefined) ?? {}),
+    };
+    if (Object.keys(worker).length > 0) {
+      merged["worker"] = worker;
+    }
+
+    const missing = ["runtime", "agent", "workspace"].filter((field) => {
+      const value = merged[field];
+      return typeof value !== "string" || value.length === 0;
+    });
+    if (missing.length > 0) {
+      throw new ProjectResolveError(
+        projectId,
+        `Project "${projectId}" is missing required behavior fields with no defaults: ${missing.join(", ")}`,
+      );
+    }
+
+    return merged;
+  };
+
+  const localConfigResult = loadLocalProjectConfigDetailed(projectPath);
 
   if (localConfigResult.kind === "loaded" && localConfigResult.config) {
-    // In-project mode: global identity + local behavior (override shadow)
     return {
-      name,
-      path: projectPath,
-      storageKey,
-      sessionPrefix,
-      defaultBranch,
-      ...shadowBehavior,
-      ...(localConfigResult.config as Record<string, unknown>),
+      ...identityFields,
+      ...applyBehaviorDefaults(localConfigResult.config as Record<string, unknown>),
     };
   }
 
@@ -792,51 +793,10 @@ export function resolveProjectIdentity(
     localConfigResult.kind !== "missing" ? localConfigResult.error ?? "Failed to load local config" : undefined;
 
   return {
-    name,
-    path: projectPath,
-    storageKey,
-    sessionPrefix,
-    defaultBranch,
-    ...shadowBehavior,
+    ...identityFields,
+    ...(resolveError ? {} : applyBehaviorDefaults({})),
     ...(resolveError ? { resolveError } : {}),
   };
-}
-
-// =============================================================================
-// STALENESS DETECTION
-// =============================================================================
-
-/**
- * Returns true if the local config file is newer than the last shadow sync.
- * Used by `ao status` to warn the user to restart ao.
- */
-export function isProjectShadowStale(projectId: string, globalConfig: GlobalConfig): boolean {
-  const entry = globalConfig.projects[projectId] as
-    | (GlobalProjectEntry & { _shadowSyncedAt?: number })
-    | undefined;
-  if (!entry) return false;
-
-  const syncedAt = entry._shadowSyncedAt;
-  if (!syncedAt) return true; // Never synced
-
-  const projectPath = entry.path as string;
-  const candidates = [
-    join(projectPath, "agent-orchestrator.yaml"),
-    join(projectPath, "agent-orchestrator.yml"),
-  ];
-
-  for (const candidate of candidates) {
-    if (!existsSync(candidate)) continue;
-    try {
-      const stat = statSync(candidate);
-      const mtimeSeconds = Math.floor(stat.mtimeMs / 1000);
-      return mtimeSeconds > syncedAt;
-    } catch {
-      return false;
-    }
-  }
-
-  return false;
 }
 
 export function relinkProjectInGlobalConfig(
@@ -864,7 +824,7 @@ export function relinkProjectInGlobalConfig(
     const nextOriginUrl = identity.originUrl ?? `local://${resolve(identity.gitRoot)}`;
     const nextStorageKey = identity.storageKey;
 
-    if (nextStorageKey === oldStorageKey && nextOriginUrl === currentEntry.originUrl) {
+    if (nextStorageKey === oldStorageKey && nextOriginUrl === currentEntry.repo?.originUrl) {
       result = { oldStorageKey, storageKey: nextStorageKey, originUrl: nextOriginUrl };
       return;
     }
@@ -891,7 +851,7 @@ export function relinkProjectInGlobalConfig(
     }
 
     currentEntry.storageKey = nextStorageKey;
-    currentEntry.originUrl = nextOriginUrl;
+    currentEntry.repo = normalizeRepoIdentity(nextOriginUrl);
     saveGlobalConfig(globalConfig, configPath);
     result = { oldStorageKey, storageKey: nextStorageKey, originUrl: nextOriginUrl };
   });
@@ -931,16 +891,12 @@ export function isOldConfigFormat(raw: unknown): boolean {
  *   1. Read old config from oldConfigPath
  *   2. Create global config at ~/.agent-orchestrator/config.yaml with:
  *      - Global settings (port, defaults, notifiers, reactions)
- *      - Project registry entries (identity) + full behavior as shadow
- *      - _shadowSyncedAt = now (treating existing config as synced)
+ *      - Project registry entries (identity only)
  *   3. Rewrite local config at oldConfigPath to flat behavior-only format
  *      (removes name, path, sessionPrefix from each project entry, removes
  *       the `projects:` wrapper — only the first/matched project is written
  *       when the old config is inside the project directory)
  *   4. Returns the new global config path
- *
- * The old storage directories (based on sha256(project.path)) remain valid
- * because the hash derivation is unchanged — configPath dirname = project.path.
  *
  * @param oldConfigPath  Absolute path to the old agent-orchestrator.yaml
  * @param globalConfigPath  Override for global config path (default: getGlobalConfigPath())
@@ -979,8 +935,6 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
   if (parsed["reactions"] !== null && parsed["reactions"] !== undefined)
     newGlobal.reactions = parsed["reactions"] as GlobalConfig["reactions"];
 
-  const now = Math.floor(Date.now() / 1000);
-
   // Build project registry entries
   for (const [projectId, project] of Object.entries(oldProjects)) {
     if (!project["path"]) continue;
@@ -990,29 +944,24 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
         ? join(homedir(), (project["path"] as string).slice(2))
         : (project["path"] as string);
 
-    // Extract behavior fields (everything except identity + internal)
-    const shadowFields: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(project)) {
-      if (key === "name" || key === "path" || key === "sessionPrefix") continue;
-      if (key.startsWith(INTERNAL_FIELD_PREFIX)) continue;
-      if (SECRET_SUFFIX_PATTERN.test(key)) {
-        process.stderr.write(
-          `ao: warning — excluding "${key}" from global config during migration (secret-like field name). ` +
-            `Use environment variables for secrets.\n`,
-        );
-        continue;
-      }
-      shadowFields[key] = value;
-    }
-
+    const repoIdentity =
+      typeof project["originUrl"] === "string"
+        ? normalizeRepoIdentity(project["originUrl"] as string)
+        : undefined;
     newGlobal.projects[projectId] = {
-      name: (project["name"] as string | undefined) ?? projectId,
+      projectId,
       path: projectPath,
+      ...(typeof project["storageKey"] === "string" ? { storageKey: project["storageKey"] as string } : {}),
+      ...(repoIdentity ? { repo: repoIdentity } : {}),
+      ...(typeof project["defaultBranch"] === "string"
+        ? { defaultBranch: project["defaultBranch"] as string }
+        : {}),
+      source: "migrated",
+      registeredAt: Math.floor(Date.now() / 1000),
+      displayName: (project["name"] as string | undefined) ?? projectId,
       ...(typeof project["sessionPrefix"] === "string"
         ? { sessionPrefix: project["sessionPrefix"] as string }
         : {}),
-      ...shadowFields,
-      _shadowSyncedAt: now,
     };
   }
 
@@ -1040,14 +989,16 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
       name: _name,
       path: _path,
       sessionPrefix: _sessionPrefix,
+      storageKey: _storageKey,
+      originUrl: _originUrl,
       ...behaviorFields
     } = project;
     void _name;
     void _path;
     void _sessionPrefix;
-    const localBehaviorFields = Object.fromEntries(
-      Object.entries(behaviorFields).filter(([key]) => !key.startsWith(INTERNAL_FIELD_PREFIX)),
-    );
+    void _storageKey;
+    void _originUrl;
+    const localBehaviorFields = behaviorFields;
 
     // Write flat local config
     const localConfigPath = join(projectPath, basename(oldConfigPath));
@@ -1081,4 +1032,67 @@ function makeEmptyGlobalConfig(): GlobalConfig {
     },
     reactions: {},
   };
+}
+
+function sanitizeRawGlobalConfig(
+  raw: Record<string, unknown>,
+): RawGlobalConfigSanitization {
+  const projects = raw["projects"];
+  if (!projects || typeof projects !== "object") {
+    return { changed: false, strippedProjects: [] };
+  }
+
+  let changed = false;
+  const strippedProjects: Array<{ projectId: string; strippedFieldCount: number }> = [];
+
+  for (const [projectId, value] of Object.entries(projects as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const entry = value as Record<string, unknown>;
+    const hadLegacyAliases =
+      entry["projectId"] !== projectId ||
+      (typeof entry["name"] === "string" && typeof entry["displayName"] !== "string") ||
+      (typeof entry["originUrl"] === "string" && entry["repo"] === undefined);
+    const result = sanitizeRawGlobalProjectEntry(projectId, value as Record<string, unknown>);
+
+    if (result.strippedFieldCount > 0) {
+      strippedProjects.push({ projectId, strippedFieldCount: result.strippedFieldCount });
+    }
+    if (result.strippedFieldCount > 0 || hadLegacyAliases) {
+      changed = true;
+    }
+  }
+
+  return { changed, strippedProjects };
+}
+
+function sanitizeRawGlobalProjectEntry(
+  projectId: string,
+  entry: Record<string, unknown>,
+): RawGlobalConfigProjectSanitization {
+  let strippedFieldCount = 0;
+
+  entry["projectId"] = projectId;
+
+  if (typeof entry["name"] === "string" && typeof entry["displayName"] !== "string") {
+    entry["displayName"] = entry["name"];
+  }
+
+  if (typeof entry["originUrl"] === "string" && entry["repo"] === undefined) {
+    const repoIdentity = normalizeRepoIdentity(entry["originUrl"] as string);
+    if (repoIdentity) {
+      entry["repo"] = repoIdentity;
+    }
+  }
+
+  delete entry["name"];
+  delete entry["originUrl"];
+
+  for (const key of Object.keys(entry)) {
+    if (!GLOBAL_PROJECT_ENTRY_FIELDS.has(key)) {
+      delete entry[key];
+      strippedFieldCount += 1;
+    }
+  }
+
+  return { strippedFieldCount };
 }

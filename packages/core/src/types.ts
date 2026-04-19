@@ -334,7 +334,7 @@ export function isOrchestratorSession(
   sessionPrefix?: string,
   allSessionPrefixes?: string[],
 ): boolean {
-  if (session.metadata?.["role"] === "orchestrator" || session.id.endsWith("-orchestrator")) {
+  if (session.metadata?.["role"] === "orchestrator") {
     return true;
   }
   if (!sessionPrefix) {
@@ -1259,6 +1259,17 @@ export interface OrchestratorConfig {
   _externalPluginEntries?: ExternalPluginEntryRef[];
 }
 
+export interface DegradedProjectEntry {
+  projectId: string;
+  path: string;
+  storageKey: string;
+  resolveError: string;
+}
+
+export interface LoadedConfig extends OrchestratorConfig {
+  degradedProjects: Record<string, DegradedProjectEntry>;
+}
+
 /**
  * Structured location of an external plugin config.
  * Used to update config with manifest.name after loading (avoids parsing dotted strings).
@@ -1362,11 +1373,6 @@ export interface ProjectConfig {
   /** Canonical git origin URL associated with the storage identity */
   originUrl?: string;
 
-  /**
-   * Per-project resolution failure captured without aborting the whole config.
-   * When set, consumers should treat the project as degraded and avoid
-   * runtime-sensitive operations until the local config is fixed.
-   */
   resolveError?: string;
 
   /** Default branch (main, master, next, develop, etc.) */
@@ -1648,6 +1654,8 @@ export interface SessionManager {
 export interface OpenCodeSessionManager extends SessionManager {
   /** Remap session to OpenCode session ID, returns the mapped OpenCode session ID */
   remap(sessionId: SessionId, force?: boolean): Promise<string>;
+  listCached(projectId?: string): Promise<Session[]>;
+  invalidateCache(): void;
 }
 
 export interface ClaimPROptions {
@@ -1783,6 +1791,17 @@ export class ConfigNotFoundError extends Error {
   }
 }
 
+/** Thrown when a project cannot be resolved into an effective runtime config. */
+export class ProjectResolveError extends Error {
+  constructor(
+    public readonly projectId: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ProjectResolveError";
+  }
+}
+
 // =============================================================================
 // PORTFOLIO — Cross-project aggregation
 // =============================================================================
@@ -1803,8 +1822,7 @@ export interface PortfolioProject {
   enabled: boolean;                    // User can disable without removing
   pinned: boolean;                     // User preference for ordering
   lastSeenAt: string;                  // ISO timestamp
-  degraded?: boolean;                  // True if config can't be loaded
-  degradedReason?: string;             // Why it's degraded
+  resolveError?: string;               // Present only when the project is degraded
 }
 
 /** User preferences overlay (canonical, small file) */

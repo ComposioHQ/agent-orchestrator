@@ -7,6 +7,7 @@ export interface ProjectInfo {
   id: string;
   name: string;
   sessionPrefix?: string;
+  resolveError?: string;
 }
 
 export const getProjectName = cache((): string => {
@@ -37,11 +38,19 @@ export const getPrimaryProjectId = cache((): string => {
 export const getAllProjects = cache((): ProjectInfo[] => {
   try {
     const config = loadConfig();
-    return Object.entries(config.projects).map(([id, project]) => ({
-      id,
-      name: project.name ?? id,
-      sessionPrefix: project.sessionPrefix ?? id,
-    }));
+    return [
+      ...Object.entries(config.projects).map(([id, project]) => ({
+        id,
+        name: project.name ?? id,
+        sessionPrefix: project.sessionPrefix ?? id,
+      })),
+      ...Object.entries(config.degradedProjects).map(([id, project]) => ({
+        id,
+        name: id,
+        sessionPrefix: id,
+        resolveError: project.resolveError,
+      })),
+    ];
   } catch {
     return [];
   }
