@@ -1,0 +1,91 @@
+packages/core/src/__tests__/global-config.test.ts
+  851299caedf604c0 3,6,61,64,74-75,78-86,88-89,147-152,168,185-190,202-253,258,273
+packages/core/src/config-generator.ts
+  851299caedf604c0 164-184
+packages/cli/src/lib/portfolio-display.ts
+  851299caedf604c0 1-30
+packages/core/src/__tests__/config-validation.test.ts
+  851299caedf604c0 9,16-17,23-24,29,32,39-40,43-44,46-47,52-53
+packages/core/src/portfolio-session-service.ts
+  851299caedf604c0 26,140
+packages/core/src/index.ts
+  851299caedf604c0 271-274
+packages/core/__tests__/config.test.ts
+  851299caedf604c0 5,24-26,122-212,242-306
+packages/web/src/lib/services.ts
+  851299caedf604c0 20,45,129,181
+packages/web/src/app/projects/[projectId]/settings/page.tsx
+  851299caedf604c0 1-84
+packages/core/src/config.ts
+  851299caedf604c0 14,18-25,31,508-510,512,533-558,563-564,570,574,576,583,747-748,760-762,773,777,780,784-801,803,814,827,849-851,853,858,880-882,884
+packages/web/src/app/api/projects/[id]/route.ts
+  851299caedf604c0 1-115
+packages/web/src/app/api/filesystem/browse/route.ts
+  851299caedf604c0 1-94
+packages/web/src/components/ProjectSettingsForm.tsx
+  851299caedf604c0 1-279
+packages/core/src/project-resolver.ts
+  851299caedf604c0 1-26
+packages/web/src/lib/project-name.ts
+  851299caedf604c0 10,41-53
+packages/cli/__tests__/commands/review-check.test.ts
+  851299caedf604c0 110,120-121,181-185
+packages/core/src/global-config.ts
+  851299caedf604c0 15,17,68,87-116,122,171-172,238-246,263-283,449-475,516,539,561,563-565,569,571,593,640-645,647,650-655,671-673,692-693,704-705,719,724,729-735,739-740,745-747,749-751,753-759,761-767,769-777,779-789,792-799,827,854,894,947-950,952,954-961,992-993,999-1001,1036-1097
+packages/web/src/components/__tests__/ProjectSettingsForm.test.tsx
+  851299caedf604c0 1-109
+packages/core/src/portfolio-projects.ts
+  851299caedf604c0 1-72
+packages/core/src/__tests__/project-resolver.test.ts
+  851299caedf604c0 1-215
+packages/core/src/types.ts
+  851299caedf604c0 337,1262-1272,1657-1658,1794-1804,1825
+packages/web/src/components/DegradedProjectState.tsx
+  851299caedf604c0 1-76
+packages/core/src/recovery/actions.ts
+  851299caedf604c0 42,47,59,75,126,131,165,202,207,218
+packages/web/src/lib/path-security.ts
+  851299caedf604c0 1-136
+packages/core/src/portfolio-routing.ts
+  851299caedf604c0 1-34
+packages/web/src/app/projects/[projectId]/settings/page.test.tsx
+  851299caedf604c0 1-83
+packages/core/src/feature-flags.ts
+  851299caedf604c0 1-5
+packages/web/src/app/projects/[projectId]/page.tsx
+  851299caedf604c0 1-61
+packages/core/src/utils/session-from-metadata.ts
+  851299caedf604c0 1-8,18,59
+packages/web/src/components/__tests__/ProjectSidebar.test.tsx
+  851299caedf604c0 184
+packages/core/src/portfolio-registry.ts
+  851299caedf604c0 231-267,273-303
+packages/web/src/lib/project-route-data.ts
+  851299caedf604c0 1-32
+packages/web/src/app/api/browse-directory/route.ts
+  851299caedf604c0 1-9
+packages/core/src/file-lock.ts
+  851299caedf604c0 1-59
+packages/web/src/components/Dashboard.tsx
+  851299caedf604c0 7,86,112-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "a2898637de4a478477d3a74366867640801c5259",
+  "prompts": {
+    "851299caedf604c0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019da632-82ac-7ff0-97fc-cff98c1239d8",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2331,
+      "total_deletions": 443,
+      "accepted_lines": 2313,
+      "overriden_lines": 0
+    }
+  }
+}
