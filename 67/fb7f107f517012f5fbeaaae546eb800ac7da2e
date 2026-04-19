@@ -1,0 +1,61 @@
+docs/multi-project-guide.md
+  92b51282e68f02da 8-11
+packages/core/src/__tests__/feature-flags.test.ts
+  92b51282e68f02da 1-35
+packages/core/src/feature-flags.ts
+  92b51282e68f02da 2-4
+packages/cli/src/commands/spawn.ts
+  92b51282e68f02da 278
+packages/cli/src/commands/project.ts
+  92b51282e68f02da 24,76-79
+packages/web/src/app/settings/page.tsx
+  92b51282e68f02da 88
+.changeset/portfolio-default-on.md
+  92b51282e68f02da 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "67fb7f107f517012f5fbeaaae546eb800ac7da2e",
+  "prompts": {
+    "92b51282e68f02da": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1305960e-8a29-4f54-9442-8084f719c41e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 56,
+      "total_deletions": 5,
+      "accepted_lines": 56,
+      "overriden_lines": 0
+    },
+    "b9395e960022219f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019da074-4a2f-74c1-bddf-70fbf3d6ee92",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 5014,
+      "overriden_lines": 21
+    },
+    "c73d1b75965fd5ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d9cdd-31b5-7103-bcb9-b6e0ae4ad11d",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1028,
+      "overriden_lines": 0
+    }
+  }
+}
