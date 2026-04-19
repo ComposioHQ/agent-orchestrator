@@ -228,6 +228,20 @@ export {
 } from "./code-review-fingerprint.js";
 export type { CarryForwardResult } from "./code-review-fingerprint.js";
 
+// Review manager — orchestrates the code review loop
+export { createReviewManager } from "./review-manager.js";
+export type {
+  ReviewManager,
+  ReviewManagerDeps,
+  TriggerReviewArgs,
+  DismissArgs,
+  ReopenArgs,
+  MarkSentArgs,
+  TerminateRunArgs,
+} from "./review-manager.js";
+export { createReviewTrigger } from "./code-review-trigger.js";
+export type { CreateReviewTriggerDeps } from "./code-review-trigger.js";
+
 // Path utilities — hash-based directory structure
 export {
   generateConfigHash,

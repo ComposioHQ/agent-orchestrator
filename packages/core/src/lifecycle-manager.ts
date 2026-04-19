@@ -298,6 +298,12 @@ export interface LifecycleManagerDeps {
   sessionManager: SessionManager;
   /** When set, only poll sessions belonging to this project. */
   projectId?: string;
+  /**
+   * Optional hook invoked once per session per poll cycle. Used by the review
+   * manager to opportunistically trigger code reviews without the lifecycle
+   * manager needing to know about the review slot directly.
+   */
+  onSessionPolled?: (session: Session, status: SessionStatus) => Promise<void> | void;
 }
 
 /** Track attempt counts for reactions per session. */
@@ -1787,6 +1793,26 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // Report watcher: audit agent reports for issues (#140)
     await auditAndReactToReports(session);
+
+    // Code review hook — fires once per session per poll cycle so external
+    // coordinators (e.g. review manager) can trigger reviews without reaching
+    // into lifecycle internals.
+    if (deps.onSessionPolled) {
+      try {
+        await deps.onSessionPolled(session, newStatus);
+      } catch (err) {
+        observer.recordOperation({
+          metric: "lifecycle_poll",
+          operation: "lifecycle.onSessionPolled",
+          outcome: "failure",
+          correlationId: createCorrelationId("lifecycle-on-session-polled"),
+          projectId: session.projectId,
+          durationMs: 0,
+          reason: err instanceof Error ? err.message : String(err),
+          level: "warn",
+        });
+      }
+    }
   }
 
   /**
