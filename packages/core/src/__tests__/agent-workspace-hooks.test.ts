@@ -74,7 +74,7 @@ describe("setupPathWrapperWorkspace", () => {
 
   it("skips wrapper rewrite when version matches", async () => {
     mockReadFile
-      .mockResolvedValueOnce("0.3.0") // version marker matches
+      .mockResolvedValueOnce("0.3.2") // version marker matches
       .mockRejectedValueOnce(new Error("ENOENT")); // AGENTS.md doesn't exist
 
     await setupPathWrapperWorkspace("/workspace");

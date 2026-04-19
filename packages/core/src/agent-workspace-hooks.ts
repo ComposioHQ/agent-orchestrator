@@ -32,7 +32,7 @@ function getAoBinDir(): string {
 }
 
 /** Current version of wrapper scripts — bump when scripts change */
-const WRAPPER_VERSION = "0.2.1";
+const WRAPPER_VERSION = "0.3.2";
 
 // =============================================================================
 // PATH Builder
@@ -176,6 +176,9 @@ log_gh_invocation() {
 
   mkdir -p "\$(dirname "\$trace_file")" 2>/dev/null || return 0
 
+  local args_json
+  args_json="\$(printf '%s\n' "\$@" | jq -Rsc 'split("\n")[:-1]')" || return 0
+
   jq -nc \
     --arg timestamp "\$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
     --arg cwd "\$PWD" \
@@ -186,11 +189,11 @@ log_gh_invocation() {
     --arg aoCallerType "\${AO_CALLER_TYPE:-}" \
     --arg pid "\$\$" \
     --arg wrapperVersion "${WRAPPER_VERSION}" \
-    --args "\$@" \
+    --argjson args "\$args_json" \
     '{
       timestamp: $timestamp,
       cwd: $cwd,
-      args: $ARGS.positional,
+      args: $args,
       aoSession: (if $aoSession == "" then null else $aoSession end),
       aoSessionName: (if $aoSessionName == "" then null else $aoSessionName end),
       aoProjectId: (if $aoProjectId == "" then null else $aoProjectId end),
