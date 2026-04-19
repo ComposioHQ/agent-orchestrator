@@ -1,0 +1,35 @@
+packages/cli/__tests__/commands/session.test.ts
+  21d5d2860123e95b 20-21,354-370,385-510,513-516,520-543,547,552-554
+packages/cli/__tests__/commands/status.test.ts
+  21d5d2860123e95b 17-18,578,714,739,760,781,805,826-832,835,870,944,1173-1309
+SETUP.md
+  21d5d2860123e95b 815,818
+packages/cli/src/commands/session.ts
+  21d5d2860123e95b 6,40-43,45-50,61,67-75,171-177,181-186
+docs/CLI.md
+  21d5d2860123e95b 26-28,33-37
+.changeset/filter-terminated-sessions-from-ls.md
+  21d5d2860123e95b 1-9
+packages/cli/src/commands/status.ts
+  21d5d2860123e95b 16,55,247-250,290-300,395-401,412-418
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "41fb7ae59da12b36461360ee46102a8d315090b7",
+  "prompts": {
+    "21d5d2860123e95b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a8ed20a8-2222-4143-a4ce-0861c70cff6b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 466,
+      "total_deletions": 88,
+      "accepted_lines": 437,
+      "overriden_lines": 0
+    }
+  }
+}
