@@ -253,9 +253,19 @@ const LifecycleConfigSchema = z
     autoCleanupOnMerge: z.boolean().default(true),
     /**
      * Maximum time (ms) to wait after a session enters `merged` before forcing
-     * cleanup regardless of agent activity. Defaults to 5 minutes.
+     * cleanup regardless of agent activity. Defaults to 5 minutes. Use `0` to
+     * disable the grace window (cleanup runs immediately even if the agent is
+     * still active). Values between 1 and 9999 are rejected to catch the common
+     * mistake of writing seconds (e.g. `5`) when milliseconds are expected.
      */
-    mergeCleanupIdleGraceMs: z.number().nonnegative().default(300_000),
+    mergeCleanupIdleGraceMs: z
+      .number()
+      .nonnegative()
+      .refine((v) => v === 0 || v >= 10_000, {
+        message:
+          "mergeCleanupIdleGraceMs is in milliseconds; values between 1 and 9999 are likely a units mistake (use 0 to disable the gate, or e.g. 10000 for 10s, 300000 for 5min)",
+      })
+      .default(300_000),
   })
   .default({});
 

@@ -13,6 +13,7 @@
 import { randomUUID } from "node:crypto";
 import {
   SESSION_STATUS,
+  ACTIVITY_STATE,
   PR_STATE,
   CI_STATUS,
   TERMINAL_STATUSES,
@@ -1582,7 +1583,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       : false;
 
     const activity = session.activity;
-    const agentIsBusy = activity === "active" || activity === "waiting_input" || activity === "blocked";
+    const agentIsBusy =
+      activity === ACTIVITY_STATE.ACTIVE ||
+      activity === ACTIVITY_STATE.WAITING_INPUT ||
+      activity === ACTIVITY_STATE.BLOCKED;
 
     if (agentIsBusy && !graceElapsed) {
       if (!session.metadata["mergedPendingCleanupSince"]) {
