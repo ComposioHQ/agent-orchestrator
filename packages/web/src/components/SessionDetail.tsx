@@ -24,8 +24,10 @@ const DirectTerminal = dynamic(
   () => import("./DirectTerminal").then((m) => ({ default: m.DirectTerminal })),
   {
     ssr: false,
+    // h-full (not a fixed 440px) so the skeleton matches the eventual terminal's
+    // flex-1 sizing and the layout stays viewport-driven during lazy load.
     loading: () => (
-      <div className="h-[440px] animate-pulse rounded bg-[var(--color-bg-primary)]" />
+      <div className="h-full w-full animate-pulse rounded bg-[var(--color-bg-primary)]" />
     ),
   },
 );

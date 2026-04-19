@@ -21,6 +21,30 @@ const FONT_SIZE_MIN = 9;
 const FONT_SIZE_MAX = 18;
 const FONT_SIZE_DEFAULT = 13;
 
+// Fallback mono stack used when the CSS custom property isn't resolvable yet.
+const MONO_FONT_FALLBACK =
+  '"JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace';
+
+/**
+ * Resolve the app's configured mono font token to a concrete font-family string.
+ * xterm's internal char-size measurement ultimately hits canvas ctx.font, which
+ * cannot evaluate `var(...)`. Reading the CSS custom property with
+ * getComputedStyle gives us the generated next/font family name (e.g.
+ * `__JetBrains_Mono_abc123`), which we can safely feed into xterm while still
+ * honouring the app's font configuration.
+ */
+function resolveMonoFontFamily(): string {
+  if (typeof window === "undefined") return MONO_FONT_FALLBACK;
+  try {
+    const resolved = getComputedStyle(document.documentElement)
+      .getPropertyValue("--font-jetbrains-mono")
+      .trim();
+    return resolved ? `${resolved}, ${MONO_FONT_FALLBACK}` : MONO_FONT_FALLBACK;
+  } catch {
+    return MONO_FONT_FALLBACK;
+  }
+}
+
 function getStoredFontSize(): number {
   if (typeof window === "undefined") return FONT_SIZE_DEFAULT;
   try {
@@ -235,14 +259,14 @@ export function DirectTerminal({
         const activeTheme = isDark ? terminalThemes.dark : terminalThemes.light;
 
         // Initialize xterm.js Terminal
-        // NOTE: fontFamily must not contain `var(...)` — xterm's internal char-size
-        // measurement uses canvas ctx.font which cannot resolve CSS custom properties.
-        // Using a plain stack keeps measurement and rendering in the same font.
+        // NOTE: xterm's internal char-size measurement uses canvas ctx.font which
+        // cannot resolve `var(...)`. resolveMonoFontFamily() reads the CSS custom
+        // property at runtime so we still honour the app's configured font token
+        // (next/font generated name) while handing xterm a concrete string.
         const terminal = new Terminal({
           cursorBlink: true,
           fontSize: fontSize,
-          fontFamily:
-            '"JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
+          fontFamily: resolveMonoFontFamily(),
           // xterm v6 default lineHeight (1.0) collides rows with JetBrains Mono's
           // tall x-height. 1.2 restores visual breathing room between lines.
           lineHeight: 1.2,
@@ -331,6 +355,9 @@ export function DirectTerminal({
         const handleFontsLoadingDone = () => {
           if (!mounted || !fitAddon.current || !terminalInstance.current) return;
           try {
+            // Re-resolve the CSS var in case next/font registered its family
+            // name after initial construction, then force a re-measure.
+            terminalInstance.current.options.fontFamily = resolveMonoFontFamily();
             terminalInstance.current.clearTextureAtlas?.();
             fitAddon.current.fit();
             resizeTerminalMux(sessionId, terminalInstance.current.cols, terminalInstance.current.rows);
