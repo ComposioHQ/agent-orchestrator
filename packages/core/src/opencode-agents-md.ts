@@ -1,10 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const AO_OPENCODE_SECTION_START = "<!-- AO_SYSTEM_PROMPT_START -->";
-const AO_OPENCODE_SECTION_END = "<!-- AO_SYSTEM_PROMPT_END -->";
-
-export type OpenCodeAgentsMdRole = "worker" | "orchestrator";
+const AO_OPENCODE_SECTION_START = "<!-- AO_ORCHESTRATOR_PROMPT_START -->";
+const AO_OPENCODE_SECTION_END = "<!-- AO_ORCHESTRATOR_PROMPT_END -->";
 
 export function getWorkspaceAgentsMdPath(workspacePath: string): string {
   return join(workspacePath, "AGENTS.md");
@@ -24,21 +22,16 @@ function stripExistingAoOpenCodeSection(content: string): string {
   return before || after;
 }
 
-export function writeWorkspaceOpenCodeAgentsMd(
-  workspacePath: string,
-  promptFile: string,
-  role: OpenCodeAgentsMdRole,
-): string {
+export function writeWorkspaceOpenCodeAgentsMd(workspacePath: string, promptFile: string): string {
   const agentsMdPath = getWorkspaceAgentsMdPath(workspacePath);
   mkdirSync(workspacePath, { recursive: true });
 
   const existing = existsSync(agentsMdPath) ? readFileSync(agentsMdPath, "utf-8") : "";
   const baseContent = stripExistingAoOpenCodeSection(existing).trimEnd();
   const prompt = readFileSync(promptFile, "utf-8").trim();
-  const title = role === "worker" ? "## Agent Worker" : "## Agent Orchestrator";
   const aoSection = [
     AO_OPENCODE_SECTION_START,
-    title,
+    "## Agent Orchestrator",
     "",
     prompt,
     AO_OPENCODE_SECTION_END,

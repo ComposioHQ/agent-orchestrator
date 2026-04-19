@@ -1299,15 +1299,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw err;
     }
 
-    if (plugins.agent.name === "opencode" && systemPromptFile) {
-      try {
-        writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile, "worker");
-      } catch (err) {
-        await cleanupSpawnWorkspaceAndMetadata(systemPromptFile);
-        throw err;
-      }
-    }
-
     // Get agent launch config and create runtime — clean up workspace on failure
     const opencodeIssueSessionStrategy = project.opencodeIssueSessionStrategy ?? "reuse";
     let reusedOpenCodeSessionId: string | undefined;
@@ -1616,7 +1607,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     if (plugins.agent.name === "opencode" && systemPromptFile) {
       try {
-        writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile, "orchestrator");
+        writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile);
       } catch (err) {
         await cleanupWorktreeAndMetadata(systemPromptFile);
         throw err;
@@ -2742,16 +2733,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    if (plugins.agent.name === "opencode") {
+    if (plugins.agent.name === "opencode" && selection.role === "orchestrator") {
       const baseDir = getProjectBaseDir(config.configPath, project.path);
-      const promptPrefix = selection.role === "orchestrator" ? "orchestrator-prompt" : "worker-prompt";
-      const systemPromptFile = join(baseDir, `${promptPrefix}-${sessionId}.md`);
+      const systemPromptFile = join(baseDir, `orchestrator-prompt-${sessionId}.md`);
       if (existsSync(systemPromptFile)) {
         try {
-          writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile, selection.role);
+          writeWorkspaceOpenCodeAgentsMd(workspacePath, systemPromptFile);
         } catch (err) {
           throw new Error(
-            `failed to restore OpenCode ${selection.role} AGENTS.md: ${err instanceof Error ? err.message : String(err)}`,
+            `failed to restore OpenCode orchestrator AGENTS.md: ${err instanceof Error ? err.message : String(err)}`,
             { cause: err },
           );
         }
