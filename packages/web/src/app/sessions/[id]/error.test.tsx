@@ -44,4 +44,14 @@ describe("Session error boundary", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it("shows a network-specific message", () => {
+    render(<SessionError error={new Error("Network request failed")} reset={vi.fn()} />);
+
+    expect(
+      screen.getByText(
+        "The session request failed before the dashboard got a response. Check the server connection and try again.",
+      ),
+    ).toBeInTheDocument();
+  });
 });
