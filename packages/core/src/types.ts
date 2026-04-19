@@ -334,10 +334,7 @@ export function isOrchestratorSession(
   sessionPrefix?: string,
   allSessionPrefixes?: string[],
 ): boolean {
-  // Explicit role metadata is always authoritative — covers legacy
-  // bare-named records once they have been backfilled by
-  // repairSingleSessionMetadataOnRead on read.
-  if (session.metadata?.["role"] === "orchestrator") {
+  if (session.metadata?.["role"] === "orchestrator" || session.id.endsWith("-orchestrator")) {
     return true;
   }
   if (!sessionPrefix) {
@@ -381,6 +378,8 @@ export interface SessionSpawnConfig {
 export interface OrchestratorSpawnConfig {
   projectId: string;
   systemPrompt?: string;
+  /** Override the agent plugin for this orchestrator (e.g. "codex", "claude-code", "opencode") */
+  agent?: string;
 }
 
 // =============================================================================
@@ -805,6 +804,59 @@ export interface SCM {
   enrichSessionsPRBatch?(prs: PRInfo[], observer?: BatchObserver): Promise<Map<string, PREnrichmentData>>;
 }
 
+/**
+ * Batch enrichment data returned by SCM plugins.
+ * Contains all the information the orchestrator needs for status detection.
+ */
+export interface PREnrichmentData {
+  /** Current PR state */
+  state: PRState;
+  /** Overall CI status */
+  ciStatus: CIStatus;
+  /** Review decision */
+  reviewDecision: ReviewDecision;
+  /** Whether the PR is mergeable based on CI, reviews, and merge state */
+  mergeable: boolean;
+  /** PR title */
+  title?: string;
+  /** Number of additions */
+  additions?: number;
+  /** Number of deletions */
+  deletions?: number;
+  /** Whether PR is a draft */
+  isDraft?: boolean;
+  /** Whether PR has merge conflicts */
+  hasConflicts?: boolean;
+  /** Whether PR is behind base branch */
+  isBehind?: boolean;
+  /** List of blockers preventing merge */
+  blockers?: string[];
+}
+
+/**
+ * Observer for GraphQL batch PR enrichment operations.
+ * Used by SCM plugins to report batch success/failure to the observability system.
+ */
+export interface BatchObserver {
+  /** Record a successful batch enrichment */
+  recordSuccess(data: {
+    batchIndex: number;
+    totalBatches: number;
+    prCount: number;
+    durationMs: number;
+  }): void;
+  /** Record a failed batch enrichment */
+  recordFailure(data: {
+    batchIndex: number;
+    totalBatches: number;
+    prCount: number;
+    error: string;
+    durationMs: number;
+  }): void;
+  /** Log a message at a specific level */
+  log(level: ObservabilityLevel, message: string): void;
+}
+
 // --- PR Types ---
 
 export interface PRInfo {
@@ -983,7 +1035,6 @@ export interface BatchObserver {
   /** Log a message at a specific level */
   log(level: ObservabilityLevel, message: string): void;
 }
-
 // =============================================================================
 // NOTIFIER — Plugin Slot 6 (PRIMARY INTERFACE)
 // =============================================================================
@@ -1305,11 +1356,27 @@ export interface ProjectConfig {
   /** Local path to the repo */
   path: string;
 
+  /** Persisted storage hash — stable across directory moves */
+  storageKey?: string;
+
+  /** Canonical git origin URL associated with the storage identity */
+  originUrl?: string;
+
+  /**
+   * Per-project resolution failure captured without aborting the whole config.
+   * When set, consumers should treat the project as degraded and avoid
+   * runtime-sensitive operations until the local config is fixed.
+   */
+  resolveError?: string;
+
   /** Default branch (main, master, next, develop, etc.) */
   defaultBranch: string;
 
   /** Session name prefix (e.g. "app" → "app-1", "app-2") */
   sessionPrefix: string;
+
+  /** Whether this project is active in portfolio and dashboard surfaces */
+  enabled?: boolean;
 
   /** Override default runtime */
   runtime?: string;
@@ -1567,14 +1634,6 @@ export interface SessionManager {
   spawnOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
-  /** Fast cache-served list. Falls back to list() on first call or after TTL. */
-  listCached(projectId?: string): Promise<Session[]>;
-  /**
-   * Drop the listCached() cache. Call after any metadata mutation made
-   * outside of the session manager's own mutation APIs (e.g. when another
-   * module imports updateMetadata from ./metadata directly).
-   */
-  invalidateCache(): void;
   get(sessionId: SessionId): Promise<Session | null>;
   kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void>;
   cleanup(
@@ -1722,4 +1781,56 @@ export class ConfigNotFoundError extends Error {
     super(message ?? "No agent-orchestrator.yaml found. Run `ao start` to create one.");
     this.name = "ConfigNotFoundError";
   }
+}
+
+// =============================================================================
+// PORTFOLIO — Cross-project aggregation
+// =============================================================================
+
+/** A project entry in the portfolio index (merged from discovery + registration + preferences) */
+export interface PortfolioProject {
+  id: string;                          // Stable portfolio identity (configProjectKey, with collision suffix if needed)
+  name: string;                        // Human-readable display name
+  configPath: string;                  // Absolute path to agent-orchestrator.yaml
+  configProjectKey: string;            // Key in config.projects map
+  repoPath: string;                    // Absolute local filesystem path
+  storageKey?: string;                 // Persisted storage hash — stable across directory moves
+  originUrl?: string;                  // Canonical git origin URL associated with the storage identity
+  repo?: string;                       // "owner/repo" for SCM
+  defaultBranch?: string;
+  sessionPrefix: string;
+  source: "discovered" | "registered" | "config"; // How this entry was found
+  enabled: boolean;                    // User can disable without removing
+  pinned: boolean;                     // User preference for ordering
+  lastSeenAt: string;                  // ISO timestamp
+  degraded?: boolean;                  // True if config can't be loaded
+  degradedReason?: string;             // Why it's degraded
+}
+
+/** User preferences overlay (canonical, small file) */
+export interface PortfolioPreferences {
+  version: 1;
+  defaultProjectId?: string;
+  projectOrder?: string[];             // Ordered project IDs for display
+  projects?: Record<string, {          // Per-project preferences
+    pinned?: boolean;
+    enabled?: boolean;
+    displayName?: string;
+  }>;
+}
+
+/** Registered projects (explicit `ao project add`) */
+export interface PortfolioRegistered {
+  version: 1;
+  projects: Array<{
+    path: string;                      // Repo path
+    configProjectKey?: string;         // Key in config if multi-project YAML
+    addedAt: string;                   // ISO timestamp
+  }>;
+}
+
+/** Aggregated portfolio session with project context */
+export interface PortfolioSession {
+  session: Session;
+  project: PortfolioProject;
 }

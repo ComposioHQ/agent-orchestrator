@@ -64,7 +64,7 @@ describe("config → metadata service integration (real filesystem)", () => {
   afterAll(async () => {
     // Clean up hash-based directories in ~/.agent-orchestrator
     try {
-      const projectBaseDir = getProjectBaseDir(configPath, repoPath);
+      const projectBaseDir = getProjectBaseDir("111111111111");
       if (existsSync(projectBaseDir)) {
         await rm(projectBaseDir, { recursive: true, force: true });
       }
@@ -85,22 +85,21 @@ describe("config → metadata service integration (real filesystem)", () => {
   });
 
   it("getSessionsDir returns hash-based path including project name", () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir("111111111111");
 
     expect(sessionsDir).toContain(".agent-orchestrator");
     expect(sessionsDir).toContain("my-repo");
     expect(sessionsDir).toContain("sessions");
 
-    const hash = generateConfigHash(configPath);
-    expect(sessionsDir).toContain(hash);
+    expect(sessionsDir).toContain("111111111111");
   });
 
   it("different repos get different session directories", () => {
     const repo2Path = join(tmpDir, "other-repo");
     mkdirSync(repo2Path, { recursive: true });
 
-    const dir1 = getSessionsDir(configPath, repoPath);
-    const dir2 = getSessionsDir(configPath, repo2Path);
+    const dir1 = getSessionsDir("111111111111");
+    const dir2 = getSessionsDir("222222222222");
 
     expect(dir1).not.toBe(dir2);
     expect(dir1).toContain("my-repo");
@@ -108,7 +107,7 @@ describe("config → metadata service integration (real filesystem)", () => {
   });
 
   it("full metadata lifecycle through hash-based directory", () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir("111111111111");
     mkdirSync(sessionsDir, { recursive: true });
 
     // 1. Write metadata
@@ -170,18 +169,18 @@ describe("config → metadata service integration (real filesystem)", () => {
   it("origin validation stores and detects repo identity", () => {
     // validateAndStoreOrigin should not throw for a valid repo path
     // (even without a real git remote, it stores path-based identity)
-    expect(() => validateAndStoreOrigin(configPath, repoPath)).not.toThrow();
+    expect(() => validateAndStoreOrigin(configPath, "111111111111")).not.toThrow();
 
     // Calling again with the same path should succeed (same origin)
-    expect(() => validateAndStoreOrigin(configPath, repoPath)).not.toThrow();
+    expect(() => validateAndStoreOrigin(configPath, "111111111111")).not.toThrow();
   });
 
   it("multi-project isolation with shared config", () => {
     const repo2Path = join(tmpDir, "project-b-repo");
     mkdirSync(repo2Path, { recursive: true });
 
-    const dirA = getSessionsDir(configPath, repoPath);
-    const dirB = getSessionsDir(configPath, repo2Path);
+    const dirA = getSessionsDir("111111111111");
+    const dirB = getSessionsDir("222222222222");
     mkdirSync(dirA, { recursive: true });
     mkdirSync(dirB, { recursive: true });
 

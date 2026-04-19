@@ -22,7 +22,6 @@ import {
   createSessionManager,
   createPluginRegistry,
   type OrchestratorConfig,
-  generateConfigHash,
   getSessionsDir,
   generateTmuxName,
 } from "@aoagents/ao-core";
@@ -100,19 +99,17 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
   }, 30_000);
 
   it("sessions are stored in hash-based project-specific directory", () => {
-    // Calculate expected directory
-    const hash = generateConfigHash(configPath);
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir("111111111111");
 
-    expect(sessionsDir).toMatch(new RegExp(`\\.agent-orchestrator/${hash}-test-repo/sessions$`));
+    expect(sessionsDir).toMatch(/\.agent-orchestrator\/111111111111\/sessions$/);
   });
 
   it("session metadata includes tmuxName field", () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir("111111111111");
     mkdirSync(sessionsDir, { recursive: true });
 
     // Write metadata as CLI would do
-    const tmuxName = generateTmuxName(configPath, sessionPrefix, 1);
+    const tmuxName = generateTmuxName("111111111111", sessionPrefix, 1);
     const metadataPath = join(sessionsDir, sessionName);
     const metadata = [
       `worktree=${tmpDir}`,
@@ -135,11 +132,11 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
   });
 
   it("core session-manager finds session in hash-based directory", async () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir("111111111111");
     mkdirSync(sessionsDir, { recursive: true });
 
     // Write metadata
-    const tmuxName = generateTmuxName(configPath, sessionPrefix, 1);
+    const tmuxName = generateTmuxName("111111111111", sessionPrefix, 1);
     const metadataPath = join(sessionsDir, sessionName);
     const metadata = [
       `worktree=${tmpDir}`,
@@ -200,10 +197,9 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
   });
 
   it("tmux name includes hash for global uniqueness", () => {
-    const hash = generateConfigHash(configPath);
-    const tmuxName = generateTmuxName(configPath, sessionPrefix, 1);
+    const tmuxName = generateTmuxName("111111111111", sessionPrefix, 1);
 
-    expect(tmuxName).toMatch(new RegExp(`^${hash}-${sessionPrefix}-1$`));
+    expect(tmuxName).toMatch(new RegExp(`^111111111111-${sessionPrefix}-1$`));
     expect(tmuxName).not.toBe(sessionName); // User-facing name is different
   });
 
@@ -252,7 +248,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
     };
 
     // Write metadata for project A
-    const sessionsDirA = getSessionsDir(configPath, repoAPath);
+    const sessionsDirA = getSessionsDir("111111111111");
     mkdirSync(sessionsDirA, { recursive: true });
     const sessionAName = `${sessionPrefix}-a-1`;
     writeFileSync(
@@ -261,7 +257,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
     );
 
     // Write metadata for project B
-    const sessionsDirB = getSessionsDir(configPath, repo2Path);
+    const sessionsDirB = getSessionsDir("222222222222");
     mkdirSync(sessionsDirB, { recursive: true });
     const sessionBName = `${sessionPrefix}-b-1`;
     writeFileSync(

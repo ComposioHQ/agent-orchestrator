@@ -140,6 +140,7 @@ function buildSessionsFromDir(dir: string, projectId: string): Session[] {
 let tmpDir: string;
 let configPath: string;
 let sessionsDir: string;
+let originalHome: string | undefined;
 
 import { Command } from "commander";
 import { registerSession } from "../../src/commands/session.js";
@@ -149,6 +150,8 @@ let consoleSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-session-test-"));
+  originalHome = process.env["HOME"];
+  process.env["HOME"] = tmpDir;
 
   configPath = join(tmpDir, "agent-orchestrator.yaml");
   writeFileSync(configPath, "projects: {}");
@@ -179,7 +182,7 @@ beforeEach(() => {
   mkdirSync(join(tmpDir, "main-repo"), { recursive: true });
 
   // Calculate and create sessions directory for hash-based architecture
-  sessionsDir = getSessionsDir(configPath, join(tmpDir, "main-repo"));
+  sessionsDir = getSessionsDir("111111111111");
   mkdirSync(sessionsDir, { recursive: true });
   sessionsDirRef.current = sessionsDir;
 
@@ -245,8 +248,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  process.env["HOME"] = originalHome;
   // Clean up hash-based directories in ~/.agent-orchestrator
-  const projectBaseDir = getProjectBaseDir(configPath, join(tmpDir, "main-repo"));
+  const projectBaseDir = getProjectBaseDir("111111111111");
   if (existsSync(projectBaseDir)) {
     rmSync(projectBaseDir, { recursive: true, force: true });
   }

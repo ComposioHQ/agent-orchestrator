@@ -128,7 +128,7 @@ beforeEach(() => {
 afterEach(() => {
   cwdSpy?.mockRestore();
   cwdSpy = undefined;
-  const projectBaseDir = getProjectBaseDir(configPath, join(tmpDir, "main-repo"));
+  const projectBaseDir = getProjectBaseDir("111111111111");
   if (projectBaseDir) {
     rmSync(projectBaseDir, { recursive: true, force: true });
   }

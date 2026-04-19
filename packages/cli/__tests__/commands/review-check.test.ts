@@ -144,7 +144,7 @@ beforeEach(() => {
   } as Record<string, unknown>;
 
   // Calculate and create sessions directory for hash-based architecture
-  sessionsDir = getSessionsDir(configPath, join(tmpDir, "main-repo"));
+  sessionsDir = getSessionsDir("111111111111");
   mkdirSync(sessionsDir, { recursive: true });
   sessionsDirRef.current = sessionsDir;
 

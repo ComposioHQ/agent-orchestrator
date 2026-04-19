@@ -118,6 +118,7 @@ beforeEach(() => {
     name: "Test App",
     repo: "acme/app",
     path: join(env.tmpDir, "test-app"),
+    storageKey: "111111111111",
     defaultBranch: "main",
     sessionPrefix: "app",
     tracker: { plugin: "github" },
@@ -148,11 +149,11 @@ beforeEach(() => {
   };
 
   env.config = config;
-  env.sessionsDir = getSessionsDir(env.configPath, project.path);
+  env.sessionsDir = getSessionsDir(project.storageKey);
   mkdirSync(env.sessionsDir, { recursive: true });
 
   env.cleanup = () => {
-    const projectBaseDir = getProjectBaseDir(env.configPath, project.path);
+    const projectBaseDir = getProjectBaseDir(project.storageKey);
     if (existsSync(projectBaseDir)) {
       rmSync(projectBaseDir, { recursive: true, force: true });
     }

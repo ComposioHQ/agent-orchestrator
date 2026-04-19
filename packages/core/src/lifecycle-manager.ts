@@ -342,32 +342,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // Clear previous cache
     prEnrichmentCache.clear();
 
-    // Collect all unique PRs
-    const prs = sessions
-      .map((s) => s.pr)
-      .filter((pr): pr is NonNullable<typeof pr> => pr !== null);
+    // Collect all unique PRs keyed by their owning session's project/plugin.
+    const prsByPlugin = new Map<string, Array<NonNullable<Session["pr"]>>>();
+    const seenPRKeys = new Set<string>();
+    for (const session of sessions) {
+      if (!session.pr) continue;
+      const project = config.projects[session.projectId];
+      if (!project?.scm?.plugin || project.resolveError) continue;
 
-    // Deduplicate by key
-    const uniquePRs = Array.from(
-      new Map(prs.map((pr) => [`${pr.owner}/${pr.repo}#${pr.number}`, pr])).values(),
-    );
-
-    if (uniquePRs.length === 0) return;
-
-    // Group by SCM plugin and batch fetch for each group
-    const prsByPlugin = new Map<string, typeof uniquePRs>();
-    for (const pr of uniquePRs) {
-      // Find the project for this PR
-      const project = Object.values(config.projects).find((p) => {
-        if (!p.repo) return false;
-        // Use lastIndexOf to correctly handle GitLab subgroup paths (group/subgroup/repo)
-        const slashIdx = p.repo.lastIndexOf("/");
-        if (slashIdx < 0) return false;
-        const owner = p.repo.slice(0, slashIdx);
-        const repo = p.repo.slice(slashIdx + 1);
-        return owner === pr.owner && repo === pr.repo;
-      });
-      if (!project?.scm?.plugin) continue;
+      const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+      if (seenPRKeys.has(prKey)) continue;
+      seenPRKeys.add(prKey);
 
       const pluginKey = project.scm.plugin;
       if (!prsByPlugin.has(pluginKey)) {
@@ -375,7 +360,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
       const pluginPRs = prsByPlugin.get(pluginKey);
       if (pluginPRs) {
-        pluginPRs.push(pr);
+        pluginPRs.push(session.pr);
       }
     }
 
@@ -459,7 +444,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
   }
-
   /** Check if idle time exceeds the agent-stuck threshold. */
   function isIdleBeyondThreshold(session: Session, idleTimestamp: Date): boolean {
     const stuckReaction = getReactionConfigForSession(session, "agent-stuck");
@@ -478,6 +462,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       return {
         status: session.status,
         evidence: "project_missing",
+        detectingAttempts: parseAttemptCount(session.metadata["detectingAttempts"]),
+      };
+    }
+    if (typeof project.resolveError === "string" && project.resolveError.length > 0) {
+      return {
+        status: session.status,
+        evidence: "project_resolve_error",
         detectingAttempts: parseAttemptCount(session.metadata["detectingAttempts"]),
       };
     }
@@ -722,9 +713,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           lifecycle.pr.number = detectedPR.number;
           lifecycle.pr.url = detectedPR.url;
           lifecycle.pr.lastObservedAt = nowIso;
-          const sessionsDir = getSessionsDir(config.configPath, project.path);
+          const sessionsDir = getSessionsDir(project.storageKey);
           updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
-          sessionManager.invalidateCache();
         }
       } catch (error) {
         observer?.recordOperation?.({
@@ -761,7 +751,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             }),
           );
         }
-
         const prState = await scm.getPRState(session.pr);
         if (prState === PR_STATE.MERGED || prState === PR_STATE.CLOSED) {
           return commit(
@@ -1061,6 +1050,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     reactionKey: string,
   ): ReactionConfig | null {
     const project = config.projects[session.projectId];
+    if (project?.resolveError) return null;
     const globalReaction = config.reactions[reactionKey];
     const projectReaction = project?.reactions?.[reactionKey];
     const reactionConfig = projectReaction
@@ -1075,15 +1065,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   ): void {
     const project = config.projects[session.projectId];
     if (!project) return;
+    if (typeof project.resolveError === "string" && project.resolveError.length > 0) return;
 
-    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    const sessionsDir = getSessionsDir(project.storageKey);
     const lifecycleUpdates = buildLifecycleMetadataPatch(
       cloneLifecycle(session.lifecycle),
       session.status,
     );
     const mergedUpdates = { ...updates, ...lifecycleUpdates };
     updateMetadata(sessionsDir, session.id, mergedUpdates);
-    sessionManager.invalidateCache();
 
     const cleaned = Object.fromEntries(
       Object.entries(session.metadata).filter(([key]) => {
@@ -1111,6 +1101,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   ): Promise<void> {
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
+    if (typeof project.resolveError === "string" && project.resolveError.length > 0) return;
 
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
@@ -1313,6 +1304,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   ): Promise<void> {
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
+    if (typeof project.resolveError === "string" && project.resolveError.length > 0) return;
 
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
@@ -1444,6 +1436,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   ): Promise<void> {
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
+    if (typeof project.resolveError === "string" && project.resolveError.length > 0) return;
 
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
@@ -1878,8 +1871,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         return tracked !== undefined && tracked !== s.status;
       });
 
-      // Populate PR enrichment cache using batch GraphQL queries
-      // This reduces API calls from N×3 to 1 per poll cycle
+      // Prime the per-poll PR enrichment cache before session checks so
+      // downstream status/reaction logic can reuse batch GraphQL data.
       await populatePREnrichmentCache(sessionsToCheck);
 
       // Poll all sessions concurrently

@@ -48,7 +48,7 @@ afterEach(() => {
 describe("kill", () => {
   it("destroys runtime, workspace, and archives metadata", async () => {
     const managedWorktree = join(
-      getWorktreesDir(config.configPath, config.projects["my-app"]!.path),
+      getWorktreesDir(config.projects["my-app"]!.storageKey),
       "app-1",
     );
     writeMetadata(sessionsDir, "app-1", {
@@ -408,6 +408,7 @@ describe("cleanup", () => {
           name: "My App 2",
           repo: "org/my-app-2",
           path: project2Path,
+          storageKey: "222222222222",
           defaultBranch: "main",
           sessionPrefix: "app",
           scm: { plugin: "github" },
@@ -415,7 +416,7 @@ describe("cleanup", () => {
         },
       },
     };
-    const sessionsDir2 = getSessionsDir(configPath, project2Path);
+    const sessionsDir2 = getSessionsDir("222222222222");
     mkdirSync(sessionsDir2, { recursive: true });
 
     writeMetadata(sessionsDir, "app-1", {
