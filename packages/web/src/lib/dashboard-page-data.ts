@@ -20,6 +20,19 @@ import { settlesWithin } from "@/lib/async-utils";
 
 const FAST_METADATA_ENRICH_TIMEOUT_MS = 3_000;
 
+/**
+ * Normalize thrown values from dashboard SSR into a single-line message for the UI.
+ * Avoids dumping stack traces into the banner.
+ */
+export function formatDashboardLoadError(err: unknown): string {
+  if (err instanceof Error && err.message.trim()) {
+    return err.message.trim();
+  }
+  if (typeof err === "string" && err.trim()) {
+    return err.trim();
+  }
+  return "The orchestrator could not load dashboard data. Check your configuration file.";
+}
 
 interface DashboardPageData {
   sessions: DashboardSession[];
@@ -28,6 +41,8 @@ interface DashboardPageData {
   projects: ProjectInfo[];
   selectedProjectId?: string;
   attentionZones: DashboardAttentionZoneMode;
+  /** Present when services initialization or session listing failed during SSR (distinct from an empty session list). */
+  dashboardLoadError?: string;
 }
 
 /** Default zone mode when no config is loaded or `dashboard` block is absent. */
@@ -93,9 +108,10 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
         await enrichSessionPR(pageData.sessions[i], scm, core.pr, { cacheOnly: true });
       }
     }
-  } catch {
+  } catch (err) {
     pageData.sessions = [];
     pageData.orchestrators = [];
+    pageData.dashboardLoadError = formatDashboardLoadError(err);
   }
 
   return pageData;

@@ -59,6 +59,18 @@ describe("Dashboard empty state", () => {
     expect(queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
   });
 
+  it("shows load error banner instead of empty state when SSR services failed", () => {
+    render(
+      <Dashboard
+        initialSessions={[]}
+        dashboardLoadError="No agent-orchestrator.yaml found"
+      />,
+    );
+    expect(screen.queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Orchestrator failed to load");
+    expect(screen.getByRole("alert")).toHaveTextContent("No agent-orchestrator.yaml found");
+  });
+
   it("shows empty state when only done sessions exist", () => {
     render(
       <Dashboard

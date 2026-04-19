@@ -135,4 +135,14 @@ describe("getDashboardPageData fast path", () => {
       vi.useRealTimers();
     }
   });
+
+  it("surfaces getServices failure as dashboardLoadError instead of a silent empty list", async () => {
+    hoisted.getServicesMock.mockRejectedValue(new Error("No agent-orchestrator.yaml found"));
+
+    const pageData = await getDashboardPageData("all");
+
+    expect(pageData.sessions).toEqual([]);
+    expect(pageData.orchestrators).toEqual([]);
+    expect(pageData.dashboardLoadError).toBe("No agent-orchestrator.yaml found");
+  });
 });
