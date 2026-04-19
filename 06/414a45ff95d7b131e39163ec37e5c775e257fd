@@ -1,0 +1,47 @@
+packages/core/src/global-config.ts
+  851299caedf604c0 274,570,1092-1094
+packages/core/src/__tests__/paths.test.ts
+  851299caedf604c0 17,37
+packages/web/src/app/api/filesystem/browse/route.ts
+  851299caedf604c0 1,3
+packages/cli/__tests__/commands/session.test.ts
+  851299caedf604c0 144,174,187,255
+packages/cli/__tests__/commands/spawn.test.ts
+  851299caedf604c0 71,98,133
+packages/web/src/app/api/browse-directory/route.ts
+  851299caedf604c0 1
+packages/cli/__tests__/commands/review-check.test.ts
+  851299caedf604c0 111,141,152
+packages/core/src/project-resolver.ts
+  851299caedf604c0 1-7
+packages/integration-tests/src/cli-spawn-core-read-new.integration.test.ts
+  851299caedf604c0 17,33,74,104,110,114,137,141,171,203,205,210-211,234,242,258-259,268-269,292-293
+packages/integration-tests/src/prompt-spawn.integration.test.ts
+  851299caedf604c0 34,65,92,114,144,181,212,243,270,308
+packages/web/src/app/api/projects/[id]/route.ts
+  851299caedf604c0 3
+packages/core/src/__tests__/session-manager/lifecycle.test.ts
+  851299caedf604c0 40
+packages/integration-tests/src/config-metadata-service.integration.test.ts
+  851299caedf604c0 27-28,69,90,93,101-102,105-106,110,172,175,182-183
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "06414a45ff95d7b131e39163ec37e5c775e257fd",
+  "prompts": {
+    "851299caedf604c0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019da632-82ac-7ff0-97fc-cff98c1239d8",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 89,
+      "total_deletions": 78,
+      "accepted_lines": 74,
+      "overriden_lines": 0
+    }
+  }
+}
