@@ -106,6 +106,14 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
       if (path) return actual.loadConfig(path);
       return mockConfigRef.current;
     },
+    // Return the mocked config's path so the cross-project check in
+    // start.ts compares against a deterministic value instead of whatever
+    // the test process's real cwd resolves to.
+    findConfigFile: (startDir?: string) => {
+      const current = mockConfigRef.current as { configPath?: string } | null;
+      if (current?.configPath) return current.configPath;
+      return actual.findConfigFile(startDir);
+    },
   };
 });
 
@@ -288,6 +296,10 @@ beforeEach(async () => {
   mockWaitForExit.mockResolvedValue(true);
   mockIsHumanCaller.mockReset();
   mockIsHumanCaller.mockReturnValue(true);
+  // Reset the shared config ref so prior tests don't leak their
+  // configPath into findConfigFile() lookups (cross-project check in
+  // start.ts reads this path to compare against running.configPath).
+  mockConfigRef.current = null;
 });
 
 afterEach(() => {
@@ -1545,18 +1557,35 @@ describe("start command — autoCreateConfig", () => {
 // ---------------------------------------------------------------------------
 
 describe("start command — already-running detection", () => {
-  it("exits immediately for non-TTY caller when AO is already running", async () => {
+  // Helper: mock a running instance tied to the current test config
+  // (same-project scenario — configPath matches mockConfigRef.current.configPath).
+  function mockSameProjectRunning(): void {
+    const cfg = mockConfigRef.current as { configPath: string };
     mockIsAlreadyRunning.mockResolvedValue({
       pid: 9999,
-      configPath: "/fake/config.yaml",
+      configPath: cfg.configPath,
       port: 3000,
       startedAt: "2026-01-01T00:00:00Z",
       projects: ["my-app"],
     });
+  }
 
-    mockIsHumanCaller.mockReturnValue(false);
+  // Helper: mock a running instance for a different project than cwd
+  // (cross-project scenario — configPath differs from mockConfigRef.current.configPath).
+  function mockCrossProjectRunning(): void {
+    mockIsAlreadyRunning.mockResolvedValue({
+      pid: 9999,
+      configPath: "/some/other/project/agent-orchestrator.yaml",
+      port: 3000,
+      startedAt: "2026-01-01T00:00:00Z",
+      projects: ["other-project"],
+    });
+  }
 
+  it("exits immediately for non-TTY caller when AO is already running (same project)", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSameProjectRunning();
+    mockIsHumanCaller.mockReturnValue(false);
 
     // process.exit(0) throws in tests, caught by the action's catch block which calls exit(1)
     await expect(
@@ -1570,21 +1599,14 @@ describe("start command — already-running detection", () => {
       .join("\n");
     expect(output).toContain("AO is already running");
     expect(output).toContain("PID: 9999");
+    expect(output).not.toContain("different project");
   });
 
-  it("exits when human caller selects 'quit'", async () => {
-    mockIsAlreadyRunning.mockResolvedValue({
-      pid: 9999,
-      configPath: "/fake/config.yaml",
-      port: 3000,
-      startedAt: "2026-01-01T00:00:00Z",
-      projects: ["my-app"],
-    });
-
+  it("exits when human caller selects 'quit' (same project)", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSameProjectRunning();
     mockPromptSelect.mockResolvedValue("quit");
 
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-
     await expect(
       program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
     ).rejects.toThrow("process.exit(1)");
@@ -1596,19 +1618,11 @@ describe("start command — already-running detection", () => {
     expect(output).toContain("AO is already running");
   });
 
-  it("exits when human caller selects 'open'", async () => {
-    mockIsAlreadyRunning.mockResolvedValue({
-      pid: 9999,
-      configPath: "/fake/config.yaml",
-      port: 3000,
-      startedAt: "2026-01-01T00:00:00Z",
-      projects: ["my-app"],
-    });
-
+  it("exits when human caller selects 'open' (same project)", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSameProjectRunning();
     mockPromptSelect.mockResolvedValue("open");
 
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-
     await expect(
       program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
     ).rejects.toThrow("process.exit(1)");
@@ -1620,22 +1634,14 @@ describe("start command — already-running detection", () => {
     expect(output).toContain("AO is already running");
   });
 
-  it("kills existing process and continues when human caller selects 'restart'", async () => {
-    mockIsAlreadyRunning.mockResolvedValue({
-      pid: 9999,
-      configPath: "/fake/config.yaml",
-      port: 3000,
-      startedAt: "2026-01-01T00:00:00Z",
-      projects: ["my-app"],
-    });
-
+  it("kills existing process and continues when human caller selects 'restart' (same project)", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSameProjectRunning();
     mockWaitForExit.mockResolvedValue(true);
 
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
 
     mockPromptSelect.mockResolvedValue("restart");
-
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 
     // After restart the startup flow continues — it may succeed or fail
     // depending on infrastructure mocks, so we just verify the restart actions
@@ -1657,15 +1663,7 @@ describe("start command — already-running detection", () => {
     killSpy.mockRestore();
   });
 
-  it("creates new orchestrator entry when human caller selects 'new'", async () => {
-    mockIsAlreadyRunning.mockResolvedValue({
-      pid: 9999,
-      configPath: "/fake/config.yaml",
-      port: 3000,
-      startedAt: "2026-01-01T00:00:00Z",
-      projects: ["my-app"],
-    });
-
+  it("creates new orchestrator entry when human caller selects 'new' (same project)", async () => {
     mockPromptSelect.mockResolvedValue("new");
 
     const configPath = join(tmpDir, "agent-orchestrator.yaml");
@@ -1691,6 +1689,7 @@ describe("start command — already-running detection", () => {
 
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
     (mockConfigRef.current as Record<string, unknown>).configPath = configPath;
+    mockSameProjectRunning();
 
     // After "new" the startup flow continues — it may fail on infrastructure
     try {
@@ -1710,15 +1709,7 @@ describe("start command — already-running detection", () => {
     expect(newKey).toMatch(/^my-app-/);
   });
 
-  it("does not mutate YAML when non-TTY caller detects already running (path arg)", async () => {
-    mockIsAlreadyRunning.mockResolvedValue({
-      pid: 9999,
-      configPath: "/fake/config.yaml",
-      port: 3000,
-      startedAt: "2026-01-01T00:00:00Z",
-      projects: ["my-app"],
-    });
-
+  it("does not mutate YAML when non-TTY caller detects already running (path arg, same project)", async () => {
     mockIsHumanCaller.mockReturnValue(false);
 
     const repoDir = join(tmpDir, "some-project");
@@ -1744,6 +1735,7 @@ describe("start command — already-running detection", () => {
     writeFileSync(configPath, originalYaml);
 
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSameProjectRunning();
     mockCwd(tmpDir);
 
     // process.exit(0) throws, caught by catch block which calls exit(1)
@@ -1761,6 +1753,98 @@ describe("start command — already-running detection", () => {
     // YAML should be unchanged — no duplicate entry added
     const afterYaml = readFileSync(configPath, "utf-8");
     expect(afterYaml).toBe(originalYaml);
+  });
+
+  // Cross-project detection — issue #1279
+  //
+  // When AO is running for project A and the user runs `ao start` in a
+  // folder belonging to a different project B, the CLI must NOT show
+  // A's dashboard URL as the default action.
+
+  it("shows cross-project warning for non-TTY caller when running instance is a different project", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockCrossProjectRunning();
+    mockIsHumanCaller.mockReturnValue(false);
+
+    await expect(
+      program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    // Makes it explicit that the running instance is a different project.
+    expect(output).toContain("different project");
+    expect(output).toContain("other-project");
+    expect(output).toContain("PID: 9999");
+    // Does NOT suggest the running dashboard URL as the primary action.
+    expect(output).toContain("ao stop --all && ao start");
+    // No new entry added to config.
+    expect(mockUnregister).not.toHaveBeenCalled();
+  });
+
+  it("offers 'stop-start' default in cross-project prompt and kills other instance on confirm", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockCrossProjectRunning();
+    mockWaitForExit.mockResolvedValue(true);
+
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    mockPromptSelect.mockResolvedValue("stop-start");
+
+    try {
+      await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+    } catch {
+      // Startup after stop-start may throw — that's OK for this test
+    }
+
+    expect(killSpy).toHaveBeenCalledWith(9999, "SIGTERM");
+    expect(mockUnregister).toHaveBeenCalled();
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("different project");
+    expect(output).toContain("Stopped other instance");
+
+    killSpy.mockRestore();
+  });
+
+  it("exits when cross-project human caller selects 'open-other'", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockCrossProjectRunning();
+    mockPromptSelect.mockResolvedValue("open-other");
+
+    await expect(
+      program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("different project");
+    // Did not proceed to start anything new.
+    expect(mockUnregister).not.toHaveBeenCalled();
+  });
+
+  it("exits when cross-project human caller selects 'quit'", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockCrossProjectRunning();
+    mockPromptSelect.mockResolvedValue("quit");
+
+    await expect(
+      program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("different project");
+    expect(mockUnregister).not.toHaveBeenCalled();
   });
 });
 

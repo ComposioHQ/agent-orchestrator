@@ -1388,7 +1388,90 @@ export function registerStart(program: Command): void {
           const running = await isAlreadyRunning();
           let startNewOrchestrator = false;
           if (running) {
-            if (isHumanCaller()) {
+            // Determine whether the running instance belongs to the same
+            // project as the user's current directory. If the user has cd'd
+            // into a different repo with its own agent-orchestrator.yaml,
+            // the "Open dashboard" default would point at the wrong project
+            // (issue #1279). Comparing config paths disambiguates the two
+            // cases: same config → same project set; different config →
+            // cross-project.
+            let currentConfigPath: string | null = null;
+            try {
+              currentConfigPath = findConfigFile();
+            } catch {
+              currentConfigPath = null;
+            }
+            const isSameProject =
+              currentConfigPath !== null &&
+              resolve(currentConfigPath) === resolve(running.configPath);
+
+            if (!isSameProject) {
+              // Cross-project — running instance belongs to a different config.
+              if (isHumanCaller()) {
+                console.log(
+                  chalk.yellow(`\n⚠ AO is already running for a different project.`),
+                );
+                console.log(
+                  `  Running project(s): ${chalk.cyan(running.projects.join(", "))}`,
+                );
+                console.log(`  Running config:     ${chalk.dim(running.configPath)}`);
+                console.log(`  Current directory:  ${chalk.dim(cwd())}`);
+                console.log(
+                  `  Other dashboard:    ${chalk.cyan(`http://localhost:${running.port}`)} (PID ${running.pid})\n`,
+                );
+
+                const choice = await promptSelect(
+                  "What do you want to do?",
+                  [
+                    {
+                      value: "stop-start",
+                      label: "Stop the other instance and start here",
+                      hint: `Stops PID ${running.pid}`,
+                    },
+                    {
+                      value: "open-other",
+                      label: "Open the other project's dashboard",
+                      hint: `http://localhost:${running.port}`,
+                    },
+                    { value: "quit", label: "Quit" },
+                  ],
+                  "stop-start",
+                );
+
+                if (choice === "open-other") {
+                  openUrl(`http://localhost:${running.port}`);
+                  process.exit(0);
+                } else if (choice === "stop-start") {
+                  try { process.kill(running.pid, "SIGTERM"); } catch { /* already dead */ }
+                  if (!(await waitForExit(running.pid, 5000))) {
+                    console.log(chalk.yellow("  Process didn't exit cleanly, sending SIGKILL..."));
+                    try { process.kill(running.pid, "SIGKILL"); } catch { /* already dead */ }
+                    if (!(await waitForExit(running.pid, 3000))) {
+                      throw new Error(
+                        `Failed to stop AO process (PID ${running.pid}). Check permissions or stop it manually.`,
+                      );
+                    }
+                  }
+                  await unregister();
+                  console.log(
+                    chalk.yellow("\n  Stopped other instance. Starting this project...\n"),
+                  );
+                  // Continue to startup below
+                } else {
+                  process.exit(0);
+                }
+              } else {
+                // Agent/non-TTY caller — print cross-project info and exit.
+                console.log(`AO is already running for a different project.`);
+                console.log(`Running project(s): ${running.projects.join(", ")}`);
+                console.log(`Running config: ${running.configPath}`);
+                console.log(`Current directory: ${cwd()}`);
+                console.log(`Dashboard: http://localhost:${running.port}`);
+                console.log(`PID: ${running.pid}`);
+                console.log(`To start here: ao stop --all && ao start`);
+                process.exit(0);
+              }
+            } else if (isHumanCaller()) {
               console.log(chalk.cyan(`\nℹ AO is already running.`));
               console.log(`  Dashboard: ${chalk.cyan(`http://localhost:${running.port}`)}`);
               console.log(`  PID: ${running.pid} | Up since: ${running.startedAt}`);
