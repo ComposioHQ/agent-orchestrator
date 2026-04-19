@@ -277,12 +277,26 @@ interface EventContext {
 }
 
 /**
+ * Minimal session context required for reaction execution and event enrichment.
+ * Used for system-level events (like all-complete) that don't have a real session.
+ */
+interface ReactionSessionContext {
+  id: SessionId;
+  projectId: string;
+  pr: Session["pr"];
+  issueId: string | null;
+  branch: string | null;
+  metadata: Record<string, string>;
+  agentInfo: Session["agentInfo"];
+}
+
+/**
  * Build event context with PR and issue information for webhook payloads.
  * This enriches events with useful metadata so external consumers (Telegram, Discord, etc.)
  * can display meaningful information without making additional API calls.
  */
 function buildEventContext(
-  session: Session,
+  session: Session | ReactionSessionContext,
   prEnrichmentCache: Map<string, PREnrichmentData>,
 ): EventContext {
   let pr: EventPRContext | null = null;
@@ -1198,7 +1212,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   /** Execute a reaction for a session. */
   async function executeReaction(
-    session: Session,
+    session: Session | ReactionSessionContext,
     reactionKey: string,
     reactionConfig: ReactionConfig,
   ): Promise<ReactionResult> {
@@ -2354,8 +2368,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           const reactionConfig = config.reactions[reactionKey];
           if (reactionConfig && reactionConfig.action) {
             if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
-              // Create a minimal session-like object for system events (no PR/issue context)
-              const systemSession = {
+              // Create a minimal session context for system events (no PR/issue context)
+              const systemSession: ReactionSessionContext = {
                 id: "system" as SessionId,
                 projectId: "all",
                 pr: null,
@@ -2363,7 +2377,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 branch: null,
                 metadata: {},
                 agentInfo: null,
-              } as unknown as Session;
+              };
               await executeReaction(systemSession, reactionKey, reactionConfig as ReactionConfig);
             }
           }
