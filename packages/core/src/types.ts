@@ -1511,6 +1511,7 @@ export interface SCMWebhookConfig {
   eventHeader?: string;
   deliveryHeader?: string;
   maxBodyBytes?: number;
+  /** When true, automatically spawn a new agent session when CI fails on a PR and no active or restorable session exists for that PR. */
   autoSpawnOnCIFailure?: boolean;
 }
 

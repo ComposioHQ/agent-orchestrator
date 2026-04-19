@@ -85,7 +85,7 @@ export function buildWebhookRequest(
   };
 }
 
-export function findRestorableSessions(
+export function findRestorableSessionsForCI(
   sessions: Session[],
   projectId: string,
   event: SCMWebhookEvent,

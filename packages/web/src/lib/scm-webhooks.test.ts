@@ -6,7 +6,7 @@ import {
   type SCMWebhookEvent,
   type Session,
 } from "@aoagents/ao-core";
-import { eventMatchesProject, findAffectedSessions, findRestorableSessions } from "./scm-webhooks";
+import { eventMatchesProject, findAffectedSessions, findRestorableSessionsForCI } from "./scm-webhooks";
 
 const project: ProjectConfig = {
   name: "my-app",
@@ -166,10 +166,10 @@ describe("findAffectedSessions", () => {
 });
 
 
-describe("findRestorableSessions", () => {
+describe("findRestorableSessionsForCI", () => {
   const killedLifecycle = createInitialCanonicalLifecycle("worker", new Date());
   killedLifecycle.session.state = "terminated";
-  killedLifecycle.session.reason = "kill_requested";
+  killedLifecycle.session.reason = "manually_killed";
   killedLifecycle.session.startedAt = killedLifecycle.session.lastTransitionAt;
   killedLifecycle.runtime.state = "exited";
   killedLifecycle.runtime.reason = "process_missing";
@@ -232,7 +232,7 @@ describe("findRestorableSessions", () => {
       provider: "github", kind: "pull_request", action: "synchronize",
       rawEventType: "pull_request", prNumber: 42, data: {},
     };
-    expect(findRestorableSessions([killedSession], "my-app", event)).toEqual([]);
+    expect(findRestorableSessionsForCI([killedSession], "my-app", event)).toEqual([]);
   });
 
   it("returns empty for ci events without prNumber", () => {
@@ -240,7 +240,7 @@ describe("findRestorableSessions", () => {
       provider: "github", kind: "ci", action: "completed",
       rawEventType: "workflow_run", data: {},
     };
-    expect(findRestorableSessions([killedSession], "my-app", event)).toEqual([]);
+    expect(findRestorableSessionsForCI([killedSession], "my-app", event)).toEqual([]);
   });
 
   it("matches a killed session by pr number", () => {
@@ -248,7 +248,7 @@ describe("findRestorableSessions", () => {
       provider: "github", kind: "ci", action: "completed",
       rawEventType: "workflow_run", prNumber: 42, data: {},
     };
-    expect(findRestorableSessions([killedSession, mergedSession], "my-app", event)).toEqual([killedSession]);
+    expect(findRestorableSessionsForCI([killedSession, mergedSession], "my-app", event)).toEqual([killedSession]);
   });
 
   it("skips merged sessions even when pr number matches", () => {
@@ -256,6 +256,6 @@ describe("findRestorableSessions", () => {
       provider: "github", kind: "ci", action: "completed",
       rawEventType: "workflow_run", prNumber: 42, data: {},
     };
-    expect(findRestorableSessions([mergedSession], "my-app", event)).toEqual([]);
+    expect(findRestorableSessionsForCI([mergedSession], "my-app", event)).toEqual([]);
   });
 });

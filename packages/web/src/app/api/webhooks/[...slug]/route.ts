@@ -1,12 +1,30 @@
 import { NextResponse } from "next/server";
+import type { SCMWebhookEvent } from "@aoagents/ao-core";
 import { getServices } from "@/lib/services";
 import {
   buildWebhookRequest,
   eventMatchesProject,
   findAffectedSessions,
-  findRestorableSessions,
+  findRestorableSessionsForCI,
   findWebhookProjects,
 } from "@/lib/scm-webhooks";
+
+function buildCISpawnPrompt(event: SCMWebhookEvent): string {
+  const base = `CI failed on PR #${event.prNumber} (branch: ${event.branch}).`;
+  try {
+    const checkRun = (event.data as Record<string, unknown>)[event.rawEventType] as Record<string, unknown> | undefined;
+    const name = typeof checkRun?.["name"] === "string" ? checkRun["name"] : undefined;
+    const conclusion = typeof checkRun?.["conclusion"] === "string" ? checkRun["conclusion"] : undefined;
+    const url = typeof checkRun?.["html_url"] === "string" ? checkRun["html_url"] : undefined;
+    if (name) {
+      const detail = [name, conclusion, url].filter(Boolean).join(" — ");
+      return `${base} Failed check: ${detail}. Investigate the failure, fix the root cause, and push a fix to this branch.`;
+    }
+  } catch {
+    // fall through to generic prompt
+  }
+  return `${base} Investigate the failure, fix the root cause, and push a fix to this branch.`;
+}
 
 export const dynamic = "force-dynamic";
 
@@ -78,11 +96,11 @@ export async function POST(request: Request): Promise<Response> {
       projectIds.add(candidate.projectId);
       const affectedSessions = findAffectedSessions(sessions, candidate.projectId, event);
 
-      const lifecycle = services.lifecycleManager;
 
       if (affectedSessions.length === 0) {
+        const lifecycle = services.lifecycleManager;
         // Gap 1: session exists but is terminal — restore it, then let existing reaction engine handle ci-failed
-        const restorable = findRestorableSessions(sessions, candidate.projectId, event);
+        const restorable = findRestorableSessionsForCI(sessions, candidate.projectId, event);
         for (const session of restorable) {
           sessionIds.add(session.id);
           try {
@@ -97,12 +115,15 @@ export async function POST(request: Request): Promise<Response> {
         // Gap 2: no session at all — auto-spawn if project opts in
         if (restorable.length === 0) {
           const autoSpawn = candidate.project.scm?.webhook?.autoSpawnOnCIFailure ?? false;
-          if (autoSpawn && event.kind === "ci" && event.prNumber !== undefined && event.branch) {
+          const alreadyExists = sessions.some(
+            (s) => s.projectId === candidate.projectId && s.pr?.number === event.prNumber,
+          );
+          if (autoSpawn && !alreadyExists && event.kind === "ci" && event.prNumber !== undefined && event.branch) {
             try {
               const spawned = await services.sessionManager.spawn({
                 projectId: candidate.projectId,
                 branch: event.branch,
-                prompt: `CI failed on PR #${event.prNumber}. Investigate the failure, fix the root cause, and push a fix to this branch.`,
+                prompt: buildCISpawnPrompt(event),
               });
               sessionIds.add(spawned.id);
               await lifecycle.check(spawned.id);
@@ -116,6 +137,7 @@ export async function POST(request: Request): Promise<Response> {
         continue;
       }
 
+      const lifecycle = services.lifecycleManager;
       for (const session of affectedSessions) {
         sessionIds.add(session.id);
         try {
