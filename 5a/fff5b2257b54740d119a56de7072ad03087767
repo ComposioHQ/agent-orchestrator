@@ -1,0 +1,33 @@
+.changeset/filter-terminated-sessions-from-ls.md
+  21d5d2860123e95b 3,8
+packages/cli/__tests__/commands/session.test.ts
+  21d5d2860123e95b 24,118-126,133,136,360-362,494-513
+packages/cli/__tests__/commands/status.test.ts
+  21d5d2860123e95b 19,163-169,180,183-184,1247-1264
+packages/core/src/index.ts
+  21d5d2860123e95b 43
+packages/core/src/lifecycle-state.ts
+  21d5d2860123e95b 204-210
+packages/core/src/__tests__/lifecycle-state.test.ts
+  21d5d2860123e95b 82-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "5afff5b2257b54740d119a56de7072ad03087767",
+  "prompts": {
+    "21d5d2860123e95b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a8ed20a8-2222-4143-a4ce-0861c70cff6b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 91,
+      "total_deletions": 29,
+      "accepted_lines": 91,
+      "overriden_lines": 0
+    }
+  }
+}
