@@ -88,6 +88,34 @@ describe("list", () => {
     expect(repaired!["status"]).toBe("working");
   });
 
+  it("persists canonical lifecycle payloads for legacy session metadata on read", async () => {
+    writeMetadata(sessionsDir, "app-legacy", {
+      worktree: "/tmp/legacy",
+      branch: "feat/legacy",
+      status: "working",
+      project: "my-app",
+      createdAt: "2025-01-01T00:00:00.000Z",
+    });
+
+    const oldTime = new Date("2026-01-02T00:00:00.000Z");
+    utimesSync(join(sessionsDir, "app-legacy"), oldTime, oldTime);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const sessions = await sm.list("my-app");
+    const legacy = sessions.find((session) => session.id === "app-legacy");
+
+    expect(legacy).toBeDefined();
+    expect(legacy!.lastActivityAt.getTime()).toBe(oldTime.getTime());
+
+    const repaired = readMetadataRaw(sessionsDir, "app-legacy");
+    expect(repaired?.["stateVersion"]).toBe("2");
+    expect(repaired?.["statePayload"]).toBeTruthy();
+
+    const payload = JSON.parse(repaired!["statePayload"]);
+    expect(payload.session.startedAt).toBe("2025-01-01T00:00:00.000Z");
+    expect(payload.session.lastTransitionAt).toBe("2025-01-01T00:00:00.000Z");
+  });
+
   it("filters by project ID", async () => {
     // In hash-based architecture, each project has its own directory
     // so filtering is implicit. This test verifies list(projectId) only
@@ -315,6 +343,7 @@ describe("list", () => {
 
     // Should keep null (absent) when getActivityState fails
     expect(sessions[0].activity).toBeNull();
+    expect(sessions[0].activitySignal.state).toBe("probe_failure");
   });
 
   it("keeps existing activity when getActivityState returns null", async () => {
@@ -345,6 +374,36 @@ describe("list", () => {
     // null = "I don't know" — activity stays null (absent)
     expect(agentWithNull.getActivityState).toHaveBeenCalled();
     expect(sessions[0].activity).toBeNull();
+    expect(sessions[0].activitySignal.state).toBe("null");
+  });
+
+  it("marks terminal fallback-free stale activity explicitly when timing is missing", async () => {
+    const agentWithIdleNoTimestamp: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "idle" }),
+    };
+    const registryWithStaleSignal: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return agentWithIdleNoTimestamp;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithStaleSignal });
+    const sessions = await sm.list();
+
+    expect(sessions[0].activity).toBe("idle");
+    expect(sessions[0].activitySignal.state).toBe("stale");
   });
 
   it("updates lastActivityAt when detection timestamp is newer", async () => {

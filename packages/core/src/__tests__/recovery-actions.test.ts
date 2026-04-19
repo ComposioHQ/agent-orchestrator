@@ -20,6 +20,7 @@ function makeConfig(rootDir: string): OrchestratorConfig {
     configPath: join(rootDir, "agent-orchestrator.yaml"),
     port: 3000,
     readyThresholdMs: 300_000,
+    power: { preventIdleSleep: false },
     defaults: {
       runtime: "tmux",
       agent: "claude-code",
@@ -63,6 +64,10 @@ function makeAssessment(overrides: Partial<RecoveryAssessment> = {}): RecoveryAs
     classification: "live",
     action: "recover",
     reason: "Session is running normally",
+    runtimeProbeSucceeded: true,
+    processProbeSucceeded: true,
+    signalDisagreement: false,
+    recoveryRule: "auto",
     runtimeAlive: true,
     runtimeHandle: { id: "rt-1", runtimeName: "tmux", data: {} },
     workspaceExists: true,
@@ -213,6 +218,23 @@ describe("recoverSession", () => {
     expect(result.action).toBe("escalate");
     expect(result.requiresManualIntervention).toBe(true);
     expect(result.reason).toBe("Exceeded max recovery attempts (3)");
+  });
+
+  it("calls context.invalidateCache() after mutating metadata", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment();
+    const invalidateCache = vi.fn();
+    const context = makeContext(rootDir, { invalidateCache });
+
+    await recoverSession(assessment, config, registry, context);
+
+    expect(invalidateCache).toHaveBeenCalled();
   });
 });
 

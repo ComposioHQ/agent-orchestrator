@@ -67,6 +67,9 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "terminal", name: "web", pkg: "@aoagents/ao-plugin-terminal-web" },
 ];
 
+/** Npm package specifiers for every built-in plugin (single source of truth for web/CLI parity). */
+export const BUILTIN_PLUGIN_PACKAGES: readonly string[] = BUILTIN_PLUGINS.map((b) => b.pkg);
+
 function matchesNotifierPlugin(
   pluginName: string,
   notifierId: string,
@@ -442,16 +445,20 @@ export function createPluginRegistry(): PluginRegistry {
       orchestratorConfig?: OrchestratorConfig,
       importFn?: (pkg: string) => Promise<unknown>,
     ): Promise<void> {
-      const doImport = importFn ?? ((pkg: string) => import(pkg));
+      const doImport = importFn ?? ((pkg: string) => import(/* webpackIgnore: true */ pkg));
       for (const builtin of BUILTIN_PLUGINS) {
         let mod;
         try {
           mod = normalizeImportedPluginModule(await doImport(builtin.pkg));
         } catch (error) {
-          if (error instanceof Error && error.message.includes("is not bundled")) {
-            process.stderr.write(`[plugin-registry] ${error.message}\n`);
+          const msg = error instanceof Error ? error.message : String(error);
+          if (importFn) {
+            // Custom importer (e.g. Next.js static map): surface failures so dashboard parity issues are visible.
+            process.stderr.write(
+              `[plugin-registry] Failed to import built-in "${builtin.pkg}" (${builtin.slot}/${builtin.name}): ${msg}\n`,
+            );
           }
-          // Plugin not installed — that's fine, only load what's available
+          // Default dynamic import: optional installs may be missing — stay quiet to avoid noisy CLI startup.
           continue;
         }
 
@@ -478,7 +485,7 @@ export function createPluginRegistry(): PluginRegistry {
       // Load built-ins with orchestrator config so plugins receive their settings
       await this.loadBuiltins(config, importFn);
 
-      const doImport = importFn ?? ((pkg: string) => import(pkg));
+      const doImport = importFn ?? ((pkg: string) => import(/* webpackIgnore: true */ pkg));
       // Build index once for O(1) lookups when matching plugins to external entries
       const externalIndex = buildExternalPluginIndex(config._externalPluginEntries);
 

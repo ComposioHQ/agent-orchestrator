@@ -138,6 +138,22 @@ CI fails → agent gets the logs and fixes it. Reviewer requests changes → age
 
 See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference, or run `ao config-help` for the complete schema.
 
+## Remote Access
+
+AO keeps your Mac awake while running, so you can access the dashboard remotely (e.g., via Tailscale from your phone) without the machine going to sleep.
+
+**How it works:** On macOS, AO automatically holds an idle-sleep prevention assertion using `caffeinate`. When AO exits, the assertion is released.
+
+```yaml
+# agent-orchestrator.yaml
+power:
+  preventIdleSleep: true  # Default on macOS, no-op on Linux
+```
+
+Set to `false` if you want to allow idle sleep while AO runs.
+
+**Lid-close limitation:** macOS enforces lid-close sleep at the hardware level — no userspace assertion can override it. If you need remote access while traveling with the lid closed, use [clamshell mode](https://support.apple.com/en-us/102505) (external power + display + input device).
+
 ## Plugin Architecture
 
 Seven plugin slots. Lifecycle stays in core.

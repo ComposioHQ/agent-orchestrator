@@ -1,3 +1,5 @@
+import type { AttentionLevel } from "./types";
+
 // ── Client → Server ──
 
 export type ClientMessage =
@@ -23,6 +25,9 @@ export interface SessionPatch {
   id: string;
   status: string;
   activity: string | null;
-  attentionLevel: string;
+  /** Tight union — server-computed via getAttentionLevel. Unvalidated strings
+   *  (e.g. "none") would lookup-miss downstream in DynamicFavicon and silently
+   *  drop urgent sessions from the favicon count. */
+  attentionLevel: AttentionLevel;
   lastActivityAt: string;
 }

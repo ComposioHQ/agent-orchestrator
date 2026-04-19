@@ -48,6 +48,7 @@ export async function recoverSession(
         escalationReason: `Exceeded max recovery attempts (${context.recoveryConfig.maxRecoveryAttempts})`,
         recoveryCount: String(recoveryCount),
       });
+      context.invalidateCache?.();
 
       return {
         success: true,
@@ -63,6 +64,7 @@ export async function recoverSession(
       restoredAt: now,
       recoveryCount: String(recoveryCount),
     });
+    context.invalidateCache?.();
 
     const updatedMetadata = {
       ...rawMetadata,
@@ -144,6 +146,7 @@ export async function cleanupSession(
     });
 
     deleteMetadata(sessionsDir, sessionId, true);
+    context.invalidateCache?.();
 
     return {
       success: true,
@@ -187,6 +190,7 @@ export async function escalateSession(
       escalatedAt: new Date().toISOString(),
       escalationReason: reason,
     });
+    context.invalidateCache?.();
 
     return {
       success: true,

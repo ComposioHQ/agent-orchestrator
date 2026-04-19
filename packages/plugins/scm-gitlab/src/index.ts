@@ -447,7 +447,7 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
     },
 
     async detectPR(session: Session, project: ProjectConfig): Promise<PRInfo | null> {
-      if (!session.branch) return null;
+      if (!session.branch || !project.repo) return null;
 
       const parts = project.repo.split("/");
       if (parts.length < 2 || !parts[0] || !parts[1]) {

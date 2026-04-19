@@ -90,6 +90,31 @@ describe("readLastJsonlEntry", () => {
     const result = await readLastJsonlEntry(path);
     expect(result!.modifiedAt).toBeInstanceOf(Date);
   });
+
+  it("extracts payloadType from nested payload.type", async () => {
+    // Real Codex writes records like {"type":"event_msg","payload":{"type":"error",...}}
+    // Consumers need the inner payload.type to classify activity correctly.
+    const path = setup(
+      '{"type":"event_msg","payload":{"type":"error","message":"bad"}}\n',
+    );
+    const result = await readLastJsonlEntry(path);
+    expect(result!.lastType).toBe("event_msg");
+    expect(result!.payloadType).toBe("error");
+  });
+
+  it("returns payloadType null when payload has no type field", async () => {
+    const path = setup('{"type":"session_meta","payload":{"cwd":"/workspace"}}\n');
+    const result = await readLastJsonlEntry(path);
+    expect(result!.lastType).toBe("session_meta");
+    expect(result!.payloadType).toBeNull();
+  });
+
+  it("returns payloadType null when payload is not an object", async () => {
+    const path = setup('{"type":"x","payload":"string"}\n');
+    const result = await readLastJsonlEntry(path);
+    expect(result!.lastType).toBe("x");
+    expect(result!.payloadType).toBeNull();
+  });
 });
 
 describe("isGitBranchNameSafe", () => {
@@ -162,10 +187,28 @@ describe("parsePrFromUrl", () => {
 
   it("falls back to trailing number for non-GitHub URLs", () => {
     expect(parsePrFromUrl("https://gitlab.com/foo/bar/-/merge_requests/456")).toEqual({
-      owner: "",
-      repo: "",
+      owner: "foo",
+      repo: "bar",
       number: 456,
       url: "https://gitlab.com/foo/bar/-/merge_requests/456",
+    });
+  });
+
+  it("parses GitHub Enterprise pull request URLs", () => {
+    expect(parsePrFromUrl("https://github.example.com/foo/bar/pull/789")).toEqual({
+      owner: "foo",
+      repo: "bar",
+      number: 789,
+      url: "https://github.example.com/foo/bar/pull/789",
+    });
+  });
+
+  it("parses GitHub pull request URLs with trailing path segments", () => {
+    expect(parsePrFromUrl("https://github.com/foo/bar/pull/123/files")).toEqual({
+      owner: "foo",
+      repo: "bar",
+      number: 123,
+      url: "https://github.com/foo/bar/pull/123/files",
     });
   });
 

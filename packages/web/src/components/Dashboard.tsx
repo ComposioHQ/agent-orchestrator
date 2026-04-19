@@ -5,13 +5,11 @@ import { useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   type DashboardSession,
-  type DashboardPR,
   type AttentionLevel,
   type DashboardOrchestratorLink,
+  type DashboardAttentionZoneMode,
   getAttentionLevel,
   isPRRateLimited,
-  isPRMergeReady,
-  isPRUnenriched,
 } from "@/lib/types";
 import { AttentionZone } from "./AttentionZone";
 import { DynamicFavicon, countNeedingAttention } from "./DynamicFavicon";
@@ -21,10 +19,8 @@ import { ProjectSidebar } from "./ProjectSidebar";
 import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
-import { BottomSheet } from "./BottomSheet";
 import { ConnectionBar } from "./ConnectionBar";
-import { MobileBottomNav } from "./MobileBottomNav";
-import { getProjectScopedHref } from "@/lib/project-utils";
+import { SidebarContext } from "./workspace/SidebarContext";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -32,21 +28,12 @@ interface DashboardProps {
   projectName?: string;
   projects?: ProjectInfo[];
   orchestrators?: DashboardOrchestratorLink[];
+  /** Dashboard attention zone mode (defaults to "simple" — 4 zones). */
+  attentionZones?: DashboardAttentionZoneMode;
 }
 
-const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
-/** Urgency-first order for the mobile accordion (reversed from desktop) */
-const MOBILE_KANBAN_ORDER = ["respond", "merge", "review", "pending", "working"] as const;
-const MOBILE_FILTERS = [
-  { value: "all", label: "All" },
-  { value: "respond", label: "Respond" },
-  { value: "merge", label: "Ready" },
-  { value: "review", label: "Review" },
-  { value: "pending", label: "Pending" },
-  { value: "working", label: "Working" },
-] as const;
-
-type MobileFilterValue = (typeof MOBILE_FILTERS)[number]["value"];
+const SIMPLE_KANBAN_LEVELS = ["working", "pending", "action", "merge"] as const;
+const DETAILED_KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
 
 function formatRelativeTimeCompact(isoDate: string | null): string {
@@ -135,126 +122,31 @@ function DoneCard({
   );
 }
 
-function getCiPillClass(pr: DashboardPR): string {
-  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "";
-  return pr.ciStatus === "passing"
-    ? "mobile-feed-card__pill--green"
-    : pr.ciStatus === "failing"
-      ? "mobile-feed-card__pill--red"
-      : "mobile-feed-card__pill--amber";
-}
-
-function getCiLabel(pr: DashboardPR): string {
-  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "";
-  return pr.ciStatus === "passing" ? "CI passing" : pr.ciStatus === "failing" ? "CI failed" : "CI pending";
-}
-
-function getReviewPillClass(pr: DashboardPR): string {
-  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "";
-  return pr.reviewDecision === "approved"
-    ? "mobile-feed-card__pill--green"
-    : pr.reviewDecision === "changes_requested"
-      ? "mobile-feed-card__pill--red"
-      : "mobile-feed-card__pill--amber";
-}
-
-function getReviewLabel(pr: DashboardPR): string {
-  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "";
-  return pr.reviewDecision === "approved"
-    ? "approved"
-    : pr.reviewDecision === "changes_requested"
-      ? "changes requested"
-      : "needs review";
-}
-
-function MobileFeedCard({
-  session,
-  level,
-  onTap,
-}: {
-  session: DashboardSession;
-  level: AttentionLevel;
-  onTap: (session: DashboardSession) => void;
-}) {
-  const title =
-    (!session.summaryIsFallback && session.summary) ||
-    session.issueTitle ||
-    session.summary ||
-    session.id;
-  const pr = session.pr;
-
-  return (
-    <button
-      type="button"
-      className="mobile-feed-card"
-      onClick={() => onTap(session)}
-    >
-      <div className="mobile-feed-card__strip" data-level={level} />
-      <div className="mobile-feed-card__content">
-        <div className="mobile-feed-card__header">
-          <span className="mobile-feed-card__id">{session.id}</span>
-          <span className="mobile-feed-card__time">
-            {formatRelativeTimeCompact(session.lastActivityAt)}
-          </span>
-        </div>
-        <div className="mobile-feed-card__title">{title}</div>
-        <div className="mobile-feed-card__meta">
-          {session.branch ? (
-            <span className="mobile-feed-card__branch">{session.branch}</span>
-          ) : null}
-          {pr ? (
-            <span className="mobile-feed-card__pr">#{pr.number}</span>
-          ) : null}
-          {pr && !isPRRateLimited(pr) && !isPRUnenriched(pr) ? (
-            <span className="mobile-feed-card__diff">
-              <span style={{ color: "var(--color-accent-green)" }}>+{pr.additions}</span>
-              {" "}
-              <span style={{ color: "var(--color-accent-red)" }}>-{pr.deletions}</span>
-            </span>
-          ) : null}
-        </div>
-        {pr && !isPRRateLimited(pr) && !isPRUnenriched(pr) ? (
-          <div className="mobile-feed-card__pills">
-            {getCiLabel(pr) ? (
-              <span className={`mobile-feed-card__pill ${getCiPillClass(pr)}`}>
-                {getCiLabel(pr)}
-              </span>
-            ) : null}
-            {getReviewLabel(pr) ? (
-              <span className={`mobile-feed-card__pill ${getReviewPillClass(pr)}`}>
-                {getReviewLabel(pr)}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    </button>
-  );
-}
-
 function DashboardInner({
   initialSessions,
   projectId,
   projectName,
   projects = [],
   orchestrators,
+  attentionZones = "simple",
 }: DashboardProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
   const mux = useMuxOptional();
+  const kanbanLevels = attentionZones === "detailed" ? DETAILED_KANBAN_LEVELS : SIMPLE_KANBAN_LEVELS;
   const initialAttentionLevels = useMemo(() => {
     const levels: Record<string, AttentionLevel> = {};
     for (const s of initialSessions) {
-      levels[s.id] = getAttentionLevel(s);
+      levels[s.id] = getAttentionLevel(s, attentionZones);
     }
     return levels;
-  }, [initialSessions]);
-  const { sessions, connectionStatus, sseAttentionLevels } = useSessionEvents(
+  }, [initialSessions, attentionZones]);
+  const { sessions, connectionStatus, sseAttentionLevels } = useSessionEvents({
     initialSessions,
-    projectId,
-    mux?.status === "connected" ? mux.sessions : undefined,
+    project: projectId,
+    muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
     initialAttentionLevels,
-    false,
-  );
+    attentionZones,
+  });
   const searchParams = useSearchParams();
   const activeSessionId = searchParams.get("session") ?? undefined;
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
@@ -265,15 +157,8 @@ function DashboardInner({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
-  const [hasMounted, setHasMounted] = useState(false);
-  const [mobileFilter, setMobileFilter] = useState<MobileFilterValue>("all");
   const showSidebar = projects.length >= 1;
   const { showToast } = useToast();
-  const [sheetState, setSheetState] = useState<{
-    sessionId: string;
-    mode: "preview" | "confirm-kill";
-  } | null>(null);
-  const [sheetSessionOverride, setSheetSessionOverride] = useState<DashboardSession | null>(null);
   const [doneExpanded, setDoneExpanded] = useState(false);
   const sessionsRef = useRef(sessions);
 
@@ -286,56 +171,14 @@ function DashboardInner({
         : null,
     [activeOrchestrators, projectId],
   );
-  const dashboardHref = getProjectScopedHref("/", projectId);
-  const prsHref = getProjectScopedHref("/prs", projectId);
   const orchestratorHref = currentProjectOrchestrator
     ? `/sessions/${encodeURIComponent(currentProjectOrchestrator.id)}`
     : null;
-  const latestActivityAt = useMemo(() => {
-    if (sessions.length === 0) return null;
-
-    let latest: string | null = null;
-    let latestTs = -Infinity;
-
-    for (const session of sessions) {
-      const ts = new Date(session.lastActivityAt).getTime();
-      if (!Number.isFinite(ts) || ts <= latestTs) continue;
-      latestTs = ts;
-      latest = session.lastActivityAt;
-    }
-
-    return latest;
-  }, [sessions]);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const headerMeta = useMemo(() => {
-    const sessionLabel = `${sessions.length} session${sessions.length === 1 ? "" : "s"}`;
-    if (!mounted) return sessionLabel;
-    return `${sessionLabel} · ${formatRelativeTimeCompact(latestActivityAt)}`;
-  }, [latestActivityAt, sessions.length, mounted]);
 
   const displaySessions = useMemo(() => {
     if (allProjectsView || !activeSessionId) return sessions;
     return sessions.filter((s) => s.id === activeSessionId);
   }, [sessions, allProjectsView, activeSessionId]);
-  const sheetSession = useMemo(
-    () =>
-      sheetState ? (sessions.find((session) => session.id === sheetState.sessionId) ?? null) : null,
-    [sessions, sheetState],
-  );
-  const hydratedSheetSession = useMemo(() => {
-    if (!sheetSession) return null;
-    if (!sheetSessionOverride) return sheetSession;
-    return {
-      ...sheetSession,
-      ...sheetSessionOverride,
-      status: sheetSession.status,
-      activity: sheetSession.activity,
-      lastActivityAt: sheetSession.lastActivityAt,
-    };
-  }, [sheetSession, sheetSessionOverride]);
 
   useEffect(() => {
     setActiveOrchestrators((current) => mergeOrchestrators(current, orchestratorLinks));
@@ -352,49 +195,11 @@ function DashboardInner({
     setMobileMenuOpen(false);
   }, [searchParams]);
 
-  useEffect(() => {
-    if (sheetState && sheetSession === null) {
-      setSheetState(null);
-    }
-  }, [sheetSession, sheetState]);
-
-  useEffect(() => {
-    if (!sheetState || sheetState.mode !== "confirm-kill" || !hydratedSheetSession) return;
-    if (getAttentionLevel(hydratedSheetSession) !== "done") return;
-    setSheetState(null);
-  }, [hydratedSheetSession, sheetState]);
-
-  useEffect(() => {
-    if (!sheetState) {
-      setSheetSessionOverride(null);
-      return;
-    }
-
-    let cancelled = false;
-    const sessionId = sheetState.sessionId;
-    const refreshSession = async () => {
-      try {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
-        if (!res.ok) return;
-        const data = (await res.json()) as Partial<DashboardSession> | null;
-        if (!data || data.id !== sessionId) return;
-        if (!cancelled) setSheetSessionOverride(data as DashboardSession);
-      } catch {
-        // Ignore transient failures; SSE still keeps status/activity fresh.
-      }
-    };
-
-    void refreshSession();
-    const interval = setInterval(refreshSession, 15000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [sheetState]);
 
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
       merge: [],
+      action: [],
       respond: [],
       review: [],
       pending: [],
@@ -402,16 +207,10 @@ function DashboardInner({
       done: [],
     };
     for (const session of displaySessions) {
-      zones[getAttentionLevel(session)].push(session);
+      zones[getAttentionLevel(session, attentionZones)].push(session);
     }
     return zones;
-  }, [displaySessions]);
-
-  // Auto-expand the most urgent non-empty section when switching to mobile.
-  // Intentionally seeded once per mobile mode change, not on every session update.
-  useEffect(() => {
-    setHasMounted(true);
-  }, []);
+  }, [displaySessions, attentionZones]);
 
   const sessionsByProject = useMemo(() => {
     const groupedSessions = new Map<string, DashboardSession[]>();
@@ -433,6 +232,7 @@ function DashboardInner({
       const projectSessions = sessionsByProject.get(project.id) ?? [];
       const counts: Record<AttentionLevel, number> = {
         merge: 0,
+        action: 0,
         respond: 0,
         review: 0,
         pending: 0,
@@ -441,7 +241,7 @@ function DashboardInner({
       };
 
       for (const session of projectSessions) {
-        counts[getAttentionLevel(session)]++;
+        counts[getAttentionLevel(session, attentionZones)]++;
       }
 
       return {
@@ -453,31 +253,8 @@ function DashboardInner({
         counts,
       };
     });
-  }, [activeOrchestrators, allProjectsView, projects, sessionsByProject]);
+  }, [activeOrchestrators, allProjectsView, attentionZones, projects, sessionsByProject]);
 
-  const handlePillTap = useCallback((level: AttentionLevel) => {
-    if (level === "done") return;
-    setMobileFilter(level);
-    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches
-      ? ("instant" as ScrollBehavior)
-      : "smooth";
-    document.getElementById("mobile-board")?.scrollIntoView({ behavior, block: "start" });
-  }, []);
-
-  const mobileFeedSessions = useMemo(() => {
-    const levels = mobileFilter === "all"
-      ? MOBILE_KANBAN_ORDER
-      : MOBILE_KANBAN_ORDER.filter((level) => level === mobileFilter);
-    const feed: Array<{ session: DashboardSession; level: AttentionLevel }> = [];
-    for (const level of levels) {
-      for (const session of grouped[level]) {
-        feed.push({ session, level });
-      }
-    }
-    return feed;
-  }, [grouped, mobileFilter]);
-
-  const showDesktopPrsLink = hasMounted && !isMobile;
 
   const handleSend = useCallback(
     async (sessionId: string, message: string) => {
@@ -536,31 +313,11 @@ function DashboardInner({
     (sessionId: string) => {
       const session = sessionsRef.current.find((s) => s.id === sessionId) ?? null;
       if (!session) return;
-      if (!isMobile) {
-        void killSession(session.id);
-        return;
-      }
-      setSheetState({ sessionId: session.id, mode: "confirm-kill" });
+      void killSession(session.id);
     },
-    [isMobile, killSession],
+    [killSession],
   );
 
-  const handlePreview = useCallback((session: DashboardSession) => {
-    setSheetState({ sessionId: session.id, mode: "preview" });
-  }, []);
-
-  const handleRequestKillFromPreview = useCallback(() => {
-    setSheetState((current) =>
-      current ? { sessionId: current.sessionId, mode: "confirm-kill" } : current,
-    );
-  }, []);
-
-  const handleKillConfirm = useCallback(async () => {
-    const session = hydratedSheetSession;
-    setSheetState(null);
-    if (!session) return;
-    await killSession(session.id);
-  }, [hydratedSheetSession, killSession]);
 
   const handleMerge = useCallback(
     async (prNumber: number) => {
@@ -573,7 +330,6 @@ function DashboardInner({
           return;
         } else {
           showToast(`PR #${prNumber} merged`, "success");
-          setSheetState(null);
         }
       } catch (error) {
         console.error(`Network error merging PR #${prNumber}:`, error);
@@ -642,7 +398,7 @@ function DashboardInner({
     }
   };
 
-  const hasAnySessions = KANBAN_LEVELS.some((level) => grouped[level].length > 0);
+  const hasAnySessions = kanbanLevels.some((level) => grouped[level].length > 0);
   const showEmptyState = !allProjectsView && !hasAnySessions;
 
   const anyRateLimited = useMemo(
@@ -656,8 +412,16 @@ function DashboardInner({
       : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
   const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
-  if (!isMobile) {
-    return (
+  const handleToggleSidebar = () => {
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      setMobileMenuOpen((current) => !current);
+    } else {
+      setSidebarCollapsed((current) => !current);
+    }
+  };
+
+  return (
+    <SidebarContext.Provider value={{ onToggleSidebar: handleToggleSidebar, mobileSidebarOpen: mobileMenuOpen }}>
       <>
         <ConnectionBar status={connectionStatus} />
         <div className="dashboard-app-shell">
@@ -666,21 +430,27 @@ function DashboardInner({
               <button
                 type="button"
                 className="dashboard-app-sidebar-toggle"
-                onClick={() => setSidebarCollapsed((current) => !current)}
+                onClick={handleToggleSidebar}
                 aria-label="Toggle sidebar"
               >
-                <svg
-                  width="14"
-                  height="14"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.75"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <path d="M9 3v18" />
-                </svg>
+                {isMobile ? (
+                  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                ) : (
+                  <svg
+                    width="14"
+                    height="14"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.75"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <path d="M9 3v18" />
+                  </svg>
+                )}
               </button>
             ) : null}
             <div className="dashboard-app-header__brand">
@@ -726,19 +496,23 @@ function DashboardInner({
             className={`dashboard-shell dashboard-shell--desktop${sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
           >
             {showSidebar && (
-              <ProjectSidebar
-                projects={projects}
-                sessions={sessions}
-                activeProjectId={projectId}
-                activeSessionId={activeSessionId}
-                collapsed={sidebarCollapsed}
-                onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-                mobileOpen={mobileMenuOpen}
-                onMobileClose={() => setMobileMenuOpen(false)}
-              />
+              <div className={`sidebar-wrapper${mobileMenuOpen ? " sidebar-wrapper--mobile-open" : ""}`}>
+                <ProjectSidebar
+                  projects={projects}
+                  sessions={sessions}
+                  activeProjectId={projectId}
+                  activeSessionId={activeSessionId}
+                  collapsed={sidebarCollapsed}
+                  onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+                  onMobileClose={() => setMobileMenuOpen(false)}
+                />
+              </div>
+            )}
+            {mobileMenuOpen && (
+              <div className="sidebar-mobile-backdrop" onClick={() => setMobileMenuOpen(false)} />
             )}
 
-            <main className="dashboard-main dashboard-main--desktop">
+            <main className="dashboard-main dashboard-main--desktop overflow-y-auto">
               <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName} />
               <div className="dashboard-main__subhead">
                 <h1 className="dashboard-main__title">Dashboard</h1>
@@ -788,13 +562,14 @@ function DashboardInner({
                     onSpawnOrchestrator={handleSpawnOrchestrator}
                     spawningProjectIds={spawningProjectIds}
                     spawnErrors={spawnErrors}
+                    attentionZones={attentionZones}
                   />
                 )}
 
                 {!allProjectsView && hasAnySessions && (
                   <div className="kanban-board-wrap">
                     <div className="kanban-board">
-                      {KANBAN_LEVELS.map((level) => (
+                      {kanbanLevels.map((level) => (
                         <AttentionZone
                           key={level}
                           level={level}
@@ -846,247 +621,7 @@ function DashboardInner({
           </div>
         </div>
       </>
-    );
-  }
-
-  return (
-    <>
-      <ConnectionBar status={connectionStatus} />
-      <div className="dashboard-shell flex h-screen">
-        {showSidebar && (
-          <ProjectSidebar
-            projects={projects}
-            sessions={sessions}
-            activeProjectId={projectId}
-            activeSessionId={activeSessionId}
-            collapsed={sidebarCollapsed}
-            onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-            mobileOpen={mobileMenuOpen}
-            onMobileClose={() => setMobileMenuOpen(false)}
-          />
-        )}
-        <div className="dashboard-main flex-1 overflow-y-auto">
-          <div id="mobile-dashboard-anchor" aria-hidden="true" />
-          <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName} />
-          <section className="dashboard-hero">
-            <div className="dashboard-hero__backdrop" />
-            <div className="dashboard-hero__content">
-              {showSidebar && (
-                <button
-                  type="button"
-                  className="mobile-menu-toggle"
-                  onClick={() => setMobileMenuOpen(true)}
-                  aria-label="Open menu"
-                >
-                  <svg
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    className="h-5 w-5"
-                  >
-                    <path d="M4 6h16M4 12h16M4 18h16" />
-                  </svg>
-                </button>
-              )}
-              <div className="dashboard-hero__primary">
-                <div className="dashboard-hero__heading">
-                  <div className="dashboard-hero__copy">
-                    <h1 className="dashboard-title">Kanban</h1>
-                    {projectName ? <p className="dashboard-subtitle">{projectName}</p> : null}
-                  </div>
-                </div>
-              </div>
-
-              <div className="dashboard-hero__meta">
-                <div className="dashboard-topbar-meta">
-                  <span className="dashboard-topbar-summary">{headerMeta}</span>
-                  {showDesktopPrsLink ? (
-                    <a href={prsHref} className="dashboard-topbar-link dashboard-prs-link">
-                      PRs
-                    </a>
-                  ) : null}
-                  {!allProjectsView && !isMobile && orchestratorHref ? (
-                    <a
-                      href={orchestratorHref}
-                      className="dashboard-topbar-link dashboard-topbar-link--orchestrator"
-                      aria-label="Orchestrator"
-                    >
-                      <span className="dashboard-topbar-link__chip" aria-hidden="true">
-                        Main
-                      </span>
-                      <span className="dashboard-topbar-link__label">Orchestrator</span>
-                      <span className="dashboard-topbar-link__arrow" aria-hidden="true">
-                        &rarr;
-                      </span>
-                    </a>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <div className="px-4 pt-4 md:px-7 md:pt-6">
-            {isMobile ? (
-              <section className="mobile-priority-row" aria-label="Needs attention">
-                <div className="mobile-priority-row__label">Needs attention</div>
-                <MobileActionStrip grouped={grouped} onPillTap={handlePillTap} />
-              </section>
-            ) : null}
-
-            {isMobile ? (
-              <section className="mobile-filter-row" aria-label="Dashboard filters">
-                {MOBILE_FILTERS.map((filter) => (
-                  <button
-                    key={filter.value}
-                    type="button"
-                    className="mobile-filter-chip"
-                    data-active={mobileFilter === filter.value ? "true" : "false"}
-                    onClick={() => setMobileFilter(filter.value)}
-                  >
-                    {filter.label}
-                  </button>
-                ))}
-              </section>
-            ) : null}
-
-            {anyRateLimited && !rateLimitDismissed && (
-              <div className="dashboard-alert mb-6 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-attention)_25%,transparent)] bg-[var(--color-tint-yellow)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
-                <svg
-                  className="h-3.5 w-3.5 shrink-0"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  viewBox="0 0 24 24"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 8v4M12 16h.01" />
-                </svg>
-                <span className="flex-1">
-                  GitHub API rate limited — PR data (CI status, review state, sizes) may be stale.
-                  Will retry automatically on next refresh.
-                </span>
-                <button
-                  onClick={() => setRateLimitDismissed(true)}
-                  className="ml-1 shrink-0 opacity-60 hover:opacity-100"
-                  aria-label="Dismiss"
-                >
-                  <svg
-                    className="h-3.5 w-3.5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M18 6 6 18M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            )}
-
-            {allProjectsView && (
-              <ProjectOverviewGrid
-                overviews={projectOverviews}
-                onSpawnOrchestrator={handleSpawnOrchestrator}
-                spawningProjectIds={spawningProjectIds}
-                spawnErrors={spawnErrors}
-              />
-            )}
-
-            {!allProjectsView && hasAnySessions && (
-              <div className="kanban-board-wrap">
-                {isMobile ? (
-                  <div id="mobile-board" className="mobile-feed">
-                    {mobileFeedSessions.length > 0 ? (
-                      mobileFeedSessions.map(({ session, level }) => (
-                        <MobileFeedCard
-                          key={session.id}
-                          session={session}
-                          level={level}
-                          onTap={handlePreview}
-                        />
-                      ))
-                    ) : (
-                      <div className="mobile-feed-empty">No sessions match this filter.</div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="kanban-board">
-                    {KANBAN_LEVELS.map((level) => (
-                      <AttentionZone
-                        key={level}
-                        level={level}
-                        sessions={grouped[level]}
-                        onSend={handleSend}
-                        onKill={handleKill}
-                        onMerge={handleMerge}
-                        onRestore={handleRestore}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {!allProjectsView && !hasAnySessions && (
-              <EmptyState orchestratorHref={orchestratorHref} />
-            )}
-
-            {!allProjectsView && grouped.done.length > 0 && (
-              <div className="done-bar mt-6">
-                <button
-                  type="button"
-                  className="done-bar__toggle"
-                  onClick={() => setDoneExpanded((v) => !v)}
-                  aria-expanded={doneExpanded}
-                >
-                  <svg
-                    className={`done-bar__chevron${doneExpanded ? " done-bar__chevron--open" : ""}`}
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                  >
-                    <path d="m9 18 6-6-6-6" />
-                  </svg>
-                  <span className="done-bar__label">Done / Terminated</span>
-                  <span className="done-bar__count">{grouped.done.length}</span>
-                </button>
-                {doneExpanded && (
-                  <div className="done-bar__cards">
-                    {grouped.done.map((session) => (
-                      <DoneCard key={session.id} session={session} onRestore={handleRestore} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-      {isMobile ? (
-        <MobileBottomNav
-          ariaLabel="Dashboard navigation"
-          activeTab="dashboard"
-          dashboardHref={dashboardHref}
-          prsHref={prsHref}
-          showOrchestrator={!allProjectsView}
-          orchestratorHref={orchestratorHref}
-        />
-      ) : null}
-      {isMobile ? (
-        <BottomSheet
-          session={hydratedSheetSession}
-          mode={sheetState?.mode ?? "preview"}
-          onConfirm={handleKillConfirm}
-          onCancel={() => setSheetState(null)}
-          onRequestKill={handleRequestKillFromPreview}
-          onMerge={handleMerge}
-          isMergeReady={hydratedSheetSession?.pr ? isPRMergeReady(hydratedSheetSession.pr) : false}
-        />
-      ) : null}
-    </>
+    </SidebarContext.Provider>
   );
 }
 
@@ -1103,6 +638,7 @@ function ProjectOverviewGrid({
   onSpawnOrchestrator,
   spawningProjectIds,
   spawnErrors,
+  attentionZones,
 }: {
   overviews: Array<{
     project: ProjectInfo;
@@ -1114,6 +650,7 @@ function ProjectOverviewGrid({
   onSpawnOrchestrator: (project: ProjectInfo) => Promise<void>;
   spawningProjectIds: string[];
   spawnErrors: Record<string, string>;
+  attentionZones: DashboardAttentionZoneMode;
 }) {
   return (
     <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -1142,8 +679,18 @@ function ProjectOverviewGrid({
 
           <div className="mb-4 flex flex-wrap gap-2">
             <ProjectMetric label="Merge" value={counts.merge} tone="ready" />
-            <ProjectMetric label="Respond" value={counts.respond} tone="error" />
-            <ProjectMetric label="Review" value={counts.review} tone="orange" />
+            {attentionZones === "detailed" ? (
+              <>
+                <ProjectMetric label="Respond" value={counts.respond} tone="error" />
+                <ProjectMetric label="Review" value={counts.review} tone="orange" />
+              </>
+            ) : (
+              // "action" collapses respond + review — use orange (the less
+              // severe of the two merged tones) to match the favicon's
+              // yellow-severity treatment. Red would cry wolf on routine
+              // review work like ci_failed / changes_requested.
+              <ProjectMetric label="Action" value={counts.action} tone="orange" />
+            )}
             <ProjectMetric label="Pending" value={counts.pending} tone="attention" />
             <ProjectMetric label="Working" value={counts.working} tone="working" />
           </div>
@@ -1200,46 +747,3 @@ function ProjectMetric({ label, value, tone }: { label: string; value: number; t
   );
 }
 
-const MOBILE_ACTION_STRIP_LEVELS = [
-  { level: "respond" as const, label: "respond" },
-  { level: "merge" as const, label: "merge" },
-  { level: "review" as const, label: "review" },
-] satisfies Array<{ level: AttentionLevel; label: string }>;
-
-function MobileActionStrip({
-  grouped,
-  onPillTap,
-}: {
-  grouped: Record<AttentionLevel, DashboardSession[]>;
-  onPillTap: (level: AttentionLevel) => void;
-}) {
-  const activePills = MOBILE_ACTION_STRIP_LEVELS.filter(({ level }) => grouped[level].length > 0);
-
-  if (activePills.length === 0) {
-    return (
-      <div role="status" className="mobile-action-strip mobile-action-strip--all-good">
-        <span className="mobile-action-strip__all-good">All clear — agents are working</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mobile-action-strip" role="group" aria-label="Session priorities">
-      {activePills.map(({ level, label }) => (
-        <button
-          key={level}
-          type="button"
-          className="mobile-action-pill"
-          onClick={() => onPillTap(level)}
-          aria-label={`${grouped[level].length} ${label} — scroll to section`}
-        >
-          <span className="mobile-action-pill__dot" data-level={level} aria-hidden="true" />
-          <span className="mobile-action-pill__count" data-level={level}>
-            {grouped[level].length}
-          </span>
-          <span className="mobile-action-pill__label">{label}</span>
-        </button>
-      ))}
-    </div>
-  );
-}

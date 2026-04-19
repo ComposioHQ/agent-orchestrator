@@ -1,6 +1,8 @@
 import chalk from "chalk";
 import type { Command } from "commander";
 import {
+  createInitialCanonicalLifecycle,
+  createActivitySignal,
   type Agent,
   type SCM,
   type Session,
@@ -474,17 +476,26 @@ async function showFallbackStatus(): Promise<void> {
   const details = await Promise.all(
     sortedSessions.map(async (session) => {
       const activityTsPromise = getTmuxActivity(session).catch(() => null);
+      const lifecycle = createInitialCanonicalLifecycle("worker", new Date());
+      lifecycle.session.state = "working";
+      lifecycle.session.reason = "task_in_progress";
+      lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+      lifecycle.runtime.state = "alive";
+      lifecycle.runtime.reason = "process_running";
+      lifecycle.runtime.handle = { id: session, runtimeName: "tmux", data: {} };
 
       const sessionObj: Session = {
         id: session,
         projectId: "",
         status: "working",
         activity: null,
+        activitySignal: createActivitySignal("unavailable"),
+        lifecycle,
         branch: null,
         issueId: null,
         pr: null,
         workspacePath: null,
-        runtimeHandle: { id: session, runtimeName: "tmux", data: {} },
+        runtimeHandle: lifecycle.runtime.handle,
         agentInfo: null,
         createdAt: new Date(),
         lastActivityAt: new Date(),

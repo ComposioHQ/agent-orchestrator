@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// `import()` in a type position is the correct way to name the full module shape for `importOriginal`.
+/* eslint-disable @typescript-eslint/consistent-type-imports -- see above */
+type AoCoreModule = typeof import("@aoagents/ao-core");
+/* eslint-enable @typescript-eslint/consistent-type-imports */
+
 const {
   mockLoadConfig,
   mockLoadBuiltins,
@@ -51,24 +56,28 @@ const {
   };
 });
 
-vi.mock("@aoagents/ao-core", () => ({
-  loadConfig: mockLoadConfig,
-  createPluginRegistry: () => mockRegistry,
-  createSessionManager: mockCreateSessionManager,
-  createLifecycleManager: () => ({
-    start: vi.fn(),
-    stop: vi.fn(),
-    getStates: vi.fn(),
-    check: vi.fn(),
-  }),
-  decompose: vi.fn(),
-  getLeaves: vi.fn(),
-  getSiblings: vi.fn(),
-  formatPlanTree: vi.fn(),
-  DEFAULT_DECOMPOSER_CONFIG: {},
-  isOrchestratorSession: vi.fn().mockReturnValue(false),
-  TERMINAL_STATUSES: new Set(["merged", "killed"]) as ReadonlySet<string>,
-}));
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
+  const actual = await importOriginal<AoCoreModule>();
+  return {
+    ...actual,
+    loadConfig: mockLoadConfig,
+    createPluginRegistry: () => mockRegistry,
+    createSessionManager: mockCreateSessionManager,
+    createLifecycleManager: () => ({
+      start: vi.fn(),
+      stop: vi.fn(),
+      getStates: vi.fn(),
+      check: vi.fn(),
+    }),
+    decompose: vi.fn(),
+    getLeaves: vi.fn(),
+    getSiblings: vi.fn(),
+    formatPlanTree: vi.fn(),
+    DEFAULT_DECOMPOSER_CONFIG: {},
+    isOrchestratorSession: vi.fn().mockReturnValue(false),
+    TERMINAL_STATUSES: new Set(["merged", "killed"]) as ReadonlySet<string>,
+  };
+});
 
 vi.mock("@aoagents/ao-plugin-runtime-tmux", () => ({
   default: builtinPlugins["@aoagents/ao-plugin-runtime-tmux"],
@@ -206,34 +215,11 @@ describe("services", () => {
     );
   });
 
-  it("WEB_BUILTIN_PLUGIN_MODULES covers every package in the BUILTIN_PLUGINS list", async () => {
-    // This test is a compile-time parity guard. Every time a new plugin is added to
-    // core's BUILTIN_PLUGINS array it must also be added to WEB_BUILTIN_PLUGIN_MODULES
-    // in services.ts (with a static import) so Next.js can bundle it.
-    //
-    // The expected list below must match core/src/plugin-registry.ts BUILTIN_PLUGINS[].pkg.
-    // If this test fails, add the new plugin package to:
-    //   1. services.ts imports + WEB_BUILTIN_PLUGIN_MODULES
-    //   2. packages/web/package.json dependencies
-    //   3. packages/web/next.config.js transpilePackages
-    //   4. This test's expected list and vi.mock() calls above.
-    const expectedPackages = new Set(Object.keys(builtinPlugins));
+  it("WEB_BUILTIN_PLUGIN_PACKAGE_NAMES matches core BUILTIN_PLUGIN_PACKAGES", async () => {
+    const { BUILTIN_PLUGIN_PACKAGES } = await import("@aoagents/ao-core");
+    const { WEB_BUILTIN_PLUGIN_PACKAGE_NAMES } = await import("../lib/services");
 
-    const { getServices } = await import("../lib/services");
-    await getServices();
-
-    const [, importFn] = mockLoadBuiltins.mock.calls[0];
-
-    // Every package in our expected set should resolve without throwing
-    const results = await Promise.allSettled(
-      [...expectedPackages].map((pkg) => importFn(pkg)),
-    );
-
-    const failures = results
-      .map((r, i) => ({ pkg: [...expectedPackages][i], result: r }))
-      .filter(({ result }) => result.status === "rejected");
-
-    expect(failures).toEqual([]);
+    expect(new Set(WEB_BUILTIN_PLUGIN_PACKAGE_NAMES)).toEqual(new Set(BUILTIN_PLUGIN_PACKAGES));
   });
 });
 

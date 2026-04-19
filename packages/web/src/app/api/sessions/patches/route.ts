@@ -22,12 +22,14 @@ export async function GET(request: Request) {
     // Convert to dashboard format
     const dashboardSessions = visibleSessions.map(sessionToDashboard);
 
+    const attentionZones = config.dashboard?.attentionZones ?? "simple";
+
     // Extract lightweight patches
     const patches = dashboardSessions.map((session) => ({
       id: session.id,
       status: session.status,
       activity: session.activity,
-      attentionLevel: getAttentionLevel(session),
+      attentionLevel: getAttentionLevel(session, attentionZones),
       lastActivityAt: session.lastActivityAt,
     }));
 

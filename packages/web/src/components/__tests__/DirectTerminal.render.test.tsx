@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DirectTerminal } from "../DirectTerminal";
 
@@ -153,5 +153,30 @@ describe("DirectTerminal render", () => {
 
     expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument();
     expect(screen.queryByText("XDA")).toBeNull();
+  });
+
+  it("switches the terminal shell between inline and fullscreen positioning", async () => {
+    const { container } = render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument(),
+    );
+
+    const terminalShell = container.firstElementChild;
+    expect(terminalShell).not.toBeNull();
+    expect(terminalShell).toHaveClass("relative");
+    expect(terminalShell).not.toHaveClass("fixed");
+
+    fireEvent.click(screen.getByRole("button", { name: "fullscreen" }));
+
+    expect(screen.getByRole("button", { name: "exit fullscreen" })).toBeInTheDocument();
+    expect(terminalShell).toHaveClass("fixed", "inset-0");
+    expect(terminalShell).not.toHaveClass("relative");
+
+    fireEvent.click(screen.getByRole("button", { name: "exit fullscreen" }));
+
+    expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument();
+    expect(terminalShell).toHaveClass("relative");
+    expect(terminalShell).not.toHaveClass("fixed");
   });
 });

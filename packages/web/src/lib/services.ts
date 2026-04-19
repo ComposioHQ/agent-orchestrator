@@ -99,6 +99,11 @@ const WEB_BUILTIN_PLUGIN_MODULES = {
   "@aoagents/ao-plugin-terminal-web": pluginTerminalWeb,
 } as const;
 
+/** Package names statically bundled for the web server — must match `BUILTIN_PLUGIN_PACKAGES` in core. */
+export const WEB_BUILTIN_PLUGIN_PACKAGE_NAMES: readonly string[] = Object.freeze(
+  Object.keys(WEB_BUILTIN_PLUGIN_MODULES),
+);
+
 /** Get (or lazily initialize) the core services singleton. */
 export function getServices(): Promise<Services> {
   if (globalForServices._aoServices) {
@@ -175,7 +180,9 @@ async function labelIssuesForVerification(
 ): Promise<void> {
   const mergedSessions = sessions.filter(
     (s) =>
-      s.status === "merged" && s.issueId && !processedIssues.has(`${s.projectId}:${s.issueId}`),
+      s.lifecycle.pr.state === "merged" &&
+      s.issueId &&
+      !processedIssues.has(`${s.projectId}:${s.issueId}`),
   );
 
   for (const session of mergedSessions) {

@@ -58,10 +58,7 @@ describe("setupPathWrapperWorkspace", () => {
 
   it("creates ao bin directory", async () => {
     await setupPathWrapperWorkspace("/workspace");
-    expect(mockMkdir).toHaveBeenCalledWith(
-      "/home/testuser/.ao/bin",
-      { recursive: true },
-    );
+    expect(mockMkdir).toHaveBeenCalledWith("/home/testuser/.ao/bin", { recursive: true });
   });
 
   it("writes wrapper scripts when version marker is missing", async () => {
@@ -69,15 +66,15 @@ describe("setupPathWrapperWorkspace", () => {
     // atomicWriteFile writes to .tmp then renames
     expect(mockRename).toHaveBeenCalled();
     // .ao/AGENTS.md is written directly
-    const agentsMdWrites = mockWriteFile.mock.calls.filter(
-      (c: unknown[]) => String(c[0]).includes(".ao/AGENTS.md"),
+    const agentsMdWrites = mockWriteFile.mock.calls.filter((c: unknown[]) =>
+      String(c[0]).includes(".ao/AGENTS.md"),
     );
     expect(agentsMdWrites).toHaveLength(1);
   });
 
   it("skips wrapper rewrite when version matches", async () => {
     mockReadFile
-      .mockResolvedValueOnce("0.2.0") // version marker matches
+      .mockResolvedValueOnce("0.3.0") // version marker matches
       .mockRejectedValueOnce(new Error("ENOENT")); // AGENTS.md doesn't exist
 
     await setupPathWrapperWorkspace("/workspace");
@@ -91,8 +88,8 @@ describe("setupPathWrapperWorkspace", () => {
   it("writes .ao/AGENTS.md with session context", async () => {
     await setupPathWrapperWorkspace("/workspace");
 
-    const agentsMdWrites = mockWriteFile.mock.calls.filter(
-      (c: unknown[]) => String(c[0]).includes(".ao/AGENTS.md"),
+    const agentsMdWrites = mockWriteFile.mock.calls.filter((c: unknown[]) =>
+      String(c[0]).includes(".ao/AGENTS.md"),
     );
     expect(agentsMdWrites).toHaveLength(1);
     expect(String(agentsMdWrites[0][1])).toContain("Agent Orchestrator");

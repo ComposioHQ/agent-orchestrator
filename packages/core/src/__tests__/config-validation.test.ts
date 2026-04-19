@@ -373,9 +373,59 @@ describe("Config Schema Validation", () => {
     };
 
     expect(() => validateConfig(missingPath)).toThrow();
-    expect(() => validateConfig(missingRepo)).toThrow();
+    // repo is optional — projects without a detected remote should still load
+    expect(() => validateConfig(missingRepo)).not.toThrow();
     // missingBranch should work (defaults to "main")
     expect(() => validateConfig(missingBranch)).not.toThrow();
+  });
+
+  it("does not infer SCM or tracker when repo is missing", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          defaultBranch: "main",
+          // No repo — SCM and tracker should not be inferred
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.repo).toBeUndefined();
+    expect(validated.projects.proj1.scm).toBeUndefined();
+    expect(validated.projects.proj1.tracker).toBeUndefined();
+  });
+
+  it("infers SCM and tracker when repo has owner/repo format", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.scm).toEqual({ plugin: "github" });
+    expect(validated.projects.proj1.tracker).toEqual({ plugin: "github" });
+  });
+
+  it("does not infer SCM or tracker when repo has no slash", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "notaslash",
+          defaultBranch: "main",
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.scm).toBeUndefined();
+    expect(validated.projects.proj1.tracker).toBeUndefined();
   });
 
   it("sessionPrefix is optional", () => {
@@ -1085,5 +1135,74 @@ describe("External Plugin Name Generation", () => {
 
     // Should extract "azure-devops" not just "devops"
     expect(config.projects.proj1.scm?.plugin).toBe("azure-devops");
+  });
+});
+
+describe("Config Validation - Power Config", () => {
+  it("applies default power config with preventIdleSleep based on platform", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+    });
+
+    // Default is true on darwin, false elsewhere
+    expect(config.power).toBeDefined();
+    expect(config.power!.preventIdleSleep).toBe(process.platform === "darwin");
+  });
+
+  it("accepts explicit power.preventIdleSleep: true", () => {
+    const config = validateConfig({
+      power: {
+        preventIdleSleep: true,
+      },
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+    });
+
+    expect(config.power!.preventIdleSleep).toBe(true);
+  });
+
+  it("accepts explicit power.preventIdleSleep: false", () => {
+    const config = validateConfig({
+      power: {
+        preventIdleSleep: false,
+      },
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+    });
+
+    expect(config.power!.preventIdleSleep).toBe(false);
+  });
+
+  it("rejects invalid power.preventIdleSleep type", () => {
+    expect(() =>
+      validateConfig({
+        power: {
+          preventIdleSleep: "yes", // Invalid: should be boolean
+        },
+        projects: {
+          proj1: {
+            path: "/repos/test",
+            repo: "org/test",
+            defaultBranch: "main",
+          },
+        },
+      }),
+    ).toThrow();
   });
 });

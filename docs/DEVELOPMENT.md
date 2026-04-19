@@ -72,6 +72,17 @@ Activity states (orthogonal to lifecycle): `active`, `ready`, `idle`, `waiting_i
 | `packages/core/src/observability.ts`     | Correlation IDs, structured logging, metrics    |
 | `packages/core/src/paths.ts`             | Hash-based path and session name generation     |
 
+### Working Principles
+
+These apply to both human contributors and AI agents:
+
+1. **Think before coding.** If a task is ambiguous, ask for clarification. If multiple approaches exist, present the tradeoff.
+2. **Minimum code.** No speculative features. No abstractions for code used once. Plugin slots exist for extensibility - use them instead of config proliferation.
+3. **Surgical diffs.** Don't touch files outside your change scope. Don't reformat adjacent code. Match existing patterns even if you prefer differently. Every changed line should trace to a specific requirement.
+4. **Verifiable goals.** Before implementing, state what "done" looks like and how to verify it. For bug fixes: write a test that reproduces the bug first.
+
+For AI agent-specific guidance (including high-risk files like `types.ts`, `lifecycle-manager.ts`, `globals.css`), see CLAUDE.md -> Working Principles.
+
 ---
 
 ## Getting Started
