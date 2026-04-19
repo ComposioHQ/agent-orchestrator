@@ -4,6 +4,7 @@ import {
   buildWebhookRequest,
   eventMatchesProject,
   findAffectedSessions,
+  findRestorableSessions,
   findWebhookProjects,
 } from "@/lib/scm-webhooks";
 
@@ -76,11 +77,45 @@ export async function POST(request: Request): Promise<Response> {
 
       projectIds.add(candidate.projectId);
       const affectedSessions = findAffectedSessions(sessions, candidate.projectId, event);
+
+      const lifecycle = services.lifecycleManager;
+
       if (affectedSessions.length === 0) {
+        // Gap 1: session exists but is terminal — restore it, then let existing reaction engine handle ci-failed
+        const restorable = findRestorableSessions(sessions, candidate.projectId, event);
+        for (const session of restorable) {
+          sessionIds.add(session.id);
+          try {
+            await services.sessionManager.restore(session.id);
+            await lifecycle.check(session.id);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Restore failed";
+            lifecycleErrors.push(`restore ${session.id}: ${message}`);
+          }
+        }
+
+        // Gap 2: no session at all — auto-spawn if project opts in
+        if (restorable.length === 0) {
+          const autoSpawn = candidate.project.scm?.webhook?.autoSpawnOnCIFailure ?? false;
+          if (autoSpawn && event.kind === "ci" && event.prNumber !== undefined && event.branch) {
+            try {
+              const spawned = await services.sessionManager.spawn({
+                projectId: candidate.projectId,
+                branch: event.branch,
+                prompt: `CI failed on PR #${event.prNumber}. Investigate the failure, fix the root cause, and push a fix to this branch.`,
+              });
+              sessionIds.add(spawned.id);
+              await lifecycle.check(spawned.id);
+            } catch (err) {
+              const message = err instanceof Error ? err.message : "Spawn failed";
+              lifecycleErrors.push(`auto-spawn PR #${event.prNumber}: ${message}`);
+            }
+          }
+        }
+
         continue;
       }
 
-      const lifecycle = services.lifecycleManager;
       for (const session of affectedSessions) {
         sessionIds.add(session.id);
         try {

@@ -1511,6 +1511,7 @@ export interface SCMWebhookConfig {
   eventHeader?: string;
   deliveryHeader?: string;
   maxBodyBytes?: number;
+  autoSpawnOnCIFailure?: boolean;
 }
 
 export interface NotifierConfig {
