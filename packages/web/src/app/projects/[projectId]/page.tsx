@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 export const dynamic = "force-dynamic";
 
+import { isPortfolioEnabled } from "@aoagents/ao-core";
 import { redirect } from "next/navigation";
 import { Dashboard } from "@/components/Dashboard";
 import { DashboardShell } from "@/components/DashboardShell";
@@ -23,6 +24,7 @@ export async function generateMetadata(props: {
 export default async function ProjectPage(props: {
   params: Promise<{ projectId: string }>;
 }) {
+  const portfolioEnabled = isPortfolioEnabled();
   const params = await props.params;
   const projectFilter = params.projectId;
   const projects = getAllProjects();
@@ -40,7 +42,7 @@ export default async function ProjectPage(props: {
         sessions={portfolioData.sessions}
         activeProjectId={projectFilter}
         defaultLocation={getDefaultCloneLocation()}
-        portfolioEnabled
+        portfolioEnabled={portfolioEnabled}
       >
         <ProjectDegradedState
           projectId={project.id}
@@ -61,6 +63,7 @@ export default async function ProjectPage(props: {
       projectId={projectFilter}
       projectName={projectName}
       projects={projects}
+      portfolioEnabled={portfolioEnabled}
       initialGlobalPause={pageData.globalPause}
       orchestrators={pageData.orchestrators}
     />

@@ -428,6 +428,13 @@ export function registerProjectInGlobalConfig(
       | (GlobalProjectEntry & Record<string, unknown>)
       | undefined;
 
+    if (existing?.path && resolve(existing.path) !== resolve(projectPath)) {
+      throw new Error(
+        `Project id "${projectId}" is already registered for "${existing.path}". ` +
+          `Choose a different configProjectKey to add "${projectPath}" as a separate project.`,
+      );
+    }
+
     for (const [existingProjectId, entry] of Object.entries(globalConfig.projects)) {
       if (existingProjectId === projectId) continue;
       if (entry.path === projectPath) {

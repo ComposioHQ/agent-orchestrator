@@ -3447,6 +3447,29 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   height: 11px;
 }
 
+.project-sidebar__proj-more {
+  display: inline-flex;
+  height: 22px;
+  width: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
+}
+
+.project-sidebar__proj-more:hover {
+  background: var(--sidebar-row-hover);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-subtle);
+}
+
+.project-sidebar__proj-more svg {
+  width: 11px;
+  height: 11px;
+}
+
 .project-sidebar__agent-menu {
   position: fixed;
   z-index: calc(var(--z-overlay) + 1);
@@ -3480,6 +3503,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 .project-sidebar__agent-menu-item:hover {
   background: var(--color-bg-elevated-hover);
+}
+
+.project-sidebar__project-menu-item--danger {
+  color: var(--color-status-error);
+}
+
+.project-sidebar__project-menu-item--danger:hover {
+  background: color-mix(in srgb, var(--color-status-error) 10%, transparent);
 }
 
 .project-sidebar__agent-menu-item:disabled {

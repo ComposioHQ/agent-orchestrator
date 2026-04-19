@@ -52,6 +52,7 @@ describe("ProjectSidebar", () => {
         sessions={[]}
         activeProjectId="project-1"
         activeSessionId={undefined}
+        onAddProject={vi.fn()}
       />,
     );
 
@@ -334,6 +335,51 @@ describe("ProjectSidebar", () => {
     );
     fireEvent.click(screen.getByLabelText("New project"));
     expect(onAddProject).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the + button when add-project is unavailable", () => {
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={[]}
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+      />,
+    );
+
+    expect(screen.queryByLabelText("New project")).not.toBeInTheDocument();
+  });
+
+  it("shows a project row overflow menu for workspace actions", () => {
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={[]}
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+        onRemoveProject={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Project options for Project One" })).toBeInTheDocument();
+  });
+
+  it("calls onRemoveProject from the project row overflow menu", () => {
+    const onRemoveProject = vi.fn();
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={[]}
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+        onRemoveProject={onRemoveProject}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Project options for Project One" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Delete Workspace/ }));
+
+    expect(onRemoveProject).toHaveBeenCalledWith("project-1");
   });
 
   it("shows available agents from the project-row + menu and spawns the selected one", async () => {

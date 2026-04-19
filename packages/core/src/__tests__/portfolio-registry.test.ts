@@ -139,6 +139,44 @@ describe("portfolio-registry", () => {
     expect(updated?.projects["demo"]).toBeUndefined();
   });
 
+  it("rejects registering a second path with the same derived project id", () => {
+    const firstRepoPath = join(tempRoot, "repos", "team-a", "api");
+    const secondRepoPath = join(tempRoot, "repos", "team-b", "api");
+    mkdirSync(firstRepoPath, { recursive: true });
+    mkdirSync(secondRepoPath, { recursive: true });
+
+    writeFileSync(
+      join(firstRepoPath, "agent-orchestrator.yaml"),
+      [
+        "repo: acme/team-a-api",
+        "defaultBranch: main",
+        "runtime: tmux",
+        "agent: claude-code",
+        "workspace: worktree",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(secondRepoPath, "agent-orchestrator.yaml"),
+      [
+        "repo: acme/team-b-api",
+        "defaultBranch: main",
+        "runtime: tmux",
+        "agent: claude-code",
+        "workspace: worktree",
+      ].join("\n"),
+    );
+
+    registerProject(firstRepoPath);
+
+    expect(() => registerProject(secondRepoPath)).toThrow(
+      `Project id "api" is already registered for "${firstRepoPath}".`,
+    );
+    expect(loadGlobalConfig()?.projects["api"]).toMatchObject({
+      path: firstRepoPath,
+      repo: "acme/team-a-api",
+    });
+  });
+
   it("falls back when registered.json has an unexpected shape", () => {
     mkdirSync(dirname(getRegisteredPath()), { recursive: true });
     writeFileSync(

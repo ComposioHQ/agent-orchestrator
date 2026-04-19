@@ -85,7 +85,7 @@ export default async function SettingsRoute() {
                     Project Management
                   </div>
                   <p className="mt-3 max-w-[62ch] text-[var(--font-size-base)] leading-relaxed text-[var(--color-text-secondary)]">
-                    Portfolio management is disabled. Set <code>AO_ENABLE_PORTFOLIO=1</code> to enable multi-project registration and settings.
+                    Portfolio management is disabled. Unset <code>AO_ENABLE_PORTFOLIO</code> (or set it to <code>1</code>) to enable multi-project registration and settings.
                   </p>
                 </section>
               </div>

@@ -48,6 +48,8 @@ interface ProjectSidebarProps {
   onMobileClose?: () => void;
   /** When provided, the existing "+" header button opens the add-project flow. */
   onAddProject?: () => void;
+  /** When provided, shows a project row overflow menu with workspace actions. */
+  onRemoveProject?: (projectId: string) => void;
 }
 
 interface AvailableAgent {
@@ -153,6 +155,7 @@ function ProjectSidebarInner({
   mobileOpen = false,
   onMobileClose,
   onAddProject,
+  onRemoveProject,
 }: ProjectSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -169,6 +172,10 @@ function ProjectSidebarInner({
   );
   const [agentMenuProjectId, setAgentMenuProjectId] = useState<string | null>(null);
   const [agentMenuPosition, setAgentMenuPosition] = useState<{ top: number; left: number } | null>(
+    null,
+  );
+  const [projectMenuProjectId, setProjectMenuProjectId] = useState<string | null>(null);
+  const [projectMenuPosition, setProjectMenuPosition] = useState<{ top: number; left: number } | null>(
     null,
   );
   const [availableAgents, setAvailableAgents] = useState<AvailableAgent[]>([]);
@@ -199,12 +206,14 @@ function ProjectSidebarInner({
   }, [expandedProjects]);
 
   useEffect(() => {
-    if (!agentMenuProjectId) return;
+    if (!agentMenuProjectId && !projectMenuProjectId) return;
 
     const onPointerDown = (event: MouseEvent) => {
       if (!menuRef.current?.contains(event.target as Node)) {
         setAgentMenuProjectId(null);
         setAgentMenuPosition(null);
+        setProjectMenuProjectId(null);
+        setProjectMenuPosition(null);
       }
     };
 
@@ -212,14 +221,16 @@ function ProjectSidebarInner({
     return () => {
       document.removeEventListener("mousedown", onPointerDown);
     };
-  }, [agentMenuProjectId]);
+  }, [agentMenuProjectId, projectMenuProjectId]);
 
   useEffect(() => {
-    if (!agentMenuProjectId) return;
+    if (!agentMenuProjectId && !projectMenuProjectId) return;
 
     const closeMenu = () => {
       setAgentMenuProjectId(null);
       setAgentMenuPosition(null);
+      setProjectMenuProjectId(null);
+      setProjectMenuPosition(null);
     };
 
     window.addEventListener("resize", closeMenu);
@@ -228,7 +239,7 @@ function ProjectSidebarInner({
       window.removeEventListener("resize", closeMenu);
       window.removeEventListener("scroll", closeMenu, true);
     };
-  }, [agentMenuProjectId]);
+  }, [agentMenuProjectId, projectMenuProjectId]);
 
   useEffect(() => {
     if (!agentMenuProjectId || agentsLoaded || agentsLoading) return;
@@ -362,16 +373,18 @@ function ProjectSidebarInner({
       >
         <div className="project-sidebar__compact-hdr">
           <span className="project-sidebar__sect-label">Projects</span>
-          <button
-            type="button"
-            className="project-sidebar__add-btn"
-            aria-label="New project"
-            onClick={onAddProject}
-          >
-            <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-          </button>
+          {onAddProject ? (
+            <button
+              type="button"
+              className="project-sidebar__add-btn"
+              aria-label="New project"
+              onClick={onAddProject}
+            >
+              <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
+          ) : null}
         </div>
 
         {/* Stale-data banner: keep cached sessions visible on fetch failure but
@@ -455,7 +468,10 @@ function ProjectSidebarInner({
                       {workerSessions.length}
                     </span>
                   </button>
-                  <div className="project-sidebar__proj-actions" ref={agentMenuProjectId === project.id ? menuRef : undefined}>
+                  <div
+                    className="project-sidebar__proj-actions"
+                    ref={agentMenuProjectId === project.id || projectMenuProjectId === project.id ? menuRef : undefined}
+                  >
                     <button
                       type="button"
                       className="project-sidebar__proj-add-agent"
@@ -502,6 +518,52 @@ function ProjectSidebarInner({
                         <path d="M12 5v14M5 12h14" />
                       </svg>
                     </button>
+                    {onRemoveProject ? (
+                      <button
+                        type="button"
+                        className="project-sidebar__proj-more"
+                        aria-label={`Project options for ${project.name}`}
+                        aria-haspopup="menu"
+                        aria-expanded={projectMenuProjectId === project.id}
+                        onClick={(event) => {
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          setProjectMenuProjectId((current) => {
+                            if (current === project.id) {
+                              setProjectMenuPosition(null);
+                              return null;
+                            }
+
+                            setAgentMenuProjectId(null);
+                            setAgentMenuPosition(null);
+                            setProjectMenuPosition({
+                              top: Math.max(
+                                AGENT_MENU_VIEWPORT_MARGIN,
+                                Math.min(
+                                  rect.top - 6,
+                                  window.innerHeight - 120 - AGENT_MENU_VIEWPORT_MARGIN,
+                                ),
+                              ),
+                              left: Math.max(
+                                AGENT_MENU_VIEWPORT_MARGIN,
+                                Math.min(
+                                  rect.right + AGENT_MENU_GAP,
+                                  window.innerWidth - 220 - AGENT_MENU_VIEWPORT_MARGIN,
+                                ),
+                              ),
+                            });
+
+                            return project.id;
+                          });
+                        }}
+                        title={`Project options for ${project.name}`}
+                      >
+                        <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                          <circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none" />
+                          <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+                          <circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none" />
+                        </svg>
+                      </button>
+                    ) : null}
                     {agentMenuProjectId === project.id ? (
                       <div
                         className="project-sidebar__agent-menu"
@@ -547,6 +609,36 @@ function ProjectSidebarInner({
                             );
                           })
                         )}
+                      </div>
+                    ) : null}
+                    {projectMenuProjectId === project.id ? (
+                      <div
+                        className="project-sidebar__agent-menu project-sidebar__project-menu"
+                        role="menu"
+                        aria-label={`Project actions for ${project.name}`}
+                        style={projectMenuPosition ?? undefined}
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="project-sidebar__agent-menu-item project-sidebar__project-menu-item--danger"
+                          onClick={() => {
+                            setProjectMenuProjectId(null);
+                            setProjectMenuPosition(null);
+                            onRemoveProject(project.id);
+                          }}
+                        >
+                          <span className="project-sidebar__agent-menu-item-main">
+                            <span className="project-sidebar__agent-menu-item-copy">
+                              <span className="project-sidebar__agent-menu-item-label">
+                                Delete Workspace
+                              </span>
+                              <span className="project-sidebar__agent-menu-item-meta">
+                                Removes {project.name} from AO only
+                              </span>
+                            </span>
+                          </span>
+                        </button>
                       </div>
                     ) : null}
                   </div>

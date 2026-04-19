@@ -1,10 +1,14 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { NextResponse } from "next/server";
 import {
+  configToYaml,
   getPortfolio,
   isPortfolioEnabled,
   loadGlobalConfig,
+  loadLocalProjectConfigDetailed,
   loadPreferences,
-  saveGlobalConfig,
+  syncProjectShadow,
   updatePreferences,
   unregisterProject,
 } from "@aoagents/ao-core";
@@ -15,6 +19,23 @@ import { reloadServices } from "@/lib/services";
 export const dynamic = "force-dynamic";
 
 const IDENTITY_FIELD_KEYS = new Set(["name", "path", "sessionPrefix", "storageKey", "_shadowSyncedAt"]);
+
+function getShadowBehaviorFields(entry: Record<string, unknown>): Record<string, unknown> {
+  const {
+    name: _name,
+    path: _path,
+    sessionPrefix: _sessionPrefix,
+    storageKey: _storageKey,
+    _shadowSyncedAt: _shadowSyncedAt,
+    ...behaviorFields
+  } = entry;
+  void _name;
+  void _path;
+  void _sessionPrefix;
+  void _storageKey;
+  void _shadowSyncedAt;
+  return behaviorFields;
+}
 
 function removeProjectFromPreferences(
   preferences: {
@@ -141,11 +162,23 @@ export async function PATCH(
       );
     }
 
-    globalConfig.projects[project.configProjectKey] = {
-      ...existing,
+    const localConfigResult = loadLocalProjectConfigDetailed(existing.path);
+    if (localConfigResult.kind === "old-format" || localConfigResult.kind === "malformed" || localConfigResult.kind === "invalid") {
+      return NextResponse.json(
+        { error: localConfigResult.error ?? "Local project config must be repaired before editing behavior" },
+        { status: 409 },
+      );
+    }
+
+    const nextLocalConfig = {
+      ...(localConfigResult.kind === "loaded" && localConfigResult.config
+        ? localConfigResult.config
+        : getShadowBehaviorFields(existing)),
       ...parsed.data,
     };
-    saveGlobalConfig(globalConfig);
+    const localConfigPath = join(existing.path, "agent-orchestrator.yaml");
+    await writeFile(localConfigPath, configToYaml(nextLocalConfig), "utf-8");
+    syncProjectShadow(project.configProjectKey, nextLocalConfig);
 
     invalidateProjectCaches();
     await reloadServices();

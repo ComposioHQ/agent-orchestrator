@@ -89,7 +89,7 @@ describe("Dashboard project overview cards", () => {
     expect(screen.queryByRole("link", { name: "Orchestrator" })).not.toBeInTheDocument();
   });
 
-  it("shows a delete workspace button for project-scoped dashboards", () => {
+  it("shows the delete workspace action in the project row menu for project-scoped dashboards", () => {
     render(
       <Dashboard
         initialSessions={[]}
@@ -100,7 +100,8 @@ describe("Dashboard project overview cards", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Delete Workspace" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete Workspace" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Project options for My App" })).toBeInTheDocument();
   });
 
   it("shows a header orchestrator link for project-scoped dashboards with an orchestrator", () => {
@@ -204,7 +205,8 @@ describe("Dashboard project overview cards", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete Workspace" }));
+    fireEvent.click(screen.getByRole("button", { name: "Project options for My App" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Delete Workspace/ }));
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith("/api/projects/my-app", { method: "DELETE" });

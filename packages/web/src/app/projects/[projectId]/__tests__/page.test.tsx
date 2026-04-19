@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const { mockIsPortfolioEnabled } = vi.hoisted(() => ({
+  mockIsPortfolioEnabled: vi.fn(),
+}));
+
 vi.mock("@aoagents/ao-core", () => ({
-  isPortfolioEnabled: () => true,
+  isPortfolioEnabled: mockIsPortfolioEnabled,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -14,13 +18,16 @@ vi.mock("@/components/Dashboard", () => ({
       data-testid="dashboard"
       data-project-id={props.projectId}
       data-sidebar-sessions={Array.isArray(props.sidebarSessions) ? props.sidebarSessions.length : -1}
+      data-portfolio-enabled={String(props.portfolioEnabled)}
     />
   ),
 }));
 
 vi.mock("@/components/DashboardShell", () => ({
-  DashboardShell: (props: { children: React.ReactNode }) => (
-    <div data-testid="dashboard-shell">{props.children}</div>
+  DashboardShell: (props: { children: React.ReactNode; portfolioEnabled?: boolean }) => (
+    <div data-testid="dashboard-shell" data-portfolio-enabled={String(props.portfolioEnabled)}>
+      {props.children}
+    </div>
   ),
 }));
 
@@ -83,6 +90,7 @@ const fakeProjects = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockIsPortfolioEnabled.mockReturnValue(true);
   mockGetAllProjects.mockReturnValue(fakeProjects);
   mockLoadProjectPageData.mockResolvedValue(fakePageData);
   mockLoadPortfolioPageData.mockResolvedValue(fakePortfolioData);
@@ -121,6 +129,16 @@ describe("ProjectPage", () => {
     expect(mockLoadPortfolioPageData).toHaveBeenCalled();
   });
 
+  it("passes the portfolio feature flag through to project surfaces", async () => {
+    mockIsPortfolioEnabled.mockReturnValue(false);
+
+    render(
+      await ProjectPage({ params: Promise.resolve({ projectId: "my-app" }) }),
+    );
+
+    expect(screen.getByTestId("dashboard")).toHaveAttribute("data-portfolio-enabled", "false");
+  });
+
   it("renders degraded project state instead of dashboard for degraded projects", async () => {
     mockGetAllProjects.mockReturnValue([
       { id: "my-app", name: "My App", degraded: true, degradedReason: "Malformed local config" },
@@ -131,6 +149,7 @@ describe("ProjectPage", () => {
     );
 
     expect(screen.getByTestId("dashboard-shell")).toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-shell")).toHaveAttribute("data-portfolio-enabled", "true");
     expect(screen.getByTestId("project-degraded")).toHaveAttribute("data-project-id", "my-app");
     expect(screen.getByTestId("project-degraded")).toHaveAttribute("data-reason", "Malformed local config");
     expect(mockLoadProjectPageData).not.toHaveBeenCalled();

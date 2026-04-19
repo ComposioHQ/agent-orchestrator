@@ -275,7 +275,7 @@ export function registerSpawn(program: Command): void {
 
         if (opts.project) {
           if (!isPortfolioEnabled()) {
-            console.error(chalk.red("Portfolio mode is disabled. Set AO_ENABLE_PORTFOLIO=1 to use --project."));
+            console.error(chalk.red("Portfolio mode is disabled. Unset AO_ENABLE_PORTFOLIO or set it to 1 to use --project."));
             process.exit(1);
           }
           // ── Remote mode: load shadow from global registry ──

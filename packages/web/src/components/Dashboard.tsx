@@ -39,6 +39,7 @@ interface DashboardProps {
   projectId?: string;
   projectName?: string;
   projects?: ProjectInfo[];
+  portfolioEnabled?: boolean;
   orchestrators?: DashboardOrchestratorLink[];
   initialGlobalPause?: GlobalPauseState | null;
   /** Dashboard attention zone mode (defaults to "simple" — 4 zones). */
@@ -270,6 +271,7 @@ function DashboardInner({
   projectId,
   projectName,
   projects = [],
+  portfolioEnabled = true,
   orchestrators,
   attentionZones = "simple",
 }: DashboardProps) {
@@ -676,15 +678,19 @@ function DashboardInner({
     [showToast],
   );
 
-  const handleRemoveWorkspace = useCallback(async () => {
-    if (!projectId || !currentProjectInfo || typeof window === "undefined") return;
+  const handleRemoveWorkspace = useCallback(async (targetProjectId: string) => {
+    if (typeof window === "undefined") return;
+    const targetProject =
+      projects.find((project) => project.id === targetProjectId) ??
+      (projectId === targetProjectId ? currentProjectInfo : null);
+    if (!targetProject) return;
     const confirmed = window.confirm(
-      `Delete workspace "${currentProjectInfo.name}" from your portfolio? This removes it from AO but does not delete files on disk.`,
+      `Delete workspace "${targetProject.name}" from your portfolio? This removes it from AO but does not delete files on disk.`,
     );
     if (!confirmed) return;
 
     try {
-      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+      const res = await fetch(`/api/projects/${encodeURIComponent(targetProjectId)}`, {
         method: "DELETE",
       });
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -693,13 +699,15 @@ function DashboardInner({
       }
       await refreshProjectsView(router);
       showToast("Workspace removed", "success");
-      router.push("/");
+      if (projectId === targetProjectId) {
+        router.push("/");
+      }
     } catch (error) {
       const message =
         error instanceof Error ? sanitizeErrorText(error.message) : "Failed to delete workspace";
       showToast(message, "error");
     }
-  }, [currentProjectInfo, projectId, router, showToast]);
+  }, [currentProjectInfo, projectId, projects, router, showToast]);
 
   const handleSpawnOrchestrator = async (project: ProjectInfo) => {
     if (project.degraded) {
@@ -775,7 +783,8 @@ function DashboardInner({
               onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
               mobileOpen={mobileMenuOpen}
               onMobileClose={() => setMobileMenuOpen(false)}
-              onAddProject={addProjectModal.open}
+              onAddProject={portfolioEnabled ? addProjectModal.open : undefined}
+              onRemoveProject={(targetProjectId) => void handleRemoveWorkspace(targetProjectId)}
             />
           )}
           <div className="dashboard-app-shell__col">
@@ -813,15 +822,6 @@ function DashboardInner({
             ) : null}
             <div className="dashboard-app-header__spacer" />
             <div className="dashboard-app-header__actions">
-              {projectId ? (
-                <button
-                  type="button"
-                  className="dashboard-app-btn"
-                  onClick={() => void handleRemoveWorkspace()}
-                >
-                  Delete Workspace
-                </button>
-              ) : null}
               {!allProjectsView && orchestratorHref ? (
                 <a
                   href={orchestratorHref}
@@ -926,7 +926,7 @@ function DashboardInner({
 
                 {showEmptyState ? (
                   showZeroProjectsEmptyState ? (
-                    <EmptyProjectState onAddProject={addProjectModal.open} />
+                    <EmptyProjectState onAddProject={portfolioEnabled ? addProjectModal.open : () => undefined} />
                   ) : (
                     <EmptyState orchestratorHref={orchestratorHref} />
                   )
@@ -967,7 +967,9 @@ function DashboardInner({
           </div>
           </div>
         </div>
-        <AddProjectModal open={addProjectModal.isOpen} onClose={addProjectModal.close} />
+        {portfolioEnabled ? (
+          <AddProjectModal open={addProjectModal.isOpen} onClose={addProjectModal.close} />
+        ) : null}
       </>
     );
   }
@@ -986,6 +988,7 @@ function DashboardInner({
             onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
             mobileOpen={mobileMenuOpen}
             onMobileClose={() => setMobileMenuOpen(false)}
+            onRemoveProject={(targetProjectId) => void handleRemoveWorkspace(targetProjectId)}
           />
         )}
         <div className="dashboard-main flex-1 overflow-y-auto">
@@ -1158,7 +1161,7 @@ function DashboardInner({
 
             {!allProjectsView && !hasAnySessions && (
               showZeroProjectsEmptyState ? (
-                <EmptyProjectState onAddProject={addProjectModal.open} />
+                <EmptyProjectState onAddProject={portfolioEnabled ? addProjectModal.open : () => undefined} />
               ) : (
                 <EmptyState orchestratorHref={orchestratorHref} />
               )
@@ -1218,7 +1221,9 @@ function DashboardInner({
           isMergeReady={hydratedSheetSession?.pr ? isPRMergeReady(hydratedSheetSession.pr) : false}
         />
       ) : null}
-      <AddProjectModal open={addProjectModal.isOpen} onClose={addProjectModal.close} />
+      {portfolioEnabled ? (
+        <AddProjectModal open={addProjectModal.isOpen} onClose={addProjectModal.close} />
+      ) : null}
     </>
   );
 }

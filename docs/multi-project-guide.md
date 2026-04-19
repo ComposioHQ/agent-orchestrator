@@ -5,6 +5,10 @@ in `~/.agent-orchestrator/config.yaml`, each repo keeps its own
 `agent-orchestrator.yaml` for repo-specific behavior, and the dashboard, sidebar,
 and CLI all share the same project registry.
 
+> Portfolio mode is on by default. To opt out (fall back to the single-project
+> dashboard and disable `ao project` / `ao spawn --project`), set
+> `AO_ENABLE_PORTFOLIO=0` in your shell.
+
 ---
 
 ## For Existing Users
