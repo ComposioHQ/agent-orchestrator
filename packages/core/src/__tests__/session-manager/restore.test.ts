@@ -652,7 +652,7 @@ describe("restore", () => {
     expect(written).toContain("<!-- AO_SYSTEM_PROMPT_START -->");
   });
 
-  it("re-materializes AGENTS.md for restored OpenCode workers", async () => {
+  it("injects OPENCODE_CONFIG for restored OpenCode workers", async () => {
     const wsPath = join(tmpDir, "ws-app-worker-opencode-agentsmd");
     mkdirSync(wsPath, { recursive: true });
 
@@ -662,9 +662,6 @@ describe("restore", () => {
     const promptFile = join(baseDir, "worker-prompt-app-1.md");
     const promptContent = "Work on issue: TEST-1\nFix the failing tests.";
     writeFileSync(promptFile, promptContent, "utf-8");
-
-    const agentsMdPath = getWorkspaceAgentsMdPath(wsPath);
-    expect(existsSync(agentsMdPath)).toBe(false);
 
     const mockOpenCodeAgent: Agent = {
       ...mockAgent,
@@ -712,10 +709,22 @@ describe("restore", () => {
     });
     await sm.restore("app-1");
 
-    expect(existsSync(agentsMdPath)).toBe(true);
-    const written = readFileSync(agentsMdPath, "utf-8");
-    expect(written).toContain(promptContent);
-    expect(written).toContain("## Agent Worker");
+    expect(mockRuntime.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environment: expect.objectContaining({
+          OPENCODE_CONFIG: expect.stringContaining("opencode-config-app-1.json"),
+        }),
+      }),
+    );
+    const runtimeCreateCall = vi.mocked(mockRuntime.create).mock.calls[0][0];
+    const opencodeConfigPath = runtimeCreateCall.environment.OPENCODE_CONFIG;
+    expect(opencodeConfigPath).toBeTruthy();
+    expect(existsSync(opencodeConfigPath)).toBe(true);
+    const opencodeConfig = JSON.parse(readFileSync(opencodeConfigPath, "utf-8")) as {
+      instructions: string[];
+    };
+    expect(opencodeConfig.instructions).toEqual([promptFile]);
+    expect(existsSync(getWorkspaceAgentsMdPath(wsPath))).toBe(false);
   });
 
   it("preserves original createdAt/issue/PR metadata", async () => {

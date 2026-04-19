@@ -1005,7 +1005,7 @@ describe("spawn", () => {
     expect(systemPrompt).not.toContain("## Additional Instructions");
   });
 
-  it("writes the worker AGENTS.md block for OpenCode workers", async () => {
+  it("injects OPENCODE_CONFIG for OpenCode workers", async () => {
     const opencodeAgent: Agent = {
       ...mockAgent,
       name: "opencode",
@@ -1044,11 +1044,30 @@ describe("spawn", () => {
       prompt: "Focus on the API layer only.",
     });
 
+    expect(mockRuntime.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environment: expect.objectContaining({
+          OPENCODE_CONFIG: expect.stringContaining("opencode-config-app-1.json"),
+        }),
+      }),
+    );
+
+    const runtimeCreateCall = vi.mocked(mockRuntime.create).mock.calls[0][0];
+    const opencodeConfigPath = runtimeCreateCall.environment.OPENCODE_CONFIG;
+    expect(opencodeConfigPath).toBeTruthy();
+    expect(existsSync(opencodeConfigPath)).toBe(true);
+    const opencodeConfig = JSON.parse(readFileSync(opencodeConfigPath, "utf-8")) as {
+      instructions: string[];
+    };
+    expect(opencodeConfig.instructions).toHaveLength(1);
+    expect(opencodeConfig.instructions[0]).toContain("worker-prompt-app-1.md");
+
+    const systemPromptPath = opencodeConfig.instructions[0]!;
+    expect(readFileSync(systemPromptPath, "utf-8")).toContain("Work on issue: INT-1343");
+    expect(readFileSync(systemPromptPath, "utf-8")).not.toContain("## Additional Instructions");
+
     const agentsMdPath = getWorkspaceAgentsMdPath("/tmp/ws");
-    expect(existsSync(agentsMdPath)).toBe(true);
-    expect(readFileSync(agentsMdPath, "utf-8")).toContain("## Agent Worker");
-    expect(readFileSync(agentsMdPath, "utf-8")).toContain("Work on issue: INT-1343");
-    expect(readFileSync(agentsMdPath, "utf-8")).not.toContain("## Additional Instructions");
+    expect(existsSync(agentsMdPath)).toBe(false);
   });
 
   it("does not send prompt post-launch when agent.promptDelivery is not set", async () => {

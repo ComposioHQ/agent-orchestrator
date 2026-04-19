@@ -67,6 +67,7 @@ import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import {
   writeWorkspaceOpenCodeAgentsMd,
 } from "./opencode-agents-md.js";
+import { writeOpenCodeConfig } from "./opencode-config.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse, validateStatus } from "./utils/validation.js";
@@ -1255,7 +1256,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    const cleanupSpawnWorkspaceAndMetadata = async (promptFile?: string): Promise<void> => {
+    const cleanupSpawnWorkspaceAndMetadata = async (
+      promptFile?: string,
+      opencodeConfigFile?: string,
+    ): Promise<void> => {
       if (
         plugins.workspace &&
         shouldDestroyWorkspacePath(project, spawnConfig.projectId, workspacePath)
@@ -1278,6 +1282,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           /* best effort */
         }
       }
+      if (opencodeConfigFile) {
+        try {
+          unlinkSync(opencodeConfigFile);
+        } catch {
+          /* best effort */
+        }
+      }
     };
 
     const { systemPrompt, taskPrompt } = buildPrompt({
@@ -1289,13 +1300,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
 
     let systemPromptFile: string | undefined;
+    let opencodeConfigFile: string | undefined;
     try {
       const baseDir = getProjectBaseDir(config.configPath, project.path);
       mkdirSync(baseDir, { recursive: true });
       systemPromptFile = join(baseDir, `worker-prompt-${sessionId}.md`);
       writeFileSync(systemPromptFile, systemPrompt, "utf-8");
+      if (plugins.agent.name === "opencode") {
+        opencodeConfigFile = writeOpenCodeConfig(baseDir, sessionId, [systemPromptFile]);
+      }
     } catch (err) {
-      await cleanupSpawnWorkspaceAndMetadata(systemPromptFile);
+      await cleanupSpawnWorkspaceAndMetadata(systemPromptFile, opencodeConfigFile);
       throw err;
     }
 
@@ -1312,7 +1327,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             })
           : undefined;
     } catch (err) {
-      await cleanupSpawnWorkspaceAndMetadata(systemPromptFile);
+      await cleanupSpawnWorkspaceAndMetadata(systemPromptFile, opencodeConfigFile);
       throw err;
     }
     const agentLaunchConfig = {
@@ -1343,6 +1358,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         launchCommand,
         environment: {
           ...environment,
+          ...(opencodeConfigFile ? { OPENCODE_CONFIG: opencodeConfigFile } : {}),
           AO_SESSION: sessionId,
           AO_DATA_DIR: sessionsDir, // Pass sessions directory (not root dataDir)
           AO_SESSION_NAME: sessionId, // User-facing session name
@@ -1356,7 +1372,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       });
     } catch (err) {
       // Clean up workspace, prompt file, and reserved ID if agent config or runtime creation failed
-      await cleanupSpawnWorkspaceAndMetadata(systemPromptFile);
+      await cleanupSpawnWorkspaceAndMetadata(systemPromptFile, opencodeConfigFile);
       throw err;
     }
 
@@ -2748,6 +2764,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
+    let opencodeConfigPath: string | undefined;
+    if (plugins.agent.name === "opencode" && selection.role !== "orchestrator") {
+      const baseDir = getProjectBaseDir(config.configPath, project.path);
+      const systemPromptFile = join(baseDir, `worker-prompt-${sessionId}.md`);
+      if (existsSync(systemPromptFile)) {
+        opencodeConfigPath = writeOpenCodeConfig(baseDir, sessionId, [systemPromptFile]);
+      }
+    }
+
     // 6. Destroy old runtime if still alive (e.g. tmux session survives agent crash)
     if (session.runtimeHandle) {
       try {
@@ -2795,6 +2820,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       launchCommand,
       environment: {
         ...environment,
+        ...(opencodeConfigPath ? { OPENCODE_CONFIG: opencodeConfigPath } : {}),
         AO_SESSION: sessionId,
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,

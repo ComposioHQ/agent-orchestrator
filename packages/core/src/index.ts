@@ -154,6 +154,10 @@ export {
   getWorkspaceAgentsMdPath,
   writeWorkspaceOpenCodeAgentsMd,
 } from "./opencode-agents-md.js";
+export {
+  getOpenCodeConfigPath,
+  writeOpenCodeConfig,
+} from "./opencode-config.js";
 export { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 
 // Activity log — JSONL activity tracking for agents without native JSONL
