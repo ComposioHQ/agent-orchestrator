@@ -20,6 +20,7 @@ import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
 import { ConnectionBar } from "./ConnectionBar";
+import { CopyDebugBundleButton } from "./CopyDebugBundleButton";
 import { SidebarContext } from "./workspace/SidebarContext";
 
 interface DashboardProps {
@@ -489,6 +490,7 @@ function DashboardInner({
                   Orchestrator
                 </a>
               ) : null}
+              {!isMobile ? <CopyDebugBundleButton projectId={projectId} /> : null}
             </div>
           </header>
 
