@@ -6,15 +6,16 @@ import type { ObservabilityLevel } from "./observability.js";
  * This file defines ALL interfaces and types that the system uses.
  * Every plugin, CLI command, and web API route builds against these.
  *
- * Architecture: 8 plugin slots + core services
- *   1. Runtime    — where sessions execute (tmux, docker, k8s, process)
- *   2. Agent      — AI coding tool (claude-code, codex, aider)
- *   3. Workspace  — code isolation (worktree, clone)
- *   4. Tracker    — issue tracking (github, linear, jira)
- *   5. SCM        — source platform + PR/CI/reviews (github, gitlab)
- *   6. Notifier   — push notifications (desktop, slack, webhook)
- *   7. Terminal   — human interaction UI (iterm2, web, none)
- *   8. Lifecycle Manager (core, not pluggable)
+ * Architecture: 9 plugin slots + core services
+ *   1. Runtime     — where sessions execute (tmux, docker, k8s, process)
+ *   2. Agent       — AI coding tool (claude-code, codex, aider)
+ *   3. Workspace   — code isolation (worktree, clone)
+ *   4. Tracker     — issue tracking (github, linear, jira)
+ *   5. SCM         — source platform + PR/CI/reviews (github, gitlab)
+ *   6. Notifier    — push notifications (desktop, slack, webhook)
+ *   7. Terminal    — human interaction UI (iterm2, web, none)
+ *   8. CodeReview  — AI-powered peer review of worker PRs (codex, claude-code)
+ *   9. Lifecycle Manager (core, not pluggable)
  */
 
 // =============================================================================
@@ -1042,6 +1043,165 @@ export interface Terminal {
 }
 
 // =============================================================================
+// CODE REVIEW — Plugin Slot 8
+// =============================================================================
+
+/**
+ * CodeReview plugin — AI-powered peer review of worker PRs.
+ *
+ * Unlike other plugins, reviewers run as lightweight workspaces (a git worktree only,
+ * with no runtime/agent/tmux). The CodeReview plugin IS the reviewer: it reads the
+ * diff, produces findings, and optionally handles conversational follow-up.
+ */
+export interface CodeReview {
+  readonly name: string;
+
+  /** Run a code review pass on the given workspace and return findings. */
+  runReview(config: CodeReviewRunConfig): Promise<CodeReviewResult>;
+
+  /** Optional: send a follow-up message to the persistent reviewer session. */
+  sendFollowUp?(config: CodeReviewFollowUpConfig): Promise<CodeReviewFollowUpResult>;
+
+  /** Optional: cleanup any plugin-managed state for a reviewer workspace. */
+  destroy?(reviewerWorkspacePath: string): Promise<void>;
+}
+
+export interface CodeReviewRunConfig {
+  reviewerWorkspacePath: string;
+  baseBranch: string;
+  headSha: string;
+  linkedSessionId: SessionId;
+  projectId: string;
+  maxBudgetUsd?: number;
+  confidenceThreshold?: number;
+  severityThreshold?: CodeReviewFindingSeverity;
+  prompt?: string;
+}
+
+export interface CodeReviewResult {
+  outcome: CodeReviewRunOutcome;
+  findings: CodeReviewFindingInput[];
+  overallSummary: string;
+  overallConfidence?: number;
+  errorMessage?: string;
+  cost?: CostEstimate;
+}
+
+export interface CodeReviewFollowUpConfig {
+  reviewerWorkspacePath: string;
+  findingId?: string;
+  message: string;
+}
+
+export interface CodeReviewFollowUpResult {
+  response: string;
+  statusChange?: "acknowledged" | "unchanged";
+}
+
+export type CodeReviewFindingSeverity = "error" | "warning" | "info";
+export type CodeReviewFindingStatus = "open" | "dismissed" | "sent_to_agent" | "acknowledged";
+export type CodeReviewRunOutcome = "completed" | "failed" | "outdated";
+export type CodeReviewLoopState =
+  | "reviewing"
+  | "awaiting_context"
+  | "done"
+  | "stalled"
+  | "terminated";
+export type CodeReviewTerminationReason =
+  | "cycle_cap"
+  | "worker_dead"
+  | "reviewer_failure"
+  | "manual_cancel"
+  | "config_change";
+
+export interface CodeReviewFindingInput {
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  title: string;
+  description: string;
+  category: string;
+  severity: CodeReviewFindingSeverity;
+  confidence: number;
+  anchorSignature?: string;
+}
+
+export interface CodeReviewFinding extends CodeReviewFindingInput {
+  findingId: string;
+  runId: string;
+  linkedSessionId: SessionId;
+  projectId: string;
+  fingerprint: string;
+  status: CodeReviewFindingStatus;
+  belowConfidenceThreshold?: boolean;
+  dismissedBy?: string;
+  dismissedAt?: string;
+  sentToAgentAt?: string;
+  createdAt: string;
+}
+
+export interface CodeReviewRun {
+  runId: string;
+  reviewerSessionId: string;
+  reviewerWorkspacePath: string | null;
+  linkedSessionId: SessionId;
+  projectId: string;
+  headSha: string;
+  outcome: CodeReviewRunOutcome;
+  loopState: CodeReviewLoopState;
+  terminationReason?: CodeReviewTerminationReason;
+  createdAt: string;
+  completedAt?: string;
+  overallSummary: string;
+  overallConfidence?: number;
+  findingCount: number;
+  costUsd?: number;
+}
+
+export interface CodeReviewThread {
+  threadId: string;
+  findingId: string;
+  runId: string;
+  linkedSessionId: SessionId;
+  projectId: string;
+  messages: CodeReviewThreadMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CodeReviewThreadMessage {
+  role: "human" | "reviewer";
+  content: string;
+  timestamp: string;
+  author?: string;
+}
+
+export interface CodeReviewConfig {
+  plugin?: string;
+  package?: string;
+  path?: string;
+  mode?: "enabled" | "disabled" | "manual-only";
+  prompt?: string;
+  autoSendNewFindingsToAgent?: boolean;
+  routing?: {
+    publishToScm?: boolean;
+  };
+  limits?: {
+    maxReviewRounds?: number;
+    maxBudgetPerRun?: number;
+    confidenceThreshold?: number;
+    stallWindow?: number;
+  };
+  severityThreshold?: CodeReviewFindingSeverity;
+  trigger?: {
+    onPullRequestOpen?: boolean;
+    onPullRequestUpdate?: boolean;
+    manual?: boolean;
+  };
+  [key: string]: unknown;
+}
+
+// =============================================================================
 // EVENTS
 // =============================================================================
 
@@ -1213,7 +1373,7 @@ export interface OrchestratorConfig {
  * Used to update config with manifest.name after loading (avoids parsing dotted strings).
  */
 export type ExternalPluginLocation =
-  | { kind: "project"; projectId: string; configType: "tracker" | "scm" }
+  | { kind: "project"; projectId: string; configType: "tracker" | "scm" | "codeReview" }
   | { kind: "notifier"; notifierId: string };
 
 /**
@@ -1226,7 +1386,7 @@ export interface ExternalPluginEntryRef {
   /** Structured location for updating config (avoids parsing source string) */
   location: ExternalPluginLocation;
   /** The slot this plugin fills */
-  slot: "tracker" | "scm" | "notifier";
+  slot: "tracker" | "scm" | "notifier" | "code-review";
   /** npm package name (if specified) */
   package?: string;
   /** Local path (if specified) */
@@ -1325,6 +1485,9 @@ export interface ProjectConfig {
 
   /** SCM configuration (usually inferred from repo) */
   scm?: SCMConfig;
+
+  /** CodeReview plugin configuration (AI-powered peer review) */
+  codeReview?: CodeReviewConfig;
 
   /** Files/dirs to symlink into workspaces */
   symlinks?: string[];
@@ -1491,7 +1654,8 @@ export type PluginSlot =
   | "tracker"
   | "scm"
   | "notifier"
-  | "terminal";
+  | "terminal"
+  | "code-review";
 
 /** Plugin manifest — what every plugin exports */
 export interface PluginManifest {
