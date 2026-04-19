@@ -1,0 +1,27 @@
+packages/core/src/config.ts
+  b653e7e4983ca8a0 256-259,261-268
+packages/web/src/lib/serialize.ts
+  b653e7e4983ca8a0 77-79
+packages/core/src/lifecycle-manager.ts
+  b653e7e4983ca8a0 16,1586-1589
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "e15e7b09932ab09ef88c2ffb29a9fe9b02a4dcb0",
+  "prompts": {
+    "b653e7e4983ca8a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c8c62348-935d-4518-a70a-01b37be7746c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 20,
+      "total_deletions": 4,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    }
+  }
+}
