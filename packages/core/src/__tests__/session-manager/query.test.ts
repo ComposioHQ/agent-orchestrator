@@ -62,6 +62,31 @@ describe("list", () => {
     expect(sessions.map((s) => s.id).sort()).toEqual(["app-1", "app-2"]);
   });
 
+  it("does not backfill role onto foreign bare-id orchestrator records (issue #1048)", async () => {
+    // Regression guard for PR #1075 review comment: a legacy record whose id
+    // is `{projectId}-orchestrator` (pre-numbered scheme, wrong prefix) must
+    // NOT get `role: orchestrator` stamped by the repair-on-read path. If it
+    // did, the record would then pass isOrchestratorSession() via the
+    // role-metadata branch and leak into the dashboard with an id that
+    // doesn't match the canonical `{prefix}-orchestrator-N` shape — which
+    // was the root cause of the dashboard/CLI id divergence in issue #1048.
+    writeMetadata(sessionsDir, "my-app-orchestrator", {
+      worktree: config.projects["my-app"]!.path,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-legacy-bare")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.list("my-app");
+
+    // After list(), the record on disk must still have no role metadata.
+    const raw = readMetadataRaw(sessionsDir, "my-app-orchestrator");
+    expect(raw).not.toBeNull();
+    expect(raw!["role"]).toBeUndefined();
+  });
+
   it("preserves lastActivityAt when read-time repair rewrites metadata", async () => {
     writeMetadata(sessionsDir, "app-orchestrator", {
       worktree: config.projects["my-app"]!.path,

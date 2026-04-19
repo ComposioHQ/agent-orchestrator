@@ -19,6 +19,14 @@ interface ParseCanonicalLifecycleOptions {
   status?: SessionStatus;
   runtimeHandle?: RuntimeHandle | null;
   createdAt?: Date;
+  /**
+   * When provided, overrides the id-based heuristic for `session.kind`.
+   * Use this from call sites that know the project's sessionPrefix and can
+   * apply the stricter predicate — avoids leaking foreign-prefix legacy
+   * records (e.g. `{projectId}-orchestrator` where projectId ≠ sessionPrefix)
+   * through as orchestrators via the `endsWith("-orchestrator")` fallback.
+   */
+  sessionKind?: SessionKind;
 }
 
 const TimestampSchema = z.string().nullable();
@@ -241,9 +249,10 @@ function synthesizeCanonicalLifecycle(
 ): CanonicalSessionLifecycle {
   const status = options.status ?? validateStatus(meta["status"]);
   const sessionKind: SessionKind =
-    meta["role"] === "orchestrator" || options.sessionId?.endsWith("-orchestrator")
+    options.sessionKind ??
+    (meta["role"] === "orchestrator" || options.sessionId?.endsWith("-orchestrator")
       ? "orchestrator"
-      : "worker";
+      : "worker");
   const now =
     options.createdAt?.toISOString() ??
     normalizeTimestamp(meta["createdAt"], new Date().toISOString()) ??
