@@ -370,7 +370,7 @@ describe("session ls", () => {
     });
   });
 
-  it("keeps terminal sessions in JSON output by default", async () => {
+  it("filters terminal sessions from JSON by default and reports hidden count", async () => {
     writeFileSync(join(sessionsDir, "app-1"), "branch=main\nstatus=working\n");
     writeFileSync(join(sessionsDir, "app-done"), "branch=main\nstatus=merged\nactivity=exited\n");
 
@@ -379,8 +379,12 @@ describe("session ls", () => {
 
     await program.parseAsync(["node", "test", "session", "ls", "--json"]);
 
-    const entries = JSON.parse(String(consoleSpy.mock.calls[0][0])) as Array<{ id: string }>;
-    expect(entries.map((entry) => entry.id)).toEqual(["app-1", "app-done"]);
+    const parsed = JSON.parse(String(consoleSpy.mock.calls[0][0])) as {
+      data: Array<{ id: string }>;
+      meta: { hiddenTerminatedCount: number };
+    };
+    expect(parsed.data.map((entry) => entry.id)).toEqual(["app-1"]);
+    expect(parsed.meta.hiddenTerminatedCount).toBe(1);
   });
 
   it("marks metadata-based orchestrators correctly in JSON output", async () => {
@@ -648,7 +652,7 @@ describe("session ls", () => {
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(output).toContain("app-1");
-    expect(output).toContain("terminal session");
+    expect(output).toContain("terminated session");
     expect(output).toContain("--include-terminated");
   });
 });

@@ -34,12 +34,12 @@ export function registerSession(program: Command): void {
 
   session
     .command("ls")
-    .description("List sessions (non-terminal rows by default; see --include-terminated)")
+    .description("List all sessions")
     .option("-p, --project <id>", "Filter by project ID")
     .option("-a, --all", "Include orchestrator sessions")
     .option(
       "--include-terminated",
-      "Include sessions in a terminal state (done, merged, killed, cleanup, …)",
+      "Include terminated sessions (killed/done/merged/terminated/errored/cleanup)",
     )
     .option("--json", "Output as JSON")
     .action(async (opts: {
@@ -64,7 +64,14 @@ export function registerSession(program: Command): void {
             (s) => !isOrchestratorSessionName(config, s.id, s.projectId),
           );
 
-      const sessions = withoutOrchestrators;
+      // Count terminal sessions that would be hidden by default, then
+      // drop them unless --include-terminated is passed.
+      const hiddenTerminatedCount = opts.includeTerminated
+        ? 0
+        : withoutOrchestrators.filter(isTerminalSession).length;
+      const sessions = opts.includeTerminated
+        ? withoutOrchestrators
+        : withoutOrchestrators.filter((s) => !isTerminalSession(s));
 
       // Group sessions by project
       const byProject = new Map<string, typeof sessions>();
@@ -80,7 +87,6 @@ export function registerSession(program: Command): void {
         ([id, project]) => project.sessionPrefix ?? id,
       );
       const jsonOutput: SessionListEntry[] = [];
-      const includeTerminated = opts.includeTerminated === true;
 
       for (const projectId of projectIds) {
         const project = config.projects[projectId];
@@ -89,32 +95,13 @@ export function registerSession(program: Command): void {
           console.log(chalk.bold(`\n${project.name || projectId}:`));
         }
 
-        const projectSessionsRaw = (byProject.get(projectId) ?? []).sort((a, b) =>
+        const projectSessions = (byProject.get(projectId) ?? []).sort((a, b) =>
           a.id.localeCompare(b.id),
         );
 
-        if (projectSessionsRaw.length === 0) {
+        if (projectSessions.length === 0) {
           if (!opts.json) {
             console.log(chalk.dim("  (no active sessions)"));
-          }
-          continue;
-        }
-
-        const hiddenTerminated = includeTerminated || opts.json
-          ? 0
-          : projectSessionsRaw.filter((s) => isTerminalSession(s)).length;
-
-        const projectSessions = includeTerminated || opts.json
-          ? projectSessionsRaw
-          : projectSessionsRaw.filter((s) => !isTerminalSession(s));
-
-        if (projectSessions.length === 0) {
-          if (!opts.json && hiddenTerminated > 0) {
-            console.log(
-              chalk.dim(
-                `  (${hiddenTerminated} terminal session${hiddenTerminated !== 1 ? "s" : ""} hidden — use --include-terminated to list them)`,
-              ),
-            );
           }
           continue;
         }
@@ -178,19 +165,25 @@ export function registerSession(program: Command): void {
 
           console.log(`  ${parts.join("  ")}`);
         }
-
-        if (!opts.json && hiddenTerminated > 0) {
-          console.log(
-            chalk.dim(
-              `  (${hiddenTerminated} terminal session${hiddenTerminated !== 1 ? "s" : ""} hidden — use --include-terminated to list them)`,
-            ),
-          );
-        }
       }
 
       if (opts.json) {
-        console.log(JSON.stringify(jsonOutput, null, 2));
+        console.log(
+          JSON.stringify(
+            { data: jsonOutput, meta: { hiddenTerminatedCount } },
+            null,
+            2,
+          ),
+        );
         return;
+      }
+
+      if (hiddenTerminatedCount > 0) {
+        console.log(
+          chalk.dim(
+            `  ${hiddenTerminatedCount} terminated session${hiddenTerminatedCount !== 1 ? "s" : ""} hidden. Use --include-terminated to show.`,
+          ),
+        );
       }
 
       console.log();
