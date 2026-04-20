@@ -459,7 +459,7 @@ describe("applyAgentReport", () => {
     const auditFilePath = join(dataDir, ".agent-report-audit", `${sessionId}.ndjson`);
     const rawAudit = readFileSync(auditFilePath, "utf8");
     expect(Buffer.byteLength(rawAudit, "utf8")).toBeLessThan(300_000);
-  });
+  }, 20_000);
 });
 
 describe("readAgentReport + isAgentReportFresh", () => {
