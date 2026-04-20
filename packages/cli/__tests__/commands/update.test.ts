@@ -6,16 +6,13 @@ import { Command } from "commander";
 // ---------------------------------------------------------------------------
 
 const {
-  mockExecuteScriptCommand,
-  mockHasRepoScript,
+  mockRunRepoScript,
 } = vi.hoisted(() => ({
-  mockExecuteScriptCommand: vi.fn(),
-  mockHasRepoScript: vi.fn(() => true),
+  mockRunRepoScript: vi.fn(),
 }));
 
 vi.mock("../../src/lib/script-runner.js", () => ({
-  executeScriptCommand: (...args: unknown[]) => mockExecuteScriptCommand(...args),
-  hasRepoScript: (...args: unknown[]) => mockHasRepoScript(...args),
+  runRepoScript: (...args: unknown[]) => mockRunRepoScript(...args),
 }));
 
 const {
@@ -101,10 +98,8 @@ describe("update command", () => {
     program = new Command();
     program.exitOverride();
     registerUpdate(program);
-    mockExecuteScriptCommand.mockReset();
-    mockExecuteScriptCommand.mockResolvedValue(undefined);
-    mockHasRepoScript.mockReset();
-    mockHasRepoScript.mockReturnValue(true);
+    mockRunRepoScript.mockReset();
+    mockRunRepoScript.mockResolvedValue(0);
     mockDetectInstallMethod.mockReturnValue("git");
     mockCheckForUpdate.mockReset();
     mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ installMethod: "git", recommendedCommand: "ao update" }));
@@ -135,7 +130,7 @@ describe("update command", () => {
     await expect(
       program.parseAsync(["node", "test", "update", "--skip-smoke", "--smoke-only"]),
     ).rejects.toThrow("process.exit(1)");
-    expect(mockExecuteScriptCommand).not.toHaveBeenCalled();
+    expect(mockRunRepoScript).not.toHaveBeenCalled();
   });
 
   // -----------------------------------------------------------------------
@@ -184,37 +179,34 @@ describe("update command", () => {
 
     it("runs the update script with default args", async () => {
       await program.parseAsync(["node", "test", "update"]);
-      expect(mockExecuteScriptCommand).toHaveBeenCalledWith("ao-update.sh", []);
+      expect(mockRunRepoScript).toHaveBeenCalledWith("ao-update.sh", []);
     });
 
-    it("falls back to npm flow when the update script is unavailable", async () => {
-      mockHasRepoScript.mockReturnValue(false);
-      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
-      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
-      mockPromptConfirm.mockResolvedValue(true);
-      mockSpawn.mockReturnValue(createMockChild(0));
-
-      await program.parseAsync(["node", "test", "update"]);
-
-      expect(mockExecuteScriptCommand).not.toHaveBeenCalled();
-      expect(mockSpawn).toHaveBeenCalledTimes(1);
-      expect(mockSpawn).toHaveBeenCalledWith(
-        "npm",
-        ["install", "-g", "@aoagents/ao@latest"],
-        expect.anything(),
+    it("shows an actionable error when the bundled update script is missing", async () => {
+      mockRunRepoScript.mockRejectedValue(
+        new Error("Script not found: ao-update.sh. Expected at: /tmp/ao-update.sh"),
       );
-      expect(mockCheckForUpdate).toHaveBeenCalledWith({ force: true });
-      expect(mockInvalidateCache).toHaveBeenCalledTimes(1);
+
+      await expect(
+        program.parseAsync(["node", "test", "update"]),
+      ).rejects.toThrow("process.exit(1)");
+
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(mockCheckForUpdate).not.toHaveBeenCalled();
+      expect(mockInvalidateCache).not.toHaveBeenCalled();
+      expect(vi.mocked(console.error)).toHaveBeenCalledWith(
+        expect.stringContaining("ao-update.sh is missing from the bundled assets"),
+      );
     });
 
     it("passes through --skip-smoke", async () => {
       await program.parseAsync(["node", "test", "update", "--skip-smoke"]);
-      expect(mockExecuteScriptCommand).toHaveBeenCalledWith("ao-update.sh", ["--skip-smoke"]);
+      expect(mockRunRepoScript).toHaveBeenCalledWith("ao-update.sh", ["--skip-smoke"]);
     });
 
     it("passes through --smoke-only", async () => {
       await program.parseAsync(["node", "test", "update", "--smoke-only"]);
-      expect(mockExecuteScriptCommand).toHaveBeenCalledWith("ao-update.sh", ["--smoke-only"]);
+      expect(mockRunRepoScript).toHaveBeenCalledWith("ao-update.sh", ["--smoke-only"]);
     });
 
     it("invalidates cache after successful update", async () => {
@@ -238,7 +230,7 @@ describe("update command", () => {
 
     it("does not run script-runner", async () => {
       await program.parseAsync(["node", "test", "update"]);
-      expect(mockExecuteScriptCommand).not.toHaveBeenCalled();
+      expect(mockRunRepoScript).not.toHaveBeenCalled();
     });
 
     it("prints already up to date when not outdated", async () => {
@@ -387,7 +379,7 @@ describe("update command", () => {
       await program.parseAsync(["node", "test", "update"]);
 
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Could not detect install method"));
-      expect(mockExecuteScriptCommand).not.toHaveBeenCalled();
+      expect(mockRunRepoScript).not.toHaveBeenCalled();
     });
 
     it("shows latest version when available", async () => {

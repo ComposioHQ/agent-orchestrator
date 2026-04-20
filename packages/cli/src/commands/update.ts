@@ -1,13 +1,12 @@
 import { spawn } from "node:child_process";
 import type { Command } from "commander";
 import chalk from "chalk";
-import { executeScriptCommand, hasRepoScript } from "../lib/script-runner.js";
+import { runRepoScript } from "../lib/script-runner.js";
 import {
   checkForUpdate,
   detectInstallMethod,
   getCurrentVersion,
   getUpdateCommand,
-  type InstallMethod,
   invalidateCache,
 } from "../lib/update-check.js";
 import { promptConfirm } from "../lib/prompts.js";
@@ -78,16 +77,30 @@ async function handleGitUpdate(opts: {
   if (opts.skipSmoke) args.push("--skip-smoke");
   if (opts.smokeOnly) args.push("--smoke-only");
 
-  if (!hasRepoScript("ao-update.sh")) {
-    console.log(
-      chalk.yellow("Source-update script unavailable; using package-manager update flow for this install."),
-    );
-    await handleNpmUpdate(opts, "npm-global");
-    return;
-  }
+  try {
+    const exitCode = await runRepoScript("ao-update.sh", args);
+    if (exitCode !== 0) {
+      process.exit(exitCode);
+    }
+    invalidateCache();
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("Script not found: ao-update.sh")
+    ) {
+      console.error(
+        chalk.red(
+          "ao-update.sh is missing from the bundled assets. " +
+            "If you're running from a source checkout, rebuild with `pnpm --filter @aoagents/ao-cli build`. " +
+            "If you're on a package install, reinstall the package.",
+        ),
+      );
+      process.exit(1);
+    }
 
-  await executeScriptCommand("ao-update.sh", args);
-  invalidateCache();
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -97,7 +110,7 @@ async function handleGitUpdate(opts: {
 async function handleNpmUpdate(opts: {
   skipSmoke?: boolean;
   smokeOnly?: boolean;
-}, fallbackMethod?: InstallMethod): Promise<void> {
+}): Promise<void> {
   if (opts.skipSmoke || opts.smokeOnly) {
     console.log(
       chalk.yellow("--skip-smoke and --smoke-only only apply to git source installs. Ignoring."),
@@ -120,7 +133,7 @@ async function handleNpmUpdate(opts: {
   console.log(`Latest version:  ${chalk.green(info.latestVersion)}`);
   console.log();
 
-  const command = fallbackMethod ? getUpdateCommand(fallbackMethod) : info.recommendedCommand;
+  const command = info.recommendedCommand;
 
   if (!isTTY()) {
     // Non-interactive: print the command. Exit 0 because this isn't an error,

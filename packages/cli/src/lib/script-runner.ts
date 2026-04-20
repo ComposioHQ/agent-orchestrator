@@ -2,6 +2,12 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  classifyInstallPath,
+  hasNodeModulesAncestor,
+  isAgentOrchestratorRepoRoot,
+  isAoCliPackageRoot,
+} from "./update-check.js";
 
 const CURRENT_MODULE_PATH = fileURLToPath(import.meta.url);
 const CURRENT_MODULE_DIR = dirname(CURRENT_MODULE_PATH);
@@ -10,9 +16,15 @@ const CLI_DIST_ROOT = resolve(CURRENT_MODULE_DIR, "..");
 export type ScriptLayout = "source-checkout" | "package-install";
 
 export function resolveScriptLayoutFromPath(modulePath: string): ScriptLayout {
-  const isNodeModulesInstall =
-    modulePath.includes("/node_modules/") || modulePath.includes("\\node_modules\\");
-  return isNodeModulesInstall ? "package-install" : "source-checkout";
+  const installMethod = classifyInstallPath(modulePath);
+  if (installMethod === "git") {
+    return "source-checkout";
+  }
+  if (installMethod === "npm-global" || installMethod === "pnpm-global") {
+    return "package-install";
+  }
+
+  return hasNodeModulesAncestor(modulePath) ? "package-install" : "source-checkout";
 }
 
 export function resolveDefaultRepoRootFromPath(modulePath: string): string {
@@ -26,14 +38,36 @@ export function resolveDefaultRepoRootFromPath(modulePath: string): string {
 const DEFAULT_REPO_ROOT = resolveDefaultRepoRootFromPath(CURRENT_MODULE_PATH);
 const DEFAULT_SCRIPT_LAYOUT = resolveScriptLayoutFromPath(CURRENT_MODULE_PATH);
 
+function isValidRepoRootForLayout(root: string, layout: ScriptLayout): boolean {
+  return layout === "source-checkout"
+    ? isAgentOrchestratorRepoRoot(root)
+    : isAoCliPackageRoot(root);
+}
+
 export function resolveRepoRoot(): string {
   const override = process.env["AO_REPO_ROOT"];
-  return override ? resolve(override) : DEFAULT_REPO_ROOT;
+  if (!override) {
+    return DEFAULT_REPO_ROOT;
+  }
+
+  const resolved = resolve(override);
+  if (!isValidRepoRootForLayout(resolved, DEFAULT_SCRIPT_LAYOUT)) {
+    const expected =
+      DEFAULT_SCRIPT_LAYOUT === "source-checkout"
+        ? "an agent-orchestrator checkout"
+        : "an installed @aoagents/ao-cli package";
+    throw new Error(`AO_REPO_ROOT=${override} does not look like ${expected}`);
+  }
+
+  return resolved;
 }
 
 export function resolveScriptLayout(): ScriptLayout {
   const override = process.env["AO_SCRIPT_LAYOUT"];
-  if (override === "package-install" || override === "source-checkout") {
+  if (
+    process.env["AO_DEV"] === "1" &&
+    (override === "package-install" || override === "source-checkout")
+  ) {
     return override;
   }
   return DEFAULT_SCRIPT_LAYOUT;
@@ -65,7 +99,7 @@ export async function runRepoScript(scriptName: string, args: string[]): Promise
 
   return await new Promise<number>((resolveExit, reject) => {
     const child = spawn(shell, [scriptPath, ...args], {
-      cwd: process.cwd(),
+      cwd: repoRoot,
       env: { ...process.env, AO_REPO_ROOT: repoRoot, AO_SCRIPT_LAYOUT: scriptLayout },
       stdio: "inherit",
     });

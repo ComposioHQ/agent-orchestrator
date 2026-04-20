@@ -168,10 +168,23 @@ describe("update-check", () => {
         if (path.endsWith(".git")) return true;
         return false;
       });
+      mockReadFileSync.mockReturnValue(JSON.stringify({ name: "@aoagents/ao" }));
 
       expect(
         classifyInstallPath("/home/user/agent-orchestrator/packages/cli/src/lib/update-check.ts"),
       ).toBe("git");
+    });
+
+    it("returns 'unknown' for a non-AO repo even when .git exists four levels up", () => {
+      mockExistsSync.mockImplementation((path: string) => {
+        if (path.endsWith(".git")) return true;
+        return false;
+      });
+      mockReadFileSync.mockReturnValue(JSON.stringify({ name: "not-ao" }));
+
+      expect(
+        classifyInstallPath("/home/user/other-monorepo/packages/cli/src/lib/update-check.ts"),
+      ).toBe("unknown");
     });
 
     it("returns 'unknown' when .git does not exist at the resolved repo root", () => {
@@ -192,6 +205,7 @@ describe("update-check", () => {
         if (path.endsWith(".git")) return true;
         return false;
       });
+      mockReadFileSync.mockReturnValue(JSON.stringify({ name: "@aoagents/ao" }));
 
       const result = detectInstallMethod();
       expect(["git", "npm-global", "unknown"]).toContain(result);
