@@ -2092,7 +2092,10 @@ describe("start command — global registry mutations", () => {
           .mocked(console.error)
           .mock.calls.map((call) => call.join(" "))
           .join("\n");
-        throw new Error(`${error instanceof Error ? error.message : String(error)}\n${loggedErrors}`);
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}\n${loggedErrors}`,
+          { cause: error },
+        );
       }
 
       const globalConfig = parseYaml(readFileSync(globalConfigPath, "utf-8")) as {
