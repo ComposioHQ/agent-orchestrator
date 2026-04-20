@@ -1885,6 +1885,17 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   letter-spacing: 0.05em;
 }
 
+.session-detail-mode-badge--link {
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.session-detail-mode-badge--link:hover {
+  background: var(--color-accent-amber-border);
+  border-color: var(--color-accent-amber);
+}
+
 .session-detail-link-pill {
   display: inline-flex;
   align-items: center;

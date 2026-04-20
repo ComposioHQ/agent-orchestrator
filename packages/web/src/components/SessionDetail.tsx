@@ -96,6 +96,7 @@ function OrchestratorTopStrip({
   pr,
   crumbHref,
   crumbLabel,
+  projectId,
   rightSlot,
 }: {
   headline: string;
@@ -106,6 +107,7 @@ function OrchestratorTopStrip({
   pr: DashboardPR | null;
   crumbHref: string;
   crumbLabel: string;
+  projectId?: string;
   rightSlot?: ReactNode;
 }) {
   return (
@@ -129,7 +131,17 @@ function OrchestratorTopStrip({
         </a>
         <span className="session-detail-crumb-sep">/</span>
         <span className="session-detail-crumb-id">{crumbId}</span>
-        <span className="session-detail-mode-badge">orchestrator</span>
+        {projectId ? (
+          <a
+            href={`/orchestrators?project=${encodeURIComponent(projectId)}`}
+            className="session-detail-mode-badge session-detail-mode-badge--link"
+            title="View all orchestrators"
+          >
+            orchestrator
+          </a>
+        ) : (
+          <span className="session-detail-mode-badge">orchestrator</span>
+        )}
       </div>
 
       {/* Identity strip */}
@@ -230,6 +242,7 @@ function _OrchestratorStatusStrip({
   pr,
   crumbHref,
   crumbLabel,
+  projectId,
 }: {
   zones: OrchestratorZones;
   createdAt: string;
@@ -240,6 +253,7 @@ function _OrchestratorStatusStrip({
   pr: DashboardPR | null;
   crumbHref: string;
   crumbLabel: string;
+  projectId?: string;
 }) {
   const [uptime, setUptime] = useState<string>("");
 
@@ -308,6 +322,7 @@ function _OrchestratorStatusStrip({
         pr={pr}
         crumbHref={crumbHref}
         crumbLabel={crumbLabel}
+        projectId={projectId}
         rightSlot={
           <div className="flex flex-wrap items-center gap-3 lg:justify-end">
             <div className="flex items-baseline gap-1.5 mr-2">
@@ -678,6 +693,7 @@ export function SessionDetail({
                 pr={pr}
                 crumbHref={crumbHref}
                 crumbLabel={crumbLabel}
+                projectId={session.projectId}
               />
             )}
 
