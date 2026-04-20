@@ -42,7 +42,7 @@ export function setExecFileAsync(fn: typeof execFileAsync): void {
  * Configuration constants for cache sizing.
  * LRU cache automatically evicts oldest entries when these limits are reached.
  */
-const MAX_PR_LIST_ETAGS = 100;  // Number of repos to cache
+const MAX_PR_RESOURCE_ETAGS = 500;  // Number of PRs to cache (per-PR resource ETags)
 const MAX_COMMIT_STATUS_ETAGS = 500;  // Number of commits to cache
 const MAX_PR_METADATA = 200;  // Number of PRs to cache full data
 
@@ -51,11 +51,11 @@ const MAX_PR_METADATA = 200;  // Number of PRs to cache full data
  * Used to avoid expensive GraphQL queries when nothing has changed.
  *
  * Keys:
- * - PR list: "prList:{owner}/{repo}"
- * - Commit status: "commit:{owner}/{repo}#{sha}"
+ * - PR resource: "owner/repo#number"
+ * - Commit status: "owner/repo#sha"
  */
 interface ETagCache {
-  prList: LRUCache<string, string>; // Key: "owner/repo", Value: ETag
+  prResource: LRUCache<string, string>; // Key: "owner/repo#number", Value: ETag
   commitStatus: LRUCache<string, string>; // Key: "owner/repo#sha", Value: ETag
 }
 
@@ -67,15 +67,17 @@ interface ETagCache {
  * Uses LRU eviction to ensure bounded memory usage.
  */
 const etagCache: ETagCache = {
-  prList: new LRUCache(MAX_PR_LIST_ETAGS),
+  prResource: new LRUCache(MAX_PR_RESOURCE_ETAGS),
   commitStatus: new LRUCache(MAX_COMMIT_STATUS_ETAGS),
 };
 
 /**
- * Result of checking if PR data has changed via ETag guards.
+ * Refresh plan returned by shouldRefreshPREnrichment.
+ * Tells enrichSessionsPRBatch which PRs need GraphQL and which are cached.
  */
-interface ETagGuardResult {
-  shouldRefresh: boolean;
+interface PREnrichmentRefreshPlan {
+  prsToRefresh: PRInfo[];
+  cachedResults: Map<string, PREnrichmentData>;
   details: string[];
 }
 
@@ -84,15 +86,15 @@ interface ETagGuardResult {
  * Useful for testing or when forcing a refresh.
  */
 export function clearETagCache(): void {
-  etagCache.prList.clear();
+  etagCache.prResource.clear();
   etagCache.commitStatus.clear();
 }
 
 /**
- * Get PR list ETag for a repository.
+ * Get PR resource ETag for a specific PR.
  */
-export function getPRListETag(owner: string, repo: string): string | undefined {
-  return etagCache.prList.get(`${owner}/${repo}`);
+export function getPRResourceETag(owner: string, repo: string, number: number): string | undefined {
+  return etagCache.prResource.get(`${owner}/${repo}#${number}`);
 }
 
 /**
@@ -107,11 +109,11 @@ export function getCommitStatusETag(
 }
 
 /**
- * Set PR list ETag for a repository.
+ * Set PR resource ETag for a specific PR.
  * Exported for testing.
  */
-export function setPRListETag(owner: string, repo: string, etag: string): void {
-  etagCache.prList.set(`${owner}/${repo}`, etag);
+export function setPRResourceETag(owner: string, repo: string, number: number, etag: string): void {
+  etagCache.prResource.set(`${owner}/${repo}#${number}`, etag);
 }
 
 /**
@@ -167,104 +169,70 @@ function updatePRMetadataCache(
 }
 
 /**
- * 2-Guard ETag Strategy: Check if PR enrichment cache needs refreshing.
+ * 2-Guard ETag Strategy: Build a per-PR refresh plan.
  *
- * Before running expensive GraphQL batch queries, use two lightweight REST API
- * ETag checks to detect if anything actually changed:
+ * For each PR, runs two lightweight REST ETag checks to decide whether it
+ * needs a GraphQL refresh or can be served from cache:
  *
- * Guard 1: PR List ETag Check (per repo)
- *   - Detects: New commits, PR title/body edits, labels changes, reviews, PR state changes
- *   - Misses: CI status changes
+ * Guard 1: PR Resource ETag Check (per PR)
+ *   - Endpoint: GET /repos/{owner}/{repo}/pulls/{number}
+ *   - Detects: New commits, PR title/body edits, label changes, reviews, state changes
+ *   - 304 = unchanged, 200 = changed → refresh that PR
  *
- * Guard 2: Commit Status ETag Check (per PR with cached metadata)
- *   - Checks ALL PRs with cached metadata and head SHA
+ * Guard 2: Commit Status ETag Check (per PR, only when Guard 1 returns 304)
  *   - Detects: CI check starts, passes, fails, or external status updates
- *   - Critical for catching CI transitions (failing -> passing, passing -> failing, etc.)
+ *   - 304 = unchanged → serve from cache, 200 = changed → refresh that PR
  *
  * @param prs - PRs to check
- * @returns true if GraphQL batch should run, false if nothing changed
+ * @returns refresh plan: which PRs need GraphQL, which are cached
  */
 export async function shouldRefreshPREnrichment(
   prs: PRInfo[],
-): Promise<ETagGuardResult> {
+): Promise<PREnrichmentRefreshPlan> {
   const details: string[] = [];
-  let shouldRefresh = false;
+  const prsToRefresh: PRInfo[] = [];
+  const cachedResults = new Map<string, PREnrichmentData>();
 
   if (prs.length === 0) {
-    return { shouldRefresh: false, details: ["No PRs to check"] };
+    return { prsToRefresh: [], cachedResults, details: ["No PRs to check"] };
   }
-
-  // Group PRs by repository for Guard 1 (PR list check)
-  const repos = new Map<string, PRInfo[]>();
 
   for (const pr of prs) {
-    const repoKey = `${pr.owner}/${pr.repo}`;
-    if (!repos.has(repoKey)) {
-      repos.set(repoKey, []);
+    const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
+
+    // Guard 1: PR resource ETag check
+    const prChanged = await checkPRResourceETag(pr.owner, pr.repo, pr.number);
+    if (prChanged) {
+      prsToRefresh.push(pr);
+      details.push(`PR resource changed for ${prKey} (Guard 1)`);
+      continue;
     }
-    const repoPrs = repos.get(repoKey);
-    if (repoPrs) {
-      repoPrs.push(pr);
+
+    // Guard 1 returned 304 — check if we have cached data to serve
+    const cachedEnrichment = prEnrichmentDataCache.get(prKey);
+    const cachedMeta = prMetadataCache.get(prKey);
+
+    if (!cachedEnrichment || !cachedMeta || cachedMeta.headSha === null) {
+      prsToRefresh.push(pr);
+      details.push(`No cached data for ${prKey} (Guard 1: 304 but cache miss)`);
+      continue;
     }
-  }
 
-  // Guard 1: Check PR list ETag for each repository
-  let guard1DetectedChanges = false;
-  for (const [repoKey] of repos) {
-    const [owner, repo] = repoKey.split("/");
-    const prListChanged = await checkPRListETag(owner, repo);
-    if (prListChanged) {
-      guard1DetectedChanges = true;
-      shouldRefresh = true;
-      details.push(`PR list changed for ${repoKey} (Guard 1)`);
-    }
-  }
-
-  // Guard 2: Check commit status ETag only when Guard 1 didn't detect changes
-  // We check ALL PRs (not just pending) to catch CI status transitions:
-  // - failing -> passing (PR becomes merge-ready)
-  // - passing -> failing (PR becomes unmergeable)
-  // - pending -> passing/failing (CI completes)
-  // - passing -> pending (new CI run starts)
-  //
-  // Guard 2 is only needed when Guard 1 returns 304 (no PR list changes).
-  // If Guard 1 detected changes, we're going to refresh all PRs anyway.
-  if (!guard1DetectedChanges) {
-    for (const pr of prs) {
-      const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
-      const cached = prMetadataCache.get(prKey);
-
-      // Check for incomplete cache (cached but no headSha)
-      // This happens when PR was cached but headSha wasn't captured
-      // We need to refresh to get complete data including headSha
-      if (cached && cached.headSha === null) {
-        shouldRefresh = true;
-        details.push(`First time seeing PR #${pr.number} (Guard 2: no cached head SHA)`);
-        continue;
-      }
-
-      // Only check commit status ETag if we have cached data with a non-null head SHA
-      if (!cached || !cached.headSha) {
-        // No cached metadata - skip Guard 2. Since Guard 1 didn't detect changes
-        // and we have no cached data, there's nothing to check.
-        continue;
-      }
-
-      const statusChanged = await checkCommitStatusETag(
-        pr.owner,
-        pr.repo,
-        cached.headSha,
-      );
-      if (statusChanged) {
-        shouldRefresh = true;
-        details.push(
-          `CI status changed for ${pr.owner}/${pr.repo}#${pr.number} (Guard 2)`,
-        );
-      }
+    // Guard 2: commit status ETag check
+    const statusChanged = await checkCommitStatusETag(
+      pr.owner,
+      pr.repo,
+      cachedMeta.headSha,
+    );
+    if (statusChanged) {
+      prsToRefresh.push(pr);
+      details.push(`CI status changed for ${prKey} (Guard 2)`);
+    } else {
+      cachedResults.set(prKey, cachedEnrichment);
     }
   }
 
-  return { shouldRefresh, details };
+  return { prsToRefresh, cachedResults, details };
 }
 
 /**
@@ -353,25 +321,26 @@ function extractErrorOutput(err: unknown): string | null {
 }
 
 /**
- * Guard 1: PR List ETag Check (per repo)
+ * Guard 1: PR Resource ETag Check (per PR)
  *
- * Detects if PR metadata has changed in a repository using REST ETag.
+ * Detects if a specific PR has changed using REST ETag.
  *
- * - Endpoint: GET /repos/{owner}/{repo}/pulls?state=open&sort=updated&direction=desc
+ * - Endpoint: GET /repos/{owner}/{repo}/pulls/{number}
  * - Detects: New commits, PR title/body edits, label changes, reviews, PR state changes
  * - Misses: CI status changes (handled by Guard 2)
  *
- * @returns true if PR list has changed (200 OK), false if unchanged (304 Not Modified)
+ * @returns true if PR has changed (200 OK), false if unchanged (304 Not Modified)
  */
-async function checkPRListETag(
+async function checkPRResourceETag(
   owner: string,
   repo: string,
+  number: number,
 ): Promise<boolean> {
-  const repoKey = `${owner}/${repo}`;
-  const cachedETag = etagCache.prList.get(repoKey);
+  const prKey = `${owner}/${repo}#${number}`;
+  const cachedETag = etagCache.prResource.get(prKey);
 
   // Build gh CLI args for REST API call
-  const url = `repos/${repoKey}/pulls?state=open&sort=updated&direction=desc&per_page=1`;
+  const url = `repos/${owner}/${repo}/pulls/${number}`;
   const args = ["api", "--method", "GET", url, "-i"]; // -i includes headers
 
   // Add If-None-Match header if we have a cached ETag
@@ -380,7 +349,7 @@ async function checkPRListETag(
   }
 
   try {
-    const output = await execGhAsync(args, 10_000, "gh.api.guard-pr-list");
+    const output = await execGhAsync(args, 10_000, "gh.api.guard-pr-resource");
 
     // Check for HTTP 304 Not Modified response
     if (is304(output)) {
@@ -391,10 +360,10 @@ async function checkPRListETag(
     const etagMatch = output.match(/etag:\s*(.+)/i);
     if (etagMatch) {
       const newETag = etagMatch[1].trim();
-      setPRListETag(owner, repo, newETag);
+      setPRResourceETag(owner, repo, number, newETag);
     }
 
-    // PR list changed - cost: 1 REST point
+    // PR resource changed - cost: 1 REST point
     return true;
   } catch (err) {
     // gh exits code 1 on 304 Not Modified — check stdout/stderr for the status line
@@ -405,7 +374,7 @@ async function checkPRListETag(
 
     const errorMsg = err instanceof Error ? err.message : String(err);
     // eslint-disable-next-line no-console -- Observability logging for ETag errors
-    console.warn(`[ETag Guard 1] PR list check failed for ${repoKey}: ${errorMsg}`);
+    console.warn(`[ETag Guard 1] PR resource check failed for ${prKey}: ${errorMsg}`);
     return true; // Assume changed to be safe
   }
 }
@@ -906,19 +875,17 @@ function extractPREnrichment(
 /**
  * Main batch enrichment function with 2-Guard ETag Strategy.
  *
- * Before running expensive GraphQL batch queries, uses two lightweight REST API
- * ETag checks to detect if anything actually changed:
+ * Uses per-PR ETag checks to build a selective refresh plan:
  *
- * 1. Guard 1: PR List ETag Check (per repo)
+ * 1. Guard 1: PR Resource ETag Check (per PR)
  *    - Detects PR metadata changes (commits, reviews, labels, state)
- *    - Cost: 1 REST point if changed, 0 if unchanged (304)
+ *    - Cost: 0 if unchanged (304), 1 REST point if changed (200)
  *
- * 2. Guard 2: Commit Status ETag Check (per PR with pending CI)
- *    - Detects CI status changes for PRs with pending CI
- *    - Cost: 1 REST point if changed, 0 if unchanged (304)
+ * 2. Guard 2: Commit Status ETag Check (per PR, only when Guard 1 returns 304)
+ *    - Detects CI status changes
+ *    - Cost: 0 if unchanged (304), 1 REST point if changed (200)
  *
- * If guards indicate no changes, skips GraphQL entirely (saves ~50 points per batch).
- * If any guard detects a change, runs GraphQL batch queries.
+ * Only changed PRs go into the GraphQL batch. Unchanged PRs are served from cache.
  *
  * Returns a Map keyed by "${owner}/${repo}#${number}" for efficient lookup.
  */
@@ -932,46 +899,31 @@ export async function enrichSessionsPRBatch(
     return result;
   }
 
-  // Step 1: Check if we need to refresh using 2-Guard ETag Strategy
-  const guardResult = await shouldRefreshPREnrichment(prs);
+  // Step 1: Build per-PR refresh plan using 2-Guard ETag Strategy
+  const plan = await shouldRefreshPREnrichment(prs);
 
-  if (!guardResult.shouldRefresh) {
-    // No changes detected - try to return cached data
-    // If any PRs are missing from cache, we need to fetch them via GraphQL
-    const missingPRs: PRInfo[] = [];
-
-    for (const pr of prs) {
-      const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
-      const cachedData = prEnrichmentDataCache.get(prKey);
-      if (cachedData) {
-        result.set(prKey, cachedData);
-      } else {
-        missingPRs.push(pr);
-      }
-    }
-
-    if (missingPRs.length === 0) {
-      // All PRs cached - return cached data
-      observer?.log(
-        "info",
-        `[ETag Guard] Skipping GraphQL batch - all ${result.size} PRs cached. Reasons: ${guardResult.details.join(", ")}`,
-      );
-      return result;
-    }
-
-    // Some PRs not cached - fetch missing PRs via GraphQL
-    observer?.log(
-      "info",
-      `[ETag Guard] Partial cache: ${result.size} cached, ${missingPRs.length} missing. Fetching missing PRs via GraphQL.`,
-    );
-    prs = missingPRs; // Update to only fetch missing PRs
-    // Continue to GraphQL batch processing below
+  // Seed result with cached data from the plan
+  for (const [key, data] of plan.cachedResults) {
+    result.set(key, data);
   }
 
-  // Step 2: Split into batches if we have too many PRs
+  if (plan.prsToRefresh.length === 0) {
+    observer?.log(
+      "info",
+      `[ETag Guard] Skipping GraphQL batch - all ${result.size} PRs cached. Reasons: ${plan.details.join(", ")}`,
+    );
+    return result;
+  }
+
+  observer?.log(
+    "info",
+    `[ETag Guard] ${result.size} cached, ${plan.prsToRefresh.length} need refresh. Reasons: ${plan.details.join(", ")}`,
+  );
+
+  // Step 2: Split prsToRefresh into batches
   const batches: PRInfo[][] = [];
-  for (let i = 0; i < prs.length; i += MAX_BATCH_SIZE) {
-    batches.push(prs.slice(i, i + MAX_BATCH_SIZE));
+  for (let i = 0; i < plan.prsToRefresh.length; i += MAX_BATCH_SIZE) {
+    batches.push(plan.prsToRefresh.slice(i, i + MAX_BATCH_SIZE));
   }
 
   // Step 3: Execute each batch
@@ -1058,11 +1010,11 @@ export {
   parseReviewDecision,
   parsePRState,
   extractPREnrichment,
-  checkPRListETag,
+  checkPRResourceETag,
   checkCommitStatusETag,
   // shouldRefreshPREnrichment is already exported as async function
   updatePRMetadataCache,
 };
 
 // Export types for testing
-export type { ETagCache, ETagGuardResult };
+export type { ETagCache, PREnrichmentRefreshPlan };
