@@ -275,6 +275,71 @@ describe("tracker-jira plugin", () => {
     expect(JSON.parse(commentWrite).body.content[0].content[0].text).toBe("Verified on staging.");
   });
 
+  it("updates assignee using Jira Cloud accountId payload", async () => {
+    jira.queue([{ accountId: "acct-456", displayName: "Bob Roe" }]);
+    jira.queueEmpty(204);
+    const tracker = create();
+
+    await tracker.updateIssue!("APP-123", { assignee: "Bob Roe" }, project);
+
+    expect(requestMock).toHaveBeenCalledTimes(2);
+    const updateWrite = (requestMock.mock.results[1].value as MockRequest).write.mock.calls[0][0];
+    expect(JSON.parse(updateWrite)).toEqual({ fields: { assignee: { accountId: "acct-456" } } });
+  });
+
+  it("skips assignee update when Jira user search is ambiguous", async () => {
+    jira.queue([
+      { accountId: "acct-123", displayName: "Alice Doe" },
+      { accountId: "acct-456", displayName: "Alice Doe" },
+    ]);
+    const tracker = create();
+
+    await tracker.updateIssue!("APP-123", { assignee: "Alice Doe" }, project);
+
+    expect(requestMock).toHaveBeenCalledTimes(1);
+    expect((requestMock.mock.results[0].value as MockRequest).write).not.toHaveBeenCalled();
+  });
+
+  it("skips assignee create when Jira user search has no exact match", async () => {
+    jira.queue([{ accountId: "acct-123", displayName: "Alice Doe" }]);
+    jira.queue({ id: "10002", key: "APP-456" });
+    jira.queue({
+      ...sampleIssue,
+      key: "APP-456",
+      fields: {
+        ...sampleIssue.fields,
+        summary: "New login bug",
+        labels: ["agent:backlog"],
+        assignee: null,
+        priority: { name: "Highest" },
+      },
+    });
+    const tracker = create();
+
+    const issue = await tracker.createIssue!(
+      {
+        title: "New login bug",
+        description: "Freshly reported",
+        labels: ["agent:backlog"],
+        assignee: "Alice",
+        priority: 1,
+      },
+      {
+        ...project,
+        tracker: {
+          plugin: "jira",
+          projectKey: "APP",
+          issueTypeName: "Bug",
+        },
+      },
+    );
+
+    expect(issue.id).toBe("APP-456");
+    const createWrite = (requestMock.mock.results[1].value as MockRequest).write.mock.calls[0][0];
+    const createBody = JSON.parse(createWrite);
+    expect(createBody.fields.assignee).toBeUndefined();
+  });
+
   it("creates an issue with priority, labels, assignee, and custom issue type", async () => {
     jira.queue([{ accountId: "acct-123", displayName: "Alice Doe" }]);
     jira.queue({ id: "10002", key: "APP-456" });
@@ -317,7 +382,7 @@ describe("tracker-jira plugin", () => {
     expect(createBody.fields.issuetype).toEqual({ name: "Bug" });
     expect(createBody.fields.priority).toEqual({ name: "Highest" });
     expect(createBody.fields.labels).toEqual(["agent:backlog"]);
-    expect(createBody.fields.assignee).toEqual({ id: "acct-123" });
+    expect(createBody.fields.assignee).toEqual({ accountId: "acct-123" });
   });
 
   it("requires projectKey for createIssue", async () => {

@@ -79,6 +79,13 @@ interface JiraUserResponse {
   emailAddress?: string | null;
 }
 
+function matchesAssigneeQuery(user: JiraUserResponse, query: string): boolean {
+  const lower = query.toLowerCase();
+  return [user.displayName, user.emailAddress, user.accountId].some(
+    (value) => typeof value === "string" && value.toLowerCase() === lower,
+  );
+}
+
 const ISSUE_FIELDS = ["summary", "description", "labels", "assignee", "priority", "status"].join(",");
 
 function getTrackerConfig(project: ProjectConfig): Record<string, unknown> {
@@ -315,14 +322,13 @@ async function resolveAssigneeAccountId(
     config,
     `/rest/api/3/user/search?query=${encodeURIComponent(assignee)}`,
   );
-  const lower = assignee.toLowerCase();
-  const exact = response.body.find(
-    (user) =>
-      user.displayName?.toLowerCase() === lower ||
-      user.emailAddress?.toLowerCase() === lower ||
-      user.accountId?.toLowerCase() === lower,
-  );
-  return exact?.accountId ?? response.body[0]?.accountId ?? undefined;
+
+  const exactMatches = response.body.filter((user) => matchesAssigneeQuery(user, assignee));
+  if (exactMatches.length !== 1) {
+    return undefined;
+  }
+
+  return exactMatches[0]?.accountId ?? undefined;
 }
 
 function buildListJql(filters: IssueFilters, config: JiraConfig): string {
@@ -455,7 +461,7 @@ function createJiraTracker(): Tracker {
       if (update.assignee) {
         const accountId = await resolveAssigneeAccountId(config, update.assignee);
         if (accountId) {
-          fieldUpdates["assignee"] = { id: accountId };
+          fieldUpdates["assignee"] = { accountId };
         }
       }
 
@@ -521,7 +527,7 @@ function createJiraTracker(): Tracker {
       if (input.assignee) {
         const accountId = await resolveAssigneeAccountId(config, input.assignee);
         if (accountId) {
-          fields["assignee"] = { id: accountId };
+          fields["assignee"] = { accountId };
         }
       }
 
