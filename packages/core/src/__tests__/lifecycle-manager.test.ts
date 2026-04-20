@@ -841,7 +841,12 @@ describe("check (single session)", () => {
   });
 
   it("detects PR states from SCM", async () => {
-    const mockSCM = createMockSCM({ getCISummary: vi.fn().mockResolvedValue("failing") });
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIChecks: vi.fn().mockResolvedValue([
+        { name: "build", status: "failed", conclusion: "FAILURE" },
+      ]),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -855,6 +860,194 @@ describe("check (single session)", () => {
 
     await lm.check("app-1");
     expect(lm.getStates().get("app-1")).toBe("ci_failed");
+  });
+
+  it("blocks ci_failed transition when fresh checks show no actual failures", async () => {
+    // getCISummary reports "failing" (e.g., fail-closed fallback on API error)
+    // but getCIChecks reveals no checks have actually failed — all pending.
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIChecks: vi.fn().mockResolvedValue([
+        { name: "build", status: "pending", conclusion: undefined },
+        { name: "lint", status: "running", conclusion: undefined },
+      ]),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    // Should NOT transition to ci_failed — ground truth shows checks are pending
+    expect(lm.getStates().get("app-1")).not.toBe("ci_failed");
+  });
+
+  it("blocks ci_failed transition when getCIChecks verification call fails", async () => {
+    // getCISummary reports "failing" but getCIChecks throws (API error).
+    // For a NEW transition, we don't trust the fail-closed fallback.
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIChecks: vi.fn().mockRejectedValue(new Error("API rate limit")),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    // Should NOT transition to ci_failed when verification fails
+    expect(lm.getStates().get("app-1")).not.toBe("ci_failed");
+  });
+
+  it("allows ci_failed transition when fresh checks confirm actual failures", async () => {
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIChecks: vi.fn().mockResolvedValue([
+        { name: "build", status: "passed", conclusion: "SUCCESS" },
+        { name: "lint", status: "failed", conclusion: "FAILURE" },
+      ]),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    // Transition IS allowed — fresh checks confirm a real failure
+    expect(lm.getStates().get("app-1")).toBe("ci_failed");
+  });
+
+  it("skips CI verification when session is already in ci_failed", async () => {
+    const getCIChecksMock = vi.fn().mockResolvedValue([
+      { name: "lint", status: "failed", conclusion: "FAILURE" },
+    ]);
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIChecks: getCIChecksMock,
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "ci_failed", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    // When already in ci_failed, getCIChecks should not be called for verification
+    // (getCISummary itself may call it internally, but the verification step is skipped)
+    expect(lm.getStates().get("app-1")).toBe("ci_failed");
+  });
+
+  it("blocks changes_requested transition when no unresolved review comments exist", async () => {
+    // GitHub reviewDecision says "changes_requested" but all threads are resolved
+    const mockSCM = createMockSCM({
+      getReviewDecision: vi.fn().mockResolvedValue("changes_requested"),
+      getPendingComments: vi.fn().mockResolvedValue([]),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    // Should NOT transition to changes_requested — no unresolved comments
+    expect(lm.getStates().get("app-1")).not.toBe("changes_requested");
+  });
+
+  it("allows changes_requested transition when unresolved comments exist", async () => {
+    const mockSCM = createMockSCM({
+      getReviewDecision: vi.fn().mockResolvedValue("changes_requested"),
+      getPendingComments: vi.fn().mockResolvedValue([
+        {
+          id: "c1",
+          author: "reviewer",
+          body: "Please fix this",
+          isResolved: false,
+          createdAt: new Date(),
+          url: "https://example.com/comment/1",
+        },
+      ]),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    // Transition IS allowed — there are real unresolved comments
+    expect(lm.getStates().get("app-1")).toBe("changes_requested");
+  });
+
+  it("blocks ci_failed from batch enrichment when ciChecks show no failures", async () => {
+    const mockSCM = createMockSCM({
+      enrichSessionsPRBatch: vi.fn().mockResolvedValue(
+        new Map([
+          [
+            "org/repo#42",
+            {
+              state: "open" as const,
+              ciStatus: "failing" as const,
+              reviewDecision: "none" as const,
+              mergeable: false,
+              hasConflicts: false,
+              // Batch reports "failing" but individual checks are all passing
+              ciChecks: [
+                { name: "build", status: "passed" as const, conclusion: "SUCCESS" },
+                { name: "lint", status: "passed" as const, conclusion: "SUCCESS" },
+              ],
+            },
+          ],
+        ]),
+      ),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    // Batch enrichment CI status is overridden by check-level verification
+    expect(lm.getStates().get("app-1")).not.toBe("ci_failed");
   });
 
   it("keeps canonical session state idle while waiting on external review", async () => {
@@ -1221,7 +1414,12 @@ describe("reactions", () => {
       },
     };
 
-    const mockSCM = createMockSCM({ getCISummary: vi.fn().mockResolvedValue("failing") });
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIChecks: vi.fn().mockResolvedValue([
+        { name: "build", status: "failed", conclusion: "FAILURE" },
+      ]),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -1242,7 +1440,12 @@ describe("reactions", () => {
       "ci-failed": { auto: false, action: "send-to-agent", message: "CI is failing." },
     };
 
-    const mockSCM = createMockSCM({ getCISummary: vi.fn().mockResolvedValue("failing") });
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIChecks: vi.fn().mockResolvedValue([
+        { name: "build", status: "failed", conclusion: "FAILURE" },
+      ]),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -1262,6 +1465,9 @@ describe("reactions", () => {
     const notifier = createMockNotifier();
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIChecks: vi.fn().mockResolvedValue([
+        { name: "build", status: "failed", conclusion: "FAILURE" },
+      ]),
     });
 
     const registry: PluginRegistry = {

@@ -494,6 +494,8 @@ describe("plugin integration", () => {
       mockGh({ state: "OPEN" });
       // 2. getCISummary → failing (pr checks returns array of checks with correct field names)
       mockGh([{ name: "lint", state: "FAILURE", link: "", startedAt: "", completedAt: "" }]);
+      // 3. verifyCIStatusForTransition → getCIChecks confirms the failure is real
+      mockGh([{ name: "lint", state: "FAILURE", link: "", startedAt: "", completedAt: "" }]);
 
       await lm.check("app-1");
 

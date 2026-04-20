@@ -37,6 +37,8 @@ import {
   type ProjectConfig as _ProjectConfig,
   type PREnrichmentData,
   type CICheck,
+  type CIStatus,
+  type ReviewDecision,
 } from "./types.js";
 import { buildLifecycleMetadataPatch, cloneLifecycle, deriveLegacyStatus } from "./lifecycle-state.js";
 import { updateMetadata } from "./metadata.js";
@@ -461,6 +463,180 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /**
+   * Verify CI status before a NEW transition to ci_failed.
+   *
+   * When getCISummary reports "failing" (which may be from a fail-closed
+   * fallback on API error or stale batch data), fetch individual CI checks
+   * to confirm at least one check has actually failed. This prevents false
+   * ci_failed transitions when checks are passing or pending.
+   *
+   * Skips verification when the session is already in ci_failed (no
+   * transition will occur, so the extra API call is unnecessary).
+   */
+  async function verifyCIStatusForTransition(
+    ciStatus: CIStatus,
+    session: Session,
+    scm: SCM,
+  ): Promise<CIStatus> {
+    if (ciStatus !== CI_STATUS.FAILING) return ciStatus;
+    if (session.status === SESSION_STATUS.CI_FAILED) return ciStatus;
+    if (!session.pr) return ciStatus;
+
+    try {
+      const checks = await scm.getCIChecks(session.pr);
+      const hasFailing = checks.some((c) => c.status === "failed");
+      if (!hasFailing) {
+        // No actual failures — override the stale/erroneous CI status
+        const hasPending = checks.some(
+          (c) => c.status === "pending" || c.status === "running",
+        );
+        if (hasPending) return CI_STATUS.PENDING;
+        const hasPassing = checks.some((c) => c.status === "passed");
+        return hasPassing ? CI_STATUS.PASSING : CI_STATUS.NONE;
+      }
+    } catch (err) {
+      // Verification call itself failed — don't trust the original
+      // fail-closed "failing" for a NEW transition. Record the error for
+      // diagnosability, then return pending so the lifecycle stays in its
+      // current state rather than falsely moving to ci_failed.
+      observer?.recordOperation?.({
+        metric: "lifecycle_poll",
+        operation: "verification.ci_checks",
+        outcome: "failure",
+        correlationId: createCorrelationId("lifecycle-verify"),
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: err instanceof Error ? err.message : String(err),
+        level: "warn",
+      });
+      return CI_STATUS.PENDING;
+    }
+    return ciStatus;
+  }
+
+  /**
+   * Verify review decision before a NEW transition to changes_requested.
+   *
+   * GitHub's reviewDecision field can stay "CHANGES_REQUESTED" even after
+   * the agent addresses comments and pushes new code (the reviewer hasn't
+   * re-reviewed yet). Before transitioning, check whether there are actually
+   * unresolved review comments. If all threads are resolved (or there are
+   * none), the transition is stale and should be suppressed.
+   *
+   * Skips verification when the session is already in changes_requested or
+   * review_pending (the latter means a prior verification already ran and
+   * found no actionable comments — re-checking every poll would bypass the
+   * existing review backlog throttle).
+   *
+   * Note: this checks review threads only. A body-only "Request Changes"
+   * review without inline threads will still be surfaced because we preserve
+   * the original decision when getPendingComments returns non-empty OR when
+   * verification fails. The edge case where a reviewer requests changes
+   * with ONLY a body comment and no threads is accepted — the review will
+   * be caught by maybeDispatchReviewBacklog on the next throttle cycle.
+   */
+  async function verifyReviewDecisionForTransition(
+    reviewDecision: ReviewDecision,
+    session: Session,
+    scm: SCM,
+  ): Promise<ReviewDecision> {
+    if (reviewDecision !== "changes_requested") return reviewDecision;
+    if (session.status === SESSION_STATUS.CHANGES_REQUESTED) return reviewDecision;
+    if (session.status === SESSION_STATUS.REVIEW_PENDING) return reviewDecision;
+    if (!session.pr) return reviewDecision;
+
+    try {
+      const pendingComments = await scm.getPendingComments(session.pr);
+      if (pendingComments.length === 0) {
+        // No unresolved human review comments — the review decision is stale.
+        // Downgrade to "pending" so the PR shows as awaiting re-review rather
+        // than falsely routing the agent to address already-resolved comments.
+        return "pending";
+      }
+    } catch (err) {
+      // Verification failed — preserve the original decision since we can't
+      // confirm it's stale. This is conservative: the agent may get a
+      // redundant notification, but won't miss a real review request.
+      observer?.recordOperation?.({
+        metric: "lifecycle_poll",
+        operation: "verification.pending_comments",
+        outcome: "failure",
+        correlationId: createCorrelationId("lifecycle-verify"),
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: err instanceof Error ? err.message : String(err),
+        level: "warn",
+      });
+    }
+    return reviewDecision;
+  }
+
+  /**
+   * Verify batch enrichment data before a NEW ci_failed or changes_requested
+   * transition. Returns a shallow copy of the enrichment data with corrected
+   * ciStatus and/or reviewDecision when the ground truth disagrees.
+   *
+   * For CI: when `ciChecks` is included in the batch data (self-contained),
+   * validates the top-level ciStatus against individual checks without an
+   * extra API call. When `ciChecks` is absent (truncated), falls back to
+   * fetching fresh checks via getCIChecks().
+   */
+  async function verifyPREnrichmentForTransition(
+    cachedData: PREnrichmentData,
+    session: Session,
+    scm: SCM,
+  ): Promise<PREnrichmentData> {
+    const needsCIVerification =
+      cachedData.ciStatus === CI_STATUS.FAILING &&
+      session.status !== SESSION_STATUS.CI_FAILED;
+    const needsReviewVerification =
+      cachedData.reviewDecision === "changes_requested" &&
+      session.status !== SESSION_STATUS.CHANGES_REQUESTED;
+
+    if (!needsCIVerification && !needsReviewVerification) {
+      return cachedData;
+    }
+
+    let verifiedCI = cachedData.ciStatus;
+    let verifiedReview = cachedData.reviewDecision;
+
+    if (needsCIVerification) {
+      if (cachedData.ciChecks !== undefined) {
+        // Batch data includes individual checks — verify self-consistency
+        // without an extra API call.
+        const hasFailing = cachedData.ciChecks.some((c) => c.status === "failed");
+        if (!hasFailing) {
+          const hasPending = cachedData.ciChecks.some(
+            (c) => c.status === "pending" || c.status === "running",
+          );
+          if (hasPending) {
+            verifiedCI = CI_STATUS.PENDING;
+          } else {
+            const hasPassing = cachedData.ciChecks.some((c) => c.status === "passed");
+            verifiedCI = hasPassing ? CI_STATUS.PASSING : CI_STATUS.NONE;
+          }
+        }
+      } else {
+        // ciChecks was truncated — fall back to fresh API call
+        verifiedCI = await verifyCIStatusForTransition(cachedData.ciStatus, session, scm);
+      }
+    }
+    if (needsReviewVerification) {
+      verifiedReview = await verifyReviewDecisionForTransition(
+        cachedData.reviewDecision,
+        session,
+        scm,
+      );
+    }
+
+    if (verifiedCI === cachedData.ciStatus && verifiedReview === cachedData.reviewDecision) {
+      return cachedData;
+    }
+
+    return { ...cachedData, ciStatus: verifiedCI, reviewDecision: verifiedReview };
+  }
+
   /** Check if idle time exceeds the agent-stuck threshold. */
   function isIdleBeyondThreshold(session: Session, idleTimestamp: Date): boolean {
     const stuckReaction = getReactionConfigForSession(session, "agent-stuck");
@@ -754,8 +930,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             : false;
 
         if (cachedData) {
+          // Ground truth verification: before accepting a ci_failed or
+          // changes_requested transition from batch cache, confirm with fresh
+          // data. Batch enrichment can be stale (fetched at poll-cycle start).
+          const verifiedData = await verifyPREnrichmentForTransition(
+            cachedData,
+            session,
+            scm,
+          );
           return commit(
-            resolvePREnrichmentDecision(cachedData, {
+            resolvePREnrichmentDecision(verifiedData, {
               shouldEscalateIdleToStuck,
               idleWasBlocked,
               activityEvidence,
@@ -779,11 +963,19 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         }
 
         const ciStatus = await scm.getCISummary(session.pr);
-        if (ciStatus === CI_STATUS.FAILING) {
+        // Ground truth verification: when getCISummary reports failing (which
+        // may come from a fail-closed fallback on API error), verify there are
+        // actual failed checks before transitioning to ci_failed.
+        const verifiedCIStatus = await verifyCIStatusForTransition(
+          ciStatus,
+          session,
+          scm,
+        );
+        if (verifiedCIStatus === CI_STATUS.FAILING) {
           return commit(
             resolvePRLiveDecision({
               prState,
-              ciStatus,
+              ciStatus: verifiedCIStatus,
               reviewDecision: "none",
               mergeable: false,
               shouldEscalateIdleToStuck,
@@ -794,15 +986,22 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         }
 
         const reviewDecision = await scm.getReviewDecision(session.pr);
+        // Ground truth verification: when reviewDecision says changes_requested,
+        // verify there are actually unresolved review comments before transitioning.
+        const verifiedReviewDecision = await verifyReviewDecisionForTransition(
+          reviewDecision,
+          session,
+          scm,
+        );
         const mergeReady =
-          reviewDecision === "approved" || reviewDecision === "none"
+          verifiedReviewDecision === "approved" || verifiedReviewDecision === "none"
             ? await scm.getMergeability(session.pr)
             : { mergeable: false };
         return commit(
           resolvePRLiveDecision({
             prState,
-            ciStatus,
-            reviewDecision,
+            ciStatus: verifiedCIStatus,
+            reviewDecision: verifiedReviewDecision,
             mergeable: mergeReady.mergeable,
             shouldEscalateIdleToStuck,
             idleWasBlocked,
