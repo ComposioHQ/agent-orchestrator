@@ -1447,8 +1447,9 @@ describe("reactions", () => {
     expect(sentMessage).toContain("src/worker.ts:9");
     expect(sentMessage).toContain("Potential issue detected");
     expect(sentMessage).toContain("https://example.com/comment/3");
-    expect(sentMessage).toContain("/reviews --paginate");
-    expect(sentMessage).toContain("/reviews/REVIEW_ID/comments");
+    // Real PR identifiers are interpolated into the guidance (org/repo/42 from makePR).
+    expect(sentMessage).toContain("repos/org/repo/pulls/42/reviews --paginate");
+    expect(sentMessage).toContain("repos/org/repo/pulls/42/reviews/REVIEW_ID/comments");
     expect(sentMessage).toContain("in_reply_to_id");
 
     vi.mocked(mockSessionManager.send).mockClear();

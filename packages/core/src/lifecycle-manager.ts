@@ -36,8 +36,8 @@ import {
   type ProjectConfig as _ProjectConfig,
   type PREnrichmentData,
   type CICheck,
-  type AutomatedComment,
 } from "./types.js";
+import { formatAutomatedCommentsMessage } from "./format-automated-comments.js";
 import { buildLifecycleMetadataPatch, cloneLifecycle, deriveLegacyStatus } from "./lifecycle-state.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
@@ -1268,7 +1268,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           // (see #895 — fixes the pagination + stale `gh pr checks` failure modes).
           const detailedConfig: ReactionConfig =
             reactionConfig.action === "send-to-agent"
-              ? { ...reactionConfig, message: formatAutomatedCommentsMessage(automatedComments) }
+              ? {
+                  ...reactionConfig,
+                  message: formatAutomatedCommentsMessage(automatedComments, session.pr),
+                }
               : reactionConfig;
           const result = await executeReaction(
             session.id,
@@ -1304,36 +1307,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     lines.push(
       "",
       "Investigate the failures, fix the issues, and push again.",
-    );
-    return lines.join("\n");
-  }
-
-  /**
-   * Format automated (bot) review comments into a detailed message for the agent.
-   * Includes severity, path/line, excerpt, and URL for each comment so the agent
-   * doesn't have to re-query — this avoids the stale `gh pr checks` status and
-   * the `GET /pulls/{pr}/comments` pagination failure modes described in #895.
-   */
-  function formatAutomatedCommentsMessage(comments: AutomatedComment[]): string {
-    const lines = [
-      "Automated review comments found on your PR. Address each of the following issues:",
-      "",
-    ];
-    for (const c of comments) {
-      const loc = c.path ? ` \`${c.path}${c.line ? `:${c.line}` : ""}\`` : "";
-      const excerpt = c.body.split("\n", 1)[0].trim().slice(0, 160);
-      lines.push(`- **[${c.severity}] ${c.botName}**${loc}: ${excerpt}`);
-      if (c.url) lines.push(`  ${c.url}`);
-    }
-    lines.push(
-      "",
-      "Fix each issue, push your changes, and reply to the inline comment to resolve it.",
-      "",
-      "To verify you have covered the latest bot review (avoid relying on `gh pr checks`, which can be stale, or on `gh api repos/OWNER/REPO/pulls/PR/comments` alone, which can be paginated):",
-      "",
-      "  1. `gh api repos/OWNER/REPO/pulls/PR/reviews --paginate` — pick the most recent review whose `user.login` is a bot (e.g. `cursor[bot]`), by `submitted_at`.",
-      "  2. `gh api repos/OWNER/REPO/pulls/PR/reviews/REVIEW_ID/comments` — the inline comments for that specific review.",
-      "  3. `gh api repos/OWNER/REPO/pulls/PR/comments --paginate` — full comment list (paginate!); a top-level comment is addressed only when some later comment has `in_reply_to_id` equal to its `id`.",
     );
     return lines.join("\n");
   }
