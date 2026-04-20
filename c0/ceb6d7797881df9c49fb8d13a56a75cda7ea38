@@ -1,0 +1,43 @@
+eslint.config.js
+  8ff7d7b24663bd48 13,15-22
+packages/cli/__tests__/commands/start.test.ts
+  8ff7d7b24663bd48 2095-2098
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "c0ceb6d7797881df9c49fb8d13a56a75cda7ea38",
+  "prompts": {
+    "8ff7d7b24663bd48": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dac16-1437-7403-94bc-46935665e3ee",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 1,
+      "accepted_lines": 13,
+      "overriden_lines": 0
+    },
+    "b7f2e1a29ab55353": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dab5d-199b-7d82-b411-d2f8b145eab3",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3439,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e1aac9baf373c4": {
+      "author": "Ashish Huddar"
+    }
+  }
+}
