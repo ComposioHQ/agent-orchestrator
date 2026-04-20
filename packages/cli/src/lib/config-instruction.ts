@@ -86,7 +86,12 @@ projects:
 
     # ── Issue tracker (optional) ──────────────────────────────────
     tracker:
-      plugin: github          # github | linear | gitlab
+      plugin: github          # github | jira | linear | gitlab
+      # Jira-specific:
+      # projectKey: APP
+      # baseUrl: https://acme.atlassian.net
+      # email: engineer@acme.com
+      # jql: project = APP AND statusCategory != Done ORDER BY updated DESC
       # Linear-specific:
       # teamId: TEAM-123
       # projectId: PROJECT-456

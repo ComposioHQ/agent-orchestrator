@@ -19,6 +19,7 @@
     "@aoagents/ao-plugin-runtime-process": "workspace:*",
     "@aoagents/ao-plugin-workspace-worktree": "workspace:*",
     "@aoagents/ao-plugin-workspace-clone": "workspace:*",
+    "@aoagents/ao-plugin-tracker-jira": "workspace:*",
     "@aoagents/ao-plugin-tracker-linear": "workspace:*"
   },
   "devDependencies": {
