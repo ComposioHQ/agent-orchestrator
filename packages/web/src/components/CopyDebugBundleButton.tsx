@@ -8,6 +8,55 @@ interface CopyDebugBundleButtonProps {
   projectId?: string;
 }
 
+const SECRET_PATTERNS = [
+  /\bBearer\s+[A-Za-z0-9._\-+/=]+\b/gi,
+  /\bsk-[A-Za-z0-9]{10,}\b/g,
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+];
+
+function redactSecretsInString(value: string): string {
+  return SECRET_PATTERNS.reduce(
+    (current, pattern) => current.replace(pattern, "[REDACTED]"),
+    value,
+  );
+}
+
+function sanitizeForClipboard(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+  if (typeof value === "string") {
+    return redactSecretsInString(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeForClipboard(entry, seen));
+  }
+
+  if (value && typeof value === "object") {
+    if (seen.has(value)) return "[Circular]";
+    seen.add(value);
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      sanitized[key] = sanitizeForClipboard(entry, seen);
+    }
+    return sanitized;
+  }
+
+  return value;
+}
+
+function scopeObservabilityToProject(observability: unknown, projectId?: string): unknown {
+  if (!projectId || !observability || typeof observability !== "object") {
+    return observability;
+  }
+
+  const scoped = { ...(observability as Record<string, unknown>) };
+  const projects = scoped["projects"];
+  if (projects && typeof projects === "object" && !Array.isArray(projects)) {
+    const projectEntry = (projects as Record<string, unknown>)[projectId];
+    scoped["projects"] = projectEntry === undefined ? {} : { [projectId]: projectEntry };
+  }
+  return scoped;
+}
+
 /**
  * Copies observability snapshot + page context to the clipboard for GitHub issues / support.
  */
@@ -20,19 +69,27 @@ export function CopyDebugBundleButton({ projectId }: CopyDebugBundleButtonProps)
     setBusy(true);
     try {
       const res = await fetch("/api/observability", { credentials: "same-origin" });
-      const correlationId = res.headers.get("x-correlation-id");
-      let observability: unknown;
-      try {
-        observability = res.ok
-          ? await res.json()
-          : { error: `HTTP ${res.status}`, body: await res.text() };
-      } catch {
-        observability = { error: "Failed to parse observability JSON" };
+      if (!res.ok) {
+        showToast("Could not fetch observability snapshot", "error");
+        return;
       }
+      const correlationId = res.headers.get("x-correlation-id");
+
+      let observabilityRaw: unknown;
+      try {
+        observabilityRaw = await res.json();
+      } catch {
+        showToast("Could not parse observability snapshot", "error");
+        return;
+      }
+
+      const observability = sanitizeForClipboard(
+        scopeObservabilityToProject(observabilityRaw, projectId),
+      );
 
       const bundle = {
         copiedAt: new Date().toISOString(),
-        pageHref: window.location.href,
+        pageHref: `${window.location.origin}${window.location.pathname}`,
         projectId: projectId ?? null,
         correlationId,
         userAgent: navigator.userAgent,
