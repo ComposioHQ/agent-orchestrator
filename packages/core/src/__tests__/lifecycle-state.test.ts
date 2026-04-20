@@ -79,6 +79,22 @@ describe("parseCanonicalLifecycle", () => {
     expect(deriveLegacyStatus(parsed, "merged")).toBe("merged");
   });
 
+  it("preserves terminal merged state on legacy metadata with no pr URL", () => {
+    // Regression: `status=merged` without `pr=` used to rehydrate as
+    // `pr.state=none` + `session.state=idle`, making isTerminalSession() return
+    // false and leaking merged sessions into active CLI listings.
+    const parsed = parseCanonicalLifecycle({
+      status: "merged",
+      createdAt: "2025-01-01T00:00:00.000Z",
+    });
+
+    expect(parsed.pr.state).toBe("merged");
+    expect(parsed.pr.reason).toBe("merged");
+    expect(parsed.pr.number).toBeNull();
+    expect(parsed.pr.url).toBeNull();
+    expect(deriveLegacyStatus(parsed, "merged")).toBe("merged");
+  });
+
   it("preserves explicit null payload fields instead of rehydrating stale flat metadata", () => {
     const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
     lifecycle.session.state = "working";

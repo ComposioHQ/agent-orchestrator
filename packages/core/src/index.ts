@@ -40,6 +40,7 @@ export {
   listMetadata,
 } from "./metadata.js";
 export { createInitialCanonicalLifecycle, deriveLegacyStatus } from "./lifecycle-state.js";
+export { sessionFromMetadata } from "./utils/session-from-metadata.js";
 
 // Lifecycle transitions — centralized transition boundary (#137)
 export {
