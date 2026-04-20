@@ -2271,10 +2271,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     };
 
-    const waitForRestoredSession = async (restoredSession: Session): Promise<void> => {
+    const waitForRestoredSession = async (restoredSession: Session): Promise<boolean> => {
       const handle = restoredSession.runtimeHandle;
       if (!handle) {
-        return;
+        return false;
       }
 
       const deadline = Date.now() + SEND_RESTORE_READY_TIMEOUT_MS;
@@ -2292,11 +2292,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           foregroundCommand === null || foregroundCommand === agentPlugin.processName;
 
         if (runtimeAlive && foregroundReady && (processRunning || output.trim().length > 0)) {
-          return;
+          return true;
         }
 
         if (Date.now() >= deadline) {
-          return;
+          return false;
         }
 
         await sleep(SEND_RESTORE_READY_POLL_MS);
@@ -2310,7 +2310,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       try {
         const restored = await restore(sessionId);
-        await waitForRestoredSession(restored);
+        const ready = await waitForRestoredSession(restored);
+        if (!ready) {
+          throw new Error("restored session did not become ready for delivery");
+        }
         return restored;
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
@@ -2414,7 +2417,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     try {
       await sendWithConfirmation(prepared);
     } catch (err) {
-      const shouldRetryWithRestore = prepared.restoredAt === undefined && isRestorable(prepared);
+      const shouldRetryWithRestore =
+        prepared.restoredAt === undefined && isRestorable(prepared);
 
       if (!shouldRetryWithRestore) {
         if (err instanceof Error) {
