@@ -370,6 +370,19 @@ describe("session ls", () => {
     });
   });
 
+  it("keeps terminal sessions in JSON output by default", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=main\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-done"), "branch=main\nstatus=merged\nactivity=exited\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls", "--json"]);
+
+    const entries = JSON.parse(String(consoleSpy.mock.calls[0][0])) as Array<{ id: string }>;
+    expect(entries.map((entry) => entry.id)).toEqual(["app-1", "app-done"]);
+  });
+
   it("marks metadata-based orchestrators correctly in JSON output", async () => {
     writeFileSync(
       join(sessionsDir, "app-control"),
@@ -622,6 +635,21 @@ describe("session ls", () => {
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(output).toContain("--include-terminated");
     expect(output).not.toContain("app-done");
+  });
+
+  it("prints a hint when terminal sessions are hidden alongside active ones", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=main\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-done"), "branch=main\nstatus=merged\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("app-1");
+    expect(output).toContain("terminal session");
+    expect(output).toContain("--include-terminated");
   });
 });
 

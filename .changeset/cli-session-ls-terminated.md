@@ -1,5 +1,5 @@
 ---
-"@composio/ao-cli": patch
+"@aoagents/ao-cli": patch
 ---
 
-`ao session ls` hides completed/terminal sessions by default; use `--include-terminated` for the full list.
+`ao session ls` hides terminal sessions in text output by default; use `--include-terminated` for the full text list.
