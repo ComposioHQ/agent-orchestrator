@@ -10,6 +10,8 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const SESSION_EVENTS_POLL_INTERVAL_MS = 2000;
+
 /**
  * GET /api/events — SSE stream for real-time lifecycle events
  *
@@ -126,7 +128,8 @@ export async function GET(request: Request): Promise<Response> {
         }
       }, 15000);
 
-      // Poll for session state changes every 5 seconds
+      // Poll for session state changes frequently enough that new workers
+      // appear in the dashboard/sidebar quickly after the orchestrator spawns them.
       updates = setInterval(() => {
         void (async () => {
           let dashboardSessions;
@@ -191,7 +194,7 @@ export async function GET(request: Request): Promise<Response> {
             return;
           }
         })();
-      }, 5000);
+      }, SESSION_EVENTS_POLL_INTERVAL_MS);
     },
     cancel() {
       clearInterval(heartbeat);

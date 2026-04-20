@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   type DashboardSession,
@@ -373,6 +373,7 @@ export function SessionDetail({
   sidebarError = false,
   onRetrySidebar,
 }: SessionDetailProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const startFullscreen = searchParams.get("fullscreen") === "true";
@@ -407,11 +408,15 @@ export function SessionDetail({
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/kill`, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      window.location.reload();
+      if (projectOrchestratorId) {
+        router.push(projectSessionPath(session.projectId, projectOrchestratorId));
+        return;
+      }
+      router.push(dashboardHref);
     } catch (err) {
       console.error("Failed to kill session:", err);
     }
-  }, [session.id]);
+  }, [dashboardHref, projectOrchestratorId, router, session.id, session.projectId]);
 
   const handleRestore = useCallback(async () => {
     try {

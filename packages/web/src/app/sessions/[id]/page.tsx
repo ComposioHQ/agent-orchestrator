@@ -63,6 +63,7 @@ interface ProjectSessionsBody {
 
 let cachedProjects: ProjectInfo[] | null = null;
 let cachedSidebarSessions: DashboardSession[] | null = null;
+const SESSION_PAGE_REFRESH_INTERVAL_MS = 2000;
 const validSessionStatuses = new Set<string>(Object.values(SESSION_STATUS));
 const validActivityStates = new Set<string>(Object.values(ACTIVITY_STATE));
 const warnedMuxPatchValues = new Set<string>();
@@ -456,13 +457,14 @@ export default function SessionPage() {
     void fetchProjectSessions();
   }, [fetchProjectSessions, sessionIsOrchestrator, sessionProjectId]);
 
-  // Poll every 5s
+  // Poll frequently enough that sidebar/project session state keeps up with
+  // newly spawned workers and terminated sessions without feeling laggy.
   useEffect(() => {
     const interval = setInterval(() => {
       fetchSession();
       fetchProjectSessions();
       fetchSidebarSessions();
-    }, 5000);
+    }, SESSION_PAGE_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [fetchSession, fetchProjectSessions, fetchSidebarSessions]);
 
