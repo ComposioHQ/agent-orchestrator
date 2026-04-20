@@ -105,7 +105,7 @@ async function acquireLock(
     }
 
     if (Date.now() - start > timeoutMs) {
-      throw new Error(`Could not acquire ${resourceName}`);
+      throw new Error(`Could not acquire ${resourceName} (${lockFile})`);
     }
 
     // Jittered backoff: 30-70ms base, growing with attempts (capped at 200ms)
