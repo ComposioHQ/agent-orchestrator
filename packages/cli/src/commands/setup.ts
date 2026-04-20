@@ -14,7 +14,7 @@ import { join } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { parse as yamlParse, parseDocument } from "yaml";
-import { findConfigFile } from "@aoagents/ao-core";
+import { CONFIG_SCHEMA_URL, findConfigFile } from "@aoagents/ao-core";
 import {
   probeGateway,
   validateToken,
@@ -330,6 +330,9 @@ function writeOpenClawConfig(
   }
 
   // Update the document tree from the modified plain object while preserving comments
+  if (doc.get("$schema") === undefined) {
+    doc.set("$schema", CONFIG_SCHEMA_URL);
+  }
   doc.setIn(["notifiers"], rawConfig.notifiers);
   doc.setIn(["defaults"], rawConfig.defaults);
   doc.setIn(["notificationRouting"], rawConfig.notificationRouting);

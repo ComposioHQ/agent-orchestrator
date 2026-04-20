@@ -77,6 +77,26 @@ describe("Config Loading", () => {
   });
 
   describe("loadConfig", () => {
+    it("should accept and preserve a top-level $schema property", () => {
+      const configPath = join(testDir, "schema-config.yaml");
+      writeFileSync(
+        configPath,
+        `
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
+projects:
+  test-project:
+    repo: test/repo
+    path: ${testDir}
+    defaultBranch: main
+`,
+      );
+
+      const config = loadConfig(configPath);
+      expect(config["$schema"]).toBe(
+        "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
+      );
+    });
+
     it("should load config from AO_CONFIG_PATH env var", () => {
       const configPath = join(testDir, "test-config.yaml");
       writeFileSync(

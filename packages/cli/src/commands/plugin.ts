@@ -2,6 +2,7 @@ import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import chalk from "chalk";
 import type { Command } from "commander";
 import {
+  withConfigSchema,
   createPluginRegistry,
   findConfigFile,
   loadConfig,
@@ -65,7 +66,7 @@ function writePluginsConfig(configPath: string, plugins: InstalledPluginConfig[]
   } else {
     rawConfig.plugins = plugins;
   }
-  doc.contents = doc.createNode(rawConfig) as typeof doc.contents;
+  doc.contents = doc.createNode(withConfigSchema(rawConfig)) as typeof doc.contents;
   const rendered = doc.toString({ indent: 2 });
   const tempPath = `${configPath}.tmp.${process.pid}.${Date.now()}`;
   writeFileSync(tempPath, rendered, "utf-8");

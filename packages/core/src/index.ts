@@ -290,6 +290,7 @@ export {
 
 // Config generator — auto-generate config from repo URL
 export {
+  CONFIG_SCHEMA_URL,
   isRepoUrl,
   parseRepoUrl,
   detectScmPlatform,
@@ -297,6 +298,7 @@ export {
   detectProjectInfo,
   generateConfigFromUrl,
   configToYaml,
+  withConfigSchema,
   isRepoAlreadyCloned,
   resolveCloneTarget,
   sanitizeProjectId,

@@ -1695,7 +1695,13 @@ describe("start command — autoCreateConfig", () => {
     expect(existsSync(configPath)).toBe(true);
 
     const content = readFileSync(configPath, "utf-8");
-    const parsed = parseYaml(content) as { defaults?: { notifiers?: unknown[] } };
+    const parsed = parseYaml(content) as {
+      "$schema"?: string;
+      defaults?: { notifiers?: unknown[] };
+    };
+    expect(parsed["$schema"]).toBe(
+      "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
+    );
     expect(parsed.defaults?.notifiers).toEqual([]);
   });
 });

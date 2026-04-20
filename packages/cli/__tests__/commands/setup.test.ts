@@ -26,6 +26,8 @@ const { mockProbeGateway, mockValidateToken, mockDetectOpenClawInstallation } = 
 }));
 
 vi.mock("@aoagents/ao-core", () => ({
+  CONFIG_SCHEMA_URL:
+    "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
   findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
 }));
 

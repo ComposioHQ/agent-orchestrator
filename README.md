@@ -130,6 +130,7 @@ The orchestrator agent uses the [AO CLI](docs/CLI.md) internally to manage sessi
 
 ```yaml
 # agent-orchestrator.yaml
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 # Runtime data is auto-derived under ~/.agent-orchestrator/{hash}-{projectId}/
 port: 3000
 
@@ -162,6 +163,8 @@ reactions:
 
 CI fails → agent gets the logs and fixes it. Reviewer requests changes → agent addresses them. PR approved with green CI → you get a notification to merge.
 
+Keep the `$schema` line so editors can autocomplete and validate against [`schema/config.schema.json`](schema/config.schema.json).
+
 See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference, or run `ao config-help` for the complete schema.
 
 ## Remote Access
@@ -172,6 +175,7 @@ AO keeps your Mac awake while running, so you can access the dashboard remotely 
 
 ```yaml
 # agent-orchestrator.yaml
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 power:
   preventIdleSleep: true  # Default on macOS, no-op on Linux
 ```

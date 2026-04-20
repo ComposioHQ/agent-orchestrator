@@ -250,6 +250,9 @@ describe("generateConfigFromUrl", () => {
     const config = generateConfigFromUrl({ parsed, repoPath: tmpDir });
 
     // Check top-level structure
+    expect(config["$schema"]).toBe(
+      "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
+    );
     expect(config.port).toBe(3000);
     expect(config.defaults).toEqual({
       runtime: "tmux",
@@ -394,6 +397,9 @@ describe("configToYaml", () => {
   it("serializes config to valid YAML", () => {
     const config = { port: 3000, projects: { app: { name: "App" } } };
     const yaml = configToYaml(config);
+    expect(yaml).toContain(
+      "$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
+    );
     expect(yaml).toContain("port: 3000");
     expect(yaml).toContain("name: App");
   });

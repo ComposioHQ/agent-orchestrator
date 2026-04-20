@@ -1,5 +1,6 @@
 # Agent Orchestrator Configuration
 # Copy to agent-orchestrator.yaml and customize.
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 
 # Runtime data directories are auto-derived from this config location under:
 #   ~/.agent-orchestrator/{hash}-{projectId}/

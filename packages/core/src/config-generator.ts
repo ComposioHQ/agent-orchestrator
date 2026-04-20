@@ -10,6 +10,23 @@ import { join, resolve } from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { generateSessionPrefix } from "./paths.js";
 
+export const CONFIG_SCHEMA_URL =
+  "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json";
+
+export function withConfigSchema<T extends Record<string, unknown>>(
+  config: T,
+): T & { $schema: string } {
+  const schema =
+    typeof config["$schema"] === "string" && config["$schema"].trim().length > 0
+      ? config["$schema"]
+      : CONFIG_SCHEMA_URL;
+
+  return {
+    $schema: schema,
+    ...config,
+  } as T & { $schema: string };
+}
+
 // =============================================================================
 // URL PARSING
 // =============================================================================
@@ -258,7 +275,7 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
     projectConfig.postCreate = [installCmd];
   }
 
-  return {
+  return withConfigSchema({
     port,
     defaults: {
       runtime: "tmux",
@@ -269,14 +286,14 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
     projects: {
       [projectId]: projectConfig,
     },
-  };
+  });
 }
 
 /**
  * Serialize a config object to YAML string.
  */
 export function configToYaml(config: Record<string, unknown>): string {
-  return yamlStringify(config, { indent: 2 });
+  return yamlStringify(withConfigSchema(config), { indent: 2 });
 }
 
 /**

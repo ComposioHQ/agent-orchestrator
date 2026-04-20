@@ -7,6 +7,8 @@ export function getConfigInstruction(): string {
 # Agent Orchestrator Config Reference
 # File: agent-orchestrator.yaml
 
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
+
 # ── Top-level settings ──────────────────────────────────────────────
 # Runtime data paths are auto-derived from the config location under:
 #   ~/.agent-orchestrator/{hash}-{projectId}/

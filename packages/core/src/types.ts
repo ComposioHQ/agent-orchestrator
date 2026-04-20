@@ -1260,6 +1260,9 @@ export interface LifecycleConfig {
 
 /** Top-level orchestrator configuration (from agent-orchestrator.yaml) */
 export interface OrchestratorConfig {
+  /** Optional JSON Schema hint for editor autocomplete/validation. */
+  "$schema"?: string;
+
   /**
    * Path to the config file (set automatically during load).
    * Used for hash-based directory structure.
