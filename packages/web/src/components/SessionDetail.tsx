@@ -7,6 +7,7 @@ import {
   type DashboardSession,
   type DashboardPR,
   TERMINAL_STATUSES,
+  TERMINAL_ACTIVITIES,
   NON_RESTORABLE_STATUSES,
   isPRMergeReady,
 } from "@/lib/types";
@@ -379,7 +380,8 @@ export function SessionDetail({
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
   const pr = session.pr;
-  const terminalEnded = TERMINAL_STATUSES.has(session.status);
+  const terminalEnded =
+    TERMINAL_STATUSES.has(session.status) || TERMINAL_ACTIVITIES.has(session.activity);
   const isRestorable = terminalEnded && !NON_RESTORABLE_STATUSES.has(session.status);
   const activity = (session.activity && activityMeta[session.activity]) ?? {
     label: session.activity ?? "unknown",
