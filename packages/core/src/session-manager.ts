@@ -30,6 +30,9 @@ import {
   type CleanupResult,
   type ClaimPROptions,
   type ClaimPRResult,
+  type KillOptions,
+  type KillResult,
+  type LifecycleKillReason,
   type OrchestratorConfig,
   type ProjectConfig,
   type Runtime,
@@ -1846,9 +1849,37 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return null;
   }
 
-  async function kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void> {
-    const { raw, sessionsDir, project, projectId } = requireSessionRecord(sessionId);
+  async function kill(sessionId: SessionId, options?: KillOptions): Promise<KillResult> {
+    const located = findSessionRecord(sessionId);
+    if (!located) {
+      // Session already archived or never existed. If it's in the archive,
+      // treat as a no-op so auto-cleanup retries don't throw.
+      for (const project of Object.values(config.projects)) {
+        if (!project) continue;
+        const sessionsDir = getProjectSessionsDir(project);
+        if (readArchivedMetadataRaw(sessionsDir, sessionId)) {
+          return { cleaned: false, alreadyTerminated: true };
+        }
+      }
+      throw new SessionNotFoundError(sessionId);
+    }
+    const { raw, sessionsDir, project, projectId } = located;
 
+    // Idempotency: if lifecycle already says terminated, don't re-run destroys
+    // (which could double-purge opencode or race with concurrent archives).
+    const existingLifecycle = parseCanonicalLifecycle(raw);
+    if (existingLifecycle?.session.state === "terminated") {
+      // Lifecycle says terminated but metadata is still in active dir — finish
+      // the archive and return alreadyTerminated so the caller logs a no-op.
+      try {
+        deleteMetadata(sessionsDir, sessionId, true);
+      } catch {
+        // Already archived by a racing caller.
+      }
+      return { cleaned: false, alreadyTerminated: true };
+    }
+
+    const killReason: LifecycleKillReason = options?.reason ?? "manually_killed";
     const cleanupAgent = resolveSelectionForSession(project, sessionId, raw).agentName;
 
     // Destroy runtime — prefer handle.runtimeName to find the correct plugin
@@ -1903,13 +1934,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
+    const runtimeReason =
+      killReason === "pr_merged"
+        ? "pr_merged_cleanup"
+        : killReason === "auto_cleanup"
+          ? "auto_cleanup"
+          : "manual_kill_requested";
     const terminatedLifecycle = buildUpdatedLifecycle(sessionId, raw, (next) => {
       next.session.state = "terminated";
-      next.session.reason = "manually_killed";
+      next.session.reason = killReason;
       next.session.terminatedAt = new Date().toISOString();
       next.session.lastTransitionAt = next.session.terminatedAt;
       next.runtime.state = raw["runtimeHandle"] || raw["tmuxName"] ? "missing" : "exited";
-      next.runtime.reason = "manual_kill_requested";
+      next.runtime.reason = runtimeReason;
       next.runtime.lastObservedAt = new Date().toISOString();
     });
     updateMetadata(sessionsDir, sessionId, {
@@ -1922,6 +1959,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     if (didPurgeOpenCodeSession) {
       markArchivedOpenCodeCleanup(sessionsDir, sessionId);
     }
+    return { cleaned: true, alreadyTerminated: false };
   }
 
   async function cleanup(
@@ -2202,10 +2240,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     };
 
-    const waitForRestoredSession = async (restoredSession: Session): Promise<void> => {
+    const waitForRestoredSession = async (restoredSession: Session): Promise<boolean> => {
       const handle = restoredSession.runtimeHandle;
       if (!handle) {
-        return;
+        return false;
       }
 
       const deadline = Date.now() + SEND_RESTORE_READY_TIMEOUT_MS;
@@ -2223,11 +2261,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           foregroundCommand === null || foregroundCommand === agentPlugin.processName;
 
         if (runtimeAlive && foregroundReady && (processRunning || output.trim().length > 0)) {
-          return;
+          return true;
         }
 
         if (Date.now() >= deadline) {
-          return;
+          return false;
         }
 
         await sleep(SEND_RESTORE_READY_POLL_MS);
@@ -2241,7 +2279,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       try {
         const restored = await restore(sessionId);
-        await waitForRestoredSession(restored);
+        const ready = await waitForRestoredSession(restored);
+        if (!ready) {
+          throw new Error("restored session did not become ready for delivery");
+        }
         return restored;
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
@@ -2345,7 +2386,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     try {
       await sendWithConfirmation(prepared);
     } catch (err) {
-      const shouldRetryWithRestore = prepared.restoredAt === undefined && isRestorable(prepared);
+      const shouldRetryWithRestore =
+        prepared.restoredAt === undefined && isRestorable(prepared);
 
       if (!shouldRetryWithRestore) {
         if (err instanceof Error) {

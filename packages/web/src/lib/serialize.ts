@@ -75,7 +75,9 @@ function buildLifecycleSummary(session: Session): string {
     return `Detecting runtime truth (${humanizeLifecycleToken(lifecycle.session.reason)})`;
   }
   if (lifecycle.pr.state === "merged") {
-    return "PR merged; worker is still available for a keep-or-kill decision";
+    return session.metadata["mergedPendingCleanupSince"]
+      ? "PR merged; worker session will be cleaned up automatically"
+      : "PR merged";
   }
   if (lifecycle.pr.state === "closed") {
     return "PR closed without merge";

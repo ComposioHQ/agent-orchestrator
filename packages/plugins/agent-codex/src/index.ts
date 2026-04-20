@@ -733,8 +733,7 @@ function createCodexAgent(): Agent {
       const parts: string[] = [shellEscape(binary), "resume"];
       appendNoUpdateCheckFlag(parts);
 
-      const isOrchestrator = session.metadata?.["role"] === "orchestrator";
-      appendApprovalFlags(parts, project.agentConfig?.permissions, isOrchestrator);
+      appendApprovalFlags(parts, project.agentConfig?.permissions);
       const effectiveModel = (project.agentConfig?.model ?? data.model) as string | undefined;
       appendModelFlags(parts, effectiveModel ?? undefined);
 

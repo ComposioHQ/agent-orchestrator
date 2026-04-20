@@ -21,6 +21,39 @@ const FONT_SIZE_MIN = 9;
 const FONT_SIZE_MAX = 18;
 const FONT_SIZE_DEFAULT = 13;
 
+// Fallback mono stack used when the CSS custom property isn't resolvable yet.
+const MONO_FONT_FALLBACK =
+  '"JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace';
+
+/**
+ * Resolve the app's configured mono font token to a concrete font-family string.
+ *
+ * xterm's internal char-size measurement ultimately hits canvas ctx.font, which
+ * cannot evaluate `var(...)`. Reading `--font-jetbrains-mono` with
+ * getComputedStyle gives us the generated next/font family name (e.g.
+ * `__JetBrains_Mono_abc123`), which we can safely feed into xterm while still
+ * honouring the app's font configuration.
+ *
+ * NOTE: we deliberately read `--font-jetbrains-mono` and NOT `--font-mono`.
+ * `--font-mono` in globals.css is itself a composed stack that contains
+ * `var(--font-jetbrains-mono)` — if we forwarded that to xterm, the raw
+ * `var(...)` token would end up back in canvas ctx.font and reintroduce the
+ * original measurement bug this helper exists to fix.
+ *
+ * Exported for unit testing.
+ */
+export function resolveMonoFontFamily(): string {
+  if (typeof window === "undefined") return MONO_FONT_FALLBACK;
+  try {
+    const resolved = getComputedStyle(document.documentElement)
+      .getPropertyValue("--font-jetbrains-mono")
+      .trim();
+    return resolved ? `${resolved}, ${MONO_FONT_FALLBACK}` : MONO_FONT_FALLBACK;
+  } catch {
+    return MONO_FONT_FALLBACK;
+  }
+}
+
 function getStoredFontSize(): number {
   if (typeof window === "undefined") return FONT_SIZE_DEFAULT;
   try {
@@ -235,11 +268,17 @@ export function DirectTerminal({
         const activeTheme = isDark ? terminalThemes.dark : terminalThemes.light;
 
         // Initialize xterm.js Terminal
+        // NOTE: xterm's internal char-size measurement uses canvas ctx.font which
+        // cannot resolve `var(...)`. resolveMonoFontFamily() reads the CSS custom
+        // property at runtime so we still honour the app's configured font token
+        // (next/font generated name) while handing xterm a concrete string.
         const terminal = new Terminal({
           cursorBlink: true,
           fontSize: fontSize,
-          fontFamily:
-            'var(--font-jetbrains-mono), "JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
+          fontFamily: resolveMonoFontFamily(),
+          // xterm v6 default lineHeight (1.0) collides rows with JetBrains Mono's
+          // tall x-height. 1.2 restores visual breathing room between lines.
+          lineHeight: 1.2,
           theme: activeTheme,
           // Light mode needs an explicit contrast floor because agent UIs often emit
           // dim/faint ANSI sequences that become unreadable on a near-white background.
@@ -315,6 +354,36 @@ export function DirectTerminal({
             }
           }
         }, 100);
+
+        // Re-measure when webfonts finish loading. next/font uses font-display:swap,
+        // so document.fonts.ready can resolve before JetBrains Mono actually swaps
+        // in. Without this, xterm's initial cell measurement stays pinned to the
+        // fallback font — producing wide-looking horizontal cells once the real
+        // font swaps. Listening to 'loadingdone' forces a re-fit when the swap
+        // actually completes.
+        const handleFontsLoadingDone = () => {
+          if (!mounted || !fitAddon.current || !terminalInstance.current) return;
+          try {
+            // Re-resolve the CSS var in case next/font registered its family
+            // name after initial construction, then force a re-measure.
+            terminalInstance.current.options.fontFamily = resolveMonoFontFamily();
+            terminalInstance.current.clearTextureAtlas?.();
+            fitAddon.current.fit();
+            resizeTerminalMux(sessionId, terminalInstance.current.cols, terminalInstance.current.rows);
+          } catch {
+            // Ignore fit errors
+          }
+        };
+        // Feature-detect `FontFaceSet.addEventListener` — it's missing in
+        // jsdom's `document.fonts` mock and some older runtimes. Without the
+        // guard, init throws a TypeError and the terminal never attaches.
+        const fontsFace =
+          typeof document !== "undefined" ? document.fonts : undefined;
+        const fontsListenerAttached =
+          !!fontsFace && typeof fontsFace.addEventListener === "function";
+        if (fontsListenerAttached) {
+          fontsFace!.addEventListener("loadingdone", handleFontsLoadingDone);
+        }
 
         // Grab viewport element for manual follow-output scroll
         const viewport = terminal.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
@@ -470,6 +539,9 @@ export function DirectTerminal({
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
           window.removeEventListener("resize", handleResize);
+          if (fontsListenerAttached && fontsFace) {
+            fontsFace.removeEventListener("loadingdone", handleFontsLoadingDone);
+          }
           viewport?.removeEventListener("scroll", handleViewportScroll);
           inputDisposable?.dispose();
           inputDisposable = null;
@@ -871,7 +943,7 @@ export function DirectTerminal({
         ) : null}
         <div
           ref={terminalRef}
-          className="w-full p-1.5 flex flex-col flex-1 min-h-0 overflow-hidden"
+          className="w-full flex flex-col flex-1 min-h-0 overflow-hidden"
         />
       </div>
     </div>

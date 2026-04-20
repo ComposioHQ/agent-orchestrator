@@ -104,7 +104,7 @@ describe("getAttentionLevel", () => {
           evidence: null,
           detectingAttempts: 0,
           detectingEscalatedAt: null,
-          summary: "PR merged; worker is still available for a keep-or-kill decision",
+          summary: "PR merged; worker session will be cleaned up automatically",
           guidance: null,
         },
         pr: {
@@ -291,7 +291,7 @@ describe("getAttentionLevel", () => {
           evidence: null,
           detectingAttempts: 0,
           detectingEscalatedAt: null,
-          summary: "PR merged; worker is still available for a keep-or-kill decision",
+          summary: "PR merged; worker session will be cleaned up automatically",
           guidance: null,
         },
       });

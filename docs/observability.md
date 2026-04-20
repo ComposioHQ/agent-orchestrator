@@ -35,6 +35,9 @@ Counters are emitted per project and operation:
 - `cleanup` (`session.cleanup`)
 - `send` (`session.send`)
 - `lifecycle_poll` (`lifecycle.poll`, `lifecycle.transition`)
+- `lifecycle_poll` (`lifecycle.merge_cleanup.completed`) — auto-cleanup ran after a PR was detected as merged; session runtime + worktree + metadata were torn down
+- `lifecycle_poll` (`lifecycle.merge_cleanup.deferred`) — auto-cleanup is waiting for the agent to idle (or for the `mergeCleanupIdleGraceMs` window to elapse) before tearing down
+- `lifecycle_poll` (`lifecycle.merge_cleanup.failed`) — auto-cleanup threw during `sessionManager.kill()`; the session stays in `merged` so the next poll retries
 - `api_request` (web API routes)
 - `sse_connect`, `sse_snapshot`, `sse_disconnect`
 - `websocket_connect`, `websocket_disconnect`, `websocket_error` (websocket servers)

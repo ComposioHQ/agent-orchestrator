@@ -20,6 +20,15 @@ port: 3000
 #                           # Uses caffeinate -i -w <pid> — auto-releases when AO exits
 #                           # Note: lid-close sleep is enforced by hardware and cannot be prevented
 
+# Lifecycle — controls how AO cleans up sessions after their PRs merge
+# lifecycle:
+#   autoCleanupOnMerge: true        # Default. When a PR is detected as merged, tear down
+#                                   # the tmux session, remove the worktree, and archive
+#                                   # metadata so `ao status` stays clean. Set false if
+#                                   # you want merged worktrees preserved for inspection.
+#   mergeCleanupIdleGraceMs: 300000 # Grace window (ms) before forcing cleanup on an agent
+#                                   # that is still active at merge time. Default 5 min.
+
 # Default plugins (these are the defaults — you can omit this section)
 defaults:
   runtime: tmux           # tmux | process

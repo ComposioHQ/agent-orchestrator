@@ -195,6 +195,35 @@ describe("SessionDetail desktop layout", () => {
     expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
   });
 
+  it("shows restore for restorable orchestrator sessions", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          status: "terminated",
+          activity: "exited",
+          summary: "Project orchestrator",
+          pr: null,
+        })}
+        isOrchestrator
+        orchestratorZones={{
+          merge: 1,
+          respond: 0,
+          review: 0,
+          pending: 0,
+          working: 2,
+          done: 3,
+        }}
+        projectOrchestratorId="my-app-orchestrator"
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    expect(within(screen.getByRole("banner")).getByRole("button", { name: "Restore" })).toBeInTheDocument();
+    expect(within(screen.getByRole("banner")).queryByRole("button", { name: "Kill" })).not.toBeInTheDocument();
+  });
+
   it("hides the desktop orchestrator button on orchestrator session pages", () => {
     render(
       <SessionDetail

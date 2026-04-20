@@ -52,7 +52,14 @@ import {
 } from "../lib/web-dir.js";
 import { rebuildDashboardProductionArtifacts } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
-import { register, unregister, isAlreadyRunning, getRunning, waitForExit } from "../lib/running-state.js";
+import {
+  register,
+  unregister,
+  isAlreadyRunning,
+  getRunning,
+  waitForExit,
+  acquireStartupLock,
+} from "../lib/running-state.js";
 import { preventIdleSleep } from "../lib/prevent-sleep.js";
 import { isHumanCaller } from "../lib/caller-context.js";
 import { detectEnvironment } from "../lib/detect-env.js";
@@ -1400,7 +1407,16 @@ export function registerStart(program: Command): void {
           interactive?: boolean;
         },
       ) => {
+        let releaseStartupLock: (() => void) | undefined;
+        let startupLockReleased = false;
+        const unlockStartup = (): void => {
+          if (startupLockReleased || !releaseStartupLock) return;
+          startupLockReleased = true;
+          releaseStartupLock();
+        };
+
         try {
+          releaseStartupLock = await acquireStartupLock();
           let config: OrchestratorConfig;
           let projectId: string;
           let project: ProjectConfig;
@@ -1429,6 +1445,7 @@ export function registerStart(program: Command): void {
               if (choice === "open") {
                 const url = `http://localhost:${running.port}`;
                 openUrl(url);
+                unlockStartup();
                 process.exit(0);
               } else if (choice === "new") {
                 // Defer config mutation until after config is loaded below
@@ -1448,6 +1465,7 @@ export function registerStart(program: Command): void {
                 console.log(chalk.yellow("\n  Stopped existing instance. Restarting...\n"));
                 // Continue to startup below
               } else {
+                unlockStartup();
                 process.exit(0);
               }
             } else {
@@ -1457,6 +1475,7 @@ export function registerStart(program: Command): void {
               console.log(`PID: ${running.pid}`);
               console.log(`Projects: ${running.projects.join(", ")}`);
               console.log(`To restart: ao stop && ao start`);
+              unlockStartup();
               process.exit(0);
             }
           }
@@ -1586,6 +1605,7 @@ export function registerStart(program: Command): void {
             startedAt: new Date().toISOString(),
             projects: [projectId],
           });
+          unlockStartup();
 
           // Install shutdown handlers so `ao stop` (which sends SIGTERM to
           // this pid) flushes lifecycle health state before exit. Handlers
@@ -1611,7 +1631,10 @@ export function registerStart(program: Command): void {
           } else {
             console.error(chalk.red("\nError:"), String(err));
           }
+          unlockStartup();
           process.exit(1);
+        } finally {
+          unlockStartup();
         }
       },
     );

@@ -10,7 +10,12 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { type Session, type SessionManager, getSessionsDir } from "@aoagents/ao-core";
+import {
+  type Session,
+  type SessionManager,
+  getSessionsDir,
+  sessionFromMetadata,
+} from "@aoagents/ao-core";
 
 const { mockTmux, mockExec, mockGh, mockConfigRef, mockSessionManager, sessionsDirRef } =
   vi.hoisted(() => ({
@@ -76,28 +81,24 @@ function parseMetadata(content: string): Record<string, string> {
   return meta;
 }
 
-/** Build Session objects from metadata files in sessionsDir. */
+/**
+ * Build Session objects from metadata files in sessionsDir.
+ *
+ * Routes through the real `sessionFromMetadata()` so lifecycle reconstruction
+ * matches what production `sm.list()` returns. Previously this helper built
+ * Session objects by hand, which silently bypassed synthesis and hid bugs like
+ * the "status=merged without pr= URL" rehydration miss fixed in PR #1340.
+ */
 function buildSessionsFromDir(dir: string, projectId: string): Session[] {
   if (!existsSync(dir)) return [];
   const files = readdirSync(dir).filter((f) => !f.startsWith(".") && f !== "archive");
   return files.map((name) => {
     const content = readFileSync(join(dir, name), "utf-8");
     const meta = parseMetadata(content);
-    return {
-      id: name,
+    return sessionFromMetadata(name, meta, {
       projectId,
-      status: (meta["status"] as Session["status"]) || "spawning",
-      activity: null,
-      branch: meta["branch"] || null,
-      issueId: meta["issue"] || null,
-      pr: null,
-      workspacePath: meta["worktree"] || null,
       runtimeHandle: { id: name, runtimeName: "tmux", data: {} },
-      agentInfo: null,
-      createdAt: new Date(),
-      lastActivityAt: new Date(),
-      metadata: meta,
-    } satisfies Session;
+    });
   });
 }
 

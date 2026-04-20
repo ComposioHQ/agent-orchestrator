@@ -209,6 +209,13 @@ function synthesizePRState(meta: Record<string, string>, status: SessionStatus):
 } {
   const prUrl = meta["pr"] ?? null;
   if (!prUrl) {
+    // Legacy metadata can record `status=merged` without `pr=` (the PR URL was
+    // never written, or was pruned). Preserve the terminal truth — the legacy
+    // status is authoritative for session terminality — so downstream
+    // consumers like isTerminalSession don't lose the "merged" signal.
+    if (status === "merged") {
+      return { state: "merged", reason: "merged", number: null, url: null };
+    }
     return { state: "none", reason: "not_created", number: null, url: null };
   }
   const parsed = parsePrFromUrl(prUrl);

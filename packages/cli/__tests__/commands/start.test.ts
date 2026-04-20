@@ -30,12 +30,12 @@ const {
   mockConfigRef: { current: null as Record<string, unknown> | null },
   mockSessionManager: {
     list: vi.fn(),
+    restore: vi.fn(),
     kill: vi.fn(),
     cleanup: vi.fn(),
     get: vi.fn(),
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
-    restore: vi.fn(),
     send: vi.fn(),
     claimPR: vi.fn(),
   },
@@ -57,8 +57,10 @@ const { mockPromptSelect, mockPromptConfirm } = vi.hoisted(() => ({
   mockPromptConfirm: vi.fn().mockResolvedValue(true),
 }));
 
-const { mockIsAlreadyRunning, mockUnregister, mockWaitForExit } = vi.hoisted(() => ({
+const { mockAcquireStartupLock, mockIsAlreadyRunning, mockRegister, mockUnregister, mockWaitForExit } = vi.hoisted(() => ({
+  mockAcquireStartupLock: vi.fn().mockResolvedValue(() => {}),
   mockIsAlreadyRunning: vi.fn().mockReturnValue(null),
+  mockRegister: vi.fn(),
   mockUnregister: vi.fn(),
   mockWaitForExit: vi.fn().mockReturnValue(true),
 }));
@@ -142,7 +144,8 @@ vi.mock("../../src/lib/preflight.js", () => ({
 }));
 
 vi.mock("../../src/lib/running-state.js", () => ({
-  register: vi.fn(),
+  acquireStartupLock: (...args: unknown[]) => mockAcquireStartupLock(...args),
+  register: (...args: unknown[]) => mockRegister(...args),
   unregister: (...args: unknown[]) => mockUnregister(...args),
   isAlreadyRunning: (...args: unknown[]) => mockIsAlreadyRunning(...args),
   getRunning: vi.fn().mockReturnValue(null),
@@ -247,9 +250,10 @@ beforeEach(async () => {
 
   mockSessionManager.list.mockReset();
   mockSessionManager.list.mockResolvedValue([]);
+  mockSessionManager.restore.mockReset();
+  mockSessionManager.restore.mockResolvedValue({ id: "app-orchestrator-restored" });
   mockSessionManager.get.mockReset();
   mockSessionManager.spawnOrchestrator.mockReset();
-  mockSessionManager.restore.mockReset();
   mockSessionManager.kill.mockReset();
   mockExec.mockReset();
   mockExecSilent.mockReset();
@@ -281,8 +285,12 @@ beforeEach(async () => {
   mockPromptSelect.mockReset();
   mockPromptConfirm.mockReset();
   mockPromptConfirm.mockResolvedValue(true);
+  mockAcquireStartupLock.mockReset();
+  mockAcquireStartupLock.mockResolvedValue(() => {});
   mockIsAlreadyRunning.mockReset();
   mockIsAlreadyRunning.mockResolvedValue(null);
+  mockRegister.mockReset();
+  mockRegister.mockResolvedValue(undefined);
   mockUnregister.mockReset();
   mockWaitForExit.mockReset();
   mockWaitForExit.mockResolvedValue(true);
@@ -955,6 +963,93 @@ describe("start command — orchestrator session strategy display", () => {
     expect(output).toContain("ao session attach app-orchestrator-2");
   });
 
+  it("restores the latest restorable orchestrator when tmux is gone", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const now = new Date();
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-1",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now.getTime() - 1000),
+        lifecycle: {
+          version: 2,
+          session: {
+            kind: "orchestrator",
+            state: "working",
+            reason: "task_in_progress",
+            startedAt: now.toISOString(),
+            completedAt: null,
+            terminatedAt: null,
+            lastTransitionAt: now.toISOString(),
+          },
+          pr: {
+            state: "none",
+            reason: "not_created",
+            number: null,
+            url: null,
+            lastObservedAt: null,
+          },
+          runtime: {
+            state: "missing",
+            reason: "tmux_missing",
+            lastObservedAt: now.toISOString(),
+            handle: null,
+            tmuxName: "tmux-old-1",
+          },
+        },
+      },
+      {
+        id: "app-orchestrator-2",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: now,
+        lifecycle: {
+          version: 2,
+          session: {
+            kind: "orchestrator",
+            state: "working",
+            reason: "task_in_progress",
+            startedAt: now.toISOString(),
+            completedAt: null,
+            terminatedAt: null,
+            lastTransitionAt: now.toISOString(),
+          },
+          pr: {
+            state: "none",
+            reason: "not_created",
+            number: null,
+            url: null,
+            lastObservedAt: null,
+          },
+          runtime: {
+            state: "missing",
+            reason: "tmux_missing",
+            lastObservedAt: now.toISOString(),
+            handle: null,
+            tmuxName: "tmux-old-2",
+          },
+        },
+      },
+    ]);
+    mockSessionManager.restore.mockResolvedValue({
+      id: "app-orchestrator-2",
+      runtimeHandle: { id: "tmux-restored-2" },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    const output = getLoggedOutput();
+    expect(output).toContain("ao session attach app-orchestrator-2");
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("app-orchestrator-2");
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
   it("navigates directly to session page when one existing orchestrator found with dashboard enabled", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 
@@ -1246,6 +1341,34 @@ describe("start command — orchestrator session strategy display", () => {
 
     // Should have killed the dashboard
     expect(fakeDashboard.kill).toHaveBeenCalled();
+  });
+
+  it("reports startup lock acquisition failures through the normal CLI error path", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockAcquireStartupLock.mockRejectedValueOnce(
+      new Error("Could not acquire startup lock (/tmp/startup.lock)"),
+    );
+
+    await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(errors).toContain("Could not acquire startup lock (/tmp/startup.lock)");
+    expect(mockIsAlreadyRunning).not.toHaveBeenCalled();
+  });
+
+  it("releases the startup lock before exiting on startup failures", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    const releaseStartupLock = vi.fn();
+    mockAcquireStartupLock.mockResolvedValueOnce(releaseStartupLock);
+    mockSessionManager.list.mockResolvedValue([]);
+    mockSessionManager.spawnOrchestrator.mockRejectedValue(new Error("Spawn failed"));
+
+    await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
+
+    expect(releaseStartupLock).toHaveBeenCalledTimes(1);
   });
 
   it("fails and cleans up dashboard when sm.restore throws on a killed orchestrator", async () => {

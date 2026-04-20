@@ -25,8 +25,10 @@ const DirectTerminal = dynamic(
   () => import("./DirectTerminal").then((m) => ({ default: m.DirectTerminal })),
   {
     ssr: false,
+    // h-full (not a fixed 440px) so the skeleton matches the eventual terminal's
+    // flex-1 sizing and the layout stays viewport-driven during lazy load.
     loading: () => (
-      <div className="h-[440px] animate-pulse rounded bg-[var(--color-bg-primary)]" />
+      <div className="h-full w-full animate-pulse rounded bg-[var(--color-bg-primary)]" />
     ),
   },
 );
@@ -595,25 +597,23 @@ export function SessionDetail({
             </div>
           ) : null}
 
-          {/* Kill / Restore — only for non-orchestrator worker sessions */}
-          {!isOrchestrator && (
-            isRestorable ? (
-              <button type="button" className="dashboard-app-btn" onClick={handleRestore}>
-                <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <polyline points="1 4 1 10 7 10" />
-                  <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                </svg>
-                <span className="topbar-btn-label">Restore</span>
-              </button>
-            ) : !terminalEnded ? (
+          {/* Restore is available for any restorable session; Kill stays worker-only. */}
+          {isRestorable ? (
+            <button type="button" className="dashboard-app-btn" onClick={handleRestore}>
+              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <polyline points="1 4 1 10 7 10" />
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+              </svg>
+              <span className="topbar-btn-label">Restore</span>
+            </button>
+          ) : !isOrchestrator && !terminalEnded ? (
               <button type="button" className="dashboard-app-btn dashboard-app-btn--danger" onClick={handleKill}>
                 <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                 </svg>
                 <span className="topbar-btn-label">Kill</span>
               </button>
-            ) : null
-          )}
+          ) : null}
 
           {!isOrchestrator && orchestratorHref ? (
             <a
