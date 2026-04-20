@@ -872,7 +872,11 @@ describe("enrichSessionsMetadata", () => {
         labels: [],
       }),
       isCompleted: vi.fn().mockResolvedValue(false),
-      issueUrl: vi.fn().mockReturnValue(`${urlBase}-default`),
+      issueUrl: vi.fn().mockImplementation((identifier: string) =>
+        identifier.startsWith("http://") || identifier.startsWith("https://")
+          ? identifier
+          : `${urlBase}-${identifier}`,
+      ),
       issueLabel: vi.fn().mockReturnValue("#42"),
       branchName: vi.fn().mockReturnValue("feat/issue-42"),
       generatePrompt: vi.fn().mockResolvedValue("prompt"),
@@ -946,6 +950,23 @@ describe("enrichSessionsMetadata", () => {
     // Summary enriched (async)
     expect(dashboard.summary).toBe("Implementing auth fix");
     // Issue title enriched (async, depends on issueLabel from sync step)
+    expect(dashboard.issueTitle).toBe("Fix auth bug");
+  });
+
+  it("should derive issue URL from issue identifier via tracker", async () => {
+    const tracker = mockTracker("Fix auth bug");
+    const agent = mockAgent("Implementing auth fix");
+    const registry = mockRegistry(tracker, agent);
+
+    const core = createCoreSession({ issueId: "42" });
+    const dashboard = sessionToDashboard(core);
+    expect(dashboard.issueUrl).toBeNull();
+
+    await enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+
+    expect(tracker.issueUrl).toHaveBeenCalledWith("42", testProject);
+    expect(dashboard.issueUrl).toBe(`${urlBase}-42`);
+    expect(dashboard.issueLabel).toBe("#42");
     expect(dashboard.issueTitle).toBe("Fix auth bug");
   });
 

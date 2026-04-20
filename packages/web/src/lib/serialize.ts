@@ -30,6 +30,15 @@ import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
 const issueTitleCache = new TTLCache<string>(300_000);
 
+function isAbsoluteUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /** Resolve which project a session belongs to. */
 export function resolveProject(
   core: Session,
@@ -176,7 +185,7 @@ export function sessionToDashboard(session: Session): DashboardSession {
     lifecycle: buildDashboardLifecycle(session),
     branch: session.branch,
     issueId: session.issueId, // Deprecated: kept for backwards compatibility
-    issueUrl: session.issueId, // issueId is actually the full URL
+    issueUrl: session.issueId && isAbsoluteUrl(session.issueId) ? session.issueId : null,
     issueLabel: null, // Will be enriched by enrichSessionIssue()
     issueTitle: null, // Will be enriched by enrichSessionIssueTitle()
     userPrompt: session.metadata["userPrompt"] ?? null,
@@ -430,6 +439,19 @@ export function enrichSessionIssue(
   tracker: Tracker,
   project: ProjectConfig,
 ): void {
+  const issueReference = dashboard.issueId ?? dashboard.issueUrl;
+  if (!issueReference) return;
+
+  if (tracker.issueUrl) {
+    try {
+      dashboard.issueUrl = tracker.issueUrl(issueReference, project);
+    } catch {
+      // Keep existing values if URL generation fails.
+    }
+  } else if (!dashboard.issueUrl) {
+    dashboard.issueUrl = issueReference;
+  }
+
   if (!dashboard.issueUrl) return;
 
   // Use tracker plugin to extract human-readable label from URL
@@ -535,7 +557,9 @@ function prepareSessionMetadataEnrichment(
 
   // Issue labels (synchronous string parsing, no API calls)
   projects.forEach((project, i) => {
-    if (!dashboardSessions[i].issueUrl || !project?.tracker?.plugin) return;
+    if ((!dashboardSessions[i].issueUrl && !dashboardSessions[i].issueId) || !project?.tracker?.plugin) {
+      return;
+    }
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
     if (!tracker) return;
     enrichSessionIssue(dashboardSessions[i], tracker, project);
