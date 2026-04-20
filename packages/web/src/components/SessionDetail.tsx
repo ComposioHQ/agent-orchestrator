@@ -728,11 +728,11 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
   const [sentComments, setSentComments] = useState<Set<string>>(new Set());
   const [errorComments, setErrorComments] = useState<Set<string>>(new Set());
   const [branchCopied, setBranchCopied] = useState(false);
-  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const timersRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     return () => {
-      timersRef.current.forEach((timer) => clearTimeout(timer));
+      timersRef.current.forEach((timer) => window.clearTimeout(timer));
       timersRef.current.clear();
     };
   }, []);
@@ -761,8 +761,8 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
         });
         setSentComments((prev) => new Set(prev).add(comment.url));
         const existing = timersRef.current.get(comment.url);
-        if (existing) clearTimeout(existing);
-        const timer = setTimeout(() => {
+        if (existing !== undefined) window.clearTimeout(existing);
+        const timer = window.setTimeout(() => {
           setSentComments((prev) => {
             const next = new Set(prev);
             next.delete(comment.url);
@@ -780,8 +780,8 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
         });
         setErrorComments((prev) => new Set(prev).add(comment.url));
         const existing = timersRef.current.get(comment.url);
-        if (existing) clearTimeout(existing);
-        const timer = setTimeout(() => {
+        if (existing !== undefined) window.clearTimeout(existing);
+        const timer = window.setTimeout(() => {
           setErrorComments((prev) => {
             const next = new Set(prev);
             next.delete(comment.url);
@@ -812,7 +812,7 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
         setBranchCopied(true);
         const timerKey = "__copy-branch";
         const existing = timersRef.current.get(timerKey);
-        if (existing) clearTimeout(existing);
+        if (existing !== undefined) window.clearTimeout(existing);
         const timer = window.setTimeout(() => {
           setBranchCopied(false);
           timersRef.current.delete(timerKey);
