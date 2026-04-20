@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createActivitySignal, createInitialCanonicalLifecycle } from "@aoagents/ao-core";
 import type { Session, RuntimeHandle, AgentLaunchConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
@@ -36,6 +37,8 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "test-project",
     status: "working",
     activity: "active",
+    activitySignal: createActivitySignal("null"),
+    lifecycle: createInitialCanonicalLifecycle("worker"),
     branch: "feat/test",
     issueId: null,
     pr: null,

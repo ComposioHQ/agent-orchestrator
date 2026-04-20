@@ -51,6 +51,7 @@ function createAmpAgent(): Agent {
 
       if (threadId) {
         // Resume existing thread
+        // --dangerously-allow-all: required for non-interactive operation (see new-thread path)
         return [
           "amp",
           "threads",
@@ -63,6 +64,8 @@ function createAmpAgent(): Agent {
       }
 
       // New thread
+      // --dangerously-allow-all is always set: Amp requires it for non-interactive
+      // (piped stdin) operation regardless of permissionMode. There is no safer flag.
       return ["amp", "threads", "new", "--execute", "--dangerously-allow-all", "--no-ide"].join(
         " ",
       );
@@ -80,10 +83,11 @@ function createAmpAgent(): Agent {
     detectActivity(terminalOutput: string): ActivityState {
       if (!terminalOutput.trim()) return "idle";
       // Amp-specific patterns
-      if (/waiting for|confirm|approve|permission/i.test(terminalOutput)) {
+      if (/\bwaiting for\b|\bconfirm\b|\bapprove\b|\bpermission required\b/i.test(terminalOutput)) {
         return "waiting_input";
       }
-      if (/error:|failed:|cannot|exception/i.test(terminalOutput)) {
+      // Match Amp's own fatal/unrecoverable error messages, not compiler output
+      if (/\bamp:\s*(error|fatal)\b|^\s*Error:\s/m.test(terminalOutput)) {
         return "blocked";
       }
       return "active";

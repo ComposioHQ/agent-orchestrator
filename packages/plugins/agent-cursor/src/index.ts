@@ -158,14 +158,14 @@ function createCursorAgent(): Agent {
     processName: "agent",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
-      const parts: string[] = ["agent", "--force"];
+      const parts: string[] = ["agent"];
 
       const permissionMode = normalizeAgentPermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
+        // --force: Skip confirmation prompts
         // --sandbox disabled: Skip workspace trust prompts entirely
         // --approve-mcps: Auto-approve MCP servers
-        // Note: --force is already set unconditionally above; don't duplicate it
-        parts.push("--sandbox", "disabled", "--approve-mcps");
+        parts.push("--force", "--sandbox", "disabled", "--approve-mcps");
       }
 
       if (config.model) {

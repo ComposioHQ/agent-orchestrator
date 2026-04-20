@@ -634,6 +634,9 @@ importers:
       '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../core
+      '@aoagents/ao-plugin-agent-amp':
+        specifier: workspace:*
+        version: link:../plugins/agent-amp
       '@aoagents/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
