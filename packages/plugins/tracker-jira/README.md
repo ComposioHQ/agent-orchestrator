@@ -29,5 +29,6 @@ Notes:
 - `baseUrl` and `email` in `tracker:` override the environment values.
 - `listIssues()` uses `tracker.jql` when provided, otherwise it builds a query from `projectKey` and AO filters.
 - `createIssue()` requires `projectKey` and creates Jira issues as `Task` by default, or `tracker.issueTypeName` when set.
-- `updateIssue()` supports state transitions, additive label updates with removals, comments, and best-effort assignee lookup.
+- `updateIssue()` supports state transitions, additive label updates with removals, comments, and best-effort assignee lookup. Jira's common `204 No Content` success responses are treated as success for transitions and field updates.
+- Done-category statuses still preserve `Canceled`/`Cancelled` as AO `cancelled` instead of collapsing every done status to `closed`.
 - Jira priorities are normalized to AO's 1-4 scale (`Highest`, `High`, `Medium`, `Low`).

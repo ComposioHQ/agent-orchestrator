@@ -48,6 +48,12 @@ interface JiraApiResponse<T> {
   headers: IncomingHttpHeaders;
 }
 
+interface JiraRequestOptions {
+  method?: "GET" | "POST" | "PUT";
+  body?: unknown;
+  allowEmptyBody?: boolean;
+}
+
 interface JiraTransitionResponse {
   transitions: Array<{
     id: string;
@@ -142,15 +148,16 @@ export function extractDocumentText(node: unknown): string {
   return parts.join("\n").trim();
 }
 
-function mapJiraState(status: JiraIssueResponse["fields"]["status"]): Issue["state"] {
+export function mapJiraState(status: JiraIssueResponse["fields"]["status"]): Issue["state"] {
+  const name = status?.name?.toLowerCase() ?? "";
+  if (["cancelled", "canceled"].includes(name)) return "cancelled";
+
   const categoryKey = status?.statusCategory?.key?.toLowerCase();
   if (categoryKey === "done") return "closed";
   if (categoryKey === "indeterminate") return "in_progress";
   if (categoryKey === "new") return "open";
 
-  const name = status?.name?.toLowerCase() ?? "";
   if (["done", "closed", "resolved"].includes(name)) return "closed";
-  if (["cancelled", "canceled"].includes(name)) return "cancelled";
   if (["in progress", "in review", "selected for development", "implementing"].includes(name)) {
     return "in_progress";
   }
@@ -200,10 +207,7 @@ function buildAuthHeader(config: JiraConfig): string {
 function jiraRequest<T>(
   config: JiraConfig,
   path: string,
-  options?: {
-    method?: "GET" | "POST" | "PUT";
-    body?: unknown;
-  },
+  options?: JiraRequestOptions,
 ): Promise<JiraApiResponse<T>> {
   return new Promise((resolve, reject) => {
     const url = new URL(path, config.baseUrl);
@@ -231,8 +235,16 @@ function jiraRequest<T>(
               reject(new Error(`Jira API request failed (${statusCode}): ${text.slice(0, 300)}`));
               return;
             }
+            const canBeEmpty = options?.allowEmptyBody === true || statusCode === 204;
+            const body = text.trim()
+              ? (JSON.parse(text) as T)
+              : canBeEmpty
+                ? (undefined as T)
+                : (() => {
+                    throw new Error(`Jira API request returned an empty body (${statusCode}) for ${method} ${url.pathname}`);
+                  })();
             resolve({
-              body: JSON.parse(text) as T,
+              body,
               statusCode,
               headers: res.headers,
             });
@@ -276,7 +288,8 @@ async function findTransitionId(
     const category = transition.to?.statusCategory?.key?.toLowerCase() ?? "";
 
     if (state === "closed") {
-      return category === "done" || [toName, transitionName].some((name) => ["done", "closed", "resolved"].includes(name));
+      const cancelled = [toName, transitionName].some((name) => ["cancelled", "canceled"].includes(name));
+      return !cancelled && (category === "done" || [toName, transitionName].some((name) => ["done", "closed", "resolved"].includes(name)));
     }
 
     if (state === "in_progress") {

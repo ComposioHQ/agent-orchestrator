@@ -7,7 +7,7 @@ const { requestMock } = vi.hoisted(() => ({
 
 vi.mock("node:https", () => ({ request: requestMock }));
 
-import { create, manifest, resolveJiraConfig, extractDocumentText, mapJiraIssue } from "../src/index.js";
+import { create, manifest, resolveJiraConfig, extractDocumentText, mapJiraIssue, mapJiraState } from "../src/index.js";
 import type { ProjectConfig } from "@aoagents/ao-core";
 
 type MockRequest = EventEmitter & {
@@ -60,7 +60,7 @@ const sampleIssue = {
 };
 
 function installJiraMock() {
-  const responses: Array<{ body: unknown; statusCode?: number }> = [];
+  const responses: Array<{ body?: unknown; rawBody?: string; statusCode?: number }> = [];
 
   requestMock.mockImplementation(
     (_url: URL | string, _options: unknown, callback: (res: EventEmitter & { statusCode?: number; headers: Record<string, string> }) => void) => {
@@ -79,7 +79,10 @@ function installJiraMock() {
 
         queueMicrotask(() => {
           callback(res);
-          res.emit("data", Buffer.from(JSON.stringify(response.body)));
+          const rawBody = response.rawBody ?? (response.body === undefined ? "" : JSON.stringify(response.body));
+          if (rawBody) {
+            res.emit("data", Buffer.from(rawBody));
+          }
           res.emit("end");
         });
       };
@@ -93,6 +96,9 @@ function installJiraMock() {
   return {
     queue(body: unknown, statusCode = 200) {
       responses.push({ body, statusCode });
+    },
+    queueEmpty(statusCode = 204) {
+      responses.push({ rawBody: "", statusCode });
     },
   };
 }
@@ -182,6 +188,11 @@ describe("tracker-jira plugin", () => {
     expect(issue.priority).toBe(4);
   });
 
+  it("preserves canceled semantics for done-category statuses", () => {
+    expect(mapJiraState({ name: "Canceled", statusCategory: { key: "done" } })).toBe("cancelled");
+    expect(mapJiraState({ name: "Cancelled", statusCategory: { key: "done" } })).toBe("cancelled");
+  });
+
   it("fetches a single Jira issue", async () => {
     jira.queue(sampleIssue);
     const tracker = create();
@@ -229,10 +240,15 @@ describe("tracker-jira plugin", () => {
   });
 
   it("updates state, labels, removes labels, and posts a comment", async () => {
-    jira.queue({ transitions: [{ id: "31", to: { name: "Done", statusCategory: { key: "done" } } }] });
-    jira.queue({});
+    jira.queue({
+      transitions: [
+        { id: "41", name: "Cancel", to: { name: "Canceled", statusCategory: { key: "done" } } },
+        { id: "31", name: "Resolve", to: { name: "Done", statusCategory: { key: "done" } } },
+      ],
+    });
+    jira.queueEmpty(204);
     jira.queue(sampleIssue);
-    jira.queue({});
+    jira.queueEmpty(204);
     jira.queue({ id: "comment-1" });
     const tracker = create();
 
