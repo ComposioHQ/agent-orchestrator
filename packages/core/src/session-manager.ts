@@ -80,6 +80,11 @@ import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse, validateStatus } from "./utils/validation.js";
 import { isGitBranchNameSafe } from "./utils.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import {
+  buildAgentPath,
+  setupPathWrapperWorkspace,
+  PREFERRED_GH_PATH,
+} from "./agent-workspace-hooks.js";
 
 const execFileAsync = promisify(execFile);
 const OPENCODE_DISCOVERY_TIMEOUT_MS = 10_000;
@@ -1304,6 +1309,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         launchCommand,
         environment: {
           ...environment,
+          PATH: buildAgentPath(environment["PATH"] ?? process.env["PATH"]),
+          GH_PATH: PREFERRED_GH_PATH,
           AO_SESSION: sessionId,
           AO_DATA_DIR: sessionsDir, // Pass sessions directory (not root dataDir)
           AO_SESSION_NAME: sessionId, // User-facing session name
@@ -1582,10 +1589,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     };
 
     // Setup agent hooks for automatic metadata updates
+    // Also install shared ~/.ao/bin wrappers (gh/git intercept + cache) for all agents
     try {
       if (plugins.agent.setupWorkspaceHooks) {
         await plugins.agent.setupWorkspaceHooks(workspacePath, { dataDir: sessionsDir });
       }
+      await setupPathWrapperWorkspace(workspacePath);
     } catch (err) {
       await cleanupWorktreeAndMetadata();
       throw err;
@@ -1669,6 +1678,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         launchCommand,
         environment: {
           ...environment,
+          PATH: buildAgentPath(environment["PATH"] ?? process.env["PATH"]),
+          GH_PATH: PREFERRED_GH_PATH,
           AO_SESSION: sessionId,
           AO_DATA_DIR: sessionsDir,
           AO_SESSION_NAME: sessionId,
@@ -2831,6 +2842,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       launchCommand,
       environment: {
         ...environment,
+        PATH: buildAgentPath(environment["PATH"] ?? process.env["PATH"]),
+        GH_PATH: PREFERRED_GH_PATH,
         AO_SESSION: sessionId,
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,

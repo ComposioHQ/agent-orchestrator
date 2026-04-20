@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { buildAgentPath, setupPathWrapperWorkspace } from "../agent-workspace-hooks.js";
+import {
+  buildAgentPath,
+  setupPathWrapperWorkspace,
+  AO_METADATA_HELPER,
+  GH_WRAPPER,
+} from "../agent-workspace-hooks.js";
 
 const { mockWriteFile, mockMkdir, mockReadFile, mockRename } = vi.hoisted(() => ({
   mockWriteFile: vi.fn().mockResolvedValue(undefined),
@@ -74,7 +79,7 @@ describe("setupPathWrapperWorkspace", () => {
 
   it("skips wrapper rewrite when version matches", async () => {
     mockReadFile
-      .mockResolvedValueOnce("0.3.2") // version marker matches
+      .mockResolvedValueOnce("0.4.0") // version marker matches
       .mockRejectedValueOnce(new Error("ENOENT")); // AGENTS.md doesn't exist
 
     await setupPathWrapperWorkspace("/workspace");
@@ -93,5 +98,93 @@ describe("setupPathWrapperWorkspace", () => {
     );
     expect(agentsMdWrites).toHaveLength(1);
     expect(String(agentsMdWrites[0][1])).toContain("Agent Orchestrator");
+  });
+});
+
+describe("AO_METADATA_HELPER", () => {
+  it("contains update_ao_metadata function", () => {
+    expect(AO_METADATA_HELPER).toContain("update_ao_metadata()");
+  });
+
+  it("contains read_ao_metadata function", () => {
+    expect(AO_METADATA_HELPER).toContain("read_ao_metadata()");
+  });
+
+  it("contains cache helper functions", () => {
+    expect(AO_METADATA_HELPER).toContain("ao_cache_dir()");
+    expect(AO_METADATA_HELPER).toContain("ao_cache_fresh()");
+    expect(AO_METADATA_HELPER).toContain("ao_cache_read()");
+    expect(AO_METADATA_HELPER).toContain("ao_cache_write()");
+  });
+
+  it("uses .ghcache subdirectory for cache storage", () => {
+    expect(AO_METADATA_HELPER).toContain(".ghcache");
+  });
+
+  it("validates environment in shared _ao_validate_env", () => {
+    expect(AO_METADATA_HELPER).toContain("_ao_validate_env()");
+    expect(AO_METADATA_HELPER).toContain("AO_DATA_DIR");
+    expect(AO_METADATA_HELPER).toContain("AO_SESSION");
+  });
+
+  it("validates trusted roots for path traversal prevention", () => {
+    expect(AO_METADATA_HELPER).toContain(".agent-orchestrator");
+    expect(AO_METADATA_HELPER).toContain("/tmp/*");
+  });
+});
+
+describe("GH_WRAPPER", () => {
+  it("contains PR discovery cache intercept", () => {
+    expect(GH_WRAPPER).toContain('$1" == "pr" && "$2" == "list"');
+    expect(GH_WRAPPER).toContain("pr-discovery-");
+    expect(GH_WRAPPER).toContain("ao_cache_fresh");
+    expect(GH_WRAPPER).toContain("ao_cache_read");
+  });
+
+  it("requires --head and --limit 1 for PR discovery cache", () => {
+    expect(GH_WRAPPER).toContain("_ao_head");
+    expect(GH_WRAPPER).toContain("_ao_limit");
+    expect(GH_WRAPPER).toContain('"$_ao_limit" == "1"');
+  });
+
+  it("does not cache empty PR discovery results", () => {
+    expect(GH_WRAPPER).toContain('"$_ao_trimmed" != "[]"');
+  });
+
+  it("passes through on unsupported flags for PR discovery", () => {
+    expect(GH_WRAPPER).toContain("--search");
+    expect(GH_WRAPPER).toContain("--state");
+    expect(GH_WRAPPER).toContain("--assignee");
+    expect(GH_WRAPPER).toContain("--label");
+    expect(GH_WRAPPER).toContain("--jq");
+    expect(GH_WRAPPER).toContain("--template");
+    expect(GH_WRAPPER).toContain("_ao_cacheable=false");
+  });
+
+  it("contains issue context cache intercept with 300s TTL", () => {
+    expect(GH_WRAPPER).toContain('$1" == "issue" && "$2" == "view"');
+    expect(GH_WRAPPER).toContain("issue-ctx-");
+    expect(GH_WRAPPER).toContain("ao_cache_fresh");
+    expect(GH_WRAPPER).toContain("300");
+  });
+
+  it("passes through on --web and --comments for issue view", () => {
+    expect(GH_WRAPPER).toContain("--web");
+    expect(GH_WRAPPER).toContain("--comments");
+  });
+
+  it("populates PR discovery cache after gh pr create", () => {
+    expect(GH_WRAPPER).toContain("pr/create)");
+    expect(GH_WRAPPER).toContain("read_ao_metadata branch");
+    expect(GH_WRAPPER).toContain("ao_cache_write");
+    expect(GH_WRAPPER).toContain("pr-discovery-");
+  });
+
+  it("still passes through unmatched commands", () => {
+    expect(GH_WRAPPER).toContain('exec "$real_gh" "$@"');
+  });
+
+  it("uses current wrapper version in trace logging", () => {
+    expect(GH_WRAPPER).toContain("0.4.0");
   });
 });

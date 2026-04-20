@@ -1,11 +1,13 @@
 /**
- * Shared PATH-based workspace hooks for agent plugins that don't have
- * native hook systems (Codex, Aider, OpenCode).
+ * Shared PATH-based workspace hooks for all agent plugins.
  *
- * Installs ~/.ao/bin/gh and ~/.ao/bin/git wrappers that intercept
- * PR creation and branch operations to auto-update session metadata.
+ * Installs ~/.ao/bin/gh and ~/.ao/bin/git wrappers that:
+ * - Intercept PR creation and branch operations to auto-update session metadata
+ * - Cache repeated read-only gh commands (PR discovery, issue context) to reduce
+ *   GitHub API traffic — see D4-wrapper-cache-plan.md for design
  *
- * Claude Code uses its own PostToolUse hook system instead.
+ * The session manager injects these wrappers into every agent's PATH,
+ * including Claude Code (which also has its own PostToolUse hooks for writes).
  */
 import { writeFile, mkdir, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
@@ -32,7 +34,7 @@ function getAoBinDir(): string {
 }
 
 /** Current version of wrapper scripts — bump when scripts change */
-const WRAPPER_VERSION = "0.3.2";
+const WRAPPER_VERSION = "0.4.0";
 
 // =============================================================================
 // PATH Builder
@@ -69,11 +71,33 @@ export function buildAgentPath(basePath: string | undefined): string {
 
 /**
  * Helper script sourced by both gh and git wrappers.
- * Provides update_ao_metadata() for writing key=value to the session file.
+ * Provides:
+ *   update_ao_metadata <key> <value>   — write key=value to session metadata
+ *   read_ao_metadata <key>             — read a value from session metadata
+ *   ao_cache_dir                       — print the per-session gh cache directory
+ *   ao_cache_fresh <key> <max_age>     — test if a cache entry is fresh (0 = infinite)
+ *   ao_cache_read <key>                — print cached stdout
+ *   ao_cache_write <key>               — write stdin to cache atomically
  */
 export const AO_METADATA_HELPER = `#!/usr/bin/env bash
 # ao-metadata-helper — shared by gh/git wrappers
-# Provides: update_ao_metadata <key> <value>
+# Provides: update_ao_metadata, read_ao_metadata, ao_cache_*
+
+# ── Shared validation ────────────────────────────────────────────────────────
+
+_ao_validate_env() {
+  local ao_dir="\${AO_DATA_DIR:-}"
+  local ao_session="\${AO_SESSION:-}"
+  [[ -z "\$ao_dir" || -z "\$ao_session" ]] && return 1
+  case "\$ao_session" in */* | *..*) return 1 ;; esac
+  case "\$ao_dir" in
+    "\$HOME"/.ao/* | "\$HOME"/.agent-orchestrator/* | /tmp/*) ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+# ── Metadata write ───────────────────────────────────────────────────────────
 
 update_ao_metadata() {
   local key="\$1" value="\$2"
@@ -131,15 +155,71 @@ update_ao_metadata() {
 
   mv "\$temp_file" "\$metadata_file"
 }
+
+# ── Metadata read ────────────────────────────────────────────────────────────
+
+read_ao_metadata() {
+  local key="\$1"
+  _ao_validate_env || return 1
+  local metadata_file="\${AO_DATA_DIR}/\${AO_SESSION}"
+  [[ -f "\$metadata_file" ]] || return 1
+  [[ "\$key" =~ ^[a-zA-Z0-9_-]+$ ]] || return 1
+  local line
+  line=\$(grep "^\${key}=" "\$metadata_file" 2>/dev/null | head -1) || return 1
+  printf '%s' "\${line#*=}"
+}
+
+# ── Cache helpers ────────────────────────────────────────────────────────────
+
+ao_cache_dir() {
+  _ao_validate_env || return 1
+  local d="\${AO_DATA_DIR}/.ghcache/\${AO_SESSION}"
+  mkdir -p "\$d" 2>/dev/null || return 1
+  printf '%s' "\$d"
+}
+
+ao_cache_fresh() {
+  local cache_key="\$1" max_age="\$2"
+  local cache_dir
+  cache_dir="\$(ao_cache_dir)" || return 1
+  local ts_file="\$cache_dir/\${cache_key}.ts"
+  local stdout_file="\$cache_dir/\${cache_key}.stdout"
+  [[ -f "\$stdout_file" && -f "\$ts_file" ]] || return 1
+  # max_age=0 means infinite TTL
+  [[ "\$max_age" -eq 0 ]] 2>/dev/null && return 0
+  local cached_ts now
+  cached_ts=\$(cat "\$ts_file" 2>/dev/null) || return 1
+  now=\$(date +%s)
+  (( now - cached_ts < max_age ))
+}
+
+ao_cache_read() {
+  local cache_key="\$1"
+  local cache_dir
+  cache_dir="\$(ao_cache_dir)" || return 1
+  cat "\$cache_dir/\${cache_key}.stdout"
+}
+
+ao_cache_write() {
+  local cache_key="\$1"
+  local cache_dir
+  cache_dir="\$(ao_cache_dir)" || return 1
+  local tmp="\$cache_dir/\${cache_key}.stdout.tmp.\$\$"
+  cat > "\$tmp" && mv "\$tmp" "\$cache_dir/\${cache_key}.stdout"
+  date +%s > "\$cache_dir/\${cache_key}.ts"
+}
 `;
 
 /**
- * gh wrapper — intercepts `gh pr create` to auto-update session metadata.
- * Merge/close state remains SCM-owned, so `gh pr merge` is not used to set
- * terminal session state directly.
+ * gh wrapper — intercepts agent-side gh calls for:
+ * 1. Caching repeated read-only commands (PR discovery, issue context)
+ * 2. Auto-updating session metadata on PR creation
+ *
+ * Cache storage: $AO_DATA_DIR/.ghcache/$AO_SESSION/{key}.stdout + {key}.ts
+ * See D4-wrapper-cache-plan.md for full design rationale.
  */
 export const GH_WRAPPER = `#!/usr/bin/env bash
-# ao gh wrapper — auto-updates session metadata on PR operations
+# ao gh wrapper — caches reads + auto-updates metadata on writes
 
 # Find real gh by removing our wrapper directory from PATH
 ao_bin_dir="\$(cd "\$(dirname "\$0")" && pwd)"
@@ -165,7 +245,7 @@ if [[ -z "\$real_gh" ]]; then
   exit 127
 fi
 
-# Source the metadata helper
+# Source the metadata helper (provides update/read_ao_metadata, ao_cache_*)
 source "\$ao_bin_dir/ao-metadata-helper.sh" 2>/dev/null || true
 
 # Best-effort JSONL tracing for agent-side gh invocations.
@@ -206,8 +286,102 @@ log_gh_invocation() {
 
 log_gh_invocation "\$@"
 
-# Only capture output for commands we need to parse (pr/create, pr/merge).
-# All other commands pass through transparently without stream merging.
+# =============================================================================
+# Cacheable reads
+# =============================================================================
+
+# ── 1. PR discovery: gh pr list --head <B> --limit 1 ────────────────────────
+# Infinite TTL for positive results (non-empty array). Never caches [].
+if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
+  _ao_head="" _ao_limit="" _ao_cacheable=true
+  _ao_saved_args=("\$@")
+  shift 2
+  while [[ \$# -gt 0 ]]; do
+    case "\$1" in
+      --head)     _ao_head="\$2"; shift 2 ;;
+      --limit)    _ao_limit="\$2"; shift 2 ;;
+      --repo|--json) shift 2 ;;  # consumed but not needed for cache key
+      --search|--state|--assignee|--label|--jq|--template)
+        _ao_cacheable=false; break ;;
+      -*)         shift ;;  # skip unknown flags
+      *)          shift ;;  # skip positional
+    esac
+  done
+  set -- "\${_ao_saved_args[@]}"
+
+  if [[ "\$_ao_cacheable" == true && "\$_ao_limit" == "1" && -n "\$_ao_head" ]]; then
+    _ao_safe_branch=\$(printf '%s' "\$_ao_head" | tr -c 'a-zA-Z0-9._-' '-')
+    _ao_cache_key="pr-discovery-\${_ao_safe_branch}"
+
+    if ao_cache_fresh "\$_ao_cache_key" 0 2>/dev/null; then
+      ao_cache_read "\$_ao_cache_key"
+      exit 0
+    fi
+
+    # Cache miss — call real gh, cache positive results
+    _ao_tmpout="\$(mktemp)"
+    trap 'rm -f "\$_ao_tmpout"' EXIT
+    "\$real_gh" "\$@" > "\$_ao_tmpout" 2>&1
+    _ao_exit=\$?
+    cat "\$_ao_tmpout"
+    if [[ \$_ao_exit -eq 0 ]]; then
+      _ao_out=\$(cat "\$_ao_tmpout")
+      _ao_trimmed=\$(printf '%s' "\$_ao_out" | tr -d '[:space:]')
+      # Only cache non-empty positive results
+      if [[ -n "\$_ao_trimmed" && "\$_ao_trimmed" != "[]" ]]; then
+        printf '%s' "\$_ao_out" | ao_cache_write "\$_ao_cache_key" 2>/dev/null || true
+      fi
+    fi
+    exit \$_ao_exit
+  fi
+fi
+
+# ── 2. Issue context: gh issue view <N> ─────────────────────────────────────
+# 300-second TTL. Caches any successful response.
+if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
+  _ao_issue_id="" _ao_cacheable=true
+  _ao_saved_args=("\$@")
+  shift 2
+  # First non-flag arg is the issue identifier
+  while [[ \$# -gt 0 ]]; do
+    case "\$1" in
+      --web|--comments|--jq|--template)
+        _ao_cacheable=false; break ;;
+      --repo|--json) shift 2 ;;
+      -*)           shift ;;
+      *)
+        if [[ -z "\$_ao_issue_id" && "\$1" =~ ^[0-9]+$ ]]; then
+          _ao_issue_id="\$1"
+        fi
+        shift ;;
+    esac
+  done
+  set -- "\${_ao_saved_args[@]}"
+
+  if [[ "\$_ao_cacheable" == true && -n "\$_ao_issue_id" ]]; then
+    _ao_cache_key="issue-ctx-\${_ao_issue_id}"
+
+    if ao_cache_fresh "\$_ao_cache_key" 300 2>/dev/null; then
+      ao_cache_read "\$_ao_cache_key"
+      exit 0
+    fi
+
+    _ao_tmpout="\$(mktemp)"
+    trap 'rm -f "\$_ao_tmpout"' EXIT
+    "\$real_gh" "\$@" > "\$_ao_tmpout" 2>&1
+    _ao_exit=\$?
+    cat "\$_ao_tmpout"
+    if [[ \$_ao_exit -eq 0 ]]; then
+      cat "\$_ao_tmpout" | ao_cache_write "\$_ao_cache_key" 2>/dev/null || true
+    fi
+    exit \$_ao_exit
+  fi
+fi
+
+# =============================================================================
+# Write intercepts
+# =============================================================================
+
 case "\$1/\$2" in
   pr/create)
     tmpout="\$(mktemp)"
@@ -239,6 +413,20 @@ case "\$1/\$2" in
       update_ao_metadata agentReportedState "\$report_state"
       update_ao_metadata agentReportedAt "\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       update_ao_metadata agentReportedPrIsDraft "\$report_draft"
+
+      # Populate PR discovery cache so subsequent gh pr list --head hits cache
+      _branch="\$(read_ao_metadata branch 2>/dev/null)" || true
+      if [[ -n "\$_branch" && -n "\$pr_url" && -n "\$pr_number" ]]; then
+        _safe_branch=\$(printf '%s' "\$_branch" | tr -c 'a-zA-Z0-9._-' '-')
+        _cache_key="pr-discovery-\${_safe_branch}"
+        _cache_dir="\$(ao_cache_dir 2>/dev/null)" || true
+        if [[ -n "\$_cache_dir" ]]; then
+          _draft_val="\${report_draft:-false}"
+          printf '[{"number":%s,"url":"%s","headRefName":"%s","isDraft":%s}]\\n' \
+            "\$pr_number" "\$pr_url" "\$_branch" "\$_draft_val" \
+            | ao_cache_write "\$_cache_key" 2>/dev/null || true
+        fi
+      fi
     fi
 
     exit \$exit_code

@@ -25,6 +25,7 @@ import {
   existsSync,
   mkdirSync,
   unlinkSync,
+  rmSync,
   readdirSync,
   statSync,
   openSync,
@@ -275,6 +276,14 @@ export function deleteMetadata(dataDir: string, sessionId: SessionId, archive = 
   }
 
   unlinkSync(path);
+
+  // Clean up per-session gh cache directory (.ghcache/<sessionId>/)
+  const cachePath = join(dataDir, ".ghcache", sessionId);
+  try {
+    rmSync(cachePath, { recursive: true, force: true });
+  } catch {
+    /* best effort */
+  }
 }
 
 /**
