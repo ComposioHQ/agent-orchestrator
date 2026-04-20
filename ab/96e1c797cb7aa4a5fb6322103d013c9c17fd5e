@@ -1,0 +1,57 @@
+packages/web/src/components/AddProjectModal.tsx
+  6352dd9ef6f411e1 3-345
+packages/web/src/components/AddProjectModal.parts.tsx
+  6352dd9ef6f411e1 1-121
+packages/web/src/app/globals.css
+  6352dd9ef6f411e1 3848-4379
+packages/web/src/app/api/projects/route.ts
+  6352dd9ef6f411e1 1-9,11,15-36,48-96
+packages/web/src/__tests__/projects-route.test.ts
+  6352dd9ef6f411e1 1-95
+packages/web/src/components/__tests__/ProjectSidebar.test.tsx
+  6352dd9ef6f411e1 2,110-132
+packages/web/src/components/__tests__/AddProjectModal.test.tsx
+  6352dd9ef6f411e1 1-113
+packages/web/src/lib/format.ts
+  6352dd9ef6f411e1 68-85
+packages/web/src/lib/services.ts
+  6352dd9ef6f411e1 73-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "ab96e1c797cb7aa4a5fb6322103d013c9c17fd5e",
+  "prompts": {
+    "37f5a8007dcaffa5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "25cbc6fa-ee69-4403-9045-7ec0600f07ee",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 1,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "6352dd9ef6f411e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019da6ff-4ca3-79d3-a856-c1bd769e84ab",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1193,
+      "total_deletions": 867,
+      "accepted_lines": 1044,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e1aac9baf373c4": {
+      "author": "Ashish Huddar"
+    }
+  }
+}
