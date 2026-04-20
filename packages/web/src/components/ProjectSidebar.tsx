@@ -298,9 +298,14 @@ function ProjectSidebarInner({
             const visibleSessions = workerSessions;
             const hasActiveSessions = visibleSessions.length > 0;
 
-            const orchestratorSession = sessions?.find(
-              (s) => isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes) && s.projectId === project.id
-            );
+            const orchestratorSession = sessions
+              ?.filter(
+                (s) => isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes) && s.projectId === project.id
+              )
+              .sort((a, b) =>
+                // Pick the most recently active orchestrator, not the lexicographically first (#1362)
+                new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime()
+              )[0] ?? null;
 
             return (
               <div key={project.id} className="project-sidebar__project">

@@ -386,9 +386,10 @@ describe("API Routes", () => {
       const data = await res.json();
 
       expect(data.orchestratorId).toBe("my-app-orchestrator-2");
+      // Sorted by recency (most recent first) — not lexicographic (#1362)
       expect(data.orchestrators.map((session: { id: string }) => session.id)).toEqual([
-        "my-app-orchestrator-1",
         "my-app-orchestrator-2",
+        "my-app-orchestrator-1",
       ]);
       expect(data.sessions).toEqual([]);
       expect(mockSessionManager.listCached).toHaveBeenCalledWith("my-app");
@@ -476,9 +477,10 @@ describe("API Routes", () => {
       const data = await res.json();
 
       expect(data.orchestratorId).toBe("my-app-orchestrator-9");
+      // Sorted by recency (most recent first) — not lexicographic (#1362)
       expect(data.orchestrators).toEqual([
-        { id: "my-app-orchestrator-0", projectId: "my-app", projectName: "My App" },
         { id: "my-app-orchestrator-9", projectId: "my-app", projectName: "My App" },
+        { id: "my-app-orchestrator-0", projectId: "my-app", projectName: "My App" },
       ]);
       expect(data.sessions).toEqual([]);
     });

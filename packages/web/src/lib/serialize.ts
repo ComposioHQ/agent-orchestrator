@@ -212,12 +212,22 @@ export function listDashboardOrchestrators(
         allSessionPrefixes,
       ),
     )
+    .sort((a, b) => {
+      const projectA = projects[a.projectId]?.name ?? a.projectId;
+      const projectB = projects[b.projectId]?.name ?? b.projectId;
+      // Group by project name, then sort by recency (most recent first)
+      // so that .find() for a given project returns the most recently active one (#1362)
+      return (
+        projectA.localeCompare(projectB) ||
+        (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0) ||
+        (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0)
+      );
+    })
     .map((session) => ({
       id: session.id,
       projectId: session.projectId,
       projectName: projects[session.projectId]?.name ?? session.projectId,
-    }))
-    .sort((a, b) => a.projectName.localeCompare(b.projectName) || a.id.localeCompare(b.id));
+    }));
 }
 
 /**
