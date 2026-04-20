@@ -18,18 +18,16 @@ import {
   parsePRState,
   extractPREnrichment,
   clearETagCache,
-  getPRResourceETag,
+  getPRListETag,
   getCommitStatusETag,
-  setPRResourceETag,
+  setPRListETag,
   setCommitStatusETag,
   setPRMetadata,
   getPRMetadataCache,
   clearPRMetadataCache,
   shouldRefreshPREnrichment,
-  updatePRMetadataCache,
   setExecFileAsync,
 } from "../src/graphql-batch.js";
-import type { PREnrichmentData } from "@aoagents/ao-core";
 
 // Mock execFile using the injection function
 // Create a mock function that returns a promise matching the execFile signature
@@ -735,11 +733,11 @@ describe("ETag Cache", () => {
   });
 
   describe("ETag Cache Getters (Testing Exposed APIs)", () => {
-    it("should return undefined for PR resource ETag not in cache", () => {
+    it("should return undefined for PR list ETag not in cache", () => {
       const owner = "testowner";
       const repo = "testrepo";
 
-      expect(getPRResourceETag(owner, repo, 123)).toBeUndefined();
+      expect(getPRListETag(owner, repo)).toBeUndefined();
     });
 
     it("should return undefined for commit status ETag not in cache", () => {
@@ -813,49 +811,40 @@ describe("ETag Cache", () => {
 });
 
 describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
-  // Shared test enrichment data for populating caches
-  const testEnrichment: PREnrichmentData = {
-    state: "open",
-    ciStatus: "passing",
-    reviewDecision: "none",
-    mergeable: true,
-    hasConflicts: false,
-    isBehind: false,
-    blockers: [],
-  };
-
-  const makePR = (owner: string, repo: string, number: number) => ({
-    owner,
-    repo,
-    number,
-    url: `https://github.com/${owner}/${repo}/pull/${number}`,
-    title: `Test PR ${number}`,
-    branch: `feature-${number}`,
-    baseBranch: "main",
-    isDraft: false,
-  });
-
   beforeEach(() => {
     clearETagCache();
     clearPRMetadataCache();
+    // Don't clear all mocks - reset only our mock call counts
     mockExecFileImpl.mockClear();
   });
 
   describe("Empty PRs", () => {
-    it("should return empty plan when no PRs provided", async () => {
+    it("should not refresh when no PRs provided", async () => {
       const result = await shouldRefreshPREnrichment([]);
 
-      expect(result.prsToRefresh).toHaveLength(0);
-      expect(result.cachedResults.size).toBe(0);
+      expect(result.shouldRefresh).toBe(false);
       expect(result.details).toContain("No PRs to check");
+      // Should not make any API calls
       expect(mockExecFileImpl).not.toHaveBeenCalled();
     });
   });
 
-  describe("Guard 1: PR Resource ETag - First-time PR (no cache)", () => {
-    it("should refresh when PR resource ETag returns 200 (first time)", async () => {
-      const prs = [makePR("owner", "repo", 123)];
+  describe("Guard 1: PR List ETag - First-time PR (no cache)", () => {
+    it("should refresh when PR list ETag check returns 200 (first time)", async () => {
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
 
+      // Mock gh CLI response for PR list check (200 OK, not 304)
       mockExecFileImpl.mockResolvedValueOnce({
         stdout: 'HTTP/2 200\neTag: "abc123"',
         stderr: "",
@@ -863,182 +852,323 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
 
       const result = await shouldRefreshPREnrichment(prs);
 
-      expect(result.prsToRefresh).toHaveLength(1);
-      expect(result.prsToRefresh[0].number).toBe(123);
-      expect(result.cachedResults.size).toBe(0);
-      expect(result.details).toContain("PR resource changed for owner/repo#123 (Guard 1)");
+      expect(result.shouldRefresh).toBe(true);
+      expect(result.details).toContain("PR list changed for owner/repo (Guard 1)");
       expect(mockExecFileImpl).toHaveBeenCalledTimes(1);
     });
 
-    it("should serve from cache when Guard 1 returns 304 and cache is populated", async () => {
-      const prs = [makePR("owner", "repo", 123)];
+    it("should not refresh when PR list ETag returns 304 Not Modified", async () => {
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
 
-      // Populate both metadata and enrichment caches
-      updatePRMetadataCache("owner/repo#123", testEnrichment, "abc123");
-
-      // Guard 1: 304, Guard 2: 304
-      mockExecFileImpl
-        .mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" })
-        .mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" });
-
-      const result = await shouldRefreshPREnrichment(prs);
-
-      expect(result.prsToRefresh).toHaveLength(0);
-      expect(result.cachedResults.size).toBe(1);
-      expect(result.cachedResults.has("owner/repo#123")).toBe(true);
-      expect(mockExecFileImpl).toHaveBeenCalledTimes(2); // Guard 1 + Guard 2
-    });
-
-    it("should refresh when Guard 1 returns 304 but no enrichment cache exists", async () => {
-      const prs = [makePR("owner", "repo", 123)];
-
-      // Only metadata cache, no enrichment cache
-      setPRMetadata("owner/repo#123", { headSha: "abc123", ciStatus: "passing" as const });
-
-      mockExecFileImpl.mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" });
+      // Mock gh CLI response for PR list check (304 Not Modified)
+      mockExecFileImpl.mockResolvedValueOnce({
+        stdout: 'HTTP/2 304',
+        stderr: "",
+      });
 
       const result = await shouldRefreshPREnrichment(prs);
 
-      expect(result.prsToRefresh).toHaveLength(1);
-      expect(result.details).toContain("No cached data for owner/repo#123 (Guard 1: 304 but cache miss)");
-      expect(mockExecFileImpl).toHaveBeenCalledTimes(1); // Only Guard 1, no Guard 2
+      expect(result.shouldRefresh).toBe(false);
+      // When no changes detected, details may be empty (only changes add to details)
+      expect(result.details).toHaveLength(0);
     });
 
     it("should refresh on error and log warning", async () => {
-      const prs = [makePR("owner", "repo", 123)];
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
 
+      // Mock gh CLI error
       const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       mockExecFileImpl.mockRejectedValueOnce(new Error("gh CLI failed"));
 
       const result = await shouldRefreshPREnrichment(prs);
 
-      expect(result.prsToRefresh).toHaveLength(1);
+      expect(result.shouldRefresh).toBe(true); // Fail-safe: assume changed on error
       expect(consoleWarnSpy).toHaveBeenCalled();
       consoleWarnSpy.mockRestore();
     });
   });
 
-  describe("Guard 2: Commit Status ETag", () => {
-    it("should refresh when commit status ETag returns 200", async () => {
-      updatePRMetadataCache("owner/repo#123", testEnrichment, "abc123");
-      const prs = [makePR("owner", "repo", 123)];
+  describe("Guard 2: Commit Status ETag - Pending CI PRs", () => {
+    it("should refresh when commit status ETag check returns 200", async () => {
+      // Set up cached PR with pending CI
+      setPRMetadata("owner/repo#123", { headSha: "abc123", ciStatus: "pending" });
 
-      // Guard 1: 304, Guard 2: 200
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      // Mock: Guard 1 returns 304 (no change), Guard 2 returns 200 (CI changed)
       mockExecFileImpl
-        .mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" })
-        .mockResolvedValueOnce({ stdout: 'HTTP/2 200\neTag: "xyz789"', stderr: "" });
+        .mockResolvedValueOnce({
+          stdout: 'HTTP/2 304', // Guard 1: no change
+          stderr: "",
+        })
+        .mockResolvedValueOnce({
+          stdout: 'HTTP/2 200\neTag: "xyz789"', // Guard 2: CI changed
+          stderr: "",
+        });
 
       const result = await shouldRefreshPREnrichment(prs);
 
-      expect(result.prsToRefresh).toHaveLength(1);
-      expect(result.cachedResults.size).toBe(0);
+      expect(result.shouldRefresh).toBe(true);
       expect(result.details).toContain("CI status changed for owner/repo#123 (Guard 2)");
       expect(mockExecFileImpl).toHaveBeenCalledTimes(2);
     });
 
-    it("should serve from cache when both guards return 304", async () => {
-      updatePRMetadataCache("owner/repo#123", testEnrichment, "abc123");
-      const prs = [makePR("owner", "repo", 123)];
+    it("should not refresh when commit status ETag returns 304", async () => {
+      // Set up cached PR with pending CI
+      setPRMetadata("owner/repo#123", { headSha: "abc123", ciStatus: "pending" });
 
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      // Mock both guards return 304 (no change)
       mockExecFileImpl
-        .mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" })
-        .mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" });
+        .mockResolvedValueOnce({
+          stdout: 'HTTP/2 304',
+          stderr: "",
+        })
+        .mockResolvedValueOnce({
+          stdout: 'HTTP/2 304',
+          stderr: "",
+        });
 
       const result = await shouldRefreshPREnrichment(prs);
 
-      expect(result.prsToRefresh).toHaveLength(0);
-      expect(result.cachedResults.size).toBe(1);
+      expect(result.shouldRefresh).toBe(false);
       expect(mockExecFileImpl).toHaveBeenCalledTimes(2);
     });
 
-    it("should refresh when PR has null headSha (incomplete cache)", async () => {
-      // headSha null → cache miss even though metadata exists
-      setPRMetadata("owner/repo#123", { headSha: null, ciStatus: "pending" as const });
-      const prs = [makePR("owner", "repo", 123)];
+    it("should check Guard 2 for ALL PRs with cached metadata", async () => {
+      // Set up cached PR with passing CI (not pending) - still should be checked
+      setPRMetadata("owner/repo#123", { headSha: "abc123", ciStatus: "passing" });
 
-      mockExecFileImpl.mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" });
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      // Mock both guards return 304 (no change)
+      mockExecFileImpl
+        .mockResolvedValueOnce({
+          stdout: 'HTTP/2 304',
+          stderr: "",
+        })
+        .mockResolvedValueOnce({
+          stdout: 'HTTP/2 304',
+          stderr: "",
+        });
 
       const result = await shouldRefreshPREnrichment(prs);
 
-      expect(result.prsToRefresh).toHaveLength(1);
-      expect(result.details).toContain("No cached data for owner/repo#123 (Guard 1: 304 but cache miss)");
+      expect(result.shouldRefresh).toBe(false);
+      expect(mockExecFileImpl).toHaveBeenCalledTimes(2); // Guard 1 + Guard 2 called
+    });
+
+    it("should refresh when PR has no cached head SHA", async () => {
+      // Set up cached PR with null head SHA (incomplete cache)
+      setPRMetadata("owner/repo#123", { headSha: null, ciStatus: "pending" });
+
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      // Mock Guard 1 (PR list check)
+      mockExecFileImpl.mockResolvedValueOnce({
+        stdout: 'HTTP/2 304',
+        stderr: "",
+      });
+
+      const result = await shouldRefreshPREnrichment(prs);
+
+      expect(result.shouldRefresh).toBe(true);
+      expect(result.details).toContain("First time seeing PR #123 (Guard 2: no cached head SHA)");
+      // Guard 1 called for PR list, Guard 2 skipped (no head SHA to check)
       expect(mockExecFileImpl).toHaveBeenCalledTimes(1);
     });
   });
 
-  describe("Multiple PRs", () => {
-    it("should check PR resource ETag for each PR individually", async () => {
-      const prs = [makePR("owner1", "repo1", 1), makePR("owner2", "repo2", 2)];
+  describe("Multiple Repositories", () => {
+    it("should check PR list ETag for each repository", async () => {
+      const prs = [
+        {
+          owner: "owner1",
+          repo: "repo1",
+          number: 1,
+          url: "https://github.com/owner1/repo1/pull/1",
+          title: "Test PR 1",
+          branch: "feature1",
+          baseBranch: "main",
+          isDraft: false,
+        },
+        {
+          owner: "owner2",
+          repo: "repo2",
+          number: 2,
+          url: "https://github.com/owner2/repo2/pull/2",
+          title: "Test PR 2",
+          branch: "feature2",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
 
-      // Both PRs changed
+      // With new behavior: ALL PRs with cached metadata get Guard 2 checked
+      // Add metadata for both PRs to validate Guard 2 is called
+      setPRMetadata("owner1/repo1#1", { headSha: "sha1", ciStatus: "passing" });
+      setPRMetadata("owner2/repo2#2", { headSha: "sha2", ciStatus: "pending" });
+
+      // Both repos changed - Guard 1 calls
       mockExecFileImpl
-        .mockResolvedValueOnce({ stdout: "HTTP/2 200", stderr: "" })
-        .mockResolvedValueOnce({ stdout: "HTTP/2 200", stderr: "" });
+        .mockResolvedValueOnce({
+          stdout: 'HTTP/2 200',
+          stderr: "",
+        })
+        .mockResolvedValueOnce({
+          stdout: 'HTTP/2 200',
+          stderr: "",
+        });
 
       const result = await shouldRefreshPREnrichment(prs);
 
-      expect(result.prsToRefresh).toHaveLength(2);
-      expect(result.details).toContain("PR resource changed for owner1/repo1#1 (Guard 1)");
-      expect(result.details).toContain("PR resource changed for owner2/repo2#2 (Guard 1)");
+      expect(result.shouldRefresh).toBe(true);
+      // Guard 1 adds 2 details (one per repo), Guard 2 skipped (304 = no change, no detail)
+      expect(result.details).toHaveLength(2);
+      expect(result.details).toContain("PR list changed for owner1/repo1 (Guard 1)");
+      expect(result.details).toContain("PR list changed for owner2/repo2 (Guard 1)");
+      // 2 Guard 1 calls only (Guard 2 calls return 304, no details added)
       expect(mockExecFileImpl).toHaveBeenCalledTimes(2);
-    });
-
-    it("should refresh only the changed PR when one returns 200 and another 304", async () => {
-      // Both PRs have cached enrichment
-      updatePRMetadataCache("owner/repo#1", testEnrichment, "sha1");
-      updatePRMetadataCache("owner/repo#2", testEnrichment, "sha2");
-      setCommitStatusETag("owner", "repo", "sha2", "commit-etag-2");
-
-      const prs = [makePR("owner", "repo", 1), makePR("owner", "repo", 2)];
-
-      mockExecFileImpl
-        .mockResolvedValueOnce({ stdout: 'HTTP/2 200\netag: "new"', stderr: "" })  // Guard 1 PR#1: changed
-        .mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" })               // Guard 1 PR#2: unchanged
-        .mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" });              // Guard 2 PR#2: CI unchanged
-
-      const result = await shouldRefreshPREnrichment(prs);
-
-      expect(result.prsToRefresh).toHaveLength(1);
-      expect(result.prsToRefresh[0].number).toBe(1);
-      expect(result.cachedResults.size).toBe(1);
-      expect(result.cachedResults.has("owner/repo#2")).toBe(true);
     });
   });
 
   describe("If-None-Match Header", () => {
     it("should send If-None-Match header with cached ETag", async () => {
-      const prs = [makePR("owner", "repo", 123)];
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
 
-      // First call — cache miss, returns new ETag
+      // First call - cache miss, returns new ETag
       mockExecFileImpl.mockResolvedValueOnce({
         stdout: 'HTTP/2 200\netag: "cached-etag"',
         stderr: "",
       });
 
       const result1 = await shouldRefreshPREnrichment(prs);
-      expect(result1.prsToRefresh).toHaveLength(1);
+      expect(result1.shouldRefresh).toBe(true);
 
-      // Populate caches after first poll
-      updatePRMetadataCache("owner/repo#123", testEnrichment, "abc123");
-      setPRResourceETag("owner", "repo", 123, "cached-etag");
+      // Cache metadata and ETags after first poll so Guard 2 has data for second poll
+      setPRMetadata("owner/repo#123", { headSha: "abc123", ciStatus: "passing" });
+      setPRListETag("owner", "repo", "cached-etag");
       setCommitStatusETag("owner", "repo", "abc123", "commit-status-etag");
 
-      // Second call — should use cached ETag in If-None-Match
+      // Second call - should use cached ETag in If-None-Match headers (Guard 1 + Guard 2)
       mockExecFileImpl
-        .mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" })
-        .mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" });
+        .mockResolvedValueOnce({
+          stdout: 'HTTP/2 304',
+          stderr: "",
+        })
+        .mockResolvedValueOnce({
+          stdout: 'HTTP/2 304',
+          stderr: "",
+        });
 
       const result2 = await shouldRefreshPREnrichment(prs);
-      expect(result2.prsToRefresh).toHaveLength(0);
-      expect(result2.cachedResults.size).toBe(1);
+      expect(result2.shouldRefresh).toBe(false);
+
+      // Cache metadata after first poll so Guard 2 has data for second poll
+      setPRMetadata("owner/repo#123", { headSha: "abc123", ciStatus: "passing" });
+
+      // Second poll - should use cached ETag in If-None-Match headers (Guard 1 + Guard 2)
+      mockExecFileImpl
+        .mockResolvedValueOnce({
+          stdout: 'HTTP/2 304',
+          stderr: "",
+        })
+        .mockResolvedValueOnce({
+          stdout: 'HTTP/2 304',
+          stderr: "",
+        });
+
+      const result3 = await shouldRefreshPREnrichment(prs);
+      expect(result3.shouldRefresh).toBe(false);
 
       // Verify the second poll included If-None-Match headers
+      // Get all call arguments and find those with -H flag
       const allCalls = mockExecFileImpl.mock.calls;
+      // Second poll has 2 calls: Guard 1 (index 1) and Guard 2 (index 2)
       const secondPollCalls = allCalls.slice(1, 3);
+      // Mock call format: [file, args, options], so check call[1] for args
       const callsWithHeader = secondPollCalls.filter((call) =>
         Array.isArray(call) && call[1] && call[1].includes("-H")
       );
-      expect(callsWithHeader).toHaveLength(2); // Guard 1 + Guard 2
+      expect(callsWithHeader).toHaveLength(2); // Both Guard 1 and Guard 2
     });
   });
 });
