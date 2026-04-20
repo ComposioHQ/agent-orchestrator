@@ -197,6 +197,43 @@ describe("ProjectSidebar", () => {
     expect(screen.queryByText("Orchestrator")).not.toBeInTheDocument();
   });
 
+  it("prefers live orchestrator over more-recent terminal one (#1362)", () => {
+    render(
+      <ProjectSidebar
+        projects={[{ id: "project-1", name: "Project One", sessionPrefix: "project-1" }]}
+        sessions={[
+          // Killed orchestrator — more recent activity
+          makeSession({
+            id: "project-1-orchestrator-2",
+            projectId: "project-1",
+            summary: "Orchestrator 2 (killed)",
+            status: "killed",
+            activity: "exited",
+            lastActivityAt: "2026-04-20T12:00:00Z",
+          }),
+          // Live orchestrator — older activity
+          makeSession({
+            id: "project-1-orchestrator-1",
+            projectId: "project-1",
+            summary: "Orchestrator 1 (live)",
+            status: "working",
+            activity: "active",
+            lastActivityAt: "2026-04-20T10:00:00Z",
+          }),
+        ]}
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+      />,
+    );
+
+    const orchestratorLink = screen.getByRole("link", { name: /Open Project One orchestrator/ });
+    // Should link to the live orchestrator, not the killed one with newer activity
+    expect(orchestratorLink).toHaveAttribute(
+      "href",
+      `/sessions/project-1-orchestrator-1?project=project-1`,
+    );
+  });
+
   it("renders the collapsed rail when collapsed", () => {
     const { container } = render(
       <ProjectSidebar

@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
 import type { ProjectInfo } from "@/lib/project-name";
-import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@/lib/types";
+import { getAttentionLevel, TERMINAL_STATUSES, type DashboardSession, type AttentionLevel } from "@/lib/types";
 import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { getSessionTitle, humanizeBranch } from "@/lib/format";
 import { usePopoverClamp } from "@/hooks/usePopoverClamp";
@@ -298,14 +298,18 @@ function ProjectSidebarInner({
             const visibleSessions = workerSessions;
             const hasActiveSessions = visibleSessions.length > 0;
 
-            const orchestratorSession = sessions
+            const allOrchestrators = sessions
               ?.filter(
                 (s) => isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes) && s.projectId === project.id
               )
               .sort((a, b) =>
                 // Pick the most recently active orchestrator, not the lexicographically first (#1362)
-                new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime()
-              )[0] ?? null;
+                new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime() ||
+                a.id.localeCompare(b.id)
+              ) ?? [];
+            // Prefer live (non-terminal) orchestrators; fall back to any if all are dead
+            const liveOrchestrators = allOrchestrators.filter((s) => !TERMINAL_STATUSES.has(s.status));
+            const orchestratorSession = (liveOrchestrators.length > 0 ? liveOrchestrators : allOrchestrators)[0] ?? null;
 
             return (
               <div key={project.id} className="project-sidebar__project">

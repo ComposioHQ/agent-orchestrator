@@ -220,7 +220,8 @@ export function listDashboardOrchestrators(
       return (
         projectA.localeCompare(projectB) ||
         (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0) ||
-        (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0)
+        (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0) ||
+        a.id.localeCompare(b.id)
       );
     })
     .map((session) => ({
