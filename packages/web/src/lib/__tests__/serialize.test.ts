@@ -1283,6 +1283,32 @@ describe("listDashboardOrchestrators (issue #1048)", () => {
     });
   });
 
+  it("prefers live orchestrators over more-recent terminal ones within a project (#1362)", () => {
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "app-orchestrator-2",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date("2026-04-20T12:00:00Z"),
+      }),
+      createCoreSession({
+        id: "app-orchestrator-1",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date("2026-04-20T10:00:00Z"),
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(2);
+    // Live orchestrator should come first despite older activity
+    expect(result[0].id).toBe("app-orchestrator-1");
+    expect(result[1].id).toBe("app-orchestrator-2");
+  });
+
   it("still includes legacy bare records when they have explicit role metadata", () => {
     // When `role: orchestrator` is explicitly stamped on a record,
     // `isOrchestratorSession` honors it unconditionally — the id shape check

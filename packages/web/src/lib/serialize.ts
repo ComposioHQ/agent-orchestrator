@@ -9,6 +9,7 @@ import "server-only";
 
 import {
   isOrchestratorSession,
+  TERMINAL_STATUSES,
   type Session,
   type Agent,
   type SCM,
@@ -215,10 +216,13 @@ export function listDashboardOrchestrators(
     .sort((a, b) => {
       const projectA = projects[a.projectId]?.name ?? a.projectId;
       const projectB = projects[b.projectId]?.name ?? b.projectId;
-      // Group by project name, then sort by recency (most recent first)
-      // so that .find() for a given project returns the most recently active one (#1362)
+      // Group by project name, prefer live (non-terminal) over dead, then sort
+      // by recency so that .find() for a given project returns the best one (#1362)
+      const aTerminal = TERMINAL_STATUSES.has(a.status) ? 1 : 0;
+      const bTerminal = TERMINAL_STATUSES.has(b.status) ? 1 : 0;
       return (
         projectA.localeCompare(projectB) ||
+        aTerminal - bTerminal ||
         (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0) ||
         (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0) ||
         a.id.localeCompare(b.id)
