@@ -256,6 +256,15 @@ function primaryLifecycleReason(lifecycle: CanonicalSessionLifecycle): string {
   return lifecycle.session.reason;
 }
 
+function synthesizeKillReason(lifecycle: CanonicalSessionLifecycle): string {
+  const reasons: string[] = [];
+  if (lifecycle.session.reason) reasons.push(lifecycle.session.reason);
+  if (lifecycle.runtime.reason && lifecycle.runtime.reason !== "process_running") {
+    reasons.push(lifecycle.runtime.reason);
+  }
+  return reasons.length > 0 ? reasons.join("; ") : "unknown";
+}
+
 function buildTransitionObservabilityData(
   previous: CanonicalSessionLifecycle,
   next: CanonicalSessionLifecycle,
@@ -293,12 +302,7 @@ function buildTransitionObservabilityData(
   };
 
   if (newStatus === "killed") {
-    const reasons: string[] = [];
-    if (next.session.reason) reasons.push(next.session.reason);
-    if (next.runtime.reason && next.runtime.reason !== "process_running") {
-      reasons.push(next.runtime.reason);
-    }
-    data.killReason = reasons.length > 0 ? reasons.join("; ") : "unknown";
+    data.killReason = synthesizeKillReason(next);
     data.killSource = evidence;
   }
 
@@ -1785,7 +1789,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           const priority = inferPriority(eventType);
           const eventData: Record<string, unknown> = { oldStatus, newStatus };
           if (newStatus === "killed") {
-            eventData.killReason = primaryLifecycleReason(session.lifecycle);
+            eventData.killReason = synthesizeKillReason(session.lifecycle);
             eventData.evidence = assessment.evidence;
           }
           const event = createEvent(eventType, {
@@ -1793,7 +1797,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             projectId: session.projectId,
             message:
               newStatus === "killed"
-                ? `${session.id}: ${oldStatus} → killed (${primaryLifecycleReason(session.lifecycle)})`
+                ? `${session.id}: ${oldStatus} → killed (${synthesizeKillReason(session.lifecycle)})`
                 : `${session.id}: ${oldStatus} → ${newStatus}`,
             data: eventData,
           });

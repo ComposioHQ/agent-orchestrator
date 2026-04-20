@@ -459,6 +459,31 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
+  it("records killReason and killSource in observability data for killed transitions", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "idle" });
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("killed");
+
+    const summary = readObservabilitySummary(config);
+    const trace = summary.projects["my-app"]?.recentTraces.find(
+      (entry) => entry.operation === "lifecycle.transition" && entry.sessionId === "app-1",
+    );
+
+    expect(trace?.data).toMatchObject({
+      oldStatus: "working",
+      newStatus: "killed",
+      killReason: expect.stringContaining("runtime_lost"),
+      killSource: expect.stringContaining("runtime_dead"),
+    });
+  });
+
   it("detects killed state when getActivityState returns exited", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "exited" });
     vi.mocked(plugins.runtime.isAlive).mockResolvedValue(true);
@@ -1063,6 +1088,46 @@ describe("check (single session)", () => {
     expect(meta?.["statePayload"]).toContain('"state":"closed"');
     expect(meta?.["statePayload"]).toContain('"reason":"pr_closed_waiting_decision"');
     expect(notifier.notify).toHaveBeenCalledWith(expect.objectContaining({ type: "pr.closed" }));
+  });
+
+  it("emits session.killed notification with kill reason and evidence", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "idle" });
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
+    const notifier = createMockNotifier();
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      notifier,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+      registry,
+      configOverride: {
+        ...config,
+        notificationRouting: {
+          ...config.notificationRouting,
+          info: ["desktop"],
+        },
+      },
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("killed");
+
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "session.killed",
+        message: expect.stringContaining("killed"),
+        data: expect.objectContaining({
+          oldStatus: "working",
+          newStatus: "killed",
+          killReason: expect.stringContaining("runtime_lost"),
+          evidence: expect.any(String),
+        }),
+      }),
+    );
   });
 
   it("routes closed PR transitions through the pr-closed reaction key", async () => {

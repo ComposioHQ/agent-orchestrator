@@ -1030,7 +1030,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             const killReason = `${session.lifecycle.session.reason}; ${session.lifecycle.runtime.reason}`;
             session.status = "killed";
             observer.recordOperation({
-              metric: "lifecycle_poll",
+              metric: "kill",
               operation: "session.killed",
               outcome: "success",
               correlationId: createCorrelationId("session-killed"),
