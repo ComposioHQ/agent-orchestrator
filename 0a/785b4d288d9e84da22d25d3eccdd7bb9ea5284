@@ -1,0 +1,78 @@
+packages/web/src/components/__tests__/AddProjectModal.test.tsx
+  8ff7d7b24663bd48 53-70,89,102-149,177-214
+packages/web/src/__tests__/services.test.ts
+  dfbeeefdc3f3943a 5,20,39,57,85-86,132-139
+  8ff7d7b24663bd48 6,21-26,40,58,140-165
+packages/web/src/__tests__/projects-route.test.ts
+  dfbeeefdc3f3943a 79-106,304-332
+  8ff7d7b24663bd48 134-184
+packages/web/src/components/AddProjectModal.tsx
+  8ff7d7b24663bd48 28,50-51,125-126,132-135,139-151,156-166,206,212-213,218,221,263-264,269-272,339-355
+packages/web/src/app/api/projects/[id]/route.ts
+  dfbeeefdc3f3943a 1,13,170-180,182-191,193-202,205-206,209-213
+packages/web/src/app/api/projects/route.ts
+  8ff7d7b24663bd48 6-8,30-33,44-62,84,91-97,100
+packages/web/src/components/ProjectSettingsForm.tsx
+  8ff7d7b24663bd48 42-45,74
+packages/web/src/components/ProjectSidebar.tsx
+  8ff7d7b24663bd48 3,473,483,488,500
+packages/web/src/components/DegradedProjectState.tsx
+  8ff7d7b24663bd48 18-19
+packages/web/src/__tests__/project-detail-route.test.ts
+  dfbeeefdc3f3943a 77-78,82-135
+packages/web/src/lib/services.ts
+  8ff7d7b24663bd48 18,102,126-145
+packages/web/src/components/Dashboard.tsx
+  8ff7d7b24663bd48 4,483,504,741,746,773,778,780,786
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "0a785b4d288d9e84da22d25d3eccdd7bb9ea5284",
+  "prompts": {
+    "8ff7d7b24663bd48": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dac16-1437-7403-94bc-46935665e3ee",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 322,
+      "total_deletions": 30,
+      "accepted_lines": 322,
+      "overriden_lines": 0
+    },
+    "b7f2e1a29ab55353": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dab5d-199b-7d82-b411-d2f8b145eab3",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3439,
+      "overriden_lines": 0
+    },
+    "dfbeeefdc3f3943a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dabf9-e1db-7cd3-93d1-3c9ef3a8cb7e",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 78,
+      "total_deletions": 48,
+      "accepted_lines": 78,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e1aac9baf373c4": {
+      "author": "Ashish Huddar"
+    }
+  }
+}
