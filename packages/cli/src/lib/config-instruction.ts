@@ -91,6 +91,7 @@ projects:
       # projectKey: APP
       # baseUrl: https://acme.atlassian.net
       # email: engineer@acme.com
+      # issueTypeName: Task
       # jql: project = APP AND statusCategory != Done ORDER BY updated DESC
       # Linear-specific:
       # teamId: TEAM-123

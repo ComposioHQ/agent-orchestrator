@@ -21,10 +21,13 @@ projects:
       # Optional overrides:
       # baseUrl: https://acme.atlassian.net
       # email: engineer@acme.com
+      # issueTypeName: Bug
       # jql: project = APP AND statusCategory != Done ORDER BY updated DESC
 ```
 
 Notes:
 - `baseUrl` and `email` in `tracker:` override the environment values.
 - `listIssues()` uses `tracker.jql` when provided, otherwise it builds a query from `projectKey` and AO filters.
-- The plugin currently supports read paths only: fetch, inspect, prompt generation, and list/search.
+- `createIssue()` requires `projectKey` and creates Jira issues as `Task` by default, or `tracker.issueTypeName` when set.
+- `updateIssue()` supports state transitions, additive label updates with removals, comments, and best-effort assignee lookup.
+- Jira priorities are normalized to AO's 1-4 scale (`Highest`, `High`, `Medium`, `Low`).
