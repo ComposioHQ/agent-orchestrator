@@ -295,7 +295,7 @@ describe("runtime.destroy()", () => {
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
       1,
       "tmux",
-      ["list-panes", "-t", "destroy-test", "-F", "#{pane_tty}"],
+      ["list-panes", "-s", "-t", "destroy-test", "-F", "#{pane_tty}"],
       expectedTmuxOptions,
     );
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
@@ -306,47 +306,54 @@ describe("runtime.destroy()", () => {
     );
   });
 
-  it("terminates remaining pane processes after killing the tmux session", async () => {
+  it("snapshots pane processes before kill-session and only signals matching TTY PIDs", async () => {
     const runtime = create();
     const handle = makeHandle("destroy-test");
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
 
     mockExecFileCustom
-      .mockResolvedValueOnce({ stdout: "/dev/ttys004\n", stderr: "" })
-      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "/dev/ttys004\n/dev/ttys005\n/dev/ttys004\n", stderr: "" })
       .mockResolvedValueOnce({ stdout: "101\n102\n", stderr: "" })
-      .mockResolvedValueOnce({ stdout: "102\n", stderr: "" });
+      .mockResolvedValueOnce({ stdout: "201\n", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "ttys004\n", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "ttys004\n", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "ttys005\n", stderr: "" })
+      .mockRejectedValueOnce(new Error("process exited"))
+      .mockResolvedValueOnce({ stdout: "ttys004\n", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "ttys006\n", stderr: "" });
 
     await runtime.destroy(handle);
 
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
       1,
       "tmux",
-      ["list-panes", "-t", "destroy-test", "-F", "#{pane_tty}"],
+      ["list-panes", "-s", "-t", "destroy-test", "-F", "#{pane_tty}"],
       expectedTmuxOptions,
     );
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
       2,
-      "tmux",
-      ["kill-session", "-t", "destroy-test"],
+      "ps",
+      ["-t", "ttys004", "-o", "pid="],
       expectedTmuxOptions,
     );
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
       3,
       "ps",
-      ["-t", "ttys004", "-o", "pid="],
+      ["-t", "ttys005", "-o", "pid="],
       expectedTmuxOptions,
     );
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
       4,
-      "ps",
-      ["-t", "ttys004", "-o", "pid="],
+      "tmux",
+      ["kill-session", "-t", "destroy-test"],
       expectedTmuxOptions,
     );
 
     expect(killSpy).toHaveBeenNthCalledWith(1, 101, "SIGTERM");
     expect(killSpy).toHaveBeenNthCalledWith(2, 102, "SIGTERM");
-    expect(killSpy).toHaveBeenNthCalledWith(3, 102, "SIGKILL");
+    expect(killSpy).toHaveBeenNthCalledWith(3, 201, "SIGTERM");
+    expect(killSpy).toHaveBeenNthCalledWith(4, 102, "SIGKILL");
 
     killSpy.mockRestore();
   });

@@ -19,6 +19,11 @@ const execFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = 5_000;
 const PROCESS_CLEANUP_GRACE_MS = 1_000;
 
+interface ProcessSnapshot {
+  pid: number;
+  tty: string;
+}
+
 export const manifest = {
   name: "tmux",
   slot: "runtime" as const,
@@ -50,16 +55,12 @@ async function tmux(...args: string[]): Promise<string> {
   return stdout.trimEnd();
 }
 
-async function getPaneTTY(sessionName: string): Promise<string | null> {
+async function getPaneTTYs(sessionName: string): Promise<string[]> {
   try {
-    const output = await tmux("list-panes", "-t", sessionName, "-F", "#{pane_tty}");
-    const tty = output
-      .split("\n")
-      .map((line) => line.trim())
-      .find(Boolean);
-    return tty ?? null;
+    const output = await tmux("list-panes", "-s", "-t", sessionName, "-F", "#{pane_tty}");
+    return [...new Set(output.split("\n").map((line) => line.trim()).filter(Boolean))];
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -83,6 +84,23 @@ async function getProcessIdsForTTY(tty: string): Promise<number[]> {
   }
 }
 
+async function getTTYForPID(pid: number): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "ps",
+      ["-p", String(pid), "-o", "tty="],
+      { timeout: TMUX_COMMAND_TIMEOUT_MS },
+    );
+    const tty = stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean);
+    return tty ? normalizeTTY(tty) : null;
+  } catch {
+    return null;
+  }
+}
+
 function signalProcesses(pids: number[], signal: NodeJS.Signals): void {
   for (const pid of pids) {
     try {
@@ -93,8 +111,29 @@ function signalProcesses(pids: number[], signal: NodeJS.Signals): void {
   }
 }
 
-async function cleanupTTYProcesses(tty: string): Promise<void> {
-  let remaining = await getProcessIdsForTTY(tty);
+async function snapshotSessionProcesses(sessionName: string): Promise<ProcessSnapshot[]> {
+  const paneTTYs = await getPaneTTYs(sessionName);
+  const snapshots = await Promise.all(
+    paneTTYs.map(async (tty) => {
+      const normalizedTTY = normalizeTTY(tty);
+      const pids = await getProcessIdsForTTY(normalizedTTY);
+      return pids.map((pid) => ({ pid, tty: normalizedTTY }));
+    }),
+  );
+
+  return [...new Map(snapshots.flat().map((snapshot) => [snapshot.pid, snapshot])).values()];
+}
+
+async function getLiveSnapshotPIDs(snapshots: ProcessSnapshot[]): Promise<number[]> {
+  const livePIDs = await Promise.all(
+    snapshots.map(async ({ pid, tty }) => ((await getTTYForPID(pid)) === tty ? pid : null)),
+  );
+
+  return livePIDs.filter((pid): pid is number => pid !== null);
+}
+
+async function cleanupSnapshotProcesses(snapshots: ProcessSnapshot[]): Promise<void> {
+  let remaining = await getLiveSnapshotPIDs(snapshots);
   if (remaining.length === 0) {
     return;
   }
@@ -102,7 +141,7 @@ async function cleanupTTYProcesses(tty: string): Promise<void> {
   signalProcesses(remaining, "SIGTERM");
   await sleep(PROCESS_CLEANUP_GRACE_MS);
 
-  remaining = await getProcessIdsForTTY(tty);
+  remaining = await getLiveSnapshotPIDs(snapshots);
   if (remaining.length > 0) {
     signalProcesses(remaining, "SIGKILL");
   }
@@ -160,15 +199,15 @@ export function create(): Runtime {
     },
 
     async destroy(handle: RuntimeHandle): Promise<void> {
-      const paneTTY = await getPaneTTY(handle.id);
+      const processSnapshots = await snapshotSessionProcesses(handle.id);
       try {
         await tmux("kill-session", "-t", handle.id);
       } catch {
         // Session may already be dead — that's fine
       }
 
-      if (paneTTY) {
-        await cleanupTTYProcesses(paneTTY);
+      if (processSnapshots.length > 0) {
+        await cleanupSnapshotProcesses(processSnapshots);
       }
     },
 
