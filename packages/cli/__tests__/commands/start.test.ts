@@ -818,7 +818,7 @@ describe("start command — browser open waits for port", () => {
     // waitForPortAndOpen should have been called with orchestrator URL and AbortSignal
     expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
     const args = mockWaitForPortAndOpen.mock.calls[0];
-    expect(args[1]).toContain("/sessions/app-orchestrator-1");
+    expect(args[1]).toContain("/projects/my-app/sessions/app-orchestrator-1");
     expect(args[2]).toBeInstanceOf(AbortSignal);
     expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
       expect.objectContaining({ configPath: expect.any(String) }),
@@ -935,22 +935,24 @@ describe("start command — orchestrator session strategy display", () => {
       {
         id: "app-orchestrator",
         projectId: "my-app",
+        status: "working",
+        activity: "active",
         metadata: { role: "orchestrator" },
         lastActivityAt: new Date(),
         runtimeHandle: { id: "tmux-session-existing" },
       },
     ]);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator-2",
+      runtimeHandle: { id: "tmux-session-new" },
+    });
 
     await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
 
     const output = getLoggedOutput();
-    // When --no-dashboard is used, auto-selects the most recent orchestrator
-    // and shows ao session attach (not the dashboard selection message)
-    expect(output).toContain("ao session attach app-orchestrator");
-    expect(output).not.toContain("existing sessions found — select one in the dashboard");
-
-    // Should NOT spawn a new orchestrator when existing ones exist
-    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator");
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledTimes(1);
+    expect(output).toContain("ao session attach app-orchestrator-2");
   });
 
   it("navigates directly to session page when one existing orchestrator found with dashboard enabled", async () => {
@@ -974,27 +976,31 @@ describe("start command — orchestrator session strategy display", () => {
       {
         id: "app-orchestrator",
         projectId: "my-app",
+        status: "working",
+        activity: "active",
         metadata: { role: "orchestrator" },
         lastActivityAt: new Date(),
         runtimeHandle: { id: "tmux-session-existing" },
       },
     ]);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator-2",
+      runtimeHandle: { id: "tmux-session-new" },
+    });
 
     await program.parseAsync(["node", "test", "start"]);
 
     const output = getLoggedOutput();
-    // With one orchestrator and dashboard enabled, shows the session URL instead of tmux attach
-    expect(output).toContain("http://localhost:3000/sessions/app-orchestrator");
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator");
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledTimes(1);
+    expect(output).toContain("http://localhost:3000/projects/my-app/sessions/app-orchestrator-2");
     expect(output).not.toContain("tmux attach");
-    expect(output).not.toContain("multiple sessions found");
-    expect(output).not.toContain("select one in the dashboard");
-
-    // Should NOT spawn a new orchestrator when existing one exists
-    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
   });
 
-  it("opens orchestrator selection page when multiple existing orchestrators found with dashboard enabled", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+  it("opens orchestrator selection page when multiple existing orchestrators found with dashboard enabled and reuse is explicit", async () => {
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
 
     // Mock findWebDir
     const { findWebDir } = await import("../../src/lib/web-dir.js");
@@ -1014,6 +1020,8 @@ describe("start command — orchestrator session strategy display", () => {
       {
         id: "app-orchestrator-1",
         projectId: "my-app",
+        status: "working",
+        activity: "active",
         metadata: { role: "orchestrator" },
         lastActivityAt: new Date(now.getTime() - 1000),
         runtimeHandle: { id: "tmux-session-1" },
@@ -1021,6 +1029,8 @@ describe("start command — orchestrator session strategy display", () => {
       {
         id: "app-orchestrator-2",
         projectId: "my-app",
+        status: "working",
+        activity: "active",
         metadata: { role: "orchestrator" },
         lastActivityAt: now,
         runtimeHandle: { id: "tmux-session-2" },
@@ -1032,7 +1042,7 @@ describe("start command — orchestrator session strategy display", () => {
     const output = getLoggedOutput();
     // With multiple orchestrators, the CLI auto-selects the most recent and tells the user
     // how many other sessions are available so they can pick a different one in the dashboard.
-    expect(output).toContain("/sessions/app-orchestrator-2");
+    expect(output).toContain("/projects/my-app/sessions/app-orchestrator-2");
     expect(output).toContain("1 other session(s) available");
 
     // The browser auto-open should land on the dashboard's orchestrator-selection page
@@ -1050,7 +1060,9 @@ describe("start command — orchestrator session strategy display", () => {
   // must follow when deciding whether to reuse, restore, or spawn fresh.
 
   it("restores the most-recently-active killed orchestrator instead of spawning", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
 
     // Only orchestrator on disk is killed (its tmux pane was destroyed) but
     // still restorable — runStartup must call sm.restore() and reuse its id.
@@ -1129,7 +1141,9 @@ describe("start command — orchestrator session strategy display", () => {
     // but still-running one. sm.restore() would then spin up the killed
     // record while the live one kept running, leaving two orchestrators
     // alive. The fix prefers live unconditionally.
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
 
     const now = Date.now();
     mockSessionManager.list.mockResolvedValue([
@@ -1162,12 +1176,14 @@ describe("start command — orchestrator session strategy display", () => {
     expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
 
     const output = getLoggedOutput();
-    expect(output).toContain("/sessions/app-orchestrator-2");
-    expect(output).not.toContain("/sessions/app-orchestrator-3");
+    expect(output).toContain("/projects/my-app/sessions/app-orchestrator-2");
+    expect(output).not.toContain("/projects/my-app/sessions/app-orchestrator-3");
   });
 
   it("reuses the most-recently-active live orchestrator when multiple are running", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
 
     const now = Date.now();
     mockSessionManager.list.mockResolvedValue([
@@ -1233,7 +1249,9 @@ describe("start command — orchestrator session strategy display", () => {
   });
 
   it("fails and cleans up dashboard when sm.restore throws on a killed orchestrator", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
 
     const { findWebDir } = await import("../../src/lib/web-dir.js");
     vi.mocked(findWebDir).mockReturnValue(tmpDir);

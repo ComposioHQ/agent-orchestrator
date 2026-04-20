@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
+import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 
 export interface Orchestrator {
   id: string;
@@ -118,7 +119,7 @@ export function OrchestratorSelector({
       }
 
       const data = await response.json();
-      router.push(`/sessions/${data.orchestrator.id}`);
+      router.push(projectSessionPath(projectId, data.orchestrator.id));
     } catch (err) {
       setSpawnError(err instanceof Error ? err.message : "Failed to spawn orchestrator");
     } finally {
@@ -156,7 +157,7 @@ export function OrchestratorSelector({
             <p className="text-sm text-[var(--color-text-secondary)]">Select an orchestrator</p>
           </div>
           <Link
-            href={`/?project=${projectId}`}
+            href={projectDashboardPath(projectId)}
             className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
           >
             Dashboard
@@ -188,7 +189,7 @@ export function OrchestratorSelector({
               {orchestrators.map((orch) => (
                 <Link
                   key={orch.id}
-                  href={`/sessions/${orch.id}`}
+                  href={projectSessionPath(orch.projectId, orch.id)}
                   className={cn(
                     "flex items-center justify-between rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] p-4",
                     "transition-all hover:border-[var(--color-border-default)] hover:shadow-sm",

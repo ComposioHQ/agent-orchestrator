@@ -16,6 +16,7 @@ import dynamic from "next/dynamic";
 import { getSessionTitle } from "@/lib/format";
 import type { ProjectInfo } from "@/lib/project-name";
 import { SidebarContext } from "./workspace/SidebarContext";
+import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 
 import { ProjectSidebar } from "./ProjectSidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
@@ -396,7 +397,7 @@ export function SessionDetail({
   const reloadCommand = opencodeSessionId
     ? `/exit\nopencode --session ${opencodeSessionId}\n`
     : undefined;
-  const dashboardHref = session.projectId ? `/?project=${encodeURIComponent(session.projectId)}` : "/";
+  const dashboardHref = session.projectId ? projectDashboardPath(session.projectId) : "/";
   const crumbHref = dashboardHref;
   const crumbLabel = "Dashboard";
 
@@ -447,10 +448,10 @@ export function SessionDetail({
   const showHeaderProjectLabel =
     headerProjectLabel.trim().toLowerCase() !== "agent orchestrator";
   const orchestratorHref = useMemo(() => {
-    if (isOrchestrator) return `/sessions/${encodeURIComponent(session.id)}`;
+    if (isOrchestrator) return projectSessionPath(session.projectId, session.id);
     if (!projectOrchestratorId) return null;
-    return `/sessions/${encodeURIComponent(projectOrchestratorId)}`;
-  }, [isOrchestrator, projectOrchestratorId, session.id]);
+    return projectSessionPath(session.projectId, projectOrchestratorId);
+  }, [isOrchestrator, projectOrchestratorId, session.id, session.projectId]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setShowTerminal(true));

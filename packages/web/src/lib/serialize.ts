@@ -9,6 +9,7 @@ import "server-only";
 
 import {
   isOrchestratorSession,
+  isTerminalSession,
   type Session,
   type Agent,
   type SCM,
@@ -202,14 +203,47 @@ export function listDashboardOrchestrators(
   const allSessionPrefixes = Object.entries(projects).map(
     ([projectId, p]) => p.sessionPrefix ?? projectId,
   );
-  return sessions
-    .filter((session) =>
-      isOrchestratorSession(
+  const bestByProject = new Map<string, Session>();
+
+  for (const session of sessions) {
+    if (
+      !isOrchestratorSession(
         session,
         projects[session.projectId]?.sessionPrefix ?? session.projectId,
         allSessionPrefixes,
-      ),
-    )
+      )
+    ) {
+      continue;
+    }
+
+    const current = bestByProject.get(session.projectId);
+    if (!current) {
+      bestByProject.set(session.projectId, session);
+      continue;
+    }
+
+    const currentIsTerminal = isTerminalSession(current);
+    const candidateIsTerminal = isTerminalSession(session);
+    if (currentIsTerminal !== candidateIsTerminal) {
+      if (!candidateIsTerminal) {
+        bestByProject.set(session.projectId, session);
+      }
+      continue;
+    }
+
+    const currentActivity = current.lastActivityAt?.getTime() ?? current.createdAt?.getTime() ?? 0;
+    const candidateActivity = session.lastActivityAt?.getTime() ?? session.createdAt?.getTime() ?? 0;
+    if (candidateActivity > currentActivity) {
+      bestByProject.set(session.projectId, session);
+      continue;
+    }
+
+    if (candidateActivity === currentActivity && session.id.localeCompare(current.id) > 0) {
+      bestByProject.set(session.projectId, session);
+    }
+  }
+
+  return [...bestByProject.values()]
     .map((session) => ({
       id: session.id,
       projectId: session.projectId,

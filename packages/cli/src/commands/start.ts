@@ -71,6 +71,7 @@ import { applyOpenClawCredentials } from "../lib/credential-resolver.js";
 import { findProjectForDirectory } from "../lib/project-resolution.js";
 
 import { DEFAULT_PORT } from "../lib/constants.js";
+import { projectSessionUrl } from "../lib/routes.js";
 const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
 // =============================================================================
@@ -1015,7 +1016,7 @@ async function runStartup(
   let lifecycleStatus: Awaited<ReturnType<typeof ensureLifecycleWorker>> | null = null;
   let port = config.port ?? DEFAULT_PORT;
   const orchestratorSessionStrategy = normalizeOrchestratorSessionStrategy(
-    project.orchestratorSessionStrategy,
+    project.orchestratorSessionStrategy ?? "kill-previous",
   );
 
   console.log(chalk.bold(`\nStarting orchestrator for ${chalk.cyan(project.name)}\n`));
@@ -1142,7 +1143,7 @@ async function runStartup(
             .sort(byMostRecent)
             .map<OrchestratorCandidate>((session) => ({ session, mode: "restore" }));
 
-    if (candidates.length > 0) {
+    if (candidates.length > 0 && orchestratorSessionStrategy === "reuse") {
       const chosen = candidates[0];
       // Multiple candidates → CLI auto-picks the most recent, but the dashboard
       // surfaces all of them via the orchestrator-selection page. Only meaningful
@@ -1181,6 +1182,26 @@ async function runStartup(
         }
       }
     } else {
+      if (orchestratorSessionStrategy === "delete") {
+        const liveOrchestrators = orchestrators.filter((s) => !isTerminalSession(s));
+        for (const orchestrator of liveOrchestrators) {
+          try {
+            await sm.kill(orchestrator.id);
+          } catch (err) {
+            spinner.fail(`Failed to replace existing orchestrator: ${orchestrator.id}`);
+            if (dashboardProcess) {
+              dashboardProcess.kill();
+            }
+            throw new Error(
+              `Failed to kill existing orchestrator ${orchestrator.id}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+              { cause: err },
+            );
+          }
+        }
+      }
+
       // No reusable orchestrators — spawn a fresh numbered one.
       try {
         spinner.start("Creating orchestrator session");
@@ -1222,7 +1243,7 @@ async function runStartup(
       otherCandidateCount > 0 ? ` — ${otherCandidateCount} other session(s) available` : "";
     const target =
       opts?.dashboard !== false
-        ? `http://localhost:${port}/sessions/${selectedOrchestratorId}`
+        ? projectSessionUrl(port, projectId, selectedOrchestratorId)
         : `ao session attach ${selectedOrchestratorId}`;
 
     if (reused) {
@@ -1252,7 +1273,7 @@ async function runStartup(
     const orchestratorUrl = hasMultipleReusable
       ? `http://localhost:${port}/orchestrators?project=${projectId}`
       : selectedOrchestratorId
-        ? `http://localhost:${port}/sessions/${selectedOrchestratorId}`
+        ? projectSessionUrl(port, projectId, selectedOrchestratorId)
         : `http://localhost:${port}`;
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
   }

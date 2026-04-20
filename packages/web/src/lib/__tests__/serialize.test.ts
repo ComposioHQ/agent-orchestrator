@@ -1308,6 +1308,60 @@ describe("listDashboardOrchestrators (issue #1048)", () => {
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("my-app-orchestrator");
   });
+
+  it("prefers the live orchestrator over stale exited ones for the same project", () => {
+    const now = Date.now();
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "ao-orchestrator-9",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        lastActivityAt: new Date(now - 60_000),
+        metadata: { role: "orchestrator" },
+      }),
+      createCoreSession({
+        id: "ao-orchestrator-26",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        lastActivityAt: new Date(now),
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe("ao-orchestrator-26");
+  });
+
+  it("prefers the most recently active live orchestrator when multiple are running", () => {
+    const now = Date.now();
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "app-orchestrator-12",
+        projectId: "my-app",
+        status: "working",
+        activity: "idle",
+        lastActivityAt: new Date(now - 120_000),
+        metadata: { role: "orchestrator" },
+      }),
+      createCoreSession({
+        id: "app-orchestrator-13",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        lastActivityAt: new Date(now),
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe("app-orchestrator-13");
+  });
 });
 
 describe("basicPRToDashboard defaults", () => {

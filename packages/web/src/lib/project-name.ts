@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cache } from "react";
-import { loadConfig } from "@aoagents/ao-core";
+import { getGlobalConfigPath, loadConfig } from "@aoagents/ao-core";
 
 export interface ProjectInfo {
   id: string;
@@ -12,7 +12,7 @@ export interface ProjectInfo {
 
 export const getProjectName = cache((): string => {
   try {
-    const config = loadConfig();
+    const config = loadConfig(getGlobalConfigPath());
     const firstKey = Object.keys(config.projects)[0];
     if (firstKey) {
       const name = config.projects[firstKey].name ?? firstKey;
@@ -26,7 +26,7 @@ export const getProjectName = cache((): string => {
 
 export const getPrimaryProjectId = cache((): string => {
   try {
-    const config = loadConfig();
+    const config = loadConfig(getGlobalConfigPath());
     const firstKey = Object.keys(config.projects)[0];
     if (firstKey) return firstKey;
   } catch {
@@ -37,7 +37,7 @@ export const getPrimaryProjectId = cache((): string => {
 
 export const getAllProjects = cache((): ProjectInfo[] => {
   try {
-    const config = loadConfig();
+    const config = loadConfig(getGlobalConfigPath());
     return [
       ...Object.entries(config.projects).map(([id, project]) => ({
         id,

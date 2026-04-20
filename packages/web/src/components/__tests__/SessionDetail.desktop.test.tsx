@@ -109,7 +109,7 @@ describe("SessionDetail desktop layout", () => {
     // Scope to topbar since MobileBottomNav also has an Orchestrator link
     expect(within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" })).toHaveAttribute(
       "href",
-      "/sessions/my-app-orchestrator",
+      "/projects/my-app/sessions/my-app-orchestrator",
     );
     // Branch pill is rendered as link when session has a PR
     expect(screen.getByRole("link", { name: "feat/desktop-detail" })).toHaveAttribute(

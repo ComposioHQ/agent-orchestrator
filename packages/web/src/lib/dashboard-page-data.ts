@@ -78,10 +78,14 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
 
     // Fast enrichment: issue labels (sync) + agent summaries (local disk I/O).
     // Keep a hard cap here so a slow local agent plugin can't stall SSR indefinitely.
-    await settlesWithin(
-      enrichSessionsMetadataFast(coreSessions, pageData.sessions, config, registry),
-      FAST_METADATA_ENRICH_TIMEOUT_MS,
-    );
+    try {
+      await settlesWithin(
+        enrichSessionsMetadataFast(coreSessions, pageData.sessions, config, registry),
+        FAST_METADATA_ENRICH_TIMEOUT_MS,
+      );
+    } catch {
+      // Keep the base dashboard data if non-critical enrichment fails.
+    }
 
     // PR cache hits only (in-memory lookup, no SCM API calls).
     for (let i = 0; i < coreSessions.length; i++) {
@@ -90,7 +94,11 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
       const projectConfig = resolveProject(core, config.projects);
       const scm = getSCM(registry, projectConfig);
       if (scm) {
-        await enrichSessionPR(pageData.sessions[i], scm, core.pr, { cacheOnly: true });
+        try {
+          await enrichSessionPR(pageData.sessions[i], scm, core.pr, { cacheOnly: true });
+        } catch {
+          // Preserve the base session payload if PR enrichment fails.
+        }
       }
     }
   } catch {

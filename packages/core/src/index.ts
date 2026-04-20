@@ -251,6 +251,7 @@ export {
   loadLocalProjectConfig,
   LocalProjectConfigSchema,
   loadLocalProjectConfigDetailed,
+  repairWrappedLocalProjectConfig,
   registerProjectInGlobalConfig,
   relinkProjectInGlobalConfig,
   StorageKeyCollisionError,

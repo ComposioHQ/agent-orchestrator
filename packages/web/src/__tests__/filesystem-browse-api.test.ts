@@ -104,11 +104,15 @@ describe("/api/filesystem/browse", () => {
     const repoDir = path.join(homeDir, "repo");
     const plainDir = path.join(homeDir, "notes");
     const filePath = path.join(homeDir, "README.md");
+    const hiddenDir = path.join(homeDir, ".agents");
+    const hiddenFile = path.join(homeDir, ".env");
 
     mkdirSync(path.join(repoDir, ".git"), { recursive: true });
     writeFileSync(path.join(repoDir, "agent-orchestrator.yaml"), "defaults: {}\n");
     mkdirSync(plainDir);
     writeFileSync(filePath, "# hi\n");
+    mkdirSync(hiddenDir);
+    writeFileSync(hiddenFile, "SECRET=1\n");
     mkdirSync(path.join(homeDir, ".aws"));
 
     const response = await browseGET(makeRequest("/api/filesystem/browse?path=~"));
@@ -154,6 +158,9 @@ describe("/api/filesystem/browse", () => {
         "name",
       ]);
     }
+
+    expect(body.entries.map((entry) => entry.name)).not.toContain(".agents");
+    expect(body.entries.map((entry) => entry.name)).not.toContain(".env");
   });
 
   it("redirects the legacy browse endpoint to the new route", async () => {

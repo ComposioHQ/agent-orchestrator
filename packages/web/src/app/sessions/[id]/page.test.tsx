@@ -9,12 +9,16 @@ const notFoundError = new Error("NEXT_NOT_FOUND");
 const notFoundSpy = vi.fn(() => {
   throw notFoundError;
 });
+const replaceSpy = vi.fn();
+let mockPathname = "/projects/my-app/sessions/worker-1";
 const mockMuxState: {
   current?: { sessions: SessionPatch[]; status?: "connecting" | "connected" | "reconnecting" | "disconnected" };
 } = {};
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "worker-1" }),
+  usePathname: () => mockPathname,
+  useRouter: () => ({ replace: replaceSpy }),
   notFound: notFoundSpy,
 }));
 
@@ -81,6 +85,8 @@ describe("SessionPage project polling", () => {
     vi.useFakeTimers();
     vi.resetModules();
     sessionDetailSpy.mockClear();
+    replaceSpy.mockClear();
+    mockPathname = "/projects/my-app/sessions/worker-1";
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
     mockMuxState.current = undefined;
@@ -523,5 +529,106 @@ describe("SessionPage project polling", () => {
         lastActivityAt: muxPatchedLastActivityAt,
       },
     ]);
+  });
+
+  it("redirects the legacy session URL to the project-scoped route for clean projects", async () => {
+    mockPathname = "/sessions/worker-1";
+    const workerSession = makeWorkerSession();
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            projects: [{ id: "my-app", name: "My App", sessionPrefix: "my-app" }],
+          }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => workerSession,
+        } as Response;
+      }
+
+      if (url === "/api/sessions") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [workerSession] }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ orchestratorId: null, orchestrators: [] }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+    render(<SessionPage />);
+    await flushAsyncWork();
+
+    expect(replaceSpy).toHaveBeenCalledWith("/projects/my-app/sessions/worker-1");
+  });
+
+  it("redirects the legacy session URL for degraded projects too", async () => {
+    mockPathname = "/sessions/worker-1";
+    const workerSession = makeWorkerSession();
+    workerSession.projectId = "broken-app";
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            projects: [{ id: "broken-app", name: "broken-app", resolveError: "bad config" }],
+          }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => workerSession,
+        } as Response;
+      }
+
+      if (url === "/api/sessions") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [workerSession] }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions?project=broken-app&orchestratorOnly=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ orchestratorId: null, orchestrators: [] }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+    render(<SessionPage />);
+    await flushAsyncWork();
+
+    expect(replaceSpy).toHaveBeenCalledWith("/projects/broken-app/sessions/worker-1");
   });
 });

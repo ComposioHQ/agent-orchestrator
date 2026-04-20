@@ -2,23 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { formatRelativeTime } from "@/lib/format";
 import {
   ArrowUpIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   deriveProjectIdFromPath,
   deriveProjectNameFromPath,
-  FolderIcon,
-  getBreadcrumbs,
   getParentBrowsePath,
-  HomeIcon,
   joinBrowsePath,
-  loadRecentPaths,
   RefreshIcon,
   saveRecentPath,
-  SidebarSection,
-  SortChevronIcon,
 } from "@/components/AddProjectModal.parts";
 
 interface BrowseEntry {
@@ -54,10 +47,6 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
   const [browseEntries, setBrowseEntries] = useState<BrowseEntry[]>([]);
   const [browseLoading, setBrowseLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
-  const [recentPaths, setRecentPaths] = useState<string[]>([]);
-  const [favoritesOpen, setFavoritesOpen] = useState(true);
-  const [reposOpen, setReposOpen] = useState(true);
-  const [recentOpen, setRecentOpen] = useState(true);
 
   const browse = async (
     path: string,
@@ -66,9 +55,20 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     setBrowseLoading(true);
     setBrowseError(null);
     try {
-      const response = await fetch(`/api/filesystem/browse?path=${encodeURIComponent(path)}`);
-      const body = (await response.json().catch(() => null)) as { error?: string; entries?: BrowseEntry[] } | null;
+      const response = await fetch(`/api/filesystem/browse?path=${encodeURIComponent(path)}`).catch(
+        () => null,
+      );
+      if (!response) {
+        setBrowseEntries([]);
+        setSelectedBrowsePath(options?.selectedPath ?? path);
+        setBrowseError("Failed to browse directories.");
+        return;
+      }
+
       if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as
+          | { error?: string; entries?: BrowseEntry[] }
+          | null;
         const isBrowseDisabled = response.status === 404 && body?.error === "Not found";
         setBrowseEntries([]);
         setSelectedBrowsePath(isBrowseDisabled ? "" : options?.selectedPath ?? path);
@@ -79,6 +79,10 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
         );
         return;
       }
+
+      const body = (await response.json().catch(() => null)) as
+        | { error?: string; entries?: BrowseEntry[] }
+        | null;
       const mode = options?.mode ?? "push";
       const targetHistoryIndex = options?.historyIndex ?? browseHistoryIndex;
       setBrowsePath(path);
@@ -116,16 +120,11 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     setBrowseHistoryIndex(0);
     setBrowsePath(initialPath);
     setSelectedBrowsePath(initialPath);
-    setRecentPaths(loadRecentPaths());
     modalRef.current?.focus();
     void browse(initialPath, { mode: "replace", selectedPath: initialPath });
   }, [open]);
 
   const directoryEntries = useMemo(() => browseEntries.filter((entry) => entry.isDirectory), [browseEntries]);
-  const selectedCrumbs = useMemo(
-    () => getBreadcrumbs(selectedBrowsePath || "~").map((crumb) => crumb.label),
-    [selectedBrowsePath],
-  );
   const parentPath = getParentBrowsePath(browsePath);
   const canGoBack = browseHistoryIndex > 0;
   const canGoForward = browseHistoryIndex < browseHistory.length - 1;
@@ -205,7 +204,6 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
         return;
       }
       saveRecentPath(resolvedPath);
-      setRecentPaths(loadRecentPaths());
       const nextProjectId = body?.projectId ?? projectId.trim();
       onClose();
       router.push(`/projects/${encodeURIComponent(nextProjectId)}`);
@@ -255,42 +253,14 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
             <button type="button" onClick={() => parentPath && void browse(parentPath)} disabled={!parentPath} className="add-project-modal__toolbtn" aria-label="Go up"><ArrowUpIcon /></button>
             <button type="button" onClick={() => void browse(browsePath, { mode: "replace", selectedPath: selectedBrowsePath })} className="add-project-modal__toolbtn" aria-label="Refresh"><RefreshIcon /></button>
           </div>
-          <input className="add-project-modal__search" type="text" placeholder="⌘ search folders" aria-label="Search folders" />
+          <div className="add-project-modal__location">{browsePath}</div>
         </div>
 
         <div className="add-project-modal__content">
-          <aside className="add-project-browser__sidebar">
-            <SidebarSection title="Favorites" open={favoritesOpen} onToggle={() => setFavoritesOpen((value) => !value)}>
-              <button type="button" onClick={() => void browse("~")} className={`add-project-browser__sidebar-row${browsePath === "~" ? " is-active" : ""}`}>
-                <span className="add-project-browser__sidebar-rowaccent" aria-hidden="true" />
-                <HomeIcon className="add-project-browser__sidebar-icon" />
-                <span className="add-project-browser__sidebar-copy">Home</span>
-              </button>
-            </SidebarSection>
-            <SidebarSection title="Detected Repos" open={reposOpen} onToggle={() => setReposOpen((value) => !value)}>
-              {/* TODO: wire this section to /api/filesystem/detected-repos if that endpoint is introduced. */}
-              <div className="add-project-browser__sidebar-empty">No git repos detected nearby</div>
-            </SidebarSection>
-            <SidebarSection title="Recent" open={recentOpen} onToggle={() => setRecentOpen((value) => !value)}>
-              {recentPaths.length === 0 ? (
-                <div className="add-project-browser__sidebar-empty">No recent folders yet</div>
-              ) : (
-                recentPaths.map((path) => (
-                  <button key={path} type="button" onClick={() => { setSelectedBrowsePath(path); void browse(path, { selectedPath: path }); }} className={`add-project-browser__sidebar-row${selectedBrowsePath === path ? " is-active" : ""}`}>
-                    <span className="add-project-browser__sidebar-rowaccent" aria-hidden="true" />
-                    <FolderIcon className="add-project-browser__sidebar-icon" />
-                    <span className="add-project-browser__sidebar-copy">{path}</span>
-                  </button>
-                ))
-              )}
-            </SidebarSection>
-          </aside>
-
           <div className="add-project-browser">
-            <div className="add-project-browser__headerrow">
-              <span className="add-project-browser__headerlabel add-project-browser__headerlabel--name">Name <SortChevronIcon /></span>
-              <span className="add-project-browser__headerlabel">Modified</span>
-              <span className="add-project-browser__headerlabel">Kind</span>
+            <div className="add-project-browser__current">
+              <div className="add-project-browser__current-label">Current folder</div>
+              <div className="add-project-browser__current-path">{browsePath}</div>
             </div>
             {browseError ? (
               <div className="add-project-browser__state add-project-browser__state--error">
@@ -309,14 +279,16 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
               </div>
             ) : (
               <div className="add-project-browser__rows">
+                {parentPath ? (
+                  <button type="button" onClick={() => void browse(parentPath)} className="add-project-browser__row add-project-browser__row--parent">
+                    ..
+                  </button>
+                ) : null}
                 {directoryEntries.map((entry) => {
                   const nextPath = joinBrowsePath(browsePath, entry.name);
                   return (
                     <button key={nextPath} type="button" onClick={() => setSelectedBrowsePath(nextPath)} onDoubleClick={() => void browse(nextPath)} className={`add-project-browser__row${selectedBrowsePath === nextPath ? " is-selected" : ""}`}>
-                      <span className="add-project-browser__rowaccent" aria-hidden="true" />
-                      <span className="add-project-browser__rowname"><FolderIcon className="add-project-browser__foldericon" />{entry.name}</span>
-                      <span className="add-project-browser__rowmeta">{entry.modifiedAt ? formatRelativeTime(entry.modifiedAt) : "—"}</span>
-                      <span className={`add-project-browser__rowkind${entry.isGitRepo ? " is-git" : entry.hasLocalConfig ? " is-configured" : ""}`}>{entry.isGitRepo ? "git repo" : entry.hasLocalConfig ? "configured" : "folder"}</span>
+                      {entry.name}
                     </button>
                   );
                 })}
@@ -325,16 +297,9 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
           </div>
         </div>
 
-        <div className="add-project-modal__pathbar">
-          <FolderIcon className="add-project-modal__pathicon" />
-          <div className="add-project-modal__pathcrumbs">
-            {selectedCrumbs.map((crumb, index) => (
-              <span key={`${crumb}-${index}`} className="add-project-modal__pathcrumb">
-                {index > 0 ? <span className="add-project-modal__pathseparator">▸</span> : null}
-                <span>{crumb}</span>
-              </span>
-            ))}
-          </div>
+        <div className="add-project-modal__pathbar add-project-modal__pathbar--selection">
+          <span className="add-project-modal__selection-label">Selected</span>
+          <span className="add-project-modal__selection-path">{selectedBrowsePath || "No directory selected"}</span>
         </div>
         {selectedNotice}
 

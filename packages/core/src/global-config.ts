@@ -244,6 +244,11 @@ interface RawGlobalConfigSanitization {
   strippedProjects: Array<{ projectId: string; strippedFieldCount: number }>;
 }
 
+interface GlobalConfigMigrationResult {
+  parsed: Record<string, unknown> | null;
+  migrationSummary: string | null;
+}
+
 // =============================================================================
 // LOAD / SAVE
 // =============================================================================
@@ -252,34 +257,19 @@ interface RawGlobalConfigSanitization {
  * Load and validate the global config.
  * Returns null if the file does not exist (not an error — first run).
  */
-export function loadGlobalConfig(configPath?: string): GlobalConfig | null {
+export function loadGlobalConfig(
+  configPath?: string,
+  options: { alreadyLocked?: boolean } = {},
+): GlobalConfig | null {
   const path = configPath ?? getGlobalConfigPath();
   if (!existsSync(path)) return null;
 
-  const raw = readFileSync(path, "utf-8");
-  const parsed = parseYaml(raw);
-  if (!parsed || typeof parsed !== "object") return null;
+  const { parsed, migrationSummary } = migrateLegacyGlobalConfigOnLoad(path, options);
+  if (!parsed) return null;
 
-  const sanitized = sanitizeRawGlobalConfig(parsed as Record<string, unknown>);
-  if (sanitized.changed) {
-    withFileLockSync(globalConfigLockPath(path), () => {
-      const freshRaw = readFileSync(path, "utf-8");
-      const freshParsed = parseYaml(freshRaw);
-      if (!freshParsed || typeof freshParsed !== "object") return;
-
-      const freshSanitized = sanitizeRawGlobalConfig(freshParsed as Record<string, unknown>);
-      if (!freshSanitized.changed) return;
-
-      for (const project of freshSanitized.strippedProjects) {
-        // eslint-disable-next-line no-console -- required migration visibility for stale shadow stripping
-        console.info(
-          `[ao] stripping ${project.strippedFieldCount} stale shadow fields from project ${project.projectId}`,
-        );
-      }
-
-      const rewrittenConfig = GlobalConfigSchema.parse(freshParsed);
-      saveGlobalConfig(rewrittenConfig, path);
-    });
+  if (migrationSummary) {
+    // eslint-disable-next-line no-console -- required migration visibility for stale shadow stripping
+    console.info(migrationSummary);
   }
 
   const config = GlobalConfigSchema.parse(parsed);
@@ -367,6 +357,50 @@ export function loadLocalProjectConfigDetailed(projectPath: string): LocalProjec
   }
 
   return { kind: "missing" };
+}
+
+export function repairWrappedLocalProjectConfig(projectId: string, projectPath: string): void {
+  const configPath = join(projectPath, "agent-orchestrator.yaml");
+  if (!existsSync(configPath)) {
+    throw new Error(`No local config found at ${configPath}`);
+  }
+
+  const raw = readFileSync(configPath, "utf-8");
+  const parsed = parseYaml(raw) as Record<string, unknown>;
+  if (!parsed || typeof parsed !== "object" || !isOldConfigFormat(parsed)) {
+    throw new Error(`Local config at ${configPath} is not a wrapped old-format config.`);
+  }
+
+  const projects = (parsed["projects"] ?? {}) as Record<string, Record<string, unknown>>;
+  const project = projects[projectId];
+  if (!project || typeof project !== "object") {
+    throw new Error(`Wrapped local config at ${configPath} does not contain project "${projectId}".`);
+  }
+
+  const {
+    name: _name,
+    path: _path,
+    sessionPrefix: _sessionPrefix,
+    storageKey: _storageKey,
+    originUrl: _originUrl,
+    projectId: _projectId,
+    source: _source,
+    registeredAt: _registeredAt,
+    displayName: _displayName,
+    ...behaviorFields
+  } = project;
+  void _name;
+  void _path;
+  void _sessionPrefix;
+  void _storageKey;
+  void _originUrl;
+  void _projectId;
+  void _source;
+  void _registeredAt;
+  void _displayName;
+
+  const validated = LocalProjectConfigSchema.parse(behaviorFields);
+  atomicWriteFileSync(configPath, stringifyYaml(validated, { indent: 2 }));
 }
 
 interface StorageIdentity {
@@ -472,6 +506,39 @@ function normalizeRepoIdentity(originUrl: string | null): z.infer<typeof GlobalR
   } catch {
     return undefined;
   }
+}
+
+function normalizeLegacyRepoValue(
+  repoValue: unknown,
+): z.infer<typeof GlobalRepoIdentitySchema> | undefined {
+  if (typeof repoValue !== "string") return undefined;
+
+  const trimmed = repoValue.trim();
+  if (!trimmed) return undefined;
+
+  if (
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("git@")
+  ) {
+    return normalizeRepoIdentity(trimmed);
+  }
+
+  const segments = trimmed.split("/").filter(Boolean);
+  if (segments.length === 2) {
+    return normalizeRepoIdentity(`https://github.com/${segments[0]}/${segments[1]}`);
+  }
+
+  if (segments.length >= 3 && segments[0].includes(".")) {
+    const host = segments[0];
+    const platform = detectScmPlatform(host);
+    if (platform === "unknown") return undefined;
+    const owner = segments.slice(1, -1).join("/");
+    const name = segments[segments.length - 1];
+    return normalizeRepoIdentity(`https://${host}/${owner}/${name}`);
+  }
+
+  return undefined;
 }
 
 function findStorageKeyOwner(
@@ -610,7 +677,7 @@ export function registerProjectInGlobalConfig(
   const identity = deriveProjectStorageIdentity(projectPath);
 
   withFileLockSync(globalConfigLockPath(configPath), () => {
-    const globalConfig = loadGlobalConfig(configPath) ?? makeEmptyGlobalConfig();
+    const globalConfig = loadGlobalConfig(configPath, { alreadyLocked: true }) ?? makeEmptyGlobalConfig();
 
     const existing = globalConfig.projects[projectId] as
       | (GlobalProjectEntry & Record<string, unknown>)
@@ -809,7 +876,7 @@ export function relinkProjectInGlobalConfig(
   let result: { oldStorageKey: string; storageKey: string; originUrl: string } | null = null;
 
   withFileLockSync(globalConfigLockPath(configPath), () => {
-    const globalConfig = loadGlobalConfig(configPath) ?? makeEmptyGlobalConfig();
+    const globalConfig = loadGlobalConfig(configPath, { alreadyLocked: true }) ?? makeEmptyGlobalConfig();
     const entry = globalConfig.projects[projectId] as (GlobalProjectEntry & Record<string, unknown>) | undefined;
     if (!entry?.path) {
       throw new Error(`Project "${projectId}" is not registered in the global config.`);
@@ -1052,6 +1119,7 @@ function sanitizeRawGlobalConfig(
     const hadLegacyAliases =
       entry["projectId"] !== projectId ||
       (typeof entry["name"] === "string" && typeof entry["displayName"] !== "string") ||
+      typeof entry["repo"] === "string" ||
       (typeof entry["originUrl"] === "string" && entry["repo"] === undefined);
     const result = sanitizeRawGlobalProjectEntry(projectId, value as Record<string, unknown>);
 
@@ -1064,6 +1132,68 @@ function sanitizeRawGlobalConfig(
   }
 
   return { changed, strippedProjects };
+}
+
+function migrateLegacyGlobalConfigOnLoad(
+  configPath: string,
+  options: { alreadyLocked?: boolean },
+): GlobalConfigMigrationResult {
+  let parsed = readRawGlobalConfig(configPath);
+  if (!parsed) {
+    return { parsed: null, migrationSummary: null };
+  }
+
+  const initialSanitization = sanitizeRawGlobalConfig(parsed);
+  if (!initialSanitization.changed) {
+    return { parsed, migrationSummary: null };
+  }
+
+  let migrationSummary: string | null = null;
+  const rewrite = () => {
+    const freshParsed = readRawGlobalConfig(configPath);
+    if (!freshParsed) {
+      parsed = null;
+      return;
+    }
+
+    const freshSanitization = sanitizeRawGlobalConfig(freshParsed);
+    parsed = freshParsed;
+    if (!freshSanitization.changed) return;
+
+    migrationSummary = formatGlobalConfigMigrationLog(freshSanitization);
+    saveGlobalConfig(GlobalConfigSchema.parse(freshParsed), configPath);
+  };
+
+  if (options.alreadyLocked) {
+    rewrite();
+  } else {
+    withFileLockSync(globalConfigLockPath(configPath), rewrite);
+  }
+
+  return { parsed, migrationSummary };
+}
+
+function readRawGlobalConfig(configPath: string): Record<string, unknown> | null {
+  const raw = readFileSync(configPath, "utf-8");
+  const parsed = parseYaml(raw);
+  if (!parsed || typeof parsed !== "object") return null;
+  return parsed as Record<string, unknown>;
+}
+
+function formatGlobalConfigMigrationLog(sanitization: RawGlobalConfigSanitization): string | null {
+  if (sanitization.strippedProjects.length === 0) {
+    return "[ao] migrated legacy project registry fields in global config";
+  }
+
+  const totalFieldCount = sanitization.strippedProjects.reduce(
+    (sum, project) => sum + project.strippedFieldCount,
+    0,
+  );
+  const projectSummary = sanitization.strippedProjects
+    .map((project) => `${project.projectId} (${project.strippedFieldCount})`)
+    .join(", ");
+
+  return `[ao] stripped ${totalFieldCount} legacy project registry fields from ${sanitization.strippedProjects.length} project${sanitization.strippedProjects.length === 1 ? "" : "s"}: ${projectSummary}`;
 }
 
 function sanitizeRawGlobalProjectEntry(
@@ -1082,6 +1212,15 @@ function sanitizeRawGlobalProjectEntry(
     const repoIdentity = normalizeRepoIdentity(entry["originUrl"] as string);
     if (repoIdentity) {
       entry["repo"] = repoIdentity;
+    }
+  }
+
+  if (typeof entry["repo"] === "string") {
+    const repoIdentity = normalizeLegacyRepoValue(entry["repo"]);
+    if (repoIdentity) {
+      entry["repo"] = repoIdentity;
+    } else {
+      delete entry["repo"];
     }
   }
 

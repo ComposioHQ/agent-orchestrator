@@ -127,6 +127,9 @@ export function assertDirectoryPath(rawPath: string): ResolvedHomePath {
 
 export function shouldHideBrowseEntry(entryPath: string, rootPath: string): boolean {
   try {
+    if (path.basename(entryPath).startsWith(".")) {
+      return true;
+    }
     const resolvedEntryPath = realpathSync(entryPath);
     if (!isWithinRoot(rootPath, resolvedEntryPath)) return true;
     return containsRestrictedSegments(resolvedEntryPath, rootPath);

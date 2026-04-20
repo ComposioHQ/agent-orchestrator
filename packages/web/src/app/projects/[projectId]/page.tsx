@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Dashboard } from "@/components/Dashboard";
 import { DegradedProjectState } from "@/components/DegradedProjectState";
@@ -31,23 +30,6 @@ export default async function ProjectPage(props: {
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-canvas)]">
-      <div className="border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-6 py-3">
-        <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4">
-          <nav className="flex items-center gap-2 text-sm text-[var(--color-text-tertiary)]">
-            <Link href="/" className="hover:text-[var(--color-text-primary)]">
-              Portfolio
-            </Link>
-            <span>/</span>
-            <span className="text-[var(--color-text-primary)]">{pageData.projectName}</span>
-          </nav>
-          <Link
-            href={`/projects/${encodeURIComponent(projectId)}/settings`}
-            className="rounded-lg border border-[var(--color-border-default)] px-3 py-1.5 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)]"
-          >
-            Project settings
-          </Link>
-        </div>
-      </div>
       <Dashboard
         initialSessions={pageData.sessions}
         projectId={pageData.selectedProjectId}

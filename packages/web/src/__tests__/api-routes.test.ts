@@ -628,6 +628,31 @@ describe("API Routes", () => {
       const data = await res.json();
       expect(data.error).toBe("boom");
     });
+
+    it("returns a guided recovery message for registered orchestrator worktree collisions", async () => {
+      (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error(
+          'Worktree path "/Users/test/.worktrees/my-app/my-app-orchestrator-1" already exists and is still registered with git',
+        ),
+      );
+
+      const req = makeRequest("/api/orchestrators", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app" }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await orchestratorsPOST(req);
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data).toEqual({
+        error: expect.stringContaining(
+          'AO found older orchestrator workspaces for "my-app" that are still registered with git.',
+        ),
+        code: "orchestrator_workspace_conflict",
+        recovery: "remove-and-readd-project",
+      });
+    });
   });
 
   describe("GET /api/orchestrators", () => {

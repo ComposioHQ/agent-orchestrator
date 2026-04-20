@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
   loadGlobalConfig,
+  repairWrappedLocalProjectConfig,
   registerProjectInGlobalConfig,
   relinkProjectInGlobalConfig,
   resolveProjectIdentity,
@@ -243,11 +244,116 @@ describe("global-config storage identity", () => {
       expect(rewritten.projects.legacy).not.toHaveProperty("runtime");
       expect(rewritten.projects.legacy).not.toHaveProperty("_shadowSyncedAt");
       expect(consoleInfo).toHaveBeenCalledWith(
-        "[ao] stripping 3 stale shadow fields from project legacy",
+        "[ao] stripped 3 legacy project registry fields from 1 project: legacy (3)",
       );
     } finally {
       consoleInfo.mockRestore();
     }
+  });
+
+  it("migrates legacy string repo fields into repo identity objects on load", () => {
+    const repoPath = createRepo("legacy-repo", "https://github.com/OpenAI/demo.git");
+    writeFileSync(
+      configPath,
+      [
+        "port: 3000",
+        "readyThresholdMs: 300000",
+        "defaults:",
+        "  runtime: tmux",
+        "  agent: claude-code",
+        "  workspace: worktree",
+        "  notifiers: []",
+        "projects:",
+        "  legacy:",
+        `    path: ${repoPath}`,
+        "    repo: OpenAI/demo",
+        "notifiers: {}",
+        "notificationRouting: {}",
+        "reactions: {}",
+        "",
+      ].join("\n"),
+    );
+
+    const config = loadGlobalConfig(configPath);
+    expect(config?.projects["legacy"]?.repo).toEqual({
+      owner: "OpenAI",
+      name: "demo",
+      platform: "github",
+      originUrl: "https://github.com/OpenAI/demo",
+    });
+
+    const rewritten = parseYaml(readFileSync(configPath, "utf-8")) as {
+      projects: Record<string, Record<string, unknown>>;
+    };
+    expect(rewritten.projects.legacy.repo).toEqual({
+      owner: "OpenAI",
+      name: "demo",
+      platform: "github",
+      originUrl: "https://github.com/OpenAI/demo",
+    });
+  });
+
+  it("repairs a wrapped local project config into flat behavior-only config", () => {
+    const repoPath = createRepo("wrapped-local", "https://github.com/OpenAI/demo.git");
+    writeFileSync(
+      join(repoPath, "agent-orchestrator.yaml"),
+      [
+        "projects:",
+        "  wrapped-local:",
+        `    path: ${repoPath}`,
+        "    name: Wrapped Local",
+        "    agent: codex",
+        "    runtime: tmux",
+        "",
+      ].join("\n"),
+    );
+
+    repairWrappedLocalProjectConfig("wrapped-local", repoPath);
+
+    const repaired = parseYaml(readFileSync(join(repoPath, "agent-orchestrator.yaml"), "utf-8"));
+    expect(repaired).toEqual({
+      agent: "codex",
+      runtime: "tmux",
+    });
+  });
+
+  it("registers a project successfully even when the existing config needs shadow-field cleanup", () => {
+    const legacyRepoPath = createRepo("legacy", "https://github.com/OpenAI/legacy.git");
+    const freshRepoPath = createRepo("fresh", "https://github.com/OpenAI/fresh.git");
+
+    writeFileSync(
+      configPath,
+      [
+        "port: 3000",
+        "readyThresholdMs: 300000",
+        "defaults:",
+        "  runtime: tmux",
+        "  agent: claude-code",
+        "  workspace: worktree",
+        "  notifiers: []",
+        "projects:",
+        "  legacy:",
+        `    path: ${legacyRepoPath}`,
+        "    name: Legacy",
+        "    agent: codex",
+        "    runtime: docker",
+        "notifiers: {}",
+        "notificationRouting: {}",
+        "reactions: {}",
+        "",
+      ].join("\n"),
+    );
+
+    registerProjectInGlobalConfig("fresh", "Fresh", freshRepoPath, undefined, configPath);
+
+    const config = loadGlobalConfig(configPath);
+    expect(config?.projects["fresh"]).toMatchObject({
+      projectId: "fresh",
+      displayName: "Fresh",
+      path: freshRepoPath,
+    });
+    expect(config?.projects["legacy"]).not.toHaveProperty("agent");
+    expect(config?.projects["legacy"]).not.toHaveProperty("runtime");
   });
 
   it("uses the synthetic local storage key when no origin can be read", () => {

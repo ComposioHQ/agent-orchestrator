@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { projectDashboardPath } from "@/lib/routes";
+import { RepairDegradedProjectButton } from "./RepairDegradedProjectButton";
 
 interface DegradedProjectStateProps {
   projectId: string;
@@ -14,6 +16,7 @@ export function DegradedProjectState({
   heading = "This project's config failed to load",
 }: DegradedProjectStateProps) {
   const yamlPath = `${projectPath}/agent-orchestrator.yaml`;
+  const canAutoRepair = resolveError.includes("wrapped projects: format");
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-canvas)] px-6 py-10 text-[var(--color-text-primary)]">
@@ -56,15 +59,17 @@ export function DegradedProjectState({
           </p>
         </div>
 
+        {canAutoRepair ? <RepairDegradedProjectButton projectId={projectId} /> : null}
+
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
-            href={`/projects/${encodeURIComponent(projectId)}`}
+            href={projectDashboardPath(projectId)}
             className="rounded-lg border border-[var(--color-border-default)] px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)]"
           >
             Back to project
           </Link>
           <Link
-            href={`/?project=${encodeURIComponent(projectId)}`}
+            href={projectDashboardPath(projectId)}
             className="rounded-lg border border-[var(--color-border-default)] px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)]"
           >
             Open dashboard view

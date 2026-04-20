@@ -13,6 +13,7 @@ import "server-only";
  */
 
 import {
+  getGlobalConfigPath,
   loadConfig,
   createPluginRegistry,
   createSessionManager,
@@ -80,7 +81,7 @@ export function invalidatePortfolioServicesCache(): void {
 }
 
 async function initServices(): Promise<Services> {
-  const config = loadConfig();
+  const config = loadConfig(getGlobalConfigPath());
   const registry = createPluginRegistry();
 
   // Register plugins explicitly (webpack can't handle dynamic import() in core)

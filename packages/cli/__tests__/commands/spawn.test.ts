@@ -295,7 +295,7 @@ describe("spawn command", () => {
     await program.parseAsync(["node", "test", "spawn"]);
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(output).toContain("http://localhost:3000/sessions/app-7");
+    expect(output).toContain("http://localhost:3000/projects/my-app/sessions/app-7");
     expect(output).not.toContain("tmux attach");
     expect(output).not.toContain("8474d6f29887-app-7");
   });
@@ -427,7 +427,7 @@ describe("spawn command", () => {
     const succeedMsg = String(mockSpinner.succeed.mock.calls[0]?.[0] ?? "");
     expect(succeedMsg).toContain("https://github.com/org/repo/pull/123");
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(output).toContain("http://localhost:3000/sessions/app-1");
+    expect(output).toContain("http://localhost:3000/projects/my-app/sessions/app-1");
   });
 
   it("passes GitHub assignment flag through to claimPR", async () => {

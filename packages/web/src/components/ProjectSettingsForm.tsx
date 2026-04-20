@@ -96,15 +96,15 @@ function ProjectSettingsFormInner({ projectId, initialValues }: ProjectSettingsF
   };
 
   return (
-    <div className="space-y-8">
-      <section className="rounded-2xl border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-6 shadow-sm">
-        <div className="flex items-start justify-between gap-4">
+    <div className="project-settings-form">
+      <section className="project-settings-form__section">
+        <div className="project-settings-form__section-header">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
+            <p className="project-settings-form__eyebrow">
               Behavior
             </p>
-            <h2 className="mt-2 text-xl font-semibold text-[var(--color-text-primary)]">Runtime configuration</h2>
-            <p className="mt-2 max-w-2xl text-sm text-[var(--color-text-secondary)]">
+            <h2 className="project-settings-form__section-title">Runtime configuration</h2>
+            <p className="project-settings-form__section-copy">
               These values change how AO runs this project without changing which repository the project points at.
             </p>
           </div>
@@ -112,13 +112,13 @@ function ProjectSettingsFormInner({ projectId, initialValues }: ProjectSettingsF
             type="button"
             onClick={() => void submit()}
             disabled={submitting}
-            className="rounded-lg border border-[var(--color-accent)] bg-[var(--color-tint-blue)] px-4 py-2 text-sm font-semibold text-[var(--color-accent)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-accent)_14%,transparent)] disabled:cursor-not-allowed disabled:opacity-60"
+            className="project-settings-form__save"
           >
             {submitting ? "Saving..." : "Save changes"}
           </button>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <div className="project-settings-form__grid">
           <EditableField
             id="agent"
             label="Agent"
@@ -149,11 +149,11 @@ function ProjectSettingsFormInner({ projectId, initialValues }: ProjectSettingsF
           />
         </div>
 
-        <div className="mt-4">
-          <label htmlFor="reactions" className="block text-sm font-medium text-[var(--color-text-primary)]">
+        <div className="project-settings-form__reactions">
+          <label htmlFor="reactions" className="project-settings-form__label">
             Reactions
           </label>
-          <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
+          <p className="project-settings-form__hint">
             JSON object keyed by reaction name. This PATCH only sends behavior fields.
           </p>
           <textarea
@@ -162,27 +162,26 @@ function ProjectSettingsFormInner({ projectId, initialValues }: ProjectSettingsF
             onChange={(event) => setReactions(event.target.value)}
             spellCheck={false}
             rows={12}
-            className="mt-2 w-full rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-3 py-3 text-sm text-[var(--color-text-primary)] focus:border-[var(--color-accent)] focus:outline-none"
-            style={{ fontFamily: "var(--font-mono)" }}
+            className="project-settings-form__textarea project-settings-form__textarea--mono"
           />
         </div>
 
         {inlineError ? (
           <div
             role="alert"
-            className="mt-4 rounded-xl border border-[color-mix(in_srgb,var(--color-status-error)_22%,transparent)] bg-[var(--color-tint-red)] px-4 py-3 text-sm text-[var(--color-status-error)]"
+            className="project-settings-form__alert project-settings-form__alert--error"
           >
             {inlineError}
           </div>
         ) : null}
 
         {networkError ? (
-          <div className="mt-4 rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-4 py-3">
-            <p className="text-sm text-[var(--color-status-error)]">{networkError}</p>
+          <div className="project-settings-form__alert project-settings-form__alert--surface">
+            <p className="project-settings-form__alert-copy">{networkError}</p>
             <button
               type="button"
               onClick={() => void submit()}
-              className="mt-3 rounded-lg border border-[var(--color-border-default)] px-3 py-1.5 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)]"
+              className="project-settings-form__retry"
             >
               Retry
             </button>
@@ -190,16 +189,16 @@ function ProjectSettingsFormInner({ projectId, initialValues }: ProjectSettingsF
         ) : null}
       </section>
 
-      <section className="rounded-2xl border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-6 shadow-sm">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
+      <section className="project-settings-form__section">
+        <p className="project-settings-form__eyebrow">
           Identity
         </p>
-        <h2 className="mt-2 text-xl font-semibold text-[var(--color-text-primary)]">Repository identity</h2>
-        <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
+        <h2 className="project-settings-form__section-title">Repository identity</h2>
+        <p className="project-settings-form__section-copy">
           These fields are read-only because they define which repository AO considers this project to be.
         </p>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <div className="project-settings-form__grid">
           <ReadonlyField id="identity-project-id" label="Project ID" value={initialValues.identity.projectId} />
           <ReadonlyField id="identity-path" label="Path" value={initialValues.identity.path} />
           <ReadonlyField id="identity-storage-key" label="Storage key" value={initialValues.identity.storageKey} />
@@ -229,14 +228,14 @@ function EditableField({
   placeholder: string;
 }) {
   return (
-    <label htmlFor={id} className="block">
-      <span className="block text-sm font-medium text-[var(--color-text-primary)]">{label}</span>
+    <label htmlFor={id} className="project-settings-form__field">
+      <span className="project-settings-form__label">{label}</span>
       <input
         id={id}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="mt-2 w-full rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-3 py-2 text-sm text-[var(--color-text-primary)] focus:border-[var(--color-accent)] focus:outline-none"
+        className="project-settings-form__input"
       />
     </label>
   );
@@ -252,8 +251,8 @@ function ReadonlyField({
   value: string;
 }) {
   return (
-    <label htmlFor={id} className="block">
-      <span className="block text-sm font-medium text-[var(--color-text-primary)]">{label}</span>
+    <label htmlFor={id} className="project-settings-form__field">
+      <span className="project-settings-form__label">{label}</span>
       <input
         id={id}
         value={value}
@@ -261,9 +260,9 @@ function ReadonlyField({
         readOnly
         title={IDENTITY_FIELD_TOOLTIP}
         aria-describedby={`${id}-tooltip`}
-        className="mt-2 w-full cursor-not-allowed rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-canvas)] px-3 py-2 text-sm text-[var(--color-text-tertiary)]"
+        className="project-settings-form__input project-settings-form__input--readonly"
       />
-      <span id={`${id}-tooltip`} className="mt-1 block text-xs text-[var(--color-text-tertiary)]">
+      <span id={`${id}-tooltip`} className="project-settings-form__hint">
         {IDENTITY_FIELD_TOOLTIP}
       </span>
     </label>

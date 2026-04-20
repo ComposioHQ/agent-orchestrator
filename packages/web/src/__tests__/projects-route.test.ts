@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server";
-import { deriveStorageKey, loadGlobalConfig } from "@aoagents/ao-core";
+import { deriveStorageKey, loadGlobalConfig, registerProjectInGlobalConfig } from "@aoagents/ao-core";
 
 const invalidatePortfolioServicesCache = vi.fn();
 
@@ -40,6 +40,32 @@ describe("POST /api/projects", () => {
       process.env["AO_GLOBAL_CONFIG"] = oldGlobalConfig;
     }
     rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it("returns projects as an array and includes degraded entries with resolveError", async () => {
+    const healthyDir = path.join(tempRoot, "healthy");
+    const brokenDir = path.join(tempRoot, "broken");
+    mkdirSync(healthyDir, { recursive: true });
+    mkdirSync(brokenDir, { recursive: true });
+    writeFileSync(path.join(brokenDir, "agent-orchestrator.yaml"), "agent: [broken\n");
+
+    registerProjectInGlobalConfig("healthy", "Healthy", healthyDir);
+    registerProjectInGlobalConfig("broken", "Broken", brokenDir);
+
+    const { GET } = await import("@/app/api/projects/route");
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      projects: expect.arrayContaining([
+        expect.objectContaining({ id: "healthy", name: "Healthy" }),
+        expect.objectContaining({
+          id: "broken",
+          name: "broken",
+          resolveError: expect.any(String),
+        }),
+      ]),
+    });
   });
 
   it("stores the Phase 1a-derived storage key and invalidates services cache", async () => {
@@ -91,5 +117,51 @@ describe("POST /api/projects", () => {
       existingProjectId: "existing-app",
       suggestion: "register-as-second",
     });
+  });
+});
+
+describe("POST /api/projects/reload", () => {
+  let oldGlobalConfig: string | undefined;
+  let tempRoot: string;
+  let configPath: string;
+
+  beforeEach(() => {
+    vi.resetModules();
+    invalidatePortfolioServicesCache.mockReset();
+    oldGlobalConfig = process.env["AO_GLOBAL_CONFIG"];
+    tempRoot = mkdtempSync(path.join(tmpdir(), "ao-projects-reload-"));
+    configPath = path.join(tempRoot, "config.yaml");
+    process.env["AO_GLOBAL_CONFIG"] = configPath;
+  });
+
+  afterEach(() => {
+    if (oldGlobalConfig === undefined) {
+      delete process.env["AO_GLOBAL_CONFIG"];
+    } else {
+      process.env["AO_GLOBAL_CONFIG"] = oldGlobalConfig;
+    }
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it("returns project and degraded counts after reload", async () => {
+    const healthyDir = path.join(tempRoot, "healthy");
+    const brokenDir = path.join(tempRoot, "broken");
+    mkdirSync(healthyDir, { recursive: true });
+    mkdirSync(brokenDir, { recursive: true });
+    writeFileSync(path.join(brokenDir, "agent-orchestrator.yaml"), "agent: [broken\n");
+
+    registerProjectInGlobalConfig("healthy", "Healthy", healthyDir);
+    registerProjectInGlobalConfig("broken", "Broken", brokenDir);
+
+    const { POST } = await import("@/app/api/projects/reload/route");
+    const response = await POST();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      reloaded: true,
+      projectCount: 1,
+      degradedCount: 1,
+    });
+    expect(invalidatePortfolioServicesCache).toHaveBeenCalledTimes(1);
   });
 });

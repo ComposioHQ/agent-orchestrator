@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { notFound, useParams } from "next/navigation";
+import { notFound, useParams, usePathname, useRouter } from "next/navigation";
 import { ACTIVITY_STATE, SESSION_STATUS, isOrchestratorSession } from "@aoagents/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
 import { type DashboardSession, type ActivityState, getAttentionLevel } from "@/lib/types";
@@ -11,6 +11,7 @@ import { getSessionTitle } from "@/lib/format";
 import { useSSESessionActivity } from "@/hooks/useSSESessionActivity";
 import { useMuxOptional } from "@/providers/MuxProvider";
 import type { SessionPatch } from "@/lib/mux-protocol";
+import { projectSessionPath } from "@/lib/routes";
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
@@ -160,6 +161,8 @@ function applyMuxSessionPatches(current: DashboardSession[] | null, patches: Ses
 
 export default function SessionPage() {
   const params = useParams();
+  const pathname = usePathname();
+  const router = useRouter();
   const id = params.id as string;
   const mux = useMuxOptional();
 
@@ -251,6 +254,13 @@ export default function SessionPage() {
   useEffect(() => {
     sessionProjectIdRef.current = sessionProjectId;
   }, [sessionProjectId]);
+
+  useEffect(() => {
+    if (!session) return;
+    if (!pathname?.startsWith("/sessions/")) return;
+    if (!projects.some((project) => project.id === session.projectId)) return;
+    router.replace(projectSessionPath(session.projectId, session.id));
+  }, [pathname, projects, router, session]);
 
   useEffect(() => {
     sessionIsOrchestratorRef.current = sessionIsOrchestrator;

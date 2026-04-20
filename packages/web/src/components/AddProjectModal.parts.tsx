@@ -1,8 +1,6 @@
-"use client";
-
 import type { ReactNode } from "react";
 
-export const RECENT_PATHS_KEY = "ao:add-project:recent";
+const RECENT_PATHS_KEY = "ao:add-project:recent";
 
 export function deriveProjectIdFromPath(input: string): string {
   const segment = input.split("/").filter(Boolean).pop() ?? "project";
