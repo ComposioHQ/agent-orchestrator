@@ -25,7 +25,6 @@ import {
   existsSync,
   mkdirSync,
   unlinkSync,
-  rmSync,
   readdirSync,
   statSync,
   openSync,
@@ -277,13 +276,9 @@ export function deleteMetadata(dataDir: string, sessionId: SessionId, archive = 
 
   unlinkSync(path);
 
-  // Clean up per-session gh cache directory (.ghcache/<sessionId>/)
-  const cachePath = join(dataDir, ".ghcache", sessionId);
-  try {
-    rmSync(cachePath, { recursive: true, force: true });
-  } catch {
-    /* best effort */
-  }
+  // NOTE: .ghcache/<sessionId>/ is intentionally NOT deleted here.
+  // Cache files are small and useful for post-mortem analysis of wrapper
+  // cache hit/miss behavior. listMetadata() already ignores hidden dirs.
 }
 
 /**

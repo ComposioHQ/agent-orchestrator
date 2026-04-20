@@ -1,10 +1,48 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { promisify } from "node:util";
 import type { SessionId } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Resolve the real gh binary path, bypassing ~/.ao/bin wrapper.
+ * AO-owned calls must NOT go through the wrapper (which is for agent sessions).
+ *
+ * Strips ~/.ao/bin from PATH and resolves gh from the clean PATH.
+ * Cached after first resolution.
+ */
+let resolvedGhPath: string | null = null;
+function getGhBinaryPath(): string {
+  if (resolvedGhPath !== null) return resolvedGhPath;
+
+  // Build a clean PATH without ~/.ao/bin
+  const aoBinDir = join(homedir(), ".ao", "bin");
+  const cleanPath = (process.env["PATH"] ?? "")
+    .split(":")
+    .filter((entry) => entry !== aoBinDir)
+    .join(":");
+
+  try {
+    // Resolve gh from the clean PATH using `which` equivalent
+    const resolved = execFileSync("sh", ["-c", `PATH='${cleanPath}' command -v gh`], {
+      timeout: 3000,
+      encoding: "utf-8",
+    }).trim();
+    if (resolved) {
+      resolvedGhPath = resolved;
+      return resolvedGhPath;
+    }
+  } catch {
+    // Fall through
+  }
+
+  // Last resort — bare "gh" (may hit wrapper, but better than failing)
+  resolvedGhPath = "gh";
+  return resolvedGhPath;
+}
 
 const GH_TRACE_FILE_ENV = "AO_GH_TRACE_FILE";
 
@@ -215,7 +253,7 @@ export async function execGhObserved(
   const startedAt = Date.now();
 
   try {
-    const { stdout, stderr } = await execFileAsync("gh", args, {
+    const { stdout, stderr } = await execFileAsync(getGhBinaryPath(), args, {
       ...(ctx.cwd ? { cwd: ctx.cwd } : {}),
       maxBuffer: 10 * 1024 * 1024,
       timeout,
