@@ -9,6 +9,8 @@ import {
   TERMINAL_STATUSES,
   NON_RESTORABLE_STATUSES,
   isPRMergeReady,
+  isPRRateLimited,
+  isPRUnenriched,
 } from "@/lib/types";
 import { CI_STATUS } from "@aoagents/ao-core/types";
 import { cn } from "@/lib/cn";
@@ -796,20 +798,30 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
   const blockerIssues = buildBlockerChips(pr, metadata);
   const fileCount = pr.changedFiles ?? 0;
 
-  const hasConflicts = pr.state !== "merged" && !pr.mergeability.noConflicts;
+  const mergeabilityReliable = !isPRUnenriched(pr) && !isPRRateLimited(pr);
+  const hasConflicts = mergeabilityReliable && pr.state !== "merged" && !pr.mergeability.noConflicts;
   const showConflictActions = hasConflicts && pr.state === "open";
   const compareUrl = showConflictActions ? buildGitHubCompareUrl(pr) : "";
 
   const handleCopyBranch = () => {
-    void navigator.clipboard.writeText(pr.branch).then(
-      () => {
+    const clipboardWrite = navigator.clipboard?.writeText(pr.branch);
+    if (!clipboardWrite) return;
+
+    void clipboardWrite
+      .then(() => {
         setBranchCopied(true);
-        window.setTimeout(() => setBranchCopied(false), 2000);
-      },
-      () => {
+        const timerKey = "__copy-branch";
+        const existing = timersRef.current.get(timerKey);
+        if (existing) clearTimeout(existing);
+        const timer = window.setTimeout(() => {
+          setBranchCopied(false);
+          timersRef.current.delete(timerKey);
+        }, 2000);
+        timersRef.current.set(timerKey, timer);
+      })
+      .catch(() => {
         /* clipboard unavailable */
-      },
-    );
+      });
   };
 
   return (
@@ -858,7 +870,7 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
           <button
             type="button"
             onClick={handleCopyBranch}
-            aria-label="Copy head branch name"
+            aria-label={branchCopied ? "Head branch name copied" : "Copy head branch name"}
             className="session-detail-pr-merge-action session-detail-pr-merge-action--btn"
           >
             {branchCopied ? "Copied branch name" : "Copy head branch name"}
@@ -1038,7 +1050,8 @@ function buildBlockerChips(pr: DashboardPR, metadata: Record<string, string>): B
   const ciIsFailing = pr.ciStatus === CI_STATUS.FAILING || lifecycleStatus === "ci_failed";
   const hasChangesRequested =
     pr.reviewDecision === "changes_requested" || lifecycleStatus === "changes_requested";
-  const hasConflicts = pr.state !== "merged" && !pr.mergeability.noConflicts;
+  const mergeabilityReliable = !isPRUnenriched(pr) && !isPRRateLimited(pr);
+  const hasConflicts = mergeabilityReliable && pr.state !== "merged" && !pr.mergeability.noConflicts;
 
   if (ciIsFailing) {
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;

@@ -39,6 +39,10 @@ describe("SessionDetail merge conflict actions", () => {
         text: () => Promise.resolve(""),
       } as Response),
     );
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      value: { writeText: vi.fn(() => Promise.resolve()) },
+      configurable: true,
+    });
   });
 
   it("renders compare and copy actions when the PR has merge conflicts", () => {
@@ -72,5 +76,32 @@ describe("SessionDetail merge conflict actions", () => {
       "https://github.com/acme/app/compare/main...feat%2Fhas-conflict",
     );
     expect(screen.getByRole("button", { name: /Copy head branch name/i })).toBeInTheDocument();
+  });
+
+  it("hides conflict actions when mergeability data is not reliable", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-unenriched",
+          projectId: "my-app",
+          pr: makePR({
+            number: 100,
+            enriched: false,
+            mergeability: {
+              mergeable: false,
+              ciPassing: true,
+              approved: true,
+              noConflicts: false,
+              blockers: ["API rate limited or unavailable"],
+            },
+          }),
+        })}
+        projectOrchestratorId="orch-1"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "PR #100" }));
+    expect(screen.queryByRole("link", { name: /Compare with base branch/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Copy head branch name/i })).not.toBeInTheDocument();
   });
 });

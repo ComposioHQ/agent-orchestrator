@@ -23,4 +23,15 @@ describe("buildGitHubCompareUrl", () => {
       }),
     ).toBe("https://github.com/o/r/compare/release%2F1.0...fix%23123");
   });
+
+  it("encodes owner and repo segments", () => {
+    expect(
+      buildGitHubCompareUrl({
+        owner: "../../evil",
+        repo: "app?tab=code",
+        baseBranch: "main",
+        branch: "feat/x",
+      }),
+    ).toBe("https://github.com/..%2F..%2Fevil/app%3Ftab%3Dcode/compare/main...feat%2Fx");
+  });
 });
