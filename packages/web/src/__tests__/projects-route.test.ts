@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server";
@@ -107,6 +107,9 @@ describe("POST /api/projects", () => {
   it("stores the Phase 1a-derived storage key and invalidates services cache", async () => {
     const repoDir = path.join(tempRoot, "demo");
     mkdirSync(path.join(repoDir, ".git"), { recursive: true });
+    writeFileSync(path.join(repoDir, ".git", "HEAD"), "ref: refs/heads/trunk\n");
+    mkdirSync(path.join(repoDir, ".git", "refs", "remotes", "origin"), { recursive: true });
+    writeFileSync(path.join(repoDir, ".git", "refs", "remotes", "origin", "trunk"), "abc\n");
     writeFileSync(
       path.join(repoDir, ".git", "config"),
       '[remote "origin"]\n  url = git@github.com:acme/demo.git\n',
@@ -129,6 +132,7 @@ describe("POST /api/projects", () => {
         projectPath: repoDir,
       }),
     );
+    expect(saved?.projects.demo?.defaultBranch).toBe("trunk");
   });
 
   it("migrates the current local config into the global registry before adding a new project", async () => {
@@ -144,6 +148,9 @@ describe("POST /api/projects", () => {
       path.join(addedRepoDir, ".git", "config"),
       '[remote "origin"]\n  url = git@github.com:acme/added.git\n',
     );
+    writeFileSync(path.join(addedRepoDir, ".git", "HEAD"), "ref: refs/heads/master\n");
+    mkdirSync(path.join(addedRepoDir, ".git", "refs", "remotes", "origin"), { recursive: true });
+    writeFileSync(path.join(addedRepoDir, ".git", "refs", "remotes", "origin", "master"), "abc\n");
 
     const localConfigPath = path.join(currentRepoDir, "agent-orchestrator.yaml");
     writeFileSync(
@@ -175,8 +182,9 @@ describe("POST /api/projects", () => {
       sessionPrefix: "current",
     });
     expect(saved?.projects["added"]).toMatchObject({
-      path: addedRepoDir,
+      path: realpathSync(addedRepoDir),
       displayName: "Added",
+      defaultBranch: "master",
     });
     expect(readFileSync(localConfigPath, "utf-8")).not.toContain("projects:");
     expect(readFileSync(localConfigPath, "utf-8")).toContain("agent: codex");

@@ -821,10 +821,20 @@ function buildEffectiveConfigFromFlatLocalPath(
   const globalConfig = loadGlobalConfig(globalConfigPath);
   if (!globalConfig) return null;
 
-  const projectDir = resolve(dirname(configPath));
+  const canonicalProjectDir = (() => {
+    try {
+      return realpathSync(resolve(dirname(configPath)));
+    } catch {
+      return resolve(dirname(configPath));
+    }
+  })();
   const entry = Object.entries(globalConfig.projects).find(([, project]) => {
     if (typeof project.path !== "string") return false;
-    return resolve(project.path) === projectDir;
+    try {
+      return realpathSync(resolve(project.path)) === canonicalProjectDir;
+    } catch {
+      return resolve(project.path) === canonicalProjectDir;
+    }
   });
   if (!entry) return null;
 

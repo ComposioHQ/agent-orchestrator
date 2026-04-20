@@ -53,7 +53,7 @@ describe("global-config storage identity", () => {
     mkdirSync(join(repoPath, ".git"), { recursive: true });
     const remoteBlock = originUrl ? `\n[remote "origin"]\n  url = ${originUrl}\n` : "\n";
     writeFileSync(join(repoPath, ".git", "config"), `[core]\n  repositoryformatversion = 0${remoteBlock}`);
-    return repoPath;
+    return realpathSync(repoPath);
   }
 
   function legacyStorageKey(projectPath: string): string {
@@ -313,6 +313,30 @@ describe("global-config storage identity", () => {
       platform: "github",
       originUrl: "https://github.com/OpenAI/demo",
     });
+  });
+
+  it("rejects tilde-expanded project paths that escape the home directory", () => {
+    writeFileSync(
+      configPath,
+      [
+        "port: 3000",
+        "readyThresholdMs: 300000",
+        "defaults:",
+        "  runtime: tmux",
+        "  agent: claude-code",
+        "  workspace: worktree",
+        "  notifiers: []",
+        "projects:",
+        "  escaped:",
+        "    path: ~/../../../etc",
+        "notifiers: {}",
+        "notificationRouting: {}",
+        "reactions: {}",
+        "",
+      ].join("\n"),
+    );
+
+    expect(() => loadGlobalConfig(configPath)).toThrow(/escapes the home directory/);
   });
 
   it("repairs a wrapped local project config into flat behavior-only config", () => {

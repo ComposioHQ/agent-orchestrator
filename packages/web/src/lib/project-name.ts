@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cache } from "react";
-import { getGlobalConfigPath, loadConfig } from "@aoagents/ao-core";
+import { ConfigNotFoundError, getGlobalConfigPath, loadConfig } from "@aoagents/ao-core";
 
 export interface ProjectInfo {
   id: string;
@@ -10,9 +10,25 @@ export interface ProjectInfo {
   resolveError?: string;
 }
 
+function loadProjectDiscoveryConfig() {
+  const globalConfigPath = getGlobalConfigPath();
+
+  try {
+    return loadConfig(globalConfigPath);
+  } catch (error) {
+    if (error instanceof ConfigNotFoundError) {
+      return loadConfig();
+    }
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return loadConfig();
+    }
+    throw error;
+  }
+}
+
 export const getProjectName = cache((): string => {
   try {
-    const config = loadConfig(getGlobalConfigPath());
+    const config = loadProjectDiscoveryConfig();
     const firstKey = Object.keys(config.projects)[0];
     if (firstKey) {
       const name = config.projects[firstKey].name ?? firstKey;
@@ -26,7 +42,7 @@ export const getProjectName = cache((): string => {
 
 export const getPrimaryProjectId = cache((): string => {
   try {
-    const config = loadConfig(getGlobalConfigPath());
+    const config = loadProjectDiscoveryConfig();
     const firstKey = Object.keys(config.projects)[0];
     if (firstKey) return firstKey;
   } catch {
@@ -37,7 +53,7 @@ export const getPrimaryProjectId = cache((): string => {
 
 export const getAllProjects = cache((): ProjectInfo[] => {
   try {
-    const config = loadConfig(getGlobalConfigPath());
+    const config = loadProjectDiscoveryConfig();
     return [
       ...Object.entries(config.projects).map(([id, project]) => ({
         id,

@@ -137,6 +137,42 @@ describe("/api/projects/[id]", () => {
     expect(existsSync(path.join(repoDir, "agent-orchestrator.yaml"))).toBe(false);
   });
 
+  it("GET falls back to the repo-local config when no global registry exists yet", async () => {
+    const repoDir = path.join(tempRoot, "demo-local");
+    const localConfigPath = path.join(repoDir, "agent-orchestrator.yaml");
+    mkdirSync(repoDir, { recursive: true });
+    writeFileSync(
+      localConfigPath,
+      [
+        "projects:",
+        "  demo:",
+        "    name: Demo",
+        `    path: ${repoDir}`,
+        "    defaultBranch: main",
+        "    agent: codex",
+        "    runtime: tmux",
+        "",
+      ].join("\n"),
+    );
+    process.env["AO_CONFIG_PATH"] = localConfigPath;
+
+    const { GET } = await import("@/app/api/projects/[id]/route");
+    const response = await GET(makeRequest("GET"), {
+      params: Promise.resolve({ id: "demo" }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      project: expect.objectContaining({
+        id: "demo",
+        name: "Demo",
+        path: repoDir,
+        agent: "codex",
+        runtime: "tmux",
+      }),
+    });
+  });
+
   it("PATCH rejects identity field updates with 400", async () => {
     const repoDir = path.join(tempRoot, "demo");
     mkdirSync(repoDir, { recursive: true });
@@ -169,11 +205,13 @@ describe("/api/projects/[id]", () => {
       error: expect.any(String),
       projectId: "broken",
       degraded: true,
-      project: expect.objectContaining({
+      project: {
         id: "broken",
-        path: repoDir,
+        name: "broken",
+        path: expect.stringContaining(path.sep + "broken"),
+        storageKey: expect.any(String),
         resolveError: expect.any(String),
-      }),
+      },
     });
   });
 

@@ -52,10 +52,7 @@ export function DegradedProjectState({
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
             Local Config Path
           </p>
-          <p
-            className="mt-2 break-all text-sm text-[var(--color-text-primary)]"
-            style={{ fontFamily: "var(--font-mono)" }}
-          >
+          <p className="mt-2 break-all font-[var(--font-mono)] text-sm text-[var(--color-text-primary)]">
             {yamlPath}
           </p>
         </div>

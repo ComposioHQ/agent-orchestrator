@@ -1,6 +1,10 @@
 import { closeSync, mkdirSync, openSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 export function withFileLockSync<T>(
   lockPath: string,
   fn: () => T,
@@ -12,6 +16,7 @@ export function withFileLockSync<T>(
 
   const deadline = Date.now() + timeoutMs;
   let fd: number | null = null;
+  let waitMs = 10;
 
   while (fd === null) {
     try {
@@ -35,10 +40,8 @@ export function withFileLockSync<T>(
         throw new Error(`Timed out waiting for file lock: ${lockPath}`, { cause: err });
       }
 
-      const until = Date.now() + 50;
-      while (Date.now() < until) {
-        // Busy wait to keep this sync API dependency-free.
-      }
+      sleepSync(waitMs);
+      waitMs = Math.min(waitMs * 2, 250);
     }
   }
 

@@ -8,7 +8,7 @@ import {
   renameSync,
   statSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
@@ -26,6 +26,35 @@ import { deriveStorageKey, normalizeOriginUrl } from "./storage-key.js";
 
 function globalConfigLockPath(configPath: string): string {
   return `${configPath}.lock`;
+}
+
+function isWithinRoot(rootPath: string, candidatePath: string): boolean {
+  const rel = relative(rootPath, candidatePath);
+  return rel === "" || (!rel.startsWith("..") && !rel.startsWith(`..${sep}`));
+}
+
+function normalizeRegistryProjectPath(projectId: string, rawPath: string): string {
+  if (rawPath === "~") {
+    return homedir();
+  }
+
+  if (rawPath.startsWith("~/")) {
+    const homePath = homedir();
+    const resolvedPath = resolve(homePath, rawPath.slice(2));
+    if (!isWithinRoot(homePath, resolvedPath)) {
+      throw new ProjectResolveError(
+        projectId,
+        `Project path "${rawPath}" escapes the home directory and cannot be loaded from the global registry.`,
+      );
+    }
+    return resolvedPath;
+  }
+
+  return resolve(rawPath);
+}
+
+function normalizeRegisteredProjectPath(projectPath: string): string {
+  return realpathSync(resolve(projectPath));
 }
 
 export class StorageKeyCollisionError extends Error {
@@ -279,11 +308,8 @@ export function loadGlobalConfig(
 
   const config = GlobalConfigSchema.parse(parsed);
 
-  // Expand ~ in project paths
-  for (const entry of Object.values(config.projects)) {
-    if (typeof entry.path === "string" && entry.path.startsWith("~/")) {
-      entry.path = join(homedir(), entry.path.slice(2));
-    }
+  for (const [projectId, entry] of Object.entries(config.projects)) {
+    entry.path = normalizeRegistryProjectPath(projectId, entry.path);
   }
 
   return config;
@@ -728,7 +754,7 @@ export function registerProjectInGlobalConfig(
   projectId: string,
   name: string,
   projectPath: string,
-  localConfig?: LocalProjectConfig,
+  localConfig?: (LocalProjectConfig & { sessionPrefix?: string }) | undefined,
   optionsOrGlobalConfigPath?: RegisterProjectOptions | string,
   globalConfigPath?: string,
 ): void {
@@ -737,7 +763,9 @@ export function registerProjectInGlobalConfig(
     typeof optionsOrGlobalConfigPath === "string"
       ? optionsOrGlobalConfigPath
       : (globalConfigPath ?? getGlobalConfigPath());
-  const identity = deriveProjectStorageIdentity(projectPath);
+  const requestedProjectPath = resolve(projectPath);
+  const normalizedProjectPath = normalizeRegisteredProjectPath(projectPath);
+  const identity = deriveProjectStorageIdentity(normalizedProjectPath);
 
   withFileLockSync(globalConfigLockPath(configPath), () => {
     const globalConfig = loadGlobalConfig(configPath, { alreadyLocked: true }) ?? makeEmptyGlobalConfig();
@@ -746,19 +774,23 @@ export function registerProjectInGlobalConfig(
       | (GlobalProjectEntry & Record<string, unknown>)
       | undefined;
 
-    if (existing?.path && resolve(existing.path) !== resolve(projectPath)) {
+    if (existing?.path && resolve(existing.path) !== normalizedProjectPath) {
       throw new Error(
         `Project id "${projectId}" is already registered for "${existing.path}". ` +
-          `Choose a different configProjectKey to add "${projectPath}" as a separate project.`,
+          `Choose a different configProjectKey to add "${normalizedProjectPath}" as a separate project.`,
       );
     }
 
     for (const [existingProjectId, entry] of Object.entries(globalConfig.projects)) {
       if (existingProjectId === projectId) continue;
-      if (entry.path === projectPath) {
-        throw new Error(
-          `Project path "${projectPath}" is already registered as "${existingProjectId}"`,
-        );
+      if (entry.path === normalizedProjectPath) {
+        if (!options.allowStorageKeyReuse) {
+          throw new StorageKeyCollisionError(
+            entry.storageKey ?? identity.storageKey,
+            existingProjectId,
+            projectId,
+          );
+        }
       }
     }
 
@@ -770,7 +802,10 @@ export function registerProjectInGlobalConfig(
 
     const repoIdentity = existing?.repo ?? normalizeRepoIdentity(identity.originUrl);
     const defaultBranch = existing?.defaultBranch ?? localConfig?.defaultBranch ?? "main";
-    const sessionPrefix = existing?.sessionPrefix ?? generateSessionPrefix(basename(projectPath));
+    const sessionPrefix =
+      existing?.sessionPrefix ??
+      localConfig?.sessionPrefix ??
+      generateSessionPrefix(basename(requestedProjectPath));
     const source = existing?.source ?? (repoIdentity ? "ao-project-add" : "local");
     const registeredAt = existing?.registeredAt ?? Math.floor(Date.now() / 1000);
     const prefixOwner = findSessionPrefixOwner(globalConfig, sessionPrefix, projectId);
@@ -785,7 +820,7 @@ export function registerProjectInGlobalConfig(
 
     globalConfig.projects[projectId] = {
       projectId,
-      path: projectPath,
+      path: normalizedProjectPath,
       storageKey,
       ...(repoIdentity ? { repo: repoIdentity } : {}),
       defaultBranch,

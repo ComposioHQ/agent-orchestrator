@@ -2,6 +2,7 @@ import { rmSync } from "node:fs";
 import path from "node:path";
 import { NextResponse, type NextRequest } from "next/server";
 import {
+  ConfigNotFoundError,
   LocalProjectConfigSchema,
   getProjectBaseDir,
   getGlobalConfigPath,
@@ -52,9 +53,25 @@ async function cleanupManagedWorkspaces(projectId: string, workspacePluginName: 
   }
 }
 
+function loadProjectRouteConfig() {
+  const globalConfigPath = getGlobalConfigPath();
+
+  try {
+    return loadConfig(globalConfigPath);
+  } catch (error) {
+    if (error instanceof ConfigNotFoundError) {
+      return loadConfig();
+    }
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return loadConfig();
+    }
+    throw error;
+  }
+}
+
 function getProjectState(projectId: string) {
   const globalConfig = loadGlobalConfig();
-  const config = loadConfig(getGlobalConfigPath());
+  const config = loadProjectRouteConfig();
   return {
     config,
     globalEntry: globalConfig?.projects[projectId] ?? null,

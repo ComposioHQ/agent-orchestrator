@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { NextResponse, type NextRequest } from "next/server";
 import {
+  detectDefaultBranchFromDir,
   getGlobalConfigPath,
   loadConfig,
   migrateToGlobalConfig,
@@ -39,6 +40,11 @@ function revalidatePortfolioPaths(projectId: string): void {
       // Route tests do not run inside a full Next.js revalidation context.
     }
   }
+}
+
+function buildSeedLocalConfig(projectPath: string): { defaultBranch: string } {
+  const defaultBranch = detectDefaultBranchFromDir(projectPath);
+  return { defaultBranch };
 }
 
 function seedGlobalRegistryFromCurrentConfig(): void {
@@ -102,7 +108,7 @@ export async function POST(request: NextRequest) {
       projectId,
       name ?? projectId,
       resolvedPath,
-      undefined,
+      buildSeedLocalConfig(resolvedPath),
       allowStorageKeyReuse ? { allowStorageKeyReuse: true } : undefined,
     );
     invalidatePortfolioServicesCache();

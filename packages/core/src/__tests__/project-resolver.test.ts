@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -210,6 +210,42 @@ describe("project resolver", () => {
       path: brokenPath,
       storageKey: "storage-key-degraded",
       resolveError: expect.any(String),
+    });
+  });
+
+  it("matches a flat local config launched from a symlinked checkout", () => {
+    const realProjectPath = join(tempRoot, "real-app");
+    const symlinkParent = join(tempRoot, "links");
+    const symlinkProjectPath = join(symlinkParent, "app-link");
+    mkdirSync(realProjectPath, { recursive: true });
+    mkdirSync(symlinkParent, { recursive: true });
+    symlinkSync(realProjectPath, symlinkProjectPath);
+    writeFileSync(
+      join(realProjectPath, "agent-orchestrator.yaml"),
+      ["agent: codex", "runtime: docker", "workspace: clone", ""].join("\n"),
+    );
+
+    saveGlobalConfig(
+      makeGlobalConfig({
+        app: {
+          projectId: "app",
+          path: realProjectPath,
+          storageKey: "storage-key-app",
+          displayName: "App",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+        },
+      }),
+      configPath,
+    );
+
+    const loaded = loadConfig(join(symlinkProjectPath, "agent-orchestrator.yaml"));
+    expect(loaded.projects.app).toMatchObject({
+      name: "App",
+      path: realProjectPath,
+      agent: "codex",
+      runtime: "docker",
+      workspace: "clone",
     });
   });
 });
