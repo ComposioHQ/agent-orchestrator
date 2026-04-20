@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { createLifecycleManager } from "../lifecycle-manager.js";
 import { DEFAULT_BUGBOT_COMMENTS_MESSAGE } from "../config.js";
 import {
@@ -825,6 +827,47 @@ describe("check (single session)", () => {
     const meta = readMetadataRaw(env.sessionsDir, "app-1");
     expect(meta?.["pr"]).toBe(makePR().url);
     expect(lm.getStates().get("app-1")).toBe("stuck");
+  });
+
+  it("refreshes worker branch metadata from the current worktree HEAD before PR detection", async () => {
+    const workspacePath = join(env.tmpDir, "worker-ws");
+    const gitDir = join(env.tmpDir, "repo", ".git", "worktrees", "app-1");
+    mkdirSync(workspacePath, { recursive: true });
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(join(workspacePath, ".git"), `gitdir: ${gitDir}\n`);
+    writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/fix-login-v2\n");
+
+    const mockSCM = createMockSCM({ detectPR: vi.fn().mockResolvedValue(null) });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "working",
+        branch: "fix-login",
+        workspacePath,
+        pr: null,
+        metadata: { agent: "mock-agent" },
+      }),
+      metaOverrides: {
+        worktree: workspacePath,
+        branch: "fix-login",
+        agent: "mock-agent",
+      },
+      registry,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSCM.detectPR).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "fix-login-v2" }),
+      expect.anything(),
+    );
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["branch"]).toBe("fix-login-v2");
   });
 
   it("preserves stuck state when getActivityState throws", async () => {

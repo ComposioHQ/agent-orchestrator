@@ -11,6 +11,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import {
   ACTIVITY_STATE,
   SESSION_STATUS,
@@ -87,6 +89,36 @@ function parseDuration(str: string): number {
       return value * 3_600_000;
     default:
       return 0;
+  }
+}
+
+function resolveGitDir(workspacePath: string): string | null {
+  const dotGitPath = join(workspacePath, ".git");
+  if (!existsSync(dotGitPath)) return null;
+
+  const dotGitStats = statSync(dotGitPath);
+  if (dotGitStats.isDirectory()) return dotGitPath;
+
+  const dotGitContent = readFileSync(dotGitPath, "utf8").trim();
+  const gitDirMatch = dotGitContent.match(/^gitdir:\s*(.+)$/i);
+  if (!gitDirMatch) return null;
+
+  return resolve(dirname(dotGitPath), gitDirMatch[1].trim());
+}
+
+function readWorkspaceBranch(workspacePath: string): string | null {
+  try {
+    const gitDir = resolveGitDir(workspacePath);
+    if (!gitDir) return null;
+
+    const head = readFileSync(join(gitDir, "HEAD"), "utf8").trim();
+    const prefix = "ref: refs/heads/";
+    if (!head.startsWith(prefix)) return null;
+
+    const branch = head.slice(prefix.length).trim();
+    return branch.length > 0 ? branch : null;
+  } catch {
+    return null;
   }
 }
 
@@ -584,6 +616,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
+
+    const currentBranch = session.workspacePath ? readWorkspaceBranch(session.workspacePath) : null;
+    if (currentBranch && currentBranch !== session.branch) {
+      session.branch = currentBranch;
+      if (session.pr) {
+        session.pr.branch = currentBranch;
+      }
+      updateSessionMetadata(session, { branch: currentBranch });
+    }
 
     let detectedIdleTimestamp: Date | null = null;
     let idleWasBlocked = false;
