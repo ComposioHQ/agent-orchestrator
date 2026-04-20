@@ -1,0 +1,45 @@
+packages/core/src/global-config.ts
+  b7f2e1a29ab55353 630
+packages/web/src/app/api/projects/[id]/route.ts
+  07b358be77babf41 190-193,195,223
+packages/core/src/portfolio-session-service.ts
+  07b358be77babf41 121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "86a93b27026dd1567425ef0dae9779d58d886a62",
+  "prompts": {
+    "07b358be77babf41": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dabc0-c78b-7231-89ff-e601496e025f",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 3,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    },
+    "b7f2e1a29ab55353": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dab5d-199b-7d82-b411-d2f8b145eab3",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 2,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e1aac9baf373c4": {
+      "author": "Ashish Huddar"
+    }
+  }
+}
