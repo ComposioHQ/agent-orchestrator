@@ -1,0 +1,85 @@
+packages/core/src/__tests__/global-config.test.ts
+  8ff7d7b24663bd48 56,318-339
+packages/web/src/__tests__/project-detail-route.test.ts
+  8ff7d7b24663bd48 140-175,208,210-212,214
+packages/core/rollup.config.ts
+  8ff7d7b24663bd48 44-47
+packages/core/src/global-config.ts
+  8ff7d7b24663bd48 11,31-59,311-312,757,766-768,777,780,786-793,805-808,823
+packages/web/src/lib/project-name.ts
+  8ff7d7b24663bd48 4,13-28,31,45,56
+packages/core/src/__tests__/file-lock.test.ts
+  8ff7d7b24663bd48 1-43
+packages/web/src/__tests__/projects-route.test.ts
+  92b51282e68f02da 2,110-112,135,151-153,185
+packages/core/src/decomposer.ts
+  8ff7d7b24663bd48 1-131
+packages/core/src/file-lock.ts
+  8ff7d7b24663bd48 4-7,19,43-44
+packages/web/src/app/api/projects/route.ts
+  92b51282e68f02da 6,45-49,111
+packages/web/src/app/api/projects/[id]/route.ts
+  8ff7d7b24663bd48 5,56-71,74
+packages/core/src/config.ts
+  8ff7d7b24663bd48 824-830,833-837
+packages/cli/src/commands/start.ts
+  8ff7d7b24663bd48 201,1064
+  92b51282e68f02da 809-813,815-816,818-821,823-841
+packages/web/src/components/DegradedProjectState.tsx
+  92b51282e68f02da 55
+packages/cli/__tests__/commands/start.test.ts
+  8ff7d7b24663bd48 9,250-253,965-967,1095-1097,2026-2188
+packages/core/src/__tests__/project-resolver.test.ts
+  8ff7d7b24663bd48 2,215-248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "8f6901e232c4bac8db737d368007fd00d04b75dd",
+  "prompts": {
+    "8ff7d7b24663bd48": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dac16-1437-7403-94bc-46935665e3ee",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 421,
+      "total_deletions": 52,
+      "accepted_lines": 421,
+      "overriden_lines": 0
+    },
+    "92b51282e68f02da": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1305960e-8a29-4f54-9442-8084f719c41e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 46,
+      "total_deletions": 23,
+      "accepted_lines": 42,
+      "overriden_lines": 1
+    },
+    "b7f2e1a29ab55353": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dab5d-199b-7d82-b411-d2f8b145eab3",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3439,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e1aac9baf373c4": {
+      "author": "Ashish Huddar"
+    }
+  }
+}
