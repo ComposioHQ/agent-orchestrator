@@ -1030,6 +1030,7 @@ describe("check (single session)", () => {
     expect(meta?.["statePayload"]).toContain('"state":"merged"');
     expect(meta?.["statePayload"]).toContain('"reason":"merged"');
     expect(meta?.["statePayload"]).not.toContain('"reason":"not_created"');
+    expect(mockSessionManager.invalidateCache).toHaveBeenCalled();
   });
 
   it("keeps closed PR sessions idle and emits a PR-closed notification", async () => {

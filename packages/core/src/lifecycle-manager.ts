@@ -1065,6 +1065,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     );
     const mergedUpdates = { ...updates, ...lifecycleUpdates };
     updateMetadata(sessionsDir, session.id, mergedUpdates);
+    sessionManager.invalidateCache();
 
     const cleaned = Object.fromEntries(
       Object.entries(session.metadata).filter(([key]) => {

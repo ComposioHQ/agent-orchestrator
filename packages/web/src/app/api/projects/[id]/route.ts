@@ -187,8 +187,12 @@ export async function PATCH(
     if (state.degradedProject) {
       return NextResponse.json(degradedPayload(id, state.degradedProject), { status: 409 });
     }
+    const projectPath = state.globalEntry?.path;
+    if (!projectPath) {
+      return NextResponse.json({ error: `Project "${id}" is missing a registry path.` }, { status: 409 });
+    }
 
-    const localConfigResult = loadLocalProjectConfigDetailed(state.globalEntry!.path);
+    const localConfigResult = loadLocalProjectConfigDetailed(projectPath);
     if (localConfigResult.kind === "malformed" || localConfigResult.kind === "invalid") {
       return NextResponse.json({ error: localConfigResult.error }, { status: 400 });
     }
@@ -216,7 +220,7 @@ export async function PATCH(
     };
 
     const validated = LocalProjectConfigSchema.parse(nextConfig);
-    const configPath = path.join(state.globalEntry!.path, "agent-orchestrator.yaml");
+    const configPath = path.join(projectPath, "agent-orchestrator.yaml");
     mkdirSync(path.dirname(configPath), { recursive: true });
     writeFileSync(configPath, stringifyLocalProjectConfig(validated));
     invalidatePortfolioServicesCache();
@@ -253,7 +257,13 @@ export async function DELETE(
     await cleanupManagedWorkspaces(id, workspacePluginName);
 
     const storageKey = state.globalEntry?.storageKey ?? state.degradedProject?.storageKey ?? null;
-    if (storageKey) {
+    const otherStorageOwners = storageKey
+      ? Object.entries(loadGlobalConfig(getGlobalConfigPath())?.projects ?? {}).filter(
+          ([projectId, entry]) => projectId !== id && entry.storageKey === storageKey,
+        )
+      : [];
+
+    if (storageKey && otherStorageOwners.length === 0) {
       rmSync(getProjectBaseDir(storageKey), { recursive: true, force: true });
     }
     unregisterProject(id);
@@ -264,7 +274,7 @@ export async function DELETE(
       ok: true,
       projectId: id,
       storageKey,
-      removedStorageDir: Boolean(storageKey),
+      removedStorageDir: Boolean(storageKey) && otherStorageOwners.length === 0,
     });
   } catch (error) {
     return NextResponse.json(

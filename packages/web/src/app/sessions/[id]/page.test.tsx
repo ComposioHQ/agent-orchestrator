@@ -194,6 +194,74 @@ describe("SessionPage project polling", () => {
     ).toHaveLength(2);
   });
 
+  it("does not deadlock project polling after a cached worker poll is skipped", async () => {
+    const workerSession = makeWorkerSession();
+    let sessionFetchCount = 0;
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            projects: [{ id: "my-app", name: "My App", sessionPrefix: "my-app" }],
+          }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        sessionFetchCount += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () =>
+            sessionFetchCount >= 3
+              ? { ...workerSession, metadata: { role: "orchestrator" } }
+              : workerSession,
+        } as Response;
+      }
+
+      if (url === "/api/sessions") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [workerSession] }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ orchestratorId: "my-app-orchestrator" }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions?project=my-app") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [workerSession], orchestratorId: "worker-1" }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+
+    render(<SessionPage />);
+    await flushAsyncWork();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    await flushAsyncWork();
+
+    expect(fetch).toHaveBeenCalledWith("/api/sessions?project=my-app");
+  });
+
   it("routes 404 responses through notFound()", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

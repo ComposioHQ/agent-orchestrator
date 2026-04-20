@@ -53,6 +53,7 @@ export interface Services {
 const globalForServices = globalThis as typeof globalThis & {
   _aoServices?: Services;
   _aoServicesInit?: Promise<Services>;
+  _aoServicesGeneration?: number;
 };
 
 /** Get (or lazily initialize) the core services singleton. */
@@ -61,18 +62,34 @@ export function getServices(): Promise<Services> {
     return Promise.resolve(globalForServices._aoServices);
   }
   if (!globalForServices._aoServicesInit) {
-    globalForServices._aoServicesInit = initServices().catch((err) => {
-      // Clear the cached promise so the next call retries instead of
-      // permanently returning a rejected promise.
-      globalForServices._aoServicesInit = undefined;
-      throw err;
-    });
+    const generation = globalForServices._aoServicesGeneration ?? 0;
+    const initPromise = initServices()
+      .then((services) => {
+        if ((globalForServices._aoServicesGeneration ?? 0) !== generation) {
+          services.lifecycleManager.stop();
+          return getServices();
+        }
+
+        globalForServices._aoServices = services;
+        return services;
+      })
+      .catch((err) => {
+        // Clear the cached promise so the next call retries instead of
+        // permanently returning a rejected promise.
+        if (globalForServices._aoServicesInit === initPromise) {
+          globalForServices._aoServicesInit = undefined;
+        }
+        throw err;
+      });
+
+    globalForServices._aoServicesInit = initPromise;
   }
   return globalForServices._aoServicesInit;
 }
 
 /** Clear the cached services singleton so subsequent requests reload config/plugins. */
 export function invalidatePortfolioServicesCache(): void {
+  globalForServices._aoServicesGeneration = (globalForServices._aoServicesGeneration ?? 0) + 1;
   if (globalForServices._aoServices) {
     globalForServices._aoServices.lifecycleManager.stop();
   }
@@ -102,9 +119,7 @@ async function initServices(): Promise<Services> {
   const lifecycleManager = createLifecycleManager({ config, registry, sessionManager });
   lifecycleManager.start(30_000);
 
-  const services = { config, registry, sessionManager, lifecycleManager };
-  globalForServices._aoServices = services;
-  return services;
+  return { config, registry, sessionManager, lifecycleManager };
 }
 
 // ---------------------------------------------------------------------------

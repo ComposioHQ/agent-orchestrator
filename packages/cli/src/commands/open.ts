@@ -2,7 +2,7 @@ import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@aoagents/ao-core";
 import { exec, getTmuxSessions } from "../lib/shell.js";
-import { matchesPrefix, stripHashPrefix } from "../lib/session-utils.js";
+import { findProjectForSession, matchesPrefix, stripHashPrefix } from "../lib/session-utils.js";
 import { DEFAULT_PORT } from "../lib/constants.js";
 import { projectSessionUrl } from "../lib/routes.js";
 
@@ -69,10 +69,7 @@ export function registerOpen(program: Command): void {
           console.log(chalk.green(`  Opened: ${session}`));
         } else {
           const sessionId = stripHashPrefix(session);
-          const matchedProjectId =
-            Object.entries(config.projects).find(([, project]) =>
-              matchesPrefix(session, project.sessionPrefix || ""),
-            )?.[0] ?? target ?? sessionId;
+          const matchedProjectId = findProjectForSession(config, session) ?? target ?? sessionId;
           console.log(
             `  ${chalk.yellow(session)} — view at: ${chalk.dim(projectSessionUrl(port, matchedProjectId, sessionId))}`,
           );

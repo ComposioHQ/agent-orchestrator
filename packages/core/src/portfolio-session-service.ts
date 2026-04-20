@@ -96,6 +96,8 @@ function rawToMetadata(raw: Record<string, string>): SessionMetadata {
     runtimeHandle: raw["runtimeHandle"],
     restoredAt: raw["restoredAt"],
     role: raw["role"],
+    stateVersion: raw["stateVersion"],
+    statePayload: raw["statePayload"],
   };
 }
 
@@ -116,7 +118,7 @@ function metadataToSession(sessionId: string, project: PortfolioProject, metadat
   // Use the most recent timestamp available as lastActivityAt
   const timestamps = [metadata.createdAt, metadata.restoredAt].filter(Boolean);
   const lastActivity = timestamps.length > 0
-    ? new Date(Math.max(...timestamps.map(t => new Date(t!).getTime())))
+    ? new Date(Math.max(...timestamps.map((timestamp) => new Date(timestamp).getTime())))
     : new Date();
 
   return sessionFromMetadata(sessionId, metadataToRecord(metadata), {

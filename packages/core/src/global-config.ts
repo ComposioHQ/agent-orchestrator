@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  realpathSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -557,6 +558,30 @@ function getLegacyProjectBaseDir(storageKey: string, projectPath: string): strin
   return join(getAoBaseDir(), `${storageKey}-${basename(projectPath)}`);
 }
 
+function getLegacyWrappedStorageKey(configPath: string, projectPath: string): string {
+  const configDir = dirname(realpathSync(configPath));
+  const hash = createHash("sha256").update(configDir).digest("hex").slice(0, 12);
+  return `${hash}-${basename(projectPath)}`;
+}
+
+function getRegisteredSessionPrefix(entry: GlobalProjectEntry, projectId: string): string {
+  return entry.sessionPrefix ?? generateSessionPrefix(basename(entry.path ?? projectId));
+}
+
+function findSessionPrefixOwner(
+  globalConfig: GlobalConfig,
+  sessionPrefix: string,
+  excludeProjectId?: string,
+): string | null {
+  for (const [projectId, entry] of Object.entries(globalConfig.projects)) {
+    if (projectId === excludeProjectId) continue;
+    if (getRegisteredSessionPrefix(entry, projectId) === sessionPrefix) {
+      return projectId;
+    }
+  }
+  return null;
+}
+
 function moveStorageDirectory(fromDir: string, toDir: string): void {
   if (!existsSync(fromDir) || fromDir === toDir) return;
   if (existsSync(toDir)) {
@@ -595,12 +620,14 @@ function ensureProjectStorageIdentity(
 
   const configPath = globalConfigPath ?? getGlobalConfigPath();
   const migrate = () => {
-    const fresh = loadGlobalConfig(configPath) ?? globalConfig;
+    const fresh = loadGlobalConfig(configPath, { alreadyLocked: true }) ?? globalConfig;
     const freshEntry = fresh.projects[projectId] as (GlobalProjectEntry & Record<string, unknown>) | undefined;
     if (!freshEntry?.path) return;
 
     const freshOldStorageKey =
-      typeof freshEntry.storageKey === "string" ? freshEntry.storageKey : legacyProjectHash(freshEntry.path);
+      typeof freshEntry.storageKey === "string"
+        ? freshEntry.storageKey
+        : legacyProjectHash(freshEntry.path);
     const freshIdentity = deriveProjectStorageIdentity(
       freshEntry.path,
       typeof freshEntry.repo?.originUrl === "string" ? freshEntry.repo.originUrl : undefined,
@@ -710,6 +737,15 @@ export function registerProjectInGlobalConfig(
     const sessionPrefix = existing?.sessionPrefix ?? generateSessionPrefix(basename(projectPath));
     const source = existing?.source ?? (repoIdentity ? "ao-project-add" : "local");
     const registeredAt = existing?.registeredAt ?? Math.floor(Date.now() / 1000);
+    const prefixOwner = findSessionPrefixOwner(globalConfig, sessionPrefix, projectId);
+
+    if (prefixOwner) {
+      throw new Error(
+        `Duplicate session prefix detected: "${sessionPrefix}"\n` +
+          `Projects "${prefixOwner}" and "${projectId}" would generate the same prefix.\n\n` +
+          `Choose a different configProjectKey or add an explicit sessionPrefix before registering the project.`,
+      );
+    }
 
     globalConfig.projects[projectId] = {
       projectId,
@@ -1011,6 +1047,10 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
       typeof project["path"] === "string" && project["path"].startsWith("~/")
         ? join(homedir(), (project["path"] as string).slice(2))
         : (project["path"] as string);
+    const storageKey =
+      typeof project["storageKey"] === "string"
+        ? (project["storageKey"] as string)
+        : getLegacyWrappedStorageKey(oldConfigPath, projectPath);
 
     const repoIdentity =
       typeof project["originUrl"] === "string"
@@ -1019,7 +1059,7 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
     newGlobal.projects[projectId] = {
       projectId,
       path: projectPath,
-      ...(typeof project["storageKey"] === "string" ? { storageKey: project["storageKey"] as string } : {}),
+      storageKey,
       ...(repoIdentity ? { repo: repoIdentity } : {}),
       ...(typeof project["defaultBranch"] === "string"
         ? { defaultBranch: project["defaultBranch"] as string }
@@ -1040,7 +1080,6 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
   // Each old project had its config inside the multi-project file.
   // For single-project configs at the project root: rewrite in place.
   // For multi-project configs: write each project's local config to its path.
-  const oldConfigDir = dirname(resolve(oldConfigPath));
   for (const [_projectId, project] of Object.entries(oldProjects)) {
     if (!project["path"]) continue;
 
@@ -1048,10 +1087,6 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
       typeof project["path"] === "string" && project["path"].startsWith("~/")
         ? join(homedir(), (project["path"] as string).slice(2))
         : (project["path"] as string);
-
-    // Only rewrite if the old config lives inside this project's directory
-    // (single-project setup: the config IS in the project root)
-    if (resolve(projectPath) !== resolve(oldConfigDir)) continue;
 
     const {
       name: _name,

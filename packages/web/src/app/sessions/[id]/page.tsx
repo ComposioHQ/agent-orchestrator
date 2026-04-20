@@ -300,10 +300,10 @@ export default function SessionPage() {
     if (fetchingProjectSessionsRef.current) return;
     const projectId = sessionProjectIdRef.current;
     if (!projectId) return;
-    fetchingProjectSessionsRef.current = true;
     const isOrchestrator = sessionIsOrchestratorRef.current;
     const projectSessionsKey = `${projectId}:${isOrchestrator ? "orchestrator" : "worker"}`;
     if (!isOrchestrator && resolvedProjectSessionsKeyRef.current === projectSessionsKey) return;
+    fetchingProjectSessionsRef.current = true;
     try {
       const query = isOrchestrator
         ? `/api/sessions?project=${encodeURIComponent(projectId)}`

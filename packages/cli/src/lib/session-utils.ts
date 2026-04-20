@@ -28,7 +28,7 @@ export function findProjectForSession(
     [string, OrchestratorConfig["projects"][string]]
   >) {
     const prefix = project.sessionPrefix || id;
-    if (matchesPrefix(sessionName, prefix)) {
+    if (matchesPrefix(sessionName, prefix) || isOrchestratorSessionName(config, sessionName, id)) {
       return id;
     }
   }

@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
   loadGlobalConfig,
+  migrateToGlobalConfig,
   repairWrappedLocalProjectConfig,
   registerProjectInGlobalConfig,
   relinkProjectInGlobalConfig,
@@ -99,6 +100,27 @@ describe("global-config storage identity", () => {
     expect(() =>
       registerProjectInGlobalConfig("demo-clone", "Demo Clone", clonePath, undefined, configPath),
     ).toThrow(StorageKeyCollisionError);
+  });
+
+  it("rejects registration when another project already owns the generated session prefix", () => {
+    const repoPath = join(tempRoot, "apps", "web");
+    mkdirSync(join(repoPath, ".git"), { recursive: true });
+    writeFileSync(
+      join(repoPath, ".git", "config"),
+      '[core]\n  repositoryformatversion = 0\n[remote "origin"]\n  url = https://github.com/OpenAI/web.git\n',
+    );
+    const clonePath = join(tempRoot, "fixtures", "web");
+    mkdirSync(join(clonePath, ".git"), { recursive: true });
+    writeFileSync(
+      join(clonePath, ".git", "config"),
+      '[core]\n  repositoryformatversion = 0\n[remote "origin"]\n  url = https://github.com/OpenAI/web-fixtures.git\n',
+    );
+
+    registerProjectInGlobalConfig("web", "Web", repoPath, undefined, configPath);
+
+    expect(() =>
+      registerProjectInGlobalConfig("web-fixtures", "Web Fixtures", clonePath, undefined, configPath),
+    ).toThrow(/Duplicate session prefix detected: "web"/);
   });
 
   it("allows an explicit second registration when collision is confirmed", () => {
@@ -377,5 +399,69 @@ describe("global-config storage identity", () => {
 
     expect(resolved?.storageKey).toBe(expectedStorageKey);
     expect(loadGlobalConfig(configPath)?.projects["local"]?.repo).toBeUndefined();
+  });
+
+  it("migrates central old-format configs into local behavior files for every project", () => {
+    const repoA = createRepo("frontend", "https://github.com/OpenAI/frontend.git");
+    const repoB = createRepo("backend", "https://github.com/OpenAI/backend.git");
+    const oldConfigPath = join(tempRoot, "legacy-multi.yaml");
+
+    writeFileSync(
+      oldConfigPath,
+      [
+        "port: 3000",
+        "readyThresholdMs: 300000",
+        "projects:",
+        "  frontend:",
+        "    name: Frontend",
+        `    path: ${repoA}`,
+        "    agent: codex",
+        "    tracker:",
+        "      plugin: github",
+        "  backend:",
+        "    name: Backend",
+        `    path: ${repoB}`,
+        "    runtime: tmux",
+        "    postCreate:",
+        "      - pnpm install",
+        "",
+      ].join("\n"),
+    );
+
+    migrateToGlobalConfig(oldConfigPath, configPath);
+
+    const frontendLocal = parseYaml(readFileSync(join(repoA, "legacy-multi.yaml"), "utf-8"));
+    const backendLocal = parseYaml(readFileSync(join(repoB, "legacy-multi.yaml"), "utf-8"));
+
+    expect(frontendLocal).toEqual({
+      agent: "codex",
+      tracker: { plugin: "github" },
+    });
+    expect(backendLocal).toEqual({
+      runtime: "tmux",
+      postCreate: ["pnpm install"],
+    });
+  });
+
+  it("persists wrapped legacy storage keys during migration", () => {
+    const repoPath = createRepo("wrapped-project", "https://github.com/OpenAI/wrapped-project.git");
+    const oldConfigPath = join(repoPath, "agent-orchestrator.yaml");
+    const expectedStorageKey = `${createHash("sha256").update(realpathSync(repoPath)).digest("hex").slice(0, 12)}-wrapped-project`;
+
+    writeFileSync(
+      oldConfigPath,
+      [
+        "projects:",
+        "  wrapped-project:",
+        `    path: ${repoPath}`,
+        "    agent: codex",
+        "",
+      ].join("\n"),
+    );
+
+    migrateToGlobalConfig(oldConfigPath, configPath);
+
+    const migrated = loadGlobalConfig(configPath);
+    expect(migrated?.projects["wrapped-project"]?.storageKey).toBe(expectedStorageKey);
   });
 });

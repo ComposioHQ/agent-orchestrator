@@ -126,6 +126,12 @@ describe("findProjectForSession", () => {
     expect(findProjectForSession(config, "a-1")).toBe("alpha");
     expect(findProjectForSession(config, "b-2")).toBe("beta");
   });
+
+  it("matches orchestrator session names to their project", () => {
+    const config = makeConfig({ "my-app": { sessionPrefix: "app" } });
+    expect(findProjectForSession(config, "app-orchestrator")).toBe("my-app");
+    expect(findProjectForSession(config, "app-orchestrator-2")).toBe("my-app");
+  });
 });
 
 describe("isOrchestratorSessionName", () => {

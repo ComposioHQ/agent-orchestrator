@@ -21,7 +21,6 @@ import {
   formatPortfolioProjectStatus,
 } from "../lib/portfolio-display.js";
 import { isHumanCaller } from "../lib/caller-context.js";
-import { promptConfirm } from "../lib/prompts.js";
 
 function assertPortfolioEnabled(): void {
   if (isPortfolioEnabled()) return;
@@ -118,15 +117,13 @@ export function registerProject_cmd(program: Command): void {
         registerProject(resolvedPath, opts.key);
       } catch (error) {
         if (error instanceof StorageKeyCollisionError && isHumanCaller()) {
-          const proceed = await promptConfirm(
-            `This repo slice is already registered as "${error.existingProjectId}". Register a second project that shares storage?`,
-            false,
+          console.log(
+            chalk.dim(
+              `This repo slice is already registered as "${error.existingProjectId}". ` +
+                `Use \`ao open ${error.existingProjectId}\` or \`ao project ls\` to work from the existing project.`,
+            ),
           );
-          if (!proceed) {
-            console.log(chalk.dim(`Use \`ao open ${error.existingProjectId}\` or \`ao project ls\` to work from the existing project.`));
-            return;
-          }
-          registerProject(resolvedPath, opts.key, undefined, { allowStorageKeyReuse: true });
+          return;
         } else {
           throw error;
         }

@@ -153,23 +153,18 @@ describe("ao project add", () => {
     );
   });
 
-  it("registers a duplicate storage key after interactive confirmation", async () => {
+  it("surfaces duplicate storage collisions without registering a shared-storage project", async () => {
     mockLoadLocalProjectConfig.mockReturnValue({ projects: {} });
     const { StorageKeyCollisionError } = await import("@aoagents/ao-core");
-    mockRegisterProject
-      .mockImplementationOnce(() => {
-        throw new StorageKeyCollisionError("existing-proj");
-      })
-      .mockImplementationOnce(() => {});
+    mockRegisterProject.mockImplementationOnce(() => {
+      throw new StorageKeyCollisionError("existing-proj");
+    });
 
     await program.parseAsync(["node", "ao", "project", "add", "/tmp/my-project"]);
 
-    expect(mockRegisterProject).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("my-project"),
-      undefined,
-      undefined,
-      { allowStorageKeyReuse: true },
+    expect(mockRegisterProject).toHaveBeenCalledTimes(1);
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('already registered as "existing-proj"'),
     );
   });
 });
