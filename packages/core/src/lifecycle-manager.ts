@@ -495,11 +495,21 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const hasPassing = checks.some((c) => c.status === "passed");
         return hasPassing ? CI_STATUS.PASSING : CI_STATUS.NONE;
       }
-    } catch {
+    } catch (err) {
       // Verification call itself failed — don't trust the original
-      // fail-closed "failing" for a NEW transition. Return pending so
-      // the lifecycle stays in its current state rather than falsely
-      // moving to ci_failed.
+      // fail-closed "failing" for a NEW transition. Record the error for
+      // diagnosability, then return pending so the lifecycle stays in its
+      // current state rather than falsely moving to ci_failed.
+      observer?.recordOperation?.({
+        metric: "lifecycle_poll",
+        operation: "verification.ci_checks",
+        outcome: "failure",
+        correlationId: createCorrelationId("lifecycle-verify"),
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: err instanceof Error ? err.message : String(err),
+        level: "warn",
+      });
       return CI_STATUS.PENDING;
     }
     return ciStatus;
@@ -514,7 +524,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
    * unresolved review comments. If all threads are resolved (or there are
    * none), the transition is stale and should be suppressed.
    *
-   * Skips verification when the session is already in changes_requested.
+   * Skips verification when the session is already in changes_requested or
+   * review_pending (the latter means a prior verification already ran and
+   * found no actionable comments — re-checking every poll would bypass the
+   * existing review backlog throttle).
+   *
+   * Note: this checks review threads only. A body-only "Request Changes"
+   * review without inline threads will still be surfaced because we preserve
+   * the original decision when getPendingComments returns non-empty OR when
+   * verification fails. The edge case where a reviewer requests changes
+   * with ONLY a body comment and no threads is accepted — the review will
+   * be caught by maybeDispatchReviewBacklog on the next throttle cycle.
    */
   async function verifyReviewDecisionForTransition(
     reviewDecision: ReviewDecision,
@@ -523,6 +543,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   ): Promise<ReviewDecision> {
     if (reviewDecision !== "changes_requested") return reviewDecision;
     if (session.status === SESSION_STATUS.CHANGES_REQUESTED) return reviewDecision;
+    if (session.status === SESSION_STATUS.REVIEW_PENDING) return reviewDecision;
     if (!session.pr) return reviewDecision;
 
     try {
@@ -533,10 +554,20 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         // than falsely routing the agent to address already-resolved comments.
         return "pending";
       }
-    } catch {
+    } catch (err) {
       // Verification failed — preserve the original decision since we can't
       // confirm it's stale. This is conservative: the agent may get a
       // redundant notification, but won't miss a real review request.
+      observer?.recordOperation?.({
+        metric: "lifecycle_poll",
+        operation: "verification.pending_comments",
+        outcome: "failure",
+        correlationId: createCorrelationId("lifecycle-verify"),
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: err instanceof Error ? err.message : String(err),
+        level: "warn",
+      });
     }
     return reviewDecision;
   }
