@@ -509,8 +509,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       Boolean(scm) &&
       Boolean(session.branch) &&
       session.metadata["prAutoDetect"] !== "off" &&
-      session.metadata["role"] !== "orchestrator" &&
-      !session.id.endsWith("-orchestrator");
+      lifecycle.session.kind !== "orchestrator";
 
     const commit = (
       decision: LifecycleDecision = {
