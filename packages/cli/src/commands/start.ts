@@ -1667,53 +1667,55 @@ export function registerStop(program: Command): void {
 
           console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(project.name)}\n`));
 
-          // Resolve the actual orchestrator session id by listing the project's sessions
-          // and finding the most-recently-active orchestrator. This avoids relying on the
-          // legacy `${prefix}-orchestrator` (no-N) phantom id, which never matches a real
-          // numbered session and causes ao stop to silently no-op.
           const sm = await getSessionManager(config);
           const allSessionPrefixes = Object.entries(config.projects).map(
-            ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
+            ([, configuredProject]) =>
+              configuredProject.sessionPrefix ?? generateSessionPrefix(configuredProject.name ?? ""),
           );
-          let orchestratorToKill: { id: string } | null = null;
+          let sessionsToKill: Session[] = [];
           let lookupFailed = false;
           try {
             const projectSessions = await sm.list(_projectId);
-            const orchestrators = projectSessions
-              .filter((s) =>
-                isOrchestratorSession(s, project.sessionPrefix ?? _projectId, allSessionPrefixes),
-              )
-              .filter((s) => !isTerminalSession(s));
-            const sorted = [...orchestrators].sort(
-              (a, b) =>
-                (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0),
-            );
-            orchestratorToKill = sorted[0] ?? null;
+            sessionsToKill = projectSessions.filter((session) => !isTerminalSession(session));
           } catch (err) {
             lookupFailed = true;
             console.log(
               chalk.yellow(
-                `  Could not list sessions to locate orchestrator: ${
-                  err instanceof Error ? err.message : String(err)
-                }`,
+                `  Could not list project sessions: ${err instanceof Error ? err.message : String(err)}`,
               ),
             );
           }
 
-          if (orchestratorToKill) {
-            const spinner = ora("Stopping orchestrator session").start();
+          if (sessionsToKill.length > 0) {
+            const spinner = ora("Stopping project sessions").start();
             const purgeOpenCode = opts?.purgeSession === true;
-            await sm.kill(orchestratorToKill.id, { purgeOpenCode });
-            spinner.succeed(`Orchestrator session stopped (${orchestratorToKill.id})`);
-            // Also log to console.log so the killed id is visible in non-TTY callers
-            // (CI, scripts) and in test capture, since spinner output is suppressed.
-            console.log(chalk.green(`  Stopped orchestrator session: ${orchestratorToKill.id}`));
-          } else if (!lookupFailed) {
-            // Suppress the "no orchestrator found" message when sm.list threw —
-            // the catch above already explained the real reason and adding a
-            // second message would falsely imply the lookup succeeded.
+            const orchestratorSessions = sessionsToKill.filter((session) =>
+              isOrchestratorSession(
+                session,
+                project.sessionPrefix ?? _projectId,
+                allSessionPrefixes,
+              ),
+            );
+            const workerSessions = sessionsToKill.filter(
+              (session) => !orchestratorSessions.some((candidate) => candidate.id === session.id),
+            );
+            const orderedSessions = [...orchestratorSessions, ...workerSessions];
+
+            for (const session of orderedSessions) {
+              await sm.kill(session.id, { purgeOpenCode });
+            }
+
+            spinner.succeed(
+              `Stopped ${orderedSessions.length} project session${orderedSessions.length === 1 ? "" : "s"}`,
+            );
             console.log(
-              chalk.yellow(`No running orchestrator session found for "${project.name}"`),
+              chalk.green(
+                `  Stopped project sessions: ${orderedSessions.map((session) => session.id).join(", ")}`,
+              ),
+            );
+          } else if (!lookupFailed) {
+            console.log(
+              chalk.yellow(`No running project sessions found for "${project.name}"`),
             );
           }
 
