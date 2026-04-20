@@ -174,6 +174,42 @@ describe("send", () => {
     expect(mockRuntime.sendMessage).toHaveBeenCalled();
   });
 
+  it("resolves on restored session when confirmation never flips (soft success)", async () => {
+    // Regression test: on a restored session (post-#1074 fix), if
+    // sendMessage fires but the confirmation heuristics never flip,
+    // send() must still resolve — otherwise the lifecycle-manager's
+    // dispatch-hash never updates and the message re-sends next poll,
+    // reintroducing the duplicate-message bug that 77685a5 removed.
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "working",
+      project: "my-app",
+      issue: "TEST-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    // rt-old is dead → restore kicks in → rt-restored is ready
+    vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => handle.id !== "rt-old");
+    vi.mocked(mockAgent.isProcessRunning).mockImplementation(
+      async (handle) => handle.id !== "rt-old",
+    );
+    vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
+    // Steady output — confirmation heuristics will never flip
+    vi.mocked(mockRuntime.getOutput).mockResolvedValue("steady output");
+    vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.send("app-1", "retry after restore")).resolves.toBeUndefined();
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-restored"),
+      "retry after restore",
+    );
+  });
+
   it("throws for nonexistent session", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
     await expect(sm.send("nope", "hello")).rejects.toThrow("not found");

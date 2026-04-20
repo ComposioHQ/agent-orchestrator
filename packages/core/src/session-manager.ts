@@ -2285,9 +2285,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     };
 
-    const prepareSession = async (
-      forceRestore = false,
-    ): Promise<{ session: Session; restoredForDelivery: boolean }> => {
+    const prepareSession = async (forceRestore = false): Promise<Session> => {
       const current = await get(sessionId);
       if (!current) {
         throw new SessionNotFoundError(sessionId);
@@ -2303,15 +2301,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const normalized = current.runtimeHandle ? current : { ...current, runtimeHandle: handle };
 
       if (forceRestore || isRestorable(normalized)) {
-        return {
-          session: await restoreForDelivery(
-            forceRestore
-              ? "session needed to be restarted before delivery"
-              : "session is not running",
-            normalized,
-          ),
-          restoredForDelivery: true,
-        };
+        return restoreForDelivery(
+          forceRestore
+            ? "session needed to be restarted before delivery"
+            : "session is not running",
+          normalized,
+        );
       }
 
       let [runtimeAlive, processRunning] = await Promise.all([
@@ -2328,22 +2323,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
 
       if (!runtimeAlive || !processRunning) {
-        return {
-          session: await restoreForDelivery(
-            !runtimeAlive ? "runtime is not alive" : "agent process is not running",
-            normalized,
-          ),
-          restoredForDelivery: true,
-        };
+        return restoreForDelivery(
+          !runtimeAlive ? "runtime is not alive" : "agent process is not running",
+          normalized,
+        );
       }
 
-      return { session: normalized, restoredForDelivery: false };
+      return normalized;
     };
 
-    const sendWithConfirmation = async (
-      session: Session,
-      options: { requireConfirmation: boolean },
-    ): Promise<void> => {
+    const sendWithConfirmation = async (session: Session): Promise<void> => {
       const handle = session.runtimeHandle;
       if (!handle) {
         throw new Error(`Session ${sessionId} has no runtime handle`);
@@ -2377,10 +2366,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
       }
 
-      if (options.requireConfirmation) {
-        throw new Error(`Could not confirm delivery to restored session ${sessionId}`);
-      }
-
       // Message was already sent via runtimePlugin.sendMessage above — if we
       // cannot *confirm* delivery (e.g. agent is slow to show output), treat it
       // as a soft success rather than throwing.  Throwing here caused the caller
@@ -2392,12 +2377,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     let prepared = await prepareSession();
 
     try {
-      await sendWithConfirmation(prepared.session, {
-        requireConfirmation: prepared.restoredForDelivery,
-      });
+      await sendWithConfirmation(prepared);
     } catch (err) {
       const shouldRetryWithRestore =
-        prepared.session.restoredAt === undefined && isRestorable(prepared.session);
+        prepared.restoredAt === undefined && isRestorable(prepared);
 
       if (!shouldRetryWithRestore) {
         if (err instanceof Error) {
@@ -2408,7 +2391,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       prepared = await prepareSession(true);
       try {
-        await sendWithConfirmation(prepared.session, { requireConfirmation: true });
+        await sendWithConfirmation(prepared);
       } catch (retryErr) {
         if (retryErr instanceof Error) {
           throw retryErr;
