@@ -143,15 +143,15 @@ function DashboardInner({
     }
     return levels;
   }, [initialSessions, attentionZones]);
-  const disableRealtime = Boolean(dashboardLoadError);
   const { sessions, connectionStatus, sseAttentionLevels } = useSessionEvents({
     initialSessions,
     project: projectId,
     muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
     initialAttentionLevels,
-    disabled: disableRealtime,
     attentionZones,
   });
+  const recoveredFromLoadError = Boolean(dashboardLoadError) && sessions.length > 0;
+  const visibleDashboardLoadError = recoveredFromLoadError ? undefined : dashboardLoadError;
   const searchParams = useSearchParams();
   const activeSessionId = searchParams.get("session") ?? undefined;
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
@@ -404,16 +404,16 @@ function DashboardInner({
   };
 
   const hasAnySessions = kanbanLevels.some((level) => grouped[level].length > 0);
-  const showEmptyState = !allProjectsView && !hasAnySessions && !dashboardLoadError;
+  const showEmptyState = !allProjectsView && !hasAnySessions && !visibleDashboardLoadError;
 
-  const loadErrorBanner = dashboardLoadError ? (
+  const loadErrorBanner = visibleDashboardLoadError ? (
     <div
       className="dashboard-alert mb-6 flex flex-col gap-1.5 border border-[color-mix(in_srgb,var(--color-status-error)_28%,transparent)] bg-[color-mix(in_srgb,var(--color-status-error)_10%,transparent)] px-3.5 py-2.5 text-[11px] md:mb-4"
       role="alert"
       aria-live="assertive"
     >
       <span className="font-semibold text-[var(--color-status-error)]">Orchestrator failed to load</span>
-      <span className="break-words text-[var(--color-text-secondary)]">{dashboardLoadError}</span>
+      <span className="break-words text-[var(--color-text-secondary)]">{visibleDashboardLoadError}</span>
       <span className="text-[var(--color-text-secondary)]">
         Confirm <span className="font-mono text-[10px]">agent-orchestrator.yaml</span> exists and is valid, then run{" "}
         <span className="font-mono text-[10px]">ao doctor</span> for diagnostics.

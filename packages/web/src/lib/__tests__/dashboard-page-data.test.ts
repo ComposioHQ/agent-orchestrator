@@ -58,6 +58,12 @@ describe("formatDashboardLoadError", () => {
     expect(formatDashboardLoadError(new Error("  boom  "))).toBe("boom");
   });
 
+  it("keeps only the first non-empty line from multiline errors", () => {
+    expect(formatDashboardLoadError(new Error("\n  config parse failed  \n  at line 4\n"))).toBe(
+      "config parse failed",
+    );
+  });
+
   it("accepts string throws", () => {
     expect(formatDashboardLoadError("config invalid")).toBe("config invalid");
   });
