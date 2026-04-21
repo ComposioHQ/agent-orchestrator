@@ -1120,6 +1120,52 @@ describe("spawn", () => {
     vi.useRealTimers();
   });
 
+  it("delivers AO guidance post-launch for opencode sessions without explicit prompt", async () => {
+    vi.useFakeTimers();
+    const opencodeAgent: Agent = {
+      ...mockAgent,
+      name: "opencode",
+    };
+    const registryWithOpenCode: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return opencodeAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+    const configWithOpenCode: OrchestratorConfig = {
+      ...config,
+      defaults: { ...config.defaults, agent: "opencode" },
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agent: "opencode",
+        },
+      },
+    };
+
+    const sm = createSessionManager({ config: configWithOpenCode, registry: registryWithOpenCode });
+    const spawnPromise = sm.spawn({ projectId: "my-app" });
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    const session = await spawnPromise;
+
+    expect(opencodeAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: undefined,
+      }),
+    );
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      expect.stringContaining("ao session claim-pr"),
+    );
+    expect(session.metadata.promptDelivered).toBe("true");
+    vi.useRealTimers();
+  });
+
   describe("spawnOrchestrator", () => {
     it("throws when no workspace plugin is configured", async () => {
       const registryNoWorkspace: PluginRegistry = {
