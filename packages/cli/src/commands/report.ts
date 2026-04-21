@@ -59,7 +59,7 @@ async function writeReport(
     console.error(chalk.red(`Project not found for session: ${sessionName}`));
     process.exit(1);
   }
-  const sessionsDir = getSessionsDir(config.configPath, project.path);
+  const sessionsDir = getSessionsDir(project.storageKey);
   try {
     const result = applyAgentReport(sessionsDir, sessionName, {
       state,

@@ -11,7 +11,7 @@ import { readObservabilitySummary } from "../observability.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
-  SessionManager,
+  OpenCodeSessionManager,
   Agent,
   ActivityState,
   SessionStatus,
@@ -32,7 +32,7 @@ import {
 let env: TestEnvironment;
 let plugins: MockPlugins;
 let mockRegistry: PluginRegistry;
-let mockSessionManager: SessionManager;
+let mockSessionManager: OpenCodeSessionManager;
 let config: OrchestratorConfig;
 
 beforeEach(() => {
@@ -1030,6 +1030,7 @@ describe("check (single session)", () => {
     expect(meta?.["statePayload"]).toContain('"state":"merged"');
     expect(meta?.["statePayload"]).toContain('"reason":"merged"');
     expect(meta?.["statePayload"]).not.toContain('"reason":"not_created"');
+    expect(mockSessionManager.invalidateCache).toHaveBeenCalled();
   });
 
   it("keeps closed PR sessions idle and emits a PR-closed notification", async () => {

@@ -10,13 +10,26 @@
  * Everything else has sensible defaults.
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { resolve, join, basename } from "node:path";
+import { createHash } from "node:crypto";
+import { readFileSync, existsSync, realpathSync } from "node:fs";
+import { resolve, join, dirname, basename } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { ConfigNotFoundError, type ExternalPluginEntryRef, type OrchestratorConfig } from "./types.js";
+import {
+  ConfigNotFoundError,
+  ProjectResolveError,
+  type DegradedProjectEntry,
+  type ExternalPluginEntryRef,
+  type LoadedConfig,
+  type OrchestratorConfig,
+} from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
+import {
+  getGlobalConfigPath,
+  loadGlobalConfig,
+} from "./global-config.js";
+import { loadEffectiveProjectConfig } from "./project-resolver.js";
 
 function inferScmPlugin(project: {
   repo?: string;
@@ -44,6 +57,65 @@ function inferScmPlugin(project: {
   }
 
   return "github";
+}
+
+function classifyConfigShape(
+  configPath: string,
+): "wrapped" | "flat-or-nonobject" | "missing" {
+  if (!existsSync(configPath)) {
+    return "missing";
+  }
+
+  const raw = readFileSync(configPath, "utf-8");
+  const parsed = parseYaml(raw);
+  return parsed &&
+    typeof parsed === "object" &&
+    "projects" in (parsed as Record<string, unknown>)
+    ? "wrapped"
+    : "flat-or-nonobject";
+}
+
+function generateLegacyWrappedStorageKey(configPath: string, projectPath: string): string {
+  const resolvedConfigPath = realpathSync(configPath);
+  const configDir = dirname(resolvedConfigPath);
+  const hash = createHash("sha256").update(configDir).digest("hex").slice(0, 12);
+  return `${hash}-${basename(projectPath)}`;
+}
+
+function applyWrappedLocalStorageKeys(
+  configPath: string,
+  parsed: unknown,
+): unknown {
+  if (!parsed || typeof parsed !== "object") return parsed;
+
+  const parsedObject = parsed as Record<string, unknown>;
+  if (!("projects" in parsedObject) || !parsedObject["projects"] || typeof parsedObject["projects"] !== "object") {
+    return parsed;
+  }
+
+  return {
+    ...parsedObject,
+    projects: Object.fromEntries(
+      Object.entries(parsedObject["projects"] as Record<string, unknown>).map(([projectId, value]) => {
+        if (!value || typeof value !== "object") {
+          return [projectId, value];
+        }
+
+        const project = value as Record<string, unknown>;
+        if (typeof project["storageKey"] === "string" || typeof project["path"] !== "string") {
+          return [projectId, value];
+        }
+
+        return [
+          projectId,
+          {
+            ...project,
+            storageKey: generateLegacyWrappedStorageKey(configPath, project["path"]),
+          },
+        ];
+      }),
+    ),
+  };
 }
 
 // =============================================================================
@@ -172,6 +244,12 @@ const ProjectConfigSchema = z.object({
     .string()
     .regex(/^[a-zA-Z0-9_-]+$/, "sessionPrefix must match [a-zA-Z0-9_-]+")
     .optional(),
+  /** Stable storage identity hash — set once at registration, never recomputed. */
+  storageKey: z.string().optional(),
+  /** Canonical git origin URL associated with the storage identity. */
+  originUrl: z.string().optional(),
+  /** Per-project resolution failure captured without aborting global load. */
+  resolveError: z.string().optional(),
   runtime: z.string().optional(),
   agent: z.string().optional(),
   workspace: z.string().optional(),
@@ -498,10 +576,11 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
       project.name = id;
     }
 
-    // Derive session prefix from project path basename if not set
+    // Derive session prefix from the project path basename if not set.
+    // This preserves the long-standing semantics on this branch, where
+    // `/repos/integrator` becomes `int` regardless of the config key.
     if (!project.sessionPrefix) {
-      const projectId = basename(project.path);
-      project.sessionPrefix = generateSessionPrefix(projectId);
+      project.sessionPrefix = generateSessionPrefix(basename(project.path));
     }
 
     const inferredPlugin = inferScmPlugin(project);
@@ -522,58 +601,57 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
 
 /** Validate project uniqueness and session prefix collisions */
 function validateProjectUniqueness(config: OrchestratorConfig): void {
-  // Check for duplicate project IDs (basenames)
   const projectIds = new Set<string>();
-  const projectIdToPaths: Record<string, string[]> = {};
+  const storageKeys = new Map<string, string>();
 
-  for (const [_configKey, project] of Object.entries(config.projects)) {
-    const projectId = basename(project.path);
-
-    if (!projectIdToPaths[projectId]) {
-      projectIdToPaths[projectId] = [];
-    }
-    projectIdToPaths[projectId].push(project.path);
-
+  for (const [projectId, project] of Object.entries(config.projects)) {
     if (projectIds.has(projectId)) {
-      const paths = projectIdToPaths[projectId].join(", ");
       throw new Error(
         `Duplicate project ID detected: "${projectId}"\n` +
-          `Multiple projects have the same directory basename:\n` +
-          `  ${paths}\n\n` +
-          `To fix this, ensure each project path has a unique directory name.\n` +
-          `Alternatively, you can use the config key as a unique identifier.`,
+          `Each project entry must use a unique registry key.`,
       );
     }
     projectIds.add(projectId);
+
+    if (!project.storageKey) continue;
+
+    const existingProjectId = storageKeys.get(project.storageKey);
+    if (existingProjectId && existingProjectId !== projectId) {
+      throw new Error(
+        `Duplicate storage key detected: "${project.storageKey}"\n` +
+          `Projects "${existingProjectId}" and "${projectId}" point at the same storage identity.\n\n` +
+          `This usually indicates a registration collision. Re-register or relink one of the projects so each projectId owns a unique storageKey.`,
+      );
+    }
+
+    storageKeys.set(project.storageKey, projectId);
   }
 
   // Check for duplicate session prefixes
   const prefixes = new Set<string>();
   const prefixToProject: Record<string, string> = {};
 
-  for (const [configKey, project] of Object.entries(config.projects)) {
-    const projectId = basename(project.path);
+  for (const [projectId, project] of Object.entries(config.projects)) {
     const prefix = project.sessionPrefix || generateSessionPrefix(projectId);
 
     if (prefixes.has(prefix)) {
       const firstProjectKey = prefixToProject[prefix];
-      const firstProject = config.projects[firstProjectKey];
       throw new Error(
         `Duplicate session prefix detected: "${prefix}"\n` +
-          `Projects "${firstProjectKey}" and "${configKey}" would generate the same prefix.\n\n` +
+          `Projects "${firstProjectKey}" and "${projectId}" would generate the same prefix.\n\n` +
           `To fix this, add an explicit sessionPrefix to one of these projects:\n\n` +
           `projects:\n` +
           `  ${firstProjectKey}:\n` +
-          `    path: ${firstProject?.path}\n` +
+          `    path: ${config.projects[firstProjectKey]?.path}\n` +
           `    sessionPrefix: ${prefix}1  # Add explicit prefix\n` +
-          `  ${configKey}:\n` +
+          `  ${projectId}:\n` +
           `    path: ${project.path}\n` +
           `    sessionPrefix: ${prefix}2  # Add explicit prefix\n`,
       );
     }
 
     prefixes.add(prefix);
-    prefixToProject[prefix] = configKey;
+    prefixToProject[prefix] = projectId;
   }
 }
 
@@ -682,9 +760,8 @@ export function findConfigFile(startDir?: string): string | null {
 
     for (const filename of configFiles) {
       const configPath = resolve(dir, filename);
-      if (existsSync(configPath)) {
-        return configPath;
-      }
+      if (!existsSync(configPath)) continue;
+      return configPath;
     }
 
     const parent = resolve(dir, "..");
@@ -707,13 +784,20 @@ export function findConfigFile(startDir?: string): string | null {
     const files = ["agent-orchestrator.yaml", "agent-orchestrator.yml"];
     for (const filename of files) {
       const path = resolve(startDir, filename);
-      if (existsSync(path)) {
-        return path;
-      }
+      if (!existsSync(path)) continue;
+      return path;
     }
   }
 
-  // 4. Check home directory locations
+  // 4. Check global config path (new hybrid mode: ~/.agent-orchestrator/config.yaml)
+  //    This takes priority over legacy home-directory locations so that users who
+  //    have migrated to the hybrid model always load from the canonical global path.
+  const globalConfigPath = getGlobalConfigPath();
+  if (existsSync(globalConfigPath)) {
+    return globalConfigPath;
+  }
+
+  // 5. Legacy home directory locations (backward compatibility)
   const homePaths = [
     resolve(homedir(), ".agent-orchestrator.yaml"),
     resolve(homedir(), ".agent-orchestrator.yml"),
@@ -729,6 +813,88 @@ export function findConfigFile(startDir?: string): string | null {
   return null;
 }
 
+function buildEffectiveConfigFromFlatLocalPath(
+  configPath: string,
+  _localParsed: unknown,
+): LoadedConfig | null {
+  const globalConfigPath = getGlobalConfigPath();
+  const globalConfig = loadGlobalConfig(globalConfigPath);
+  if (!globalConfig) return null;
+
+  const canonicalProjectDir = (() => {
+    try {
+      return realpathSync(resolve(dirname(configPath)));
+    } catch {
+      return resolve(dirname(configPath));
+    }
+  })();
+  const entry = Object.entries(globalConfig.projects).find(([, project]) => {
+    if (typeof project.path !== "string") return false;
+    try {
+      return realpathSync(resolve(project.path)) === canonicalProjectDir;
+    } catch {
+      return resolve(project.path) === canonicalProjectDir;
+    }
+  });
+  if (!entry) return null;
+
+  const [projectId] = entry;
+  const project = loadEffectiveProjectConfig(projectId, globalConfig, globalConfigPath);
+  const config = validateConfig({
+    port: globalConfig.port,
+    terminalPort: globalConfig.terminalPort,
+    directTerminalPort: globalConfig.directTerminalPort,
+    readyThresholdMs: globalConfig.readyThresholdMs,
+    defaults: globalConfig.defaults,
+    notifiers: globalConfig.notifiers,
+    notificationRouting: globalConfig.notificationRouting,
+    reactions: globalConfig.reactions,
+    projects: {
+      [projectId]: {
+        ...project,
+      },
+    },
+  });
+  return { ...config, degradedProjects: {} };
+}
+
+function buildEffectiveConfigFromGlobalConfigPath(configPath: string): LoadedConfig | null {
+  const globalConfig = loadGlobalConfig(configPath);
+  if (!globalConfig) return null;
+
+  const projects: Record<string, OrchestratorConfig["projects"][string]> = {};
+  const degradedProjects: Record<string, DegradedProjectEntry> = {};
+
+  for (const [projectId, entry] of Object.entries(globalConfig.projects)) {
+    try {
+      projects[projectId] = loadEffectiveProjectConfig(projectId, globalConfig, configPath);
+    } catch (error) {
+      if (!(error instanceof ProjectResolveError)) {
+        throw error;
+      }
+      degradedProjects[projectId] = {
+        projectId,
+        path: entry.path,
+        storageKey: entry.storageKey ?? "",
+        resolveError: error.message,
+      };
+    }
+  }
+
+  const config = validateConfig({
+    port: globalConfig.port,
+    terminalPort: globalConfig.terminalPort,
+    directTerminalPort: globalConfig.directTerminalPort,
+    readyThresholdMs: globalConfig.readyThresholdMs,
+    defaults: globalConfig.defaults,
+    notifiers: globalConfig.notifiers,
+    notificationRouting: globalConfig.notificationRouting,
+    reactions: globalConfig.reactions,
+    projects,
+  });
+  return { ...config, degradedProjects };
+}
+
 // =============================================================================
 // PUBLIC API
 // =============================================================================
@@ -739,9 +905,9 @@ export function findConfig(startDir?: string): string | null {
 }
 
 /** Load and validate config from a YAML file */
-export function loadConfig(configPath?: string): OrchestratorConfig {
+export function loadConfig(configPath?: string): LoadedConfig {
   // Priority: 1. Explicit param, 2. Search (including AO_CONFIG_PATH env var)
-  // findConfigFile handles AO_CONFIG_PATH validation, so delegate to it
+  // findConfigFile treats AO_CONFIG_PATH as authoritative when present.
   const path = configPath ?? findConfigFile();
 
   if (!path) {
@@ -750,17 +916,31 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
 
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
-  const config = validateConfig(parsed);
+  const shape = classifyConfigShape(path);
+  const isCanonicalGlobalConfig = resolve(path) === resolve(getGlobalConfigPath());
+  const normalizedParsed =
+    !isCanonicalGlobalConfig && shape === "wrapped"
+      ? applyWrappedLocalStorageKeys(path, parsed)
+      : parsed;
+  const config =
+    isCanonicalGlobalConfig
+      ? buildEffectiveConfigFromGlobalConfigPath(path) ?? validateConfig(normalizedParsed)
+      : shape === "wrapped"
+      ? validateConfig(normalizedParsed)
+      : buildEffectiveConfigFromFlatLocalPath(path, normalizedParsed) ?? validateConfig(normalizedParsed);
 
   // Set the config path in the config object for hash generation
   config.configPath = path;
+  if (!("degradedProjects" in config)) {
+    (config as LoadedConfig).degradedProjects = {};
+  }
 
-  return config;
+  return config as LoadedConfig;
 }
 
 /** Load config and return both config and resolved path */
 export function loadConfigWithPath(configPath?: string): {
-  config: OrchestratorConfig;
+  config: LoadedConfig;
   path: string;
 } {
   const path = configPath ?? findConfigFile();
@@ -771,12 +951,26 @@ export function loadConfigWithPath(configPath?: string): {
 
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
-  const config = validateConfig(parsed);
+  const shape = classifyConfigShape(path);
+  const isCanonicalGlobalConfig = resolve(path) === resolve(getGlobalConfigPath());
+  const normalizedParsed =
+    !isCanonicalGlobalConfig && shape === "wrapped"
+      ? applyWrappedLocalStorageKeys(path, parsed)
+      : parsed;
+  const config =
+    isCanonicalGlobalConfig
+      ? buildEffectiveConfigFromGlobalConfigPath(path) ?? validateConfig(normalizedParsed)
+      : shape === "wrapped"
+      ? validateConfig(normalizedParsed)
+      : buildEffectiveConfigFromFlatLocalPath(path, normalizedParsed) ?? validateConfig(normalizedParsed);
 
   // Set the config path in the config object for hash generation
   config.configPath = path;
+  if (!("degradedProjects" in config)) {
+    (config as LoadedConfig).degradedProjects = {};
+  }
 
-  return { config, path };
+  return { config: config as LoadedConfig, path };
 }
 
 /** Validate a raw config object */

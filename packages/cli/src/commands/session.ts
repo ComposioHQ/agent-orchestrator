@@ -13,6 +13,7 @@ import { git, getTmuxActivity, tmux } from "../lib/shell.js";
 import { formatAge } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { isOrchestratorSessionName } from "../lib/session-utils.js";
+import { projectSessionUrl } from "../lib/routes.js";
 
 interface SessionListEntry {
   id: string;
@@ -402,7 +403,7 @@ export function registerSession(program: Command): void {
           console.log(chalk.dim(`  Branch:   ${restored.branch}`));
         }
         const port = config.port ?? DEFAULT_PORT;
-        console.log(chalk.dim(`  View:     http://localhost:${port}/sessions/${sessionName}`));
+        console.log(chalk.dim(`  View:     ${projectSessionUrl(port, restored.projectId, sessionName)}`));
       } catch (err) {
         if (err instanceof SessionNotRestorableError) {
           console.error(chalk.red(`Cannot restore: ${err.reason}`));

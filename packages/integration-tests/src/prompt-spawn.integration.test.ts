@@ -31,6 +31,7 @@ import {
 let tmpDir: string;
 let configPath: string;
 let repoPath: string;
+const storageKey = "111111111111";
 const sessionPrefix = "ao-prompt-test";
 
 beforeAll(async () => {
@@ -61,6 +62,7 @@ beforeAll(async () => {
           name: "Test Project",
           repo: "test/test-repo",
           path: repoPath,
+          storageKey,
           defaultBranch: "main",
           sessionPrefix,
         },
@@ -87,6 +89,7 @@ function makeConfig(): OrchestratorConfig {
         name: "Test Project",
         repo: "test/test-repo",
         path: repoPath,
+        storageKey,
         defaultBranch: "main",
         sessionPrefix,
       },
@@ -108,7 +111,7 @@ function makeConfig(): OrchestratorConfig {
 
 describe("BLUE — main behavior: session metadata written without userPrompt", () => {
   it("session written without userPrompt key returns null for userPrompt", async () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir(storageKey);
     mkdirSync(sessionsDir, { recursive: true });
 
     const sessionId = `${sessionPrefix}-blue-1`;
@@ -138,7 +141,7 @@ describe("BLUE — main behavior: session metadata written without userPrompt", 
   });
 
   it("session with issueId but no userPrompt is also missing userPrompt", async () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir(storageKey);
     mkdirSync(sessionsDir, { recursive: true });
 
     const sessionId = `${sessionPrefix}-blue-2`;
@@ -175,7 +178,7 @@ describe("BLUE — main behavior: session metadata written without userPrompt", 
 
 describe("GREEN — branch behavior: session metadata persists userPrompt", () => {
   it("session written with userPrompt key returns prompt string from metadata", async () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir(storageKey);
     mkdirSync(sessionsDir, { recursive: true });
 
     const sessionId = `${sessionPrefix}-green-1`;
@@ -206,7 +209,7 @@ describe("GREEN — branch behavior: session metadata persists userPrompt", () =
   });
 
   it("userPrompt field is visible in metadata for serialization layer", async () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir(storageKey);
     mkdirSync(sessionsDir, { recursive: true });
 
     const sessionId = `${sessionPrefix}-green-2`;
@@ -237,7 +240,7 @@ describe("GREEN — branch behavior: session metadata persists userPrompt", () =
   });
 
   it("metadata file on disk actually contains userPrompt line", async () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir(storageKey);
     mkdirSync(sessionsDir, { recursive: true });
 
     const sessionId = `${sessionPrefix}-green-3`;
@@ -264,7 +267,7 @@ describe("GREEN — branch behavior: session metadata persists userPrompt", () =
   });
 
   it("issue-backed session can also carry userPrompt", async () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir(storageKey);
     mkdirSync(sessionsDir, { recursive: true });
 
     const sessionId = `${sessionPrefix}-green-4`;
@@ -302,7 +305,7 @@ describe("GREEN — branch behavior: session metadata persists userPrompt", () =
 
 describe("DELTA — before vs after: same session-manager, different metadata", () => {
   it("old-style session (no userPrompt) and new-style session (with userPrompt) coexist", async () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir(storageKey);
     mkdirSync(sessionsDir, { recursive: true });
 
     const oldSessionId = `${sessionPrefix}-delta-old`;

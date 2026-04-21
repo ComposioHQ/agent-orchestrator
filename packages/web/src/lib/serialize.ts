@@ -9,7 +9,7 @@ import "server-only";
 
 import {
   isOrchestratorSession,
-  TERMINAL_STATUSES,
+  isTerminalSession,
   type Session,
   type Agent,
   type SCM,
@@ -30,6 +30,17 @@ import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
 const issueTitleCache = new TTLCache<string>(300_000);
+/** Cache failed issue-title lookups to avoid repeated tracker API calls. */
+const issueTitleMissCache = new TTLCache<boolean>(120_000);
+
+function isAbsoluteUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 /** Resolve which project a session belongs to. */
 export function resolveProject(
@@ -179,7 +190,7 @@ export function sessionToDashboard(session: Session): DashboardSession {
     lifecycle: buildDashboardLifecycle(session),
     branch: session.branch,
     issueId: session.issueId, // Deprecated: kept for backwards compatibility
-    issueUrl: session.issueId, // issueId is actually the full URL
+    issueUrl: session.issueId && isAbsoluteUrl(session.issueId) ? session.issueId : null,
     issueLabel: null, // Will be enriched by enrichSessionIssue()
     issueTitle: null, // Will be enriched by enrichSessionIssueTitle()
     userPrompt: session.metadata["userPrompt"] ?? null,
@@ -205,34 +216,53 @@ export function listDashboardOrchestrators(
   const allSessionPrefixes = Object.entries(projects).map(
     ([projectId, p]) => p.sessionPrefix ?? projectId,
   );
-  return sessions
-    .filter((session) =>
-      isOrchestratorSession(
+  const bestByProject = new Map<string, Session>();
+
+  for (const session of sessions) {
+    if (
+      !isOrchestratorSession(
         session,
         projects[session.projectId]?.sessionPrefix ?? session.projectId,
         allSessionPrefixes,
-      ),
-    )
-    .sort((a, b) => {
-      const projectA = projects[a.projectId]?.name ?? a.projectId;
-      const projectB = projects[b.projectId]?.name ?? b.projectId;
-      // Group by project name, prefer live (non-terminal) over dead, then sort
-      // by recency so that .find() for a given project returns the best one (#1362)
-      const aTerminal = TERMINAL_STATUSES.has(a.status) ? 1 : 0;
-      const bTerminal = TERMINAL_STATUSES.has(b.status) ? 1 : 0;
-      return (
-        projectA.localeCompare(projectB) ||
-        aTerminal - bTerminal ||
-        (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0) ||
-        (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0) ||
-        a.id.localeCompare(b.id)
-      );
-    })
+      )
+    ) {
+      continue;
+    }
+
+    const current = bestByProject.get(session.projectId);
+    if (!current) {
+      bestByProject.set(session.projectId, session);
+      continue;
+    }
+
+    const currentIsTerminal = isTerminalSession(current);
+    const candidateIsTerminal = isTerminalSession(session);
+    if (currentIsTerminal !== candidateIsTerminal) {
+      if (!candidateIsTerminal) {
+        bestByProject.set(session.projectId, session);
+      }
+      continue;
+    }
+
+    const currentActivity = current.lastActivityAt?.getTime() ?? current.createdAt?.getTime() ?? 0;
+    const candidateActivity = session.lastActivityAt?.getTime() ?? session.createdAt?.getTime() ?? 0;
+    if (candidateActivity > currentActivity) {
+      bestByProject.set(session.projectId, session);
+      continue;
+    }
+
+    if (candidateActivity === currentActivity && session.id.localeCompare(current.id) > 0) {
+      bestByProject.set(session.projectId, session);
+    }
+  }
+
+  return [...bestByProject.values()]
     .map((session) => ({
       id: session.id,
       projectId: session.projectId,
       projectName: projects[session.projectId]?.name ?? session.projectId,
-    }));
+    }))
+    .sort((a, b) => a.projectName.localeCompare(b.projectName) || a.id.localeCompare(b.id));
 }
 
 /**
@@ -441,12 +471,41 @@ export async function enrichSessionPR(
   return true;
 }
 
-/** Enrich a DashboardSession's issue label using the tracker plugin. */
+/** Enrich a DashboardSession's issue URL and label using the tracker plugin. */
 export function enrichSessionIssue(
   dashboard: DashboardSession,
   tracker: Tracker,
   project: ProjectConfig,
 ): void {
+  const issueReference = dashboard.issueId ?? dashboard.issueUrl;
+  if (!issueReference) return;
+
+  if (isAbsoluteUrl(issueReference)) {
+    dashboard.issueUrl = issueReference;
+  } else if (/\s/.test(issueReference)) {
+    // Free-text issue IDs are user notes, not tracker identifiers.
+    dashboard.issueUrl = null;
+  } else if (tracker.issueUrl) {
+    try {
+      const candidateUrl = tracker.issueUrl(issueReference, project);
+      if (candidateUrl && isAbsoluteUrl(candidateUrl)) {
+        dashboard.issueUrl = candidateUrl;
+      } else {
+        console.warn("[enrichSessionIssue] tracker.issueUrl() returned a non-absolute URL", {
+          tracker: tracker.name,
+          issueReference,
+          candidateUrl,
+        });
+      }
+    } catch (error) {
+      console.warn("[enrichSessionIssue] tracker.issueUrl() failed", {
+        tracker: tracker.name,
+        issueReference,
+        error: String(error),
+      });
+    }
+  }
+
   if (!dashboard.issueUrl) return;
 
   // Use tracker plugin to extract human-readable label from URL
@@ -505,6 +564,9 @@ export async function enrichSessionIssueTitle(
     dashboard.issueTitle = cached;
     return;
   }
+  if (issueTitleMissCache.get(dashboard.issueUrl)) {
+    return;
+  }
 
   try {
     // Strip "#" prefix from GitHub-style labels to get the identifier
@@ -515,6 +577,7 @@ export async function enrichSessionIssueTitle(
       issueTitleCache.set(dashboard.issueUrl, issue.title);
     }
   } catch {
+    issueTitleMissCache.set(dashboard.issueUrl, true);
     // Can't fetch issue — keep issueTitle null
   }
 }
@@ -552,7 +615,9 @@ function prepareSessionMetadataEnrichment(
 
   // Issue labels (synchronous string parsing, no API calls)
   projects.forEach((project, i) => {
-    if (!dashboardSessions[i].issueUrl || !project?.tracker?.plugin) return;
+    if ((!dashboardSessions[i].issueUrl && !dashboardSessions[i].issueId) || !project?.tracker?.plugin) {
+      return;
+    }
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
     if (!tracker) return;
     enrichSessionIssue(dashboardSessions[i], tracker, project);

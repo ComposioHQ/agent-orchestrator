@@ -122,6 +122,7 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
       FAST_METADATA_ENRICH_TIMEOUT_MS,
     );
   } catch (err) {
+    // Keep the base dashboard data if non-critical enrichment fails.
     console.warn("[dashboard-page-data] metadata fast enrichment failed:", err);
   }
 
@@ -133,7 +134,11 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
       const projectConfig = resolveProject(core, config.projects);
       const scm = getSCM(registry, projectConfig);
       if (scm) {
-        await enrichSessionPR(pageData.sessions[i], scm, core.pr, { cacheOnly: true });
+        try {
+          await enrichSessionPR(pageData.sessions[i], scm, core.pr, { cacheOnly: true });
+        } catch {
+          // Preserve the base session payload if PR enrichment fails.
+        }
       }
     } catch (err) {
       console.warn(`[dashboard-page-data] PR enrichment failed for session ${core.id}:`, err);

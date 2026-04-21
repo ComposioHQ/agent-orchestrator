@@ -136,6 +136,34 @@ describe("getDashboardPageData fast path", () => {
     }
   });
 
+  it("preserves orchestrators and base sessions when enrichment throws", async () => {
+    const core = { id: "session-broken", status: "working", pr: { number: 7 } };
+    const dashboard = { id: "session-broken", pr: { state: "open", enriched: false } };
+    const orchestrators = [{ id: "mono-orchestrator", projectId: "mono", projectName: "Mono" }];
+
+    hoisted.getAllProjectsMock.mockReturnValue([{ id: "mono", name: "Mono" }]);
+    hoisted.getPrimaryProjectIdMock.mockReturnValue("mono");
+    hoisted.getProjectNameMock.mockReturnValue("Mono");
+    hoisted.getServicesMock.mockResolvedValue({
+      config: { projects: { mono: { id: "mono" } } },
+      registry: { scm: "registry" },
+      sessionManager: { list: vi.fn().mockResolvedValue([core]) },
+    });
+    hoisted.filterProjectSessionsMock.mockReturnValue([core]);
+    hoisted.filterWorkerSessionsMock.mockReturnValue([core]);
+    hoisted.sessionToDashboardMock.mockReturnValue(dashboard);
+    hoisted.listDashboardOrchestratorsMock.mockReturnValue(orchestrators);
+    hoisted.resolveProjectMock.mockReturnValue({ id: "mono" });
+    hoisted.getSCMMock.mockReturnValue({ provider: "github" });
+    hoisted.enrichSessionsMetadataFastMock.mockRejectedValue(new Error("metadata exploded"));
+    hoisted.enrichSessionPRMock.mockRejectedValue(new Error("pr exploded"));
+
+    const pageData = await getDashboardPageData("mono");
+
+    expect(pageData.orchestrators).toEqual(orchestrators);
+    expect(pageData.sessions).toEqual([dashboard]);
+  });
+
   it("surfaces getServices failure as dashboardLoadError instead of a silent empty list", async () => {
     hoisted.getServicesMock.mockRejectedValue(new Error("No agent-orchestrator.yaml found"));
 

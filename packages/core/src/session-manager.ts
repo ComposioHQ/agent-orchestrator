@@ -49,9 +49,9 @@ import {
   readMetadataRaw,
   readArchivedMetadataRaw,
   updateArchivedMetadata,
-  writeMetadata as _rawWriteMetadata,
-  updateMetadata as _rawUpdateMetadata,
-  deleteMetadata as _rawDeleteMetadata,
+  writeMetadata,
+  updateMetadata,
+  deleteMetadata,
   listMetadata,
   reserveSessionId,
 } from "./metadata.js";
@@ -253,11 +253,20 @@ function metadataToSession(
   sessionId: SessionId,
   meta: Record<string, string>,
   projectId: string,
+  sessionPrefix?: string,
   createdAt?: Date,
   modifiedAt?: Date,
 ): Session {
+  const sessionKind =
+    meta["role"] === "orchestrator" ||
+    (sessionPrefix
+      ? new RegExp(`^${escapeRegex(sessionPrefix)}-orchestrator-\\d+$`).test(sessionId)
+      : false)
+      ? "orchestrator"
+      : "worker";
   return sessionFromMetadata(sessionId, meta, {
     projectId,
+    sessionKind,
     createdAt,
     lastActivityAt: modifiedAt ?? new Date(),
   });
@@ -271,44 +280,6 @@ export interface SessionManagerDeps {
 /** Create a SessionManager instance. */
 export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionManager {
   const { config, registry } = deps;
-
-  // ── Session list cache ─────────────────────────────────────────────
-  // Populated by list(); served by listCached(). 35s TTL so polling
-  // (lifecycle every 30s, UI every 5s) doesn't re-scan the disk.
-  //
-  // Invalidation strategy: every metadata mutation goes through the
-  // updateMetadata/writeMetadata/deleteMetadata wrappers below, which
-  // clear the cache after writing. This covers all in-file mutation
-  // paths (spawn, kill, restore, claimPR, remap, cleanup, send, etc.)
-  // without each call site remembering to invalidate.
-  //
-  // Callers outside this file (e.g. lifecycle-manager which imports
-  // updateMetadata directly from ./metadata) must invoke the exported
-  // invalidateCache() themselves after their own mutations.
-  let _cache: { sessions: Session[]; at: number } | null = null;
-  const CACHE_TTL_MS = 35_000;
-
-  function invalidateCache(): void {
-    _cache = null;
-  }
-
-  // Wrapped metadata mutation APIs. Every caller inside this file uses
-  // these; the raw versions are only reached via the aliased imports.
-  const updateMetadata: typeof _rawUpdateMetadata = (...args) => {
-    const result = _rawUpdateMetadata(...args);
-    invalidateCache();
-    return result;
-  };
-  const writeMetadata: typeof _rawWriteMetadata = (...args) => {
-    const result = _rawWriteMetadata(...args);
-    invalidateCache();
-    return result;
-  };
-  const deleteMetadata: typeof _rawDeleteMetadata = (...args) => {
-    const result = _rawDeleteMetadata(...args);
-    invalidateCache();
-    return result;
-  };
 
   interface LocatedSession {
     raw: Record<string, string>;
@@ -327,7 +298,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
    * Get the sessions directory for a project.
    */
   function getProjectSessionsDir(project: ProjectConfig): string {
-    return getSessionsDir(config.configPath, project.path);
+    return getSessionsDir(project.storageKey);
   }
 
   function normalizePath(path: string): string {
@@ -341,7 +312,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   function getManagedWorkspaceRoots(project: ProjectConfig, projectId?: string): string[] {
-    const roots = [getWorktreesDir(config.configPath, project.path)];
+    const roots = [getWorktreesDir(project.storageKey)];
     const legacyIds = new Set<string>();
     if (projectId) {
       legacyIds.add(projectId);
@@ -384,42 +355,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionPrefix?: string,
   ): boolean {
     if (!raw) return false;
-    if (raw["role"] === "orchestrator" || sessionId.endsWith("-orchestrator")) return true;
+    if (raw["role"] === "orchestrator") return true;
     // Check the -orchestrator-N pattern only when the prefix is known so the
     // regex is anchored to the project prefix, preventing false-positives when
     // the user-configured sessionPrefix itself ends with "-orchestrator".
     if (sessionPrefix) {
+      if (sessionId === `${sessionPrefix}-orchestrator`) {
+        return true;
+      }
       return new RegExp(`^${escapeRegex(sessionPrefix)}-orchestrator-\\d+$`).test(sessionId);
     }
     return false;
-  }
-
-  /**
-   * Stricter variant of the predicate, used ONLY by the repair-on-read path.
-   * Accepts:
-   *   - records with `role: orchestrator` already stamped (idempotent)
-   *   - the bare `{sessionPrefix}-orchestrator` legacy shape (single-orchestrator
-   *     AO versions) — anchored to THIS project's prefix
-   *   - the numbered `{sessionPrefix}-orchestrator-\d+` worktree shape
-   *
-   * What it intentionally rejects compared to `isOrchestratorSessionRecord`:
-   *   - bare `{foreign}-orchestrator` names (e.g. `{projectId}-orchestrator`
-   *     where projectId ≠ sessionPrefix) — these are the records that caused
-   *     issue #1048's dashboard link mismatch. Without this guard, repair
-   *     would stamp `role: orchestrator` on them and they would then leak
-   *     through `isOrchestratorSession()` in the dashboard/CLI via the
-   *     role-metadata branch on the next read.
-   */
-  function isRepairableOrchestratorRecord(
-    sessionId: string,
-    raw: Record<string, string> | null | undefined,
-    sessionPrefix?: string,
-  ): boolean {
-    if (!raw) return false;
-    if (raw["role"] === "orchestrator") return true;
-    if (!sessionPrefix) return false;
-    if (sessionId === `${sessionPrefix}-orchestrator`) return true;
-    return new RegExp(`^${escapeRegex(sessionPrefix)}-orchestrator-\\d+$`).test(sessionId);
   }
 
   function isCleanupProtectedSession(
@@ -427,6 +373,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionId: string,
     metadata?: Record<string, string> | null,
   ): boolean {
+    if (sessionId === `${project.sessionPrefix}-orchestrator`) {
+      return true;
+    }
     return isOrchestratorSessionRecord(sessionId, metadata ?? {}, project.sessionPrefix);
   }
 
@@ -496,20 +445,25 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
   }
 
+  const SESSION_CACHE_TTL_MS = 35_000;
+  let sessionCache:
+    | {
+        sessions: Session[];
+        expiresAt: number;
+      }
+    | null = null;
+
+  function invalidateCache(): void {
+    sessionCache = null;
+  }
+
   function repairSingleSessionMetadataOnRead(
     sessionsDir: string,
     record: ActiveSessionRecord,
     sessionPrefix?: string,
   ): ActiveSessionRecord {
     const repaired = { ...record, raw: { ...record.raw } };
-    // Use the strict repairable predicate: only *foreign* bare legacy
-    // `*-orchestrator` records (wrong prefix, e.g. `{projectId}-orchestrator`)
-    // are excluded from role backfill. Correct-prefix bare
-    // `{sessionPrefix}-orchestrator` records ARE repaired — they are
-    // legitimate single-orchestrator legacy records for this project.
-    // The exclusion prevents foreign-prefix records from leaking into
-    // `isOrchestratorSession` via a stamped role on the next sm.list().
-    if (!isRepairableOrchestratorRecord(repaired.sessionName, repaired.raw, sessionPrefix)) {
+    if (!isOrchestratorSessionRecord(repaired.sessionName, repaired.raw, sessionPrefix)) {
       return repaired;
     }
 
@@ -570,26 +524,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const duplicatePRAttachments = new Map<string, ActiveSessionRecord[]>();
 
     for (const record of repaired) {
-      // Decide session kind with the stricter repairable predicate rather
-      // than the generic `endsWith("-orchestrator")` heuristic in
-      // `synthesizeCanonicalLifecycle`. Otherwise foreign-prefix legacy
-      // records (e.g. `{projectId}-orchestrator` where projectId ≠
-      // sessionPrefix) would have `kind: "orchestrator"` canonicalized and
-      // `role: "orchestrator"` stamped on the next `lifecycleMetadataUpdates`
-      // call — reintroducing the dashboard/CLI id divergence from #1048.
-      const isOrchestratorKind = isRepairableOrchestratorRecord(
-        record.sessionName,
-        record.raw,
-        sessionPrefix,
-      );
-
       if (record.raw["stateVersion"] !== "2" || !record.raw["statePayload"]) {
         const lifecycle = cloneLifecycle(
           parseCanonicalLifecycle(record.raw, {
             sessionId: record.sessionName,
             status: validateStatus(record.raw["status"]),
             createdAt: record.raw["createdAt"] ? new Date(record.raw["createdAt"]) : undefined,
-            sessionKind: isOrchestratorKind ? "orchestrator" : "worker",
+            sessionKind: isOrchestratorSessionRecord(record.sessionName, record.raw, sessionPrefix)
+              ? "orchestrator"
+              : "worker",
           }),
         );
         const canonicalUpdates = lifecycleMetadataUpdates(record.raw, lifecycle);
@@ -602,7 +545,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         record.raw = applyMetadataUpdatesToRaw(record.raw, canonicalUpdates);
       }
 
-      if (isOrchestratorKind) {
+      if (isOrchestratorSessionRecord(record.sessionName, record.raw, sessionPrefix)) {
         record.raw = repairSingleSessionMetadataOnRead(sessionsDir, record, sessionPrefix).raw;
         continue;
       }
@@ -835,8 +778,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
     for (let attempts = 0; attempts < 10_000; attempts++) {
       const sessionId = `${project.sessionPrefix}-${num}`;
-      const tmuxName = config.configPath
-        ? generateTmuxName(config.configPath, project.sessionPrefix, num)
+      const tmuxName = project.path
+        ? generateTmuxName(project.storageKey, project.sessionPrefix, num)
         : undefined;
 
       if (!usedNumbers.has(num) && reserveSessionId(sessionsDir, sessionId)) {
@@ -898,7 +841,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (!usedNumbers.has(num)) {
         const sessionId = `${orchestratorPrefix}-${num}`;
         const tmuxName = config.configPath
-          ? generateTmuxName(config.configPath, orchestratorPrefix, num)
+          ? generateTmuxName(project.storageKey, orchestratorPrefix, num)
           : undefined;
         if (reserveSessionId(sessionsDir, sessionId)) {
           return { num, sessionId, tmuxName };
@@ -1181,7 +1124,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // Validate and store .origin file (new architecture only)
     if (config.configPath) {
-      validateAndStoreOrigin(config.configPath, project.path);
+      validateAndStoreOrigin(config.configPath, project.storageKey!);
     }
 
     // Determine session ID — atomically reserve to prevent concurrent collisions
@@ -1407,6 +1350,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (Object.keys(session.metadata || {}).length > 0) {
         updateMetadata(sessionsDir, sessionId, session.metadata);
       }
+      invalidateCache();
     } catch (err) {
       // Clean up runtime and workspace on post-launch failure
       try {
@@ -1429,6 +1373,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       } catch {
         /* best effort */
       }
+      invalidateCache();
       throw err;
     }
 
@@ -1472,9 +1417,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     if (session.metadata["promptDelivered"]) {
       updateMetadata(sessionsDir, sessionId, session.metadata);
+      invalidateCache();
     }
 
-    invalidateCache();
     return session;
   }
 
@@ -1488,6 +1433,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       role: "orchestrator",
       project,
       defaults: config.defaults,
+      spawnAgentOverride: orchestratorConfig.agent,
     });
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {
@@ -1507,7 +1453,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // Validate and store .origin file before reserving any identity so that
     // a validation failure does not leave an orphaned metadata entry.
     if (config.configPath) {
-      validateAndStoreOrigin(config.configPath, project.path);
+      validateAndStoreOrigin(config.configPath, project.storageKey!);
     }
 
     // Reserve a new unique orchestrator identity (e.g. {prefix}-orchestrator-1, -2, …).
@@ -1587,7 +1533,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     let systemPromptFile: string | undefined;
     if (orchestratorConfig.systemPrompt) {
       try {
-        const baseDir = getProjectBaseDir(config.configPath, project.path);
+        const baseDir = getProjectBaseDir(project.storageKey);
         mkdirSync(baseDir, { recursive: true });
         systemPromptFile = join(baseDir, `orchestrator-prompt-${sessionId}.md`);
         writeFileSync(systemPromptFile, orchestratorConfig.systemPrompt, "utf-8");
@@ -1744,6 +1690,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (Object.keys(session.metadata || {}).length > 0) {
         updateMetadata(sessionsDir, sessionId, session.metadata);
       }
+      invalidateCache();
     } catch (err) {
       // Clean up runtime on post-launch failure
       try {
@@ -1755,13 +1702,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw err;
     }
 
-    invalidateCache();
     return session;
   }
 
   async function list(projectId?: string): Promise<Session[]> {
     const allSessions = Object.entries(config.projects).flatMap(([entryProjectId, project]) => {
       if (projectId && entryProjectId !== projectId) return [];
+      if (!project.storageKey) return [];
       return loadActiveSessionRecords(project).map((record) => ({
         sessionName: record.sessionName,
         projectId: entryProjectId,
@@ -1787,7 +1734,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         // If stat fails, timestamps will fall back to current time
       }
 
-      const session = metadataToSession(sessionName, raw, sessionProjectId, createdAt, modifiedAt);
+      const session = metadataToSession(
+        sessionName,
+        raw,
+        sessionProjectId,
+        project.sessionPrefix,
+        createdAt,
+        modifiedAt,
+      );
       const selection = resolveSelectionForSession(project, sessionName, raw);
       const effectiveAgentName = selection.agentName;
       const plugins = resolvePlugins(project, effectiveAgentName);
@@ -1821,24 +1775,31 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
 
     const resolved = await Promise.all(tasks);
-    const result = resolved.filter((session): session is Session => session !== null);
-    // Populate cache only on full (unfiltered) list calls so listCached always has the complete picture.
-    if (!projectId) {
-      _cache = { sessions: result, at: Date.now() };
-    }
-    return result;
+    return resolved.filter((session): session is Session => session !== null);
   }
 
   async function listCached(projectId?: string): Promise<Session[]> {
-    if (_cache && Date.now() - _cache.at < CACHE_TTL_MS) {
-      return projectId ? _cache.sessions.filter((s) => s.projectId === projectId) : _cache.sessions;
+    if (sessionCache && Date.now() < sessionCache.expiresAt) {
+      return projectId
+        ? sessionCache.sessions.filter((session) => session.projectId === projectId)
+        : sessionCache.sessions;
     }
-    return list(projectId);
+
+    const sessions = await list();
+    sessionCache = {
+      sessions,
+      expiresAt: Date.now() + SESSION_CACHE_TTL_MS,
+    };
+
+    return projectId
+      ? sessions.filter((session) => session.projectId === projectId)
+      : sessions;
   }
 
   async function get(sessionId: SessionId): Promise<Session | null> {
     // Try to find the session in any project's sessions directory
     for (const [projectId, project] of Object.entries(config.projects)) {
+      if (!project.storageKey) continue;
       const sessionsDir = getProjectSessionsDir(project);
       const raw = readMetadataRaw(sessionsDir, sessionId);
       if (!raw) continue;
@@ -1861,7 +1822,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         project.sessionPrefix,
       );
 
-      const session = metadataToSession(sessionId, repaired.raw, projectId, createdAt, modifiedAt);
+      const session = metadataToSession(
+        sessionId,
+        repaired.raw,
+        projectId,
+        project.sessionPrefix,
+        createdAt,
+        modifiedAt,
+      );
 
       const selection = resolveSelectionForSession(project, sessionId, repaired.raw);
       const effectiveAgentName = selection.agentName;
@@ -1987,10 +1955,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // Archive metadata
     deleteMetadata(sessionsDir, sessionId, true);
+    invalidateCache();
     if (didPurgeOpenCodeSession) {
       markArchivedOpenCodeCleanup(sessionsDir, sessionId);
     }
-    invalidateCache();
     return { cleaned: true, alreadyTerminated: false };
   }
 
@@ -2169,6 +2137,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (discovered) {
         raw["opencodeSessionId"] = discovered;
         updateMetadata(sessionsDir, sessionId, { opencodeSessionId: discovered });
+        invalidateCache();
       }
     }
     const parsedHandle = raw["runtimeHandle"]
@@ -2509,6 +2478,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       prAutoDetect: "",
       ...lifecycleMetadataUpdates(raw, claimLifecycle),
     });
+    invalidateCache();
 
     for (const previousSessionId of takenOverFrom) {
       const previousRaw = readMetadataRaw(sessionsDir, previousSessionId);
@@ -2533,6 +2503,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           : {}),
         ...lifecycleMetadataUpdates(previousRaw, previousLifecycle),
       });
+      invalidateCache();
     }
 
     let githubAssigned = false;
@@ -2642,7 +2613,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     //    metadataToSession sets activity: null, so without enrichment a crashed
     //    session (status "working", agent exited) would not be detected as terminal
     //    and isRestorable would reject it.
-    const session = metadataToSession(sessionId, raw, projectId);
+    const session = metadataToSession(sessionId, raw, projectId, project.sessionPrefix);
     const plugins = resolvePlugins(project, selection.agentName);
     await enrichSessionWithRuntimeState(session, plugins, true);
 
@@ -2726,7 +2697,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     if (plugins.agent.name === "opencode" && selection.role === "orchestrator") {
-      const baseDir = getProjectBaseDir(config.configPath, project.path);
+      const baseDir = getProjectBaseDir(project.storageKey);
       const systemPromptFile = join(baseDir, `orchestrator-prompt-${sessionId}.md`);
       if (existsSync(systemPromptFile)) {
         try {
@@ -2805,6 +2776,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       runtimeHandle: JSON.stringify(handle),
       restoredAt: now,
     });
+    invalidateCache();
 
     // 10. Run postLaunchSetup (non-fatal)
     const restoredSession: Session = {
@@ -2830,6 +2802,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
         if (Object.keys(metadataUpdates).length > 0) {
           updateMetadata(sessionsDir, sessionId, metadataUpdates);
+          invalidateCache();
         }
       } catch {
         // Non-fatal — session is already running
@@ -2839,5 +2812,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, listCached, get, kill, cleanup, send, claimPR, remap, invalidateCache };
+  return {
+    spawn,
+    spawnOrchestrator,
+    restore,
+    list,
+    listCached,
+    invalidateCache,
+    get,
+    kill,
+    cleanup,
+    send,
+    claimPR,
+    remap,
+  };
 }

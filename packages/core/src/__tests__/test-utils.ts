@@ -2,14 +2,14 @@ import { vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import { createInitialCanonicalLifecycle, deriveLegacyStatus } from "../lifecycle-state.js";
 import { createActivitySignal } from "../activity-signal.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
-  SessionManager,
+  OpenCodeSessionManager,
   Session,
   Runtime,
   RuntimeHandle,
@@ -270,6 +270,7 @@ export function createTestEnvironment(): TestEnvironment {
   const configPath = join(tmpDir, "agent-orchestrator.yaml");
   writeFileSync(configPath, "projects: {}\n");
 
+  const storageKey = "111111111111";
   const config: OrchestratorConfig = {
     configPath,
     port: 3000,
@@ -285,6 +286,7 @@ export function createTestEnvironment(): TestEnvironment {
         name: "My App",
         repo: "org/my-app",
         path: join(tmpDir, "my-app"),
+        storageKey,
         defaultBranch: "main",
         sessionPrefix: "app",
         scm: { plugin: "github" },
@@ -301,7 +303,7 @@ export function createTestEnvironment(): TestEnvironment {
     readyThresholdMs: 300_000,
   };
 
-  const sessionsDir = getSessionsDir(configPath, join(tmpDir, "my-app"));
+  const sessionsDir = getSessionsDir(storageKey);
   mkdirSync(sessionsDir, { recursive: true });
 
   const cleanup = () => {
@@ -310,7 +312,7 @@ export function createTestEnvironment(): TestEnvironment {
     } else {
       process.env["HOME"] = previousHome;
     }
-    const projectBaseDir = getProjectBaseDir(configPath, join(tmpDir, "my-app"));
+    const projectBaseDir = getProjectBaseDir(storageKey);
     if (existsSync(projectBaseDir)) {
       rmSync(projectBaseDir, { recursive: true, force: true });
     }
@@ -328,21 +330,26 @@ export interface TestContext {
   tmpDir: string;
   configPath: string;
   sessionsDir: string;
+  storageKey: string;
   mockRuntime: Runtime;
   mockAgent: Agent;
   mockWorkspace: Workspace;
   mockRegistry: PluginRegistry;
   config: OrchestratorConfig;
   originalPath: string | undefined;
+  originalHome: string | undefined;
 }
 
 export function setupTestContext(): TestContext {
   const originalPath = process.env.PATH;
+  const originalHome = process.env["HOME"];
   const tmpDir = join(tmpdir(), `ao-test-session-mgr-${randomUUID()}`);
   mkdirSync(tmpDir, { recursive: true });
+  process.env["HOME"] = tmpDir;
 
   const configPath = join(tmpDir, "agent-orchestrator.yaml");
   writeFileSync(configPath, "projects: {}\n");
+  const storageKey = createHash("sha256").update(join(tmpDir, "my-app")).digest("hex").slice(0, 12);
 
   const { runtime: mockRuntime, agent: mockAgent, workspace: mockWorkspace } = createMockPlugins();
   const mockRegistry = createMockRegistry({ runtime: mockRuntime, agent: mockAgent, workspace: mockWorkspace });
@@ -362,6 +369,7 @@ export function setupTestContext(): TestContext {
         name: "My App",
         repo: "org/my-app",
         path: join(tmpDir, "my-app"),
+        storageKey,
         defaultBranch: "main",
         sessionPrefix: "app",
         scm: { plugin: "github" },
@@ -379,25 +387,32 @@ export function setupTestContext(): TestContext {
     readyThresholdMs: 300_000,
   };
 
-  const sessionsDir = getSessionsDir(configPath, join(tmpDir, "my-app"));
+  const sessionsDir = getSessionsDir(storageKey);
   mkdirSync(sessionsDir, { recursive: true });
 
   return {
     tmpDir,
     configPath,
     sessionsDir,
+    storageKey,
     mockRuntime,
     mockAgent,
     mockWorkspace,
     mockRegistry,
     config,
     originalPath,
+    originalHome,
   };
 }
 
 export function teardownTestContext(ctx: TestContext): void {
   process.env.PATH = ctx.originalPath;
-  const projectBaseDir = getProjectBaseDir(ctx.configPath, join(ctx.tmpDir, "my-app"));
+  if (ctx.originalHome === undefined) {
+    delete process.env["HOME"];
+  } else {
+    process.env["HOME"] = ctx.originalHome;
+  }
+  const projectBaseDir = getProjectBaseDir(ctx.config.projects["my-app"]!.storageKey);
   if (existsSync(projectBaseDir)) {
     rmSync(projectBaseDir, { recursive: true, force: true });
   }
@@ -408,7 +423,7 @@ export function teardownTestContext(ctx: TestContext): void {
 // Session manager mock
 // ---------------------------------------------------------------------------
 
-export function createMockSessionManager(): SessionManager {
+export function createMockSessionManager(): OpenCodeSessionManager {
   return {
     spawn: vi.fn().mockResolvedValue(makeSession()),
     spawnOrchestrator: vi.fn().mockResolvedValue(makeSession({ id: "app-orchestrator", metadata: { role: "orchestrator" } })),
@@ -416,6 +431,7 @@ export function createMockSessionManager(): SessionManager {
     list: vi.fn().mockResolvedValue([]),
     listCached: vi.fn().mockResolvedValue([]),
     invalidateCache: vi.fn(),
+    remap: vi.fn().mockResolvedValue("app-1"),
     get: vi.fn().mockResolvedValue(null),
     kill: vi.fn().mockResolvedValue({ cleaned: true, alreadyTerminated: false }),
     cleanup: vi.fn().mockResolvedValue({ killed: [], skipped: [], errors: [] }),
@@ -428,5 +444,5 @@ export function createMockSessionManager(): SessionManager {
       githubAssigned: true,
       takenOverFrom: [],
     }),
-  } as SessionManager;
+  } as OpenCodeSessionManager;
 }

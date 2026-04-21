@@ -19,6 +19,7 @@ import { PRCard, PRTableRow } from "./PRStatus";
 import { MobileBottomNav } from "./MobileBottomNav";
 import type { ProjectInfo } from "@/lib/project-name";
 import { getProjectScopedHref } from "@/lib/project-utils";
+import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 
 interface PullRequestsPageProps {
   initialSessions: DashboardSession[];
@@ -94,10 +95,10 @@ export function PullRequestsPage({
   const openPRs = useMemo(() => allPRs.filter((pr) => pr.state === "open"), [allPRs]);
   const mergedPRs = useMemo(() => allPRs.filter((pr) => pr.state === "merged"), [allPRs]);
   const closedPRs = useMemo(() => allPRs.filter((pr) => pr.state === "closed"), [allPRs]);
-  const dashboardHref = getProjectScopedHref("/", projectId);
+  const dashboardHref = projectId ? projectDashboardPath(projectId) : getProjectScopedHref("/", projectId);
   const prsHref = getProjectScopedHref("/prs", projectId);
   const orchestratorHref = currentProjectOrchestrator
-    ? `/sessions/${encodeURIComponent(currentProjectOrchestrator.id)}`
+    ? projectSessionPath(currentProjectOrchestrator.projectId, currentProjectOrchestrator.id)
     : null;
   const activeMobilePRs = prFilter === "open" ? openPRs : prFilter === "merged" ? mergedPRs : prFilter === "closed" ? closedPRs : allPRs;
 
@@ -201,12 +202,6 @@ export function PullRequestsPage({
                       {allProjectsView ? "Across all projects" : "In this project"}
                     </span>
                   </div>
-                </div>
-              </div>
-
-              <div className="dashboard-hero__meta">
-                <div className="flex items-center gap-3">
-                  <ThemeToggle />
                 </div>
               </div>
             </div>
