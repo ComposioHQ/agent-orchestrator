@@ -1453,7 +1453,7 @@ describe("stop command", () => {
 
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-3", {
       purgeOpenCode: false,
-      preserveSession: true,
+      skipArchive: true,
     });
     const output = vi
       .mocked(console.log)
@@ -1492,7 +1492,7 @@ describe("stop command", () => {
 
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-2", {
       purgeOpenCode: false,
-      preserveSession: true,
+      skipArchive: true,
     });
   });
 
@@ -1531,7 +1531,7 @@ describe("stop command", () => {
 
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-1", {
       purgeOpenCode: true,
-      preserveSession: true,
+      skipArchive: true,
     });
   });
 
@@ -1616,7 +1616,7 @@ describe("stop command", () => {
     expect(output).toContain("Dashboard stopped");
   });
 
-  it("preserveSession keeps orchestrator metadata in active dir so ao start restores it", async () => {
+  it("skipArchive keeps orchestrator metadata in active dir so ao start restores it", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
     mockSessionManager.list.mockResolvedValue([
       {
@@ -1632,14 +1632,14 @@ describe("stop command", () => {
     mockSessionManager.kill.mockResolvedValue(undefined);
     mockDashboardOnPort(3000);
 
-    // ao stop — should pass preserveSession: true
+    // ao stop — should pass skipArchive: true
     await program.parseAsync(["node", "test", "stop"]);
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-1", {
       purgeOpenCode: false,
-      preserveSession: true,
+      skipArchive: true,
     });
 
-    // Simulate the state after ao stop with preserveSession: the session stays
+    // Simulate the state after ao stop with skipArchive: the session stays
     // in the active dir with terminated lifecycle + runtime missing.
     vi.mocked(console.log).mockReset();
     mockSessionManager.list.mockResolvedValue([

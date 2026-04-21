@@ -1903,9 +1903,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     if (existingLifecycle?.session.state === "terminated") {
       // Lifecycle says terminated but metadata is still in active dir — finish
       // the archive and return alreadyTerminated so the caller logs a no-op.
-      // Skip archiving when preserveSession is set (the session was intentionally
-      // kept in the active dir by a prior preserveSession kill).
-      if (!options?.preserveSession) {
+      // Skip archiving when skipArchive is set (the session was intentionally
+      // kept in the active dir by a prior skipArchive kill).
+      if (!options?.skipArchive) {
         try {
           deleteMetadata(sessionsDir, sessionId, true);
         } catch {
@@ -1938,7 +1938,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     const worktree = raw["worktree"];
-    if (worktree && !options?.preserveSession && shouldDestroyWorkspacePath(project, projectId, worktree)) {
+    if (worktree && !options?.skipArchive && shouldDestroyWorkspacePath(project, projectId, worktree)) {
       const workspacePlugin = project
         ? resolvePlugins(project).workspace
         : registry.get<Workspace>("workspace", config.defaults.workspace);
@@ -1989,9 +1989,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       ...lifecycleMetadataUpdates(raw, terminatedLifecycle),
     });
 
-    // Archive metadata — skip when preserveSession is set so the session
+    // Archive metadata — skip when skipArchive is set so the session
     // remains discoverable by sm.list() on the next `ao start`.
-    if (!options?.preserveSession) {
+    if (!options?.skipArchive) {
       deleteMetadata(sessionsDir, sessionId, true);
       if (didPurgeOpenCodeSession) {
         markArchivedOpenCodeCleanup(sessionsDir, sessionId);

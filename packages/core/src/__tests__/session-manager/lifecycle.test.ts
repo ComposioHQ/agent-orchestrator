@@ -69,7 +69,7 @@ describe("kill", () => {
     expect(readMetadata(sessionsDir, "app-1")).toBeNull(); // archived + deleted
   });
 
-  it("preserveSession destroys runtime but keeps metadata and workspace", async () => {
+  it("skipArchive destroys runtime but keeps metadata and workspace", async () => {
     const managedWorktree = join(
       getWorktreesDir(config.configPath, config.projects["my-app"]!.path),
       "app-1",
@@ -83,7 +83,7 @@ describe("kill", () => {
     });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
-    const result = await sm.kill("app-1", { preserveSession: true });
+    const result = await sm.kill("app-1", { skipArchive: true });
 
     expect(result).toEqual({ cleaned: true, alreadyTerminated: false });
     // Runtime destroyed
@@ -112,8 +112,8 @@ describe("kill", () => {
 
     const sm = createSessionManager({ config, registry: mockRegistry });
 
-    // Kill with preserveSession — simulates ao stop for orchestrators
-    await sm.kill("app-1", { preserveSession: true });
+    // Kill with skipArchive — simulates ao stop for orchestrators
+    await sm.kill("app-1", { skipArchive: true });
 
     // Session must still appear in list()
     const sessions = await sm.list("my-app");
@@ -139,8 +139,8 @@ describe("kill", () => {
 
     const sm = createSessionManager({ config, registry: mockRegistry });
 
-    // Kill with preserveSession, then restore — simulates ao stop → ao start
-    await sm.kill("app-1", { preserveSession: true });
+    // Kill with skipArchive, then restore — simulates ao stop → ao start
+    await sm.kill("app-1", { skipArchive: true });
     const restored = await sm.restore("app-1");
 
     expect(restored.id).toBe("app-1");
@@ -149,6 +149,56 @@ describe("kill", () => {
     expect(restored.branch).toBe("feat/work");
     // New runtime was created
     expect(mockRuntime.create).toHaveBeenCalled();
+  });
+
+  it("idempotent second skipArchive kill returns alreadyTerminated without archiving", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/work",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // First kill — terminates and keeps in active dir
+    const first = await sm.kill("app-1", { skipArchive: true });
+    expect(first).toEqual({ cleaned: true, alreadyTerminated: false });
+
+    // Second kill — idempotent, still not archived
+    const second = await sm.kill("app-1", { skipArchive: true });
+    expect(second).toEqual({ cleaned: false, alreadyTerminated: true });
+    // Metadata must still be in active dir
+    expect(readMetadata(sessionsDir, "app-1")).not.toBeNull();
+  });
+
+  it("normal kill after skipArchive kill archives the session", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/work",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // First: skipArchive kill — keeps in active dir
+    await sm.kill("app-1", { skipArchive: true });
+    expect(readMetadata(sessionsDir, "app-1")).not.toBeNull();
+
+    // Second: normal kill (no skipArchive) — drains the preserved session
+    const result = await sm.kill("app-1");
+    expect(result).toEqual({ cleaned: false, alreadyTerminated: true });
+    // Metadata now archived (removed from active dir)
+    expect(readMetadata(sessionsDir, "app-1")).toBeNull();
   });
 
   it("does not destroy workspace paths outside managed roots", async () => {

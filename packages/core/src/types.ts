@@ -1612,7 +1612,7 @@ export interface KillOptions {
    *  sessions directory (no archiving) and preserve the workspace on disk.
    *  Used by `ao stop` for orchestrator sessions so the next `ao start`
    *  can discover the session via `sm.list()` and restore it. */
-  preserveSession?: boolean;
+  skipArchive?: boolean;
 }
 
 /** Session manager — CRUD for sessions */
