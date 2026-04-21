@@ -196,7 +196,6 @@ Seven plugin slots. Lifecycle stays in core.
 | Tracker   | github      | linear, gitlab           |
 | SCM       | github      | gitlab                   |
 | Notifier  | desktop     | slack, discord, composio, webhook, openclaw |
-| Terminal  | iterm2      | web                      |
 
 All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
 
