@@ -92,35 +92,42 @@ function parseDuration(str: string): number {
   }
 }
 
-async function resolveGitDir(workspacePath: string): Promise<string | null> {
+type WorkspaceBranchProbe =
+  | { kind: "branch"; branch: string }
+  | { kind: "detached" }
+  | { kind: "unavailable" };
+
+async function resolveGitDir(workspacePath: string): Promise<string> {
   const dotGitPath = join(workspacePath, ".git");
-  try {
-    const dotGitStats = await stat(dotGitPath);
-    if (dotGitStats.isDirectory()) return dotGitPath;
+  const dotGitStats = await stat(dotGitPath);
+  if (dotGitStats.isDirectory()) return dotGitPath;
 
-    const dotGitContent = (await readFile(dotGitPath, "utf8")).trim();
-    const gitDirMatch = dotGitContent.match(/^gitdir:\s*(.+)$/i);
-    if (!gitDirMatch) return null;
-
-    return resolve(dirname(dotGitPath), gitDirMatch[1].trim());
-  } catch {
-    return null;
+  const dotGitContent = (await readFile(dotGitPath, "utf8")).trim();
+  const gitDirMatch = dotGitContent.match(/^gitdir:\s*(.+)$/i);
+  if (!gitDirMatch) {
+    throw new Error(`Invalid .git pointer in workspace: ${workspacePath}`);
   }
+
+  return resolve(dirname(dotGitPath), gitDirMatch[1].trim());
 }
 
-async function readWorkspaceBranch(workspacePath: string): Promise<string | null> {
+async function readWorkspaceBranch(workspacePath: string): Promise<WorkspaceBranchProbe> {
+  let gitDir: string;
   try {
-    const gitDir = await resolveGitDir(workspacePath);
-    if (!gitDir) return null;
+    gitDir = await resolveGitDir(workspacePath);
+  } catch {
+    return { kind: "unavailable" };
+  }
 
+  try {
     const head = (await readFile(join(gitDir, "HEAD"), "utf8")).trim();
     const prefix = "ref: refs/heads/";
-    if (!head.startsWith(prefix)) return null;
+    if (!head.startsWith(prefix)) return { kind: "detached" };
 
     const branch = head.slice(prefix.length).trim();
-    return branch.length > 0 ? branch : null;
+    return branch.length > 0 ? { kind: "branch", branch } : { kind: "detached" };
   } catch {
-    return null;
+    return { kind: "unavailable" };
   }
 }
 
@@ -592,8 +599,35 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return idleMs > stuckThresholdMs;
   }
 
+  function isBranchOwnedByAnotherActiveWorker(
+    session: Session,
+    branch: string,
+    siblingSessions: Session[],
+    allSessionPrefixes: string[],
+  ): boolean {
+    return siblingSessions.some((other) => {
+      if (other.id === session.id) return false;
+      if (other.projectId !== session.projectId) return false;
+      if (TERMINAL_STATUSES.has(other.status)) return false;
+
+      const otherProject = config.projects[other.projectId];
+      if (!otherProject) return false;
+
+      const otherRole = resolveSessionRole(
+        other.id,
+        other.metadata,
+        otherProject.sessionPrefix,
+        allSessionPrefixes,
+      );
+      return otherRole === "worker" && other.branch === branch;
+    });
+  }
+
   /** Determine current status for a session by polling plugins. */
-  async function determineStatus(session: Session): Promise<DeterminedStatus> {
+  async function determineStatus(
+    session: Session,
+    siblingSessions?: Session[],
+  ): Promise<DeterminedStatus> {
     const project = config.projects[session.projectId];
     if (!project) {
       return {
@@ -605,12 +639,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     const lifecycle = cloneLifecycle(session.lifecycle);
     const nowIso = new Date().toISOString();
+    const allSessionPrefixes = Object.values(config.projects).map((p) => p.sessionPrefix);
     const agentName = resolveAgentSelection({
       role: resolveSessionRole(
         session.id,
         session.metadata,
         project.sessionPrefix,
-        Object.values(config.projects).map((p) => p.sessionPrefix),
+        allSessionPrefixes,
       ),
       project,
       defaults: config.defaults,
@@ -619,14 +654,27 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const agent = registry.get<Agent>("agent", agentName);
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
-    if (session.workspacePath) {
-      const currentBranch = await readWorkspaceBranch(session.workspacePath);
-      if (currentBranch !== session.branch) {
-        session.branch = currentBranch;
-        if (session.pr && currentBranch) {
-          session.pr.branch = currentBranch;
+    if (session.workspacePath && !session.pr) {
+      const branchProbe = await readWorkspaceBranch(session.workspacePath);
+      if (branchProbe.kind === "detached") {
+        if (session.branch !== null) {
+          session.branch = null;
+          updateSessionMetadata(session, { branch: "" });
         }
-        updateSessionMetadata(session, { branch: currentBranch ?? "" });
+      } else if (branchProbe.kind === "branch" && branchProbe.branch !== session.branch) {
+        const sessionsForConflictCheck =
+          siblingSessions ?? (await sessionManager.list(session.projectId));
+        if (
+          !isBranchOwnedByAnotherActiveWorker(
+            session,
+            branchProbe.branch,
+            sessionsForConflictCheck,
+            allSessionPrefixes,
+          )
+        ) {
+          session.branch = branchProbe.branch;
+          updateSessionMetadata(session, { branch: branchProbe.branch });
+        }
       }
     }
 
@@ -1662,7 +1710,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   }
 
   /** Poll a single session and handle state transitions. */
-  async function checkSession(session: Session): Promise<void> {
+  async function checkSession(session: Session, siblingSessions?: Session[]): Promise<void> {
     // Use tracked state if available; otherwise use the persisted metadata status
     // (not session.status, which list() may have already overwritten for dead runtimes).
     // This ensures transitions are detected after a lifecycle manager restart.
@@ -1671,7 +1719,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
     const previousLifecycle = cloneLifecycle(session.lifecycle);
     const previousPRState = session.lifecycle.pr.state;
-    const assessment = await determineStatus(session);
+    const assessment = await determineStatus(session, siblingSessions);
     const newStatus = assessment.status;
     const lifecycleChanged = session.metadata["statePayload"] !== JSON.stringify(session.lifecycle);
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
@@ -2005,7 +2053,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       await populatePREnrichmentCache(sessionsToCheck);
 
       // Poll all sessions concurrently
-      await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
+      await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s, sessions)));
 
       // Persist batch enrichment data to session metadata files so the
       // web dashboard can read it without calling GitHub API.

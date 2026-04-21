@@ -871,6 +871,47 @@ describe("check (single session)", () => {
     expect(meta?.["branch"]).toBe("fix-login-v2");
   });
 
+  it("does not overwrite an attached PR branch from a workspace checkout change", async () => {
+    const workspacePath = join(env.tmpDir, "worker-ws-pr");
+    const gitDir = join(env.tmpDir, "repo", ".git", "worktrees", "app-1-pr");
+    mkdirSync(workspacePath, { recursive: true });
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(join(workspacePath, ".git"), `gitdir: ${gitDir}\n`);
+    writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/fix-login-v2\n");
+
+    const pr = makePR({ branch: "fix-login" });
+    const mockSCM = createMockSCM({ detectPR: vi.fn().mockResolvedValue(null) });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "pr_open",
+        branch: "fix-login",
+        workspacePath,
+        pr,
+        metadata: { agent: "mock-agent" },
+      }),
+      metaOverrides: {
+        worktree: workspacePath,
+        branch: "fix-login",
+        pr: pr.url,
+        agent: "mock-agent",
+      },
+      registry,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSCM.detectPR).not.toHaveBeenCalled();
+    expect(pr.branch).toBe("fix-login");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["branch"]).toBe("fix-login");
+  });
+
   it("clears stale worker branch metadata when the current worktree HEAD is detached", async () => {
     const workspacePath = join(env.tmpDir, "worker-ws-detached");
     const gitDir = join(env.tmpDir, "repo", ".git", "worktrees", "app-1-detached");
@@ -907,6 +948,99 @@ describe("check (single session)", () => {
     expect(mockSCM.detectPR).not.toHaveBeenCalled();
     const meta = readMetadataRaw(env.sessionsDir, "app-1");
     expect(meta?.["branch"]).toBeUndefined();
+  });
+
+  it("keeps existing branch metadata when the current worktree HEAD cannot be read", async () => {
+    const workspacePath = join(env.tmpDir, "worker-ws-missing-head");
+    const gitDir = join(env.tmpDir, "repo", ".git", "worktrees", "app-1-missing-head");
+    mkdirSync(workspacePath, { recursive: true });
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(join(workspacePath, ".git"), `gitdir: ${gitDir}\n`);
+
+    const mockSCM = createMockSCM({ detectPR: vi.fn().mockResolvedValue(null) });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "working",
+        branch: "fix-login",
+        workspacePath,
+        pr: null,
+        metadata: { agent: "mock-agent" },
+      }),
+      metaOverrides: {
+        worktree: workspacePath,
+        branch: "fix-login",
+        agent: "mock-agent",
+      },
+      registry,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSCM.detectPR).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "fix-login" }),
+      expect.anything(),
+    );
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["branch"]).toBe("fix-login");
+  });
+
+  it("does not adopt a branch already tracked by another active worker", async () => {
+    const workspacePath = join(env.tmpDir, "worker-ws-conflict");
+    const gitDir = join(env.tmpDir, "repo", ".git", "worktrees", "app-1-conflict");
+    mkdirSync(workspacePath, { recursive: true });
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(join(workspacePath, ".git"), `gitdir: ${gitDir}\n`);
+    writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/fix-login-v2\n");
+
+    const mockSCM = createMockSCM({ detectPR: vi.fn().mockResolvedValue(null) });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const session = makeSession({
+      id: "app-1",
+      status: "working",
+      branch: "fix-login",
+      workspacePath,
+      pr: null,
+      metadata: { agent: "mock-agent" },
+    });
+    const sibling = makeSession({
+      id: "app-2",
+      status: "working",
+      branch: "fix-login-v2",
+      workspacePath: null,
+      pr: null,
+      metadata: { agent: "mock-agent" },
+    });
+
+    const lm = setupCheck("app-1", {
+      session,
+      metaOverrides: {
+        worktree: workspacePath,
+        branch: "fix-login",
+        agent: "mock-agent",
+      },
+      registry,
+    });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session, sibling]);
+
+    await lm.check("app-1");
+
+    expect(mockSCM.detectPR).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "fix-login" }),
+      expect.anything(),
+    );
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["branch"]).toBe("fix-login");
   });
 
   it("preserves stuck state when getActivityState throws", async () => {
