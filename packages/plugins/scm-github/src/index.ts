@@ -997,7 +997,9 @@ function createGitHubSCM(): SCM {
         blockers.push("Review required");
       }
 
-      // Conflicts / merge state
+      // Conflicts / merge state — `noConflicts` means "not explicitly CONFLICTING"
+      // (matches graphql-batch `hasConflicts`), so draft / BLOCKED / UNKNOWN do not
+      // look like merge conflicts to lifecycle conflict reactions.
       const mergeable = (data.mergeable ?? "").toUpperCase();
       const mergeState = (data.mergeStateStatus ?? "").toUpperCase();
       const noConflicts = mergeable !== "CONFLICTING";
