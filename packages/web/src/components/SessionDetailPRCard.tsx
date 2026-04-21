@@ -37,9 +37,9 @@ function buildBlockerChips(
   const lifecycleStatus = metadata["status"];
 
   const ciIsFailing =
-    pr.ciStatus === CI_STATUS.FAILING ||
-    lifecyclePrReason === "ci_failing" ||
-    lifecycleStatus === "ci_failed";
+    lifecyclePrReason !== undefined
+      ? lifecyclePrReason === "ci_failing"
+      : pr.ciStatus === CI_STATUS.FAILING;
   const hasChangesRequested =
     pr.reviewDecision === "changes_requested" ||
     lifecyclePrReason === "changes_requested" ||

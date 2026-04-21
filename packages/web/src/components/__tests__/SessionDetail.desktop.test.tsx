@@ -146,6 +146,43 @@ describe("SessionDetail desktop layout", () => {
     expect(screen.getByText("The empty state text needs to be shorter.")).toBeInTheDocument();
   });
 
+  it("does not show a stale CI blocker when the PR lifecycle has recovered", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-ci-recovered",
+          projectId: "my-app",
+          pr: makePR({
+            number: 312,
+            title: "Recovered CI should not stay red",
+            ciStatus: "passing",
+            ciChecks: [
+              { name: "build", status: "passed" },
+              { name: "test", status: "passed" },
+            ],
+            reviewDecision: "approved",
+            mergeability: {
+              mergeable: true,
+              ciPassing: true,
+              approved: true,
+              noConflicts: true,
+              blockers: [],
+            },
+          }),
+          metadata: {
+            status: "ci_failed",
+            lastCIFailureDispatchHash: "stale-dispatch-hash",
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "PR #312" }));
+
+    expect(screen.getByText("Ready to merge")).toBeInTheDocument();
+    expect(screen.queryByText("CI failing")).not.toBeInTheDocument();
+  });
+
   it("sends unresolved comments back to the agent and shows sent state", async () => {
     vi.useFakeTimers();
 

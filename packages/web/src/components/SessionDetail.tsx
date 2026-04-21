@@ -599,7 +599,12 @@ export function SessionDetail({
 
               {prPopoverOpen && (
                 <div className="topbar-pr-popover">
-                  <SessionDetailPRCard pr={pr} sessionId={session.id} metadata={session.metadata} />
+                  <SessionDetailPRCard
+                    pr={pr}
+                    sessionId={session.id}
+                    metadata={session.metadata}
+                    lifecyclePrReason={session.lifecycle?.prReason}
+                  />
                 </div>
               )}
             </div>
@@ -729,7 +734,17 @@ export function SessionDetail({
 
 // ── Session detail PR card ────────────────────────────────────────────
 
-function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; sessionId: string; metadata: Record<string, string> }) {
+function SessionDetailPRCard({
+  pr,
+  sessionId,
+  metadata,
+  lifecyclePrReason,
+}: {
+  pr: DashboardPR;
+  sessionId: string;
+  metadata: Record<string, string>;
+  lifecyclePrReason?: string;
+}) {
   const [sendingComments, setSendingComments] = useState<Set<string>>(new Set());
   const [sentComments, setSentComments] = useState<Set<string>>(new Set());
   const [errorComments, setErrorComments] = useState<Set<string>>(new Set());
@@ -801,7 +816,7 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
   };
 
   const allGreen = isPRMergeReady(pr);
-  const blockerIssues = buildBlockerChips(pr, metadata);
+  const blockerIssues = buildBlockerChips(pr, metadata, lifecyclePrReason);
   const fileCount = pr.changedFiles ?? 0;
 
   const mergeabilityReliable = !isPRUnenriched(pr) && !isPRRateLimited(pr);
@@ -1045,7 +1060,11 @@ interface BlockerChip {
   notified?: boolean;
 }
 
-function buildBlockerChips(pr: DashboardPR, metadata: Record<string, string>): BlockerChip[] {
+function buildBlockerChips(
+  pr: DashboardPR,
+  metadata: Record<string, string>,
+  lifecyclePrReason?: string,
+): BlockerChip[] {
   const chips: BlockerChip[] = [];
 
   const ciNotified = Boolean(metadata["lastCIFailureDispatchHash"]);
@@ -1053,7 +1072,10 @@ function buildBlockerChips(pr: DashboardPR, metadata: Record<string, string>): B
   const reviewNotified = Boolean(metadata["lastPendingReviewDispatchHash"]);
   const lifecycleStatus = metadata["status"];
 
-  const ciIsFailing = pr.ciStatus === CI_STATUS.FAILING || lifecycleStatus === "ci_failed";
+  const ciIsFailing =
+    lifecyclePrReason !== undefined
+      ? lifecyclePrReason === "ci_failing"
+      : pr.ciStatus === CI_STATUS.FAILING;
   const hasChangesRequested =
     pr.reviewDecision === "changes_requested" || lifecycleStatus === "changes_requested";
   const mergeabilityReliable = !isPRUnenriched(pr) && !isPRRateLimited(pr);
