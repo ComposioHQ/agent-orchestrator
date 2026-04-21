@@ -649,7 +649,7 @@ describe("restore", () => {
     expect(existsSync(agentsMdPath)).toBe(true);
     const written = readFileSync(agentsMdPath, "utf-8");
     expect(written).toContain(promptContent);
-    expect(written).toContain("<!-- AO_SYSTEM_PROMPT_START -->");
+    expect(written).toContain("<!-- AO_ORCHESTRATOR_PROMPT_START -->");
   });
 
   it("injects OPENCODE_CONFIG for restored OpenCode workers", async () => {
