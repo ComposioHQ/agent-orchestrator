@@ -130,7 +130,7 @@ describe("findProjectForSession", () => {
   it("matches orchestrator session names to their project", () => {
     const config = makeConfig({ "my-app": { sessionPrefix: "app" } });
     expect(findProjectForSession(config, "app-orchestrator")).toBe("my-app");
-    expect(findProjectForSession(config, "app-orchestrator-2")).toBe("my-app");
+    expect(findProjectForSession(config, "app-orchestrator-2")).toBeNull();
   });
 });
 
@@ -162,9 +162,9 @@ describe("isOrchestratorSessionName", () => {
     expect(isOrchestratorSessionName(config, "app-orchestrator")).toBe(true);
   });
 
-  it("falls back to suffix detection for legacy orchestrator names", () => {
+  it("does not fall back to suffix detection for non-configured orchestrator names", () => {
     const config = makeConfig({ "my-app": { sessionPrefix: "app" } });
-    expect(isOrchestratorSessionName(config, "legacy-orchestrator")).toBe(true);
+    expect(isOrchestratorSessionName(config, "legacy-orchestrator")).toBe(false);
   });
 
   it("does not classify worker session IDs as orchestrators", () => {
@@ -172,15 +172,15 @@ describe("isOrchestratorSessionName", () => {
     expect(isOrchestratorSessionName(config, "app-12", "my-app")).toBe(false);
   });
 
-  it("matches worktree orchestrator IDs (orchestrator-N) for a known project", () => {
+  it("does not match numbered orchestrator ids for a known project", () => {
     const config = makeConfig({ "my-app": { sessionPrefix: "app" } });
-    expect(isOrchestratorSessionName(config, "app-orchestrator-1", "my-app")).toBe(true);
-    expect(isOrchestratorSessionName(config, "app-orchestrator-42", "my-app")).toBe(true);
+    expect(isOrchestratorSessionName(config, "app-orchestrator-1", "my-app")).toBe(false);
+    expect(isOrchestratorSessionName(config, "app-orchestrator-42", "my-app")).toBe(false);
   });
 
-  it("matches worktree orchestrator IDs without an explicit project", () => {
+  it("does not match numbered orchestrator ids without an explicit project", () => {
     const config = makeConfig({ "my-app": { sessionPrefix: "app" } });
-    expect(isOrchestratorSessionName(config, "app-orchestrator-1")).toBe(true);
+    expect(isOrchestratorSessionName(config, "app-orchestrator-1")).toBe(false);
   });
 
   it("does not false-positive on a worker when prefix ends with -orchestrator", () => {
@@ -191,7 +191,7 @@ describe("isOrchestratorSessionName", () => {
     expect(isOrchestratorSessionName(config, "my-orchestrator-orchestrator", "my-app")).toBe(true);
   });
 
-  it("does not cross-project false-positive when one prefix is another's {prefix}-orchestrator", () => {
+  it("still recognizes the canonical orchestrator when one prefix is another's {prefix}-orchestrator", () => {
     // project A prefix "app", project B prefix "app-orchestrator"
     // "app-orchestrator-1" is a worker of B, NOT an orchestrator of A
     const config = makeConfig({
@@ -199,8 +199,7 @@ describe("isOrchestratorSessionName", () => {
       "project-b": { sessionPrefix: "app-orchestrator" },
     });
     expect(isOrchestratorSessionName(config, "app-orchestrator-1")).toBe(false);
-    // "app-orchestrator-orchestrator-1" IS an orchestrator of B
-    expect(isOrchestratorSessionName(config, "app-orchestrator-orchestrator-1")).toBe(true);
+    expect(isOrchestratorSessionName(config, "app-orchestrator-orchestrator")).toBe(true);
   });
 
   it("does not cross-project false-positive when projectId is provided", () => {

@@ -322,16 +322,16 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
 
-      expect(data.orchestratorId).toBeNull();
+      expect(data.orchestratorId).toBe("docs-orchestrator");
       expect(data.orchestrators).toEqual([
         { id: "docs-orchestrator", projectId: "docs-app", projectName: "Docs App" },
-        { id: "app-orchestrator", projectId: "my-app", projectName: "My App" },
       ]);
       expect(data.sessions.map((session: { id: string }) => session.id)).toEqual([
+        "app-orchestrator",
         "backend-3",
         "docs-2",
       ]);
-      expect(data.stats.totalSessions).toBe(2);
+      expect(data.stats.totalSessions).toBe(3);
     });
 
     it("supports project-scoped session queries for orchestrator detail views", async () => {
@@ -375,38 +375,21 @@ describe("API Routes", () => {
     it("prefers the most recently active live orchestrator for project-scoped worker navigation", async () => {
       const deadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T11:00:00.000Z"));
       deadLifecycle.session.state = "terminated";
-      deadLifecycle.session.reason = "runtime_missing";
+      deadLifecycle.session.reason = "runtime_lost";
       deadLifecycle.session.terminatedAt = "2026-04-19T11:00:00.000Z";
       deadLifecycle.session.lastTransitionAt = "2026-04-19T11:00:00.000Z";
       deadLifecycle.runtime.state = "missing";
       deadLifecycle.runtime.reason = "process_missing";
       deadLifecycle.runtime.lastObservedAt = "2026-04-19T11:00:00.000Z";
 
-      const olderLive = makeSession({
-        id: "my-app-orchestrator-1",
-        projectId: "my-app",
-        metadata: { role: "orchestrator" },
-        lastActivityAt: new Date("2026-04-19T09:00:00.000Z"),
-      });
-      const newerLive = makeSession({
-        id: "my-app-orchestrator-2",
+      const canonical = makeSession({
+        id: "my-app-orchestrator",
         projectId: "my-app",
         metadata: { role: "orchestrator" },
         lastActivityAt: new Date("2026-04-19T10:00:00.000Z"),
       });
-      const deadOlder = makeSession({
-        id: "my-app-orchestrator-0",
-        projectId: "my-app",
-        metadata: { role: "orchestrator" },
-        status: "killed",
-        activity: "exited",
-        lastActivityAt: new Date("2026-04-19T11:00:00.000Z"),
-        lifecycle: deadLifecycle,
-      });
       (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
-        deadOlder,
-        olderLive,
-        newerLive,
+        canonical,
         makeSession({
           id: "backend-3",
           projectId: "my-app",
@@ -421,9 +404,9 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
 
-      expect(data.orchestratorId).toBe("my-app-orchestrator-2");
+      expect(data.orchestratorId).toBe("my-app-orchestrator");
       expect(data.orchestrators.map((session: { id: string }) => session.id)).toEqual([
-        "my-app-orchestrator-2",
+        "my-app-orchestrator",
       ]);
       expect(data.sessions).toEqual([]);
       expect(mockSessionManager.listCached).toHaveBeenCalledWith("my-app");
@@ -432,7 +415,7 @@ describe("API Routes", () => {
     it("keeps dead orchestrators as the fallback project-scoped payload when none are live", async () => {
       const deadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T11:00:00.000Z"));
       deadLifecycle.session.state = "terminated";
-      deadLifecycle.session.reason = "runtime_missing";
+      deadLifecycle.session.reason = "runtime_lost";
       deadLifecycle.session.terminatedAt = "2026-04-19T11:00:00.000Z";
       deadLifecycle.session.lastTransitionAt = "2026-04-19T11:00:00.000Z";
       deadLifecycle.runtime.state = "missing";
@@ -441,7 +424,7 @@ describe("API Routes", () => {
 
       (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
         makeSession({
-          id: "my-app-orchestrator-0",
+          id: "my-app-orchestrator",
           projectId: "my-app",
           metadata: { role: "orchestrator" },
           status: "killed",
@@ -457,62 +440,9 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
 
-      expect(data.orchestratorId).toBe("my-app-orchestrator-0");
+      expect(data.orchestratorId).toBe("my-app-orchestrator");
       expect(data.orchestrators).toEqual([
-        { id: "my-app-orchestrator-0", projectId: "my-app", projectName: "My App" },
-      ]);
-      expect(data.sessions).toEqual([]);
-    });
-
-    it("prefers the most recently active dead orchestrator when no live project orchestrator exists", async () => {
-      const olderDeadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T10:00:00.000Z"));
-      olderDeadLifecycle.session.state = "terminated";
-      olderDeadLifecycle.session.reason = "runtime_missing";
-      olderDeadLifecycle.session.terminatedAt = "2026-04-19T10:00:00.000Z";
-      olderDeadLifecycle.session.lastTransitionAt = "2026-04-19T10:00:00.000Z";
-      olderDeadLifecycle.runtime.state = "missing";
-      olderDeadLifecycle.runtime.reason = "process_missing";
-      olderDeadLifecycle.runtime.lastObservedAt = "2026-04-19T10:00:00.000Z";
-
-      const newerDeadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T11:00:00.000Z"));
-      newerDeadLifecycle.session.state = "terminated";
-      newerDeadLifecycle.session.reason = "runtime_missing";
-      newerDeadLifecycle.session.terminatedAt = "2026-04-19T11:00:00.000Z";
-      newerDeadLifecycle.session.lastTransitionAt = "2026-04-19T11:00:00.000Z";
-      newerDeadLifecycle.runtime.state = "missing";
-      newerDeadLifecycle.runtime.reason = "process_missing";
-      newerDeadLifecycle.runtime.lastObservedAt = "2026-04-19T11:00:00.000Z";
-
-      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
-        makeSession({
-          id: "my-app-orchestrator-0",
-          projectId: "my-app",
-          metadata: { role: "orchestrator" },
-          status: "killed",
-          activity: "exited",
-          lastActivityAt: new Date("2026-04-19T10:00:00.000Z"),
-          lifecycle: olderDeadLifecycle,
-        }),
-        makeSession({
-          id: "my-app-orchestrator-9",
-          projectId: "my-app",
-          metadata: { role: "orchestrator" },
-          status: "killed",
-          activity: "exited",
-          lastActivityAt: new Date("2026-04-19T11:00:00.000Z"),
-          lifecycle: newerDeadLifecycle,
-        }),
-      ]);
-
-      const res = await sessionsGET(
-        makeRequest("http://localhost:3000/api/sessions?project=my-app&orchestratorOnly=true"),
-      );
-      expect(res.status).toBe(200);
-      const data = await res.json();
-
-      expect(data.orchestratorId).toBe("my-app-orchestrator-9");
-      expect(data.orchestrators).toEqual([
-        { id: "my-app-orchestrator-9", projectId: "my-app", projectName: "My App" },
+        { id: "my-app-orchestrator", projectId: "my-app", projectName: "My App" },
       ]);
       expect(data.sessions).toEqual([]);
     });
@@ -928,7 +858,7 @@ describe("API Routes", () => {
     it("restores the canonical dead orchestrator instead of spawning another one", async () => {
       const deadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T11:00:00.000Z"));
       deadLifecycle.session.state = "terminated";
-      deadLifecycle.session.reason = "runtime_missing";
+      deadLifecycle.session.reason = "runtime_lost";
       deadLifecycle.session.terminatedAt = "2026-04-19T11:00:00.000Z";
       deadLifecycle.session.lastTransitionAt = "2026-04-19T11:00:00.000Z";
       deadLifecycle.runtime.state = "missing";
@@ -973,7 +903,7 @@ describe("API Routes", () => {
     it("spawns a fresh orchestrator when canonical restore fails", async () => {
       const deadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T11:00:00.000Z"));
       deadLifecycle.session.state = "terminated";
-      deadLifecycle.session.reason = "runtime_missing";
+      deadLifecycle.session.reason = "runtime_lost";
       deadLifecycle.session.terminatedAt = "2026-04-19T11:00:00.000Z";
       deadLifecycle.session.lastTransitionAt = "2026-04-19T11:00:00.000Z";
       deadLifecycle.runtime.state = "missing";
@@ -1074,7 +1004,7 @@ describe("API Routes", () => {
       (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
       (mockSessionManager.ensureOrchestrator as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error(
-          'Worktree path "/Users/test/.worktrees/my-app/my-app-orchestrator-1" already exists and is still registered with git',
+          'Worktree path "/Users/test/.worktrees/my-app/my-app-orchestrator" already exists and is still registered with git',
         ),
       );
 
@@ -1116,18 +1046,10 @@ describe("API Routes", () => {
       expect(data.projectName).toBe("My App");
     });
 
-    it("returns only the canonical orchestrator when multiple historical sessions exist", async () => {
+    it("returns only the canonical orchestrator", async () => {
       (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
         makeSession({
-          id: "my-app-orchestrator-1",
-          projectId: "my-app",
-          metadata: { role: "orchestrator" },
-          status: "killed",
-          activity: "exited",
-          lastActivityAt: new Date("2026-04-19T10:00:00.000Z"),
-        }),
-        makeSession({
-          id: "my-app-orchestrator-7",
+          id: "my-app-orchestrator",
           projectId: "my-app",
           metadata: { role: "orchestrator" },
           status: "working",
@@ -1142,7 +1064,7 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.orchestrators).toEqual([
-        expect.objectContaining({ id: "my-app-orchestrator-7" }),
+        expect.objectContaining({ id: "my-app-orchestrator" }),
       ]);
     });
 

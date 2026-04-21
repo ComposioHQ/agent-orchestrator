@@ -22,9 +22,7 @@ import {
   generateSessionPrefix,
   findConfigFile,
   getGlobalConfigPath,
-  isOrchestratorSession,
   isRepoUrl,
-  isTerminalSession,
   parseRepoUrl,
   resolveCloneTarget,
   isRepoAlreadyCloned,
@@ -1598,42 +1596,14 @@ export function registerStop(program: Command): void {
           const sm = await getSessionManager(config);
           const sessionPrefix = project.sessionPrefix ?? _projectId;
           const orchestratorId = `${sessionPrefix}-orchestrator`;
-          const allSessionPrefixes = Object.entries(config.projects).map(
-            ([, configuredProject]) =>
-              configuredProject.sessionPrefix ?? generateSessionPrefix(configuredProject.name ?? ""),
-          );
           try {
             const spinner = ora("Stopping orchestrator session").start();
             const purgeOpenCode = opts?.purgeSession === true;
-            let stoppedSessionId = orchestratorId;
-
-            try {
-              await sm.kill(orchestratorId, { purgeOpenCode });
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              if (!message.includes("not found")) {
-                throw err;
-              }
-
-              const legacyOrchestrator = (await sm.list(_projectId)).find(
-                (session) =>
-                  session.id !== orchestratorId &&
-                  isOrchestratorSession(session, sessionPrefix, allSessionPrefixes) &&
-                  !isTerminalSession(session),
-              );
-
-              if (!legacyOrchestrator) {
-                throw err;
-              }
-
-              stoppedSessionId = legacyOrchestrator.id;
-              await sm.kill(stoppedSessionId, { purgeOpenCode });
-            }
-
-            spinner.succeed(`Orchestrator session stopped (${stoppedSessionId})`);
+            await sm.kill(orchestratorId, { purgeOpenCode });
+            spinner.succeed(`Orchestrator session stopped (${orchestratorId})`);
             // Also log to console.log so the killed id is visible in non-TTY callers
             // (CI, scripts) and in test capture, since spinner output is suppressed.
-            console.log(chalk.green(`  Stopped orchestrator session: ${stoppedSessionId}`));
+            console.log(chalk.green(`  Stopped orchestrator session: ${orchestratorId}`));
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             if (message.includes("not found")) {

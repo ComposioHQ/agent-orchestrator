@@ -39,7 +39,7 @@ describe("Orchestrators Page (OrchestratorsRoute)", () => {
     const mockSessionManager = {
       list: vi.fn().mockResolvedValue([
         {
-          id: "app-orchestrator-1",
+          id: "app-orchestrator",
           projectId: "my-app",
           status: "working",
           activity: "active",
@@ -66,7 +66,7 @@ describe("Orchestrators Page (OrchestratorsRoute)", () => {
     render(jsx);
 
     expect(screen.getByText("My App")).toBeInTheDocument();
-    expect(screen.getByText("app-orchestrator-1")).toBeInTheDocument();
+    expect(screen.getByText("app-orchestrator")).toBeInTheDocument();
   });
 
   it("shows error when project is missing in searchParams", async () => {

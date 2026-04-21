@@ -333,41 +333,11 @@ export interface Session {
   metadata: Record<string, string>;
 }
 
-function compareOrchestratorRecency(
-  a: Pick<Session, "id" | "lastActivityAt" | "createdAt">,
-  b: Pick<Session, "id" | "lastActivityAt" | "createdAt">,
-): number {
-  return (
-    (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0) ||
-    (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0) ||
-    a.id.localeCompare(b.id)
-  );
-}
-
 export function selectPreferredOrchestratorSession(
   sessions: Session[],
   canonicalSessionId: string,
 ): Session | null {
-  const exact = sessions.find((session) => session.id === canonicalSessionId) ?? null;
-  if (exact && !isTerminalSession(exact)) {
-    return exact;
-  }
-
-  const live = sessions
-    .filter((session) => !isTerminalSession(session))
-    .sort(compareOrchestratorRecency);
-  if (live.length > 0) {
-    return live[0] ?? null;
-  }
-
-  if (exact) {
-    return exact;
-  }
-
-  const restorable = sessions
-    .filter((session) => isRestorable(session))
-    .sort(compareOrchestratorRecency);
-  return restorable[0] ?? null;
+  return sessions.find((session) => session.id === canonicalSessionId) ?? null;
 }
 
 export function isOrchestratorSession(
@@ -375,35 +345,11 @@ export function isOrchestratorSession(
   sessionPrefix?: string,
   allSessionPrefixes?: string[],
 ): boolean {
-  if (session.metadata?.["role"] === "orchestrator") {
-    return true;
-  }
   if (!sessionPrefix) {
-    return false;
+    return session.metadata?.["role"] === "orchestrator";
   }
-  const escaped = sessionPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (
-    session.id !== `${sessionPrefix}-orchestrator` &&
-    !new RegExp(`^${escaped}-orchestrator-\\d+$`).test(session.id)
-  ) {
-    return false;
-  }
-  // Guard against cross-project false positives: if the session ID is a plain
-  // numbered worker for any other known prefix (e.g. prefix "app-orchestrator"
-  // matches "app-orchestrator-1" as a worker), it is not an orchestrator.
-  if (allSessionPrefixes) {
-    for (const prefix of allSessionPrefixes) {
-      if (prefix === sessionPrefix) continue;
-      if (
-        new RegExp(
-          `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`,
-        ).test(session.id)
-      ) {
-        return false;
-      }
-    }
-  }
-  return true;
+  void allSessionPrefixes;
+  return session.id === `${sessionPrefix}-orchestrator`;
 }
 
 /** Config for creating a new session */

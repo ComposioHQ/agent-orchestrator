@@ -1,7 +1,6 @@
 import {
   type Session,
   isOrchestratorSession,
-  selectPreferredOrchestratorSession,
 } from "@aoagents/ao-core";
 import type { Orchestrator } from "@/components/OrchestratorSelector";
 
@@ -10,12 +9,12 @@ export function selectCanonicalProjectOrchestrator(
   sessionPrefix: string,
   allSessionPrefixes?: string[],
 ): Session | null {
-  const projectOrchestrators = sessions.filter((session) =>
-    isOrchestratorSession(session, sessionPrefix, allSessionPrefixes),
-  );
-  return selectPreferredOrchestratorSession(
-    projectOrchestrators,
-    `${sessionPrefix}-orchestrator`,
+  return (
+    sessions.find(
+      (session) =>
+        session.id === `${sessionPrefix}-orchestrator` &&
+        isOrchestratorSession(session, sessionPrefix, allSessionPrefixes),
+    ) ?? null
   );
 }
 

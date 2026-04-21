@@ -9,22 +9,13 @@ vi.mock("next/navigation", () => ({
 
 const mockOrchestrators = [
   {
-    id: "app-orchestrator-1",
+    id: "app-orchestrator",
     projectId: "my-project",
     projectName: "My Project",
     status: "working",
     activity: "active",
     createdAt: new Date(Date.now() - 3600000).toISOString(), // 1 hour ago
     lastActivityAt: new Date(Date.now() - 300000).toISOString(), // 5 min ago
-  },
-  {
-    id: "app-orchestrator-2",
-    projectId: "my-project",
-    projectName: "My Project",
-    status: "spawning",
-    activity: null,
-    createdAt: new Date(Date.now() - 7200000).toISOString(), // 2 hours ago
-    lastActivityAt: null,
   },
 ];
 
@@ -45,8 +36,7 @@ describe("OrchestratorSelector", () => {
   it("renders orchestrator list", () => {
     render(<OrchestratorSelector {...defaultProps} />);
 
-    expect(screen.getByText("app-orchestrator-1")).toBeInTheDocument();
-    expect(screen.getByText("app-orchestrator-2")).toBeInTheDocument();
+    expect(screen.getByText("app-orchestrator")).toBeInTheDocument();
   });
 
   it("displays project name in header", () => {
@@ -87,7 +77,7 @@ describe("OrchestratorSelector", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          orchestrator: { id: "app-orchestrator-3" },
+          orchestrator: { id: "app-orchestrator" },
         }),
     });
     global.fetch = mockFetch;
@@ -102,7 +92,7 @@ describe("OrchestratorSelector", () => {
     });
 
     await waitFor(() => {
-      expect(mockPush).toHaveBeenCalledWith("/projects/my-project/sessions/app-orchestrator-3");
+      expect(mockPush).toHaveBeenCalledWith("/projects/my-project/sessions/app-orchestrator");
     });
   });
 
@@ -142,8 +132,8 @@ describe("OrchestratorSelector", () => {
   it("links to orchestrator session page", () => {
     render(<OrchestratorSelector {...defaultProps} />);
 
-    const link = screen.getByRole("link", { name: /app-orchestrator-1/i });
-    expect(link).toHaveAttribute("href", "/projects/my-project/sessions/app-orchestrator-1");
+    const link = screen.getByRole("link", { name: /app-orchestrator/i });
+    expect(link).toHaveAttribute("href", "/projects/my-project/sessions/app-orchestrator");
   });
 
   it("displays status and activity for each orchestrator", () => {
@@ -151,7 +141,6 @@ describe("OrchestratorSelector", () => {
 
     expect(screen.getByText("working")).toBeInTheDocument();
     expect(screen.getByText("Active")).toBeInTheDocument();
-    expect(screen.getByText("spawning")).toBeInTheDocument();
   });
 
   it("covers relative time for days and status colors/labels", () => {

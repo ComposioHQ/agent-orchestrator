@@ -414,17 +414,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionPrefix?: string,
   ): boolean {
     if (!raw) return false;
-    if (raw["role"] === "orchestrator") return true;
-    // Check the -orchestrator-N pattern only when the prefix is known so the
-    // regex is anchored to the project prefix, preventing false-positives when
-    // the user-configured sessionPrefix itself ends with "-orchestrator".
-    if (sessionPrefix) {
-      if (sessionId === `${sessionPrefix}-orchestrator`) {
-        return true;
-      }
-      return new RegExp(`^${escapeRegex(sessionPrefix)}-orchestrator-\\d+$`).test(sessionId);
-    }
-    return false;
+    if (!sessionPrefix) return raw["role"] === "orchestrator";
+    return sessionId === `${sessionPrefix}-orchestrator`;
   }
 
   function isCleanupProtectedSession(

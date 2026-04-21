@@ -1038,38 +1038,6 @@ describe("stop command", () => {
     expect(output).toContain("No running orchestrator session found");
   });
 
-  it("falls back to a legacy numbered orchestrator during migration", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.kill
-      .mockRejectedValueOnce(new Error("session not found"))
-      .mockResolvedValueOnce(undefined);
-    mockSessionManager.list.mockResolvedValue([
-      {
-        id: "app-orchestrator-1",
-        status: "working",
-        activity: "active",
-        metadata: { role: "orchestrator" },
-      },
-    ]);
-    mockDashboardOnPort(3000);
-
-    await program.parseAsync(["node", "test", "stop"]);
-
-    expect(mockSessionManager.kill).toHaveBeenNthCalledWith(1, "app-orchestrator", {
-      purgeOpenCode: false,
-    });
-    expect(mockSessionManager.kill).toHaveBeenNthCalledWith(2, "app-orchestrator-1", {
-      purgeOpenCode: false,
-    });
-    expect(mockSessionManager.list).toHaveBeenCalledWith("my-app");
-    const output = vi
-      .mocked(console.log)
-      .mock.calls.map((c) => c.join(" "))
-      .join("\n");
-    expect(output).toContain("app-orchestrator-1");
-    expect(output).toContain("Orchestrator stopped");
-  });
-
   it("passes purge flag when stopping orchestrator with --purge-session", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
     mockSessionManager.kill.mockResolvedValue(undefined);

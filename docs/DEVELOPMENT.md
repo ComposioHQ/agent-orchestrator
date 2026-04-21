@@ -175,7 +175,7 @@ ao update
 
 If your branch has drift from `main`, update the install checkout first and then return to your feature worktree. That keeps CLI behavior and generated docs aligned with the version contributors are expected to run.
 
-This matters for orchestrator dogfooding in particular: fresh project identities now create a canonical `{sessionPrefix}-orchestrator` session, while older projects may still reuse historical numbered orchestrators such as `{sessionPrefix}-orchestrator-1` during the migration window.
+This matters for orchestrator dogfooding in particular: the canonical orchestrator session is always `{sessionPrefix}-orchestrator`.
 
 ---
 
