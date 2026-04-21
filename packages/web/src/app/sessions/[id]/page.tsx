@@ -68,7 +68,7 @@ interface ProjectSessionsBody {
 }
 
 let cachedProjects: ProjectInfo[] | null = null;
-let cachedSidebarSessions: DashboardSession[] | null = null;
+const cachedSidebarSessionsByScope = new Map<string, DashboardSession[]>();
 const SESSION_PAGE_REFRESH_INTERVAL_MS = 2000;
 const SESSION_PAGE_FETCH_TIMEOUT_MS = 10_000;
 const validSessionStatuses = new Set<string>(Object.values(SESSION_STATUS));
@@ -106,6 +106,10 @@ function areSidebarSessionsEqual(
     const candidate = next[index];
     return JSON.stringify(session) === JSON.stringify(candidate);
   });
+}
+
+function getSidebarScopeKey(projectId?: string | null): string {
+  return projectId ? `project:${projectId}` : "all";
 }
 
 async function fetchWithTimeout(input: string, timeoutMs = SESSION_PAGE_FETCH_TIMEOUT_MS): Promise<Response> {
@@ -334,6 +338,7 @@ export default function SessionPage() {
         ? params.projectId[0]
         : null;
   const mux = useMuxOptional();
+  const initialSidebarScopeKey = getSidebarScopeKey(expectedProjectId);
 
   // Read optimistic session data written by sidebar navigation (instant render, no white screen)
   const cachedSession = (() => {
@@ -353,13 +358,17 @@ export default function SessionPage() {
   const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(undefined);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(cachedProjects === null);
-  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[] | null>(() => cachedSidebarSessions);
+  const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[] | null>(
+    () => cachedSidebarSessionsByScope.get(initialSidebarScopeKey) ?? null,
+  );
   const [loading, setLoading] = useState(cachedSession === null);
   const [routeError, setRouteError] = useState<Error | null>(null);
   const [sessionMissing, setSessionMissing] = useState(false);
   const [sidebarError, setSidebarError] = useState(false);
   const [prefixByProject, setPrefixByProject] = useState<Map<string, string>>(new Map());
   const sessionProjectId = session?.projectId ?? null;
+  const sidebarProjectId = null;
+  const sidebarScopeKey = getSidebarScopeKey(sidebarProjectId);
   const allPrefixes = [...prefixByProject.values()];
   const sessionIsOrchestrator = session
     ? isOrchestratorSession(session, prefixByProject.get(session.projectId), allPrefixes)
@@ -450,6 +459,11 @@ export default function SessionPage() {
     sessionIsOrchestratorRef.current = sessionIsOrchestrator;
   }, [sessionIsOrchestrator]);
 
+  useEffect(() => {
+    const cachedSessions = cachedSidebarSessionsByScope.get(sidebarScopeKey) ?? null;
+    setSidebarSessions(cachedSessions);
+  }, [sidebarScopeKey]);
+
   // Fetch session data (memoized to avoid recreating on every render)
   const fetchSession = useCallback(async () => {
     if (fetchingSessionRef.current) return;
@@ -539,8 +553,11 @@ export default function SessionPage() {
   const fetchSidebarSessions = useCallback(async () => {
     if (fetchingSidebarRef.current) return;
     fetchingSidebarRef.current = true;
+    const projectId = null;
+    const scopeKey = getSidebarScopeKey(projectId);
+    const query = "/api/sessions?fresh=true";
     try {
-      const res = await fetchWithTimeout("/api/sessions?fresh=true");
+      const res = await fetchWithTimeout(query);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -548,7 +565,7 @@ export default function SessionPage() {
       const restSessions = body?.sessions ?? [];
       const nextSessions =
         applyMuxSessionPatches(restSessions, pendingMuxSessionsRef.current ?? []) ?? restSessions;
-      cachedSidebarSessions = nextSessions;
+      cachedSidebarSessionsByScope.set(scopeKey, nextSessions);
       setSidebarError(false);
       setSidebarSessions((current) => (
         areSidebarSessionsEqual(current, nextSessions) ? current : nextSessions
@@ -578,13 +595,18 @@ export default function SessionPage() {
     // Read current sessions via the module-level cache so this effect reacts to
     // new mux data only — keeping `sidebarSessions` out of the dep array avoids
     // re-running on every state change that the effect itself produces.
-    const next = applyMuxSessionPatches(cachedSidebarSessions, mux.sessions);
+    const cachedSidebarSessions = cachedSidebarSessionsByScope.get(sidebarScopeKey) ?? null;
+    if (cachedSidebarSessions === null) {
+      return;
+    }
+
+    const next = applyMuxSessionPatches(cachedSidebarSessions, mux.sessions) ?? cachedSidebarSessions;
     if (next !== cachedSidebarSessions) {
-      cachedSidebarSessions = next;
+      cachedSidebarSessionsByScope.set(sidebarScopeKey, next);
       setSidebarSessions(next);
     }
 
-    if (mux.sessions.length === 0 || !cachedSidebarSessions) {
+    if (mux.sessions.length === 0) {
       return;
     }
 
@@ -601,7 +623,7 @@ export default function SessionPage() {
         return;
       }
     }
-  }, [fetchSidebarSessions, mux?.sessions, mux?.status]);
+  }, [fetchSidebarSessions, mux?.sessions, mux?.status, sidebarScopeKey]);
 
   useEffect(() => {
     if (!sessionIsOrchestrator) {

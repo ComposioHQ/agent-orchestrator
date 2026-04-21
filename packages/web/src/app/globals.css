@@ -980,6 +980,23 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   transform: scale(0.97);
 }
 
+.topbar-action-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.dashboard-app-btn--restore {
+  border-radius: 4px;
+  color: var(--color-text-secondary);
+}
+
+.dashboard-app-btn--restore:hover {
+  background: color-mix(in srgb, var(--color-accent-amber) 4%, transparent);
+  border-color: var(--color-accent-amber-border);
+  color: var(--color-accent-amber);
+}
+
 .dashboard-app-btn--amber {
   border-color: var(--color-accent-amber-border);
   background: var(--color-accent-amber-dim);
@@ -2659,6 +2676,23 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-color: var(--color-accent-amber-border);
   color: var(--color-accent-amber);
   text-decoration: none;
+}
+
+.session-card__restore-control {
+  font-size: 10.5px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  padding: 2px 8px 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border-default);
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.session-card__restore-control:hover {
+  background: color-mix(in srgb, var(--color-accent-amber) 4%, transparent);
+  border-color: var(--color-accent-amber-border);
+  color: var(--color-accent-amber);
 }
 
 .btn--danger {

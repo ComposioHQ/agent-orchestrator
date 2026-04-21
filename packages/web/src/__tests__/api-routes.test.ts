@@ -943,6 +943,53 @@ describe("API Routes", () => {
       expect(data.orchestrator.id).toBe("my-app-orchestrator-30");
     });
 
+    it("spawns a fresh orchestrator when canonical restore fails", async () => {
+      const deadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T11:00:00.000Z"));
+      deadLifecycle.session.state = "terminated";
+      deadLifecycle.session.reason = "runtime_missing";
+      deadLifecycle.session.terminatedAt = "2026-04-19T11:00:00.000Z";
+      deadLifecycle.session.lastTransitionAt = "2026-04-19T11:00:00.000Z";
+      deadLifecycle.runtime.state = "missing";
+      deadLifecycle.runtime.reason = "process_missing";
+      deadLifecycle.runtime.lastObservedAt = "2026-04-19T11:00:00.000Z";
+
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        makeSession({
+          id: "my-app-orchestrator-30",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+          status: "killed",
+          activity: "exited",
+          lifecycle: deadLifecycle,
+        }),
+      ]);
+      (mockSessionManager.restore as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("workspace missing"),
+      );
+      (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        makeSession({
+          id: "my-app-orchestrator-31",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+          status: "spawning",
+          activity: "active",
+        }),
+      );
+
+      const req = makeRequest("/api/orchestrators", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await orchestratorsPOST(req);
+
+      expect(res.status).toBe(201);
+      expect(mockSessionManager.restore).toHaveBeenCalledWith("my-app-orchestrator-30");
+      expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledTimes(1);
+      const data = await res.json();
+      expect(data.orchestrator.id).toBe("my-app-orchestrator-31");
+    });
+
     it("returns 404 for an unknown project", async () => {
       const req = makeRequest("/api/orchestrators", {
         method: "POST",

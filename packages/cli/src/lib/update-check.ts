@@ -53,9 +53,9 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
  * the resolved `import.meta.url` path.
  *
  * Distinguishes global npm installs (e.g. /usr/local/lib/node_modules,
- * ~/.nvm/.../lib/node_modules, pnpm global store) from local project
- * node_modules by checking for `lib/node_modules` (global) vs a bare
- * `node_modules` that sits inside a project directory (local/npx).
+ * ~/.nvm/.../lib/node_modules, %AppData%/npm/node_modules, pnpm global store)
+ * from local project node_modules by checking for known global-install
+ * layouts rather than treating every node_modules path as global.
  */
 export function classifyInstallPath(resolvedPath: string): InstallMethod {
   const hasNodeModules =
@@ -75,9 +75,14 @@ export function classifyInstallPath(resolvedPath: string): InstallMethod {
       return "pnpm-global";
     }
 
+    const isWindowsNpmGlobal =
+      resolvedPath.includes("/AppData/Roaming/npm/node_modules/") ||
+      resolvedPath.includes("\\AppData\\Roaming\\npm\\node_modules\\");
+
     const isNpmGlobal =
       resolvedPath.includes("/lib/node_modules/") ||
-      resolvedPath.includes("\\lib\\node_modules\\");
+      resolvedPath.includes("\\lib\\node_modules\\") ||
+      isWindowsNpmGlobal;
 
     if (isNpmGlobal) {
       return "npm-global";

@@ -113,15 +113,23 @@ export async function POST(request: NextRequest) {
       }
 
       if (isRestorable(canonical)) {
-        const restored = await sessionManager.restore(canonical.id);
-        return NextResponse.json(
-          {
-            orchestrator: mapSessionToOrchestrator(restored, project.name),
-            reusedExisting: true,
-            restoredExisting: true,
-          },
-          { status: 200 },
-        );
+        try {
+          const restored = await sessionManager.restore(canonical.id);
+          return NextResponse.json(
+            {
+              orchestrator: mapSessionToOrchestrator(restored, project.name),
+              reusedExisting: true,
+              restoredExisting: true,
+            },
+            { status: 200 },
+          );
+        } catch (error) {
+          console.warn("Failed to restore canonical orchestrator, falling back to spawn", {
+            projectId,
+            orchestratorId: canonical.id,
+            error,
+          });
+        }
       }
     }
 

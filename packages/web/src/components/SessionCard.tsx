@@ -10,7 +10,6 @@ import {
   getSessionTruthLabel,
   getPRTruthLabel,
   getRuntimeTruthLabel,
-  getLifecycleGuidance,
   isDashboardSessionDone,
   isDashboardSessionTerminal,
   isDashboardSessionRestorable,
@@ -201,7 +200,6 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         `Runtime ${getRuntimeTruthLabel(session)}`,
       ].join(" · ")
     : null;
-  const lifecycleGuidance = getLifecycleGuidance(session);
   const secondaryText = session.issueLabel
     ? `${session.issueLabel}${session.issueTitle ? ` · ${session.issueTitle}` : ""}`
     : (session.issueTitle ??
@@ -483,17 +481,19 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               e.stopPropagation();
               onRestore?.(session.id);
             }}
-            className="inline-flex items-center gap-1 border border-[color-mix(in_srgb,var(--color-accent)_35%,transparent)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[var(--color-tint-blue)]"
+            className="session-card__control session-card__restore-control"
           >
             <svg
+              className="session-card__control-icon"
               fill="none"
               stroke="currentColor"
               strokeWidth="2"
               viewBox="0 0 24 24"
-              className="h-3 w-3"
             >
-              <polyline points="1 4 1 10 7 10" />
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+              <path d="M20 11a8 8 0 0 0-14.9-3.98" />
+              <path d="M4 5v4h4" />
+              <path d="M4 13a8 8 0 0 0 14.9 3.98" />
+              <path d="M20 19v-4h-4" />
             </svg>
             restore
           </button>
@@ -586,14 +586,6 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           <div className="px-[10px] pb-[5px]">
             <p className="text-[10px] leading-relaxed text-[var(--color-text-tertiary)]">
               {truthLine}
-            </p>
-          </div>
-        )}
-
-        {lifecycleGuidance && (
-          <div className="px-[10px] pb-[6px]">
-            <p className="inline-flex items-center gap-1 rounded-full border border-[color-mix(in_srgb,var(--color-status-attention)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-status-attention)_9%,transparent)] px-2 py-1 text-[10px] leading-none text-[var(--color-status-attention)]">
-              {lifecycleGuidance}
             </p>
           </div>
         )}

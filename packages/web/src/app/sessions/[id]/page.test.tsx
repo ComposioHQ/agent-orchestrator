@@ -85,7 +85,15 @@ describe("SessionPage project polling", () => {
 
   it("resolves orchestrator nav once for non-orchestrator pages and skips repeated project polling", async () => {
     const workerSession = makeWorkerSession();
-    const sidebarSessions = [workerSession];
+    const sidebarSessions = [
+      workerSession,
+      {
+        ...workerSession,
+        id: "docs-2",
+        projectId: "docs-app",
+        summary: "Docs session",
+      },
+    ];
 
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

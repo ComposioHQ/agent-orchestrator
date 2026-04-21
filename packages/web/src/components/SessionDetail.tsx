@@ -428,11 +428,11 @@ export function SessionDetail({
         const message = await res.text().catch(() => "");
         throw new Error(message || `HTTP ${res.status}`);
       }
-      router.refresh();
+      window.location.reload();
     } catch (err) {
       console.error("Failed to restore session:", err);
     }
-  }, [router, session.id]);
+  }, [session.id]);
 
   const allGreen = pr ? isPRMergeReady(pr) : false;
   const [prPopoverOpen, setPrPopoverOpen] = useState(false);
@@ -610,10 +610,12 @@ export function SessionDetail({
 
           {/* Restore is available for any restorable session; Kill stays worker-only. */}
           {isRestorable ? (
-            <button type="button" className="dashboard-app-btn" onClick={handleRestore}>
-              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <polyline points="1 4 1 10 7 10" />
-                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+            <button type="button" className="dashboard-app-btn dashboard-app-btn--restore" onClick={handleRestore}>
+              <svg className="topbar-action-icon" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M20 11a8 8 0 0 0-14.9-3.98" />
+                <path d="M4 5v4h4" />
+                <path d="M4 13a8 8 0 0 0 14.9 3.98" />
+                <path d="M20 19v-4h-4" />
               </svg>
               <span className="topbar-btn-label">Restore</span>
             </button>
