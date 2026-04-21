@@ -281,19 +281,20 @@ describe("restore", () => {
 
     // Older archive — has stale branch
     writeFileSync(
-      join(archiveDir, "app-1_2025-01-01T00-00-00-000Z"),
-      "worktree=" + wsPath + "\nbranch=old-branch\nstatus=killed\nproject=my-app\n",
+      join(archiveDir, "app-1_2025-01-01T00-00-00-000Z.json"),
+      JSON.stringify({ worktree: wsPath, branch: "old-branch", status: "killed", project: "my-app" }, null, 2) + "\n",
     );
 
     // Newer archive — has correct branch
     writeFileSync(
-      join(archiveDir, "app-1_2025-06-15T12-00-00-000Z"),
-      "worktree=" +
-        wsPath +
-        "\nbranch=feat/latest\nstatus=killed\nproject=my-app\n" +
-        "runtimeHandle=" +
-        JSON.stringify(makeHandle("rt-old")) +
-        "\n",
+      join(archiveDir, "app-1_2025-06-15T12-00-00-000Z.json"),
+      JSON.stringify({
+        worktree: wsPath,
+        branch: "feat/latest",
+        status: "killed",
+        project: "my-app",
+        runtimeHandle: makeHandle("rt-old"),
+      }, null, 2) + "\n",
     );
 
     const sm = createSessionManager({ config, registry: mockRegistry });

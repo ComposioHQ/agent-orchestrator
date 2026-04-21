@@ -76,7 +76,7 @@ describe("writeMetadata + readMetadata", () => {
     expect(meta).toBeNull();
   });
 
-  it("produces key=value format matching bash scripts", () => {
+  it("produces JSON format", () => {
     writeMetadata(dataDir, "app-3", {
       worktree: "/tmp/w",
       branch: "feat/INT-123",
@@ -84,11 +84,26 @@ describe("writeMetadata + readMetadata", () => {
       issue: "https://linear.app/team/issue/INT-123",
     });
 
-    const content = readFileSync(join(dataDir, "app-3"), "utf-8");
-    expect(content).toContain("worktree=/tmp/w\n");
-    expect(content).toContain("branch=feat/INT-123\n");
-    expect(content).toContain("status=working\n");
-    expect(content).toContain("issue=https://linear.app/team/issue/INT-123\n");
+    const content = readFileSync(join(dataDir, "app-3.json"), "utf-8");
+    const parsed = JSON.parse(content);
+    expect(parsed.worktree).toBe("/tmp/w");
+    expect(parsed.branch).toBe("feat/INT-123");
+    expect(parsed.status).toBe("working");
+    expect(parsed.issue).toBe("https://linear.app/team/issue/INT-123");
+  });
+
+  it("stores runtimeHandle as an object in JSON (not stringified)", () => {
+    writeMetadata(dataDir, "app-json", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+      runtimeHandle: '{"id":"tmux-1","runtimeName":"tmux"}',
+    });
+
+    const content = readFileSync(join(dataDir, "app-json.json"), "utf-8");
+    const parsed = JSON.parse(content);
+    expect(typeof parsed.runtimeHandle).toBe("object");
+    expect(parsed.runtimeHandle.id).toBe("tmux-1");
   });
 
   it("omits optional fields that are undefined", () => {
@@ -98,10 +113,11 @@ describe("writeMetadata + readMetadata", () => {
       status: "spawning",
     });
 
-    const content = readFileSync(join(dataDir, "app-4"), "utf-8");
-    expect(content).not.toContain("issue=");
-    expect(content).not.toContain("pr=");
-    expect(content).not.toContain("summary=");
+    const content = readFileSync(join(dataDir, "app-4.json"), "utf-8");
+    const parsed = JSON.parse(content);
+    expect(parsed.issue).toBeUndefined();
+    expect(parsed.pr).toBeUndefined();
+    expect(parsed.summary).toBeUndefined();
   });
 
   it("serializes pinnedSummary field when present", () => {
@@ -112,16 +128,17 @@ describe("writeMetadata + readMetadata", () => {
       pinnedSummary: "First quality summary",
     });
 
-    const content = readFileSync(join(dataDir, "app-5"), "utf-8");
-    expect(content).toContain("pinnedSummary=First quality summary\n");
+    const content = readFileSync(join(dataDir, "app-5.json"), "utf-8");
+    const parsed = JSON.parse(content);
+    expect(parsed.pinnedSummary).toBe("First quality summary");
   });
 });
 
 describe("readMetadataRaw", () => {
-  it("reads arbitrary key=value pairs", () => {
+  it("reads arbitrary JSON fields as strings", () => {
     writeFileSync(
-      join(dataDir, "raw-1"),
-      "worktree=/tmp/w\nbranch=main\ncustom_key=custom_value\n",
+      join(dataDir, "raw-1.json"),
+      JSON.stringify({ worktree: "/tmp/w", branch: "main", custom_key: "custom_value" }),
       "utf-8",
     );
 
@@ -135,21 +152,15 @@ describe("readMetadataRaw", () => {
     expect(readMetadataRaw(dataDir, "nope")).toBeNull();
   });
 
-  it("handles comments and empty lines", () => {
-    writeFileSync(
-      join(dataDir, "raw-2"),
-      "# This is a comment\n\nkey1=value1\n\n# Another comment\nkey2=value2\n",
-      "utf-8",
-    );
-
-    const raw = readMetadataRaw(dataDir, "raw-2");
-    expect(raw).toEqual({ key1: "value1", key2: "value2" });
+  it("returns null for empty file (from reserveSessionId)", () => {
+    writeFileSync(join(dataDir, "empty.json"), "", "utf-8");
+    expect(readMetadataRaw(dataDir, "empty")).toBeNull();
   });
 
-  it("handles values containing equals signs", () => {
+  it("flattens nested objects to JSON strings", () => {
     writeFileSync(
-      join(dataDir, "raw-3"),
-      'runtimeHandle={"id":"foo","data":{"key":"val"}}\n',
+      join(dataDir, "raw-3.json"),
+      JSON.stringify({ runtimeHandle: { id: "foo", data: { key: "val" } } }),
       "utf-8",
     );
 
@@ -280,12 +291,12 @@ describe("deleteMetadata", () => {
 
     deleteMetadata(dataDir, "del-1", true);
 
-    expect(existsSync(join(dataDir, "del-1"))).toBe(false);
+    expect(existsSync(join(dataDir, "del-1.json"))).toBe(false);
     const archiveDir = join(dataDir, "archive");
     expect(existsSync(archiveDir)).toBe(true);
     const files = readdirSync(archiveDir);
     expect(files.length).toBe(1);
-    expect(files[0]).toMatch(/^del-1_/);
+    expect(files[0]).toMatch(/^del-1_.*\.json$/);
   });
 
   it("deletes without archiving when archive=false", () => {
@@ -297,7 +308,7 @@ describe("deleteMetadata", () => {
 
     deleteMetadata(dataDir, "del-2", false);
 
-    expect(existsSync(join(dataDir, "del-2"))).toBe(false);
+    expect(existsSync(join(dataDir, "del-2.json"))).toBe(false);
     expect(existsSync(join(dataDir, "archive"))).toBe(false);
   });
 
@@ -312,12 +323,12 @@ describe("readArchivedMetadataRaw", () => {
     mkdirSync(archiveDir, { recursive: true });
 
     writeFileSync(
-      join(archiveDir, "app-1_2025-01-01T00-00-00-000Z"),
-      "branch=old-branch\nstatus=killed\n",
+      join(archiveDir, "app-1_20250101T000000Z.json"),
+      JSON.stringify({ branch: "old-branch", status: "killed" }),
     );
     writeFileSync(
-      join(archiveDir, "app-1_2025-06-15T12-00-00-000Z"),
-      "branch=new-branch\nstatus=killed\n",
+      join(archiveDir, "app-1_20250615T120000Z.json"),
+      JSON.stringify({ branch: "new-branch", status: "killed" }),
     );
 
     const raw = readArchivedMetadataRaw(dataDir, "app-1");
@@ -331,8 +342,8 @@ describe("readArchivedMetadataRaw", () => {
 
     // "app" should NOT match "app_v2_..." (belongs to session "app_v2")
     writeFileSync(
-      join(archiveDir, "app_v2_2025-01-01T00-00-00-000Z"),
-      "branch=wrong\nstatus=killed\n",
+      join(archiveDir, "app_v2_20250101T000000Z.json"),
+      JSON.stringify({ branch: "wrong", status: "killed" }),
     );
 
     expect(readArchivedMetadataRaw(dataDir, "app")).toBeNull();
@@ -344,13 +355,13 @@ describe("readArchivedMetadataRaw", () => {
 
     // Archive for "app" — timestamp starts with digit
     writeFileSync(
-      join(archiveDir, "app_2025-06-15T12-00-00-000Z"),
-      "branch=correct\nstatus=killed\n",
+      join(archiveDir, "app_20250615T120000Z.json"),
+      JSON.stringify({ branch: "correct", status: "killed" }),
     );
     // Archive for "app_v2" — should not be matched by "app"
     writeFileSync(
-      join(archiveDir, "app_v2_2025-01-01T00-00-00-000Z"),
-      "branch=wrong\nstatus=killed\n",
+      join(archiveDir, "app_v2_20250101T000000Z.json"),
+      JSON.stringify({ branch: "wrong", status: "killed" }),
     );
 
     const raw = readArchivedMetadataRaw(dataDir, "app");
@@ -367,8 +378,8 @@ describe("readArchivedMetadataRaw", () => {
     mkdirSync(archiveDir, { recursive: true });
 
     writeFileSync(
-      join(archiveDir, "other-session_2025-01-01T00-00-00-000Z"),
-      "branch=main\nstatus=killed\n",
+      join(archiveDir, "other-session_20250101T000000Z.json"),
+      JSON.stringify({ branch: "main", status: "killed" }),
     );
 
     expect(readArchivedMetadataRaw(dataDir, "app-1")).toBeNull();
@@ -432,8 +443,6 @@ describe("atomic writes", () => {
   });
 
   it("concurrent writeMetadata calls do not produce corrupt files", () => {
-    // Simulate rapid sequential writes (synchronous, so they serialize naturally,
-    // but each individual write must be atomic — no partial content)
     for (let i = 0; i < 20; i++) {
       writeMetadata(dataDir, "atomic-3", {
         worktree: "/tmp/w",
@@ -470,7 +479,7 @@ describe("restoredAt persistence", () => {
     expect(meta!.restoredAt).toBe(now);
   });
 
-  it("restoredAt is persisted in the key=value file", () => {
+  it("restoredAt is persisted in the JSON file", () => {
     const now = "2026-03-01T12:00:00.000Z";
     writeMetadata(dataDir, "restore-2", {
       worktree: "/tmp/w",
@@ -479,8 +488,9 @@ describe("restoredAt persistence", () => {
       restoredAt: now,
     });
 
-    const content = readFileSync(join(dataDir, "restore-2"), "utf-8");
-    expect(content).toContain(`restoredAt=${now}`);
+    const content = readFileSync(join(dataDir, "restore-2.json"), "utf-8");
+    const parsed = JSON.parse(content);
+    expect(parsed.restoredAt).toBe(now);
   });
 
   it("restoredAt is undefined when not set", () => {
@@ -533,6 +543,5 @@ describe("listMetadata", () => {
     const emptyDir = join(tmpdir(), `ao-test-empty-${randomUUID()}`);
     const list = listMetadata(emptyDir);
     expect(list).toEqual([]);
-    // no cleanup needed since dir was never created
   });
 });

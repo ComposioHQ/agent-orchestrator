@@ -331,7 +331,7 @@ describe("cleanupSession", () => {
 
     expect(mockWorkspace.destroy).toHaveBeenCalled();
     expect(result.success).toBe(true);
-    expect(existsSync(join(sessionsDir, "app-1"))).toBe(false);
+    expect(existsSync(join(sessionsDir, "app-1.json"))).toBe(false);
   });
 
   it("continues cleanup and calls workspace.destroy and deleteMetadata even when runtime.destroy throws", async () => {
@@ -387,7 +387,7 @@ describe("cleanupSession", () => {
     expect(mockRuntime.destroy).toHaveBeenCalled();
     expect(mockWorkspace.destroy).toHaveBeenCalled();
     expect(result.success).toBe(true);
-    expect(existsSync(join(sessionsDir, "app-1"))).toBe(false);
+    expect(existsSync(join(sessionsDir, "app-1.json"))).toBe(false);
   });
 });
 
@@ -414,8 +414,8 @@ describe("recovery manager and scanner", () => {
     const sessionsDir = getSessionsDir(STORAGE_KEY);
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(
-      join(sessionsDir, "app-1"),
-      "project=app\nstatus=terminated\nworktree=/tmp/worktree\n",
+      join(sessionsDir, "app-1.json"),
+      JSON.stringify({ project: "app", status: "terminated", worktree: "/tmp/worktree" }, null, 2) + "\n",
       "utf-8",
     );
 
@@ -448,9 +448,9 @@ describe("recovery manager and scanner", () => {
     const sessionsDir = getSessionsDir(STORAGE_KEY);
     mkdirSync(sessionsDir, { recursive: true });
 
-    writeFileSync(join(sessionsDir, "app-1"), "project=app\nstatus=working\n", "utf-8");
-    writeFileSync(join(sessionsDir, ".tmp"), "project=app\n", "utf-8");
-    writeFileSync(join(sessionsDir, "bad.session"), "project=app\n", "utf-8");
+    writeFileSync(join(sessionsDir, "app-1.json"), JSON.stringify({ project: "app", status: "working" }, null, 2) + "\n", "utf-8");
+    writeFileSync(join(sessionsDir, ".tmp"), JSON.stringify({ project: "app" }, null, 2) + "\n", "utf-8");
+    writeFileSync(join(sessionsDir, "bad.session"), JSON.stringify({ project: "app" }, null, 2) + "\n", "utf-8");
 
     const scanned = scanAllSessions(config);
 

@@ -199,8 +199,8 @@ describe("claimPR", () => {
 
     const staleTime = new Date("2026-01-01T00:00:00.000Z");
     const freshTime = new Date("2026-01-02T00:00:00.000Z");
-    utimesSync(join(sessionsDir, "app-1"), staleTime, staleTime);
-    utimesSync(join(sessionsDir, "app-2"), freshTime, freshTime);
+    utimesSync(join(sessionsDir, "app-1.json"), staleTime, staleTime);
+    utimesSync(join(sessionsDir, "app-2.json"), freshTime, freshTime);
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     const sessions = await sm.list();
@@ -252,8 +252,8 @@ describe("claimPR", () => {
 
     const staleTime = new Date("2026-01-01T00:00:00.000Z");
     const freshTime = new Date("2026-01-02T00:00:00.000Z");
-    utimesSync(join(sessionsDir, "app-1"), staleTime, staleTime);
-    utimesSync(join(sessionsDir, "app-2"), freshTime, freshTime);
+    utimesSync(join(sessionsDir, "app-1.json"), staleTime, staleTime);
+    utimesSync(join(sessionsDir, "app-2.json"), freshTime, freshTime);
 
     const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
     const result = await sm.claimPR("app-3", "42");

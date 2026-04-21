@@ -1,27 +1,17 @@
 /**
- * Flat-file metadata read/write.
+ * Session metadata read/write — JSON format.
  *
- * Architecture:
- * - Session metadata stored in project-specific directories
- * - Path: ~/.agent-orchestrator/{hash}-{projectId}/sessions/{sessionName}
- * - Session files use user-facing names (int-1) not tmux names (a3b4c5d6e7f8-int-1)
- * - Metadata includes tmuxName field to map user-facing → tmux name
+ * V2 storage layout:
+ * - Session metadata: ~/.agent-orchestrator/projects/{projectId}/sessions/{sessionId}.json
+ * - Orchestrator metadata: ~/.agent-orchestrator/projects/{projectId}/orchestrator.json
+ * - Archives: ~/.agent-orchestrator/projects/{projectId}/archive/{sessionId}_{timestamp}.json
  *
- * Format: key=value pairs (one per line), compatible with bash scripts
- *
- * Example file contents:
- *   project=integrator
- *   worktree=/Users/foo/.agent-orchestrator/a3b4c5d6e7f8-integrator/worktrees/int-1
- *   branch=feat/INT-1234
- *   status=working
- *   tmuxName=a3b4c5d6e7f8-int-1
- *   pr=https://github.com/org/repo/pull/42
- *   issue=INT-1234
+ * Format: JSON (2-space indented), one object per file.
+ * Status is computed on read from the lifecycle object, never stored.
  */
 
 import {
   readFileSync,
-  writeFileSync,
   existsSync,
   mkdirSync,
   unlinkSync,
@@ -34,7 +24,6 @@ import {
 import { join, dirname } from "node:path";
 import type { CanonicalSessionLifecycle, SessionId, SessionMetadata, SessionStatus } from "./types.js";
 import { atomicWriteFileSync } from "./atomic-write.js";
-import { parseKeyValueContent } from "./key-value.js";
 import {
   buildLifecycleMetadataPatch,
   cloneLifecycle,
@@ -42,25 +31,28 @@ import {
 } from "./lifecycle-state.js";
 import { assertValidSessionIdComponent, SESSION_ID_COMPONENT_PATTERN } from "./utils/session-id.js";
 import { validateStatus } from "./utils/validation.js";
+import { compactTimestamp } from "./paths.js";
 
-/** Serialize a record back to key=value format. Newlines in values are replaced to prevent injection. */
-function serializeMetadata(data: Record<string, string>): string {
-  return (
-    Object.entries(data)
-      .filter(([, v]) => v !== undefined && v !== "")
-      .map(([k, v]) => `${k}=${v.replace(/[\r\n]/g, " ")}`)
-      .join("\n") + "\n"
-  );
+const JSON_EXTENSION = ".json";
+
+/** Serialize metadata to formatted JSON. */
+function serializeMetadata(data: Record<string, unknown>): string {
+  return JSON.stringify(data, null, 2) + "\n";
+}
+
+/** Parse JSON metadata file content. */
+function parseMetadataContent(content: string): Record<string, unknown> {
+  return JSON.parse(content) as Record<string, unknown>;
 }
 
 function validateSessionId(sessionId: SessionId): void {
   assertValidSessionIdComponent(sessionId);
 }
 
-/** Get the metadata file path for a session. */
+/** Get the metadata file path for a session (with .json extension). */
 function metadataPath(dataDir: string, sessionId: SessionId): string {
   validateSessionId(sessionId);
-  return join(dataDir, sessionId);
+  return join(dataDir, `${sessionId}${JSON_EXTENSION}`);
 }
 
 /**
@@ -70,40 +62,45 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
   const path = metadataPath(dataDir, sessionId);
   if (!existsSync(path)) return null;
 
-  const content = readFileSync(path, "utf-8");
-  const raw = parseKeyValueContent(content);
+  const content = readFileSync(path, "utf-8").trim();
+  if (!content) return null; // empty file (e.g. from reserveSessionId)
+  const raw = parseMetadataContent(content);
 
   return {
-    worktree: raw["worktree"] ?? "",
-    branch: raw["branch"] ?? "",
-    status: raw["status"] ?? "unknown",
-    tmuxName: raw["tmuxName"],
-    issue: raw["issue"],
-    pr: raw["pr"],
+    worktree: (raw["worktree"] as string) ?? "",
+    branch: (raw["branch"] as string) ?? "",
+    status: (raw["status"] as string) ?? "unknown",
+    tmuxName: raw["tmuxName"] as string | undefined,
+    issue: raw["issue"] as string | undefined,
+    pr: raw["pr"] as string | undefined,
     prAutoDetect:
       raw["prAutoDetect"] === "off" ? "off" : raw["prAutoDetect"] === "on" ? "on" : undefined,
-    summary: raw["summary"],
-    project: raw["project"],
-    agent: raw["agent"],
-    createdAt: raw["createdAt"],
-    runtimeHandle: raw["runtimeHandle"],
-    stateVersion: raw["stateVersion"],
-    statePayload: raw["statePayload"],
-    restoredAt: raw["restoredAt"],
-    role: raw["role"],
-    dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
-    terminalWsPort: raw["terminalWsPort"] ? Number(raw["terminalWsPort"]) : undefined,
-    directTerminalWsPort: raw["directTerminalWsPort"]
-      ? Number(raw["directTerminalWsPort"])
+    summary: raw["summary"] as string | undefined,
+    project: raw["project"] as string | undefined,
+    agent: raw["agent"] as string | undefined,
+    createdAt: raw["createdAt"] as string | undefined,
+    runtimeHandle: typeof raw["runtimeHandle"] === "object" && raw["runtimeHandle"] !== null
+      ? JSON.stringify(raw["runtimeHandle"])
+      : raw["runtimeHandle"] as string | undefined,
+    stateVersion: raw["stateVersion"] as string | undefined,
+    statePayload: typeof raw["statePayload"] === "object" && raw["statePayload"] !== null
+      ? JSON.stringify(raw["statePayload"])
+      : raw["statePayload"] as string | undefined,
+    restoredAt: raw["restoredAt"] as string | undefined,
+    role: raw["role"] as string | undefined,
+    dashboardPort: typeof raw["dashboardPort"] === "number" ? raw["dashboardPort"] : undefined,
+    terminalWsPort: typeof raw["terminalWsPort"] === "number" ? raw["terminalWsPort"] : undefined,
+    directTerminalWsPort: typeof raw["directTerminalWsPort"] === "number"
+      ? raw["directTerminalWsPort"]
       : undefined,
-    opencodeSessionId: raw["opencodeSessionId"],
-    pinnedSummary: raw["pinnedSummary"],
-    userPrompt: raw["userPrompt"],
+    opencodeSessionId: raw["opencodeSessionId"] as string | undefined,
+    pinnedSummary: raw["pinnedSummary"] as string | undefined,
+    userPrompt: raw["userPrompt"] as string | undefined,
   };
 }
 
 /**
- * Read raw metadata as a string record (for arbitrary keys).
+ * Read raw metadata as a plain object (for arbitrary key access).
  */
 export function readMetadataRaw(
   dataDir: string,
@@ -111,7 +108,50 @@ export function readMetadataRaw(
 ): Record<string, string> | null {
   const path = metadataPath(dataDir, sessionId);
   if (!existsSync(path)) return null;
-  return parseKeyValueContent(readFileSync(path, "utf-8"));
+  const content = readFileSync(path, "utf-8").trim();
+  if (!content) return null; // empty file (e.g. from reserveSessionId)
+  const raw = parseMetadataContent(content);
+  // Flatten to Record<string, string> for backward compatibility.
+  // Objects (runtimeHandle, statePayload) are JSON-stringified.
+  return flattenToStringRecord(raw);
+}
+
+/** Flatten a JSON object to a Record<string, string> for backward compat. */
+function flattenToStringRecord(data: Record<string, unknown>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "object") {
+      result[key] = JSON.stringify(value);
+    } else {
+      result[key] = String(value);
+    }
+  }
+  return result;
+}
+
+/** Unflatten a Record<string, string> to proper types for JSON storage. */
+function unflattenFromStringRecord(data: Record<string, string>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const jsonFields = new Set(["runtimeHandle", "statePayload"]);
+  const numberFields = new Set(["dashboardPort", "terminalWsPort", "directTerminalWsPort"]);
+
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined || value === "") continue;
+    if (jsonFields.has(key)) {
+      try {
+        result[key] = JSON.parse(value);
+      } catch {
+        result[key] = value;
+      }
+    } else if (numberFields.has(key)) {
+      const num = Number(value);
+      result[key] = Number.isFinite(num) ? num : value;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
 }
 
 /**
@@ -125,7 +165,7 @@ export function writeMetadata(
   const path = metadataPath(dataDir, sessionId);
   mkdirSync(dirname(path), { recursive: true });
 
-  const data: Record<string, string> = {
+  const data: Record<string, unknown> = {
     worktree: metadata.worktree,
     branch: metadata.branch,
     status: metadata.status,
@@ -139,16 +179,27 @@ export function writeMetadata(
   if (metadata.project) data["project"] = metadata.project;
   if (metadata.agent) data["agent"] = metadata.agent;
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
-  if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
+  if (metadata.runtimeHandle) {
+    try {
+      data["runtimeHandle"] = JSON.parse(metadata.runtimeHandle);
+    } catch {
+      data["runtimeHandle"] = metadata.runtimeHandle;
+    }
+  }
   if (metadata.stateVersion) data["stateVersion"] = metadata.stateVersion;
-  if (metadata.statePayload) data["statePayload"] = metadata.statePayload;
+  if (metadata.statePayload) {
+    try {
+      data["statePayload"] = JSON.parse(metadata.statePayload);
+    } catch {
+      data["statePayload"] = metadata.statePayload;
+    }
+  }
   if (metadata.restoredAt) data["restoredAt"] = metadata.restoredAt;
   if (metadata.role) data["role"] = metadata.role;
-  if (metadata.dashboardPort !== undefined) data["dashboardPort"] = String(metadata.dashboardPort);
-  if (metadata.terminalWsPort !== undefined)
-    data["terminalWsPort"] = String(metadata.terminalWsPort);
+  if (metadata.dashboardPort !== undefined) data["dashboardPort"] = metadata.dashboardPort;
+  if (metadata.terminalWsPort !== undefined) data["terminalWsPort"] = metadata.terminalWsPort;
   if (metadata.directTerminalWsPort !== undefined)
-    data["directTerminalWsPort"] = String(metadata.directTerminalWsPort);
+    data["directTerminalWsPort"] = metadata.directTerminalWsPort;
   if (metadata.opencodeSessionId) data["opencodeSessionId"] = metadata.opencodeSessionId;
   if (metadata.pinnedSummary) data["pinnedSummary"] = metadata.pinnedSummary;
   if (metadata.userPrompt) data["userPrompt"] = metadata.userPrompt;
@@ -205,7 +256,9 @@ export function mutateMetadata(
   let existing: Record<string, string> = {};
 
   if (existsSync(path)) {
-    existing = parseKeyValueContent(readFileSync(path, "utf-8"));
+    const content = readFileSync(path, "utf-8");
+    const raw = parseMetadataContent(content);
+    existing = flattenToStringRecord(raw);
   } else if (!options.createIfMissing) {
     return null;
   }
@@ -213,7 +266,7 @@ export function mutateMetadata(
   const next = normalizeMetadataRecord(updater({ ...existing }));
 
   mkdirSync(dirname(path), { recursive: true });
-  atomicWriteFileSync(path, serializeMetadata(next));
+  atomicWriteFileSync(path, serializeMetadata(unflattenFromStringRecord(next)));
   return next;
 }
 
@@ -258,7 +311,7 @@ export function updateCanonicalLifecycle(
 
 /**
  * Delete a session's metadata file.
- * Optionally archive it to an `archive/` subdirectory.
+ * Optionally archive it to a sibling `archive/` directory.
  */
 export function deleteMetadata(dataDir: string, sessionId: SessionId, archive = true): void {
   const path = metadataPath(dataDir, sessionId);
@@ -267,9 +320,9 @@ export function deleteMetadata(dataDir: string, sessionId: SessionId, archive = 
   if (archive) {
     const archiveDir = join(dataDir, "archive");
     mkdirSync(archiveDir, { recursive: true });
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const archivePath = join(archiveDir, `${sessionId}_${timestamp}`);
-    writeFileSync(archivePath, readFileSync(path, "utf-8"));
+    const timestamp = compactTimestamp(new Date());
+    const archivePath = join(archiveDir, `${sessionId}_${timestamp}${JSON_EXTENSION}`);
+    atomicWriteFileSync(archivePath, readFileSync(path, "utf-8"));
   }
 
   unlinkSync(path);
@@ -277,7 +330,7 @@ export function deleteMetadata(dataDir: string, sessionId: SessionId, archive = 
 
 /**
  * Read the latest archived metadata for a session.
- * Archive files are named `<sessionId>_<ISO-timestamp>` inside `<dataDir>/archive/`.
+ * Archive files are named `<sessionId>_<compact-timestamp>.json` inside `<projectDir>/archive/`.
  * Returns null if no archived metadata exists.
  */
 export function readArchivedMetadataRaw(
@@ -293,11 +346,10 @@ export function readArchivedMetadataRaw(
 
   for (const file of readdirSync(archiveDir)) {
     if (!file.startsWith(prefix)) continue;
-    // Verify the separator is followed by a digit (start of ISO timestamp)
-    // to avoid prefix collisions (e.g., "app" matching "app_v2_...")
+    // Verify the separator is followed by a digit (start of timestamp)
     const charAfterPrefix = file[prefix.length];
     if (!charAfterPrefix || charAfterPrefix < "0" || charAfterPrefix > "9") continue;
-    // Pick lexicographically last (ISO timestamps sort correctly)
+    // Pick lexicographically last (timestamps sort correctly)
     if (!latest || file > latest) {
       latest = file;
     }
@@ -305,7 +357,9 @@ export function readArchivedMetadataRaw(
 
   if (!latest) return null;
   try {
-    return parseKeyValueContent(readFileSync(join(archiveDir, latest), "utf-8"));
+    const content = readFileSync(join(archiveDir, latest), "utf-8");
+    const raw = parseMetadataContent(content);
+    return flattenToStringRecord(raw);
   } catch {
     return null;
   }
@@ -335,7 +389,9 @@ export function updateArchivedMetadata(
   const archivePath = join(archiveDir, latest);
   let existing: Record<string, string>;
   try {
-    existing = parseKeyValueContent(readFileSync(archivePath, "utf-8"));
+    const content = readFileSync(archivePath, "utf-8");
+    const raw = parseMetadataContent(content);
+    existing = flattenToStringRecord(raw);
   } catch {
     return false;
   }
@@ -350,26 +406,30 @@ export function updateArchivedMetadata(
     }
   }
 
-  atomicWriteFileSync(archivePath, serializeMetadata(existing));
+  atomicWriteFileSync(archivePath, serializeMetadata(unflattenFromStringRecord(existing)));
   return true;
 }
 
 /**
  * List all session IDs that have metadata files.
+ * Reads .json files from the sessions directory.
  */
 export function listMetadata(dataDir: string): SessionId[] {
   const dir = dataDir;
   if (!existsSync(dir)) return [];
 
   return readdirSync(dir).filter((name) => {
-    if (name === "archive" || name.startsWith(".")) return false;
-    if (!SESSION_ID_COMPONENT_PATTERN.test(name)) return false;
+    // Must be a .json file
+    if (!name.endsWith(JSON_EXTENSION)) return false;
+    const baseName = name.slice(0, -JSON_EXTENSION.length);
+    if (!baseName || baseName === "archive" || baseName.startsWith(".")) return false;
+    if (!SESSION_ID_COMPONENT_PATTERN.test(baseName)) return false;
     try {
       return statSync(join(dir, name)).isFile();
     } catch {
       return false;
     }
-  });
+  }).map((name) => name.slice(0, -JSON_EXTENSION.length));
 }
 
 /**

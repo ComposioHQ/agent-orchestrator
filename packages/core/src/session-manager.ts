@@ -425,7 +425,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     updates: Partial<Record<string, string>>,
     modifiedAt?: Date,
   ): void {
-    const metaPath = join(sessionsDir, sessionName);
+    const metaPath = join(sessionsDir, `${sessionName}.json`);
     let preservedMtime = modifiedAt;
     if (!preservedMtime) {
       try {
@@ -616,7 +616,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       let modifiedAt: Date | undefined;
       try {
-        modifiedAt = statSync(join(sessionsDir, sessionName)).mtime;
+        modifiedAt = statSync(join(sessionsDir, `${sessionName}.json`)).mtime;
       } catch {
         void 0;
       }
@@ -919,7 +919,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       let modifiedAt: Date | undefined;
       try {
-        modifiedAt = statSync(join(sessionsDir, sessionId)).mtime;
+        modifiedAt = statSync(join(sessionsDir, `${sessionId}.json`)).mtime;
       } catch {
         modifiedAt = undefined;
       }
@@ -1726,7 +1726,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       let createdAt: Date | undefined;
       let modifiedAt: Date | undefined;
       try {
-        const metaPath = join(sessionsDir, sessionName);
+        const metaPath = join(sessionsDir, `${sessionName}.json`);
         const stats = statSync(metaPath);
         createdAt = stats.birthtime;
         modifiedAt = stats.mtime;
@@ -1808,7 +1808,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       let createdAt: Date | undefined;
       let modifiedAt: Date | undefined;
       try {
-        const metaPath = join(sessionsDir, sessionId);
+        const metaPath = join(sessionsDir, `${sessionId}.json`);
         const stats = statSync(metaPath);
         createdAt = stats.birthtime;
         modifiedAt = stats.mtime;

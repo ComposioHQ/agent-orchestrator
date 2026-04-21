@@ -233,10 +233,7 @@ describe("applyLifecycleDecision (integration)", () => {
   });
 
   function writeTestSession(sessionId: string, metadata: Record<string, string>) {
-    const content = Object.entries(metadata)
-      .map(([k, v]) => `${k}=${v}`)
-      .join("\n");
-    writeFileSync(join(dataDir, sessionId), content);
+    writeFileSync(join(dataDir, `${sessionId}.json`), JSON.stringify(metadata));
   }
 
   it("returns failure when session not found", () => {

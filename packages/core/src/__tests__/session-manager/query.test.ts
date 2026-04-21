@@ -98,7 +98,7 @@ describe("list", () => {
     });
 
     const oldTime = new Date("2026-01-01T00:00:00.000Z");
-    utimesSync(join(sessionsDir, "app-orchestrator"), oldTime, oldTime);
+    utimesSync(join(sessionsDir, "app-orchestrator.json"), oldTime, oldTime);
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     const sessions = await sm.list("my-app");
@@ -123,7 +123,7 @@ describe("list", () => {
     });
 
     const oldTime = new Date("2026-01-02T00:00:00.000Z");
-    utimesSync(join(sessionsDir, "app-legacy"), oldTime, oldTime);
+    utimesSync(join(sessionsDir, "app-legacy.json"), oldTime, oldTime);
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     const sessions = await sm.list("my-app");
