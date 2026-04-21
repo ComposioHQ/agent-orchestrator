@@ -19,10 +19,6 @@
       "types": "./dist/config.d.ts",
       "import": "./dist/config.js"
     },
-    "./decomposer": {
-      "types": "./dist/decomposer.d.ts",
-      "import": "./dist/decomposer.js"
-    },
     "./lifecycle-manager": {
       "types": "./dist/lifecycle-manager.d.ts",
       "import": "./dist/lifecycle-manager.js"

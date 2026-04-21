@@ -1,6 +1,8 @@
-import { closeSync, mkdirSync, openSync, rmSync, utimesSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { closeSync, mkdirSync, openSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { withFileLockSync } from "../file-lock.js";
 
@@ -16,6 +18,51 @@ describe("withFileLockSync", () => {
 
   afterEach(() => {
     rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it("serializes parallel holders across processes", async () => {
+    const helperPath = join(tempRoot, "lock-holder.mjs");
+    const logPath = join(tempRoot, "events.log");
+    writeFileSync(
+      helperPath,
+      [
+        `import { appendFileSync } from "node:fs";`,
+        `import { withFileLockSync } from ${JSON.stringify(pathToFileURL(join(process.cwd(), "src/file-lock.ts")).href)};`,
+        `const [lockPath, targetLogPath, label, holdMs] = process.argv.slice(2);`,
+        `withFileLockSync(lockPath, () => {`,
+        `  appendFileSync(targetLogPath, \`start:\${label}\\n\`);`,
+        `  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(holdMs));`,
+        `  appendFileSync(targetLogPath, \`end:\${label}\\n\`);`,
+        `}, { timeoutMs: 5_000, staleMs: 60_000 });`,
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const runHolder = (label: string) =>
+      new Promise<void>((resolve, reject) => {
+        const child = spawn(
+          process.execPath,
+          ["--import", "tsx", helperPath, lockPath, logPath, label, "100"],
+          { cwd: process.cwd(), stdio: "inherit" },
+        );
+        child.once("error", reject);
+        child.once("exit", (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`lock holder ${label} exited with code ${code}`));
+        });
+      });
+
+    await Promise.all([runHolder("a"), runHolder("b")]);
+
+    const events = readFileSync(logPath, "utf-8").trim().split("\n");
+    expect(events).toHaveLength(4);
+    expect(events).toSatisfy((lines: string[]) => {
+      const [firstStart, firstEnd, secondStart, secondEnd] = lines;
+      return (
+        (firstStart === "start:a" && firstEnd === "end:a" && secondStart === "start:b" && secondEnd === "end:b") ||
+        (firstStart === "start:b" && firstEnd === "end:b" && secondStart === "start:a" && secondEnd === "end:a")
+      );
+    });
   });
 
   it("reclaims stale lock files before running the critical section", () => {

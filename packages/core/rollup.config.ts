@@ -43,7 +43,6 @@ function cleanDist(): Plugin {
 const config: RollupOptions = {
   input: {
     index: "src/index.ts",
-    decomposer: "src/decomposer.ts",
   },
   output: {
     dir: "dist",

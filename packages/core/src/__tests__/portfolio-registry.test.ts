@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveGlobalConfig, type GlobalConfig } from "../global-config.js";
-import { getPortfolio } from "../portfolio-registry.js";
+import { getPortfolio, savePreferences } from "../portfolio-registry.js";
 
 function makeGlobalConfig(projects: GlobalConfig["projects"] = {}): GlobalConfig {
   return {
@@ -80,5 +80,41 @@ describe("portfolio-registry", () => {
 
     const portfolio = getPortfolio();
     expect(portfolio.map((project) => project.id)).toEqual(["canonical"]);
+  });
+
+  it("applies preference overlays for pinning, renaming, disabling, and ordering", () => {
+    const globalConfigPath = join(tempRoot, "global-config.yaml");
+    const docsRepo = join(tempRoot, "docs");
+    const apiRepo = join(tempRoot, "api");
+    const webRepo = join(tempRoot, "web");
+    mkdirSync(docsRepo, { recursive: true });
+    mkdirSync(apiRepo, { recursive: true });
+    mkdirSync(webRepo, { recursive: true });
+
+    process.env["AO_GLOBAL_CONFIG"] = globalConfigPath;
+
+    saveGlobalConfig(
+      makeGlobalConfig({
+        docs: { projectId: "docs", path: docsRepo, storageKey: "storage-docs", displayName: "Docs" },
+        api: { projectId: "api", path: apiRepo, storageKey: "storage-api", displayName: "API" },
+        web: { projectId: "web", path: webRepo, storageKey: "storage-web", displayName: "Web" },
+      }),
+      globalConfigPath,
+    );
+
+    savePreferences({
+      version: 1,
+      projectOrder: ["web", "docs", "api"],
+      projects: {
+        api: { pinned: true, displayName: "API Gateway" },
+        docs: { enabled: false },
+      },
+    });
+
+    const portfolio = getPortfolio();
+
+    expect(portfolio.map((project) => project.id)).toEqual(["api", "web", "docs"]);
+    expect(portfolio[0]).toMatchObject({ name: "API Gateway", pinned: true, enabled: true });
+    expect(portfolio[2]).toMatchObject({ id: "docs", enabled: false });
   });
 });
