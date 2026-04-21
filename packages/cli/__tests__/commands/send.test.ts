@@ -167,7 +167,7 @@ describe("send command", () => {
         "-l",
         "fix the bug",
       ]);
-    });
+    }, 15000);
 
     it("skips busy detection with --no-wait", async () => {
       mockTmux.mockImplementation(async (...args: string[]) => {

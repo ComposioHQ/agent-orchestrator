@@ -212,11 +212,16 @@ describe("SessionPage project polling", () => {
 
     const { default: SessionPage } = await import("./page");
 
-    render(<SessionPage />);
+    render(
+      <TestErrorBoundary>
+        <SessionPage />
+      </TestErrorBoundary>,
+    );
     await flushAsyncWork();
 
     expect(notFoundSpy).toHaveBeenCalled();
     expect(screen.queryByTestId("session-detail")).not.toBeInTheDocument();
+    expect(screen.getByTestId("route-error")).toHaveTextContent("NEXT_NOT_FOUND");
   });
 
   it("throws non-404 session fetch failures to the route error boundary", async () => {

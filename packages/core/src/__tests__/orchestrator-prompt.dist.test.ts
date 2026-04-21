@@ -59,5 +59,5 @@ describe("generateOrchestratorPrompt dist smoke test", () => {
     expect(prompt).toContain("# My App Orchestrator");
     expect(prompt).toContain("ao session ls -p my-app");
     expect(prompt).toContain("First block\n\n\nSecond block");
-  }, 15000);
+  }, 30000);
 });

@@ -178,7 +178,7 @@ describe("ProjectSidebar", () => {
         projects={projects}
         sessions={[
           makeSession({
-            id: "project-1-orchestrator",
+            id: "project-1-orchestrator-1",
             projectId: "project-1",
             summary: "Orchestrator",
           }),
