@@ -1,8 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { generateOrchestratorPrompt, generateSessionPrefix } from "@aoagents/ao-core";
+import { generateOrchestratorPrompt, generateSessionPrefix, isRestorable, isTerminalSession } from "@aoagents/ao-core";
 import { getServices } from "@/lib/services";
 import { validateIdentifier, validateConfiguredProject } from "@/lib/validation";
-import { mapSessionsToOrchestrators } from "@/lib/orchestrator-utils";
+import { mapSessionToOrchestrator, mapSessionsToOrchestrators, selectCanonicalProjectOrchestrator } from "@/lib/orchestrator-utils";
 
 function classifySpawnError(projectId: string, error: unknown): {
   status: number;
@@ -90,17 +90,47 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: configProjectErr }, { status: 404 });
     }
     const project = config.projects[projectId];
+    const sessionPrefix = project.sessionPrefix ?? projectId;
+    const allSessions = await sessionManager.list(projectId);
+    const allSessionPrefixes = Object.entries(config.projects).map(
+      ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
+    );
+    const canonical = selectCanonicalProjectOrchestrator(
+      allSessions,
+      sessionPrefix,
+      allSessionPrefixes,
+    );
+
+    if (canonical) {
+      if (!isTerminalSession(canonical)) {
+        return NextResponse.json(
+          {
+            orchestrator: mapSessionToOrchestrator(canonical, project.name),
+            reusedExisting: true,
+          },
+          { status: 200 },
+        );
+      }
+
+      if (isRestorable(canonical)) {
+        const restored = await sessionManager.restore(canonical.id);
+        return NextResponse.json(
+          {
+            orchestrator: mapSessionToOrchestrator(restored, project.name),
+            reusedExisting: true,
+            restoredExisting: true,
+          },
+          { status: 200 },
+        );
+      }
+    }
 
     const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
     const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt });
 
     return NextResponse.json(
       {
-        orchestrator: {
-          id: session.id,
-          projectId,
-          projectName: project.name,
-        },
+        orchestrator: mapSessionToOrchestrator(session, project.name),
       },
       { status: 201 },
     );

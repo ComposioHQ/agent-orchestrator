@@ -12,6 +12,7 @@ import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/l
 import { filterProjectSessions } from "@/lib/project-utils";
 import { settlesWithin } from "@/lib/async-utils";
 import type { DashboardOrchestratorLink } from "@/lib/types";
+import { selectCanonicalProjectOrchestrator } from "@/lib/orchestrator-utils";
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 const PR_ENRICH_TIMEOUT_MS = 4_000;
@@ -62,7 +63,7 @@ function selectPreferredOrchestratorId(
 function listPreferredProjectOrchestrators(
   sessions: Parameters<typeof listDashboardOrchestrators>[0],
   projects: Parameters<typeof listDashboardOrchestrators>[1],
-) : DashboardOrchestratorLink[] {
+): DashboardOrchestratorLink[] {
   const preferredOrchestrators = listProjectOrchestratorSessions(sessions, projects);
 
   return preferredOrchestrators
@@ -73,7 +74,6 @@ function listPreferredProjectOrchestrators(
     }))
     .sort((a, b) => a.projectName.localeCompare(b.projectName) || a.id.localeCompare(b.id));
 }
-
 export async function GET(request: Request) {
   const correlationId = getCorrelationId(request);
   const startedAt = Date.now();
@@ -93,12 +93,30 @@ export async function GET(request: Request) {
       ? await sessionManager.list(requestedProjectId)
       : await sessionManager.listCached(requestedProjectId);
     const visibleSessions = filterProjectSessions(coreSessions, projectFilter, config.projects);
+    const allSessionPrefixes = Object.entries(config.projects).map(
+      ([projectId, p]) => p.sessionPrefix ?? projectId,
+    );
     const orchestrators = requestedProjectId
-      ? listPreferredProjectOrchestrators(visibleSessions, config.projects)
+      ? (() => {
+          const project = config.projects[requestedProjectId];
+          const canonical = project
+            ? selectCanonicalProjectOrchestrator(
+                visibleSessions,
+                project.sessionPrefix ?? requestedProjectId,
+                allSessionPrefixes,
+              )
+            : null;
+          return canonical
+            ? [{
+                id: canonical.id,
+                projectId: canonical.projectId,
+                projectName: project?.name ?? canonical.projectId,
+              } satisfies DashboardOrchestratorLink]
+            : [];
+        })()
       : listDashboardOrchestrators(visibleSessions, config.projects);
-    const orchestratorId = requestedProjectId
-      ? selectPreferredOrchestratorId(visibleSessions, config.projects)
-      : (orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null);
+    const orchestratorId =
+      requestedProjectId || orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null;
 
     if (orchestratorOnly) {
       recordApiObservation({
@@ -123,9 +141,6 @@ export async function GET(request: Request) {
       );
     }
 
-    const allSessionPrefixes = Object.entries(config.projects).map(
-      ([projectId, p]) => p.sessionPrefix ?? projectId,
-    );
     let workerSessions = visibleSessions.filter(
       (session) =>
         !isOrchestratorSession(

@@ -4,11 +4,6 @@ vi.mock("@/lib/project-name", () => ({
   getProjectName: () => "Agent Orchestrator",
 }));
 
-vi.mock("next/font/google", () => ({
-  Geist: () => ({ variable: "--font-geist-sans" }),
-  JetBrains_Mono: () => ({ variable: "--font-jetbrains-mono" }),
-}));
-
 describe("app layout metadata", () => {
   it("exports the themed mobile viewport colors", async () => {
     const { viewport } = await import("./layout");

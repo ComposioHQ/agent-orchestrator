@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
-import { notFound, useParams, usePathname, useRouter } from "next/navigation";
+import { useEffect, useState, useCallback, useRef, type ReactNode } from "react";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { ACTIVITY_STATE, SESSION_STATUS, isOrchestratorSession } from "@aoagents/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
+import { ErrorDisplay } from "@/components/ErrorDisplay";
+import { ProjectSidebar } from "@/components/ProjectSidebar";
+import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import { type DashboardSession, type ActivityState, getAttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
 import type { ProjectInfo } from "@/lib/project-name";
@@ -67,6 +70,7 @@ interface ProjectSessionsBody {
 let cachedProjects: ProjectInfo[] | null = null;
 let cachedSidebarSessions: DashboardSession[] | null = null;
 const SESSION_PAGE_REFRESH_INTERVAL_MS = 2000;
+const SESSION_PAGE_FETCH_TIMEOUT_MS = 10_000;
 const validSessionStatuses = new Set<string>(Object.values(SESSION_STATUS));
 const validActivityStates = new Set<string>(Object.values(ACTIVITY_STATE));
 const warnedMuxPatchValues = new Set<string>();
@@ -102,6 +106,161 @@ function areSidebarSessionsEqual(
     const candidate = next[index];
     return JSON.stringify(session) === JSON.stringify(candidate);
   });
+}
+
+async function fetchWithTimeout(input: string, timeoutMs = SESSION_PAGE_FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, { signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`, {
+        cause: error,
+      });
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function getSessionLoadErrorMessage(error: Error): string {
+  const normalized = error.message.toLowerCase();
+  if (normalized.includes("timed out")) {
+    return "The session request is taking too long, so the page stopped waiting instead of spinning forever. You can retry, or return to the project and reopen a different session.";
+  }
+  if (normalized.includes("network")) {
+    return "The session request failed before the dashboard got a response. Check the local server connection and try again.";
+  }
+  if (normalized.includes("404")) {
+    return "This session is no longer available. It may have been removed while the page was open.";
+  }
+  if (normalized.includes("500")) {
+    return "The server returned an internal error while loading this session. Try again to re-fetch the latest state.";
+  }
+  return "The dashboard could not load this session cleanly. Try again to re-fetch the latest state.";
+}
+
+function SidebarPlaceholder({ message }: { message: string }) {
+  return (
+    <div className="project-sidebar h-full">
+      <div className="space-y-3 px-3 py-4">
+        <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]">
+          Projects
+        </div>
+        <div className="space-y-2">
+          {Array.from({ length: 3 }, (_, index) => (
+            <div
+              key={`sidebar-placeholder-${index}`}
+              className="h-10 animate-pulse border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)]"
+            />
+          ))}
+        </div>
+        <div className="pt-2 text-[12px] text-[var(--color-text-tertiary)]">{message}</div>
+      </div>
+    </div>
+  );
+}
+
+function SessionPageShell({
+  projects,
+  projectsLoading,
+  sidebarSessions,
+  sidebarLoading,
+  sidebarError,
+  onRetrySidebar,
+  activeProjectId,
+  activeSessionId,
+  children,
+}: {
+  projects: ProjectInfo[];
+  projectsLoading: boolean;
+  sidebarSessions: DashboardSession[] | null;
+  sidebarLoading: boolean;
+  sidebarError: boolean;
+  onRetrySidebar: () => void;
+  activeProjectId?: string;
+  activeSessionId?: string;
+  children: ReactNode;
+}) {
+  const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const showSidebar = true;
+
+  const handleToggleSidebar = useCallback(() => {
+    if (isMobile) {
+      setMobileSidebarOpen((current) => !current);
+      return;
+    }
+    setSidebarCollapsed((current) => !current);
+  }, [isMobile]);
+
+  return (
+    <div className="dashboard-app-shell">
+      <header className="dashboard-app-header">
+        {showSidebar ? (
+          <button
+            type="button"
+            className="dashboard-app-sidebar-toggle"
+            onClick={handleToggleSidebar}
+            aria-label="Toggle sidebar"
+          >
+            {isMobile ? (
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M9 3v18" />
+              </svg>
+            )}
+          </button>
+        ) : null}
+        <div className="dashboard-app-header__brand">
+          <span>Agent Orchestrator</span>
+        </div>
+        <div className="dashboard-app-header__spacer" />
+      </header>
+
+      <div
+        className={`dashboard-shell dashboard-shell--desktop${sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
+      >
+        {showSidebar ? (
+          <div className={`sidebar-wrapper${mobileSidebarOpen ? " sidebar-wrapper--mobile-open" : ""}`}>
+            {projects.length > 0 ? (
+              <ProjectSidebar
+                projects={projects}
+                sessions={sidebarSessions}
+                loading={sidebarLoading}
+                error={sidebarError}
+                onRetry={onRetrySidebar}
+                activeProjectId={activeProjectId}
+                activeSessionId={activeSessionId}
+                collapsed={sidebarCollapsed}
+                onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+                onMobileClose={() => setMobileSidebarOpen(false)}
+              />
+            ) : (
+              <SidebarPlaceholder message={projectsLoading ? "Loading projects..." : "Projects unavailable."} />
+            )}
+          </div>
+        ) : null}
+        {mobileSidebarOpen && (
+          <div className="sidebar-mobile-backdrop" onClick={() => setMobileSidebarOpen(false)} />
+        )}
+
+        <div className="dashboard-main dashboard-main--desktop">
+          <main className="session-detail-page flex-1 min-h-0 flex flex-col bg-[var(--color-bg-base)]">
+            <div className="flex-1 min-h-0">{children}</div>
+          </main>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function applyMuxSessionPatches(current: DashboardSession[] | null, patches: SessionPatch[]): DashboardSession[] | null {
@@ -193,6 +352,7 @@ export default function SessionPage() {
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(undefined);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(cachedProjects === null);
   const [sidebarSessions, setSidebarSessions] = useState<DashboardSession[] | null>(() => cachedSidebarSessions);
   const [loading, setLoading] = useState(cachedSession === null);
   const [routeError, setRouteError] = useState<Error | null>(null);
@@ -227,10 +387,11 @@ export default function SessionPage() {
       setPrefixByProject(
         new Map(cachedProjects.map((p) => [p.id, p.sessionPrefix ?? p.id])),
       );
+      setProjectsLoading(false);
     }
 
     try {
-      const res = await fetch("/api/projects");
+      const res = await fetchWithTimeout("/api/projects");
       if (!res.ok) {
         console.error("Failed to fetch projects:", new Error(`HTTP ${res.status}`));
         return;
@@ -246,6 +407,8 @@ export default function SessionPage() {
       }
     } catch (err) {
       console.error("Failed to fetch projects:", err);
+    } finally {
+      setProjectsLoading(false);
     }
   }, []);
 
@@ -292,7 +455,7 @@ export default function SessionPage() {
     if (fetchingSessionRef.current) return;
     fetchingSessionRef.current = true;
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
+      const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(id)}`);
       if (res.status === 404) {
         if (!hasLoadedSessionRef.current) {
           setSessionMissing(true);
@@ -329,7 +492,7 @@ export default function SessionPage() {
       const query = isOrchestrator
         ? `/api/sessions?project=${encodeURIComponent(projectId)}&fresh=true`
         : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true&fresh=true`;
-      const res = await fetch(query);
+      const res = await fetchWithTimeout(query);
       if (!res.ok) {
         console.error("Failed to fetch project sessions for", projectId, new Error(`HTTP ${res.status}`));
         return;
@@ -377,7 +540,7 @@ export default function SessionPage() {
     if (fetchingSidebarRef.current) return;
     fetchingSidebarRef.current = true;
     try {
-      const res = await fetch("/api/sessions?fresh=true");
+      const res = await fetchWithTimeout("/api/sessions?fresh=true");
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -473,19 +636,91 @@ export default function SessionPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg-base)]">
-        <div className="text-[13px] text-[var(--color-text-tertiary)]">Loading session…</div>
-      </div>
+      <SessionPageShell
+        projects={projects}
+        projectsLoading={projectsLoading}
+        sidebarSessions={sidebarSessions}
+        sidebarLoading={sidebarSessions === null}
+        sidebarError={sidebarError}
+        onRetrySidebar={fetchSidebarSessions}
+        activeProjectId={expectedProjectId ?? undefined}
+        activeSessionId={id}
+      >
+        <div className="flex h-full min-h-screen items-center justify-center bg-[var(--color-bg-base)]">
+          <div className="flex flex-col items-center gap-3">
+            <svg
+              className="h-5 w-5 animate-spin text-[var(--color-text-tertiary)]"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
+              <path d="M12 3a9 9 0 1 0 9 9" />
+            </svg>
+            <div className="text-[13px] text-[var(--color-text-tertiary)]">Loading session…</div>
+          </div>
+        </div>
+      </SessionPageShell>
     );
   }
 
   if (sessionMissing) {
-    notFound();
-    return null;
+    return (
+      <SessionPageShell
+        projects={projects}
+        projectsLoading={projectsLoading}
+        sidebarSessions={sidebarSessions}
+        sidebarLoading={sidebarSessions === null}
+        sidebarError={sidebarError}
+        onRetrySidebar={fetchSidebarSessions}
+        activeProjectId={expectedProjectId ?? undefined}
+        activeSessionId={id}
+      >
+        <ErrorDisplay
+          title="Session not found"
+          message="This session is no longer available. It may have been removed, renamed, or already cleaned up."
+          tone="not-found"
+          primaryAction={{ label: "Back to dashboard", href: expectedProjectId ? `/projects/${expectedProjectId}` : "/" }}
+          secondaryAction={{ label: "Retry", onClick: () => void fetchSession() }}
+          compact
+          chrome="card"
+        />
+      </SessionPageShell>
+    );
   }
 
   if (routeError) {
-    throw routeError;
+    return (
+      <SessionPageShell
+        projects={projects}
+        projectsLoading={projectsLoading}
+        sidebarSessions={sidebarSessions}
+        sidebarLoading={sidebarSessions === null}
+        sidebarError={sidebarError}
+        onRetrySidebar={fetchSidebarSessions}
+        activeProjectId={session?.projectId ?? expectedProjectId ?? undefined}
+        activeSessionId={id}
+      >
+        <ErrorDisplay
+          title="Failed to load session"
+          message={getSessionLoadErrorMessage(routeError)}
+          tone="error"
+          primaryAction={{
+            label: "Try again",
+            onClick: () => {
+              setRouteError(null);
+              setSessionMissing(false);
+              setLoading(true);
+              void Promise.all([fetchProjects(), fetchSession(), fetchSidebarSessions()]);
+            },
+          }}
+          secondaryAction={{ label: "Back to dashboard", href: session?.projectId ? `/projects/${session.projectId}` : "/" }}
+          error={routeError}
+          compact
+          chrome="card"
+        />
+      </SessionPageShell>
+    );
   }
 
   if (!session) {

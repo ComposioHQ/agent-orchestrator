@@ -53,16 +53,14 @@ describe("OrchestratorSelector", () => {
     render(<OrchestratorSelector {...defaultProps} />);
 
     expect(screen.getByText("My Project")).toBeInTheDocument();
-    expect(screen.getByText("Select an orchestrator")).toBeInTheDocument();
+    expect(screen.getByText("Project orchestrator")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/projects/my-project");
   });
 
-  it("shows count of existing sessions", () => {
+  it("explains that orchestrator opening reuses the canonical session", () => {
     render(<OrchestratorSelector {...defaultProps} />);
 
-    expect(screen.getByText(/existing orchestrator sessions/)).toBeInTheDocument();
-    // The count "2" appears in multiple places, so we check the full info banner text
-    expect(screen.getByText(/Found/)).toBeInTheDocument();
+    expect(screen.getByText(/one main orchestrator per project/i)).toBeInTheDocument();
   });
 
   it("shows error state", () => {
@@ -78,10 +76,10 @@ describe("OrchestratorSelector", () => {
     expect(screen.getByText("Project not found")).toBeInTheDocument();
   });
 
-  it("shows start new orchestrator button", () => {
+  it("shows open orchestrator button", () => {
     render(<OrchestratorSelector {...defaultProps} />);
 
-    expect(screen.getByRole("button", { name: /start new orchestrator/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /open orchestrator/i })).toBeInTheDocument();
   });
 
   it("spawns new orchestrator on button click and navigates", async () => {
@@ -96,7 +94,7 @@ describe("OrchestratorSelector", () => {
 
     render(<OrchestratorSelector {...defaultProps} />);
 
-    const button = screen.getByRole("button", { name: /start new orchestrator/i });
+    const button = screen.getByRole("button", { name: /open orchestrator/i });
     fireEvent.click(button);
 
     await waitFor(() => {
@@ -116,11 +114,11 @@ describe("OrchestratorSelector", () => {
 
     render(<OrchestratorSelector {...defaultProps} />);
 
-    const button = screen.getByRole("button", { name: /start new orchestrator/i });
+    const button = screen.getByRole("button", { name: /open orchestrator/i });
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(screen.getByText(/creating new orchestrator/i)).toBeInTheDocument();
+      expect(screen.getByText(/opening orchestrator/i)).toBeInTheDocument();
     });
   });
 
@@ -133,7 +131,7 @@ describe("OrchestratorSelector", () => {
 
     render(<OrchestratorSelector {...defaultProps} />);
 
-    const button = screen.getByRole("button", { name: /start new orchestrator/i });
+    const button = screen.getByRole("button", { name: /open orchestrator/i });
     fireEvent.click(button);
 
     await waitFor(() => {

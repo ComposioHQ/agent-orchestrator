@@ -26,6 +26,9 @@
 
 /* ── Light mode (default) ─────────────────────────────────────────── */
 :root {
+  --font-geist-sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-jetbrains-mono: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+
   /* Base surfaces — design-system light palette */
   --color-bg-base: #f5f3f0;
   --color-bg-surface: #ffffff;
@@ -4620,9 +4623,12 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 /* ── Kanban board ────────────────────────────────────────────────────── */
 
 .kanban-board {
+  --kanban-column-count: 5;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--kanban-column-count), minmax(0, 1fr));
   gap: 8px;
+  width: 100%;
+  min-width: 0;
   height: calc(100vh - 240px);
   height: calc(100dvh - 240px);
   overflow-x: auto;

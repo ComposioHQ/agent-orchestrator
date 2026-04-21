@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "../Dashboard";
 import { makePR, makeSession } from "../../__tests__/helpers";
 
+const refreshMock = vi.fn();
+
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: refreshMock }),
   usePathname: () => "/",
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -27,6 +29,7 @@ function mockMobileViewport() {
 
 describe("Dashboard unified layout (mobile viewport)", () => {
   beforeEach(() => {
+    refreshMock.mockReset();
     mockMobileViewport();
     Element.prototype.scrollIntoView = vi.fn();
     const eventSourceMock = {
@@ -216,6 +219,7 @@ describe("Dashboard unified layout (mobile viewport)", () => {
     expect(global.fetch).toHaveBeenCalledWith("/api/sessions/done-1/restore", {
       method: "POST",
     });
+    expect(refreshMock).toHaveBeenCalledTimes(1);
   });
 
   it("kill button requires a two-click confirmation before firing", async () => {

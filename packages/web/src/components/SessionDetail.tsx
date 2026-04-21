@@ -424,12 +424,15 @@ export function SessionDetail({
   const handleRestore = useCallback(async () => {
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/restore`, { method: "POST" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      window.location.reload();
+      if (!res.ok) {
+        const message = await res.text().catch(() => "");
+        throw new Error(message || `HTTP ${res.status}`);
+      }
+      router.refresh();
     } catch (err) {
       console.error("Failed to restore session:", err);
     }
-  }, [session.id]);
+  }, [router, session.id]);
 
   const allGreen = pr ? isPRMergeReady(pr) : false;
   const [prPopoverOpen, setPrPopoverOpen] = useState(false);

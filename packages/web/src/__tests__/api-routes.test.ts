@@ -405,7 +405,6 @@ describe("API Routes", () => {
 
       expect(data.orchestratorId).toBe("my-app-orchestrator-2");
       expect(data.orchestrators.map((session: { id: string }) => session.id)).toEqual([
-        "my-app-orchestrator-1",
         "my-app-orchestrator-2",
       ]);
       expect(data.sessions).toEqual([]);
@@ -495,7 +494,6 @@ describe("API Routes", () => {
 
       expect(data.orchestratorId).toBe("my-app-orchestrator-9");
       expect(data.orchestrators).toEqual([
-        { id: "my-app-orchestrator-0", projectId: "my-app", projectName: "My App" },
         { id: "my-app-orchestrator-9", projectId: "my-app", projectName: "My App" },
       ]);
       expect(data.sessions).toEqual([]);
@@ -841,6 +839,7 @@ describe("API Routes", () => {
 
   describe("POST /api/orchestrators", () => {
     it("creates a per-project orchestrator with the generated prompt", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
       (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         makeSession({
           id: "my-app-orchestrator",
@@ -867,7 +866,81 @@ describe("API Routes", () => {
         id: "my-app-orchestrator",
         projectId: "my-app",
         projectName: "My App",
+        status: "working",
+        activity: "active",
+        createdAt: expect.any(String),
+        lastActivityAt: expect.any(String),
       });
+    });
+
+    it("reuses the live canonical orchestrator instead of spawning another one", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        makeSession({
+          id: "my-app-orchestrator-30",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+          status: "working",
+          activity: "active",
+        }),
+      ]);
+
+      const req = makeRequest("/api/orchestrators", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await orchestratorsPOST(req);
+
+      expect(res.status).toBe(200);
+      expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+      const data = await res.json();
+      expect(data.reusedExisting).toBe(true);
+      expect(data.orchestrator.id).toBe("my-app-orchestrator-30");
+    });
+
+    it("restores the canonical dead orchestrator instead of spawning another one", async () => {
+      const deadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T11:00:00.000Z"));
+      deadLifecycle.session.state = "terminated";
+      deadLifecycle.session.reason = "runtime_missing";
+      deadLifecycle.session.terminatedAt = "2026-04-19T11:00:00.000Z";
+      deadLifecycle.session.lastTransitionAt = "2026-04-19T11:00:00.000Z";
+      deadLifecycle.runtime.state = "missing";
+      deadLifecycle.runtime.reason = "process_missing";
+      deadLifecycle.runtime.lastObservedAt = "2026-04-19T11:00:00.000Z";
+
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        makeSession({
+          id: "my-app-orchestrator-30",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+          status: "killed",
+          activity: "exited",
+          lifecycle: deadLifecycle,
+        }),
+      ]);
+      (mockSessionManager.restore as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        makeSession({
+          id: "my-app-orchestrator-30",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+          status: "spawning",
+          activity: "active",
+        }),
+      );
+
+      const req = makeRequest("/api/orchestrators", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await orchestratorsPOST(req);
+
+      expect(res.status).toBe(200);
+      expect(mockSessionManager.restore).toHaveBeenCalledWith("my-app-orchestrator-30");
+      expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+      const data = await res.json();
+      expect(data.restoredExisting).toBe(true);
+      expect(data.orchestrator.id).toBe("my-app-orchestrator-30");
     });
 
     it("returns 404 for an unknown project", async () => {
@@ -910,6 +983,7 @@ describe("API Routes", () => {
     });
 
     it("returns 500 when orchestrator spawn fails", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
       (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error("boom"),
       );
@@ -927,6 +1001,7 @@ describe("API Routes", () => {
     });
 
     it("returns a guided recovery message for registered orchestrator worktree collisions", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
       (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error(
           'Worktree path "/Users/test/.worktrees/my-app/my-app-orchestrator-1" already exists and is still registered with git',
@@ -969,6 +1044,36 @@ describe("API Routes", () => {
       expect(data.orchestrators).toHaveLength(1);
       expect(data.orchestrators[0].id).toBe("my-app-orchestrator");
       expect(data.projectName).toBe("My App");
+    });
+
+    it("returns only the canonical orchestrator when multiple historical sessions exist", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        makeSession({
+          id: "my-app-orchestrator-1",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+          status: "killed",
+          activity: "exited",
+          lastActivityAt: new Date("2026-04-19T10:00:00.000Z"),
+        }),
+        makeSession({
+          id: "my-app-orchestrator-7",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+          status: "working",
+          activity: "active",
+          lastActivityAt: new Date("2026-04-19T11:00:00.000Z"),
+        }),
+      ]);
+
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.orchestrators).toEqual([
+        expect.objectContaining({ id: "my-app-orchestrator-7" }),
+      ]);
     });
 
     it("returns 400 when project parameter is missing", async () => {
@@ -1284,6 +1389,27 @@ describe("API Routes", () => {
       expect(event.sessions.length).toBeGreaterThan(0);
       expect(event.sessions[0]).toHaveProperty("id");
       expect(event.sessions[0]).toHaveProperty("attentionLevel");
+    });
+
+    it("stops enqueuing cleanly after the client aborts the SSE request", async () => {
+      vi.useFakeTimers();
+      const abortController = new AbortController();
+      const req = {
+        url: "http://localhost:3000/api/events",
+        signal: abortController.signal,
+      } as Request;
+      const res = await eventsGET(req);
+      const reader = res.body!.getReader();
+
+      await reader.read();
+      abortController.abort();
+
+      await expect(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      }).not.toThrow();
+
+      await reader.cancel();
+      vi.useRealTimers();
     });
   });
 

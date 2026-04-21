@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   NON_RESTORABLE_STATUSES,
@@ -160,6 +160,7 @@ function DashboardInner({
   const recoveredFromLoadError = Boolean(dashboardLoadError) && liveSessionsResolved;
   const visibleDashboardLoadError = recoveredFromLoadError ? undefined : dashboardLoadError;
   const searchParams = useSearchParams();
+  const router = useRouter();
   const activeSessionId = searchParams.get("session") ?? undefined;
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const [activeOrchestrators, setActiveOrchestrators] =
@@ -375,13 +376,14 @@ function DashboardInner({
           showToast(`Restore failed: ${text}`, "error");
         } else {
           showToast("Session restored", "success");
+          router.refresh();
         }
       } catch (error) {
         console.error(`Network error restoring ${sessionId}:`, error);
         showToast("Network error while restoring session", "error");
       }
     },
-    [showToast],
+    [router, showToast],
   );
 
   const handleSpawnOrchestrator = async (project: ProjectInfo) => {
@@ -634,7 +636,15 @@ function DashboardInner({
 
                 {!allProjectsView && hasAnySessions && (
                   <div className="kanban-board-wrap">
-                    <div className="kanban-board">
+                    <div
+                      className="kanban-board"
+                      data-columns={kanbanLevels.length}
+                      style={
+                        {
+                          "--kanban-column-count": kanbanLevels.length,
+                        } as React.CSSProperties
+                      }
+                    >
                       {kanbanLevels.map((level) => (
                         <AttentionZone
                           key={level}
