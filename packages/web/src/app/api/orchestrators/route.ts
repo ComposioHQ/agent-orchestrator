@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
     }
 
     const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-    const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt });
+    const session = await sessionManager.ensureOrchestrator({ projectId, systemPrompt });
 
     return NextResponse.json(
       {

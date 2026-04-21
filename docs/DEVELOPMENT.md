@@ -108,6 +108,8 @@ cd packages/web && pnpm dev
 # Open http://localhost:3000
 ```
 
+When dogfooding the CLI from this checkout with `pnpm exec ao ...`, rebuild `@aoagents/ao-core` and `@aoagents/ao-cli` first if you changed session-manager or CLI code. The launcher runs compiled `dist` output, so stale builds can make local smoke tests exercise old orchestrator behavior even when `src/` is already updated.
+
 ### Project structure
 
 ```
@@ -172,6 +174,8 @@ ao update
 `ao update` is intentionally conservative: it fast-forwards the local install checkout from `origin/main`, runs `pnpm install`, clean-rebuilds `@aoagents/ao-core`, `@aoagents/ao-cli`, and `@aoagents/ao-web`, refreshes the global launcher with `npm link`, and ends with CLI smoke tests. Use `ao update --skip-smoke` to stop after the rebuild, or `ao update --smoke-only` to rerun the smoke checks without fetching or rebuilding.
 
 If your branch has drift from `main`, update the install checkout first and then return to your feature worktree. That keeps CLI behavior and generated docs aligned with the version contributors are expected to run.
+
+This matters for orchestrator dogfooding in particular: fresh project identities now create a canonical `{sessionPrefix}-orchestrator` session, while older projects may still reuse historical numbered orchestrators such as `{sessionPrefix}-orchestrator-1` during the migration window.
 
 ---
 
