@@ -68,6 +68,7 @@ vi.mock("../../src/lib/metadata.js", () => ({
 let tmpDir: string;
 let configPath: string;
 let cwdSpy: ReturnType<typeof vi.spyOn> | undefined;
+const STORAGE_KEY = "111111111113";
 
 import { Command } from "commander";
 import { registerSpawn } from "../../src/commands/spawn.js";
@@ -94,6 +95,7 @@ beforeEach(() => {
         name: "My App",
         repo: "org/my-app",
         path: join(tmpDir, "main-repo"),
+        storageKey: STORAGE_KEY,
         defaultBranch: "main",
         sessionPrefix: "app",
       },
@@ -128,7 +130,7 @@ beforeEach(() => {
 afterEach(() => {
   cwdSpy?.mockRestore();
   cwdSpy = undefined;
-  const projectBaseDir = getProjectBaseDir(configPath, join(tmpDir, "main-repo"));
+  const projectBaseDir = getProjectBaseDir(STORAGE_KEY);
   if (projectBaseDir) {
     rmSync(projectBaseDir, { recursive: true, force: true });
   }
@@ -293,7 +295,7 @@ describe("spawn command", () => {
     await program.parseAsync(["node", "test", "spawn"]);
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(output).toContain("http://localhost:3000/sessions/app-7");
+    expect(output).toContain("http://localhost:3000/projects/my-app/sessions/app-7");
     expect(output).not.toContain("tmux attach");
     expect(output).not.toContain("8474d6f29887-app-7");
   });
@@ -425,7 +427,7 @@ describe("spawn command", () => {
     const succeedMsg = String(mockSpinner.succeed.mock.calls[0]?.[0] ?? "");
     expect(succeedMsg).toContain("https://github.com/org/repo/pull/123");
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(output).toContain("http://localhost:3000/sessions/app-1");
+    expect(output).toContain("http://localhost:3000/projects/my-app/sessions/app-1");
   });
 
   it("passes GitHub assignment flag through to claimPR", async () => {

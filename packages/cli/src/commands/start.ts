@@ -21,6 +21,7 @@ import {
   generateOrchestratorPrompt,
   generateSessionPrefix,
   findConfigFile,
+  getGlobalConfigPath,
   isRepoUrl,
   parseRepoUrl,
   resolveCloneTarget,
@@ -32,10 +33,14 @@ import {
   isTerminalSession,
   isRestorable,
   ConfigNotFoundError,
+  loadLocalProjectConfigDetailed,
+  registerProjectInGlobalConfig,
   type OrchestratorConfig,
+  type LocalProjectConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
   type Session,
+  writeLocalProjectConfig,
 } from "@aoagents/ao-core";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { exec, execSilent, git } from "../lib/shell.js";
@@ -78,11 +83,28 @@ import { applyOpenClawCredentials } from "../lib/credential-resolver.js";
 import { findProjectForDirectory } from "../lib/project-resolution.js";
 
 import { DEFAULT_PORT } from "../lib/constants.js";
-const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+import { projectSessionUrl } from "../lib/routes.js";
 
 // =============================================================================
 // HELPERS
 // =============================================================================
+
+function isCanonicalGlobalConfigPath(configPath: string | undefined): boolean {
+  if (!configPath) return false;
+  return resolve(configPath) === resolve(getGlobalConfigPath());
+}
+
+function readProjectBehaviorConfig(projectPath: string): LocalProjectConfig {
+  const localConfig = loadLocalProjectConfigDetailed(projectPath);
+  if (localConfig.kind === "loaded") {
+    return { ...localConfig.config };
+  }
+  return {};
+}
+
+function writeProjectBehaviorConfig(projectPath: string, config: LocalProjectConfig): void {
+  writeLocalProjectConfig(projectPath, config);
+}
 
 /**
  * Resolve project from config.
@@ -176,7 +198,7 @@ interface InstallAttempt {
 }
 
 function canPromptForInstall(): boolean {
-  return isHumanCaller() && IS_TTY;
+  return isHumanCaller() && Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
 function genericInstallHints(command: string): string[] {
@@ -784,22 +806,39 @@ async function addProjectToConfig(
     });
   }
 
-  // Load raw YAML, append project, rewrite
-  const rawYaml = readFileSync(config.configPath, "utf-8");
-  const rawConfig = yamlParse(rawYaml);
-  if (!rawConfig.projects) rawConfig.projects = {};
+  if (isCanonicalGlobalConfigPath(config.configPath)) {
+    registerProjectInGlobalConfig(
+      projectId,
+      projectId,
+      resolvedPath,
+      { defaultBranch, sessionPrefix: prefix },
+      config.configPath,
+    );
 
-  rawConfig.projects[projectId] = {
-    name: projectId,
-    ...(ownerRepo ? { repo: ownerRepo } : {}),
-    path: resolvedPath,
-    defaultBranch,
-    sessionPrefix: prefix,
-    ...(agentRules ? { agentRules } : {}),
-  };
+    writeProjectBehaviorConfig(
+      resolvedPath,
+      agentRules ? { agentRules } : {},
+    );
 
-  writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
-  console.log(chalk.green(`\n✓ Added "${projectId}" to ${config.configPath}\n`));
+    console.log(chalk.green(`\n✓ Added "${projectId}" to ${config.configPath}\n`));
+  } else {
+    // Load raw YAML, append project, rewrite
+    const rawYaml = readFileSync(config.configPath, "utf-8");
+    const rawConfig = yamlParse(rawYaml);
+    if (!rawConfig.projects) rawConfig.projects = {};
+
+    rawConfig.projects[projectId] = {
+      name: projectId,
+      ...(ownerRepo ? { repo: ownerRepo } : {}),
+      path: resolvedPath,
+      defaultBranch,
+      sessionPrefix: prefix,
+      ...(agentRules ? { agentRules } : {}),
+    };
+
+    writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
+    console.log(chalk.green(`\n✓ Added "${projectId}" to ${config.configPath}\n`));
+  }
 
   if (!ownerRepo) {
     console.log(chalk.yellow("⚠ No repo configured — issue tracking and PR features will be unavailable."));
@@ -1149,7 +1188,7 @@ async function runStartup(
             .sort(byMostRecent)
             .map<OrchestratorCandidate>((session) => ({ session, mode: "restore" }));
 
-    if (candidates.length > 0) {
+    if (candidates.length > 0 && orchestratorSessionStrategy === "reuse") {
       const chosen = candidates[0];
       // Multiple candidates → CLI auto-picks the most recent, but the dashboard
       // surfaces all of them via the orchestrator-selection page. Only meaningful
@@ -1188,6 +1227,26 @@ async function runStartup(
         }
       }
     } else {
+      if (orchestratorSessionStrategy === "delete") {
+        const liveOrchestrators = orchestrators.filter((s) => !isTerminalSession(s));
+        for (const orchestrator of liveOrchestrators) {
+          try {
+            await sm.kill(orchestrator.id);
+          } catch (err) {
+            spinner.fail(`Failed to replace existing orchestrator: ${orchestrator.id}`);
+            if (dashboardProcess) {
+              dashboardProcess.kill();
+            }
+            throw new Error(
+              `Failed to kill existing orchestrator ${orchestrator.id}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+              { cause: err },
+            );
+          }
+        }
+      }
+
       // No reusable orchestrators — spawn a fresh numbered one.
       try {
         spinner.start("Creating orchestrator session");
@@ -1229,7 +1288,7 @@ async function runStartup(
       otherCandidateCount > 0 ? ` — ${otherCandidateCount} other session(s) available` : "";
     const target =
       opts?.dashboard !== false
-        ? `http://localhost:${port}/sessions/${selectedOrchestratorId}`
+        ? projectSessionUrl(port, projectId, selectedOrchestratorId)
         : `ao session attach ${selectedOrchestratorId}`;
 
     if (reused) {
@@ -1259,7 +1318,7 @@ async function runStartup(
     const orchestratorUrl = hasMultipleReusable
       ? `http://localhost:${port}/orchestrators?project=${projectId}`
       : selectedOrchestratorId
-        ? `http://localhost:${port}/sessions/${selectedOrchestratorId}`
+        ? projectSessionUrl(port, projectId, selectedOrchestratorId)
         : `http://localhost:${port}`;
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
   }
@@ -1559,14 +1618,28 @@ export function registerStart(program: Command): void {
           if (agentOverride) {
             const { orchestratorAgent, workerAgent } = agentOverride;
 
-            const rawYaml = readFileSync(config.configPath, "utf-8");
-            const rawConfig = yamlParse(rawYaml);
-            const proj = rawConfig.projects[projectId];
-            proj.orchestrator = { ...(proj.orchestrator ?? {}), agent: orchestratorAgent };
-            proj.worker = { ...(proj.worker ?? {}), agent: workerAgent };
-            writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
-            console.log(chalk.dim(`  ✓ Saved to ${config.configPath}\n`));
-            
+            if (isCanonicalGlobalConfigPath(config.configPath)) {
+              const nextLocalConfig = readProjectBehaviorConfig(project.path);
+              nextLocalConfig.orchestrator = {
+                ...(nextLocalConfig.orchestrator ?? {}),
+                agent: orchestratorAgent,
+              };
+              nextLocalConfig.worker = {
+                ...(nextLocalConfig.worker ?? {}),
+                agent: workerAgent,
+              };
+              writeProjectBehaviorConfig(project.path, nextLocalConfig);
+              console.log(chalk.dim(`  ✓ Saved to ${project.path}/agent-orchestrator.yaml\n`));
+            } else {
+              const rawYaml = readFileSync(config.configPath, "utf-8");
+              const rawConfig = yamlParse(rawYaml);
+              const proj = rawConfig.projects[projectId];
+              proj.orchestrator = { ...(proj.orchestrator ?? {}), agent: orchestratorAgent };
+              proj.worker = { ...(proj.worker ?? {}), agent: workerAgent };
+              writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
+              console.log(chalk.dim(`  ✓ Saved to ${config.configPath}\n`));
+            }
+
             config = loadConfig(config.configPath);
             project = config.projects[projectId];
           }

@@ -8,6 +8,7 @@ import {
 } from "@/lib/types";
 import { SessionCard } from "./SessionCard";
 import { getSessionTitle } from "@/lib/format";
+import { projectSessionPath } from "@/lib/routes";
 
 interface AttentionZoneProps {
   level: AttentionLevel;
@@ -252,7 +253,7 @@ function MobileSessionRow({
       <div className="mobile-session-row__side">
         <SessionStateChip session={session} level={level} />
         <a
-          href={`/sessions/${encodeURIComponent(session.id)}`}
+            href={projectSessionPath(session.projectId, session.id)}
           className="mobile-session-row__open"
           aria-label={`Go to ${getSessionTitle(session)}`}
         >

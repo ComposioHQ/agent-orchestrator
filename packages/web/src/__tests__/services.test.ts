@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockLoadConfig,
+  mockGetGlobalConfigPath,
+  MockConfigNotFoundError,
   mockRegister,
   mockCreateSessionManager,
   mockRegistry,
@@ -15,6 +17,13 @@ const {
   trackerLinearPlugin,
 } = vi.hoisted(() => {
   const mockLoadConfig = vi.fn();
+  const mockGetGlobalConfigPath = vi.fn();
+  class MockConfigNotFoundError extends Error {
+    constructor(message?: string) {
+      super(message ?? "Config not found");
+      this.name = "ConfigNotFoundError";
+    }
+  }
   const mockRegister = vi.fn();
   const mockCreateSessionManager = vi.fn();
   const mockRegistry = {
@@ -27,6 +36,8 @@ const {
 
   return {
     mockLoadConfig,
+    mockGetGlobalConfigPath,
+    MockConfigNotFoundError,
     mockRegister,
     mockCreateSessionManager,
     mockRegistry,
@@ -43,6 +54,8 @@ const {
 
 vi.mock("@aoagents/ao-core", () => ({
   loadConfig: mockLoadConfig,
+  getGlobalConfigPath: mockGetGlobalConfigPath,
+  ConfigNotFoundError: MockConfigNotFoundError,
   createPluginRegistry: () => mockRegistry,
   createSessionManager: mockCreateSessionManager,
   createLifecycleManager: () => ({
@@ -69,6 +82,8 @@ describe("services", () => {
     mockRegister.mockClear();
     mockCreateSessionManager.mockReset();
     mockLoadConfig.mockReset();
+    mockGetGlobalConfigPath.mockReset();
+    mockGetGlobalConfigPath.mockReturnValue("/tmp/global-config.yaml");
     mockLoadConfig.mockReturnValue({
       configPath: "/tmp/agent-orchestrator.yaml",
       port: 3000,
@@ -113,6 +128,41 @@ describe("services", () => {
 
     expect(first).toBe(second);
     expect(mockCreateSessionManager).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads config from the canonical global config path", async () => {
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockGetGlobalConfigPath).toHaveBeenCalledTimes(1);
+    expect(mockLoadConfig).toHaveBeenCalledWith("/tmp/global-config.yaml");
+  });
+
+  it("falls back to discovered config when the canonical global config is missing", async () => {
+    mockLoadConfig
+      .mockImplementationOnce(() => {
+        const error = new Error("ENOENT: no such file or directory");
+        (error as Error & { code?: string }).code = "ENOENT";
+        throw error;
+      })
+      .mockReturnValueOnce({
+        configPath: "/tmp/local/agent-orchestrator.yaml",
+        port: 3000,
+        readyThresholdMs: 300_000,
+        defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+        projects: {},
+        notifiers: {},
+        notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+        reactions: {},
+      });
+
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockLoadConfig).toHaveBeenNthCalledWith(1, "/tmp/global-config.yaml");
+    expect(mockLoadConfig).toHaveBeenNthCalledWith(2);
   });
 });
 

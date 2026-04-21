@@ -591,8 +591,7 @@ describe("restore", () => {
     const wsPath = join(tmpDir, "ws-app-orchestrator-opencode-agentsmd");
     mkdirSync(wsPath, { recursive: true });
 
-    const projectPath = join(tmpDir, "my-app");
-    const baseDir = getProjectBaseDir(ctx.configPath, projectPath);
+    const baseDir = getProjectBaseDir(ctx.config.projects["my-app"]!.storageKey);
     mkdirSync(baseDir, { recursive: true });
     const promptFile = join(baseDir, "orchestrator-prompt-app-orchestrator.md");
     const promptContent = "You are the AO orchestrator. Delegate tasks.";

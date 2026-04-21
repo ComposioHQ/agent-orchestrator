@@ -3,9 +3,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionDetail } from "../SessionDetail";
 import { makePR, makeSession } from "../../__tests__/helpers";
 
+const { routerPushMock, routerReplaceMock, routerRefreshMock } = vi.hoisted(() => ({
+  routerPushMock: vi.fn(),
+  routerReplaceMock: vi.fn(),
+  routerRefreshMock: vi.fn(),
+}));
+
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({
+    push: routerPushMock,
+    replace: routerReplaceMock,
+    refresh: routerRefreshMock,
+  }),
   usePathname: () => "/sessions/worker-desktop",
 }));
 
@@ -34,6 +44,9 @@ function mockDesktopViewport() {
 describe("SessionDetail desktop layout", () => {
   beforeEach(() => {
     mockDesktopViewport();
+    routerPushMock.mockReset();
+    routerReplaceMock.mockReset();
+    routerRefreshMock.mockReset();
     window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -109,7 +122,7 @@ describe("SessionDetail desktop layout", () => {
     // Scope to topbar since MobileBottomNav also has an Orchestrator link
     expect(within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" })).toHaveAttribute(
       "href",
-      "/sessions/my-app-orchestrator",
+      "/projects/my-app/sessions/my-app-orchestrator",
     );
     // Branch pill is rendered as link when session has a PR
     expect(screen.getByRole("link", { name: "feat/desktop-detail" })).toHaveAttribute(
@@ -249,5 +262,36 @@ describe("SessionDetail desktop layout", () => {
     // Scope to banner since MobileBottomNav keeps its own tab link for active highlighting.
     expect(within(screen.getByRole("banner")).queryByRole("link", { name: "Orchestrator" })).not.toBeInTheDocument();
     expect(screen.getByText("orchestrator")).toBeInTheDocument();
+  });
+
+  it("routes to the project orchestrator after killing a worker session", async () => {
+    render(
+      <SessionDetail
+        session={makeSession({ id: "worker-kill", projectId: "my-app", status: "running" })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Kill" }));
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith("/api/sessions/worker-kill/kill", { method: "POST" });
+    expect(routerPushMock).toHaveBeenCalledWith("/projects/my-app/sessions/my-app-orchestrator");
+  });
+
+  it("routes to the project dashboard after killing a worker with no orchestrator", async () => {
+    render(
+      <SessionDetail
+        session={makeSession({ id: "worker-kill-dashboard", projectId: "my-app", status: "running" })}
+        projectOrchestratorId={null}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Kill" }));
+    });
+
+    expect(routerPushMock).toHaveBeenCalledWith("/projects/my-app");
   });
 });

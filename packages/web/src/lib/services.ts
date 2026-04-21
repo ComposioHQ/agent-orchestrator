@@ -13,11 +13,13 @@ import "server-only";
  */
 
 import {
+  getGlobalConfigPath,
   loadConfig,
+  ConfigNotFoundError,
   createPluginRegistry,
   createSessionManager,
   createLifecycleManager,
-  type OrchestratorConfig,
+  type LoadedConfig,
   type PluginRegistry,
   type OpenCodeSessionManager,
   type LifecycleManager,
@@ -42,7 +44,7 @@ import pluginTrackerGithub from "@aoagents/ao-plugin-tracker-github";
 import pluginTrackerLinear from "@aoagents/ao-plugin-tracker-linear";
 
 export interface Services {
-  config: OrchestratorConfig;
+  config: LoadedConfig;
   registry: PluginRegistry;
   sessionManager: OpenCodeSessionManager;
   lifecycleManager: LifecycleManager;
@@ -52,6 +54,7 @@ export interface Services {
 const globalForServices = globalThis as typeof globalThis & {
   _aoServices?: Services;
   _aoServicesInit?: Promise<Services>;
+  _aoServicesGeneration?: number;
 };
 
 /** Get (or lazily initialize) the core services singleton. */
@@ -60,18 +63,43 @@ export function getServices(): Promise<Services> {
     return Promise.resolve(globalForServices._aoServices);
   }
   if (!globalForServices._aoServicesInit) {
-    globalForServices._aoServicesInit = initServices().catch((err) => {
-      // Clear the cached promise so the next call retries instead of
-      // permanently returning a rejected promise.
-      globalForServices._aoServicesInit = undefined;
-      throw err;
-    });
+    const generation = globalForServices._aoServicesGeneration ?? 0;
+    const initPromise = initServices()
+      .then((services) => {
+        if ((globalForServices._aoServicesGeneration ?? 0) !== generation) {
+          services.lifecycleManager.stop();
+          return getServices();
+        }
+
+        globalForServices._aoServices = services;
+        return services;
+      })
+      .catch((err) => {
+        // Clear the cached promise so the next call retries instead of
+        // permanently returning a rejected promise.
+        if (globalForServices._aoServicesInit === initPromise) {
+          globalForServices._aoServicesInit = undefined;
+        }
+        throw err;
+      });
+
+    globalForServices._aoServicesInit = initPromise;
   }
   return globalForServices._aoServicesInit;
 }
 
+/** Clear the cached services singleton so subsequent requests reload config/plugins. */
+export function invalidatePortfolioServicesCache(): void {
+  globalForServices._aoServicesGeneration = (globalForServices._aoServicesGeneration ?? 0) + 1;
+  if (globalForServices._aoServices) {
+    globalForServices._aoServices.lifecycleManager.stop();
+  }
+  globalForServices._aoServices = undefined;
+  globalForServices._aoServicesInit = undefined;
+}
+
 async function initServices(): Promise<Services> {
-  const config = loadConfig();
+  const config = loadDashboardConfig();
   const registry = createPluginRegistry();
 
   // Register plugins explicitly (webpack can't handle dynamic import() in core)
@@ -92,9 +120,29 @@ async function initServices(): Promise<Services> {
   const lifecycleManager = createLifecycleManager({ config, registry, sessionManager });
   lifecycleManager.start(30_000);
 
-  const services = { config, registry, sessionManager, lifecycleManager };
-  globalForServices._aoServices = services;
-  return services;
+  return { config, registry, sessionManager, lifecycleManager };
+}
+
+function loadDashboardConfig(): LoadedConfig {
+  const globalConfigPath = getGlobalConfigPath();
+
+  try {
+    return loadConfig(globalConfigPath);
+  } catch (error) {
+    // The dashboard prefers the global portfolio config, but users may still
+    // launch it from a single repo that only has a local agent-orchestrator.yaml.
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return loadConfig();
+    }
+    if (error instanceof ConfigNotFoundError) {
+      return loadConfig();
+    }
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +174,7 @@ const processedIssues = new Set<string>();
 /** Label GitHub issues for verification when their PRs have been merged. */
 async function labelIssuesForVerification(
   sessions: Session[],
-  config: OrchestratorConfig,
+  config: LoadedConfig,
   registry: PluginRegistry,
 ): Promise<void> {
   const mergedSessions = sessions.filter(
@@ -178,7 +226,7 @@ async function labelIssuesForVerification(
  * back to agent:backlog so pollBacklog picks them up on the next cycle.
  */
 async function relabelReopenedIssues(
-  config: OrchestratorConfig,
+  config: LoadedConfig,
   registry: PluginRegistry,
 ): Promise<void> {
   for (const [, project] of Object.entries(config.projects)) {

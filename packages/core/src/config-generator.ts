@@ -161,6 +161,27 @@ export function detectProjectInfo(repoDir: string): DetectedProjectInfo {
   return { language: null, packageManager: null };
 }
 
+export function readOriginRemoteUrl(projectPath: string): string | null {
+  const gitConfigPath = join(resolve(projectPath), ".git", "config");
+  if (!existsSync(gitConfigPath)) return null;
+
+  const lines = readFileSync(gitConfigPath, "utf-8").split(/\r?\n/);
+  let inOrigin = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      inOrigin = trimmed === '[remote "origin"]';
+      continue;
+    }
+    if (!inOrigin) continue;
+
+    const match = line.match(/^\s*url\s*=\s*(.+)\s*$/);
+    if (match?.[1]) return match[1].trim();
+  }
+
+  return null;
+}
+
 // =============================================================================
 // CONFIG GENERATION
 // =============================================================================

@@ -19,6 +19,7 @@ import { cn } from "@/lib/cn";
 import { getSessionTitle } from "@/lib/format";
 import { CICheckList } from "./CIBadge";
 import { getSizeLabel } from "./PRStatus";
+import { projectSessionHashPath, projectSessionPath } from "@/lib/routes";
 
 interface SessionCardProps {
   session: DashboardSession;
@@ -499,7 +500,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         )}
         {!isTerminal && (
           <a
-            href={`/sessions/${encodeURIComponent(session.id)}#session-terminal-section`}
+            href={projectSessionHashPath(session.projectId, session.id, "#session-terminal-section")}
             onClick={(e) => e.stopPropagation()}
             className="session-card__control session-card__terminal-link"
           >
@@ -706,7 +707,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               </div>
             )}
             <a
-              href={`/sessions/${encodeURIComponent(session.id)}`}
+              href={projectSessionPath(session.projectId, session.id)}
               onClick={(e) => e.stopPropagation()}
               className="card__view-context"
             >

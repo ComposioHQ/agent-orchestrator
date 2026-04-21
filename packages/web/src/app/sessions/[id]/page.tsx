@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { notFound, useParams } from "next/navigation";
+import { notFound, useParams, usePathname, useRouter } from "next/navigation";
 import { ACTIVITY_STATE, SESSION_STATUS, isOrchestratorSession } from "@aoagents/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
 import { type DashboardSession, type ActivityState, getAttentionLevel } from "@/lib/types";
@@ -11,6 +11,7 @@ import { getSessionTitle } from "@/lib/format";
 import { useSSESessionActivity } from "@/hooks/useSSESessionActivity";
 import { useMuxOptional } from "@/providers/MuxProvider";
 import type { SessionPatch } from "@/lib/mux-protocol";
+import { projectSessionPath } from "@/lib/routes";
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
@@ -62,6 +63,7 @@ interface ProjectSessionsBody {
 
 let cachedProjects: ProjectInfo[] | null = null;
 let cachedSidebarSessions: DashboardSession[] | null = null;
+const SESSION_PAGE_REFRESH_INTERVAL_MS = 2000;
 const validSessionStatuses = new Set<string>(Object.values(SESSION_STATUS));
 const validActivityStates = new Set<string>(Object.values(ACTIVITY_STATE));
 const warnedMuxPatchValues = new Set<string>();
@@ -160,7 +162,15 @@ function applyMuxSessionPatches(current: DashboardSession[] | null, patches: Ses
 
 export default function SessionPage() {
   const params = useParams();
+  const pathname = usePathname();
+  const router = useRouter();
   const id = params.id as string;
+  const expectedProjectId =
+    typeof params.projectId === "string"
+      ? params.projectId
+      : Array.isArray(params.projectId)
+        ? params.projectId[0]
+        : null;
   const mux = useMuxOptional();
 
   // Read optimistic session data written by sidebar navigation (instant render, no white screen)
@@ -253,6 +263,24 @@ export default function SessionPage() {
   }, [sessionProjectId]);
 
   useEffect(() => {
+    if (!session) return;
+    if (!projects.some((project) => project.id === session.projectId)) return;
+
+    if (pathname?.startsWith("/sessions/")) {
+      router.replace(projectSessionPath(session.projectId, session.id));
+      return;
+    }
+
+    if (
+      pathname?.startsWith("/projects/") &&
+      expectedProjectId &&
+      session.projectId !== expectedProjectId
+    ) {
+      router.replace(projectSessionPath(session.projectId, session.id));
+    }
+  }, [expectedProjectId, pathname, projects, router, session]);
+
+  useEffect(() => {
     sessionIsOrchestratorRef.current = sessionIsOrchestrator;
   }, [sessionIsOrchestrator]);
 
@@ -290,14 +318,14 @@ export default function SessionPage() {
     if (fetchingProjectSessionsRef.current) return;
     const projectId = sessionProjectIdRef.current;
     if (!projectId) return;
-    fetchingProjectSessionsRef.current = true;
     const isOrchestrator = sessionIsOrchestratorRef.current;
     const projectSessionsKey = `${projectId}:${isOrchestrator ? "orchestrator" : "worker"}`;
     if (!isOrchestrator && resolvedProjectSessionsKeyRef.current === projectSessionsKey) return;
+    fetchingProjectSessionsRef.current = true;
     try {
       const query = isOrchestrator
-        ? `/api/sessions?project=${encodeURIComponent(projectId)}`
-        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true`;
+        ? `/api/sessions?project=${encodeURIComponent(projectId)}&fresh=true`
+        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true&fresh=true`;
       const res = await fetch(query);
       if (!res.ok) {
         console.error("Failed to fetch project sessions for", projectId, new Error(`HTTP ${res.status}`));
@@ -346,7 +374,7 @@ export default function SessionPage() {
     if (fetchingSidebarRef.current) return;
     fetchingSidebarRef.current = true;
     try {
-      const res = await fetch("/api/sessions");
+      const res = await fetch("/api/sessions?fresh=true");
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -429,13 +457,14 @@ export default function SessionPage() {
     void fetchProjectSessions();
   }, [fetchProjectSessions, sessionIsOrchestrator, sessionProjectId]);
 
-  // Poll every 5s
+  // Poll frequently enough that sidebar/project session state keeps up with
+  // newly spawned workers and terminated sessions without feeling laggy.
   useEffect(() => {
     const interval = setInterval(() => {
       fetchSession();
       fetchProjectSessions();
       fetchSidebarSessions();
-    }, 5000);
+    }, SESSION_PAGE_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [fetchSession, fetchProjectSessions, fetchSidebarSessions]);
 

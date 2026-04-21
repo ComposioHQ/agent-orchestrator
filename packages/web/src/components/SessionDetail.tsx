@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   type DashboardSession,
@@ -19,6 +19,7 @@ import { getSessionTitle } from "@/lib/format";
 import { buildGitHubCompareUrl } from "@/lib/github-links";
 import type { ProjectInfo } from "@/lib/project-name";
 import { SidebarContext } from "./workspace/SidebarContext";
+import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 
 import { ProjectSidebar } from "./ProjectSidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
@@ -375,6 +376,7 @@ export function SessionDetail({
   sidebarError = false,
   onRetrySidebar,
 }: SessionDetailProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const startFullscreen = searchParams.get("fullscreen") === "true";
@@ -401,7 +403,7 @@ export function SessionDetail({
   const reloadCommand = opencodeSessionId
     ? `/exit\nopencode --session ${opencodeSessionId}\n`
     : undefined;
-  const dashboardHref = session.projectId ? `/?project=${encodeURIComponent(session.projectId)}` : "/";
+  const dashboardHref = session.projectId ? projectDashboardPath(session.projectId) : "/";
   const crumbHref = dashboardHref;
   const crumbLabel = "Dashboard";
 
@@ -409,11 +411,15 @@ export function SessionDetail({
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/kill`, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      window.location.reload();
+      if (projectOrchestratorId) {
+        router.push(projectSessionPath(session.projectId, projectOrchestratorId));
+        return;
+      }
+      router.push(dashboardHref);
     } catch (err) {
       console.error("Failed to kill session:", err);
     }
-  }, [session.id]);
+  }, [dashboardHref, projectOrchestratorId, router, session.id, session.projectId]);
 
   const handleRestore = useCallback(async () => {
     try {
@@ -452,10 +458,10 @@ export function SessionDetail({
   const showHeaderProjectLabel =
     headerProjectLabel.trim().toLowerCase() !== "agent orchestrator";
   const orchestratorHref = useMemo(() => {
-    if (isOrchestrator) return `/sessions/${encodeURIComponent(session.id)}`;
+    if (isOrchestrator) return projectSessionPath(session.projectId, session.id);
     if (!projectOrchestratorId) return null;
-    return `/sessions/${encodeURIComponent(projectOrchestratorId)}`;
-  }, [isOrchestrator, projectOrchestratorId, session.id]);
+    return projectSessionPath(session.projectId, projectOrchestratorId);
+  }, [isOrchestrator, projectOrchestratorId, session.id, session.projectId]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setShowTerminal(true));

@@ -14,7 +14,7 @@
   "scripts": {
     "dev": "concurrently \"npm:dev:next\" \"npm:dev:direct-terminal\"",
     "dev:next": "next dev -p ${PORT:-3000}",
-    "dev:direct-terminal": "tsx watch server/direct-terminal-ws.ts",
+    "dev:direct-terminal": "node scripts/dev-direct-terminal.mjs",
     "prebuild": "rimraf .next dist-server",
     "build": "next build && tsc -p tsconfig.server.json",
     "start": "next start",
