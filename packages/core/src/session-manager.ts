@@ -2370,21 +2370,33 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         throw new SessionNotFoundError(sessionId);
       }
 
-      const handle =
-        current.runtimeHandle ??
-        ({
-          id: sessionId,
-          runtimeName,
-          data: {},
-        } satisfies RuntimeHandle);
-      const normalized = current.runtimeHandle ? current : { ...current, runtimeHandle: handle };
+      // Refuse to operate without a real persisted runtime handle. `get()`
+      // fabricates a handle from the bare sessionId when metadata is missing
+      // one (for liveness checks / display), but using that fabricated handle
+      // here is actively harmful: restore() would spawn a brand-new tmux
+      // session under the wrong name — the real name is
+      // `{projectHash}-{sessionId}` — leaving two agent instances running on
+      // the same worktree simultaneously. See #1456. Check the raw metadata
+      // (not the enriched Session) to detect the missing-handle case.
+      if (!current.metadata["runtimeHandle"]) {
+        throw new Error(
+          `Session ${sessionId} is missing its runtime handle — ` +
+            `use 'ao session ls' to inspect or 'ao session restore ${sessionId}' explicitly`,
+        );
+      }
+      if (!current.runtimeHandle) {
+        throw new Error(
+          `Session ${sessionId} has a corrupt runtime handle in metadata`,
+        );
+      }
+      const handle = current.runtimeHandle;
 
-      if (forceRestore || isRestorable(normalized)) {
+      if (forceRestore || isRestorable(current)) {
         return restoreForDelivery(
           forceRestore
             ? "session needed to be restarted before delivery"
             : "session is not running",
-          normalized,
+          current,
         );
       }
 
@@ -2393,8 +2405,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         agentPlugin.isProcessRunning(handle).catch(() => true),
       ]);
 
-      if (normalized.status === "spawning" && runtimeAlive) {
-        await waitForInteractiveReadiness(normalized, SEND_BOOTSTRAP_READY_TIMEOUT_MS);
+      if (current.status === "spawning" && runtimeAlive) {
+        await waitForInteractiveReadiness(current, SEND_BOOTSTRAP_READY_TIMEOUT_MS);
         [runtimeAlive, processRunning] = await Promise.all([
           runtimePlugin.isAlive(handle).catch(() => true),
           agentPlugin.isProcessRunning(handle).catch(() => true),
@@ -2404,11 +2416,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (!runtimeAlive || !processRunning) {
         return restoreForDelivery(
           !runtimeAlive ? "runtime is not alive" : "agent process is not running",
-          normalized,
+          current,
         );
       }
 
-      return normalized;
+      return current;
     };
 
     const sendWithConfirmation = async (session: Session): Promise<void> => {

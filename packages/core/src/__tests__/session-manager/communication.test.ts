@@ -215,22 +215,25 @@ describe("send", () => {
     await expect(sm.send("nope", "hello")).rejects.toThrow("not found");
   });
 
-  it("falls back to session ID as runtime handle when no runtimeHandle stored", async () => {
+  it("refuses to send when runtimeHandle is missing instead of synthesizing one from the sessionId", async () => {
+    // Regression for #1456: synthesizing a handle from the bare sessionId
+    // made restore() spawn a zombie tmux session (real name is
+    // `{projectHash}-{sessionId}`), running a duplicate agent on the same
+    // worktree. Refuse with a clear error instead.
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
       branch: "main",
       status: "working",
       project: "my-app",
     });
-    vi.mocked(mockRuntime.getOutput).mockResolvedValueOnce("before").mockResolvedValueOnce("after");
 
     const sm = createSessionManager({ config, registry: mockRegistry });
-    await sm.send("app-1", "hello");
-
-    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
-      { id: "app-1", runtimeName: "mock", data: {} },
-      "hello",
+    await expect(sm.send("app-1", "hello")).rejects.toThrow(
+      /missing its runtime handle/,
     );
+
+    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+    expect(mockRuntime.create).not.toHaveBeenCalled();
   });
 
   it("auto-discovers OpenCode mapping before sending when missing", async () => {
