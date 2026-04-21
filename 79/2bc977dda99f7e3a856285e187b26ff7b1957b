@@ -1,0 +1,122 @@
+packages/web/src/components/Dashboard.tsx
+  bb2fbd01895fdd37 5,163,375,382,635-643
+packages/web/src/app/orchestrators/page.tsx
+  f0997bda1b49d3e5 23
+packages/web/src/app/layout.tsx
+  f0997bda1b49d3e5 38
+packages/web/src/components/__tests__/OrchestratorSelector.test.tsx
+  f0997bda1b49d3e5 56,60,63,79,82,97,117,121,134
+packages/web/src/app/api/sessions/route.ts
+  f0997bda1b49d3e5 15,40-42,44-60,62-63
+packages/web/src/app/api/orchestrators/route.ts
+  f0997bda1b49d3e5 2,5,93-126,133
+packages/web/src/components/__tests__/SessionDetail.desktop.test.tsx
+  e2caf4f98ff2bd54 240-259
+packages/web/src/components/__tests__/Dashboard.mobile.test.tsx
+  bb2fbd01895fdd37 6-7,9,32,222
+packages/web/src/components/__tests__/Dashboard.kanbanLayout.test.tsx
+  f0997bda1b49d3e5 1-68
+packages/web/src/app/sessions/[id]/page.tsx
+  f0997bda1b49d3e5 4,7-9,70,108-182,184-187,189-262,352,387,391,407-408,455,492,540,636-660,665-686,690-720
+  2c807b0a9e3a5dad 3,183,188
+packages/web/src/components/SessionDetail.tsx
+  e2caf4f98ff2bd54 427-431,435
+packages/web/src/app/api/events/route.ts
+  f0997bda1b49d3e5 31,48-59,62-74,125,139-140,147,194-196,209,219
+packages/web/src/components/OrchestratorSelector.tsx
+  f0997bda1b49d3e5 157,174-175,182,226,259,262
+packages/web/src/lib/orchestrator-utils.ts
+  f0997bda1b49d3e5 9-60,67-68
+packages/web/src/__tests__/api-routes.test.ts
+  f0997bda1b49d3e5 710,737-740,744-813,854,872,917-946,1261-1280
+packages/web/src/app/sessions/[id]/page.test.tsx
+  f0997bda1b49d3e5 143-145,147-150,239,242,269-270,274,298,301-303,495-548
+packages/web/src/app/globals.css
+  bb2fbd01895fdd37 4626,4628,4630-4631
+  f0997bda1b49d3e5 29-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "792bc977dda99f7e3a856285e187b26ff7b1957b",
+  "prompts": {
+    "2c807b0a9e3a5dad": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db027-4416-7f11-ba64-5c733d34cff3",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 11,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    },
+    "851299caedf604c0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019da632-82ac-7ff0-97fc-cff98c1239d8",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 6010,
+      "total_deletions": 2454,
+      "accepted_lines": 5242,
+      "overriden_lines": 0
+    },
+    "980774380f0f5c03": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019da597-7278-71f3-acbb-d25583ad1d48",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 3392,
+      "total_deletions": 4737,
+      "accepted_lines": 2032,
+      "overriden_lines": 0
+    },
+    "bb2fbd01895fdd37": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db017-d9cb-7d72-9afd-bd9317a78aa4",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1112,
+      "total_deletions": 858,
+      "accepted_lines": 1111,
+      "overriden_lines": 0
+    },
+    "e2caf4f98ff2bd54": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019daf3a-58b7-7121-9c55-8504e9456e9d",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1066,
+      "total_deletions": 374,
+      "accepted_lines": 1066,
+      "overriden_lines": 0
+    },
+    "f0997bda1b49d3e5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db028-df15-7452-b344-69a9e1339d34",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 5428,
+      "total_deletions": 5237,
+      "accepted_lines": 6625,
+      "overriden_lines": 0
+    }
+  }
+}
