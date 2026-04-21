@@ -55,7 +55,15 @@ import {
   listMetadata,
   reserveSessionId,
 } from "./metadata.js";
+import {
+  buildLifecycleMetadataPatch,
+  cloneLifecycle,
+  createInitialCanonicalLifecycle,
+  deriveLegacyStatus,
+  parseCanonicalLifecycle,
+} from "./lifecycle-state.js";
 import { buildPrompt } from "./prompt-builder.js";
+import { classifyActivitySignal, createActivitySignal } from "./activity-signal.js";
 import {
   getSessionsDir,
   getWorktreesDir,
@@ -1300,7 +1308,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
 
     let systemPromptFile: string | undefined;
+
+    // need a seperate config file to pass instructions for opencode session
     let opencodeConfigFile: string | undefined;
+
     try {
       const baseDir = getProjectBaseDir(config.configPath, project.path);
       mkdirSync(baseDir, { recursive: true });

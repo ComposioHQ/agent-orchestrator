@@ -47,13 +47,16 @@ Handles session lifecycle:
 4. Determine branch name
 5. Create workspace via `Workspace.create()`
 6. Generate prompt via `Tracker.generatePrompt()`
-7. Build launch command via `Agent.getLaunchCommand()`
-8. Create runtime session via `Runtime.create()`
-9. Run `Agent.postLaunchSetup()` (optional)
-10. Write metadata file
-11. Return Session object
+7. Build layered worker prompt via `buildPrompt()` into `systemPrompt` + `taskPrompt`
+8. Persist `systemPromptFile` for the session and, for OpenCode workers, write `OPENCODE_CONFIG`
+9. Build launch command via `Agent.getLaunchCommand()`
+10. Create runtime session via `Runtime.create()`
+11. Run `Agent.postLaunchSetup()` (optional)
+12. Write metadata file
+13. Return Session object
 
 **Note:** If issue validation fails (not found, auth error), spawn fails before creating any resources (no workspace, no runtime, no session ID). This prevents spawning sessions with broken issue references.
+Worker sessions keep persistent instructions in the prompt file. OpenCode workers consume that file through `OPENCODE_CONFIG`, while OpenCode orchestrators continue to project their system prompt into workspace `AGENTS.md`.
 
 ### `src/services/lifecycle-manager.ts` — State Machine + Reactions
 

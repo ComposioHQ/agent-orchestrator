@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-export function getOpenCodeConfigPath(baseDir: string, sessionId: string): string {
+function getOpenCodeConfigPath(baseDir: string, sessionId: string): string {
   return join(baseDir, `opencode-config-${sessionId}.json`);
 }
 
