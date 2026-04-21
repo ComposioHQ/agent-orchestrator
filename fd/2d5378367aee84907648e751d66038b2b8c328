@@ -1,0 +1,49 @@
+packages/core/src/types.ts
+  4f22f18364153183 340,349,351-352
+packages/core/src/__tests__/types.test.ts
+  4f22f18364153183 5-6,9-11,18-19,22,41,45
+packages/web/src/components/__tests__/OrchestratorSelector.test.tsx
+  4f22f18364153183 12,39,80,95,135-136
+packages/web/src/__tests__/orchestrators.test.tsx
+  4f22f18364153183 42,69
+packages/web/src/__tests__/api-routes.test.ts
+  4f22f18364153183 325,330,334,378,385-386,392,407,409,418,427,443,445,729,774,875,917,920,935
+packages/web/src/lib/orchestrator-utils.ts
+  4f22f18364153183 12-17
+docs/DEVELOPMENT.md
+  4f22f18364153183 178
+packages/cli/__tests__/lib/session-utils.test.ts
+  4f22f18364153183 133,165,167,175,177-178,181,183,194,202
+.changeset/canonical-orchestrator-migration.md
+  4f22f18364153183 6,10-11
+packages/cli/src/commands/start.ts
+  4f22f18364153183 1602-1603,1606
+packages/core/src/session-manager.ts
+  4f22f18364153183 364-365
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  4f22f18364153183 1576,1594,1597,1600,1604,1609-1610,1613,1620,1636
+packages/cli/src/lib/session-utils.ts
+  4f22f18364153183 50,58,63
+SETUP.md
+  4f22f18364153183 829
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "fd2d5378367aee84907648e751d66038b2b8c328",
+  "prompts": {
+    "4f22f18364153183": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db11a-83bf-7f21-90ac-22d5b4542872",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 80,
+      "total_deletions": 337,
+      "accepted_lines": 80,
+      "overriden_lines": 0
+    }
+  }
+}
