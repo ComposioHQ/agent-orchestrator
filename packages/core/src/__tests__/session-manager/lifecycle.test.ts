@@ -13,14 +13,16 @@ import {
   deleteMetadata,
 } from "../../metadata.js";
 import { getSessionsDir, getWorktreesDir } from "../../paths.js";
-import type {
-  OrchestratorConfig,
-  PluginRegistry,
-  Runtime,
-  Agent,
-  Workspace,
-  Tracker,
-  SCM,
+import {
+  isTerminalSession,
+  isRestorable,
+  type OrchestratorConfig,
+  type PluginRegistry,
+  type Runtime,
+  type Agent,
+  type Workspace,
+  type Tracker,
+  type SCM,
 } from "../../types.js";
 import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
 import { installMockOpencode, installMockOpencodeWithNotFoundDelete } from "./opencode-helpers.js";
@@ -94,6 +96,59 @@ describe("kill", () => {
     const lifecycle = JSON.parse(meta!["statePayload"]!);
     expect(lifecycle.session.state).toBe("terminated");
     expect(lifecycle.runtime.state).toBe("missing");
+  });
+
+  it("preserved session remains in list() and is restorable", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/work",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // Kill with preserveSession — simulates ao stop for orchestrators
+    await sm.kill("app-1", { preserveSession: true });
+
+    // Session must still appear in list()
+    const sessions = await sm.list("my-app");
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).toBe("app-1");
+
+    // Session must be terminal (runtime gone) and restorable (not merged)
+    expect(isTerminalSession(sessions[0])).toBe(true);
+    expect(isRestorable(sessions[0])).toBe(true);
+  });
+
+  it("preserved session can be restored after kill", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/work",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // Kill with preserveSession, then restore — simulates ao stop → ao start
+    await sm.kill("app-1", { preserveSession: true });
+    const restored = await sm.restore("app-1");
+
+    expect(restored.id).toBe("app-1");
+    expect(restored.status).toBe("spawning");
+    expect(restored.workspacePath).toBe(wsPath);
+    expect(restored.branch).toBe("feat/work");
+    // New runtime was created
+    expect(mockRuntime.create).toHaveBeenCalled();
   });
 
   it("does not destroy workspace paths outside managed roots", async () => {
