@@ -5,6 +5,7 @@ import {
   checkActivityLogState,
   getActivityFallbackState,
   recordTerminalActivity,
+  hasRecentCommits,
   DEFAULT_READY_THRESHOLD_MS,
   DEFAULT_ACTIVE_WINDOW_MS,
   type Agent,
@@ -28,22 +29,6 @@ const execFileAsync = promisify(execFile);
 // =============================================================================
 // Aider Activity Detection Helpers
 // =============================================================================
-
-/**
- * Check if Aider has made recent commits (within last 60 seconds).
- */
-async function hasRecentCommits(workspacePath: string): Promise<boolean> {
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["log", "--since=60 seconds ago", "--format=%H"],
-      { cwd: workspacePath, timeout: 5_000 },
-    );
-    return stdout.trim().length > 0;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Get modification time of Aider chat history file.
