@@ -1,0 +1,66 @@
+packages/cli/__tests__/commands/start.test.ts
+  4f22f18364153183 38,116-120,265-266,824-825,837,857,869,877,879,884,888,903,927,961,983,1005,1012,1020,1025,1031-1033,1041,1043-1045,1054-1074,1080
+SETUP.md
+  4f22f18364153183 829-830
+packages/core/src/__tests__/test-utils.ts
+  4f22f18364153183 429-431
+packages/cli/src/commands/start.ts
+  4f22f18364153183 25,27,1124,1130-1134,1136,1141,1164,1175-1177,1599-1600,1602,1607-1632,1635-1644
+packages/core/src/types.ts
+  952ce9f57ca83716 348-351,1692
+docs/DEVELOPMENT.md
+  4f22f18364153183 111-112,178
+packages/core/src/session-manager.ts
+  4f22f18364153183 20,807-808
+  272ddac85d7b19c8 264-267,802-804,806,809-826,829-833,836-843,1414-1417,1450-1452,1454-1455,1458-1459,1462-1463,1467-1472,1628,1676-1710,2820
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  4f22f18364153183 1078-1080,1086,1093-1096,1099,1102-1103,1105-1108,1111,1116-1117,1121,1124-1126,1129-1142,1144,1147-1150,1153,1156,1158-1168,1172,1182-1183,1186,1208-1209,1217-1218,1224,1255,1262,1267-1268,1274,1282,1311-1313,1317-1318,1348,1361,1388,1406,1409-1410,1419,1426,1432-1438,1449,1475-1476,1486-1487,1519
+.changeset/canonical-orchestrator-migration.md
+  4f22f18364153183 1-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "087ba5310991a8eda210376cef51abab9d3526b5",
+  "prompts": {
+    "272ddac85d7b19c8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "84acd401-7a15-4269-8f1f-4ad912f8f1f9",
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 97,
+      "total_deletions": 94,
+      "accepted_lines": 95,
+      "overriden_lines": 0
+    },
+    "4f22f18364153183": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db11a-83bf-7f21-90ac-22d5b4542872",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 226,
+      "total_deletions": 1161,
+      "accepted_lines": 226,
+      "overriden_lines": 0
+    },
+    "952ce9f57ca83716": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db144-aa32-7772-9e1a-a3c1f961dc6a",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 1,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
