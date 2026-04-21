@@ -169,6 +169,10 @@ function DashboardInner({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
+  const debugParam = searchParams.get("debug");
+  const showDebugBundleButton =
+    !isMobile &&
+    (process.env.NODE_ENV === "development" || debugParam === "1" || debugParam === "true");
   const showSidebar = projects.length >= 1;
   const { showToast } = useToast();
   const [doneExpanded, setDoneExpanded] = useState(false);
@@ -498,6 +502,7 @@ function DashboardInner({
                 <span className="dashboard-app-header__project">{headerProjectLabel}</span>
               </>
             ) : null}
+            {showDebugBundleButton ? <CopyDebugBundleButton projectId={projectId} /> : null}
             <div className="dashboard-app-header__spacer" />
             <div className="dashboard-app-header__actions">
               {!allProjectsView && orchestratorHref ? (
@@ -549,7 +554,6 @@ function DashboardInner({
                   {isSpawningCurrentProject ? "Spawning..." : "Spawn Orchestrator"}
                 </button>
               ) : null}
-              {!isMobile ? <CopyDebugBundleButton projectId={projectId} /> : null}
             </div>
           </header>
 
