@@ -1,4 +1,11 @@
-import type { ActivitySignal, RuntimeHandle, Session, SessionId, SessionStatus } from "../types.js";
+import type {
+  ActivitySignal,
+  RuntimeHandle,
+  Session,
+  SessionId,
+  SessionKind,
+  SessionStatus,
+} from "../types.js";
 import { deriveLegacyStatus, parseCanonicalLifecycle } from "../lifecycle-state.js";
 import { createActivitySignal } from "../activity-signal.js";
 import { AGENT_REPORT_METADATA_KEYS } from "../agent-report.js";
@@ -7,6 +14,7 @@ import { safeJsonParse, validateStatus } from "./validation.js";
 
 interface SessionFromMetadataOptions {
   projectId?: string;
+  sessionKind?: SessionKind;
   status?: SessionStatus;
   activity?: Session["activity"];
   activitySignal?: ActivitySignal;
@@ -45,6 +53,7 @@ export function sessionFromMetadata(
         : null;
   const lifecycle = parseCanonicalLifecycle(meta, {
     sessionId,
+    sessionKind: options.sessionKind,
     status: options.status ?? validateStatus(meta["status"]),
     runtimeHandle,
     createdAt: options.createdAt,

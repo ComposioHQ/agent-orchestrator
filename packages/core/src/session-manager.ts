@@ -249,15 +249,32 @@ async function getTmuxForegroundCommand(sessionName: string): Promise<string | n
 }
 
 /** Reconstruct a Session object from raw metadata key=value pairs. */
+function deriveSessionKindFromMetadata(
+  sessionId: SessionId,
+  meta: Record<string, string>,
+  sessionPrefix: string,
+): "worker" | "orchestrator" {
+  if (meta["role"] === "orchestrator") return "orchestrator";
+  if (sessionId === `${sessionPrefix}-orchestrator`) return "orchestrator";
+  if (new RegExp(`^${escapeRegex(sessionPrefix)}-orchestrator-\\d+$`).test(sessionId)) {
+    return "orchestrator";
+  }
+  return "worker";
+}
+
 function metadataToSession(
   sessionId: SessionId,
   meta: Record<string, string>,
   projectId: string,
+  sessionPrefix: string | undefined,
   createdAt?: Date,
   modifiedAt?: Date,
 ): Session {
+  const normalizedSessionPrefix = sessionPrefix ?? projectId;
+  const sessionKind = deriveSessionKindFromMetadata(sessionId, meta, normalizedSessionPrefix);
   return sessionFromMetadata(sessionId, meta, {
     projectId,
+    sessionKind,
     createdAt,
     lastActivityAt: modifiedAt ?? new Date(),
   });
@@ -1787,7 +1804,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         // If stat fails, timestamps will fall back to current time
       }
 
-      const session = metadataToSession(sessionName, raw, sessionProjectId, createdAt, modifiedAt);
+      const session = metadataToSession(
+        sessionName,
+        raw,
+        sessionProjectId,
+        config.projects[sessionProjectId]?.sessionPrefix,
+        createdAt,
+        modifiedAt,
+      );
       const selection = resolveSelectionForSession(project, sessionName, raw);
       const effectiveAgentName = selection.agentName;
       const plugins = resolvePlugins(project, effectiveAgentName);
@@ -1861,7 +1885,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         project.sessionPrefix,
       );
 
-      const session = metadataToSession(sessionId, repaired.raw, projectId, createdAt, modifiedAt);
+      const session = metadataToSession(
+        sessionId,
+        repaired.raw,
+        projectId,
+        config.projects[projectId]?.sessionPrefix,
+        createdAt,
+        modifiedAt,
+      );
 
       const selection = resolveSelectionForSession(project, sessionId, repaired.raw);
       const effectiveAgentName = selection.agentName;
@@ -2642,7 +2673,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     //    metadataToSession sets activity: null, so without enrichment a crashed
     //    session (status "working", agent exited) would not be detected as terminal
     //    and isRestorable would reject it.
-    const session = metadataToSession(sessionId, raw, projectId);
+    const session = metadataToSession(
+      sessionId,
+      raw,
+      projectId,
+      config.projects[projectId]?.sessionPrefix,
+    );
     const plugins = resolvePlugins(project, selection.agentName);
     await enrichSessionWithRuntimeState(session, plugins, true);
 
