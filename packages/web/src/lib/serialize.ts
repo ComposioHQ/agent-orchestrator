@@ -29,6 +29,8 @@ import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
 const issueTitleCache = new TTLCache<string>(300_000);
+/** Cache failed issue-title lookups to avoid repeated tracker API calls. */
+const issueTitleMissCache = new TTLCache<boolean>(120_000);
 
 function isAbsoluteUrl(value: string): boolean {
   try {
@@ -433,7 +435,7 @@ export async function enrichSessionPR(
   return true;
 }
 
-/** Enrich a DashboardSession's issue label using the tracker plugin. */
+/** Enrich a DashboardSession's issue URL and label using the tracker plugin. */
 export function enrichSessionIssue(
   dashboard: DashboardSession,
   tracker: Tracker,
@@ -442,13 +444,31 @@ export function enrichSessionIssue(
   const issueReference = dashboard.issueId ?? dashboard.issueUrl;
   if (!issueReference) return;
 
-  if (tracker.issueUrl) {
+  if (isAbsoluteUrl(issueReference)) {
+    dashboard.issueUrl = issueReference;
+  } else if (/\s/.test(issueReference)) {
+    // Free-text issue IDs are user notes, not tracker identifiers.
+    dashboard.issueUrl = null;
+  } else if (tracker.issueUrl) {
     try {
-      dashboard.issueUrl = tracker.issueUrl(issueReference, project);
-    } catch {
-      // Keep existing values if URL generation fails.
+      const candidateUrl = tracker.issueUrl(issueReference, project);
+      if (candidateUrl && isAbsoluteUrl(candidateUrl)) {
+        dashboard.issueUrl = candidateUrl;
+      } else {
+        console.warn("[enrichSessionIssue] tracker.issueUrl() returned a non-absolute URL", {
+          tracker: tracker.name,
+          issueReference,
+          candidateUrl,
+        });
+      }
+    } catch (error) {
+      console.warn("[enrichSessionIssue] tracker.issueUrl() failed", {
+        tracker: tracker.name,
+        issueReference,
+        error: String(error),
+      });
     }
-  } else if (!dashboard.issueUrl) {
+  } else if (!dashboard.issueUrl && isAbsoluteUrl(issueReference)) {
     dashboard.issueUrl = issueReference;
   }
 
@@ -510,6 +530,9 @@ export async function enrichSessionIssueTitle(
     dashboard.issueTitle = cached;
     return;
   }
+  if (issueTitleMissCache.get(dashboard.issueUrl)) {
+    return;
+  }
 
   try {
     // Strip "#" prefix from GitHub-style labels to get the identifier
@@ -520,6 +543,7 @@ export async function enrichSessionIssueTitle(
       issueTitleCache.set(dashboard.issueUrl, issue.title);
     }
   } catch {
+    issueTitleMissCache.set(dashboard.issueUrl, true);
     // Can't fetch issue — keep issueTitle null
   }
 }

@@ -18,6 +18,7 @@ import {
   sessionToDashboard,
   resolveProject,
   enrichSessionPR,
+  enrichSessionIssue,
   enrichSessionAgentSummary,
   enrichSessionIssueTitle,
   enrichSessionsMetadata,
@@ -840,6 +841,25 @@ describe("enrichSessionIssueTitle", () => {
     expect(dashboard.issueTitle).toBeNull();
   });
 
+  it("should avoid repeated issue lookups after a recent failure", async () => {
+    const issueUrl = "https://github.com/test/repo/issues/failure-cache";
+    const dashboard = makeDashboard({
+      issueUrl,
+      issueLabel: "#failure-cache",
+    });
+    const tracker: Tracker = {
+      ...createMockTracker(),
+      getIssue: vi.fn().mockRejectedValue(new Error("API error")),
+    };
+    const project = makeProject();
+
+    await enrichSessionIssueTitle(dashboard, tracker, project);
+    await enrichSessionIssueTitle(dashboard, tracker, project);
+
+    expect(tracker.getIssue).toHaveBeenCalledTimes(1);
+    expect(dashboard.issueTitle).toBeNull();
+  });
+
   it("should cache results across calls", async () => {
     // Unique URL to avoid cache from other tests
     const issueUrl = "https://github.com/test/repo/issues/cache-test";
@@ -872,11 +892,7 @@ describe("enrichSessionsMetadata", () => {
         labels: [],
       }),
       isCompleted: vi.fn().mockResolvedValue(false),
-      issueUrl: vi.fn().mockImplementation((identifier: string) =>
-        identifier.startsWith("http://") || identifier.startsWith("https://")
-          ? identifier
-          : `${urlBase}-${identifier}`,
-      ),
+      issueUrl: vi.fn().mockImplementation((identifier: string) => `${urlBase}-${identifier}`),
       issueLabel: vi.fn().mockReturnValue("#42"),
       branchName: vi.fn().mockReturnValue("feat/issue-42"),
       generatePrompt: vi.fn().mockResolvedValue("prompt"),
@@ -968,6 +984,47 @@ describe("enrichSessionsMetadata", () => {
     expect(dashboard.issueUrl).toBe(`${urlBase}-42`);
     expect(dashboard.issueLabel).toBe("#42");
     expect(dashboard.issueTitle).toBe("Fix auth bug");
+  });
+
+  it("preserves URL-shaped issueId without passing it through tracker.issueUrl", async () => {
+    const tracker = mockTracker("Fix auth bug");
+    const agent = mockAgent("Implementing auth fix");
+    const registry = mockRegistry(tracker, agent);
+    const originalUrl = "https://github.com/acme/repo/issues/99";
+    const core = createCoreSession({ issueId: originalUrl });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+
+    expect(dashboard.issueUrl).toBe(originalUrl);
+    expect(tracker.issueUrl).not.toHaveBeenCalledWith(originalUrl, testProject);
+  });
+
+  it("does not create synthetic URLs for free-text issueId", async () => {
+    const tracker = mockTracker();
+    const agent = mockAgent();
+    const registry = mockRegistry(tracker, agent);
+    const core = createCoreSession({ issueId: "fix login bug" });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+
+    expect(dashboard.issueUrl).toBeNull();
+    expect(dashboard.issueLabel).toBeNull();
+    expect(tracker.getIssue).not.toHaveBeenCalled();
+  });
+
+  it("keeps URL unset when tracker.issueUrl throws", async () => {
+    const tracker = mockTracker();
+    tracker.issueUrl = vi.fn().mockImplementation(() => {
+      throw new Error("bad template");
+    });
+    const dashboard = sessionToDashboard(createCoreSession({ issueId: "42" }));
+
+    enrichSessionIssue(dashboard, tracker, testProject);
+
+    expect(dashboard.issueUrl).toBeNull();
+    expect(dashboard.issueLabel).toBeNull();
   });
 
   it("starts issue-title fetches before agent summaries finish", async () => {
