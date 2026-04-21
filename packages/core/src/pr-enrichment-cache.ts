@@ -20,7 +20,6 @@ type Observer = ProjectObserver;
 
 export interface PREnrichmentCache {
   get(key: string): PREnrichmentData | undefined;
-  clear(): void;
   populate(sessions: Session[]): Promise<void>;
 }
 
@@ -138,7 +137,6 @@ export function createPREnrichmentCache(deps: PREnrichmentCacheDeps): PREnrichme
 
   return {
     get: (key) => cache.get(key),
-    clear: () => cache.clear(),
     populate,
   };
 }

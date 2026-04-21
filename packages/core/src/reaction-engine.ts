@@ -45,7 +45,9 @@ export interface ReactionEngineDeps {
 
 export function createReactionEngine(deps: ReactionEngineDeps): ReactionEngine {
   const { config, sessionManager, notifyHuman } = deps;
-  const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  // Nested so we can prune/clear by sessionId without parsing a compound key —
+  // SessionId is an unconstrained string and could contain ":".
+  const reactionTrackers = new Map<SessionId, Map<string, ReactionTracker>>();
 
   async function executeReaction(
     sessionId: SessionId,
@@ -53,12 +55,15 @@ export function createReactionEngine(deps: ReactionEngineDeps): ReactionEngine {
     reactionKey: string,
     reactionConfig: ReactionConfig,
   ): Promise<ReactionResult> {
-    const trackerKey = `${sessionId}:${reactionKey}`;
-    let tracker = reactionTrackers.get(trackerKey);
-
+    let sessionTrackers = reactionTrackers.get(sessionId);
+    if (!sessionTrackers) {
+      sessionTrackers = new Map();
+      reactionTrackers.set(sessionId, sessionTrackers);
+    }
+    let tracker = sessionTrackers.get(reactionKey);
     if (!tracker) {
       tracker = { attempts: 0, firstTriggered: new Date() };
-      reactionTrackers.set(trackerKey, tracker);
+      sessionTrackers.set(reactionKey, tracker);
     }
 
     // Increment attempts before checking escalation
@@ -171,7 +176,12 @@ export function createReactionEngine(deps: ReactionEngineDeps): ReactionEngine {
   }
 
   function clearTracker(sessionId: SessionId, reactionKey: string): void {
-    reactionTrackers.delete(`${sessionId}:${reactionKey}`);
+    const sessionTrackers = reactionTrackers.get(sessionId);
+    if (!sessionTrackers) return;
+    sessionTrackers.delete(reactionKey);
+    if (sessionTrackers.size === 0) {
+      reactionTrackers.delete(sessionId);
+    }
   }
 
   function getReactionConfigForSession(
@@ -188,10 +198,9 @@ export function createReactionEngine(deps: ReactionEngineDeps): ReactionEngine {
   }
 
   function pruneTrackers(currentSessionIds: Set<SessionId>): void {
-    for (const trackerKey of reactionTrackers.keys()) {
-      const sessionId = trackerKey.split(":")[0];
-      if (sessionId && !currentSessionIds.has(sessionId)) {
-        reactionTrackers.delete(trackerKey);
+    for (const sessionId of reactionTrackers.keys()) {
+      if (!currentSessionIds.has(sessionId)) {
+        reactionTrackers.delete(sessionId);
       }
     }
   }

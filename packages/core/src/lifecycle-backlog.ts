@@ -50,8 +50,6 @@ export interface BacklogDispatchers {
   maybeDispatchMergeConflicts(session: Session, newStatus: SessionStatus): Promise<void>;
   /** Drop throttle entries for sessions no longer present. */
   pruneReviewBacklogThrottle(currentSessionIds: Set<string>): void;
-  /** Clear throttle entry for a single session. */
-  clearReviewBacklogThrottle(sessionId: string): void;
 }
 
 export interface BacklogDispatchersDeps {
@@ -537,15 +535,10 @@ export function createBacklogDispatchers(deps: BacklogDispatchersDeps): BacklogD
     }
   }
 
-  function clearReviewBacklogThrottle(sessionId: string): void {
-    lastReviewBacklogCheckAt.delete(sessionId);
-  }
-
   return {
     maybeDispatchReviewBacklog,
     maybeDispatchCIFailureDetails,
     maybeDispatchMergeConflicts,
     pruneReviewBacklogThrottle,
-    clearReviewBacklogThrottle,
   };
 }
