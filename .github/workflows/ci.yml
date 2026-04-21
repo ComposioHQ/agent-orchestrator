@@ -56,6 +56,21 @@ jobs:
       - run: pnpm -r --filter '!@aoagents/ao-web' build
       - run: pnpm test
 
+  css-tokens:
+    name: CSS Tokens (warn-only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Warn-only: report dead/duplicate design tokens in globals.css without
+      # failing the build. Flip to --strict once the baseline is clean.
+      # See packages/web/scripts/check-css-tokens.mjs and #1431.
+      - name: Audit CSS design tokens
+        run: node packages/web/scripts/check-css-tokens.mjs
+        continue-on-error: true
+
   test-web:
     name: Test (Web)
     runs-on: ubuntu-latest

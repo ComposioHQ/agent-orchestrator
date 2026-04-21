@@ -21,6 +21,7 @@
     "start:all": "node dist-server/start-all.js",
     "dev:optimized": "rimraf .next dist-server && next build && tsc -p tsconfig.server.json && node dist-server/start-all.js",
     "typecheck": "tsc --noEmit",
+    "lint:css-tokens": "node scripts/check-css-tokens.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rimraf .next dist-server",
