@@ -1903,10 +1903,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     if (existingLifecycle?.session.state === "terminated") {
       // Lifecycle says terminated but metadata is still in active dir — finish
       // the archive and return alreadyTerminated so the caller logs a no-op.
-      try {
-        deleteMetadata(sessionsDir, sessionId, true);
-      } catch {
-        // Already archived by a racing caller.
+      // Skip archiving when preserveSession is set (the session was intentionally
+      // kept in the active dir by a prior preserveSession kill).
+      if (!options?.preserveSession) {
+        try {
+          deleteMetadata(sessionsDir, sessionId, true);
+        } catch {
+          // Already archived by a racing caller.
+        }
       }
       return { cleaned: false, alreadyTerminated: true };
     }
@@ -1934,7 +1938,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     const worktree = raw["worktree"];
-    if (worktree && shouldDestroyWorkspacePath(project, projectId, worktree)) {
+    if (worktree && !options?.preserveSession && shouldDestroyWorkspacePath(project, projectId, worktree)) {
       const workspacePlugin = project
         ? resolvePlugins(project).workspace
         : registry.get<Workspace>("workspace", config.defaults.workspace);
@@ -1985,10 +1989,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       ...lifecycleMetadataUpdates(raw, terminatedLifecycle),
     });
 
-    // Archive metadata
-    deleteMetadata(sessionsDir, sessionId, true);
-    if (didPurgeOpenCodeSession) {
-      markArchivedOpenCodeCleanup(sessionsDir, sessionId);
+    // Archive metadata — skip when preserveSession is set so the session
+    // remains discoverable by sm.list() on the next `ao start`.
+    if (!options?.preserveSession) {
+      deleteMetadata(sessionsDir, sessionId, true);
+      if (didPurgeOpenCodeSession) {
+        markArchivedOpenCodeCleanup(sessionsDir, sessionId);
+      }
     }
     invalidateCache();
     return { cleaned: true, alreadyTerminated: false };

@@ -1608,6 +1608,11 @@ export interface KillResult {
 export interface KillOptions {
   purgeOpenCode?: boolean;
   reason?: LifecycleKillReason;
+  /** When true, destroy only the runtime — keep metadata in the active
+   *  sessions directory (no archiving) and preserve the workspace on disk.
+   *  Used by `ao stop` for orchestrator sessions so the next `ao start`
+   *  can discover the session via `sm.list()` and restore it. */
+  preserveSession?: boolean;
 }
 
 /** Session manager — CRUD for sessions */

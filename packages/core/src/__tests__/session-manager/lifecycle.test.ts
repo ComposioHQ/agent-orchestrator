@@ -67,6 +67,35 @@ describe("kill", () => {
     expect(readMetadata(sessionsDir, "app-1")).toBeNull(); // archived + deleted
   });
 
+  it("preserveSession destroys runtime but keeps metadata and workspace", async () => {
+    const managedWorktree = join(
+      getWorktreesDir(config.configPath, config.projects["my-app"]!.path),
+      "app-1",
+    );
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: managedWorktree,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const result = await sm.kill("app-1", { preserveSession: true });
+
+    expect(result).toEqual({ cleaned: true, alreadyTerminated: false });
+    // Runtime destroyed
+    expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
+    // Workspace NOT destroyed
+    expect(mockWorkspace.destroy).not.toHaveBeenCalled();
+    // Metadata still in active dir (not archived)
+    const meta = readMetadata(sessionsDir, "app-1");
+    expect(meta).not.toBeNull();
+    const lifecycle = JSON.parse(meta!["statePayload"]!);
+    expect(lifecycle.session.state).toBe("terminated");
+    expect(lifecycle.runtime.state).toBe("missing");
+  });
+
   it("does not destroy workspace paths outside managed roots", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp/ws",

@@ -1703,7 +1703,7 @@ export function registerStop(program: Command): void {
           if (orchestratorToKill) {
             const spinner = ora("Stopping orchestrator session").start();
             const purgeOpenCode = opts?.purgeSession === true;
-            await sm.kill(orchestratorToKill.id, { purgeOpenCode });
+            await sm.kill(orchestratorToKill.id, { purgeOpenCode, preserveSession: true });
             spinner.succeed(`Orchestrator session stopped (${orchestratorToKill.id})`);
             // Also log to console.log so the killed id is visible in non-TTY callers
             // (CI, scripts) and in test capture, since spinner output is suppressed.
