@@ -21,6 +21,7 @@ interface ProjectSidebarProps {
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   onMobileClose?: () => void;
+  onSpawnSession?: (projectId: string) => void;
 }
 
 type SessionDotLevel =
@@ -88,6 +89,7 @@ function ProjectSidebarInner({
   collapsed = false,
   onToggleCollapsed: _onToggleCollapsed,
   onMobileClose,
+  onSpawnSession,
 }: ProjectSidebarProps) {
   const router = useRouter();
   const isLoading = loading || sessions === null;
@@ -370,6 +372,21 @@ function ProjectSidebarInner({
                         <circle cx="6" cy="17" r="2" /><circle cx="12" cy="17" r="2" /><circle cx="18" cy="17" r="2" />
                       </svg>
                     </a>
+                  )}
+
+                  {/* New Session button */}
+                  {onSpawnSession && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onSpawnSession(project.id); }}
+                      className="project-sidebar__proj-action"
+                      aria-label={`New session in ${project.name}`}
+                      title="New Session"
+                    >
+                      <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path d="M12 5v14M5 12h14" />
+                      </svg>
+                    </button>
                   )}
                 </div>
 

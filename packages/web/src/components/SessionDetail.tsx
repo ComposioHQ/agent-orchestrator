@@ -19,6 +19,7 @@ import { SidebarContext } from "./workspace/SidebarContext";
 
 import { ProjectSidebar } from "./ProjectSidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
+import { SpawnSessionModal } from "./SpawnSessionModal";
 
 const DirectTerminal = dynamic(
   () => import("./DirectTerminal").then((m) => ({ default: m.DirectTerminal })),
@@ -377,6 +378,8 @@ export function SessionDetail({
   const startFullscreen = searchParams.get("fullscreen") === "true";
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [spawnOpen, setSpawnOpen] = useState(false);
+  const [spawnProjectId, setSpawnProjectId] = useState<string | undefined>(undefined);
   const [showTerminal, setShowTerminal] = useState(false);
   const pr = session.pr;
   const terminalEnded = TERMINAL_STATUSES.has(session.status);
@@ -471,6 +474,7 @@ export function SessionDetail({
   }, [isMobile]);
 
   return (
+    <>
     <SidebarContext.Provider value={{ onToggleSidebar: handleToggleSidebar, mobileSidebarOpen }}>
     <div className="dashboard-app-shell">
       <header className="dashboard-app-header">
@@ -657,6 +661,10 @@ export function SessionDetail({
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
               onMobileClose={() => setMobileSidebarOpen(false)}
+              onSpawnSession={(pid) => {
+                setSpawnProjectId(pid);
+                setSpawnOpen(true);
+              }}
             />
           </div>
         ) : null}
@@ -715,6 +723,14 @@ export function SessionDetail({
       />
     </div>
     </SidebarContext.Provider>
+    {spawnProjectId ? (
+      <SpawnSessionModal
+        projectId={spawnProjectId}
+        open={spawnOpen}
+        onClose={() => { setSpawnOpen(false); setSpawnProjectId(undefined); }}
+      />
+    ) : null}
+    </>
   );
 }
 
