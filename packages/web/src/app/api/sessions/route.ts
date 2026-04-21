@@ -77,13 +77,16 @@ export async function GET(request: Request) {
     const projectFilter = searchParams.get("project");
     const activeOnly = searchParams.get("active") === "true";
     const orchestratorOnly = searchParams.get("orchestratorOnly") === "true";
+    const fresh = searchParams.get("fresh") === "true";
 
     const { config, registry, sessionManager } = await getServices();
     const requestedProjectId =
       projectFilter && projectFilter !== "all" && config.projects[projectFilter]
         ? projectFilter
         : undefined;
-    const coreSessions = await sessionManager.listCached(requestedProjectId);
+    const coreSessions = fresh
+      ? await sessionManager.list(requestedProjectId)
+      : await sessionManager.listCached(requestedProjectId);
     const visibleSessions = filterProjectSessions(coreSessions, projectFilter, config.projects);
     const orchestrators = requestedProjectId
       ? listPreferredProjectOrchestrators(visibleSessions, config.projects)
@@ -101,7 +104,7 @@ export async function GET(request: Request) {
         startedAt,
         outcome: "success",
         statusCode: 200,
-        data: { orchestratorOnly: true, orchestratorCount: orchestrators.length },
+        data: { orchestratorOnly: true, orchestratorCount: orchestrators.length, fresh },
       });
 
       return jsonWithCorrelation(
@@ -175,7 +178,7 @@ export async function GET(request: Request) {
       startedAt,
       outcome: "success",
       statusCode: 200,
-      data: { sessionCount: dashboardSessions.length, activeOnly },
+      data: { sessionCount: dashboardSessions.length, activeOnly, fresh },
     });
 
     return jsonWithCorrelation(

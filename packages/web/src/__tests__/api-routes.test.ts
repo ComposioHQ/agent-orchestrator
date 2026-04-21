@@ -336,6 +336,24 @@ describe("API Routes", () => {
       expect(mockSessionManager.listCached).toHaveBeenCalledWith("docs-app");
     });
 
+    it("uses the live session list when fresh=true is requested", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        async (projectId?: string) =>
+          multiProjectSessions.filter((session) => !projectId || session.projectId === projectId),
+      );
+
+      const res = await sessionsGET(
+        makeRequest("http://localhost:3000/api/sessions?project=docs-app&fresh=true"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.orchestratorId).toBe("docs-orchestrator");
+      expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
+      expect(mockSessionManager.list).toHaveBeenCalledWith("docs-app");
+      expect(mockSessionManager.listCached).not.toHaveBeenCalledWith("docs-app");
+    });
+
     it("prefers the most recently active live orchestrator for project-scoped worker navigation", async () => {
       const deadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T11:00:00.000Z"));
       deadLifecycle.session.state = "terminated";

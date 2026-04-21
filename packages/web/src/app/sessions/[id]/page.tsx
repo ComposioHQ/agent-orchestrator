@@ -324,8 +324,8 @@ export default function SessionPage() {
     fetchingProjectSessionsRef.current = true;
     try {
       const query = isOrchestrator
-        ? `/api/sessions?project=${encodeURIComponent(projectId)}`
-        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true`;
+        ? `/api/sessions?project=${encodeURIComponent(projectId)}&fresh=true`
+        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true&fresh=true`;
       const res = await fetch(query);
       if (!res.ok) {
         console.error("Failed to fetch project sessions for", projectId, new Error(`HTTP ${res.status}`));
@@ -374,7 +374,7 @@ export default function SessionPage() {
     if (fetchingSidebarRef.current) return;
     fetchingSidebarRef.current = true;
     try {
-      const res = await fetch("/api/sessions");
+      const res = await fetch("/api/sessions?fresh=true");
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
