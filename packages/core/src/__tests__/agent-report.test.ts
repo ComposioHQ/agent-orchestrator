@@ -167,13 +167,18 @@ describe("validateAgentReportTransition", () => {
     expect(validateAgentReportTransition(lifecycle, "needs_input").ok).toBe(false);
   });
 
-  it("rejects reports on merged or closed PRs", () => {
+  it("rejects reports on merged PRs", () => {
     const lifecycle = createInitialCanonicalLifecycle("worker");
     lifecycle.pr.state = "merged";
     expect(validateAgentReportTransition(lifecycle, "working").ok).toBe(false);
+  });
 
+  it("rejects non-PR reports on closed PRs but allows new PR workflow reports", () => {
+    const lifecycle = createInitialCanonicalLifecycle("worker");
     lifecycle.pr.state = "closed";
     expect(validateAgentReportTransition(lifecycle, "working").ok).toBe(false);
+    expect(validateAgentReportTransition(lifecycle, "pr_created").ok).toBe(true);
+    expect(validateAgentReportTransition(lifecycle, "ready_for_review").ok).toBe(true);
   });
 
   it("rejects reports when runtime is missing or exited", () => {
@@ -264,6 +269,49 @@ describe("applyAgentReport", () => {
     expect(payload.pr.reason).toBe("in_progress");
     expect(payload.pr.number).toBe(42);
     expect(payload.pr.url).toBe("https://github.com/test/repo/pull/42");
+  });
+
+  it("replaces a closed PR with a newly reported PR", () => {
+    const closedAt = "2025-01-02T09:30:00.000Z";
+    const lifecycle = createInitialCanonicalLifecycle("worker");
+    lifecycle.session.state = "idle";
+    lifecycle.session.reason = "pr_closed_waiting_decision";
+    lifecycle.session.startedAt = "2024-12-01T00:00:00.000Z";
+    lifecycle.session.lastTransitionAt = closedAt;
+    lifecycle.pr.state = "closed";
+    lifecycle.pr.reason = "closed_unmerged";
+    lifecycle.pr.number = 42;
+    lifecycle.pr.url = "https://github.com/test/repo/pull/42";
+    lifecycle.pr.lastObservedAt = closedAt;
+    lifecycle.runtime.state = "alive";
+    lifecycle.runtime.reason = "process_running";
+    lifecycle.runtime.lastObservedAt = closedAt;
+    writeCanonicalLifecycle(dataDir, sessionId, lifecycle);
+
+    const now = new Date("2025-01-02T10:00:00.000Z");
+    const result = applyAgentReport(dataDir, sessionId, {
+      state: "pr_created",
+      prUrl: "https://github.com/test/repo/pull/55",
+      now,
+    });
+
+    expect(result.legacyStatus).toBe("pr_open");
+    expect(result.report.prNumber).toBe(55);
+    expect(result.report.prUrl).toBe("https://github.com/test/repo/pull/55");
+
+    const meta = readMetadataRaw(dataDir, sessionId)!;
+    expect(meta["pr"]).toBe("https://github.com/test/repo/pull/55");
+    expect(meta[AGENT_REPORT_METADATA_KEYS.PR_URL]).toBe("https://github.com/test/repo/pull/55");
+    expect(meta[AGENT_REPORT_METADATA_KEYS.PR_NUMBER]).toBe("55");
+
+    const payload = JSON.parse(meta["statePayload"]);
+    expect(payload.session.state).toBe("idle");
+    expect(payload.session.reason).toBe("pr_created");
+    expect(payload.pr.state).toBe("open");
+    expect(payload.pr.reason).toBe("in_progress");
+    expect(payload.pr.number).toBe(55);
+    expect(payload.pr.url).toBe("https://github.com/test/repo/pull/55");
+    expect(payload.pr.lastObservedAt).toBe(now.toISOString());
   });
 
   it("does not invent an open PR without a URL or number", () => {

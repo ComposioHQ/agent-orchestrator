@@ -209,7 +209,7 @@ export interface AgentReportTransitionResult {
  */
 export function validateAgentReportTransition(
   lifecycle: CanonicalSessionLifecycle,
-  _next: AgentReportedState,
+  next: AgentReportedState,
 ): AgentReportTransitionResult {
   if (lifecycle.session.kind === "orchestrator") {
     return { ok: false, reason: "orchestrator sessions cannot self-report" };
@@ -222,8 +222,11 @@ export function validateAgentReportTransition(
   if (lifecycle.session.state === "done") {
     return { ok: false, reason: "session is already done" };
   }
-  if (lifecycle.pr.state === "merged" || lifecycle.pr.state === "closed") {
-    return { ok: false, reason: `PR already ${lifecycle.pr.state}` };
+  if (lifecycle.pr.state === "merged") {
+    return { ok: false, reason: "PR already merged" };
+  }
+  if (lifecycle.pr.state === "closed" && !isPRWorkflowReport(next)) {
+    return { ok: false, reason: "PR already closed" };
   }
   if (lifecycle.runtime.state === "missing" || lifecycle.runtime.state === "exited") {
     return { ok: false, reason: "runtime is not alive" };
