@@ -146,6 +146,23 @@ describe("getDashboardPageData fast path", () => {
     expect(pageData.dashboardLoadError).toBe("No agent-orchestrator.yaml found");
   });
 
+  it("applies attentionZones from config when getServices succeeds but sessionManager.list fails", async () => {
+    hoisted.getServicesMock.mockResolvedValue({
+      config: {
+        projects: { docs: { id: "docs" } },
+        dashboard: { attentionZones: "detailed" },
+      },
+      registry: { scm: "registry" },
+      sessionManager: { list: vi.fn().mockRejectedValue(new Error("list boom")) },
+    });
+
+    const pageData = await getDashboardPageData("docs");
+
+    expect(pageData.attentionZones).toBe("detailed");
+    expect(pageData.dashboardLoadError).toBe("list boom");
+    expect(pageData.sessions).toEqual([]);
+  });
+
   it("keeps the session list when PR enrichment fails", async () => {
     const core = { id: "session-pr", status: "working", pr: { number: 7 } };
     const dashboardSession = { id: "session-pr", pr: { state: "open", enriched: false } };

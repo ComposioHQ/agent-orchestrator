@@ -96,8 +96,13 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
     const services = await getServices();
     config = services.config;
     registry = services.registry;
-    allSessions = await services.sessionManager.list();
     pageData.attentionZones = config.dashboard?.attentionZones ?? DEFAULT_ATTENTION_ZONE_MODE;
+    try {
+      allSessions = await services.sessionManager.list();
+    } catch (listErr) {
+      pageData.dashboardLoadError = formatDashboardLoadError(listErr);
+      return pageData;
+    }
   } catch (err) {
     pageData.dashboardLoadError = formatDashboardLoadError(err);
     return pageData;
