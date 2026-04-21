@@ -27,12 +27,19 @@ interface State {
   connectionStatus: ConnectionStatus;
   /** Attention levels from the latest SSE snapshot (server-computed, includes PR state). */
   sseAttentionLevels: SSEAttentionMap;
+  /**
+   * True after a real success signal from the live path: HTTP 200 `/api/sessions` refresh,
+   * an SSE snapshot, or a mux snapshot — not inferred from session count (which can mislead
+   * when SSR failed or responses are stale).
+   */
+  liveSessionsResolved: boolean;
 }
 
 type Action =
   | { type: "reset"; sessions: DashboardSession[]; sseAttentionLevels?: SSEAttentionMap }
   | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] }
-  | { type: "setConnection"; status: ConnectionStatus };
+  | { type: "setConnection"; status: ConnectionStatus }
+  | { type: "markLiveSessionsResolved" };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -44,6 +51,9 @@ function reducer(state: State, action: Action): State {
           ? { sseAttentionLevels: action.sseAttentionLevels }
           : {}),
       };
+    case "markLiveSessionsResolved":
+      if (state.liveSessionsResolved) return state;
+      return { ...state, liveSessionsResolved: true };
     case "setConnection":
       return { ...state, connectionStatus: action.status };
     case "snapshot": {
@@ -127,6 +137,7 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
     sessions: initialSessions,
     connectionStatus: "connected" as ConnectionStatus,
     sseAttentionLevels: initialAttentionLevels ?? ({} as SSEAttentionMap),
+    liveSessionsResolved: false,
   });
   const sessionsRef = useRef(state.sessions);
   const initialAttentionLevelsRef = useRef(initialAttentionLevels);
@@ -179,7 +190,7 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
         ? `/api/sessions?project=${encodeURIComponent(project)}`
         : "/api/sessions";
 
-      void fetch(sessionsUrl, { signal: refreshController.signal })
+      void fetch(sessionsUrl, { signal: refreshController.signal, cache: "no-store" })
         .then((res) => (res.ok ? res.json() : null))
         .then(
           (updated: { sessions?: DashboardSession[] } | null) => {
@@ -192,6 +203,7 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
             }
 
             lastRefreshAtRef.current = Date.now();
+            dispatch({ type: "markLiveSessionsResolved" });
             const sseAttentionLevels = Object.fromEntries(
               updated.sessions.map((s) => [s.id, getAttentionLevel(s, attentionZones)]),
             ) as SSEAttentionMap;
@@ -249,6 +261,7 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
     // knows. So if we see ANY id we don't have, trigger a refresh to find out.
     const hasUnknownIds = muxSessions.some((s) => !currentIds.has(s.id));
 
+    dispatch({ type: "markLiveSessionsResolved" });
     dispatch({ type: "snapshot", patches: scopedMuxSessions as SSESnapshotEvent["sessions"] });
 
     const currentMembershipKey = createMembershipKey(sessionsRef.current);
@@ -315,6 +328,7 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
         const data = JSON.parse(event.data as string) as { type: string };
         if (data.type === "snapshot") {
           const snapshot = data as SSESnapshotEvent;
+          dispatch({ type: "markLiveSessionsResolved" });
           dispatch({ type: "snapshot", patches: snapshot.sessions });
 
           const currentMembershipKey = createMembershipKey(sessionsRef.current);

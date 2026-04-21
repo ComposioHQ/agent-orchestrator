@@ -163,4 +163,54 @@ describe("getDashboardPageData fast path", () => {
     expect(pageData.orchestrators).toEqual(orchestrators);
     expect(pageData.sessions).toEqual([dashboard]);
   });
+
+  it("surfaces getServices failure as dashboardLoadError instead of a silent empty list", async () => {
+    hoisted.getServicesMock.mockRejectedValue(new Error("No agent-orchestrator.yaml found"));
+
+    const pageData = await getDashboardPageData("all");
+
+    expect(pageData.sessions).toEqual([]);
+    expect(pageData.orchestrators).toEqual([]);
+    expect(pageData.dashboardLoadError).toBe("No agent-orchestrator.yaml found");
+  });
+
+  it("applies attentionZones from config when getServices succeeds but sessionManager.list fails", async () => {
+    hoisted.getServicesMock.mockResolvedValue({
+      config: {
+        projects: { docs: { id: "docs" } },
+        dashboard: { attentionZones: "detailed" },
+      },
+      registry: { scm: "registry" },
+      sessionManager: { list: vi.fn().mockRejectedValue(new Error("list boom")) },
+    });
+
+    const pageData = await getDashboardPageData("docs");
+
+    expect(pageData.attentionZones).toBe("detailed");
+    expect(pageData.dashboardLoadError).toBe("list boom");
+    expect(pageData.sessions).toEqual([]);
+  });
+
+  it("keeps the session list when PR enrichment fails", async () => {
+    const core = { id: "session-pr", status: "working", pr: { number: 7 } };
+    const dashboardSession = { id: "session-pr", pr: { state: "open", enriched: false } };
+
+    hoisted.getServicesMock.mockResolvedValue({
+      config: { projects: { docs: { id: "docs" } } },
+      registry: { scm: "registry" },
+      sessionManager: { list: vi.fn().mockResolvedValue([core]) },
+    });
+    hoisted.filterProjectSessionsMock.mockReturnValue([core]);
+    hoisted.filterWorkerSessionsMock.mockReturnValue([core]);
+    hoisted.sessionToDashboardMock.mockReturnValue(dashboardSession);
+    hoisted.resolveProjectMock.mockReturnValue({ id: "docs" });
+    hoisted.getSCMMock.mockReturnValue({ provider: "github" });
+    hoisted.enrichSessionPRMock.mockRejectedValue(new Error("cache read failed"));
+
+    const pageData = await getDashboardPageData("docs");
+
+    expect(pageData.dashboardLoadError).toBeUndefined();
+    expect(pageData.sessions).toEqual([dashboardSession]);
+    expect(pageData.orchestrators).toEqual([{ id: "orch-1", projectId: "docs", projectName: "Docs" }]);
+  });
 });

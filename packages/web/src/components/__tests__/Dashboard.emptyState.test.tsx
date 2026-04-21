@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "../Dashboard";
 
+const eventSourceConstructorMock = vi.hoisted(() => vi.fn());
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/",
@@ -14,8 +16,9 @@ beforeEach(() => {
     onerror: null,
     close: vi.fn(),
   };
-  const eventSourceConstructor = vi.fn(() => eventSourceMock as unknown as EventSource);
-  global.EventSource = Object.assign(eventSourceConstructor, {
+  eventSourceConstructorMock.mockReset();
+  eventSourceConstructorMock.mockImplementation(() => eventSourceMock as unknown as EventSource);
+  global.EventSource = Object.assign(eventSourceConstructorMock, {
     CONNECTING: 0,
     OPEN: 1,
     CLOSED: 2,
@@ -92,6 +95,19 @@ describe("Dashboard empty state", () => {
       />,
     );
     expect(queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
+  });
+
+  it("shows load error banner instead of empty state when SSR services failed", () => {
+    render(
+      <Dashboard
+        initialSessions={[]}
+        dashboardLoadError="No agent-orchestrator.yaml found"
+      />,
+    );
+    expect(screen.queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Orchestrator failed to load");
+    expect(screen.getByRole("alert")).toHaveTextContent("No agent-orchestrator.yaml found");
+    expect(eventSourceConstructorMock).toHaveBeenCalledTimes(1);
   });
 
   it("shows empty state when only done sessions exist", () => {
