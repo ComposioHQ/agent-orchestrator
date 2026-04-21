@@ -1270,6 +1270,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       issueContext,
       userPrompt: spawnConfig.prompt,
     });
+    const shouldUsePostLaunchPromptDelivery =
+      plugins.agent.promptDelivery === "post-launch" || plugins.agent.name === "opencode";
+    const promptForLaunchCommand = plugins.agent.name === "opencode" ? undefined : composedPrompt;
 
     // Get agent launch config and create runtime — clean up workspace on failure
     const opencodeIssueSessionStrategy = project.opencodeIssueSessionStrategy ?? "reuse";
@@ -1291,7 +1294,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
       },
       issueId: spawnConfig.issueId,
-      prompt: composedPrompt,
+      prompt: promptForLaunchCommand,
       permissions: selection.permissions,
       model: selection.model,
       subagent: spawnConfig.subagent ?? selection.subagent,
@@ -1436,8 +1439,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // exits after -p, so we send the prompt after it starts in interactive mode).
     // This is intentionally outside the try/catch above — a prompt delivery failure
     // should NOT destroy the session. The agent is running; user can retry with `ao send`.
+    const promptForPostLaunch = plugins.agent.name === "opencode" ? composedPrompt : agentLaunchConfig.prompt;
     let promptDelivered = false;
-    if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
+    if (shouldUsePostLaunchPromptDelivery && promptForPostLaunch) {
       const maxRetries = 3;
       const baseDelayMs = 3_000;
       let lastError: Error | undefined;
@@ -1447,7 +1451,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           // Wait for agent to start and be ready for input
           // Use exponential backoff: 3s, 6s, 9s between attempts
           await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
-          await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
+          await plugins.runtime.sendMessage(handle, promptForPostLaunch);
           promptDelivered = true;
           break;
         } catch (err) {
