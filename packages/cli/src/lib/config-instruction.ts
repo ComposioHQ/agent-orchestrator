@@ -2,12 +2,14 @@
  * Returns the complete AO config schema as formatted text.
  * Used by `ao config-help` and injected into orchestrator system prompts.
  */
+import { CONFIG_SCHEMA_URL } from "@aoagents/ao-core";
+
 export function getConfigInstruction(): string {
   return `
 # Agent Orchestrator Config Reference
 # File: agent-orchestrator.yaml
 
-$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
+$schema: ${CONFIG_SCHEMA_URL}
 
 # ── Top-level settings ──────────────────────────────────────────────
 # Runtime data paths are auto-derived from the config location under:

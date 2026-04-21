@@ -16,14 +16,17 @@ export const CONFIG_SCHEMA_URL =
 export function withConfigSchema<T extends Record<string, unknown>>(
   config: T,
 ): T & { $schema: string } {
+  const { $schema: providedSchema, ...rest } = config as {
+    $schema?: unknown;
+  };
   const schema =
-    typeof config["$schema"] === "string" && config["$schema"].trim().length > 0
-      ? config["$schema"]
+    typeof providedSchema === "string" && providedSchema.trim().length > 0
+      ? providedSchema
       : CONFIG_SCHEMA_URL;
 
   return {
     $schema: schema,
-    ...config,
+    ...rest,
   } as T & { $schema: string };
 }
 

@@ -330,7 +330,8 @@ function writeOpenClawConfig(
   }
 
   // Update the document tree from the modified plain object while preserving comments
-  if (doc.get("$schema") === undefined) {
+  const currentSchema = doc.get("$schema");
+  if (!(typeof currentSchema === "string" && currentSchema.trim().length > 0)) {
     doc.set("$schema", CONFIG_SCHEMA_URL);
   }
   doc.setIn(["notifiers"], rawConfig.notifiers);

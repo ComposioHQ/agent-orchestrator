@@ -7,6 +7,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  withConfigSchema,
+  CONFIG_SCHEMA_URL,
   isRepoUrl,
   parseRepoUrl,
   detectScmPlatform,
@@ -18,6 +20,25 @@ import {
   resolveCloneTarget,
   sanitizeProjectId,
 } from "../config-generator.js";
+
+describe("withConfigSchema", () => {
+  it("uses canonical schema URL for missing schema", () => {
+    const config = withConfigSchema({ port: 3000 });
+    expect(config.$schema).toBe(CONFIG_SCHEMA_URL);
+    expect(config.port).toBe(3000);
+  });
+
+  it("treats blank and whitespace schema values as missing", () => {
+    expect(withConfigSchema({ "$schema": "" }).$schema).toBe(CONFIG_SCHEMA_URL);
+    expect(withConfigSchema({ "$schema": "   " }).$schema).toBe(CONFIG_SCHEMA_URL);
+  });
+
+  it("preserves non-empty schema values", () => {
+    const custom = "https://example.com/schema.json";
+    const config = withConfigSchema({ "$schema": custom });
+    expect(config.$schema).toBe(custom);
+  });
+});
 
 // =============================================================================
 // isRepoUrl
