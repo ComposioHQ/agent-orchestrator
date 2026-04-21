@@ -1673,7 +1673,7 @@ describe("spawn", () => {
     function makeDeadOrchestratorLifecycle(timestamp: string) {
       const lifecycle = createInitialCanonicalLifecycle("orchestrator", new Date(timestamp));
       lifecycle.session.state = "terminated";
-      lifecycle.session.reason = "runtime_missing";
+      lifecycle.session.reason = "runtime_lost";
       lifecycle.session.startedAt = timestamp;
       lifecycle.session.terminatedAt = timestamp;
       lifecycle.session.lastTransitionAt = timestamp;
