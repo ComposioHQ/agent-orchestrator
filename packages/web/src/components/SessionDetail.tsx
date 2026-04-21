@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   type DashboardSession,
@@ -16,17 +16,22 @@ import { CI_STATUS } from "@aoagents/ao-core/types";
 import { cn } from "@/lib/cn";
 import dynamic from "next/dynamic";
 import { getSessionTitle } from "@/lib/format";
+import { buildGitHubCompareUrl } from "@/lib/github-links";
 import type { ProjectInfo } from "@/lib/project-name";
+import { SidebarContext } from "./workspace/SidebarContext";
+import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 
-import { MobileBottomNav } from "./MobileBottomNav";
 import { ProjectSidebar } from "./ProjectSidebar";
+import { MobileBottomNav } from "./MobileBottomNav";
 
 const DirectTerminal = dynamic(
   () => import("./DirectTerminal").then((m) => ({ default: m.DirectTerminal })),
   {
     ssr: false,
+    // h-full (not a fixed 440px) so the skeleton matches the eventual terminal's
+    // flex-1 sizing and the layout stays viewport-driven during lazy load.
     loading: () => (
-      <div className="h-[440px] animate-pulse rounded bg-[var(--color-bg-primary)]" />
+      <div className="h-full w-full animate-pulse rounded bg-[var(--color-bg-primary)]" />
     ),
   },
 );
@@ -46,45 +51,14 @@ interface SessionDetailProps {
   orchestratorZones?: OrchestratorZones;
   projectOrchestratorId?: string | null;
   projects?: ProjectInfo[];
-  sidebarSessions?: DashboardSession[];
+  sidebarSessions?: DashboardSession[] | null;
+  sidebarLoading?: boolean;
+  sidebarError?: boolean;
+  onRetrySidebar?: () => void;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function formatTimeCompact(isoDate: string | null): string {
-  if (!isoDate) return "just now";
-  const ts = new Date(isoDate).getTime();
-  if (!Number.isFinite(ts)) return "just now";
-  const diffMs = Date.now() - ts;
-  if (diffMs <= 0) return "just now";
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return `${Math.floor(diffHours / 24)}d ago`;
-}
-
-function getCiDotBg(pr: DashboardPR): string {
-  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "var(--color-text-tertiary)";
-  if (pr.ciStatus === "passing") return "var(--color-accent-green)";
-  if (pr.ciStatus === "failing") return "var(--color-accent-red)";
-  return "var(--color-status-attention)";
-}
-
-function getCiShortLabel(pr: DashboardPR): string {
-  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "CI";
-  if (pr.ciStatus === "passing") return "CI passing";
-  if (pr.ciStatus === "failing") return "CI failed";
-  return "CI pending";
-}
-
-function getReviewShortLabel(pr: DashboardPR): string {
-  if (isPRRateLimited(pr) || isPRUnenriched(pr)) return "";
-  if (pr.reviewDecision === "approved") return "approved";
-  if (pr.reviewDecision === "changes_requested") return "changes";
-  return "review";
-}
 
 const activityMeta: Record<string, { label: string; color: string }> = {
   active: { label: "Active", color: "var(--color-status-working)" },
@@ -113,31 +87,20 @@ function buildGitHubBranchUrl(pr: DashboardPR): string {
   return `https://github.com/${pr.owner}/${pr.repo}/tree/${pr.branch}`;
 }
 
-function activityStateClass(activityLabel: string): string {
-  const normalized = activityLabel.toLowerCase();
-  if (normalized === "active") return "session-detail-status-pill--active";
-  if (normalized === "ready") return "session-detail-status-pill--ready";
-  if (normalized === "idle") return "session-detail-status-pill--idle";
-  if (normalized === "waiting for input") return "session-detail-status-pill--waiting";
-  if (normalized === "blocked" || normalized === "exited") {
-    return "session-detail-status-pill--error";
-  }
-  return "session-detail-status-pill--neutral";
+function normalizeActivityLabelForClass(activityLabel: string): string {
+  return activityLabel.toLowerCase().replace(/\s+/g, "-");
 }
 
-function SessionTopStrip({
+function OrchestratorTopStrip({
   headline,
   crumbId,
   activityLabel,
   activityColor,
   branch,
   pr,
-  isOrchestrator = false,
   crumbHref,
   crumbLabel,
   rightSlot,
-  onKill,
-  onRestore,
 }: {
   headline: string;
   crumbId: string;
@@ -145,12 +108,9 @@ function SessionTopStrip({
   activityColor: string;
   branch: string | null;
   pr: DashboardPR | null;
-  isOrchestrator?: boolean;
   crumbHref: string;
   crumbLabel: string;
   rightSlot?: ReactNode;
-  onKill?: () => void;
-  onRestore?: () => void;
 }) {
   return (
     <div className="session-detail-top-strip">
@@ -173,9 +133,7 @@ function SessionTopStrip({
         </a>
         <span className="session-detail-crumb-sep">/</span>
         <span className="session-detail-crumb-id">{crumbId}</span>
-        {isOrchestrator ? (
-          <span className="session-detail-mode-badge">orchestrator</span>
-        ) : null}
+        <span className="session-detail-mode-badge">orchestrator</span>
       </div>
 
       {/* Identity strip */}
@@ -186,10 +144,7 @@ function SessionTopStrip({
           </h1>
           <div className="session-detail-identity__pills">
             <div
-              className={cn(
-                "session-detail-status-pill",
-                activityStateClass(activityLabel),
-              )}
+              className="session-detail-status-pill"
             >
               <span
                 className="session-detail-status-pill__dot"
@@ -239,40 +194,7 @@ function SessionTopStrip({
           <div className="session-detail-identity__actions session-detail-identity__actions--custom">
             {rightSlot}
           </div>
-        ) : (
-          <div className="session-detail-identity__actions">
-            {onRestore ? (
-              <button
-                type="button"
-                className="done-restore-btn"
-                onClick={onRestore}
-              >
-                <svg
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  viewBox="0 0 24 24"
-                  className="h-3 w-3"
-                >
-                  <polyline points="1 4 1 10 7 10" />
-                  <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                </svg>
-                Restore
-              </button>
-            ) : onKill ? (
-              <button
-                type="button"
-                className="session-detail-action-btn session-detail-action-btn--danger"
-                onClick={onKill}
-              >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                </svg>
-                Kill
-              </button>
-            ) : null}
-          </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -381,14 +303,13 @@ function _OrchestratorStatusStrip({
 
   return (
     <div className="mx-auto max-w-[1180px] px-5 pt-5 lg:px-8">
-      <SessionTopStrip
+      <OrchestratorTopStrip
         headline={headline}
         crumbId={headline}
         activityLabel={activityLabel}
         activityColor={activityColor}
         branch={branch}
         pr={pr}
-        isOrchestrator
         crumbHref={crumbHref}
         crumbLabel={crumbLabel}
         rightSlot={
@@ -451,11 +372,16 @@ export function SessionDetail({
   projectOrchestratorId = null,
   projects = [],
   sidebarSessions = [],
+  sidebarLoading = false,
+  sidebarError = false,
+  onRetrySidebar,
 }: SessionDetailProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const startFullscreen = searchParams.get("fullscreen") === "true";
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
   const pr = session.pr;
   const terminalEnded = TERMINAL_STATUSES.has(session.status);
@@ -466,12 +392,8 @@ export function SessionDetail({
   };
   const headline = getSessionTitle(session);
 
-  const accentColor = "var(--color-accent)";
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
 
-  const terminalHeight = isOrchestrator
-    ? "clamp(400px, 52vh, 620px)"
-    : "clamp(380px, 48vh, 560px)";
   const isOpenCodeSession = session.metadata["agent"] === "opencode";
   const opencodeSessionId =
     typeof session.metadata["opencodeSessionId"] === "string" &&
@@ -481,8 +403,7 @@ export function SessionDetail({
   const reloadCommand = opencodeSessionId
     ? `/exit\nopencode --session ${opencodeSessionId}\n`
     : undefined;
-  const dashboardHref = session.projectId ? `/?project=${encodeURIComponent(session.projectId)}` : "/";
-  const prsHref = session.projectId ? `/prs?project=${encodeURIComponent(session.projectId)}` : "/prs";
+  const dashboardHref = session.projectId ? projectDashboardPath(session.projectId) : "/";
   const crumbHref = dashboardHref;
   const crumbLabel = "Dashboard";
 
@@ -490,11 +411,15 @@ export function SessionDetail({
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/kill`, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      window.location.reload();
+      if (projectOrchestratorId) {
+        router.push(projectSessionPath(session.projectId, projectOrchestratorId));
+        return;
+      }
+      router.push(dashboardHref);
     } catch (err) {
       console.error("Failed to kill session:", err);
     }
-  }, [session.id]);
+  }, [dashboardHref, projectOrchestratorId, router, session.id, session.projectId]);
 
   const handleRestore = useCallback(async () => {
     try {
@@ -505,15 +430,38 @@ export function SessionDetail({
       console.error("Failed to restore session:", err);
     }
   }, [session.id]);
+
+  const allGreen = pr ? isPRMergeReady(pr) : false;
+  const [prPopoverOpen, setPrPopoverOpen] = useState(false);
+  const prPopoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!prPopoverOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (prPopoverRef.current && !prPopoverRef.current.contains(e.target as Node)) {
+        setPrPopoverOpen(false);
+      }
+    };
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPrPopoverOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("keydown", keyHandler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", keyHandler);
+    };
+  }, [prPopoverOpen]);
+
   const headerProjectLabel =
     projects.find((project) => project.id === session.projectId)?.name ?? session.projectId;
   const showHeaderProjectLabel =
     headerProjectLabel.trim().toLowerCase() !== "agent orchestrator";
   const orchestratorHref = useMemo(() => {
-    if (isOrchestrator) return `/sessions/${encodeURIComponent(session.id)}`;
+    if (isOrchestrator) return projectSessionPath(session.projectId, session.id);
     if (!projectOrchestratorId) return null;
-    return `/sessions/${encodeURIComponent(projectOrchestratorId)}`;
-  }, [isOrchestrator, projectOrchestratorId, session.id]);
+    return projectSessionPath(session.projectId, projectOrchestratorId);
+  }, [isOrchestrator, projectOrchestratorId, session.id, session.projectId]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setShowTerminal(true));
@@ -523,17 +471,30 @@ export function SessionDetail({
     };
   }, [session.id]);
 
-  if (!isMobile) {
-    return (
-      <div className="dashboard-app-shell">
-        <header className="dashboard-app-header">
-          {projects.length > 0 ? (
-            <button
-              type="button"
-              className="dashboard-app-sidebar-toggle"
-              onClick={() => setSidebarCollapsed((current) => !current)}
-              aria-label="Toggle sidebar"
-            >
+  const handleToggleSidebar = useCallback(() => {
+    if (isMobile) {
+      setMobileSidebarOpen((v) => !v);
+    } else {
+      setSidebarCollapsed((v) => !v);
+    }
+  }, [isMobile]);
+
+  return (
+    <SidebarContext.Provider value={{ onToggleSidebar: handleToggleSidebar, mobileSidebarOpen }}>
+    <div className="dashboard-app-shell">
+      <header className="dashboard-app-header">
+        {projects.length > 0 ? (
+          <button
+            type="button"
+            className="dashboard-app-sidebar-toggle"
+            onClick={handleToggleSidebar}
+            aria-label="Toggle sidebar"
+          >
+            {isMobile ? (
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            ) : (
               <svg
                 width="14"
                 height="14"
@@ -546,220 +507,223 @@ export function SessionDetail({
                 <rect x="3" y="3" width="18" height="18" rx="2" />
                 <path d="M9 3v18" />
               </svg>
-            </button>
-          ) : null}
-          <div className="dashboard-app-header__brand">
-            <span>Agent Orchestrator</span>
-          </div>
-          {showHeaderProjectLabel ? (
-            <>
-              <span className="dashboard-app-header__sep" aria-hidden="true" />
+            )}
+          </button>
+        ) : null}
+        <div className="dashboard-app-header__brand dashboard-app-header__brand--hide-mobile">
+          <span>Agent Orchestrator</span>
+        </div>
+        {/* Desktop sep (hidden on mobile since brand is hidden) */}
+        {showHeaderProjectLabel && (
+          <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />
+        )}
+        {/* Project name + pills: stacked column on mobile, inline on desktop.
+            On mobile the project name + session id share line 1 (so ao-N stays
+            visually bound to the project), pills stack below on line 2. */}
+        <div className="topbar-project-pills-group">
+          <div className="topbar-project-line">
+            {showHeaderProjectLabel && (
               <span className="dashboard-app-header__project">{headerProjectLabel}</span>
-            </>
-          ) : null}
-          <div className="dashboard-app-header__spacer" />
-          <div className="dashboard-app-header__actions">
-            {!isOrchestrator && orchestratorHref ? (
-              <a
-                href={orchestratorHref}
-                className="dashboard-app-btn dashboard-app-btn--amber"
-                aria-label="Orchestrator"
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
-                  <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
-                  <circle cx="6" cy="17" r="2" />
-                  <circle cx="12" cy="17" r="2" />
-                  <circle cx="18" cy="17" r="2" />
-                </svg>
-                Orchestrator
-              </a>
-            ) : null}
+            )}
+            {!isOrchestrator && (
+              <span className="dashboard-app-header__session-id topbar-mobile-only">
+                {session.id}
+              </span>
+            )}
           </div>
-        </header>
+          {!isOrchestrator && (
+            <div className="topbar-session-pills">
+              <div className={cn("topbar-status-pill", `topbar-status-pill--${normalizeActivityLabelForClass(activity.label)}`)}>
+                <span className="topbar-status-pill__dot" style={{ background: activity.color }} />
+                <span className="topbar-status-pill__label">{activity.label}</span>
+              </div>
+              {session.branch ? (
+                pr ? (
+                  <a
+                    href={buildGitHubBranchUrl(pr)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="topbar-branch-pill topbar-branch-pill--link"
+                  >
+                    {session.branch}
+                  </a>
+                ) : (
+                  <span className="topbar-branch-pill">{session.branch}</span>
+                )
+              ) : null}
+            </div>
+          )}
+        </div>
+        {/* Desktop-only session title + session id.
+            On mobile the session id lives next to the project name (above). */}
+        {!isOrchestrator && (
+          <>
+            <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />
+            <span className="dashboard-app-header__session-title topbar-desktop-only">{headline}</span>
+            <span className="dashboard-app-header__session-id topbar-desktop-only">{session.id}</span>
+          </>
+        )}
+        <div className="dashboard-app-header__spacer" />
+        <div className="dashboard-app-header__actions">
+          {pr ? (
+            <div className="topbar-pr-btn-wrap" ref={prPopoverRef}>
+              {/* Anchored to the actual PR URL so ctrl/cmd-click opens the PR on
+                  GitHub in a new tab. Plain click toggles the details popover. */}
+              <a
+                href={pr.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn("dashboard-app-btn topbar-pr-btn", prPopoverOpen && "topbar-pr-btn--open")}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                  e.preventDefault();
+                  setPrPopoverOpen((v) => !v);
+                }}
+                aria-expanded={prPopoverOpen}
+                aria-label={`PR #${pr.number}`}
+              >
+                <span className={cn(
+                  "topbar-pr-dot",
+                  allGreen
+                    ? "topbar-pr-dot--green"
+                    : (pr.ciStatus === CI_STATUS.FAILING || pr.reviewDecision === "changes_requested")
+                      ? "topbar-pr-dot--red"
+                      : "topbar-pr-dot--amber",
+                )} />
+                PR #{pr.number}
+                <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.5"
+                     viewBox="0 0 24 24" aria-hidden="true">
+                  <path d={prPopoverOpen ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
+                </svg>
+              </a>
 
-        <div
-          className={`dashboard-shell dashboard-shell--desktop${sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
-        >
-          {projects.length > 0 ? (
+              {prPopoverOpen && (
+                <div className="topbar-pr-popover">
+                  <SessionDetailPRCard pr={pr} sessionId={session.id} metadata={session.metadata} />
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          {/* Restore is available for any restorable session; Kill stays worker-only. */}
+          {isRestorable ? (
+            <button type="button" className="dashboard-app-btn" onClick={handleRestore}>
+              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <polyline points="1 4 1 10 7 10" />
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+              </svg>
+              <span className="topbar-btn-label">Restore</span>
+            </button>
+          ) : !isOrchestrator && !terminalEnded ? (
+              <button type="button" className="dashboard-app-btn dashboard-app-btn--danger" onClick={handleKill}>
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+                <span className="topbar-btn-label">Kill</span>
+              </button>
+          ) : null}
+
+          {!isOrchestrator && orchestratorHref ? (
+            <a
+              href={orchestratorHref}
+              className="dashboard-app-btn dashboard-app-btn--amber topbar-desktop-only"
+              aria-label="Orchestrator"
+            >
+              <svg
+                width="12"
+                height="12"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+                <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+                <circle cx="6" cy="17" r="2" />
+                <circle cx="12" cy="17" r="2" />
+                <circle cx="18" cy="17" r="2" />
+              </svg>
+              <span className="topbar-btn-label">Orchestrator</span>
+            </a>
+          ) : null}
+        </div>
+      </header>
+
+      <div
+        className={`dashboard-shell dashboard-shell--desktop${sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
+      >
+        {projects.length > 0 ? (
+          <div className={`sidebar-wrapper${mobileSidebarOpen ? " sidebar-wrapper--mobile-open" : ""}`}>
             <ProjectSidebar
               projects={projects}
               sessions={sidebarSessions}
+              loading={sidebarLoading}
+              error={sidebarError}
+              onRetry={onRetrySidebar}
               activeProjectId={session.projectId}
               activeSessionId={session.id}
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+              onMobileClose={() => setMobileSidebarOpen(false)}
             />
-          ) : null}
-
-          <div className="dashboard-main dashboard-main--desktop">
-            <main className="session-detail-page min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-base)]">
-              <div className="session-detail-layout">
-                <main className="min-w-0">
-                  {(!isOrchestrator || (isOrchestrator && orchestratorZones)) && (
-                    <SessionTopStrip
-                      headline={headline}
-                      crumbId={session.id}
-                      activityLabel={activity.label}
-                      activityColor={activity.color}
-                      branch={session.branch}
-                      pr={pr}
-                      isOrchestrator={isOrchestrator}
-                      crumbHref={crumbHref}
-                      crumbLabel={crumbLabel}
-                      onKill={isOrchestrator || terminalEnded ? undefined : handleKill}
-                      onRestore={isOrchestrator || !isRestorable ? undefined : handleRestore}
-                    />
-                  )}
-
-                  {pr ? (
-                    <section id="session-pr-section" className="session-detail-pr-section">
-                      <SessionDetailPRCard
-                        pr={pr}
-                        sessionId={session.id}
-                        metadata={session.metadata}
-                      />
-                    </section>
-                  ) : null}
-
-                  <section className="session-detail-terminal-wrap">
-                    <div id="session-terminal-section" aria-hidden="true" />
-                    <div className="session-detail-section-label">
-                      <div
-                        className="session-detail-section-label__bar"
-                        style={{ background: isOrchestrator ? accentColor : activity.color }}
-                      />
-                      <span className="session-detail-section-label__text">
-                        Live Terminal
-                      </span>
-                    </div>
-                    {!showTerminal ? (
-                      <div className="session-detail-terminal-placeholder" style={{ height: terminalHeight }} />
-                    ) : terminalEnded ? (
-                      <div className="terminal-exited-placeholder" style={{ height: terminalHeight }}>
-                        <span className="terminal-exited-placeholder__text">
-                          Terminal session has ended
-                        </span>
-                      </div>
-                    ) : (
-                      <DirectTerminal
-                        sessionId={session.id}
-                        startFullscreen={startFullscreen}
-                        variant={terminalVariant}
-                        appearance="dark"
-                        height={terminalHeight}
-                        isOpenCodeSession={isOpenCodeSession}
-                        reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-                      />
-                    )}
-                  </section>
-                </main>
-              </div>
-            </main>
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  const statusPillBg = activity.color === "var(--color-status-working)"
-    ? "color-mix(in srgb, var(--color-status-working) 12%, transparent)"
-    : activity.color === "var(--color-status-attention)"
-      ? "color-mix(in srgb, var(--color-status-attention) 12%, transparent)"
-      : activity.color === "var(--color-status-error)"
-        ? "color-mix(in srgb, var(--color-status-error) 12%, transparent)"
-        : "color-mix(in srgb, var(--color-accent) 12%, transparent)";
-
-  return (
-    <div className="session-detail--terminal-first">
-      {/* Floating header */}
-      <div className="session-detail__floating-header">
-        <a href={crumbHref} className="session-detail__back" aria-label="Back to dashboard">
-          <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
-        </a>
-        <span className="session-detail__status-dot" style={{ background: activity.color }} />
-        <span className="session-detail__session-id">{session.id}</span>
-        <span
-          className="session-detail__status-pill"
-          style={{ background: statusPillBg, color: activity.color }}
-        >
-          {activity.label.toLowerCase()}
-        </span>
-        <span className="session-detail__time">
-          {formatTimeCompact(session.lastActivityAt)}
-        </span>
-      </div>
-
-      {/* Terminal fills the viewport */}
-      <div className={`session-detail__terminal-full${pr ? " session-detail__terminal-full--with-sheet" : ""}`}>
-        {!showTerminal ? (
-          <div className="session-detail-terminal-placeholder" style={{ height: "100%" }} />
-        ) : terminalEnded ? (
-          <div className="terminal-exited-placeholder" style={{ height: "100%" }}>
-            <span className="terminal-exited-placeholder__text">
-              Terminal session has ended
-            </span>
-          </div>
-        ) : (
-          <DirectTerminal
-            sessionId={session.id}
-            startFullscreen={startFullscreen}
-            variant={terminalVariant}
-            appearance="dark"
-            height="100%"
-            chromeless
-            isOpenCodeSession={isOpenCodeSession}
-            reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-          />
+        ) : null}
+        {mobileSidebarOpen && (
+          <div className="sidebar-mobile-backdrop" onClick={() => setMobileSidebarOpen(false)} />
         )}
-      </div>
 
-      {/* Bottom sheet with PR info */}
-      {pr ? (
-        <div className="session-detail__bottom-sheet">
-          <div className="session-detail__sheet-handle" />
-          <div className="session-detail__sheet-row">
-            <a
-              href={pr.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="session-detail__sheet-pr"
-            >
-              PR #{pr.number}
-            </a>
-            <span className="session-detail__sheet-item">
-              <span
-                className="session-detail__sheet-ci-dot"
-                style={{ background: getCiDotBg(pr) }}
+        <div className="dashboard-main dashboard-main--desktop">
+          <main className="session-detail-page flex-1 min-h-0 flex flex-col bg-[var(--color-bg-base)]">
+            {/* Orchestrator status strip — rendered above terminal only on orchestrator pages */}
+            {isOrchestrator && orchestratorZones && (
+              <_OrchestratorStatusStrip
+                zones={orchestratorZones}
+                createdAt={session.createdAt}
+                headline={headline}
+                activityLabel={activity.label}
+                activityColor={activity.color}
+                branch={session.branch}
+                pr={pr}
+                crumbHref={crumbHref}
+                crumbLabel={crumbLabel}
               />
-              {getCiShortLabel(pr)}
-            </span>
-            <span className="session-detail__sheet-item">
-              {getReviewShortLabel(pr) || "—"}
-            </span>
-          </div>
-        </div>
-      ) : null}
+            )}
 
+            {/* Terminal — fills all remaining height */}
+            <div className="flex-1 min-h-0 flex flex-col">
+              {!showTerminal ? (
+                <div className="session-detail-terminal-placeholder h-full" />
+              ) : terminalEnded ? (
+                <div className="terminal-exited-placeholder h-full">
+                  <span className="terminal-exited-placeholder__text">Terminal session has ended</span>
+                </div>
+              ) : (
+                <DirectTerminal
+                  sessionId={session.id}
+                  startFullscreen={startFullscreen}
+                  variant={terminalVariant}
+                  appearance="dark"
+                  height="100%"
+                  isOpenCodeSession={isOpenCodeSession}
+                  reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+                  autoFocus
+                />
+              )}
+            </div>
+          </main>
+        </div>
+      </div>
       <MobileBottomNav
         ariaLabel="Session navigation"
         activeTab={isOrchestrator ? "orchestrator" : undefined}
         dashboardHref={dashboardHref}
-        prsHref={prsHref}
-        showOrchestrator={orchestratorHref !== null}
+        prsHref={session.projectId ? `/?project=${encodeURIComponent(session.projectId)}&tab=prs` : "/"}
+        showOrchestrator={!!orchestratorHref}
         orchestratorHref={orchestratorHref}
       />
     </div>
+    </SidebarContext.Provider>
   );
 }
 
@@ -769,11 +733,12 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
   const [sendingComments, setSendingComments] = useState<Set<string>>(new Set());
   const [sentComments, setSentComments] = useState<Set<string>>(new Set());
   const [errorComments, setErrorComments] = useState<Set<string>>(new Set());
-  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const [branchCopied, setBranchCopied] = useState(false);
+  const timersRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     return () => {
-      timersRef.current.forEach((timer) => clearTimeout(timer));
+      timersRef.current.forEach((timer) => window.clearTimeout(timer));
       timersRef.current.clear();
     };
   }, []);
@@ -802,8 +767,8 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
         });
         setSentComments((prev) => new Set(prev).add(comment.url));
         const existing = timersRef.current.get(comment.url);
-        if (existing) clearTimeout(existing);
-        const timer = setTimeout(() => {
+        if (existing !== undefined) window.clearTimeout(existing);
+        const timer = window.setTimeout(() => {
           setSentComments((prev) => {
             const next = new Set(prev);
             next.delete(comment.url);
@@ -821,8 +786,8 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
         });
         setErrorComments((prev) => new Set(prev).add(comment.url));
         const existing = timersRef.current.get(comment.url);
-        if (existing) clearTimeout(existing);
-        const timer = setTimeout(() => {
+        if (existing !== undefined) window.clearTimeout(existing);
+        const timer = window.setTimeout(() => {
           setErrorComments((prev) => {
             const next = new Set(prev);
             next.delete(comment.url);
@@ -838,6 +803,32 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
   const allGreen = isPRMergeReady(pr);
   const blockerIssues = buildBlockerChips(pr, metadata);
   const fileCount = pr.changedFiles ?? 0;
+
+  const mergeabilityReliable = !isPRUnenriched(pr) && !isPRRateLimited(pr);
+  const hasConflicts = mergeabilityReliable && pr.state !== "merged" && !pr.mergeability.noConflicts;
+  const showConflictActions = hasConflicts && pr.state === "open";
+  const compareUrl = showConflictActions ? buildGitHubCompareUrl(pr) : "";
+
+  const handleCopyBranch = () => {
+    const clipboardWrite = navigator.clipboard?.writeText(pr.branch);
+    if (!clipboardWrite) return;
+
+    void clipboardWrite
+      .then(() => {
+        setBranchCopied(true);
+        const timerKey = "__copy-branch";
+        const existing = timersRef.current.get(timerKey);
+        if (existing !== undefined) window.clearTimeout(existing);
+        const timer = window.setTimeout(() => {
+          setBranchCopied(false);
+          timersRef.current.delete(timerKey);
+        }, 2000);
+        timersRef.current.set(timerKey, timer);
+      })
+      .catch(() => {
+        /* clipboard unavailable */
+      });
+  };
 
   return (
     <div className={cn("session-detail-pr-card", allGreen && "session-detail-pr-card--green")}>
@@ -867,6 +858,31 @@ function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; ses
           <span className="session-detail-pr-card__diff-label">Merged</span>
         )}
       </div>
+
+      {showConflictActions ? (
+        <div
+          className="session-detail-pr-card__merge-actions"
+          role="group"
+          aria-label="Resolve merge conflicts"
+        >
+          <a
+            href={compareUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="session-detail-pr-merge-action"
+          >
+            Compare with base branch
+          </a>
+          <button
+            type="button"
+            onClick={handleCopyBranch}
+            aria-label={branchCopied ? "Head branch name copied" : "Copy head branch name"}
+            className="session-detail-pr-merge-action session-detail-pr-merge-action--btn"
+          >
+            {branchCopied ? "Copied branch name" : "Copy head branch name"}
+          </button>
+        </div>
+      ) : null}
 
       {/* Row 2: Blocker chips + CI chips inline */}
       <div className="session-detail-pr-card__details">
@@ -1040,7 +1056,8 @@ function buildBlockerChips(pr: DashboardPR, metadata: Record<string, string>): B
   const ciIsFailing = pr.ciStatus === CI_STATUS.FAILING || lifecycleStatus === "ci_failed";
   const hasChangesRequested =
     pr.reviewDecision === "changes_requested" || lifecycleStatus === "changes_requested";
-  const hasConflicts = pr.state !== "merged" && !pr.mergeability.noConflicts;
+  const mergeabilityReliable = !isPRUnenriched(pr) && !isPRRateLimited(pr);
+  const hasConflicts = mergeabilityReliable && pr.state !== "merged" && !pr.mergeability.noConflicts;
 
   if (ciIsFailing) {
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;

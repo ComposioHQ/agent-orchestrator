@@ -45,6 +45,10 @@ export default defineConfig({
         replacement: resolve(__dirname, "../plugins/agent-claude-code/src/index.ts"),
       },
       {
+        find: "@aoagents/ao-plugin-agent-codex",
+        replacement: resolve(__dirname, "../plugins/agent-codex/src/index.ts"),
+      },
+      {
         find: "@aoagents/ao-plugin-agent-opencode",
         replacement: resolve(__dirname, "../plugins/agent-opencode/src/index.ts"),
       },

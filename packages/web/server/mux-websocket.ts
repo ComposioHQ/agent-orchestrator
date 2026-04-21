@@ -35,11 +35,21 @@ type ServerMessage =
   | { ch: "system"; type: "pong" }
   | { ch: "system"; type: "error"; message: string };
 
+// Mirrors AttentionLevel in src/lib/types.ts — keep in sync.
+type AttentionLevel =
+  | "merge"
+  | "action"
+  | "respond"
+  | "review"
+  | "pending"
+  | "working"
+  | "done";
+
 interface SessionPatch {
   id: string;
   status: string;
   activity: string | null;
-  attentionLevel: string;
+  attentionLevel: AttentionLevel;
   lastActivityAt: string;
 }
 

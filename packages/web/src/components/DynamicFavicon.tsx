@@ -16,8 +16,15 @@ function computeHealthFromLevels(levels: SSEAttentionMap): "green" | "yellow" | 
   let hasYellow = false;
 
   for (const level of entries) {
+    // Only "respond" (detailed mode) escalates the favicon to red. "action"
+    // (simple mode) collapses respond + review into one bucket, so it
+    // necessarily includes routine review work (ci_failed, changes_requested)
+    // that used to be yellow. Treating it as red would make every typical
+    // review PR scream critical. Keep it at yellow severity.
     if (level === "respond") return "red";
-    if (level === "review" || level === "merge") hasYellow = true;
+    if (level === "review" || level === "action" || level === "merge") {
+      hasYellow = true;
+    }
   }
 
   return hasYellow ? "yellow" : "green";
@@ -38,11 +45,16 @@ function generateFaviconSvg(initial: string, color: string): string {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
-/** Count sessions that need human attention (respond, review, merge). */
+/** Count sessions that need human attention (respond, review, action, merge). */
 export function countNeedingAttention(levels: SSEAttentionMap): number {
   let count = 0;
   for (const level of Object.values(levels)) {
-    if (level === "respond" || level === "review" || level === "merge") {
+    if (
+      level === "respond" ||
+      level === "review" ||
+      level === "action" ||
+      level === "merge"
+    ) {
       count++;
     }
   }

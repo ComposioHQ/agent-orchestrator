@@ -8,6 +8,7 @@ import {
 } from "@/lib/types";
 import { SessionCard } from "./SessionCard";
 import { getSessionTitle } from "@/lib/format";
+import { projectSessionPath } from "@/lib/routes";
 
 interface AttentionZoneProps {
   level: AttentionLevel;
@@ -38,6 +39,10 @@ const zoneConfig: Record<
   merge: {
     label: "Ready",
     emptyMessage: "Nothing cleared to land yet.",
+  },
+  action: {
+    label: "Action",
+    emptyMessage: "No agents need your input.",
   },
   respond: {
     label: "Respond",
@@ -248,7 +253,7 @@ function MobileSessionRow({
       <div className="mobile-session-row__side">
         <SessionStateChip session={session} level={level} />
         <a
-          href={`/sessions/${encodeURIComponent(session.id)}`}
+            href={projectSessionPath(session.projectId, session.id)}
           className="mobile-session-row__open"
           aria-label={`Go to ${getSessionTitle(session)}`}
         >
@@ -269,6 +274,39 @@ function MobileSessionRow({
   );
 }
 
+/**
+ * Pure label picker for the mobile action chip.
+ *
+ * Exported for unit tests. Returns the most specific human-readable reason
+ * to intervene on a session that has collapsed into the simple-mode `action`
+ * bucket. Precedence mirrors `getDetailedAttentionLevel` in `lib/types.ts`:
+ * respond-class signals (status errored/needs_input/stuck, then activity
+ * waiting_input/exited/blocked) outrank review-class signals (ci_failed /
+ * changes_requested / PR conflicts). Otherwise a crashed agent whose PR
+ * also has `changes_requested` would be mislabeled "changes" and hide the
+ * crash, steering the operator toward PR review instead of restart.
+ */
+export function getActionChipLabel(session: DashboardSession): string {
+  // Respond-class: status (authoritative, can't be masked by stale activity)
+  if (session.status === "needs_input") return "needs input";
+  if (session.status === "stuck") return "stuck";
+  if (session.status === "errored") return "errored";
+  // Respond-class: activity — check before review-class status so a crashed
+  // agent with a non-terminal status (e.g. changes_requested) still reads
+  // as "crashed" and not "changes".
+  if (session.activity === "waiting_input") return "waiting";
+  if (session.activity === "exited") return "crashed";
+  if (session.activity === "blocked") return "blocked";
+  // Review-class: status
+  if (session.status === "ci_failed") return "ci failed";
+  if (session.status === "changes_requested") return "changes";
+  // Review-class: PR signals
+  if (session.pr?.ciStatus === "failing") return "ci failed";
+  if (session.pr?.reviewDecision === "changes_requested") return "changes";
+  if (session.pr && !session.pr.mergeability.noConflicts) return "conflicts";
+  return "action";
+}
+
 function SessionStateChip({
   session,
   level,
@@ -280,6 +318,8 @@ function SessionStateChip({
 
   if (level === "merge" && session.pr && isPRMergeReady(session.pr)) {
     label = "ready";
+  } else if (level === "action") {
+    label = getActionChipLabel(session);
   } else if (level === "respond") {
     label = session.activity === "waiting_input" ? "waiting" : "needs input";
   } else if (level === "review") {

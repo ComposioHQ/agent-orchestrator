@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parse as parseYaml } from "yaml";
@@ -30,6 +30,7 @@ const {
   mockConfigRef: { current: null as Record<string, unknown> | null },
   mockSessionManager: {
     list: vi.fn(),
+    restore: vi.fn(),
     kill: vi.fn(),
     cleanup: vi.fn(),
     get: vi.fn(),
@@ -56,8 +57,10 @@ const { mockPromptSelect, mockPromptConfirm } = vi.hoisted(() => ({
   mockPromptConfirm: vi.fn().mockResolvedValue(true),
 }));
 
-const { mockIsAlreadyRunning, mockUnregister, mockWaitForExit } = vi.hoisted(() => ({
+const { mockAcquireStartupLock, mockIsAlreadyRunning, mockRegister, mockUnregister, mockWaitForExit } = vi.hoisted(() => ({
+  mockAcquireStartupLock: vi.fn().mockResolvedValue(() => {}),
   mockIsAlreadyRunning: vi.fn().mockReturnValue(null),
+  mockRegister: vi.fn(),
   mockUnregister: vi.fn(),
   mockWaitForExit: vi.fn().mockReturnValue(true),
 }));
@@ -141,7 +144,8 @@ vi.mock("../../src/lib/preflight.js", () => ({
 }));
 
 vi.mock("../../src/lib/running-state.js", () => ({
-  register: vi.fn(),
+  acquireStartupLock: (...args: unknown[]) => mockAcquireStartupLock(...args),
+  register: (...args: unknown[]) => mockRegister(...args),
   unregister: (...args: unknown[]) => mockUnregister(...args),
   isAlreadyRunning: (...args: unknown[]) => mockIsAlreadyRunning(...args),
   getRunning: vi.fn().mockReturnValue(null),
@@ -216,7 +220,7 @@ let tmpDir: string;
 let program: Command;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-start-test-"));
 
   program = new Command();
@@ -234,8 +238,24 @@ beforeEach(() => {
   const fakeChild = { on: vi.fn(), kill: vi.fn(), emit: vi.fn(), stdout: null, stderr: null };
   mockSpawn.mockReturnValue(fakeChild);
 
+  // Re-prime web-dir mocks defeated by afterEach's vi.restoreAllMocks().
+  // Without this, findFreePort/isPortAvailable return `undefined`, which makes
+  // dashboard-enabled tests print `http://localhost:undefined` and fail in
+  // confusing ways.
+  const webDir = await import("../../src/lib/web-dir.js");
+  vi.mocked(webDir.findWebDir).mockReturnValue("/fake/web");
+  vi.mocked(webDir.isPortAvailable).mockResolvedValue(true);
+  vi.mocked(webDir.findFreePort).mockResolvedValue(3000);
+  vi.mocked(webDir.buildDashboardEnv).mockResolvedValue({});
+  const projectDetection = await import("../../src/lib/project-detection.js");
+  vi.mocked(projectDetection.detectProjectType).mockReturnValue({ languages: [], frameworks: [] });
+  vi.mocked(projectDetection.generateRulesFromTemplates).mockReturnValue(null);
+  vi.mocked(projectDetection.formatProjectTypeForDisplay).mockReturnValue("");
+
   mockSessionManager.list.mockReset();
   mockSessionManager.list.mockResolvedValue([]);
+  mockSessionManager.restore.mockReset();
+  mockSessionManager.restore.mockResolvedValue({ id: "app-orchestrator-restored" });
   mockSessionManager.get.mockReset();
   mockSessionManager.spawnOrchestrator.mockReset();
   mockSessionManager.kill.mockReset();
@@ -269,8 +289,12 @@ beforeEach(() => {
   mockPromptSelect.mockReset();
   mockPromptConfirm.mockReset();
   mockPromptConfirm.mockResolvedValue(true);
+  mockAcquireStartupLock.mockReset();
+  mockAcquireStartupLock.mockResolvedValue(() => {});
   mockIsAlreadyRunning.mockReset();
   mockIsAlreadyRunning.mockResolvedValue(null);
+  mockRegister.mockReset();
+  mockRegister.mockResolvedValue(undefined);
   mockUnregister.mockReset();
   mockWaitForExit.mockReset();
   mockWaitForExit.mockResolvedValue(true);
@@ -790,15 +814,23 @@ describe("start command — browser open waits for port", () => {
     vi.mocked(findWebDir).mockReturnValue(tmpDir);
     writeFileSync(join(tmpDir, "package.json"), "{}");
 
-    mockSessionManager.get.mockResolvedValue(null);
-    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "app-orchestrator" });
+    // No existing orchestrators on disk → spawnOrchestrator runs and returns
+    // a numbered id which must end up in the auto-opened browser URL.
+    mockSessionManager.list.mockResolvedValue([]);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator-1",
+      projectId: "my-app",
+      status: "working",
+      activity: "active",
+      metadata: { role: "orchestrator" },
+    });
 
-    await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
+    await program.parseAsync(["node", "test", "start"]);
 
     // waitForPortAndOpen should have been called with orchestrator URL and AbortSignal
     expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
     const args = mockWaitForPortAndOpen.mock.calls[0];
-    expect(args[1]).toContain("/sessions/app-orchestrator");
+    expect(args[1]).toContain("/projects/my-app/sessions/app-orchestrator-1");
     expect(args[2]).toBeInstanceOf(AbortSignal);
     expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
       expect.objectContaining({ configPath: expect.any(String) }),
@@ -915,21 +947,112 @@ describe("start command — orchestrator session strategy display", () => {
       {
         id: "app-orchestrator",
         projectId: "my-app",
+        status: "working",
+        activity: "active",
         metadata: { role: "orchestrator" },
         lastActivityAt: new Date(),
         runtimeHandle: { id: "tmux-session-existing" },
       },
     ]);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator-2",
+      runtimeHandle: { id: "tmux-session-new" },
+    });
 
     await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
 
     const output = getLoggedOutput();
-    // When --no-dashboard is used, auto-selects the most recent orchestrator
-    // and shows ao session attach (not the dashboard selection message)
+    expect(mockSessionManager.kill).not.toHaveBeenCalled();
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
     expect(output).toContain("ao session attach app-orchestrator");
-    expect(output).not.toContain("existing sessions found — select one in the dashboard");
+  });
 
-    // Should NOT spawn a new orchestrator when existing ones exist
+  it("restores the latest restorable orchestrator when tmux is gone", async () => {
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
+
+    const now = new Date();
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-1",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now.getTime() - 1000),
+        lifecycle: {
+          version: 2,
+          session: {
+            kind: "orchestrator",
+            state: "working",
+            reason: "task_in_progress",
+            startedAt: now.toISOString(),
+            completedAt: null,
+            terminatedAt: null,
+            lastTransitionAt: now.toISOString(),
+          },
+          pr: {
+            state: "none",
+            reason: "not_created",
+            number: null,
+            url: null,
+            lastObservedAt: null,
+          },
+          runtime: {
+            state: "missing",
+            reason: "tmux_missing",
+            lastObservedAt: now.toISOString(),
+            handle: null,
+            tmuxName: "tmux-old-1",
+          },
+        },
+      },
+      {
+        id: "app-orchestrator-2",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: now,
+        lifecycle: {
+          version: 2,
+          session: {
+            kind: "orchestrator",
+            state: "working",
+            reason: "task_in_progress",
+            startedAt: now.toISOString(),
+            completedAt: null,
+            terminatedAt: null,
+            lastTransitionAt: now.toISOString(),
+          },
+          pr: {
+            state: "none",
+            reason: "not_created",
+            number: null,
+            url: null,
+            lastObservedAt: null,
+          },
+          runtime: {
+            state: "missing",
+            reason: "tmux_missing",
+            lastObservedAt: now.toISOString(),
+            handle: null,
+            tmuxName: "tmux-old-2",
+          },
+        },
+      },
+    ]);
+    mockSessionManager.restore.mockResolvedValue({
+      id: "app-orchestrator-2",
+      runtimeHandle: { id: "tmux-restored-2" },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    const output = getLoggedOutput();
+    expect(output).toContain("ao session attach app-orchestrator-2");
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("app-orchestrator-2");
     expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
   });
 
@@ -954,27 +1077,31 @@ describe("start command — orchestrator session strategy display", () => {
       {
         id: "app-orchestrator",
         projectId: "my-app",
+        status: "working",
+        activity: "active",
         metadata: { role: "orchestrator" },
         lastActivityAt: new Date(),
         runtimeHandle: { id: "tmux-session-existing" },
       },
     ]);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator-2",
+      runtimeHandle: { id: "tmux-session-new" },
+    });
 
     await program.parseAsync(["node", "test", "start"]);
 
     const output = getLoggedOutput();
-    // With one orchestrator and dashboard enabled, shows the session URL instead of tmux attach
-    expect(output).toContain("http://localhost:3000/sessions/app-orchestrator");
-    expect(output).not.toContain("tmux attach");
-    expect(output).not.toContain("multiple sessions found");
-    expect(output).not.toContain("select one in the dashboard");
-
-    // Should NOT spawn a new orchestrator when existing one exists
+    expect(mockSessionManager.kill).not.toHaveBeenCalled();
     expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+    expect(output).toContain("http://localhost:3000/projects/my-app/sessions/app-orchestrator");
+    expect(output).not.toContain("tmux attach");
   });
 
-  it("opens orchestrator selection page when multiple existing orchestrators found with dashboard enabled", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+  it("opens orchestrator selection page when multiple existing orchestrators found with dashboard enabled and reuse is explicit", async () => {
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
 
     // Mock findWebDir
     const { findWebDir } = await import("../../src/lib/web-dir.js");
@@ -994,6 +1121,8 @@ describe("start command — orchestrator session strategy display", () => {
       {
         id: "app-orchestrator-1",
         projectId: "my-app",
+        status: "working",
+        activity: "active",
         metadata: { role: "orchestrator" },
         lastActivityAt: new Date(now.getTime() - 1000),
         runtimeHandle: { id: "tmux-session-1" },
@@ -1001,6 +1130,8 @@ describe("start command — orchestrator session strategy display", () => {
       {
         id: "app-orchestrator-2",
         projectId: "my-app",
+        status: "working",
+        activity: "active",
         metadata: { role: "orchestrator" },
         lastActivityAt: now,
         runtimeHandle: { id: "tmux-session-2" },
@@ -1010,11 +1141,182 @@ describe("start command — orchestrator session strategy display", () => {
     await program.parseAsync(["node", "test", "start"]);
 
     const output = getLoggedOutput();
-    // With multiple orchestrators, shows selection message so user can choose or spawn a new one
-    expect(output).toContain("multiple sessions found — select one in the dashboard");
+    // With multiple orchestrators, the CLI auto-selects the most recent and tells the user
+    // how many other sessions are available so they can pick a different one in the dashboard.
+    expect(output).toContain("/projects/my-app/sessions/app-orchestrator-2");
+    expect(output).toContain("1 other session(s) available");
+
+    // The browser auto-open should land on the dashboard's orchestrator-selection page
+    // (not a direct session URL) so the user can pick a different one if desired.
+    expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
+    const args = mockWaitForPortAndOpen.mock.calls[0];
+    expect(args[1]).toContain("/orchestrators?project=my-app");
 
     // Should NOT spawn a new orchestrator when existing ones exist
     expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
+  // ----- Issue #1048: stable orchestrator reuse -----------------------------
+  // The next block of tests pins down the new lookup contract that runStartup
+  // must follow when deciding whether to reuse, restore, or spawn fresh.
+
+  it("restores the most-recently-active killed orchestrator instead of spawning", async () => {
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
+
+    // Only orchestrator on disk is killed (its tmux pane was destroyed) but
+    // still restorable — runStartup must call sm.restore() and reuse its id.
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-3",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-session-3" },
+      },
+    ]);
+    mockSessionManager.restore.mockResolvedValue({
+      id: "app-orchestrator-3",
+      projectId: "my-app",
+      status: "spawning",
+      activity: "active",
+      metadata: { role: "orchestrator" },
+      lastActivityAt: new Date(),
+      runtimeHandle: { id: "tmux-session-3" },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("app-orchestrator-3");
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+
+    const output = getLoggedOutput();
+    // Restored id is preserved (no fresh -N allocation) and the user sees an
+    // explicit "(restored)" marker so the resurfaced id isn't a surprise.
+    expect(output).toContain("ao session attach app-orchestrator-3");
+    expect(output).toContain("(restored)");
+  });
+
+  it("ignores stale bare {projectId}-orchestrator records that lack role metadata", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Legacy bare-named record from a pre-numbered AO version with no role
+    // metadata — must NOT be treated as an orchestrator, so spawnOrchestrator
+    // still gets called and the user gets a fresh numbered id.
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "my-app-orchestrator",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: null,
+      },
+    ]);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator-1",
+      projectId: "my-app",
+      status: "working",
+      activity: "active",
+      metadata: { role: "orchestrator" },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.restore).not.toHaveBeenCalled();
+
+    const output = getLoggedOutput();
+    expect(output).toContain("ao session attach app-orchestrator-1");
+    expect(output).not.toContain("/sessions/my-app-orchestrator");
+  });
+
+  it("prefers a live orchestrator over a more-recently-active restorable one", async () => {
+    // Regression guard for PR #1075 review comment: an earlier version of
+    // runStartup merged live + restorable into one bucket and sorted by
+    // lastActivityAt, which could pick a newer *killed* record over an older
+    // but still-running one. sm.restore() would then spin up the killed
+    // record while the live one kept running, leaving two orchestrators
+    // alive. The fix prefers live unconditionally.
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
+
+    const now = Date.now();
+    mockSessionManager.list.mockResolvedValue([
+      // Live but older — this is the one we must pick.
+      {
+        id: "app-orchestrator-2",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now - 60_000),
+        runtimeHandle: { id: "tmux-2" },
+      },
+      // Killed but newer — the old buggy sort would have picked this one.
+      {
+        id: "app-orchestrator-3",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now),
+        runtimeHandle: { id: "tmux-3" },
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start"]);
+
+    // The live -2 is reused in place; the killed -3 is NOT restored.
+    expect(mockSessionManager.restore).not.toHaveBeenCalled();
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+
+    const output = getLoggedOutput();
+    expect(output).toContain("/projects/my-app/sessions/app-orchestrator-2");
+    expect(output).not.toContain("/projects/my-app/sessions/app-orchestrator-3");
+  });
+
+  it("reuses the most-recently-active live orchestrator when multiple are running", async () => {
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
+
+    const now = Date.now();
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now - 30_000),
+        runtimeHandle: { id: "tmux-1" },
+      },
+      {
+        id: "app-orchestrator-2",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now),
+        runtimeHandle: { id: "tmux-2" },
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+    expect(mockSessionManager.restore).not.toHaveBeenCalled();
+
+    const output = getLoggedOutput();
+    // The newer one (-2) is auto-selected for attach.
+    expect(output).toContain("ao session attach app-orchestrator-2");
+    expect(output).toContain("1 other session(s) available");
   });
 
   it("fails and cleans up dashboard when orchestrator setup throws", async () => {
@@ -1046,6 +1348,93 @@ describe("start command — orchestrator session strategy display", () => {
     // Should have killed the dashboard
     expect(fakeDashboard.kill).toHaveBeenCalled();
   });
+
+  it("reports startup lock acquisition failures through the normal CLI error path", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockAcquireStartupLock.mockRejectedValueOnce(
+      new Error("Could not acquire startup lock (/tmp/startup.lock)"),
+    );
+
+    await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(errors).toContain("Could not acquire startup lock (/tmp/startup.lock)");
+    expect(mockIsAlreadyRunning).not.toHaveBeenCalled();
+  });
+
+  it("releases the startup lock before exiting on startup failures", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    const releaseStartupLock = vi.fn();
+    mockAcquireStartupLock.mockResolvedValueOnce(releaseStartupLock);
+    mockSessionManager.list.mockResolvedValue([]);
+    mockSessionManager.spawnOrchestrator.mockRejectedValue(new Error("Spawn failed"));
+
+    await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
+
+    expect(releaseStartupLock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails and cleans up dashboard when sm.restore throws on a killed orchestrator", async () => {
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
+
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = { on: vi.fn(), kill: vi.fn(), emit: vi.fn() };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    // Only candidate is restorable. sm.restore throws — runStartup must
+    // surface the error, kill the dashboard, and never fall through to
+    // spawnOrchestrator (which would silently allocate a fresh -N).
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-3",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-3" },
+      },
+    ]);
+    mockSessionManager.restore.mockRejectedValue(new Error("workspace gone"));
+
+    await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(errors).toContain("Failed to restore orchestrator session app-orchestrator-3");
+    expect(errors).toContain("workspace gone");
+
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+    expect(fakeDashboard.kill).toHaveBeenCalled();
+  });
+
+  it("opens the bare dashboard URL when --no-orchestrator skips the orchestrator block", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
+
+    // Without an orchestrator id, the auto-open URL falls back to the dashboard
+    // root rather than the legacy phantom `/sessions/${prefix}-orchestrator` path.
+    expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
+    const args = mockWaitForPortAndOpen.mock.calls[0];
+    expect(args[1]).toBe("http://localhost:3000");
+    expect(args[1]).not.toContain("/sessions/");
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1066,15 +1455,27 @@ describe("stop command", () => {
     });
   }
 
-  it("stops orchestrator session and dashboard", async () => {
+  it("stops the actual numbered orchestrator session and dashboard", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
+    // Issue #1048: ao stop must look up the real numbered orchestrator id
+    // (e.g. app-orchestrator-3) via sm.list — never the phantom `${prefix}-orchestrator`.
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-3",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-3" },
+      },
+    ]);
     mockSessionManager.kill.mockResolvedValue(undefined);
     mockDashboardOnPort(3000);
 
     await program.parseAsync(["node", "test", "stop"]);
 
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-3", {
       purgeOpenCode: false,
     });
     const output = vi
@@ -1082,11 +1483,44 @@ describe("stop command", () => {
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
     expect(output).toContain("Orchestrator stopped");
+    expect(output).toContain("app-orchestrator-3");
+  });
+
+  it("kills the most-recently-active orchestrator when multiple exist", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    const now = Date.now();
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now - 10_000),
+        runtimeHandle: { id: "tmux-1" },
+      },
+      {
+        id: "app-orchestrator-2",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(now),
+        runtimeHandle: { id: "tmux-2" },
+      },
+    ]);
+    mockSessionManager.kill.mockResolvedValue(undefined);
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-2", {
+      purgeOpenCode: false,
+    });
   });
 
   it("handles missing orchestrator session gracefully", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue(null);
+    mockSessionManager.list.mockResolvedValue([]);
     mockExec.mockRejectedValue(new Error("no process"));
 
     await program.parseAsync(["node", "test", "stop"]);
@@ -1096,18 +1530,28 @@ describe("stop command", () => {
       .mocked(console.log)
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
-    expect(output).toContain("is not running");
+    expect(output).toContain("No running orchestrator session found");
   });
 
   it("passes purge flag when stopping orchestrator with --purge-session", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-1" },
+      },
+    ]);
     mockSessionManager.kill.mockResolvedValue(undefined);
     mockDashboardOnPort(3000);
 
     await program.parseAsync(["node", "test", "stop", "--purge-session"]);
 
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-1", {
       purgeOpenCode: true,
     });
   });
@@ -1576,6 +2020,179 @@ describe("start command — path-based deduplication in addProjectToConfig", () 
     } finally {
       if (origEnv === undefined) delete process.env["AO_CONFIG_PATH"];
       else process.env["AO_CONFIG_PATH"] = origEnv;
+    }
+  });
+});
+
+describe("start command — global registry mutations", () => {
+  it("adds a project to the global registry and writes behavior to the repo-local config", async () => {
+    const currentRepoDir = join(tmpDir, "current");
+    const addedRepoDir = join(tmpDir, "added");
+    createFakeRepo(currentRepoDir, "https://github.com/org/current.git");
+    createFakeRepo(addedRepoDir, "https://github.com/org/added.git");
+    writeFileSync(join(addedRepoDir, ".git", "refs", "remotes", "origin", "master"), "abc\n");
+
+    const localCurrentConfigPath = join(currentRepoDir, "agent-orchestrator.yaml");
+    writeFileSync(localCurrentConfigPath, "agent: claude-code\n");
+
+    const globalConfigPath = join(tmpDir, "config.yaml");
+    const { stringify: yamlStringify } = await import("yaml");
+    writeFileSync(
+      globalConfigPath,
+      yamlStringify(
+        {
+          defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          projects: {
+            current: {
+              projectId: "current",
+              path: currentRepoDir,
+              storageKey: "current-storage",
+              defaultBranch: "main",
+              displayName: "Current",
+              sessionPrefix: "current",
+            },
+          },
+        },
+        { indent: 2 },
+      ),
+    );
+    mockConfigRef.current = makeConfig({
+      current: makeProject({ name: "Current", path: currentRepoDir, sessionPrefix: "current" }),
+    });
+    (mockConfigRef.current as Record<string, unknown>).configPath = globalConfigPath;
+
+    const origEnv = process.env["AO_CONFIG_PATH"];
+    const origGlobalEnv = process.env["AO_GLOBAL_CONFIG"];
+    process.env["AO_CONFIG_PATH"] = globalConfigPath;
+    process.env["AO_GLOBAL_CONFIG"] = globalConfigPath;
+
+    const shell = await import("../../src/lib/shell.js");
+    vi.mocked(shell.git).mockImplementation(async (args: string[], workingDir?: string) => {
+      if (args[0] === "rev-parse" && args[1] === "--git-dir" && workingDir === addedRepoDir) return ".git";
+      if (args[0] === "remote" && args[1] === "get-url" && args[2] === "origin" && workingDir === addedRepoDir) {
+        return "https://github.com/org/added.git";
+      }
+      if (args[0] === "symbolic-ref" && workingDir === addedRepoDir) return "refs/remotes/origin/master";
+      if (args[0] === "rev-parse" && args[1] === "--verify" && workingDir === addedRepoDir) return "abc";
+      return null;
+    });
+
+    try {
+      try {
+        await program.parseAsync([
+          "node",
+          "test",
+          "start",
+          addedRepoDir,
+          "--no-dashboard",
+          "--no-orchestrator",
+        ]);
+      } catch (error) {
+        const loggedErrors = vi
+          .mocked(console.error)
+          .mock.calls.map((call) => call.join(" "))
+          .join("\n");
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}\n${loggedErrors}`,
+          { cause: error },
+        );
+      }
+
+      const globalConfig = parseYaml(readFileSync(globalConfigPath, "utf-8")) as {
+        projects: Record<string, Record<string, unknown>>;
+      };
+      expect(globalConfig.projects["added"]).toMatchObject({
+        path: realpathSync(addedRepoDir),
+        defaultBranch: "master",
+        sessionPrefix: "add",
+      });
+      expect(globalConfig.projects["added"]).not.toHaveProperty("agentRules");
+
+      const localAddedConfig = readFileSync(join(addedRepoDir, "agent-orchestrator.yaml"), "utf-8");
+      expect(localAddedConfig).not.toContain("projects:");
+    } finally {
+      if (origEnv === undefined) delete process.env["AO_CONFIG_PATH"];
+      else process.env["AO_CONFIG_PATH"] = origEnv;
+      if (origGlobalEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+      else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
+    }
+  });
+
+  it("writes interactive agent overrides to the repo-local config when using the global registry", async () => {
+    const repoDir = join(tmpDir, "current");
+    createFakeRepo(repoDir, "https://github.com/org/current.git");
+
+    const localConfigPath = join(repoDir, "agent-orchestrator.yaml");
+    writeFileSync(localConfigPath, "agent: claude-code\n");
+
+    const globalConfigPath = join(tmpDir, "config.yaml");
+    const { stringify: yamlStringify } = await import("yaml");
+    writeFileSync(
+      globalConfigPath,
+      yamlStringify(
+        {
+          defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          projects: {
+            current: {
+              projectId: "current",
+              path: repoDir,
+              storageKey: "current-storage",
+              defaultBranch: "main",
+              displayName: "Current",
+              sessionPrefix: "current",
+            },
+          },
+        },
+        { indent: 2 },
+      ),
+    );
+    mockConfigRef.current = makeConfig({
+      current: makeProject({ name: "Current", path: repoDir, sessionPrefix: "current" }),
+    });
+    (mockConfigRef.current as Record<string, unknown>).configPath = globalConfigPath;
+
+    const origEnv = process.env["AO_CONFIG_PATH"];
+    const origGlobalEnv = process.env["AO_GLOBAL_CONFIG"];
+    process.env["AO_CONFIG_PATH"] = globalConfigPath;
+    process.env["AO_GLOBAL_CONFIG"] = globalConfigPath;
+
+    const detectAgent = await import("../../src/lib/detect-agent.js");
+    vi.mocked(detectAgent.detectAvailableAgents).mockResolvedValue([
+      { name: "codex", displayName: "Codex" },
+      { name: "opencode", displayName: "OpenCode" },
+    ]);
+    mockPromptSelect.mockResolvedValueOnce("codex").mockResolvedValueOnce("opencode");
+    const originalStdinTty = process.stdin.isTTY;
+    const originalStdoutTty = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "start",
+        "--interactive",
+        "--no-dashboard",
+        "--no-orchestrator",
+      ]);
+
+      const localConfig = readFileSync(localConfigPath, "utf-8");
+      expect(localConfig).toContain("orchestrator:");
+      expect(localConfig).toContain("agent: codex");
+      expect(localConfig).toContain("worker:");
+      expect(localConfig).toContain("agent: opencode");
+
+      const globalConfig = readFileSync(globalConfigPath, "utf-8");
+      expect(globalConfig).not.toContain("orchestrator:");
+      expect(globalConfig).not.toContain("worker:");
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", { value: originalStdinTty, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: originalStdoutTty, configurable: true });
+      if (origEnv === undefined) delete process.env["AO_CONFIG_PATH"];
+      else process.env["AO_CONFIG_PATH"] = origEnv;
+      if (origGlobalEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+      else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
     }
   });
 });

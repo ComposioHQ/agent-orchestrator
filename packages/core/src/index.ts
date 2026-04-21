@@ -17,6 +17,7 @@ export {
   findConfig,
   findConfigFile,
 } from "./config.js";
+export { isPortfolioEnabled } from "./feature-flags.js";
 
 // Plugin registry
 export {
@@ -33,9 +34,76 @@ export {
   readMetadataRaw,
   writeMetadata,
   updateMetadata,
+  readCanonicalLifecycle,
+  writeCanonicalLifecycle,
+  updateCanonicalLifecycle,
   deleteMetadata,
   listMetadata,
 } from "./metadata.js";
+export { createInitialCanonicalLifecycle, deriveLegacyStatus } from "./lifecycle-state.js";
+export { sessionFromMetadata } from "./utils/session-from-metadata.js";
+
+// Lifecycle transitions — centralized transition boundary (#137)
+export {
+  applyLifecycleDecision,
+  applyDecisionToLifecycle,
+  buildTransitionMetadataPatch,
+  createStateTransitionDecision,
+} from "./lifecycle-transition.js";
+export type {
+  TransitionSource,
+  TransitionResult,
+  ApplyDecisionInput,
+} from "./lifecycle-transition.js";
+
+// Lifecycle status decisions — pure decision helpers (#136)
+export {
+  DETECTING_MAX_ATTEMPTS,
+  DETECTING_MAX_DURATION_MS,
+  hashEvidence,
+  isDetectingTimedOut,
+} from "./lifecycle-status-decisions.js";
+
+// Report watcher — background trigger system for agent reports (#140)
+export {
+  auditAgentReports,
+  checkAcknowledgeTimeout,
+  checkStaleReport,
+  checkBlockedAgent,
+  shouldAuditSession,
+  getReactionKeyForTrigger,
+  DEFAULT_REPORT_WATCHER_CONFIG,
+  REPORT_WATCHER_METADATA_KEYS,
+} from "./report-watcher.js";
+export type {
+  ReportWatcherTrigger,
+  ReportAuditResult,
+  ReportWatcherConfig,
+} from "./report-watcher.js";
+
+// Agent reports — explicit workflow transitions declared by worker agents (Stage 3)
+export {
+  AGENT_REPORTED_STATES,
+  AGENT_REPORT_METADATA_KEYS,
+  AGENT_REPORT_FRESHNESS_MS,
+  applyAgentReport,
+  readAgentReport,
+  readAgentReportAuditTrail,
+  readAgentReportAuditTrailAsync,
+  isAgentReportFresh,
+  mapAgentReportToLifecycle,
+  normalizeAgentReportedState,
+  validateAgentReportTransition,
+} from "./agent-report.js";
+export type {
+  AgentReport,
+  AgentReportAuditEntry,
+  AgentReportAuditSnapshot,
+  AgentReportedState,
+  ApplyAgentReportInput,
+  ApplyAgentReportResult,
+  AgentReportTransitionResult,
+} from "./agent-report.js";
 
 // tmux — command wrappers
 export {
@@ -98,6 +166,17 @@ export {
   classifyTerminalActivity,
   recordTerminalActivity,
 } from "./activity-log.js";
+export {
+  ACTIVITY_STRONG_WINDOW_MS,
+  ACTIVITY_WEAK_WINDOW_MS,
+  classifyActivitySignal,
+  createActivitySignal,
+  formatActivitySignalEvidence,
+  hasPositiveIdleEvidence,
+  isWeakActivityEvidence,
+  summarizeActivityFreshness,
+  supportsRecentLiveness,
+} from "./activity-signal.js";
 
 // Agent workspace hooks — shared PATH-wrapper setup for non-Claude agents
 export {
@@ -114,9 +193,9 @@ export {
 } from "./observability.js";
 export { resolveNotifierTarget } from "./notifier-resolution.js";
 export type {
+  ObservabilityLevel,
   ObservabilityMetricName,
   ObservabilityHealthStatus,
-  ObservabilityLevel,
   ObservabilitySummary,
   ProjectObserver,
 } from "./observability.js";
@@ -144,7 +223,6 @@ export type {
 export {
   generateConfigHash,
   generateProjectId,
-  generateInstanceId,
   generateSessionPrefix,
   getProjectBaseDir,
   getSessionsDir,
@@ -160,6 +238,45 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+export {
+  normalizeOriginUrl,
+  relativeSubdir,
+  deriveStorageKey,
+} from "./storage-key.js";
+
+// Global config — Option C hybrid architecture (global registry + local behavior)
+export {
+  getGlobalConfigPath,
+  loadGlobalConfig,
+  saveGlobalConfig,
+  loadLocalProjectConfig,
+  LocalProjectConfigSchema,
+  loadLocalProjectConfigDetailed,
+  getLocalProjectConfigPath,
+  repairWrappedLocalProjectConfig,
+  registerProjectInGlobalConfig,
+  relinkProjectInGlobalConfig,
+  StorageKeyCollisionError,
+  buildEffectiveProjectConfig,
+  resolveProjectIdentity,
+  isOldConfigFormat,
+  migrateToGlobalConfig,
+  writeLocalProjectConfig,
+} from "./global-config.js";
+export type {
+  GlobalConfig,
+  GlobalProjectEntry,
+  LocalProjectConfig,
+  LocalProjectConfigLoadResult,
+  RegisterProjectOptions,
+  RelinkProjectOptions,
+} from "./global-config.js";
+
+export {
+  loadEffectiveProjectConfig,
+  iterateAllProjects,
+} from "./project-resolver.js";
+
 // Config generator — auto-generate config from repo URL
 export {
   isRepoUrl,
@@ -172,6 +289,7 @@ export {
   isRepoAlreadyCloned,
   resolveCloneTarget,
   sanitizeProjectId,
+  readOriginRemoteUrl,
 } from "./config-generator.js";
 export type {
   ParsedRepoUrl,
@@ -179,3 +297,48 @@ export type {
   DetectedProjectInfo,
   GenerateConfigOptions,
 } from "./config-generator.js";
+
+// Portfolio — cross-project aggregation
+export type {
+  PortfolioProject,
+  PortfolioPreferences,
+  PortfolioRegistered,
+  PortfolioSession,
+} from "./types.js";
+
+export {
+  getAoBaseDir,
+  getPortfolioDir,
+  getPreferencesPath,
+  getRegisteredPath,
+} from "./paths.js";
+
+export {
+  discoverProjects,
+  loadRegistered,
+  loadPreferences,
+  savePreferences,
+  updatePreferences,
+  saveRegistered,
+  getPortfolio,
+  registerProject,
+  relinkProject,
+  unregisterProject,
+  refreshProject,
+} from "./portfolio-registry.js";
+
+export {
+  resolveProjectConfig,
+  clearConfigCache,
+} from "./portfolio-projects.js";
+
+export {
+  listPortfolioSessions,
+  getPortfolioSessionCounts,
+} from "./portfolio-session-service.js";
+
+export {
+  resolvePortfolioProject,
+  resolvePortfolioSession,
+  derivePortfolioProjectId,
+} from "./portfolio-routing.js";

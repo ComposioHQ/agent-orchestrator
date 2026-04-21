@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import type { ReactNode } from "react";
 import { Geist, JetBrains_Mono } from "next/font/google";
 import { getProjectName } from "@/lib/project-name";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
@@ -44,10 +45,14 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`dark ${geistSans.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
-      <body className="bg-[var(--color-bg-base)] text-[var(--color-text-primary)] antialiased">
+    <html
+      lang="en"
+      className={`dark ${geistSans.variable} ${jetbrainsMono.variable}`}
+      suppressHydrationWarning
+    >
+      <body className="h-screen overflow-hidden bg-[var(--color-bg-base)] text-[var(--color-text-primary)] antialiased">
         <Providers>{children}</Providers>
         <ServiceWorkerRegistrar />
       </body>

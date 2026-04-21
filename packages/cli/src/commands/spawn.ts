@@ -14,6 +14,7 @@ import { getSessionManager } from "../lib/create-session-manager.js";
 import { preflight } from "../lib/preflight.js";
 import { findProjectForDirectory } from "../lib/project-resolution.js";
 import { getRunning } from "../lib/running-state.js";
+import { projectSessionUrl } from "../lib/routes.js";
 
 /**
  * Auto-detect the project ID from the config.
@@ -154,7 +155,7 @@ async function spawnSession(
     spinner.succeed(
       `Session ${chalk.green(session.id)} spawned${issueLabel}${claimLabel}`,
     );
-    console.log(`  View:     ${chalk.dim(`http://localhost:${port}/sessions/${session.id}`)}`);
+    console.log(`  View:     ${chalk.dim(projectSessionUrl(port, projectId, session.id))}`);
 
     // Warn if prompt delivery failed (for post-launch agents like Claude Code)
     const promptDelivered = session.metadata?.promptDelivered;

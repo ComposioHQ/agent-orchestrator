@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig, WorkspaceHooksConfig } from "@aoagents/ao-core";
+import {
+  createActivitySignal,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+  type WorkspaceHooksConfig,
+} from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — available inside vi.mock factories
@@ -50,7 +56,13 @@ vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
-import { create, manifest, default as defaultExport, resetPsCache, METADATA_UPDATER_SCRIPT } from "./index.js";
+import {
+  create,
+  manifest,
+  default as defaultExport,
+  resetPsCache,
+  METADATA_UPDATER_SCRIPT,
+} from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -61,6 +73,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "test-project",
     status: "working",
     activity: "active",
+    activitySignal: createActivitySignal("valid", {
+      activity: "active",
+      timestamp: new Date(),
+      source: "native",
+    }),
     branch: "feat/test",
     issueId: null,
     pr: null,
@@ -577,6 +594,17 @@ describe("getSessionInfo", () => {
       expect(result?.cost?.outputTokens).toBe(50);
     });
 
+    it("uses model-aware pricing when cached tokens are present", async () => {
+      const jsonl = [
+        '{"type":"assistant","model":"claude-sonnet-4-5","usage":{"input_tokens":1000,"output_tokens":100,"cache_read_input_tokens":10000,"cache_creation_input_tokens":2000}}',
+      ].join("\n");
+      mockJsonlFiles(jsonl);
+      const result = await agent.getSessionInfo(makeSession());
+      expect(result?.cost?.inputTokens).toBe(13000);
+      expect(result?.cost?.outputTokens).toBe(100);
+      expect(result?.cost?.estimatedCostUsd).toBeGreaterThan(0);
+    });
+
     it("uses costUSD field when present", async () => {
       const jsonl = [
         '{"type":"user","message":{"content":"hi"}}',
@@ -720,12 +748,8 @@ describe("METADATA_UPDATER_SCRIPT content", () => {
   it("does NOT use ^-anchored regexes directly on $command for gh/git detection", () => {
     // The old buggy patterns matched $command with ^ anchor.
     // After the fix, ^ is still used but on $clean_command (which has cd stripped).
-    expect(METADATA_UPDATER_SCRIPT).not.toMatch(
-      /"\$command"\s*=~\s*\^gh/,
-    );
-    expect(METADATA_UPDATER_SCRIPT).not.toMatch(
-      /"\$command"\s*=~\s*\^git/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).not.toMatch(/"\$command"\s*=~\s*\^gh/);
+    expect(METADATA_UPDATER_SCRIPT).not.toMatch(/"\$command"\s*=~\s*\^git/);
   });
 
   it("strips cd prefixes with both && and ; delimiters", () => {
@@ -737,21 +761,15 @@ describe("METADATA_UPDATER_SCRIPT content", () => {
   });
 
   it("detects gh pr create on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^gh\[/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/"\$clean_command"\s*=~\s*\^gh\[/);
   });
 
   it("detects git checkout -b on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^git\[.*checkout/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/"\$clean_command"\s*=~\s*\^git\[.*checkout/);
   });
 
   it("detects gh pr merge on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^gh\[.*merge/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/"\$clean_command"\s*=~\s*\^gh\[.*merge/);
   });
 });
 

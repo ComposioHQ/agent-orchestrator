@@ -79,10 +79,10 @@ describe("PullRequestsPage", () => {
 
     expect(screen.getByRole("link", { name: /#634 mobile dashboard density pass/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/?project=my-app");
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/projects/my-app");
     expect(screen.getByRole("link", { name: "Orchestrator" })).toHaveAttribute(
       "href",
-      "/sessions/my-app-orchestrator",
+      "/projects/my-app/sessions/my-app-orchestrator",
     );
   });
 

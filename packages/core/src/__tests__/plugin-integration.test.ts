@@ -118,6 +118,7 @@ beforeEach(() => {
     name: "Test App",
     repo: "acme/app",
     path: join(env.tmpDir, "test-app"),
+    storageKey: "111111111111",
     defaultBranch: "main",
     sessionPrefix: "app",
     tracker: { plugin: "github" },
@@ -148,11 +149,11 @@ beforeEach(() => {
   };
 
   env.config = config;
-  env.sessionsDir = getSessionsDir(env.configPath, project.path);
+  env.sessionsDir = getSessionsDir(project.storageKey);
   mkdirSync(env.sessionsDir, { recursive: true });
 
   env.cleanup = () => {
-    const projectBaseDir = getProjectBaseDir(env.configPath, project.path);
+    const projectBaseDir = getProjectBaseDir(project.storageKey);
     if (existsSync(projectBaseDir)) {
       rmSync(projectBaseDir, { recursive: true, force: true });
     }
@@ -392,7 +393,7 @@ describe("plugin integration", () => {
 
   // -------------------------------------------------------------------------
   describe("SessionManager + SCM", () => {
-    it("cleanup() calls scm-github getPRState() and kills merged PR sessions", async () => {
+    it("cleanup() calls scm-github getPRState() but keeps merged PR sessions alive", async () => {
       const registry = createTestRegistry();
       const sm = createSessionManager({ config, registry });
 
@@ -412,7 +413,7 @@ describe("plugin integration", () => {
 
       const result = await sm.cleanup("my-app");
 
-      expect(result.killed).toContain("app-1");
+      expect(result.skipped).toContain("app-1");
       // Verify gh CLI was called for PR state check
       expect(ghMock).toHaveBeenCalledWith(
         "gh",

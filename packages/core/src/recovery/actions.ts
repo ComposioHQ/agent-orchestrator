@@ -39,7 +39,15 @@ export async function recoverSession(
     const preservedStatus = validateStatus(rawMetadata["status"]);
 
     const project = config.projects[projectId];
-    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    if (!project) {
+      return {
+        success: false,
+        sessionId,
+        action: "recover",
+        error: `Unknown project: ${projectId}`,
+      };
+    }
+    const sessionsDir = getSessionsDir(project.storageKey);
 
     if (recoveryCount > context.recoveryConfig.maxRecoveryAttempts) {
       updateMetadata(sessionsDir, sessionId, {
@@ -48,6 +56,7 @@ export async function recoverSession(
         escalationReason: `Exceeded max recovery attempts (${context.recoveryConfig.maxRecoveryAttempts})`,
         recoveryCount: String(recoveryCount),
       });
+      context.invalidateCache?.();
 
       return {
         success: true,
@@ -63,6 +72,7 @@ export async function recoverSession(
       restoredAt: now,
       recoveryCount: String(recoveryCount),
     });
+    context.invalidateCache?.();
 
     const updatedMetadata = {
       ...rawMetadata,
@@ -113,6 +123,14 @@ export async function cleanupSession(
 
   try {
     const project = config.projects[projectId];
+    if (!project) {
+      return {
+        success: false,
+        sessionId,
+        action: "cleanup",
+        error: `Unknown project: ${projectId}`,
+      };
+    }
     const runtimeName = project.runtime ?? config.defaults.runtime;
     const workspaceName = project.workspace ?? config.defaults.workspace;
     const runtime = registry.get<Runtime>("runtime", runtimeName);
@@ -135,7 +153,7 @@ export async function cleanupSession(
       }
     }
 
-    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    const sessionsDir = getSessionsDir(project.storageKey);
 
     updateMetadata(sessionsDir, sessionId, {
       status: "terminated",
@@ -144,6 +162,7 @@ export async function cleanupSession(
     });
 
     deleteMetadata(sessionsDir, sessionId, true);
+    context.invalidateCache?.();
 
     return {
       success: true,
@@ -180,13 +199,23 @@ export async function escalateSession(
 
   try {
     const project = config.projects[projectId];
-    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    if (!project) {
+      return {
+        success: false,
+        sessionId,
+        action: "escalate",
+        error: `Unknown project: ${projectId}`,
+        requiresManualIntervention: true,
+      };
+    }
+    const sessionsDir = getSessionsDir(project.storageKey);
 
     updateMetadata(sessionsDir, sessionId, {
       status: "stuck",
       escalatedAt: new Date().toISOString(),
       escalationReason: reason,
     });
+    context.invalidateCache?.();
 
     return {
       success: true,

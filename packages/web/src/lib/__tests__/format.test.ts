@@ -16,6 +16,12 @@ function makeSession(overrides?: Partial<DashboardSession>): DashboardSession {
     projectId: "test",
     status: "working",
     activity: "active",
+    activitySignal: {
+      state: "valid",
+      activity: "active",
+      timestamp: new Date().toISOString(),
+      source: "native",
+    },
     branch: null,
     issueId: null,
     issueUrl: null,

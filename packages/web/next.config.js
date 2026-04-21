@@ -3,12 +3,17 @@ const nextConfig = {
   transpilePackages: [
     "@aoagents/ao-core",
     "@aoagents/ao-plugin-agent-claude-code",
+    "@aoagents/ao-plugin-agent-codex",
     "@aoagents/ao-plugin-agent-opencode",
     "@aoagents/ao-plugin-runtime-tmux",
     "@aoagents/ao-plugin-scm-github",
     "@aoagents/ao-plugin-tracker-github",
     "@aoagents/ao-plugin-tracker-linear",
     "@aoagents/ao-plugin-workspace-worktree",
+  ],
+  serverExternalPackages: [
+    "yaml",
+    "zod",
   ],
   async headers() {
     return [
