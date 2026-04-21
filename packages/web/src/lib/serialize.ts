@@ -468,8 +468,6 @@ export function enrichSessionIssue(
         error: String(error),
       });
     }
-  } else if (!dashboard.issueUrl && isAbsoluteUrl(issueReference)) {
-    dashboard.issueUrl = issueReference;
   }
 
   if (!dashboard.issueUrl) return;
