@@ -42,19 +42,23 @@ describe("hasRecentCommits", () => {
     }
   });
 
-  it("respects a custom window", async () => {
+  it("respects a custom window — excludes commits outside it, includes them inside it", async () => {
     await writeFile(join(repoDir, "a.txt"), "hello");
     execFileSync("git", ["add", "."], { cwd: repoDir });
-    // Backdate the commit well outside any short window.
-    execFileSync("git", ["commit", "-q", "-m", "old"], {
+    // Backdate the commit by ~2 minutes so a 30s window excludes it but a
+    // 10-minute window includes it — this discriminates between "parameter
+    // forwarded" and "parameter silently ignored / hardcoded".
+    const twoMinAgo = new Date(Date.now() - 120_000).toISOString();
+    execFileSync("git", ["commit", "-q", "-m", "two-min-ago"], {
       cwd: repoDir,
       env: {
         ...process.env,
-        GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
-        GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+        GIT_AUTHOR_DATE: twoMinAgo,
+        GIT_COMMITTER_DATE: twoMinAgo,
       },
     });
 
-    expect(await hasRecentCommits(repoDir, 60)).toBe(false);
+    expect(await hasRecentCommits(repoDir, 30)).toBe(false);
+    expect(await hasRecentCommits(repoDir, 600)).toBe(true);
   });
 });
