@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createActivitySignal, createInitialCanonicalLifecycle } from "@aoagents/ao-core";
-import type { Session, RuntimeHandle, AgentLaunchConfig } from "@aoagents/ao-core";
+import { createActivitySignal, createInitialCanonicalLifecycle, type Session, type RuntimeHandle, type AgentLaunchConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks

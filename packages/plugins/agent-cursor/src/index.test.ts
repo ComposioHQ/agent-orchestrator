@@ -464,12 +464,27 @@ describe("getSessionInfo", () => {
 describe("getRestoreCommand", () => {
   const agent = create();
 
-  it("returns agent --force --continue to resume latest workspace chat", async () => {
+  it("includes --force flags when permission mode is permissionless", async () => {
+    const result = await agent.getRestoreCommand!(
+      makeSession(),
+      {
+        name: "proj",
+        repo: "o/r",
+        path: "/p",
+        defaultBranch: "main",
+        sessionPrefix: "p",
+        agentConfig: { permissions: "permissionless" },
+      },
+    );
+    expect(result).toBe("agent --force --sandbox disabled --approve-mcps --continue");
+  });
+
+  it("omits --force flags when permission mode is not permissionless", async () => {
     const result = await agent.getRestoreCommand!(
       makeSession(),
       { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
     );
-    expect(result).toBe("agent --force --continue");
+    expect(result).toBe("agent --continue");
   });
 });
 

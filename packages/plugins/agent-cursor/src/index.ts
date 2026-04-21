@@ -391,8 +391,14 @@ function createCursorAgent(): Agent {
     // Cursor's `--continue` resumes the latest chat session for the current
     // workspace. Since restore launches in the same worktree, this brings
     // back the prior conversation without needing to track a chat ID.
-    async getRestoreCommand(_session: Session, _project: ProjectConfig): Promise<string | null> {
-      return "agent --force --continue";
+    async getRestoreCommand(_session: Session, project: ProjectConfig): Promise<string | null> {
+      const permissionMode = normalizeAgentPermissionMode(project.agentConfig?.permissions);
+      const parts = ["agent"];
+      if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
+        parts.push("--force", "--sandbox", "disabled", "--approve-mcps");
+      }
+      parts.push("--continue");
+      return parts.join(" ");
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
