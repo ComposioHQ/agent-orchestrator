@@ -2523,6 +2523,12 @@ describe("pollAll terminal status accounting", () => {
   });
 
   it("skips polling sessions in terminal statuses like done or errored", async () => {
+    const isolatedPlugins = createMockPlugins();
+    const isolatedRegistry = createMockRegistry({
+      runtime: isolatedPlugins.runtime,
+      agent: isolatedPlugins.agent,
+    });
+
     // Sessions in "done" / "errored" should not be polled
     const sessions = [
       makeSession({ id: "s-done", status: "done" as SessionStatus }),
@@ -2533,11 +2539,11 @@ describe("pollAll terminal status accounting", () => {
 
     // If these sessions were polled, determineStatus would call runtime.isAlive.
     // Reset call count and verify it's not called.
-    vi.mocked(plugins.runtime.isAlive).mockClear();
+    vi.mocked(isolatedPlugins.runtime.isAlive).mockClear();
 
     const lm = createLifecycleManager({
       config,
-      registry: mockRegistry,
+      registry: isolatedRegistry,
       sessionManager: mockSessionManager,
     });
 
@@ -2545,7 +2551,7 @@ describe("pollAll terminal status accounting", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     // Terminal sessions should not be polled — runtime.isAlive should not be called
-    expect(plugins.runtime.isAlive).not.toHaveBeenCalled();
+    expect(isolatedPlugins.runtime.isAlive).not.toHaveBeenCalled();
 
     lm.stop();
   });

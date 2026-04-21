@@ -43,10 +43,17 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
       lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
       break;
     case "stuck":
-    case "errored":
       lifecycle.session.state = "stuck";
-      lifecycle.session.reason = requestedStatus === "errored" ? "error_in_process" : "probe_failure";
+      lifecycle.session.reason = "probe_failure";
       lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+      break;
+    case "errored":
+      lifecycle.session.state = "terminated";
+      lifecycle.session.reason = "error_in_process";
+      lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+      lifecycle.session.terminatedAt = lifecycle.session.lastTransitionAt;
+      lifecycle.runtime.state = "missing";
+      lifecycle.runtime.reason = "process_missing";
       break;
     case "merged":
       lifecycle.session.state = "idle";
