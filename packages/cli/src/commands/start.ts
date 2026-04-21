@@ -385,6 +385,12 @@ const AGENT_INSTALL_OPTIONS: AgentInstallOption[] = [
     cmd: "npm",
     args: ["install", "-g", "opencode-ai"],
   },
+  {
+    id: "kimi-2-6-code",
+    label: "Kimi 2.6 Code",
+    cmd: "bun",
+    args: ["install", "-g", "@moonshot-ai/kimi-code"],
+  },
 ];
 
 async function promptInstallAgentRuntime(available: DetectedAgent[]): Promise<DetectedAgent[]> {
