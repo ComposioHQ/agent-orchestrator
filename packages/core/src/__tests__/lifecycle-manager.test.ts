@@ -1059,9 +1059,46 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("idle");
     const meta = readMetadataRaw(env.sessionsDir, "app-1");
     expect(meta?.["status"]).toBe("idle");
+    expect(meta?.["pr"]).toBeUndefined();
     expect(meta?.["statePayload"]).toContain('"state":"closed"');
     expect(meta?.["statePayload"]).toContain('"reason":"pr_closed_waiting_decision"');
+    expect(meta?.["statePayload"]).toContain('"number":null');
+    expect(meta?.["statePayload"]).toContain('"url":null');
     expect(notifier.notify).toHaveBeenCalledWith(expect.objectContaining({ type: "pr.closed" }));
+  });
+
+  it("replaces a closed PR with a newly detected PR on the same branch", async () => {
+    const oldPr = makePR();
+    const newPr = makePR({
+      number: 77,
+      url: "https://github.com/org/my-app/pull/77",
+      title: "Replacement PR",
+    });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockImplementation(async (pr) => (pr.number === oldPr.number ? "closed" : "open")),
+      detectPR: vi.fn().mockResolvedValue(newPr),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: oldPr }),
+      registry,
+      metaOverrides: { pr: oldPr.url },
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("pr_open");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["status"]).toBe("pr_open");
+    expect(meta?.["pr"]).toBe(newPr.url);
+    expect(meta?.["statePayload"]).toContain('"state":"open"');
+    expect(meta?.["statePayload"]).toContain('"number":77');
+    expect(meta?.["statePayload"]).toContain(`"url":"${newPr.url}"`);
   });
 
   it("routes closed PR transitions through the pr-closed reaction key", async () => {

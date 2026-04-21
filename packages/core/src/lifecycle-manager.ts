@@ -505,6 +505,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const currentDetectingAttempts = parseAttemptCount(session.metadata["detectingAttempts"]);
     const currentDetectingStartedAt = session.metadata["detectingStartedAt"] || undefined;
     const currentDetectingEvidenceHash = session.metadata["detectingEvidenceHash"] || undefined;
+    const canAutoDetectPR =
+      Boolean(scm) &&
+      Boolean(session.branch) &&
+      session.metadata["prAutoDetect"] !== "off" &&
+      lifecycle.session.kind !== "orchestrator";
 
     const commit = (
       decision: LifecycleDecision = {
@@ -554,6 +559,23 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     let activitySignal = createActivitySignal("unavailable");
     let processProbe: ProbeResult = { state: "unknown", failed: false };
     let activityEvidence = formatActivitySignalEvidence(activitySignal);
+
+    const attachDetectedPR = async (excludeUrl?: string): Promise<boolean> => {
+      if (!scm || !canAutoDetectPR) return false;
+
+      const detectedPR = await scm.detectPR(session, project);
+      if (!detectedPR || detectedPR.url === excludeUrl) {
+        return false;
+      }
+
+      session.pr = detectedPR;
+      lifecycle.pr.state = "open";
+      lifecycle.pr.reason = "in_progress";
+      lifecycle.pr.number = detectedPR.number;
+      lifecycle.pr.url = detectedPR.url;
+      lifecycle.pr.lastObservedAt = nowIso;
+      return true;
+    };
 
     if (agent && (session.runtimeHandle || session.workspacePath)) {
       try {
@@ -706,25 +728,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       return commit(probeDecision);
     }
 
-    if (
-      !session.pr &&
-      scm &&
-      session.branch &&
-      session.metadata["prAutoDetect"] !== "off" &&
-      session.metadata["role"] !== "orchestrator" &&
-      !session.id.endsWith("-orchestrator")
-    ) {
+    if (!session.pr) {
       try {
-        const detectedPR = await scm.detectPR(session, project);
-        if (detectedPR) {
-          session.pr = detectedPR;
-          lifecycle.pr.state = "open";
-          lifecycle.pr.reason = "in_progress";
-          lifecycle.pr.number = detectedPR.number;
-          lifecycle.pr.url = detectedPR.url;
-          lifecycle.pr.lastObservedAt = nowIso;
+        if (await attachDetectedPR()) {
           const sessionsDir = getSessionsDir(config.configPath, project.path);
-          updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
+          updateMetadata(sessionsDir, session.id, { pr: lifecycle.pr.url ?? "" });
           sessionManager.invalidateCache();
         }
       } catch (error) {
@@ -743,27 +751,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     if (session.pr && scm) {
       try {
-        const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
-        const cachedData = prEnrichmentCache.get(prKey);
-        lifecycle.pr.number = session.pr.number;
-        lifecycle.pr.url = session.pr.url;
+        let activePr = session.pr;
+        lifecycle.pr.number = activePr.number;
+        lifecycle.pr.url = activePr.url;
         lifecycle.pr.lastObservedAt = nowIso;
         const shouldEscalateIdleToStuck =
           detectedIdleTimestamp !== null && hasPositiveIdleEvidence(activitySignal)
             ? isIdleBeyondThreshold(session, detectedIdleTimestamp)
             : false;
 
-        if (cachedData) {
-          return commit(
-            resolvePREnrichmentDecision(cachedData, {
-              shouldEscalateIdleToStuck,
-              idleWasBlocked,
-              activityEvidence,
-            }),
-          );
+        let prState = await scm.getPRState(activePr);
+        if (prState === PR_STATE.CLOSED) {
+          const replaced = await attachDetectedPR(activePr.url);
+          if (replaced && session.pr) {
+            activePr = session.pr;
+            prState = await scm.getPRState(activePr);
+          } else {
+            session.pr = null;
+            lifecycle.pr.number = null;
+            lifecycle.pr.url = null;
+            lifecycle.pr.lastObservedAt = nowIso;
+          }
         }
-
-        const prState = await scm.getPRState(session.pr);
         if (prState === PR_STATE.MERGED || prState === PR_STATE.CLOSED) {
           return commit(
             resolvePRLiveDecision({
@@ -778,7 +787,20 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           );
         }
 
-        const ciStatus = await scm.getCISummary(session.pr);
+        const prKey = `${activePr.owner}/${activePr.repo}#${activePr.number}`;
+        const cachedData = prEnrichmentCache.get(prKey);
+
+        if (cachedData) {
+          return commit(
+            resolvePREnrichmentDecision(cachedData, {
+              shouldEscalateIdleToStuck,
+              idleWasBlocked,
+              activityEvidence,
+            }),
+          );
+        }
+
+        const ciStatus = await scm.getCISummary(activePr);
         if (ciStatus === CI_STATUS.FAILING) {
           return commit(
             resolvePRLiveDecision({
@@ -793,10 +815,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           );
         }
 
-        const reviewDecision = await scm.getReviewDecision(session.pr);
+        const reviewDecision = await scm.getReviewDecision(activePr);
         const mergeReady =
           reviewDecision === "approved" || reviewDecision === "none"
-            ? await scm.getMergeability(session.pr)
+            ? await scm.getMergeability(activePr)
             : { mergeable: false };
         return commit(
           resolvePRLiveDecision({
