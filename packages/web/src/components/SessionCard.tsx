@@ -21,6 +21,13 @@ import { CICheckList } from "./CIBadge";
 import { getSizeLabel } from "./PRStatus";
 import { projectSessionHashPath, projectSessionPath } from "@/lib/routes";
 
+/**
+ * Tracks which session IDs have already played their entrance animation.
+ * Prevents the kanban-card-enter animation from replaying when React
+ * unmounts and remounts a card due to attention-level column changes.
+ */
+const enteredSessionIds = new Set<string>();
+
 interface SessionCardProps {
   session: DashboardSession;
   onSend?: (sessionId: string, message: string) => Promise<void> | void;
@@ -126,6 +133,13 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   const [replyText, setReplyText] = useState("");
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickReplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Only play the entrance animation on the very first mount of this session.
+  // Subsequent remounts (e.g. attention-level column change) skip the animation
+  // to prevent the card from blinking (opacity 0→1 flash every SSE cycle).
+  const [hasEntered] = useState(() => enteredSessionIds.has(session.id));
+  useEffect(() => { enteredSessionIds.add(session.id); }, [session.id]);
+
   const level = getAttentionLevel(session);
   const pr = session.pr;
 
@@ -456,7 +470,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   return (
     <div
       className={cn(
-        "session-card kanban-card-enter border",
+        "session-card border",\n        !hasEntered && "kanban-card-enter",
         cardFrameClass,
         accentClass,
         isReadyToMerge && "card-merge-ready",
