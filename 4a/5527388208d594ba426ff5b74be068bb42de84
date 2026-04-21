@@ -1,0 +1,422 @@
+packages/cli/__tests__/commands/start.test.ts
+  6c73abede2236f92 9,33,60-61,63,147-148,223,241-254,257-258,292-293,296-297,817-826,828,833,950-951,957-960,965-966,968,970-1055,1080-1081,1087-1090,1095,1097-1098,1101-1104,1124-1125,1133-1134,1144-1153,1159-1321,1351-1437,1458,1460-1472,1478,1486-1518,1523,1533,1538-1548,1554,2026-2195
+.changeset/stage2-evidence-recovery.md
+  6c73abede2236f92 1-5
+packages/web/src/__tests__/project-detail-route.test.ts
+  6c73abede2236f92 1-350
+packages/core/src/config-generator.ts
+  6c73abede2236f92 164-184
+packages/core/src/portfolio-session-service.ts
+  6c73abede2236f92 1-191
+packages/cli/src/program.ts
+  6c73abede2236f92 7,36-37
+packages/web/src/app/globals.css
+  6c73abede2236f92 862-863,868-869,871,991-996,998-1007,1010-1020,1022-1028,1030-1124,1126-1131,1133-1135,1138-1139,1144,1202-1204,1211-1213,1223-1231,1542-1544,1593-1600,1977-2012,2111-2173,3007-3047,3440-3442,3508-3518,3537-3540,3549-3552,3564-3565,3568-3574,3577-3579,3582-3584,3587-3602,3605-3607,3610,3613-3616,3618-3621,3623-3624,3627,3629,3632-4489,4492-4494,4498-4502,4505,4508,4511-4512,4517-4520,4522-4529,4531,4534-4537,4540-4543,4546-4617,5033-5034,5041,5049,5334-5336,5347-5349,5814-5816,5833-5835,6031-6033,6169-6171,6178,6181-6184,6186,6222-6246,6256-6259,6263,6277-6278,6284,6326-6341,6700-6703,7013-7019,7031-7181
+packages/web/src/app/prs/page.tsx
+  6c73abede2236f92 34
+packages/cli/__tests__/commands/send.test.ts
+  6c73abede2236f92 404-436
+packages/core/src/activity-signal.ts
+  6c73abede2236f92 1-125
+packages/web/src/lib/scm-webhooks.test.ts
+  6c73abede2236f92 2-8,75-90,97-102,127-132
+packages/web/src/lib/terminal-touch-scroll.ts
+  6c73abede2236f92 1-194
+.changeset/late-lions-share.md
+  6c73abede2236f92 1-11
+packages/core/rollup.config.ts
+  6c73abede2236f92 44-46
+.changeset/isolate-lifecycle-terminal-logs.md
+  6c73abede2236f92 1-5
+.changeset/web-copy-debug-bundle.md
+  6c73abede2236f92 1-5
+.github/workflows/security.yml
+  6c73abede2236f92 32-47,115
+packages/cli/src/commands/report.ts
+  6c73abede2236f92 1-169
+packages/core/src/__tests__/lifecycle-state.test.ts
+  6c73abede2236f92 1-216
+packages/plugins/terminal-iterm2/src/index.test.ts
+  6c73abede2236f92 2,20-25,31-36
+packages/plugins/scm-gitlab/test/index.test.ts
+  6c73abede2236f92 16,47-51,359-360
+packages/web/src/app/api/projects/reload/route.ts
+  6c73abede2236f92 1-39
+packages/web/src/components/session-detail-agent-actions.ts
+  6c73abede2236f92 1-49
+packages/web/src/components/session-detail-utils.ts
+  6c73abede2236f92 1-111
+.changeset/collapsible-agent-reports.md
+  6c73abede2236f92 1-5
+.changeset/auto-cleanup-on-merge.md
+  6c73abede2236f92 1-19
+packages/web/src/lib/types.ts
+  6c73abede2236f92 14-15,20-26,41-42,44-50,52,58,60,67-70,72-79,94-95,116-183,302-404,412,414-485,491-496,507-509,528-533,544-548
+packages/web/src/app/api/sessions/route.ts
+  6c73abede2236f92 1,14,20-71,80,87-89,91-96,107,181
+.changeset/web-merge-conflict-actions.md
+  6c73abede2236f92 1-5
+packages/web/src/app/api/sessions/[id]/route.ts
+  6c73abede2236f92 2,25-32
+packages/core/src/agent-workspace-hooks.ts
+  6c73abede2236f92 6,35,137-139,171,174,183-203,330
+.changeset/stage5-ui-api-rollout.md
+  6c73abede2236f92 1-6
+packages/web/server/mux-websocket.ts
+  6c73abede2236f92 38-47,52
+packages/core/src/prompt-builder.ts
+  6c73abede2236f92 30-46,66-72
+packages/core/src/feature-flags.ts
+  6c73abede2236f92 1-5
+packages/core/src/__tests__/file-lock.test.ts
+  6c73abede2236f92 1-90
+packages/plugins/agent-codex/src/index.ts
+  6c73abede2236f92 188,245-246,256-263,328-329,388-392,395-399,440-443,520-523,695-707
+packages/core/src/session-manager.ts
+  6c73abede2236f92 33-35,58-64,66,80,309,313-319,322,354,368,411,416-418,429-431,453-474,501-512,538-549,553,556-559,580-600,637-655,834-835,897,1065-1076,1083-1086,1091-1093,1103,1108,1110-1112,1116-1117,1120,1180,1348-1352,1356,1358-1363,1370-1371,1383-1384,1389,1417,1440,1484,1500,1520,1600,1694-1702,1706,1708-1713,1720-1721,1732-1733,1738,1765,1783,1809-1816,1853-1870,1874,1897-1904,1924-1938,1940-1954,2009-2027,2030,2034,2092,2096,2212,2315,2318,2336,2340,2348,2354-2357,2462,2539-2545,2548,2551,2553,2559-2569,2573-2576,2578,2688,2694-2698,2707-2709,2773,2852,2878,2888-2901
+.changeset/filter-terminated-sessions-from-ls.md
+  6c73abede2236f92 1-12
+packages/core/src/utils/pr.ts
+  6c73abede2236f92 8-44,59-65
+packages/integration-tests/src/config-metadata-service.integration.test.ts
+  6c73abede2236f92 27-28,69,90,93,101-102,105-106,110,172,175,182-183
+packages/core/src/lifecycle-transition.ts
+  6c73abede2236f92 1-302
+packages/core/src/__tests__/global-config.test.ts
+  6c73abede2236f92 1-545
+.changeset/pr1300-review-followups.md
+  6c73abede2236f92 1-7
+.changeset/fix-start-restore-and-codex-resume.md
+  6c73abede2236f92 1-10
+packages/core/src/__tests__/activity-signal.test.ts
+  6c73abede2236f92 1-173
+packages/web/src/app/layout.tsx
+  6c73abede2236f92 2,48,50-55
+packages/web/src/__tests__/helpers.ts
+  6c73abede2236f92 1-185,189,194-200,214-218,220-226
+packages/core/src/__tests__/agent-report.test.ts
+  6c73abede2236f92 1-566
+packages/core/src/prompts/orchestrator.md
+  6c73abede2236f92 56,65-68,70,99,103-112,151,183,222
+packages/core/src/__tests__/utils.test.ts
+  6c73abede2236f92 190-191,197-211
+packages/cli/src/lib/routes.ts
+  6c73abede2236f92 1-3
+packages/plugins/agent-claude-code/src/index.ts
+  6c73abede2236f92 310,328,358-359,375-376,388-394,398-403,406-410,831-835
+packages/web/src/__tests__/get-attention-level.test.ts
+  6c73abede2236f92 248-259,263-288,293,298-303,308-313,317-446
+packages/web/src/lib/routes.ts
+  6c73abede2236f92 1-11
+.changeset/cli-session-ls-terminated.md
+  6c73abede2236f92 1-5
+packages/core/src/recovery/types.ts
+  6c73abede2236f92 49-60,228-236
+packages/web/src/__tests__/prompt-spawn.test.ts
+  6c73abede2236f92 17-24,31-36,41-46
+packages/web/src/lib/dashboard-page-data.ts
+  6c73abede2236f92 4-8,23-43,51-53,56-58,88,91-94,96-109,111-112,114-115,117-119,124-127,129-133,137-140,143-144
+packages/web/src/__tests__/filesystem-browse-api.test.ts
+  6c73abede2236f92 1-174
+packages/web/src/lib/mux-protocol.ts
+  6c73abede2236f92 1-2,28-31
+packages/cli/__tests__/commands/project.test.ts
+  6c73abede2236f92 1-236
+packages/core/src/project-resolver.ts
+  6c73abede2236f92 1-29
+packages/plugins/agent-claude-code/src/__tests__/activity-detection.test.ts
+  6c73abede2236f92 6,28-32
+packages/web/src/lib/__tests__/dashboard-page-data.fast-path.test.ts
+  6c73abede2236f92 63,65-66,70-71,138-214
+packages/core/src/__tests__/paths.test.ts
+  6c73abede2236f92 1,4,6-9,16-18,20-26,29-32,35-41,45-47
+packages/core/src/paths.ts
+  6c73abede2236f92 2,6,12-18,21-27,76-77,79-80,94,96-97,102,104-105,110,112-113,118,120-121,128-129,143,146-147,179-198,201-215,220-221,225,230-235
+packages/web/src/__tests__/services.test.ts
+  6c73abede2236f92 5-6,12,20-26,39-40,46,57-58,72,85-86,115-122,132-165
+packages/cli/src/commands/send.ts
+  6c73abede2236f92 187-193
+packages/integration-tests/src/cli-spawn-core-read-new.integration.test.ts
+  6c73abede2236f92 17,33,74,104,106,110,114,137,141,171,203,205,210-211,234,242,258-259,268-269,292-293
+packages/integration-tests/src/helpers/session-factory.ts
+  6c73abede2236f92 5,22-28,34-39
+packages/cli/src/lib/running-state.ts
+  6c73abede2236f92 1-10,25-34,40,43-78,85,87-99,101,110-111,113-117,124,127-134,136,172,184,197,202,223-231,237,240
+packages/cli/src/commands/session.ts
+  6c73abede2236f92 6,16,41-44,46-51,62,68-76,172-178,182-189,245,406
+packages/core/src/metadata.ts
+  6c73abede2236f92 35,38-44,57,90-91,144-145,170-173,175-179,184-186,188,191-215,218-258,368
+packages/cli/src/commands/start.ts
+  6c73abede2236f92 24,34,36-37,39,42-43,60-67,86,92-108,201,809-816,818-821,823-841,1072,1133,1135,1140,1157-1158,1161-1227,1230-1250,1285-1294,1297,1302,1310-1312,1318,1320-1322,1448-1455,1457,1486,1506,1516,1621-1642,1660,1686,1688-1689,1743-1746,1748-1774,1776,1779-1790
+packages/web/src/lib/serialize.ts
+  6c73abede2236f92 12,22-28,33-43,63-172,178,183-190,193,202-207,209-210,220-224,228-260,303-313,342,454,471,475,481-509,568-570,581,619-621
+packages/core/src/__tests__/portfolio-registry.test.ts
+  6c73abede2236f92 1-120
+packages/core/src/utils/validation.ts
+  6c73abede2236f92 11,24
+packages/cli/src/lib/portfolio-display.ts
+  6c73abede2236f92 1-30
+docs/state-machine-stage2-evidence-recovery-plan.md
+  6c73abede2236f92 1-347
+packages/cli/__tests__/commands/session.test.ts
+  6c73abede2236f92 20-21,24,118-126,133,136,143-144,154-155,174,187,253,255,358-393,408-553,556-559,563-586,590,595-662
+packages/web/src/app/api/projects/route.ts
+  6c73abede2236f92 1-13,15,19-68,80-130
+packages/core/src/__tests__/portfolio-routing.test.ts
+  6c73abede2236f92 1-56
+packages/web/src/lib/services.ts
+  6c73abede2236f92 16,18,22,38,47,57,66-86,91-100,102,108,123-145,177,182-184,229
+packages/core/src/lifecycle-state.ts
+  6c73abede2236f92 1-496
+packages/web/next.config.js
+  6c73abede2236f92 6,14-16
+packages/core/src/__tests__/session-manager/lifecycle.test.ts
+  6c73abede2236f92 40,50,162-165,234,238,277,285,327,334,397,413,421
+packages/core/src/__tests__/report-watcher.test.ts
+  6c73abede2236f92 1-260
+packages/core/src/__tests__/recovery-actions.test.ts
+  6c73abede2236f92 18-19,37,70-73,112,132,223-239,247,283,330,385,399,414,448
+packages/core/src/global-config.ts
+  6c73abede2236f92 1-1345
+packages/core/src/__tests__/config-validation.test.ts
+  6c73abede2236f92 9,16-17,23-24,29,32,39-40,43-44,46-47,52-53
+packages/plugins/agent-opencode/src/index.test.ts
+  6c73abede2236f92 2,45-49
+.changeset/fix-activity-unavailable-stuck.md
+  6c73abede2236f92 1-5
+.changeset/fix-web-lifecycle-restore-affordances.md
+  6c73abede2236f92 1-5
+packages/plugins/workspace-worktree/src/index.ts
+  6c73abede2236f92 73-101,136
+packages/web/src/lib/__tests__/github-links.test.ts
+  6c73abede2236f92 1-37
+packages/cli/__tests__/lib/session-utils.test.ts
+  6c73abede2236f92 129-134
+packages/web/src/lib/path-security.ts
+  6c73abede2236f92 1-139
+packages/web/src/app/sessions/[id]/page.tsx
+  6c73abede2236f92 4-5,7,12-14,46-51,67-165,168-169,171-190,192,196-197,200,211-216,224-249,268-285,292-293,316,321,327,330-331,333-336,361-365,371-372,377-378,380-383,385-398,402-442,449,451-461,463-464,470,503-505
+packages/plugins/agent-codex/src/index.test.ts
+  6c73abede2236f92 2-8,81-87,98-102,165-175,251-253,301-303,312,437,618-623,682-685,701-704,723-726,743-746,762-765,781-784,803-806,823-826,844-847,864-867,884-887,894-901,910-913,925-932,941-944,997-999,1005-1024,1040-1041,1043,1118-1119,1151-1152,1215-1217,1219-1221,1225,1266,1279,1433-1442,1459-1468,1473-1496,1508-1513,1531-1536,1553-1558,1581-1586,1616-1618,1739-1741,1747-1749,1860,1875-1877,1896,1908,1936,1954,1992,1994,2052,2054-2055,2077-2079,2083,2085-2087
+packages/core/src/__tests__/session-manager/communication.test.ts
+  6c73abede2236f92 89-125,177-210
+packages/web/vitest.config.ts
+  6c73abede2236f92 48-50
+packages/web/src/lib/__tests__/format.test.ts
+  6c73abede2236f92 19-24
+packages/core/src/__tests__/project-resolver.test.ts
+  6c73abede2236f92 1-251
+packages/web/src/lib/__tests__/types.test.ts
+  6c73abede2236f92 8-9,14-15,32-37,83-109,139,142-173,200-202,266-302,309-342,547-582,614-654,825-854
+packages/web/src/app/page.tsx
+  6c73abede2236f92 32-33
+packages/cli/__tests__/commands/status.test.ts
+  6c73abede2236f92 17-19,163-169,180,183-184,575,711,736,757,778,802,823-829,832,867,941,1170-1323
+packages/cli/src/commands/project.ts
+  6c73abede2236f92 1-183
+packages/cli/src/commands/status.ts
+  6c73abede2236f92 4-5,16,55,247-250,290-300,395-401,412-419,509-515,522-523,528
+packages/core/src/__tests__/test-utils.ts
+  6c73abede2236f92 5,7-8,12,33-85,88,90-95,105-107,109,267-268,273,289,306,310-315,333,340,345,348,352,372,390,397,404,410-415,426,432-434,436,447
+packages/core/src/__tests__/lifecycle-transition.test.ts
+  6c73abede2236f92 1-398
+packages/plugins/agent-cursor/src/index.test.ts
+  6c73abede2236f92 2,76-80
+packages/core/src/lifecycle-status-decisions.ts
+  6c73abede2236f92 1-398
+packages/core/src/recovery/scanner.ts
+  6c73abede2236f92 25
+packages/core/src/__tests__/lifecycle-manager.test.ts
+  6c73abede2236f92 3-7,10,14,35,50-125,199-320,402,451-452,464,471,477,488-558,572-646,780-842,860-891,1010-1108,1162-1213,2003-2038,2544-2586,2690-2827
+packages/plugins/scm-github/test/index.test.ts
+  6c73abede2236f92 18,49-53,431-432
+packages/web/src/__tests__/projects-route.test.ts
+  6c73abede2236f92 1-372
+packages/core/src/types.ts
+  6c73abede2236f92 27-116,121,157-173,203,237-247,252,254-262,273,275-281,299-304,341,385-386,811-863,1214-1229,1254-1261,1271-1273,1290-1300,1332-1347,1398-1405,1412-1414,1640-1641,1673-1693,1701,1714-1715,1850-1910
+packages/cli/src/commands/open.ts
+  6c73abede2236f92 5,7,72,74
+packages/core/src/__tests__/observability.test.ts
+  6c73abede2236f92 1-2,8,105-198
+packages/core/src/__tests__/portfolio-session-service.test.ts
+  6c73abede2236f92 1-126
+.changeset/agent-plugin-safety-costs.md
+  6c73abede2236f92 1-7
+packages/core/src/recovery/validator.ts
+  6c73abede2236f92 12,24-35,73,77,80,101-102,106,109-140,150-162,164,171-183,201-203,205-208,213,217-220,236-257,262,264-269,289-291,293-298
+packages/web/src/__tests__/orchestrators.test.tsx
+  6c73abede2236f92 42,46,69
+packages/web/src/lib/__tests__/dashboard-page-data.test.ts
+  6c73abede2236f92 20,49-72
+packages/plugins/agent-claude-code/src/index.test.ts
+  6c73abede2236f92 2-8,59-65,76-80,597-607,751-752,764,768,772
+packages/core/src/portfolio-routing.ts
+  6c73abede2236f92 1-34
+packages/core/src/lifecycle-manager.ts
+  6c73abede2236f92 16,21,35,41,44-61,65-74,170-182,186-187,226-295,299,346-351,354-357,364,413-419,421-423,460,462-468,470-471,487-513,517-534,538-541,544-549,551-552,556-566,570-591,594-615,617,619-626,629-631,634-635,637-639,641-645,647-655,659-692,705-710,713-723,731-737,740-746,749-761,764-775,778-804,808-839,843-891,895-901,903-908,1062-1069,1073,1077,1082,1104,1436-1437,1541-1632,1641-1645,1648-1681,1694-1703,1740-1759,1786-1838,1862-1938,1961-1962
+packages/core/src/agent-report.ts
+  6c73abede2236f92 1-606
+packages/core/src/report-watcher.ts
+  6c73abede2236f92 1-254
+packages/core/src/__tests__/metadata.test.ts
+  6c73abede2236f92 9,11,56-58,70-71,231-284
+packages/core/src/__tests__/agent-workspace-hooks.test.ts
+  6c73abede2236f92 61,69-70,77,91-92
+eslint.config.js
+  6c73abede2236f92 13,15-22
+packages/web/src/lib/project-name.ts
+  6c73abede2236f92 4,10-26,31,45,56-69
+packages/core/src/__tests__/portfolio-projects.test.ts
+  6c73abede2236f92 1-135
+packages/plugins/terminal-web/src/index.test.ts
+  6c73abede2236f92 2,6-11,17-22
+packages/web/src/app/api/filesystem/browse/route.ts
+  6c73abede2236f92 1-94
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  6c73abede2236f92 579,1978
+packages/cli/__tests__/commands/spawn.test.ts
+  6c73abede2236f92 71,98,133,298,430
+.github/workflows/deploy-vps.yml
+  6c73abede2236f92 84,90,106
+packages/web/src/app/api/events/route.ts
+  6c73abede2236f92 13-14,86,95,131-132,162,171,197
+docs/design/stage-1-canonical-lifecycle-plan.md
+  6c73abede2236f92 1-454
+packages/plugins/agent-aider/src/index.test.ts
+  6c73abede2236f92 2,56-60
+packages/core/src/__tests__/session-manager/query.test.ts
+  6c73abede2236f92 65-89,116-143,371,402-431
+packages/cli/src/commands/spawn.ts
+  6c73abede2236f92 17,158
+packages/cli/__tests__/commands/open.test.ts
+  6c73abede2236f92 125-138,184-197
+packages/cli/src/lib/session-utils.ts
+  6c73abede2236f92 19-20,32,44-45,54,62-63,75-76,82
+packages/core/src/__tests__/session-manager/cache.test.ts
+  6c73abede2236f92 1-199
+packages/core/src/__tests__/recovery-validator.test.ts
+  6c73abede2236f92 110,203,205,215-733
+packages/cli/__tests__/commands/review-check.test.ts
+  6c73abede2236f92 13-18,84-91,98,101,111-112,122-123,142,153,184-188
+packages/web/src/app/api/browse-directory/route.ts
+  6c73abede2236f92 1-9
+packages/cli/__tests__/lib/running-state.test.ts
+  6c73abede2236f92 1-73
+packages/web/src/app/api/projects/[id]/route.ts
+  6c73abede2236f92 1-325
+packages/core/src/__tests__/types.test.ts
+  6c73abede2236f92 33-51
+packages/core/__tests__/config.test.ts
+  6c73abede2236f92 5,24-26,119-140,144-234,264-328
+.changeset/stage4-pr-policy.md
+  6c73abede2236f92 1-6
+packages/web/src/app/sessions/[id]/page.test.tsx
+  6c73abede2236f92 2,5,12-17,20-22,26-29,53,87,89-91,93-94,108,116,120-129,138-146,171,173,175,179,190,193-264,332-758
+packages/web/src/app/api/sessions/patches/route.ts
+  6c73abede2236f92 25-26,32
+.changeset/lifecycle-transitions-report-watcher.md
+  6c73abede2236f92 1-14
+packages/web/src/lib/format.ts
+  6c73abede2236f92 116-133
+packages/web/src/__tests__/components.test.tsx
+  6c73abede2236f92 211
+.github/copilot-instructions.md
+  6c73abede2236f92 1-245
+packages/integration-tests/src/helpers/event-factory.ts
+  6c73abede2236f92 1-9,35-40,46-51
+packages/plugins/workspace-worktree/src/__tests__/index.test.ts
+  6c73abede2236f92 208-245
+packages/web/src/lib/github-links.ts
+  6c73abede2236f92 1-15
+.changeset/lifecycle-activity-signal-contract.md
+  6c73abede2236f92 1-6
+packages/core/src/__tests__/lifecycle-status-decisions.test.ts
+  6c73abede2236f92 1-218
+packages/core/src/__tests__/session-manager/restore.test.ts
+  6c73abede2236f92 179-192,622
+packages/core/src/recovery/manager.ts
+  6c73abede2236f92 21-26,37,50,157,169
+packages/web/src/lib/project-route-data.ts
+  6c73abede2236f92 1-32
+packages/core/src/portfolio-projects.ts
+  6c73abede2236f92 1-72
+packages/core/src/__tests__/plugin-integration.test.ts
+  6c73abede2236f92 121,152,156,396,416
+packages/integration-tests/src/prompt-spawn.integration.test.ts
+  6c73abede2236f92 34,65,92,114,144,181,212,243,270,308
+packages/web/scripts/dev-direct-terminal.mjs
+  6c73abede2236f92 1-79
+packages/cli/__tests__/commands/report.test.ts
+  6c73abede2236f92 1-185
+packages/core/src/observability.ts
+  6c73abede2236f92 2-3,9,135-144,150-154,182-186,188,208-294,427-428,432-441,460-461,463,482,498,511,519,521-583,600-601,608,614-615
+packages/core/src/utils/session-from-metadata.ts
+  6c73abede2236f92 1-11,18,20,27-42,48-64,68,70-71,74,76,78-79,85,90
+packages/web/server/__tests__/mux-websocket.test.ts
+  6c73abede2236f92 25
+packages/web/package.json
+  6c73abede2236f92 17,33,43,49
+docs/observability.md
+  6c73abede2236f92 38-40,83
+packages/core/src/file-lock.ts
+  6c73abede2236f92 1-62
+packages/web/src/app/api/orchestrators/route.ts
+  6c73abede2236f92 7-33,108-109
+packages/core/src/recovery/actions.ts
+  6c73abede2236f92 42-50,59,75,126-133,156,165,202-211,218
+packages/core/src/portfolio-registry.ts
+  6c73abede2236f92 1-379
+packages/web/src/lib/__tests__/project-name.test.ts
+  6c73abede2236f92 1-55
+packages/core/src/__tests__/storage-key.test.ts
+  6c73abede2236f92 1-89
+packages/core/src/config.ts
+  6c73abede2236f92 13-15,19-26,28-32,62-120,247-252,320-349,356,359,579-581,583,605,607,611,615-627,634,641,645,647,654,661-667,763-764,787-788,792-800,816-897,908,910,919-930,934-936,938,943,954-965,969-971,973
+packages/web/src/lib/__tests__/serialize.test.ts
+  6c73abede2236f92 6-15,21,27,34-39,45-51,141-147,153-212,528-533,741-746,844-862,895,972-1029,1321-1441
+packages/web/src/__tests__/api-routes.test.ts
+  6c73abede2236f92 6-7,21-26,31-36,107-108,239,299,320,336-352,354-501,524,796-819
+packages/core/src/utils/session-id.ts
+  6c73abede2236f92 1-12
+.changeset/session-ui-audit-oscillation.md
+  6c73abede2236f92 1-7
+packages/core/src/storage-key.ts
+  6c73abede2236f92 1-59
+packages/core/src/index.ts
+  6c73abede2236f92 20,37-39,43-106,169-179,196,241-279,292,300-344
+agent-orchestrator.yaml.example
+  6c73abede2236f92 23-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "4a5527388208d594ba426ff5b74be068bb42de84",
+  "prompts": {
+    "6c73abede2236f92": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_24f3950a1ffetzK0MXINtn8riv",
+        "model": "zai-coding-plan/glm-5.1"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 42159,
+      "total_deletions": 3337,
+      "accepted_lines": 40659,
+      "overriden_lines": 0
+    },
+    "db9ebc116b4cc9c7": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_24f33e174ffemaZUGeqRNVCqz5",
+        "model": "openai/gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 12,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    }
+  }
+}
