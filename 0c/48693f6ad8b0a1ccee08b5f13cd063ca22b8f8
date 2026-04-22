@@ -1,0 +1,25 @@
+packages/web/next.config.js
+  800a8c2634797121 17-19
+packages/plugins/tracker-linear/package.json
+  800a8c2634797121 39-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "0c48693f6ad8b0a1ccee08b5f13cd063ca22b8f8",
+  "prompts": {
+    "800a8c2634797121": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db6c7-0f4c-7051-8050-c8a683710c29",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 0,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
