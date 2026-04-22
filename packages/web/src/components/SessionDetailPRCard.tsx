@@ -23,14 +23,14 @@ interface SessionDetailPRCardProps {
   ) => Promise<void>;
 }
 
-interface BlockerChip {
+export interface BlockerChip {
   icon: string;
   text: string;
   variant: "fail" | "warn" | "muted";
   notified?: boolean;
 }
 
-function buildBlockerChips(
+export function buildBlockerChips(
   pr: DashboardPR,
   metadata: Record<string, string>,
   lifecyclePrReason?: string,
