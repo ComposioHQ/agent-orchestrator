@@ -36,18 +36,18 @@ describe("inventoryHashDirs", () => {
   });
 
   it("detects hash-based directories", () => {
-    mkdirSync(join(testDir, "abcdef012345-myproject", "sessions"), { recursive: true });
-    writeFileSync(join(testDir, "abcdef012345-myproject", "sessions", "ao-1"), "status=working\n");
+    mkdirSync(join(testDir, "aaaaaa000000-myproject", "sessions"), { recursive: true });
+    writeFileSync(join(testDir, "aaaaaa000000-myproject", "sessions", "ao-1"), "status=working\n");
 
     const dirs = inventoryHashDirs(testDir);
     expect(dirs).toHaveLength(1);
-    expect(dirs[0].hash).toBe("abcdef012345");
+    expect(dirs[0].hash).toBe("aaaaaa000000");
     expect(dirs[0].projectId).toBe("myproject");
     expect(dirs[0].empty).toBe(false);
   });
 
   it("marks empty directories correctly", () => {
-    mkdirSync(join(testDir, "abcdef012345-empty-project"), { recursive: true });
+    mkdirSync(join(testDir, "aaaaaa000000-empty-project"), { recursive: true });
 
     const dirs = inventoryHashDirs(testDir);
     expect(dirs).toHaveLength(1);
@@ -80,23 +80,23 @@ describe("inventoryHashDirs", () => {
   });
 
   it("detects bare 12-hex hash directories", () => {
-    mkdirSync(join(testDir, "abcdef012345", "sessions"), { recursive: true });
+    mkdirSync(join(testDir, "aaaaaa000000", "sessions"), { recursive: true });
     writeFileSync(
-      join(testDir, "abcdef012345", "sessions", "ao-1"),
+      join(testDir, "aaaaaa000000", "sessions", "ao-1"),
       "project=myproject\nstatus=working\n",
     );
 
     const dirs = inventoryHashDirs(testDir);
     expect(dirs).toHaveLength(1);
-    expect(dirs[0].hash).toBe("abcdef012345");
+    expect(dirs[0].hash).toBe("aaaaaa000000");
     // projectId derived from session metadata
     expect(dirs[0].projectId).toBe("myproject");
     expect(dirs[0].empty).toBe(false);
   });
 
   it("derives bare hash projectId from global config storageKey", () => {
-    mkdirSync(join(testDir, "abcdef012345", "sessions"), { recursive: true });
-    writeFileSync(join(testDir, "abcdef012345", "sessions", "ao-1"), "status=working\n");
+    mkdirSync(join(testDir, "aaaaaa000000", "sessions"), { recursive: true });
+    writeFileSync(join(testDir, "aaaaaa000000", "sessions", "ao-1"), "status=working\n");
 
     // Write a config that maps storageKey → projectId
     const configPath = join(testDir, "config.yaml");
@@ -104,7 +104,7 @@ describe("inventoryHashDirs", () => {
       "projects:",
       "  my-app:",
       "    path: /home/user/my-app",
-      "    storageKey: abcdef012345",
+      "    storageKey: aaaaaa000000",
       "",
     ].join("\n"));
 
@@ -114,19 +114,19 @@ describe("inventoryHashDirs", () => {
   });
 
   it("falls back to hash as projectId when no config or project field", () => {
-    mkdirSync(join(testDir, "abcdef012345", "sessions"), { recursive: true });
+    mkdirSync(join(testDir, "aaaaaa000000", "sessions"), { recursive: true });
     // Session file with no "project" field
-    writeFileSync(join(testDir, "abcdef012345", "sessions", "ao-1"), "status=working\n");
+    writeFileSync(join(testDir, "aaaaaa000000", "sessions", "ao-1"), "status=working\n");
 
     const dirs = inventoryHashDirs(testDir);
     expect(dirs).toHaveLength(1);
-    expect(dirs[0].projectId).toBe("abcdef012345");
+    expect(dirs[0].projectId).toBe("aaaaaa000000");
   });
 
   it("skips observability directories", () => {
-    mkdirSync(join(testDir, "abcdef012345-observability"), { recursive: true });
-    mkdirSync(join(testDir, "abcdef012345-myproject", "sessions"), { recursive: true });
-    writeFileSync(join(testDir, "abcdef012345-myproject", "sessions", "ao-1"), "status=working\n");
+    mkdirSync(join(testDir, "aaaaaa000000-observability"), { recursive: true });
+    mkdirSync(join(testDir, "aaaaaa000000-myproject", "sessions"), { recursive: true });
+    writeFileSync(join(testDir, "aaaaaa000000-myproject", "sessions", "ao-1"), "status=working\n");
 
     const dirs = inventoryHashDirs(testDir);
     expect(dirs).toHaveLength(1);
@@ -276,7 +276,7 @@ describe("migrateStorage", () => {
 
   it("migrates a single project with one session", async () => {
     // Setup: hash dir with one worker session
-    const hashDir = join(aoBaseDir, "abcdef012345-myproject");
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });
     writeFileSync(
       join(hashDir, "sessions", "ao-1"),
@@ -286,7 +286,7 @@ describe("migrateStorage", () => {
         "status=working",
         "createdAt=2026-04-21T12:00:00.000Z",
         "branch=session/ao-1",
-        "worktree=/home/user/.agent-orchestrator/abcdef012345-myproject/worktrees/ao-1",
+        "worktree=/home/user/.agent-orchestrator/aaaaaa000000-myproject/worktrees/ao-1",
       ].join("\n"),
     );
 
@@ -297,7 +297,7 @@ describe("migrateStorage", () => {
         "projects:",
         "  myproject:",
         "    path: /home/user/myproject",
-        "    storageKey: abcdef012345",
+        "    storageKey: aaaaaa000000",
         "    defaultBranch: main",
         "",
       ].join("\n"),
@@ -335,7 +335,7 @@ describe("migrateStorage", () => {
   });
 
   it("extracts orchestrator session to orchestrator.json", async () => {
-    const hashDir = join(aoBaseDir, "abcdef012345-myproject");
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });
 
     // Orchestrator session
@@ -446,7 +446,7 @@ describe("migrateStorage", () => {
   });
 
   it("deletes empty hash directories", async () => {
-    mkdirSync(join(aoBaseDir, "abcdef012345-empty-project"), { recursive: true });
+    mkdirSync(join(aoBaseDir, "aaaaaa000000-empty-project"), { recursive: true });
 
     const result = await migrateStorage({
       aoBaseDir,
@@ -456,11 +456,11 @@ describe("migrateStorage", () => {
     });
 
     expect(result.emptyDirsDeleted).toBe(1);
-    expect(existsSync(join(aoBaseDir, "abcdef012345-empty-project"))).toBe(false);
+    expect(existsSync(join(aoBaseDir, "aaaaaa000000-empty-project"))).toBe(false);
   });
 
   it("dry run makes no changes", async () => {
-    const hashDir = join(aoBaseDir, "abcdef012345-myproject");
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });
     writeFileSync(
       join(hashDir, "sessions", "ao-1"),
@@ -493,7 +493,7 @@ describe("migrateStorage", () => {
   });
 
   it("migrates archives with fixed filenames", async () => {
-    const hashDir = join(aoBaseDir, "abcdef012345-myproject");
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions", "archive"), { recursive: true });
 
     // Old archive with colon-containing timestamp
@@ -519,7 +519,7 @@ describe("migrateStorage", () => {
   });
 
   it("converts key=value format to JSON during migration", async () => {
-    const hashDir = join(aoBaseDir, "abcdef012345-myproject");
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });
 
     const lifecycle = JSON.stringify({
@@ -568,7 +568,7 @@ describe("migrateStorage", () => {
   });
 
   it("migrated JSON without stored status derives status from lifecycle on read", async () => {
-    const hashDir = join(aoBaseDir, "abcdef012345-myproject");
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });
 
     const lifecycle = JSON.stringify({
@@ -614,7 +614,7 @@ describe("migrateStorage", () => {
   });
 
   it("migrates bare 12-hex hash directories", async () => {
-    const hashDir = join(aoBaseDir, "abcdef012345");
+    const hashDir = join(aoBaseDir, "aaaaaa000000");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });
     writeFileSync(
       join(hashDir, "sessions", "ao-1"),
@@ -626,7 +626,7 @@ describe("migrateStorage", () => {
       "projects:",
       "  myproject:",
       "    path: /home/user/myproject",
-      "    storageKey: abcdef012345",
+      "    storageKey: aaaaaa000000",
       "",
     ].join("\n"));
 
@@ -651,12 +651,12 @@ describe("migrateStorage", () => {
 
   it("preserves observability directories during migration", async () => {
     // Create an observability dir that matches the hash-name pattern
-    const obsDir = join(aoBaseDir, "abcdef012345-observability");
+    const obsDir = join(aoBaseDir, "aaaaaa000000-observability");
     mkdirSync(obsDir, { recursive: true });
     writeFileSync(join(obsDir, "metrics.log"), "some observability data");
 
     // Also create a real project dir
-    const hashDir = join(aoBaseDir, "abcdef012345-myproject");
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });
     writeFileSync(
       join(hashDir, "sessions", "ao-1"),
@@ -696,7 +696,7 @@ describe("rollbackStorage", () => {
 
   it("restores .migrated directories and removes migrated projects", async () => {
     // Simulate post-migration state
-    mkdirSync(join(aoBaseDir, "abcdef012345-myproject.migrated", "sessions"), { recursive: true });
+    mkdirSync(join(aoBaseDir, "aaaaaa000000-myproject.migrated", "sessions"), { recursive: true });
     mkdirSync(join(aoBaseDir, "projects", "myproject", "sessions"), { recursive: true });
     writeFileSync(
       join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"),
@@ -722,8 +722,8 @@ describe("rollbackStorage", () => {
     });
 
     // .migrated should be restored
-    expect(existsSync(join(aoBaseDir, "abcdef012345-myproject"))).toBe(true);
-    expect(existsSync(join(aoBaseDir, "abcdef012345-myproject.migrated"))).toBe(false);
+    expect(existsSync(join(aoBaseDir, "aaaaaa000000-myproject"))).toBe(true);
+    expect(existsSync(join(aoBaseDir, "aaaaaa000000-myproject.migrated"))).toBe(false);
 
     // migrated project dir should be gone
     expect(existsSync(join(aoBaseDir, "projects", "myproject"))).toBe(false);
@@ -731,7 +731,7 @@ describe("rollbackStorage", () => {
     // storageKey should be re-added to config in {hash}-{projectId} format
     const configContent = readFileSync(configPath, "utf-8");
     expect(configContent).toContain("storageKey");
-    expect(configContent).toContain("abcdef012345-myproject");
+    expect(configContent).toContain("aaaaaa000000-myproject");
   });
 
   it("writes storageKey in original directory name format", async () => {
@@ -758,7 +758,7 @@ describe("rollbackStorage", () => {
 
   it("preserves post-migration sessions during rollback", async () => {
     // Simulate migrated dir
-    mkdirSync(join(aoBaseDir, "abcdef012345-myproject.migrated", "sessions"), { recursive: true });
+    mkdirSync(join(aoBaseDir, "aaaaaa000000-myproject.migrated", "sessions"), { recursive: true });
 
     // Migrated sessions (from migration)
     mkdirSync(join(aoBaseDir, "projects", "myproject", "sessions"), { recursive: true });

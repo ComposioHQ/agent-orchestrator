@@ -28,6 +28,4 @@ regexes = [
   "your-token-here",
   "example\\.com",
 
-  # Test placeholder hashes (migration tests use dummy 12-hex-char storageKeys)
-  "abcdef012345",
 ]
