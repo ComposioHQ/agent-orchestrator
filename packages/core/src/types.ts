@@ -1656,6 +1656,14 @@ export interface SessionMetadata {
   opencodeSessionId?: string;
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
+  /**
+   * Stable human-readable display name derived from task context at spawn time.
+   * Populated from issue title, user prompt, or orchestrator system prompt —
+   * whichever was available when the session was created. Used by the dashboard
+   * as a fallback above humanized branch names so sessions are identifiable
+   * even when PR/issue enrichment is unavailable.
+   */
+  displayName?: string;
 }
 
 // =============================================================================

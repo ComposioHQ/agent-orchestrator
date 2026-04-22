@@ -99,6 +99,13 @@ export interface DashboardSession {
   issueLabel: string | null; // Human-readable label (e.g., "INT-1327", "#42")
   issueTitle: string | null; // Full issue title (e.g., "Add user authentication flow")
   userPrompt: string | null; // Prompt used when spawning without an issue
+  /**
+   * Stable display name derived from task context at spawn time. Populated
+   * from issue title, user prompt, or orchestrator system prompt. Used as a
+   * fallback in {@link getSessionTitle} above the humanized branch so sessions
+   * remain identifiable even when PR/issue enrichment is unavailable.
+   */
+  displayName: string | null;
   summary: string | null;
   /** True when the summary is a low-quality fallback (e.g. truncated spawn prompt) */
   summaryIsFallback: boolean;

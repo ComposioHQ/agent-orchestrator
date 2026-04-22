@@ -222,6 +222,59 @@ const STALE_PR_OWNERSHIP_STATUSES: ReadonlySet<string> = new Set([
   "merged",
 ]);
 
+/**
+ * Maximum length for the `displayName` metadata field.
+ * Long enough to express intent ("Refactor session manager to use flat metadata files")
+ * without overflowing kanban cards and tabs in the dashboard.
+ */
+const DISPLAY_NAME_MAX_LENGTH = 80;
+
+/**
+ * Derive a human-readable display name from any available task context.
+ *
+ * Priority:
+ *   1. Issue title (always the best signal when present)
+ *   2. First meaningful line of a freeform prompt
+ *
+ * The result is trimmed, collapsed to single-line, and truncated to
+ * {@link DISPLAY_NAME_MAX_LENGTH} characters (with an ellipsis).
+ * Returns `undefined` when no usable context exists so callers can skip
+ * writing the field entirely.
+ */
+function deriveDisplayName(input: {
+  issueTitle?: string;
+  prompt?: string;
+}): string | undefined {
+  const pickLine = (text: string): string => {
+    const line = text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l.length > 0);
+    return line ?? "";
+  };
+
+  const truncate = (text: string): string => {
+    const collapsed = text.replace(/\s+/g, " ").trim();
+    // Split on code points so emoji / astral characters aren't cleaved into
+    // lone UTF-16 surrogates at the truncation boundary.
+    const codePoints = Array.from(collapsed);
+    if (codePoints.length <= DISPLAY_NAME_MAX_LENGTH) return collapsed;
+    // Leave room for the ellipsis character.
+    return `${codePoints.slice(0, DISPLAY_NAME_MAX_LENGTH - 1).join("").trimEnd()}…`;
+  };
+
+  if (input.issueTitle && input.issueTitle.trim()) {
+    return truncate(input.issueTitle);
+  }
+
+  if (input.prompt && input.prompt.trim()) {
+    const line = pickLine(input.prompt);
+    if (line) return truncate(line);
+  }
+
+  return undefined;
+}
+
 const SEND_RESTORE_READY_TIMEOUT_MS = 5_000;
 const SEND_RESTORE_READY_POLL_MS = 500;
 const SEND_CONFIRMATION_ATTEMPTS = 6;
@@ -1282,6 +1335,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw err;
     }
 
+    // Derive a stable display name from task context. Unlike issue-title
+    // enrichment (which is a live tracker API call), this value is captured at
+    // spawn time and persisted, so the dashboard has a good name even when the
+    // tracker is unavailable or the session has no attached PR yet.
+    const displayName = deriveDisplayName({
+      issueTitle: resolvedIssue?.title,
+      prompt: spawnConfig.prompt,
+    });
+
     // Write metadata and run post-launch setup — clean up on failure
     const createdAt = new Date();
     const lifecycle = createInitialCanonicalLifecycle("worker", createdAt);
@@ -1310,6 +1372,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       metadata: {
         ...(reusedOpenCodeSessionId ? { opencodeSessionId: reusedOpenCodeSessionId } : {}),
         ...(spawnConfig.prompt ? { userPrompt: spawnConfig.prompt } : {}),
+        ...(displayName ? { displayName } : {}),
       },
     };
 
@@ -1327,6 +1390,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusedOpenCodeSessionId,
         userPrompt: spawnConfig.prompt,
+        displayName,
       });
 
       if (plugins.agent.postLaunchSetup) {
@@ -1620,6 +1684,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw err;
     }
 
+    // Derive a stable display name from the orchestrator's system prompt so
+    // the dashboard shows something more useful than "Ao Orchestrator 8".
+    const displayName = deriveDisplayName({
+      prompt: orchestratorConfig.systemPrompt,
+    });
+
     // Write metadata and run post-launch setup
     const createdAt = new Date();
     const lifecycle = createInitialCanonicalLifecycle("orchestrator", createdAt);
@@ -1651,6 +1721,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       lastActivityAt: createdAt,
       metadata: {
         ...(reusableOpenCodeSessionId ? { opencodeSessionId: reusableOpenCodeSessionId } : {}),
+        ...(displayName ? { displayName } : {}),
       },
     };
 
@@ -1667,6 +1738,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         createdAt: createdAt.toISOString(),
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusableOpenCodeSessionId,
+        displayName,
       });
 
       if (plugins.agent.postLaunchSetup) {
@@ -2648,6 +2720,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         runtimeHandle: raw["runtimeHandle"],
         opencodeSessionId: raw["opencodeSessionId"],
         pinnedSummary: raw["pinnedSummary"],
+        displayName: raw["displayName"],
       });
     }
 
