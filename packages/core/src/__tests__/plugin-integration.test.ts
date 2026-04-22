@@ -497,10 +497,19 @@ describe("plugin integration", () => {
       return session;
     }
 
-    it("check() detects ci_failed via scm-github getCISummary()", async () => {
+    it("check() detects ci_failed via batch enrichment", async () => {
       seedSession({ status: "pr_open", pr });
 
-      // Mock the sessionManager.list() to return our session
+      // Spy on the real SCM plugin's enrichSessionsPRBatch to return batch data
+      const scmPlugin = registry.get("scm", "github") as ReturnType<typeof scmGithub.create>;
+      const originalBatch = scmPlugin.enrichSessionsPRBatch;
+      scmPlugin.enrichSessionsPRBatch = vi.fn().mockResolvedValue(
+        new Map([[`${pr.owner}/${pr.repo}#${pr.number}`, {
+          state: "open", ciStatus: "failing", reviewDecision: "none", mergeable: false,
+          ciChecks: [{ name: "lint", status: "failed", conclusion: "FAILURE" }],
+        }]]),
+      );
+
       const mockSM: SessionManager = {
         ...sm,
         list: vi.fn().mockResolvedValue([makeSession({ status: "pr_open", pr })]),
@@ -517,20 +526,23 @@ describe("plugin integration", () => {
         sessionManager: mockSM,
       });
 
-      // gh calls for determineStatus:
-      // 1. getPRState → open
-      mockGh({ state: "OPEN" });
-      // 2. getCISummary → failing (pr checks returns array of checks with correct field names)
-      mockGh([{ name: "lint", state: "FAILURE", link: "", startedAt: "", completedAt: "" }]);
-
       await lm.check("app-1");
+      scmPlugin.enrichSessionsPRBatch = originalBatch;
 
       const states = lm.getStates();
       expect(states.get("app-1")).toBe("ci_failed");
     });
 
-    it("check() detects merged via scm-github getPRState()", async () => {
+    it("check() detects merged via batch enrichment", async () => {
       seedSession({ status: "pr_open", pr });
+
+      const scmPlugin = registry.get("scm", "github") as ReturnType<typeof scmGithub.create>;
+      const originalBatch = scmPlugin.enrichSessionsPRBatch;
+      scmPlugin.enrichSessionsPRBatch = vi.fn().mockResolvedValue(
+        new Map([[`${pr.owner}/${pr.repo}#${pr.number}`, {
+          state: "merged", ciStatus: "none", reviewDecision: "none", mergeable: false,
+        }]]),
+      );
 
       const mockSM: SessionManager = {
         ...sm,
@@ -548,17 +560,23 @@ describe("plugin integration", () => {
         sessionManager: mockSM,
       });
 
-      // getPRState → merged
-      mockGh({ state: "MERGED" });
-
       await lm.check("app-1");
+      scmPlugin.enrichSessionsPRBatch = originalBatch;
 
       const states = lm.getStates();
       expect(states.get("app-1")).toBe("merged");
     });
 
-    it("check() detects changes_requested via scm-github getReviewDecision()", async () => {
+    it("check() detects changes_requested via batch enrichment", async () => {
       seedSession({ status: "pr_open", pr });
+
+      const scmPlugin = registry.get("scm", "github") as ReturnType<typeof scmGithub.create>;
+      const originalBatch = scmPlugin.enrichSessionsPRBatch;
+      scmPlugin.enrichSessionsPRBatch = vi.fn().mockResolvedValue(
+        new Map([[`${pr.owner}/${pr.repo}#${pr.number}`, {
+          state: "open", ciStatus: "passing", reviewDecision: "changes_requested", mergeable: false,
+        }]]),
+      );
 
       const mockSM: SessionManager = {
         ...sm,
@@ -576,14 +594,8 @@ describe("plugin integration", () => {
         sessionManager: mockSM,
       });
 
-      // 1. getPRState → open
-      mockGh({ state: "OPEN" });
-      // 2. getCISummary → passing (using correct field names: state and link)
-      mockGh([{ name: "lint", state: "SUCCESS", link: "", startedAt: "", completedAt: "" }]);
-      // 3. getReviewDecision (gh pr view with reviewDecision)
-      mockGh({ reviewDecision: "CHANGES_REQUESTED" });
-
       await lm.check("app-1");
+      scmPlugin.enrichSessionsPRBatch = originalBatch;
 
       const states = lm.getStates();
       expect(states.get("app-1")).toBe("changes_requested");

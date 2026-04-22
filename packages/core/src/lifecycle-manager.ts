@@ -13,9 +13,6 @@
 import { randomUUID } from "node:crypto";
 import {
   SESSION_STATUS,
-  ACTIVITY_STATE,
-  PR_STATE,
-  CI_STATUS,
   TERMINAL_STATUSES,
   type LifecycleManager,
   type OpenCodeSessionManager,
@@ -70,7 +67,6 @@ import {
   isDetectingTimedOut,
   parseAttemptCount,
   resolvePREnrichmentDecision,
-  resolvePRLiveDecision,
   resolveProbeDecision,
   type LifecycleDecision,
 } from "./lifecycle-status-decisions.js";
@@ -747,52 +743,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             }),
           );
         }
-        const prState = await scm.getPRState(session.pr);
-        if (prState === PR_STATE.MERGED || prState === PR_STATE.CLOSED) {
-          return commit(
-            resolvePRLiveDecision({
-              prState,
-              ciStatus: CI_STATUS.NONE,
-              reviewDecision: "none",
-              mergeable: false,
-              shouldEscalateIdleToStuck,
-              idleWasBlocked,
-              activityEvidence,
-            }),
-          );
-        }
 
-        const ciStatus = await scm.getCISummary(session.pr);
-        if (ciStatus === CI_STATUS.FAILING) {
-          return commit(
-            resolvePRLiveDecision({
-              prState,
-              ciStatus,
-              reviewDecision: "none",
-              mergeable: false,
-              shouldEscalateIdleToStuck,
-              idleWasBlocked,
-              activityEvidence,
-            }),
-          );
-        }
-
-        const reviewDecision = await scm.getReviewDecision(session.pr);
-        const mergeReady =
-          reviewDecision === "approved" || reviewDecision === "none"
-            ? await scm.getMergeability(session.pr)
-            : { mergeable: false };
-        return commit(
-          resolvePRLiveDecision({
-            prState,
-            ciStatus,
-            reviewDecision,
-            mergeable: mergeReady.mergeable,
-            shouldEscalateIdleToStuck,
-            idleWasBlocked,
-            activityEvidence,
-          }),
-        );
+        // No fallback to individual REST calls — the batch enrichment cache
+        // will populate on the next cycle (30s). Status stays unchanged for
+        // this cycle. This eliminates ~110 individual pr view/checks calls
+        // per 15-minute window.
       } catch (error) {
         observer?.recordOperation?.({
           metric: "lifecycle_poll",
@@ -1351,17 +1306,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
     const cachedEnrichment = prEnrichmentCache.get(prKey);
 
-    let checks: CICheck[];
-    if (cachedEnrichment?.ciChecks !== undefined) {
-      checks = cachedEnrichment.ciChecks;
-    } else {
-      try {
-        checks = await scm.getCIChecks(session.pr);
-      } catch {
-        // Failed to fetch checks — skip this cycle
-        return;
-      }
+    if (cachedEnrichment?.ciChecks === undefined) {
+      // No batch data — skip this cycle, batch will populate on next cycle (30s)
+      return;
     }
+    const checks: CICheck[] = cachedEnrichment.ciChecks;
 
     const failedChecks = checks.filter(
       (c) => c.status === "failed" || c.conclusion?.toUpperCase() === "FAILURE",
@@ -1478,19 +1427,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
     const cachedData = prEnrichmentCache.get(prKey);
 
-    let hasConflicts: boolean;
-    if (cachedData) {
-      // Batch ran — trust its data (undefined means CONFLICTING wasn't set → no conflicts)
-      hasConflicts = cachedData.hasConflicts ?? false;
-    } else {
-      // Batch didn't run this cycle — fall back to individual API call
-      try {
-        const mergeReadiness = await scm.getMergeability(session.pr);
-        hasConflicts = !mergeReadiness.noConflicts;
-      } catch {
-        return;
-      }
+    if (!cachedData) {
+      // No batch data — skip this cycle, batch will populate on next cycle (30s)
+      return;
     }
+    const hasConflicts = cachedData.hasConflicts ?? false;
 
     const lastDispatched = session.metadata["lastMergeConflictDispatched"] ?? "";
 
@@ -2088,6 +2029,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     async check(sessionId: SessionId): Promise<void> {
       const session = await sessionManager.get(sessionId);
       if (!session) throw new Error(`Session ${sessionId} not found`);
+      // Populate batch enrichment cache for this session's PR so
+      // checkSession can read from cache (no individual REST fallback).
+      await populatePREnrichmentCache([session]);
       await checkSession(session);
     },
   };

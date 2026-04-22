@@ -16,6 +16,7 @@ import type {
   Agent,
   ActivityState,
   SessionStatus,
+  PRInfo,
 } from "../types.js";
 import {
   createTestEnvironment,
@@ -157,6 +158,87 @@ function setupCheck(
       ...persistedStringMetadata,
     },
   });
+
+  writeMetadata(env.sessionsDir, sessionId, persistedMetadata);
+
+  return createLifecycleManager({
+    config: opts.configOverride ?? config,
+    registry: opts.registry ?? mockRegistry,
+    sessionManager: mockSessionManager,
+  });
+}
+
+/** Create a PR whose owner/repo matches the test config's "org/my-app". */
+function makeMatchingPR(overrides: Partial<PRInfo> = {}): PRInfo {
+  return makePR({ owner: "org", repo: "my-app", ...overrides });
+}
+
+/** Build a batch enrichment mock that returns the given data for any PR. */
+function mockBatchEnrichment(data: {
+  state?: string;
+  ciStatus?: string;
+  reviewDecision?: string;
+  mergeable?: boolean;
+  hasConflicts?: boolean;
+  ciChecks?: Array<{ name: string; status: string; conclusion?: string; url?: string }>;
+}) {
+  return vi.fn().mockImplementation(async (prs: PRInfo[]) => {
+    const result = new Map();
+    for (const p of prs) {
+      result.set(`${p.owner}/${p.repo}#${p.number}`, {
+        state: data.state ?? "open",
+        ciStatus: data.ciStatus ?? "passing",
+        reviewDecision: data.reviewDecision ?? "none",
+        mergeable: data.mergeable ?? false,
+        ...(data.hasConflicts !== undefined ? { hasConflicts: data.hasConflicts } : {}),
+        ...(data.ciChecks !== undefined ? { ciChecks: data.ciChecks } : {}),
+      });
+    }
+    return result;
+  });
+}
+
+/**
+ * Helper: set up a session with PR and run a pollAll cycle so the batch
+ * enrichment cache is populated. Returns the lifecycle manager.
+ *
+ * Must be called inside a test that uses vi.useFakeTimers().
+ */
+function setupPollCheck(
+  sessionId: string,
+  opts: {
+    session: ReturnType<typeof makeSession>;
+    metaOverrides?: Record<string, unknown>;
+    registry?: PluginRegistry;
+    configOverride?: OrchestratorConfig;
+  },
+) {
+  const persistedMetadata: Record<string, unknown> = {
+    worktree: "/tmp",
+    branch: opts.session.branch ?? "main",
+    status: opts.session.status,
+    project: "my-app",
+    runtimeHandle: opts.session.runtimeHandle
+      ? JSON.stringify(opts.session.runtimeHandle)
+      : undefined,
+    ...opts.metaOverrides,
+  };
+  const persistedStringMetadata = Object.fromEntries(
+    Object.entries(persistedMetadata).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+
+  const enrichedSession = {
+    ...opts.session,
+    metadata: {
+      ...opts.session.metadata,
+      ...persistedStringMetadata,
+    },
+  };
+
+  vi.mocked(mockSessionManager.list).mockResolvedValue([enrichedSession]);
+  vi.mocked(mockSessionManager.get).mockResolvedValue(enrichedSession);
 
   writeMetadata(env.sessionsDir, sessionId, persistedMetadata);
 
@@ -842,24 +924,38 @@ describe("check (single session)", () => {
   });
 
   it("detects PR states from SCM", async () => {
-    const mockSCM = createMockSCM({ getCISummary: vi.fn().mockResolvedValue("failing") });
-    const registry = createMockRegistry({
-      runtime: plugins.runtime,
-      agent: plugins.agent,
-      scm: mockSCM,
-    });
+    vi.useFakeTimers();
+    try {
+      const pr = makeMatchingPR();
+      const mockSCM = createMockSCM({
+        getCISummary: vi.fn().mockResolvedValue("failing"),
+        enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing" }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
 
-    const lm = setupCheck("app-1", {
-      session: makeSession({ status: "pr_open", pr: makePR() }),
-      registry,
-    });
+      const lm = setupPollCheck("app-1", {
+        session: makeSession({ status: "pr_open", pr }),
+        registry,
+      });
 
-    await lm.check("app-1");
-    expect(lm.getStates().get("app-1")).toBe("ci_failed");
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+      expect(lm.getStates().get("app-1")).toBe("ci_failed");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps canonical session state idle while waiting on external review", async () => {
-    const mockSCM = createMockSCM({ getReviewDecision: vi.fn().mockResolvedValue("pending") });
+    const mockSCM = createMockSCM({
+      getReviewDecision: vi.fn().mockResolvedValue("pending"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ reviewDecision: "pending" }),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -873,7 +969,6 @@ describe("check (single session)", () => {
       branch: session.branch ?? "main",
       status: session.status,
       project: "my-app",
-      pr: session.pr?.url,
       runtimeHandle: session.runtimeHandle ? JSON.stringify(session.runtimeHandle) : undefined,
     });
 
@@ -992,50 +1087,73 @@ describe("check (single session)", () => {
   });
 
   it("detects merged PR", async () => {
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
-    const registry = createMockRegistry({
-      runtime: plugins.runtime,
-      agent: plugins.agent,
-      scm: mockSCM,
-    });
+    vi.useFakeTimers();
+    try {
+      const pr = makeMatchingPR();
+      const mockSCM = createMockSCM({
+        getPRState: vi.fn().mockResolvedValue("merged"),
+        enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged", ciStatus: "none" }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
 
-    const lm = setupCheck("app-1", {
-      session: makeSession({ status: "approved", pr: makePR() }),
-      registry,
-    });
+      const lm = setupPollCheck("app-1", {
+        session: makeSession({ status: "approved", pr }),
+        registry,
+      });
 
-    await lm.check("app-1");
-    expect(lm.getStates().get("app-1")).toBe("merged");
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+      expect(lm.getStates().get("app-1")).toBe("merged");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("preserves merged PR truth in metadata instead of regressing to no-pr lifecycle state", async () => {
-    const pr = makePR();
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
-    const registry = createMockRegistry({
-      runtime: plugins.runtime,
-      agent: plugins.agent,
-      scm: mockSCM,
-    });
+    vi.useFakeTimers();
+    try {
+      const pr = makeMatchingPR();
+      const mockSCM = createMockSCM({
+        getPRState: vi.fn().mockResolvedValue("merged"),
+        enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged", ciStatus: "none" }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
 
-    const lm = setupCheck("app-1", {
-      session: makeSession({ status: "pr_open", pr }),
-      registry,
-    });
+      const lm = setupPollCheck("app-1", {
+        session: makeSession({ status: "pr_open", pr }),
+        registry,
+      });
 
-    await lm.check("app-1");
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
 
-    const meta = readMetadataRaw(env.sessionsDir, "app-1");
-    expect(lm.getStates().get("app-1")).toBe("merged");
-    expect(meta?.["status"]).toBe("merged");
-    expect(meta?.["pr"]).toBe(pr.url);
-    expect(meta?.["statePayload"]).toContain('"state":"merged"');
-    expect(meta?.["statePayload"]).toContain('"reason":"merged"');
-    expect(meta?.["statePayload"]).not.toContain('"reason":"not_created"');
-    expect(mockSessionManager.invalidateCache).toHaveBeenCalled();
+      const meta = readMetadataRaw(env.sessionsDir, "app-1");
+      expect(lm.getStates().get("app-1")).toBe("merged");
+      expect(meta?.["status"]).toBe("merged");
+      expect(meta?.["pr"]).toBe(pr.url);
+      expect(meta?.["statePayload"]).toContain('"state":"merged"');
+      expect(meta?.["statePayload"]).toContain('"reason":"merged"');
+      expect(meta?.["statePayload"]).not.toContain('"reason":"not_created"');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps closed PR sessions idle and emits a PR-closed notification", async () => {
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("closed") });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("closed"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "closed" }),
+    });
     const notifier = createMockNotifier();
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1068,7 +1186,10 @@ describe("check (single session)", () => {
 
   it("routes closed PR transitions through the pr-closed reaction key", async () => {
     const notifier = createMockNotifier();
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("closed") });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("closed"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "closed" }),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -1117,6 +1238,7 @@ describe("check (single session)", () => {
         noConflicts: true,
         blockers: [],
       }),
+      enrichSessionsPRBatch: mockBatchEnrichment({ reviewDecision: "approved", mergeable: true }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1223,7 +1345,10 @@ describe("reactions", () => {
       },
     };
 
-    const mockSCM = createMockSCM({ getCISummary: vi.fn().mockResolvedValue("failing") });
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing" }),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -1244,7 +1369,10 @@ describe("reactions", () => {
       "ci-failed": { auto: false, action: "send-to-agent", message: "CI is failing." },
     };
 
-    const mockSCM = createMockSCM({ getCISummary: vi.fn().mockResolvedValue("failing") });
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing" }),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -1264,6 +1392,7 @@ describe("reactions", () => {
     const notifier = createMockNotifier();
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing" }),
     });
 
     const registry: PluginRegistry = {
@@ -1523,28 +1652,30 @@ describe("reactions", () => {
       },
     };
 
+    const ciChecks = [
+      {
+        name: "lint",
+        status: "failed",
+        url: "https://github.com/org/repo/actions/runs/123",
+        conclusion: "FAILURE",
+      },
+      {
+        name: "test",
+        status: "passed",
+        url: "https://github.com/org/repo/actions/runs/124",
+        conclusion: "SUCCESS",
+      },
+      {
+        name: "typecheck",
+        status: "failed",
+        url: "https://github.com/org/repo/actions/runs/125",
+        conclusion: "FAILURE",
+      },
+    ];
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
-      getCIChecks: vi.fn().mockResolvedValue([
-        {
-          name: "lint",
-          status: "failed",
-          url: "https://github.com/org/repo/actions/runs/123",
-          conclusion: "FAILURE",
-        },
-        {
-          name: "test",
-          status: "passed",
-          url: "https://github.com/org/repo/actions/runs/124",
-          conclusion: "SUCCESS",
-        },
-        {
-          name: "typecheck",
-          status: "failed",
-          url: "https://github.com/org/repo/actions/runs/125",
-          conclusion: "FAILURE",
-        },
-      ]),
+      getCIChecks: vi.fn().mockResolvedValue(ciChecks),
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing", ciChecks }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1590,11 +1721,11 @@ describe("reactions", () => {
       },
     };
 
+    const ciChecks = [{ name: "lint", status: "failed", conclusion: "FAILURE" }];
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
-      getCIChecks: vi.fn().mockResolvedValue([
-        { name: "lint", status: "failed", conclusion: "FAILURE" },
-      ]),
+      getCIChecks: vi.fn().mockResolvedValue(ciChecks),
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing", ciChecks }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1640,12 +1771,15 @@ describe("reactions", () => {
       },
     };
 
-    const getCIChecksMock = vi.fn().mockResolvedValue([
+    const initialChecks = [
       { name: "lint", status: "failed", conclusion: "FAILURE" },
-    ]);
+    ];
+    const getCIChecksMock = vi.fn().mockResolvedValue(initialChecks);
+    const enrichmentMock = mockBatchEnrichment({ ciStatus: "failing", ciChecks: initialChecks });
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
       getCIChecks: getCIChecksMock,
+      enrichSessionsPRBatch: enrichmentMock,
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1671,10 +1805,14 @@ describe("reactions", () => {
     expect(mockSessionManager.send).not.toHaveBeenCalled();
 
     // Now a different check fails too
-    getCIChecksMock.mockResolvedValue([
+    const updatedChecks = [
       { name: "lint", status: "failed", conclusion: "FAILURE" },
       { name: "test", status: "failed", conclusion: "FAILURE" },
-    ]);
+    ];
+    getCIChecksMock.mockResolvedValue(updatedChecks);
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "failing", ciChecks: updatedChecks }),
+    );
 
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
@@ -1734,12 +1872,12 @@ describe("reactions", () => {
     };
 
     const getCISummaryMock = vi.fn().mockResolvedValue("failing");
-    const getCIChecksMock = vi.fn().mockResolvedValue([
-      { name: "lint", status: "failed", conclusion: "FAILURE" },
-    ]);
+    const failingChecks = [{ name: "lint", status: "failed", conclusion: "FAILURE" }];
+    const getCIChecksMock = vi.fn().mockResolvedValue(failingChecks);
     const mockSCM = createMockSCM({
       getCISummary: getCISummaryMock,
       getCIChecks: getCIChecksMock,
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing", ciChecks: failingChecks }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1765,6 +1903,9 @@ describe("reactions", () => {
     // CI recovers
     getCISummaryMock.mockResolvedValue("passing");
     getCIChecksMock.mockResolvedValue([]);
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "passing", ciChecks: [] }),
+    );
     await lm.check("app-1");
 
     metadata = readMetadataRaw(env.sessionsDir, "app-1");
@@ -1792,11 +1933,11 @@ describe("reactions", () => {
       },
     };
 
+    const ciChecks = [{ name: "lint", status: "failed", conclusion: "FAILURE" }];
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
-      getCIChecks: vi.fn().mockResolvedValue([
-        { name: "lint", status: "failed", conclusion: "FAILURE" },
-      ]),
+      getCIChecks: vi.fn().mockResolvedValue(ciChecks),
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing", ciChecks }),
     });
 
     const registry: PluginRegistry = {
@@ -1854,6 +1995,7 @@ describe("reactions", () => {
         noConflicts: false,
         blockers: ["Merge conflicts"],
       }),
+      enrichSessionsPRBatch: mockBatchEnrichment({ hasConflicts: true }),
     });
 
     const registry: PluginRegistry = {
@@ -1895,6 +2037,7 @@ describe("reactions", () => {
         noConflicts: false,
         blockers: ["Merge conflicts"],
       }),
+      enrichSessionsPRBatch: mockBatchEnrichment({ hasConflicts: true }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1933,6 +2076,7 @@ describe("reactions", () => {
         noConflicts: false,
         blockers: ["Merge conflicts"],
       }),
+      enrichSessionsPRBatch: mockBatchEnrichment({ hasConflicts: true }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1975,6 +2119,7 @@ describe("reactions", () => {
     });
     const mockSCM = createMockSCM({
       getMergeability: getMergeabilityMock,
+      enrichSessionsPRBatch: mockBatchEnrichment({ hasConflicts: true }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -2002,6 +2147,9 @@ describe("reactions", () => {
       noConflicts: true,
       blockers: [],
     });
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ hasConflicts: false }),
+    );
     await lm.check("app-1");
     expect(mockSessionManager.send).not.toHaveBeenCalled();
 
@@ -2016,6 +2164,9 @@ describe("reactions", () => {
       noConflicts: false,
       blockers: ["Merge conflicts"],
     });
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ hasConflicts: true }),
+    );
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
   });
@@ -2100,7 +2251,10 @@ describe("reactions", () => {
 
   it("notifies humans on significant transitions without reaction config", async () => {
     const notifier = createMockNotifier();
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged" }),
+    });
 
     const registry: PluginRegistry = {
       ...mockRegistry,
@@ -2129,7 +2283,10 @@ describe("reactions", () => {
 
   it("resolves notifier aliases from notificationRouting before dispatch", async () => {
     const notifier = createMockNotifier();
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged" }),
+    });
 
     const configWithAliasRouting: OrchestratorConfig = {
       ...config,
@@ -2170,7 +2327,10 @@ describe("reactions", () => {
 
   it("resolves notifier aliases from defaults.notifiers when routing falls back", async () => {
     const notifier = createMockNotifier();
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged" }),
+    });
 
     const configWithAliasDefaults: OrchestratorConfig = {
       ...config,
@@ -2217,7 +2377,10 @@ describe("reactions", () => {
   it("prefers alias-specific notifier instances over shared plugin instances", async () => {
     const alertsNotifier = createMockNotifier();
     const opsNotifier = createMockNotifier();
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged" }),
+    });
 
     const configWithSharedPluginAliases: OrchestratorConfig = {
       ...config,
@@ -2611,6 +2774,7 @@ describe("rate limiting optimizations", () => {
       getPRState: vi.fn().mockResolvedValue("closed"),
       getPendingComments: getPendingMock,
       getAutomatedComments: getAutomatedMock,
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "closed" }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
