@@ -596,12 +596,14 @@ function migrateProject(
 
   // Write all sessions to sessions/ (including orchestrators — runtime reads from sessions/)
   for (const [sessionId, { metadata }] of allSessions) {
-    // Update worktree path to new V2 location
+    // Update worktree path to new V2 location — only if the worktree was actually moved
     if (typeof metadata["worktree"] === "string" && metadata["worktree"]) {
-      const worktreePath = metadata["worktree"];
-      if (worktreePath.startsWith("/") || worktreePath.startsWith("~")) {
-        metadata["worktree"] = join(worktreesDir, sessionId);
+      const newWorktreePath = join(worktreesDir, sessionId);
+      if (existsSync(newWorktreePath) || dryRun) {
+        metadata["worktree"] = newWorktreePath;
       }
+      // Otherwise keep the original path — the worktree may be at ~/.worktrees/{projectId}/{sessionId}/
+      // and will be moved by moveStrayWorktrees() later
     }
 
     if (!dryRun) {
@@ -654,6 +656,37 @@ function stripStorageKeysFromConfig(configPath: string, dryRun: boolean, log: (m
 // Stray worktree detection
 // ---------------------------------------------------------------------------
 
+/**
+ * Try to move a single worktree directory to the matching project.
+ * Returns true if matched and moved (or would be moved in dry-run).
+ */
+function tryMoveWorktree(
+  sessionId: string,
+  srcPath: string,
+  projectsDir: string,
+  dryRun: boolean,
+  log: (message: string) => void,
+): boolean {
+  for (const projectId of readdirSync(projectsDir)) {
+    const sessionsDir = join(projectsDir, projectId, "sessions");
+    if (!existsSync(sessionsDir)) continue;
+
+    const sessionFile = join(sessionsDir, `${sessionId}.json`);
+    if (existsSync(sessionFile)) {
+      const destPath = join(projectsDir, projectId, "worktrees", sessionId);
+      if (!existsSync(destPath)) {
+        log(`  Moving stray worktree ${sessionId} → projects/${projectId}/worktrees/`);
+        if (!dryRun) {
+          mkdirSync(join(projectsDir, projectId, "worktrees"), { recursive: true });
+          renameSync(srcPath, destPath);
+        }
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function moveStrayWorktrees(
   aoBaseDir: string,
   dryRun: boolean,
@@ -661,6 +694,9 @@ function moveStrayWorktrees(
 ): number {
   const strayDir = join(homedir(), ".worktrees");
   if (!existsSync(strayDir)) return 0;
+
+  const projectsDir = join(aoBaseDir, "projects");
+  if (!existsSync(projectsDir)) return 0;
 
   let moved = 0;
   for (const name of readdirSync(strayDir)) {
@@ -671,34 +707,43 @@ function moveStrayWorktrees(
       continue;
     }
 
-    // Try to match worktree to a project by checking if a matching session exists
-    // under any project in the new layout
-    const projectsDir = join(aoBaseDir, "projects");
-    if (!existsSync(projectsDir)) continue;
-
-    let matched = false;
-    for (const projectId of readdirSync(projectsDir)) {
-      const sessionsDir = join(projectsDir, projectId, "sessions");
-      if (!existsSync(sessionsDir)) continue;
-
-      // Check if there's a session matching this worktree name
-      const sessionFile = join(sessionsDir, `${name}.json`);
-      if (existsSync(sessionFile)) {
-        const destPath = join(projectsDir, projectId, "worktrees", name);
-        if (!existsSync(destPath)) {
-          log(`  Moving stray worktree ${name} → projects/${projectId}/worktrees/`);
-          if (!dryRun) {
-            mkdirSync(join(projectsDir, projectId, "worktrees"), { recursive: true });
-            renameSync(srcPath, destPath);
-          }
-          matched = true;
-          moved++;
-          break;
-        }
+    // The default workspace plugin stores worktrees at ~/.worktrees/{projectId}/{sessionId}/.
+    // Check if this entry is a projectId directory containing session worktrees.
+    const children = readdirSync(srcPath);
+    let isProjectDir = false;
+    for (const child of children) {
+      const childPath = join(srcPath, child);
+      try {
+        if (!statSync(childPath).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      // If any child matches a session in any project, treat parent as a projectId dir
+      if (tryMoveWorktree(child, childPath, projectsDir, dryRun, log)) {
+        moved++;
+        isProjectDir = true;
       }
     }
 
-    if (!matched) {
+    if (isProjectDir) {
+      // Remove the now-empty projectId directory (if empty)
+      if (!dryRun) {
+        try {
+          const remaining = readdirSync(srcPath);
+          if (remaining.length === 0) {
+            rmSync(srcPath, { recursive: true, force: true });
+          }
+        } catch {
+          // Ignore — non-critical
+        }
+      }
+      continue;
+    }
+
+    // Not a projectId directory — treat as a flat session worktree
+    if (tryMoveWorktree(name, srcPath, projectsDir, dryRun, log)) {
+      moved++;
+    } else {
       log(`  Warning: stray worktree ${name} in ~/.worktrees/ has no matching session — left in place.`);
     }
   }
@@ -840,6 +885,41 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
 // Rollback
 // ---------------------------------------------------------------------------
 
+/**
+ * Count sessions in a V2 project dir that don't exist in any of the .migrated dirs.
+ * These are sessions created after migration and would be lost by rollback.
+ */
+function countPostMigrationSessions(
+  projectDir: string,
+  migratedDirs: Array<{ path: string }>,
+): number {
+  const sessionsDir = join(projectDir, "sessions");
+  if (!existsSync(sessionsDir)) return 0;
+
+  // Collect all session IDs from .migrated dirs
+  const migratedSessionIds = new Set<string>();
+  for (const dir of migratedDirs) {
+    const oldSessionsDir = join(dir.path, "sessions");
+    if (!existsSync(oldSessionsDir)) continue;
+    for (const file of readdirSync(oldSessionsDir)) {
+      if (file === "archive" || file.startsWith(".")) continue;
+      const sessionId = file.endsWith(".json") ? file.slice(0, -5) : file;
+      migratedSessionIds.add(sessionId);
+    }
+  }
+
+  // Count sessions in V2 dir that aren't in any .migrated dir
+  let count = 0;
+  for (const file of readdirSync(sessionsDir)) {
+    if (file === "archive" || file.startsWith(".")) continue;
+    const sessionId = file.endsWith(".json") ? file.slice(0, -5) : file;
+    if (!migratedSessionIds.has(sessionId)) {
+      count++;
+    }
+  }
+  return count;
+}
+
 export async function rollbackStorage(options: RollbackOptions = {}): Promise<void> {
   const aoBaseDir = options.aoBaseDir ?? join(homedir(), ".agent-orchestrator");
   const dryRun = options.dryRun ?? false;
@@ -898,6 +978,28 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
 
   log(`Found ${migratedDirs.length} .migrated director${migratedDirs.length === 1 ? "y" : "ies"}.`);
 
+  // Check for post-migration sessions BEFORE renaming .migrated dirs
+  // (we need to read the .migrated dir contents to compare).
+  const projectsDir = join(aoBaseDir, "projects");
+  const safeToDeleteProjects = new Set<string>();
+  const migratedProjectIds = new Set(migratedDirs.map((d) => d.projectId));
+  if (existsSync(projectsDir)) {
+    for (const projectId of migratedProjectIds) {
+      const projectDir = join(projectsDir, projectId);
+      if (!existsSync(projectDir)) continue;
+
+      const postMigrationSessions = countPostMigrationSessions(
+        projectDir, migratedDirs.filter((d) => d.projectId === projectId),
+      );
+      if (postMigrationSessions > 0) {
+        log(`  Warning: projects/${projectId} has ${postMigrationSessions} session(s) created after migration — skipping deletion.`);
+        log(`    These sessions exist only in projects/${projectId}/ and would be lost. Remove manually after verifying.`);
+      } else {
+        safeToDeleteProjects.add(projectId);
+      }
+    }
+  }
+
   // Rename .migrated back to original
   for (const dir of migratedDirs) {
     const originalPath = dir.path.replace(/\.migrated$/, "");
@@ -907,13 +1009,9 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
     }
   }
 
-  // Remove only the project subdirectories that correspond to .migrated dirs.
-  // Do NOT delete the entire projects/ directory — it may contain sessions
-  // created after migration that have no .migrated counterpart.
-  const projectsDir = join(aoBaseDir, "projects");
+  // Remove project directories that are safe to delete (no post-migration sessions)
   if (existsSync(projectsDir)) {
-    const migratedProjectIds = new Set(migratedDirs.map((d) => d.projectId));
-    for (const projectId of migratedProjectIds) {
+    for (const projectId of safeToDeleteProjects) {
       const projectDir = join(projectsDir, projectId);
       if (existsSync(projectDir)) {
         log(`  Removing migrated project directory: projects/${projectId}`);
