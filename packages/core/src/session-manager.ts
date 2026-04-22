@@ -1725,6 +1725,28 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     const canonicalSessionId = getCanonicalOrchestratorId(orchestratorConfig.projectId, project);
+    const createOrReuseCanonical = async (replaceExisting: boolean): Promise<Session> => {
+      try {
+        return await createCanonicalOrchestrator(orchestratorConfig, { replaceExisting });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (message !== `Orchestrator session '${canonicalSessionId}' already exists`) {
+          throw error;
+        }
+
+        const canonical = selectPreferredOrchestratorSession(
+          (await list(orchestratorConfig.projectId)).filter((session) =>
+            isOrchestratorSessionRecord(session.id, session.metadata, project.sessionPrefix),
+          ),
+          canonicalSessionId,
+        );
+        if (canonical) {
+          return canonical;
+        }
+
+        throw error;
+      }
+    };
     const projectSessions = (await list(orchestratorConfig.projectId)).filter((session) =>
       isOrchestratorSessionRecord(session.id, session.metadata, project.sessionPrefix),
     );
@@ -1743,15 +1765,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           orchestratorId: existing.id,
           error,
         });
-        if (existing.id === canonicalSessionId) {
-          return createCanonicalOrchestrator(orchestratorConfig, { replaceExisting: true });
-        }
+        return createOrReuseCanonical(true);
       }
     }
 
-    return createCanonicalOrchestrator(orchestratorConfig, {
-      replaceExisting: existing?.id === canonicalSessionId,
-    });
+    return createOrReuseCanonical(existing?.id === canonicalSessionId);
   }
 
   async function spawnOrchestrator(orchestratorConfig: OrchestratorSpawnConfig): Promise<Session> {

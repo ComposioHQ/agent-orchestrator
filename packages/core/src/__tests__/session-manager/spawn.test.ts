@@ -1748,6 +1748,27 @@ describe("spawn", () => {
       warnSpy.mockRestore();
     });
 
+    it("reuses the canonical orchestrator when concurrent ensure calls race to create it", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const results = await Promise.allSettled([
+        sm.ensureOrchestrator({ projectId: "my-app", systemPrompt: "test" }),
+        sm.ensureOrchestrator({ projectId: "my-app", systemPrompt: "test" }),
+      ]);
+
+      expect(results).toHaveLength(2);
+      expect(results[0]?.status).toBe("fulfilled");
+      expect(results[1]?.status).toBe("fulfilled");
+
+      if (results[0]?.status !== "fulfilled" || results[1]?.status !== "fulfilled") {
+        throw new Error("Expected both ensureOrchestrator calls to fulfill");
+      }
+
+      expect(results[0].value.id).toBe("app-orchestrator");
+      expect(results[1].value.id).toBe("app-orchestrator");
+      expect(mockRuntime.create).toHaveBeenCalledTimes(1);
+    });
+
     it("throws a clear error when the canonical orchestrator id collides with another project prefix", async () => {
       config.projects["other-app"] = {
         ...config.projects["my-app"]!,
