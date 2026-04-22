@@ -187,14 +187,38 @@ async function resolveProject(
 
   // No match — prompt if interactive, otherwise error
   if (isHumanCaller()) {
+    // Check if cwd is a git repo not yet in the config — offer to add it
+    const currentDirResolved = resolve(cwd());
+    const cwdAlreadyInConfig = projectIds.some((id) => {
+      try {
+        return resolve(config.projects[id].path.replace(/^~/, process.env["HOME"] || "")) === currentDirResolved;
+      } catch {
+        return false;
+      }
+    });
+    const cwdIsGitRepo = existsSync(resolve(currentDirResolved, ".git"));
+    const addOption = !cwdAlreadyInConfig && cwdIsGitRepo
+      ? [{ value: "__add_cwd__", label: `Add ${basename(currentDirResolved)}`, hint: "register this directory as a new project" }]
+      : [];
+
     const projectId = await promptSelect(
       `Choose project to ${action}:`,
-      projectIds.map((id) => ({
-        value: id,
-        label: config.projects[id].name ?? id,
-        hint: id,
-      })),
+      [
+        ...projectIds.map((id) => ({
+          value: id,
+          label: config.projects[id].name ?? id,
+          hint: id,
+        })),
+        ...addOption,
+      ],
     );
+
+    if (projectId === "__add_cwd__") {
+      const addedId = await addProjectToConfig(config, currentDirResolved);
+      const reloadedConfig = loadConfig(config.configPath);
+      return { projectId: addedId, project: reloadedConfig.projects[addedId] };
+    }
+
     return { projectId, project: config.projects[projectId] };
   } else {
     throw new Error(
