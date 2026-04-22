@@ -1,0 +1,531 @@
+agent-orchestrator.yaml.example
+  876fa56c015b7d17 23-31
+packages/cli/__tests__/commands/session.test.ts
+  876fa56c015b7d17 20-21,24,118-126,133,136,143-144,154-155,174,187,253,255,358-393,408-553,556-559,563-586,590,595-662
+packages/plugins/agent-claude-code/src/index.ts
+  876fa56c015b7d17 310,328,358-359,375-376,388-394,398-403,406-410,831-835
+packages/cli/src/lib/running-state.ts
+  876fa56c015b7d17 1-10,25-34,40,43-78,85,87-99,101,110-111,113-117,124,127-134,136,172,184,197,202,223-231,237,240
+packages/cli/src/program.ts
+  876fa56c015b7d17 7,36-37
+packages/web/src/components/__tests__/Dashboard.emptyState.test.tsx
+  876fa56c015b7d17 1,5-6,19-21,38-72,100-110
+packages/web/src/components/Dashboard.tsx
+  876fa56c015b7d17 4,8,12,25-27,35-38,41-42,89,91,117-127,130,140-141,145,149,152-153,155-156,158-161,172-175,191,193-200,226,234,237,259,268,280,340,342,425-441,454-463,472,475-492,505,509,530-555,564-577,580,590,631,638,653-672,709,726,738,743-750,752-774,776-788,790-829,831-833
+packages/web/src/app/api/sessions/[id]/route.ts
+  876fa56c015b7d17 2,25-32
+packages/core/src/format-automated-comments.ts
+  876fa56c015b7d17 1-84
+packages/core/src/session-manager.ts
+  876fa56c015b7d17 33-35,58-64,66,80,225-277,309,313-319,322,354,368,411,416-418,429-431,453-474,501-513,539-550,554,557-560,581-601,638-656,835-836,898,1066-1077,1084-1087,1092-1094,1104,1109,1111-1113,1117-1118,1121,1182,1340-1348,1350-1354,1358,1360-1365,1372-1373,1377,1385-1386,1391,1395,1419,1442,1486,1504,1524,1604,1691-1696,1698-1706,1710,1712-1717,1724-1725,1728,1736-1737,1742,1745,1769,1849,1875-1882,1919-1936,1940,1963-1970,1990,1992-2005,2007-2021,2076-2094,2097,2102,2161,2165,2282,2385,2388,2406,2410,2418,2424-2427,2532,2610-2616,2619,2622,2624,2630-2640,2644-2647,2649,2763,2769-2773,2782-2784,2798,2848,2927,2953,2964-2977
+.github/workflows/security.yml
+  876fa56c015b7d17 32-47,115
+packages/core/src/__tests__/session-manager/restore.test.ts
+  876fa56c015b7d17 179-192,274-301,622
+packages/web/src/__tests__/api-routes.test.ts
+  876fa56c015b7d17 6-7,21-26,31-36,107-108,239,299,320,336-352,354-501,524,796-819
+packages/web/next.config.js
+  876fa56c015b7d17 6,14-16
+packages/web/src/lib/format.ts
+  876fa56c015b7d17 10-24,26-29,31,34-41,53-69,78-89,92-99,101,105,110,113,116-132
+packages/core/src/__tests__/lifecycle-transition.test.ts
+  876fa56c015b7d17 1-398
+docs/DEVELOPMENT.md
+  876fa56c015b7d17 75-85
+.changeset/fix-web-lifecycle-restore-affordances.md
+  876fa56c015b7d17 1-5
+packages/web/src/lib/serialize.ts
+  876fa56c015b7d17 12,22-28,33-43,63-172,178,183-190,193,197,202-207,209-210,220-224,228-260,303-313,342,454,471,475,481-509,568-570,581,619-621
+.changeset/fix-activity-unavailable-stuck.md
+  876fa56c015b7d17 1-5
+packages/web/src/lib/project-name.ts
+  876fa56c015b7d17 4,10-26,31,45,56-69
+packages/core/src/file-lock.ts
+  876fa56c015b7d17 1-62
+packages/web/src/app/api/projects/route.ts
+  876fa56c015b7d17 1-13,15,19-68,80-130
+packages/core/src/__tests__/agent-workspace-hooks.test.ts
+  876fa56c015b7d17 61,69-70,77,91-92
+CLAUDE.md
+  876fa56c015b7d17 134-193
+packages/web/src/__tests__/project-detail-route.test.ts
+  876fa56c015b7d17 1-350
+packages/plugins/agent-claude-code/src/index.test.ts
+  876fa56c015b7d17 2-8,59-65,76-80,597-607,751-752,764,768,772
+packages/web/src/app/api/projects/reload/route.ts
+  876fa56c015b7d17 1-39
+.changeset/auto-cleanup-on-merge.md
+  876fa56c015b7d17 1-19
+packages/core/src/__tests__/portfolio-registry.test.ts
+  876fa56c015b7d17 1-120
+packages/web/src/components/PullRequestsPage.tsx
+  876fa56c015b7d17 10,22,30-31,51,55-58,62,65-66,68-69,71-72,98,101,114-124,126-128
+packages/cli/src/commands/start.ts
+  876fa56c015b7d17 24,34,36-37,39,42-43,60-67,86,92-108,201,809-816,818-821,823-841,1072,1133,1135,1140,1157-1158,1161-1227,1230-1250,1285-1294,1297,1302,1310-1312,1318,1320-1322,1448-1455,1457,1486,1506,1516,1621-1642,1660,1686,1688-1689,1743-1746,1748-1774,1776,1779-1790
+eslint.config.js
+  876fa56c015b7d17 13,15-22
+.changeset/agent-plugin-safety-costs.md
+  876fa56c015b7d17 1-7
+.changeset/collapsible-agent-reports.md
+  876fa56c015b7d17 1-5
+.changeset/session-ui-audit-oscillation.md
+  876fa56c015b7d17 1-7
+.changeset/cli-session-ls-terminated.md
+  876fa56c015b7d17 1-5
+packages/cli/src/commands/status.ts
+  876fa56c015b7d17 4-5,16,55,247-250,290-300,395-401,412-419,509-515,522-523,528
+packages/core/src/config-generator.ts
+  876fa56c015b7d17 164-184
+packages/core/src/storage-key.ts
+  876fa56c015b7d17 1-59
+packages/web/src/lib/__tests__/dashboard-page-data.fast-path.test.ts
+  876fa56c015b7d17 63,65-66,70-71,138-214
+AGENTS.md
+  876fa56c015b7d17 23-31
+packages/web/src/app/projects/[projectId]/loading.tsx
+  876fa56c015b7d17 1-101
+packages/plugins/scm-github/test/index.test.ts
+  876fa56c015b7d17 18,49-53,431-432
+packages/web/src/components/__tests__/ProjectSettingsForm.test.tsx
+  876fa56c015b7d17 1-109
+packages/web/src/components/ProjectSettingsModal.tsx
+  876fa56c015b7d17 1-152
+.github/workflows/deploy-vps.yml
+  876fa56c015b7d17 84,90,106
+packages/web/src/app/api/sessions/route.ts
+  876fa56c015b7d17 1,14,20-71,80,87-89,91-96,107,155,182
+packages/core/src/__tests__/observability.test.ts
+  876fa56c015b7d17 1-2,8,105-198
+packages/web/src/components/SessionDetailTopStrip.tsx
+  876fa56c015b7d17 1-152
+packages/web/src/components/ProjectSettingsForm.tsx
+  876fa56c015b7d17 1-278
+packages/web/src/components/workspace/SidebarContext.tsx
+  876fa56c015b7d17 1-14
+packages/core/src/__tests__/session-manager/lifecycle.test.ts
+  876fa56c015b7d17 40,50,162-165,234,238,277,285,327,334,397,413,421
+packages/cli/src/commands/report.ts
+  876fa56c015b7d17 1-169
+packages/core/src/__tests__/session-manager/query.test.ts
+  876fa56c015b7d17 65-89,116-143,371,402-431
+packages/web/src/app/layout.tsx
+  876fa56c015b7d17 2,48,50-55
+packages/web/src/lib/__tests__/project-name.test.ts
+  876fa56c015b7d17 1-55
+packages/web/scripts/dev-direct-terminal.mjs
+  876fa56c015b7d17 1-79
+packages/plugins/agent-opencode/src/index.test.ts
+  876fa56c015b7d17 2,45-49
+packages/integration-tests/src/helpers/session-factory.ts
+  876fa56c015b7d17 5,22-28,34-39
+packages/web/src/__tests__/orchestrators.test.tsx
+  876fa56c015b7d17 42,46,69
+.changeset/web-copy-debug-bundle.md
+  876fa56c015b7d17 1-5
+packages/web/src/app/projects/[projectId]/loading.test.tsx
+  876fa56c015b7d17 1-14
+packages/web/src/components/__tests__/AttentionZone.actionChip.test.ts
+  876fa56c015b7d17 1-200
+packages/web/src/components/__tests__/DirectTerminal.render.test.tsx
+  876fa56c015b7d17 79,111-118
+packages/web/src/components/__tests__/SessionDetail.mergeConflictActions.test.tsx
+  876fa56c015b7d17 1-121
+packages/web/src/components/ProjectSidebar.tsx
+  876fa56c015b7d17 3-4,10-12,14-15,30-37,51-66,72,102-162,170-184,186-187,191-192,197-202,204-208,214,216-223,240-279,282-339,344-346,349-354,383,387-390,393-396,399-468,470-505,507-559,562,569,571-573,582,584,586-591,600-623,647-723,725-731
+packages/core/src/__tests__/test-utils.ts
+  876fa56c015b7d17 5,7-8,12,33-85,88,90-95,105-107,109,267-268,273,289,306,310-315,333,340,345,348,352,372,390,397,404,410-415,426,432-434,436,447
+packages/web/src/lib/mux-protocol.ts
+  876fa56c015b7d17 1-2,28-31
+packages/core/src/metadata.ts
+  876fa56c015b7d17 35,38-44,57,90-91,102,144-145,156,170-173,175-179,184-186,188,191-215,218-258,368
+.changeset/lifecycle-activity-signal-contract.md
+  876fa56c015b7d17 1-6
+packages/core/src/__tests__/lifecycle-manager.test.ts
+  876fa56c015b7d17 3-8,11,15,36,51-126,200-321,403,452-453,465,472,478,489-559,573-647,781-843,861-892,1011-1109,1163-1214,1402,1407-1408,1442-1456,1458-1460,1470-1514,2065-2100,2606-2648,2752-2889
+packages/web/src/lib/github-links.ts
+  876fa56c015b7d17 1-15
+packages/cli/src/commands/session.ts
+  876fa56c015b7d17 6,16,41-44,46-51,62,68-76,172-178,182-189,245,406
+packages/web/src/lib/terminal-touch-scroll.ts
+  876fa56c015b7d17 1-194
+packages/cli/src/commands/open.ts
+  876fa56c015b7d17 5,7,72,74
+packages/core/src/__tests__/agent-report.test.ts
+  876fa56c015b7d17 1-566
+packages/web/src/app/api/orchestrators/route.ts
+  876fa56c015b7d17 7-33,108-109
+docs/CLI.md
+  876fa56c015b7d17 26-28,33-38,51-56
+packages/web/src/components/__tests__/OrchestratorSelector.test.tsx
+  876fa56c015b7d17 57,107,148
+packages/web/src/lib/scm-webhooks.test.ts
+  876fa56c015b7d17 2-8,75-90,97-102,127-132
+packages/core/src/observability.ts
+  876fa56c015b7d17 2-3,9,135-144,150-154,182-186,188,208-294,427-428,432-441,460-461,463,482,498,511,519,521-583,600-601,608,614-615
+.changeset/fix-start-restore-and-codex-resume.md
+  876fa56c015b7d17 1-10
+packages/core/src/__tests__/metadata.test.ts
+  876fa56c015b7d17 9,11,56-58,70-71,118-132,231-284
+packages/web/src/app/globals.css
+  876fa56c015b7d17 862-863,868-869,871,991-996,998-1007,1010-1020,1022-1028,1030-1124,1126-1131,1133-1135,1138-1139,1144,1202-1204,1211-1213,1223-1231,1542-1544,1593-1600,1977-2012,2111-2173,3007-3047,3440-3442,3508-3518,3537-3540,3549-3552,3564-3565,3568-3574,3577-3579,3582-3584,3587-3602,3605-3607,3610,3613-3616,3618-3621,3623-3624,3627,3629,3632-4489,4492-4494,4498-4502,4505,4508,4511-4512,4517-4520,4522-4529,4531,4534-4537,4540-4543,4546-4617,5033-5034,5041,5049,5334-5336,5347-5349,5814-5816,5833-5835,6031-6033,6169-6171,6178,6181-6184,6186,6222-6246,6256-6259,6263,6277-6278,6284,6326-6341,6700-6703,7013-7019,7031-7181
+packages/cli/__tests__/commands/spawn.test.ts
+  876fa56c015b7d17 71,74,98,133,248-381,432,564,883-1019
+packages/core/src/__tests__/plugin-integration.test.ts
+  876fa56c015b7d17 121,152,156,396,416
+packages/web/src/components/DynamicFavicon.tsx
+  876fa56c015b7d17 19-23,25-27,48,52-57
+packages/web/src/components/__tests__/ProjectSidebar.test.tsx
+  876fa56c015b7d17 2,7,11,30,32,59-60,74,78,83,93-96,98-110,113-205,216-217,219-223,252-254,286,288,297,300
+packages/core/src/__tests__/lifecycle-status-decisions.test.ts
+  876fa56c015b7d17 1-218
+packages/web/src/lib/__tests__/serialize.test.ts
+  876fa56c015b7d17 6-15,21,27,34-39,45-51,141-147,153-212,528-533,741-746,844-862,895,972-1029,1321-1441
+packages/core/src/lifecycle-status-decisions.ts
+  876fa56c015b7d17 1-398
+packages/core/src/__tests__/utils.test.ts
+  876fa56c015b7d17 190-191,197-211
+packages/core/src/paths.ts
+  876fa56c015b7d17 2,6,12-18,21-27,76-77,79-80,94,96-97,102,104-105,110,112-113,118,120-121,128-129,143,146-147,179-198,201-215,220-221,225,230-235
+packages/plugins/scm-gitlab/test/index.test.ts
+  876fa56c015b7d17 16,47-51,359-360
+packages/web/src/lib/dashboard-page-data.ts
+  876fa56c015b7d17 4-8,23-43,51-53,56-58,88,91-94,96-109,111-112,114-115,117-119,124-127,129-133,137-140,143-144
+packages/core/src/recovery/actions.ts
+  876fa56c015b7d17 42-50,59,75,126-133,156,165,202-211,218
+packages/cli/__tests__/lib/session-utils.test.ts
+  876fa56c015b7d17 129-134
+packages/cli/src/lib/session-utils.ts
+  876fa56c015b7d17 19-20,32,44-45,54,62-63,75-76,82
+packages/core/src/utils/validation.ts
+  876fa56c015b7d17 11,24
+packages/integration-tests/src/config-metadata-service.integration.test.ts
+  876fa56c015b7d17 27-28,69,90,93,101-102,105-106,110,172,175,182-183
+packages/web/src/lib/project-route-data.ts
+  876fa56c015b7d17 1-32
+packages/web/src/components/AddProjectModal.parts.tsx
+  876fa56c015b7d17 1-119
+packages/core/src/recovery/validator.ts
+  876fa56c015b7d17 12,24-35,73,77,80,101-102,106,109-140,150-162,164,171-183,201-203,205-208,213,217-220,236-257,262,264-269,289-291,293-298
+packages/core/src/lifecycle-transition.ts
+  876fa56c015b7d17 1-302
+packages/web/src/lib/__tests__/dashboard-page-data.test.ts
+  876fa56c015b7d17 20,49-72
+packages/core/src/portfolio-projects.ts
+  876fa56c015b7d17 1-72
+packages/web/src/components/CopyDebugBundleButton.tsx
+  876fa56c015b7d17 1-131
+packages/web/src/components/__tests__/Dashboard.mobile.test.tsx
+  876fa56c015b7d17 28,53,56-57,59-60,66-68,71-72,74-75,79,82,96,99,104-107,110,119,125-126,129,196,209,221-226,231-235,241-242,244-252,254,257-261,263-285,287-289,292,314-315,340-341
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  876fa56c015b7d17 579,1077-1163,1906-1928,1978
+.changeset/web-merge-conflict-actions.md
+  876fa56c015b7d17 1-5
+packages/core/src/__tests__/activity-signal.test.ts
+  876fa56c015b7d17 1-173
+packages/core/src/recovery/types.ts
+  876fa56c015b7d17 49-60,228-236
+packages/web/server/mux-websocket.ts
+  876fa56c015b7d17 38-47,52,287-288,290
+packages/web/src/lib/services.ts
+  876fa56c015b7d17 16,18,22,38,47,57,66-86,91-100,102,108,123-145,177,182-184,229
+packages/web/vitest.config.ts
+  876fa56c015b7d17 48-50
+.github/copilot-instructions.md
+  876fa56c015b7d17 1-245
+packages/web/src/app/projects/[projectId]/page.test.tsx
+  876fa56c015b7d17 1-58
+packages/web/src/components/__tests__/DynamicFavicon.test.tsx
+  876fa56c015b7d17 20,25-27,29,71-83
+packages/plugins/agent-claude-code/src/__tests__/activity-detection.test.ts
+  876fa56c015b7d17 6,28-32
+packages/core/src/__tests__/portfolio-session-service.test.ts
+  876fa56c015b7d17 1-126
+packages/core/src/__tests__/file-lock.test.ts
+  876fa56c015b7d17 1-90
+packages/web/src/app/sessions/[id]/page.tsx
+  876fa56c015b7d17 4,7,14,17-20,46-51,69,168-169,171-176,179-192,195,197,200,211,213-216,268-285,292-293,316,321,327,330-331,361-365,369-372,377-378,380,397-398,463-464,470
+packages/cli/__tests__/commands/project.test.ts
+  876fa56c015b7d17 1-236
+packages/web/src/components/__tests__/Dashboard.debugBundleVisibility.test.tsx
+  876fa56c015b7d17 1-57
+packages/web/src/components/__tests__/SessionDetail.mobile.test.tsx
+  876fa56c015b7d17 1-2,10-11,36,41-51,53,56,61-63,66,70,72-74,80-81,84,88,90-96,98,102,105,108-110,114-116,119,122,127-128,131,134-135,139,142,148,154-155
+packages/core/src/__tests__/config-validation.test.ts
+  876fa56c015b7d17 9,16-17,23-24,29,32,39-40,43-44,46-47,52-53
+packages/web/src/hooks/useSessionEvents.ts
+  876fa56c015b7d17 7,30-35,41-42,54-56,107-135,140,148,172-178,181-182,187-188,193,206,208,246,264,331
+.changeset/filter-terminated-sessions-from-ls.md
+  876fa56c015b7d17 1-12
+packages/web/src/__tests__/prompt-spawn.test.ts
+  876fa56c015b7d17 17-24,31-36,41-46
+packages/web/src/__tests__/get-attention-level.test.ts
+  876fa56c015b7d17 248-259,263-288,293,298-303,308-313,317-446
+packages/web/src/__tests__/filesystem-browse-api.test.ts
+  876fa56c015b7d17 1-174
+packages/core/src/__tests__/report-watcher.test.ts
+  876fa56c015b7d17 1-260
+packages/core/src/__tests__/session-manager/cache.test.ts
+  876fa56c015b7d17 1-199
+packages/web/src/components/Skeleton.tsx
+  876fa56c015b7d17 6-8,13-19,114-137
+.changeset/late-lions-share.md
+  876fa56c015b7d17 1-11
+packages/web/src/providers/__tests__/MuxProvider.test.tsx
+  876fa56c015b7d17 422
+packages/core/src/prompts/orchestrator.md
+  876fa56c015b7d17 56,65-68,70,99,103-112,151,183,222
+packages/core/src/prompt-builder.ts
+  876fa56c015b7d17 30-46,66-72
+.changeset/fix-bugbot-detail-dispatch.md
+  876fa56c015b7d17 1-9
+packages/web/src/__tests__/components.test.tsx
+  876fa56c015b7d17 211
+.changeset/isolate-lifecycle-terminal-logs.md
+  876fa56c015b7d17 1-5
+packages/web/src/app/projects/[projectId]/settings/page.tsx
+  876fa56c015b7d17 1-84
+packages/cli/__tests__/commands/start.test.ts
+  876fa56c015b7d17 9,33,60-61,63,147-148,223,241-254,257-258,292-293,296-297,817-826,828,833,950-951,957-960,965-966,968,970-1055,1080-1081,1087-1090,1095,1097-1098,1101-1104,1124-1125,1133-1134,1144-1153,1159-1321,1351-1437,1458,1460-1472,1478,1486-1518,1523,1533,1538-1548,1554,2026-2195
+packages/web/src/components/session-detail-utils.ts
+  876fa56c015b7d17 1-111
+packages/web/src/components/SessionCard.tsx
+  876fa56c015b7d17 10-16,22,42,62,64-83,100,188-189,196-204,503,585-600,710,853-858,885,888-891,893-895
+packages/core/src/__tests__/lifecycle-state.test.ts
+  876fa56c015b7d17 1-216
+packages/web/src/hooks/__tests__/useSessionEvents.mux.test.ts
+  876fa56c015b7d17 27-28,30-37,41
+packages/plugins/agent-codex/src/index.test.ts
+  876fa56c015b7d17 2-8,81-87,98-102,165-175,251-253,301-303,312,437,618-623,682-685,701-704,723-726,743-746,762-765,781-784,803-806,823-826,844-847,864-867,884-887,894-901,910-913,925-932,941-944,997-999,1005-1024,1040-1041,1043,1118-1119,1151-1152,1215-1217,1219-1221,1225,1266,1279,1433-1442,1459-1468,1473-1496,1508-1513,1531-1536,1553-1558,1581-1586,1616-1618,1739-1741,1747-1749,1860,1875-1877,1896,1908,1936,1954,1992,1994,2052,2054-2055,2077-2079,2083,2085-2087
+packages/web/src/lib/routes.ts
+  876fa56c015b7d17 1-11
+packages/core/src/global-config.ts
+  876fa56c015b7d17 1-1345
+packages/core/src/__tests__/project-resolver.test.ts
+  876fa56c015b7d17 1-251
+packages/web/src/lib/types.ts
+  876fa56c015b7d17 14-15,20-26,41-42,44-50,52,58,60,67-70,72-79,94-95,102-108,116-183,302-404,412,414-485,491-496,507-509,528-533,544-548
+packages/plugins/agent-codex/src/index.ts
+  876fa56c015b7d17 188,245-246,256-263,328-329,388-392,395-399,440-443,520-523,695-707
+packages/core/src/config.ts
+  876fa56c015b7d17 13-15,19-26,28-32,62-120,247-252,320-349,356,359,579-581,583,605,607,611,615-627,634,641,645,647,654,658-666,670-676,695-699,776-777,800-801,805-813,829-910,921,923,932-943,947-949,951,956,967-978,982-984,986
+packages/web/src/__tests__/services.test.ts
+  876fa56c015b7d17 5-6,12,20-26,39-40,46,57-58,72,85-86,115-122,132-165
+packages/web/src/components/__tests__/DirectTerminal.test.ts
+  876fa56c015b7d17 1-2,89-120
+packages/core/src/portfolio-session-service.ts
+  876fa56c015b7d17 1-191
+packages/cli/__tests__/lib/running-state.test.ts
+  876fa56c015b7d17 1-73
+.changeset/lifecycle-transitions-report-watcher.md
+  876fa56c015b7d17 1-14
+SETUP.md
+  876fa56c015b7d17 815,818
+packages/cli/src/lib/portfolio-display.ts
+  876fa56c015b7d17 1-30
+CONTRIBUTING.md
+  876fa56c015b7d17 208-219
+packages/core/src/agent-report.ts
+  876fa56c015b7d17 1-606
+packages/web/src/app/projects/[projectId]/sessions/[id]/page.tsx
+  876fa56c015b7d17 1
+packages/web/src/components/AddProjectModal.tsx
+  876fa56c015b7d17 1-369
+packages/core/src/__tests__/recovery-actions.test.ts
+  876fa56c015b7d17 18-19,37,70-73,112,132,223-239,247,283,330,385,399,414,448
+packages/web/src/app/api/events/route.ts
+  876fa56c015b7d17 13-14,86,95,131-132,162,171,197
+packages/core/src/__tests__/session-manager/communication.test.ts
+  876fa56c015b7d17 89-125,177-210
+.changeset/stage2-evidence-recovery.md
+  876fa56c015b7d17 1-5
+packages/cli/src/commands/project.ts
+  876fa56c015b7d17 1-183
+packages/plugins/agent-cursor/src/index.test.ts
+  876fa56c015b7d17 2,76-80
+packages/web/src/components/__tests__/AddProjectModal.test.tsx
+  876fa56c015b7d17 1-216
+packages/core/src/__tests__/format-automated-comments.test.ts
+  876fa56c015b7d17 1-177
+.changeset/stage5-ui-api-rollout.md
+  876fa56c015b7d17 1-6
+packages/core/src/project-resolver.ts
+  876fa56c015b7d17 1-29
+packages/plugins/terminal-iterm2/src/index.test.ts
+  876fa56c015b7d17 2,20-25,31-36
+packages/web/src/app/api/sessions/patches/route.ts
+  876fa56c015b7d17 25-26,32
+packages/web/src/components/session-detail-agent-actions.ts
+  876fa56c015b7d17 1-49
+packages/web/src/components/__tests__/Dashboard.projectOverview.test.tsx
+  876fa56c015b7d17 41,73-109,170,201-220
+packages/cli/__tests__/commands/status.test.ts
+  876fa56c015b7d17 17-19,163-169,180,183-184,575,711,736,757,778,802,823-829,832,867,941,1170-1323
+packages/plugins/workspace-worktree/src/index.ts
+  876fa56c015b7d17 73-101,136
+.changeset/stage4-pr-policy.md
+  876fa56c015b7d17 1-6
+packages/core/src/__tests__/spawn-target.test.ts
+  876fa56c015b7d17 1-89
+packages/cli/__tests__/commands/send.test.ts
+  876fa56c015b7d17 404-436
+packages/web/src/app/api/filesystem/browse/route.ts
+  876fa56c015b7d17 1-94
+packages/core/src/lifecycle-state.ts
+  876fa56c015b7d17 1-496
+packages/web/src/app/api/projects/[id]/route.ts
+  876fa56c015b7d17 1-325
+packages/core/src/__tests__/recovery-validator.test.ts
+  876fa56c015b7d17 110,203,205,215-733
+packages/web/src/lib/__tests__/github-links.test.ts
+  876fa56c015b7d17 1-37
+docs/design/stage-1-canonical-lifecycle-plan.md
+  876fa56c015b7d17 1-454
+packages/core/src/__tests__/portfolio-projects.test.ts
+  876fa56c015b7d17 1-135
+packages/web/src/components/__tests__/PullRequestsPage.test.tsx
+  876fa56c015b7d17 82,85
+packages/core/src/agent-workspace-hooks.ts
+  876fa56c015b7d17 6,35,137-139,171,174,183-203,330
+packages/plugins/workspace-worktree/src/__tests__/index.test.ts
+  876fa56c015b7d17 208-245
+packages/plugins/terminal-web/src/index.test.ts
+  876fa56c015b7d17 2,6-11,17-22
+docs/observability.md
+  876fa56c015b7d17 38-40,83
+packages/core/__tests__/config.test.ts
+  876fa56c015b7d17 5,24-26,119-140,144-234,264-328
+packages/core/src/spawn-target.ts
+  876fa56c015b7d17 1-48
+packages/plugins/agent-aider/src/index.test.ts
+  876fa56c015b7d17 2,56-60
+packages/core/rollup.config.ts
+  876fa56c015b7d17 44-46
+packages/core/src/__tests__/portfolio-routing.test.ts
+  876fa56c015b7d17 1-56
+packages/integration-tests/src/prompt-spawn.integration.test.ts
+  876fa56c015b7d17 34,65,92,114,144,181,212,243,270,308
+packages/core/src/index.ts
+  876fa56c015b7d17 20,37-39,43-106,159-160,171-181,198,243-281,294,302-346
+packages/core/src/lifecycle-manager.ts
+  876fa56c015b7d17 16,21,35,41-43,46-63,67-76,172-184,188-189,228-297,301,348-353,356-359,366,415-421,423-425,462,464-470,472-473,489-515,519-536,540-543,546-551,553-554,558-568,572-593,596-617,619,621-628,631-633,636-637,639-641,643-647,649-657,661-694,707-712,715-725,733-739,742-748,751-763,766-777,780-806,810-888,892-893,897-903,905-910,1064-1071,1075,1079,1084,1106,1250-1264,1269,1453-1454,1558-1649,1658-1662,1665-1698,1711-1720,1757-1776,1803-1855,1879-1955,1978-1979
+packages/cli/__tests__/commands/report.test.ts
+  876fa56c015b7d17 1-185
+.changeset/pr1300-review-followups.md
+  876fa56c015b7d17 1-7
+packages/core/src/types.ts
+  876fa56c015b7d17 27-116,121,157-173,203,237-247,252,254-262,273,275-281,299-304,341,385-386,811-863,1214-1229,1254-1261,1271-1273,1290-1300,1332-1347,1398-1405,1412-1414,1640-1641,1659-1666,1673-1693,1701,1714-1715,1850-1910
+packages/core/src/utils/session-from-metadata.ts
+  876fa56c015b7d17 1-11,18,20,27-42,48-64,68,70-71,74,76,78-79,85,90
+packages/core/src/utils/session-id.ts
+  876fa56c015b7d17 1-12
+packages/web/src/components/RepairDegradedProjectButton.tsx
+  876fa56c015b7d17 1-50
+packages/cli/src/commands/spawn.ts
+  876fa56c015b7d17 7,18,159,195-198,235-246,285-288,293-305,308-325,330-333,335,341,343-350,353-361,363-390,392-401
+packages/web/src/lib/__tests__/format.test.ts
+  876fa56c015b7d17 19-24,30-31,71-88,198-291
+packages/web/src/components/OrchestratorSelector.tsx
+  876fa56c015b7d17 7,122,160,192
+packages/web/src/hooks/usePopoverClamp.ts
+  876fa56c015b7d17 1-62
+packages/cli/__tests__/commands/open.test.ts
+  876fa56c015b7d17 125-138,184-197
+packages/web/src/components/AttentionZone.tsx
+  876fa56c015b7d17 11,43-46,256,277-309,321-322
+packages/cli/src/commands/send.ts
+  876fa56c015b7d17 187-193
+packages/web/src/__tests__/helpers.ts
+  876fa56c015b7d17 1-185,189,194-200,205-207,214-218,220-226
+packages/web/src/lib/path-security.ts
+  876fa56c015b7d17 1-139
+docs/state-machine-stage2-evidence-recovery-plan.md
+  876fa56c015b7d17 1-347
+packages/web/src/components/SessionDetailPRCard.tsx
+  876fa56c015b7d17 1-349
+packages/web/src/components/DirectTerminal.tsx
+  876fa56c015b7d17 8,11,13-15,18-72,79,84-85,170,174,192-194,259,271-274,277-281,339-342,346-415,490-493,497-515,536-538,542-545,562-565,599-617,727-751,794-795,801-828,835,921-948
+packages/integration-tests/src/cli-spawn-core-read-new.integration.test.ts
+  876fa56c015b7d17 17,33,74,104,106,110,114,137,141,171,203,205,210-211,234,242,258-259,268-269,292-293
+packages/core/src/recovery/manager.ts
+  876fa56c015b7d17 21-26,37,50,157,169
+packages/core/src/recovery/scanner.ts
+  876fa56c015b7d17 25
+packages/web/src/components/SessionDetail.tsx
+  876fa56c015b7d17 4,19,21-22,25,31-32,34,90-91,94,136,147,197,306,379,384,406,414-418,422,433-455,461,463-464,474-497,510-525,527-571,573-583,585-596,600-657,668,671-673,676-689,691,693-716,721-722,726,736-737,741,770-771,789-790,807-832,862-886,1059-1060
+packages/integration-tests/src/helpers/event-factory.ts
+  876fa56c015b7d17 1-9,35-40,46-51
+packages/cli/src/lib/routes.ts
+  876fa56c015b7d17 1-3
+packages/core/src/__tests__/paths.test.ts
+  876fa56c015b7d17 1,4,6-9,16-18,20-26,29-32,35-41,45-47
+packages/core/src/portfolio-registry.ts
+  876fa56c015b7d17 1-379
+packages/web/package.json
+  876fa56c015b7d17 17,33,43,49
+packages/web/src/components/BottomSheet.tsx
+  876fa56c015b7d17 6,283
+packages/core/src/__tests__/storage-key.test.ts
+  876fa56c015b7d17 1-89
+packages/core/src/report-watcher.ts
+  876fa56c015b7d17 1-254
+packages/core/src/portfolio-routing.ts
+  876fa56c015b7d17 1-34
+packages/web/src/app/projects/[projectId]/page.tsx
+  876fa56c015b7d17 1-43
+packages/web/src/components/__tests__/SessionDetail.desktop.test.tsx
+  876fa56c015b7d17 1,6-11,14-18,47-49,122-123,125,127,132-139,173-175,211-239,261-263,266-295
+packages/core/src/__tests__/types.test.ts
+  876fa56c015b7d17 33-51
+packages/core/src/__tests__/global-config.test.ts
+  876fa56c015b7d17 1-545
+packages/web/src/app/sessions/[id]/page.test.tsx
+  876fa56c015b7d17 12-14,20-22,53,89-91,138,146,173,175,179,190,195-264,357,363,427,435,460,487,495,560,566,603-758
+packages/web/src/app/projects/[projectId]/settings/page.test.tsx
+  876fa56c015b7d17 1-83
+packages/cli/__tests__/commands/review-check.test.ts
+  876fa56c015b7d17 13-18,84-91,98,101,111-112,122-123,142,153,184-188
+packages/web/src/components/DegradedProjectState.tsx
+  876fa56c015b7d17 1-79
+packages/web/src/components/__tests__/CopyDebugBundleButton.test.tsx
+  876fa56c015b7d17 1-93
+packages/web/src/__tests__/projects-route.test.ts
+  876fa56c015b7d17 1-372
+packages/web/src/components/__tests__/Dashboard.doneBar.test.tsx
+  876fa56c015b7d17 62-68
+packages/web/src/app/page.tsx
+  876fa56c015b7d17 32-33
+packages/web/src/app/api/browse-directory/route.ts
+  876fa56c015b7d17 1-9
+packages/core/src/activity-signal.ts
+  876fa56c015b7d17 1-125
+packages/web/src/app/prs/page.tsx
+  876fa56c015b7d17 34
+packages/core/src/feature-flags.ts
+  876fa56c015b7d17 1-5
+packages/web/server/__tests__/mux-websocket.test.ts
+  876fa56c015b7d17 25
+packages/web/src/lib/__tests__/types.test.ts
+  876fa56c015b7d17 8-9,14-15,32-37,83-109,139,142-173,200-202,266-302,309-342,547-582,614-654,825-854
+packages/core/src/utils/pr.ts
+  876fa56c015b7d17 8-44,59-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "c3637e3afd0a218c7b73cbb623f8f6c30d146074",
+  "prompts": {
+    "876fa56c015b7d17": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db69f-91c9-7d82-925d-5e18fc6d64a8",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 46773,
+      "total_deletions": 4265,
+      "accepted_lines": 45962,
+      "overriden_lines": 0
+    }
+  }
+}
