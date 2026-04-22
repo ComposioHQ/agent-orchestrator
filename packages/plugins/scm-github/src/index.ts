@@ -451,7 +451,73 @@ function parseDate(val: string | undefined | null): Date {
 // SCM implementation
 // ---------------------------------------------------------------------------
 
+// In-process PR cache. Per-method TTLs to balance call reduction against
+// staleness on decision-influencing fields. CI status, mergeability, and full
+// statusCheckRollup are intentionally NOT cached here — those need ETag
+// revalidation (separate change), not blind TTL.
+const PR_CACHE_TTL_MS = {
+  resolvePR: 60_000, // identity metadata (number, url, title, branch refs, isDraft)
+  getPRState: 5_000, // open / merged / closed
+  getPRSummary: 5_000, // state + title + additions/deletions
+  getReviews: 5_000, // review array (state, body, author)
+  getReviewDecision: 5_000, // approved / changes_requested / pending
+} as const;
+
+const PR_CACHE_MAX_ENTRIES = 1000;
+
+type PRCacheMethod = keyof typeof PR_CACHE_TTL_MS;
+
 function createGitHubSCM(): SCM {
+  // Per-instance cache so each createGitHubSCM() returns an isolated cache —
+  // tests get clean state on each create() call.
+  const prCache = new Map<string, { value: unknown; expiresAt: number }>();
+
+  function prCacheKey(owner: string, repo: string, prKey: string, method: PRCacheMethod): string {
+    return `${owner}/${repo}#${prKey}:${method}`;
+  }
+
+  function readPRCache<T>(key: string): T | null {
+    const entry = prCache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      prCache.delete(key);
+      return null;
+    }
+    return entry.value as T;
+  }
+
+  function writePRCache<T>(key: string, value: T, ttlMs: number): void {
+    if (prCache.size >= PR_CACHE_MAX_ENTRIES) {
+      const oldest = prCache.keys().next().value;
+      if (oldest !== undefined) prCache.delete(oldest);
+    }
+    prCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  }
+
+  // Wipe every method's cache entry for a specific PR. Called on writes
+  // (pr edit/merge/close) to avoid serving stale state after our own mutation.
+  function invalidatePRCache(pr: PRInfo): void {
+    const prefix = `${pr.owner}/${pr.repo}#${pr.number}:`;
+    for (const key of prCache.keys()) {
+      if (key.startsWith(prefix)) prCache.delete(key);
+    }
+  }
+
+  async function withPRCache<T>(
+    owner: string,
+    repo: string,
+    prKey: string,
+    method: PRCacheMethod,
+    fetcher: () => Promise<T>,
+  ): Promise<T> {
+    const key = prCacheKey(owner, repo, prKey, method);
+    const cached = readPRCache<T>(key);
+    if (cached !== null) return cached;
+    const value = await fetcher();
+    writePRCache(key, value, PR_CACHE_TTL_MS[method]);
+    return value;
+  }
+
   return {
     name: "github",
 
@@ -553,30 +619,38 @@ function createGitHubSCM(): SCM {
       if (!project.repo) {
         throw new Error("Cannot resolve PR: project has no repo configured");
       }
-      const raw = await gh([
-        "pr",
-        "view",
-        reference,
-        "--repo",
-        project.repo,
-        "--json",
-        "number,url,title,headRefName,baseRefName,isDraft",
-      ]);
+      const repo = project.repo;
+      const [owner, repoName] = repo.split("/");
+      // Cache by reference (number, branch, or URL — caller-provided).
+      // Identity metadata (number, url, title, branch refs, isDraft) is stable
+      // for the life of a PR; 60s TTL is safely under any user-noticeable window.
+      return withPRCache(owner ?? "", repoName ?? "", `ref=${reference}`, "resolvePR", async () => {
+        const raw = await gh([
+          "pr",
+          "view",
+          reference,
+          "--repo",
+          repo,
+          "--json",
+          "number,url,title,headRefName,baseRefName,isDraft",
+        ]);
 
-      const data: {
-        number: number;
-        url: string;
-        title: string;
-        headRefName: string;
-        baseRefName: string;
-        isDraft: boolean;
-      } = JSON.parse(raw);
+        const data: {
+          number: number;
+          url: string;
+          title: string;
+          headRefName: string;
+          baseRefName: string;
+          isDraft: boolean;
+        } = JSON.parse(raw);
 
-      return prInfoFromView(data, project.repo);
+        return prInfoFromView(data, repo);
+      });
     },
 
     async assignPRToCurrentUser(pr: PRInfo): Promise<void> {
       await gh(["pr", "edit", String(pr.number), "--repo", repoFlag(pr), "--add-assignee", "@me"]);
+      invalidatePRCache(pr);
     },
 
     async checkoutPR(pr: PRInfo, workspacePath: string): Promise<boolean> {
@@ -595,56 +669,67 @@ function createGitHubSCM(): SCM {
     },
 
     async getPRState(pr: PRInfo): Promise<PRState> {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "state",
-      ]);
-      const data: { state: string } = JSON.parse(raw);
-      const s = data.state.toUpperCase();
-      if (s === "MERGED") return "merged";
-      if (s === "CLOSED") return "closed";
-      return "open";
+      // 5s TTL — state is decision-influencing (lifecycle uses it for cleanup),
+      // but 5s is well under one poll cycle so the lifecycle worker still sees
+      // freshly observed transitions on its next pass.
+      return withPRCache(pr.owner, pr.repo, String(pr.number), "getPRState", async () => {
+        const raw = await gh([
+          "pr",
+          "view",
+          String(pr.number),
+          "--repo",
+          repoFlag(pr),
+          "--json",
+          "state",
+        ]);
+        const data: { state: string } = JSON.parse(raw);
+        const s = data.state.toUpperCase();
+        if (s === "MERGED") return "merged";
+        if (s === "CLOSED") return "closed";
+        return "open";
+      });
     },
 
     async getPRSummary(pr: PRInfo) {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "state,title,additions,deletions",
-      ]);
-      const data: {
-        state: string;
-        title: string;
-        additions: number;
-        deletions: number;
-      } = JSON.parse(raw);
-      const s = data.state.toUpperCase();
-      const state: PRState = s === "MERGED" ? "merged" : s === "CLOSED" ? "closed" : "open";
-      return {
-        state,
-        title: data.title ?? "",
-        additions: data.additions ?? 0,
-        deletions: data.deletions ?? 0,
-      };
+      // 5s TTL — includes state, so same freshness contract as getPRState.
+      // Title and additions/deletions change rarely; they ride along.
+      return withPRCache(pr.owner, pr.repo, String(pr.number), "getPRSummary", async () => {
+        const raw = await gh([
+          "pr",
+          "view",
+          String(pr.number),
+          "--repo",
+          repoFlag(pr),
+          "--json",
+          "state,title,additions,deletions",
+        ]);
+        const data: {
+          state: string;
+          title: string;
+          additions: number;
+          deletions: number;
+        } = JSON.parse(raw);
+        const s = data.state.toUpperCase();
+        const state: PRState = s === "MERGED" ? "merged" : s === "CLOSED" ? "closed" : "open";
+        return {
+          state,
+          title: data.title ?? "",
+          additions: data.additions ?? 0,
+          deletions: data.deletions ?? 0,
+        };
+      });
     },
 
     async mergePR(pr: PRInfo, method: MergeMethod = "squash"): Promise<void> {
       const flag = method === "rebase" ? "--rebase" : method === "merge" ? "--merge" : "--squash";
 
       await gh(["pr", "merge", String(pr.number), "--repo", repoFlag(pr), flag, "--delete-branch"]);
+      invalidatePRCache(pr);
     },
 
     async closePR(pr: PRInfo): Promise<void> {
       await gh(["pr", "close", String(pr.number), "--repo", repoFlag(pr)]);
+      invalidatePRCache(pr);
     },
 
     async getCIChecks(pr: PRInfo): Promise<CICheck[]> {
@@ -722,59 +807,67 @@ function createGitHubSCM(): SCM {
     },
 
     async getReviews(pr: PRInfo): Promise<Review[]> {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "reviews",
-      ]);
-      const data: {
-        reviews: Array<{
-          author: { login: string };
-          state: string;
-          body: string;
-          submittedAt: string;
-        }>;
-      } = JSON.parse(raw);
+      // 5s TTL — review array. Reviewers are async, so the lifecycle worker
+      // sees a new review on its next poll cycle within 5s of the cache expiring.
+      return withPRCache(pr.owner, pr.repo, String(pr.number), "getReviews", async () => {
+        const raw = await gh([
+          "pr",
+          "view",
+          String(pr.number),
+          "--repo",
+          repoFlag(pr),
+          "--json",
+          "reviews",
+        ]);
+        const data: {
+          reviews: Array<{
+            author: { login: string };
+            state: string;
+            body: string;
+            submittedAt: string;
+          }>;
+        } = JSON.parse(raw);
 
-      return data.reviews.map((r) => {
-        let state: Review["state"];
-        const s = r.state?.toUpperCase();
-        if (s === "APPROVED") state = "approved";
-        else if (s === "CHANGES_REQUESTED") state = "changes_requested";
-        else if (s === "DISMISSED") state = "dismissed";
-        else if (s === "PENDING") state = "pending";
-        else state = "commented";
+        return data.reviews.map((r) => {
+          let state: Review["state"];
+          const s = r.state?.toUpperCase();
+          if (s === "APPROVED") state = "approved";
+          else if (s === "CHANGES_REQUESTED") state = "changes_requested";
+          else if (s === "DISMISSED") state = "dismissed";
+          else if (s === "PENDING") state = "pending";
+          else state = "commented";
 
-        return {
-          author: r.author?.login ?? "unknown",
-          state,
-          body: r.body || undefined,
-          submittedAt: parseDate(r.submittedAt),
-        };
+          return {
+            author: r.author?.login ?? "unknown",
+            state,
+            body: r.body || undefined,
+            submittedAt: parseDate(r.submittedAt),
+          };
+        });
       });
     },
 
     async getReviewDecision(pr: PRInfo): Promise<ReviewDecision> {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "reviewDecision",
-      ]);
-      const data: { reviewDecision: string } = JSON.parse(raw);
+      // 5s TTL — review decision is decision-influencing (gates merge), kept
+      // tight so a fresh "approved" surfaces within one poll cycle.
+      return withPRCache(pr.owner, pr.repo, String(pr.number), "getReviewDecision", async () => {
+        const raw = await gh([
+          "pr",
+          "view",
+          String(pr.number),
+          "--repo",
+          repoFlag(pr),
+          "--json",
+          "reviewDecision",
+        ]);
+        const data: { reviewDecision: string } = JSON.parse(raw);
 
-      const d = (data.reviewDecision ?? "").toUpperCase();
-      if (d === "APPROVED") return "approved";
-      if (d === "CHANGES_REQUESTED") return "changes_requested";
-      if (d === "REVIEW_REQUIRED") return "pending";
-      return "none";
+        const d = (data.reviewDecision ?? "").toUpperCase();
+        if (d === "APPROVED") return "approved";
+        if (d === "CHANGES_REQUESTED") return "changes_requested";
+        if (d === "REVIEW_REQUIRED") return "pending";
+        return "none";
+      });
     },
 
     async getPendingComments(pr: PRInfo): Promise<ReviewComment[]> {

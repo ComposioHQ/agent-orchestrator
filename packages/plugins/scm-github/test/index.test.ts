@@ -1264,4 +1264,165 @@ describe("scm-github plugin", () => {
       expect(result.mergeable).toBe(false);
     });
   });
+
+  // ---- PR cache (per-method TTLs, write invalidation) -------------------
+
+  describe("PR cache", () => {
+    it("getPRState second call within 5s hits cache", async () => {
+      mockGh({ state: "OPEN" });
+      const first = await scm.getPRState(pr);
+      const second = await scm.getPRState(pr);
+      expect(first).toBe("open");
+      expect(second).toBe("open");
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("getPRState re-fetches after TTL expires (5s)", async () => {
+      vi.useFakeTimers();
+      try {
+        mockGh({ state: "OPEN" });
+        await scm.getPRState(pr);
+        expect(ghMock).toHaveBeenCalledTimes(1);
+
+        vi.advanceTimersByTime(5_001);
+
+        mockGh({ state: "MERGED" });
+        const fresh = await scm.getPRState(pr);
+        expect(fresh).toBe("merged");
+        expect(ghMock).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("getPRState and getPRSummary use separate cache slots", async () => {
+      mockGh({ state: "OPEN" });
+      mockGh({ state: "OPEN", title: "T", additions: 10, deletions: 5 });
+
+      await scm.getPRState(pr);
+      await scm.getPRSummary(pr);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+
+      // Both now cached — second round hits cache, no new gh calls
+      await scm.getPRState(pr);
+      await scm.getPRSummary(pr);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("getReviews caches independently of getReviewDecision", async () => {
+      mockGh({ reviews: [] });
+      mockGh({ reviewDecision: "APPROVED" });
+      await scm.getReviews(pr);
+      await scm.getReviewDecision(pr);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+
+      // Cache hits on second round
+      await scm.getReviews(pr);
+      await scm.getReviewDecision(pr);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("different PRs cache independently", async () => {
+      const otherPR = { ...pr, number: 99 };
+      mockGh({ state: "OPEN" });
+      mockGh({ state: "MERGED" });
+      const a = await scm.getPRState(pr);
+      const b = await scm.getPRState(otherPR);
+      expect(a).toBe("open");
+      expect(b).toBe("merged");
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("mergePR invalidates the PR's cache", async () => {
+      mockGh({ state: "OPEN" });
+      await scm.getPRState(pr);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // gh pr merge
+      await scm.mergePR(pr);
+
+      mockGh({ state: "MERGED" });
+      const fresh = await scm.getPRState(pr);
+      expect(fresh).toBe("merged");
+      expect(ghMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("closePR invalidates the PR's cache", async () => {
+      mockGh({ state: "OPEN" });
+      await scm.getPRState(pr);
+
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // gh pr close
+      await scm.closePR(pr);
+
+      mockGh({ state: "CLOSED" });
+      const fresh = await scm.getPRState(pr);
+      expect(fresh).toBe("closed");
+      expect(ghMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("assignPRToCurrentUser invalidates the PR's cache", async () => {
+      mockGh({ reviewDecision: "REVIEW_REQUIRED" });
+      await scm.getReviewDecision(pr);
+
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // gh pr edit
+      await scm.assignPRToCurrentUser(pr);
+
+      mockGh({ reviewDecision: "REVIEW_REQUIRED" });
+      await scm.getReviewDecision(pr);
+      expect(ghMock).toHaveBeenCalledTimes(3); // view + edit + view again
+    });
+
+    it("invalidating one PR does not affect a different PR's cache", async () => {
+      const otherPR = { ...pr, number: 99 };
+      mockGh({ state: "OPEN" });
+      mockGh({ state: "OPEN" });
+      await scm.getPRState(pr);
+      await scm.getPRState(otherPR);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+      await scm.closePR(pr); // wipes pr #42 only
+
+      mockGh({ state: "CLOSED" });
+      await scm.getPRState(pr); // re-fetches
+      await scm.getPRState(otherPR); // still cached
+      expect(ghMock).toHaveBeenCalledTimes(4);
+    });
+
+    it("resolvePR caches by reference for 60s", async () => {
+      mockGh({
+        number: 7,
+        url: "https://github.com/acme/repo/pull/7",
+        title: "Fix",
+        headRefName: "feat/x",
+        baseRefName: "main",
+        isDraft: false,
+      });
+      const first = await scm.resolvePR("feat/x", project);
+      const second = await scm.resolvePR("feat/x", project);
+      expect(first).toEqual(second);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("failures are not cached", async () => {
+      ghMock.mockRejectedValueOnce(new Error("boom"));
+      await expect(scm.getPRState(pr)).rejects.toThrow();
+
+      mockGh({ state: "OPEN" });
+      const fresh = await scm.getPRState(pr);
+      expect(fresh).toBe("open");
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("each create() returns an isolated cache", async () => {
+      const scmA = create();
+      const scmB = create();
+      mockGh({ state: "OPEN" });
+      await scmA.getPRState(pr);
+      mockGh({ state: "MERGED" });
+      const fromB = await scmB.getPRState(pr);
+      expect(fromB).toBe("merged");
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+  });
 });
