@@ -29,6 +29,7 @@ import {
   generateConfigFromUrl,
   configToYaml,
   ConfigNotFoundError,
+  SessionNotFoundError,
   loadLocalProjectConfigDetailed,
   registerProjectInGlobalConfig,
   type OrchestratorConfig,
@@ -1605,8 +1606,7 @@ export function registerStop(program: Command): void {
             // (CI, scripts) and in test capture, since spinner output is suppressed.
             console.log(chalk.green(`  Stopped orchestrator session: ${orchestratorId}`));
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            if (message.includes("not found")) {
+            if (err instanceof SessionNotFoundError) {
               console.log(
                 chalk.yellow(`No running orchestrator session found for "${project.name}"`),
               );

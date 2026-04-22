@@ -10,7 +10,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync,
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parse as parseYaml } from "yaml";
-import type { SessionManager } from "@aoagents/ao-core";
+import { SessionNotFoundError, type SessionManager } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -1022,7 +1022,7 @@ describe("stop command", () => {
 
   it("handles missing orchestrator session gracefully", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.kill.mockRejectedValue(new Error("session not found"));
+    mockSessionManager.kill.mockRejectedValue(new SessionNotFoundError("app-orchestrator"));
     mockSessionManager.list.mockResolvedValue([]);
     mockExec.mockRejectedValue(new Error("no process"));
 
@@ -1036,6 +1036,19 @@ describe("stop command", () => {
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
     expect(output).toContain("No running orchestrator session found");
+  });
+
+  it("does not swallow unrelated errors that happen to contain 'not found'", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.kill.mockRejectedValue(new Error("metadata file not found"));
+
+    await expect(program.parseAsync(["node", "test", "stop"])).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(errors).toContain("metadata file not found");
   });
 
   it("passes purge flag when stopping orchestrator with --purge-session", async () => {
