@@ -152,11 +152,20 @@ export async function GET(request: Request) {
       for (let i = 0; i < workerSessions.length; i++) {
         const core = workerSessions[i];
         if (!core?.pr) continue;
-        if (isTerminalSession(core)) continue;
 
         const project = resolveProject(core, config.projects);
         const scm = getSCM(registry, project);
         if (!scm) continue;
+
+        if (isTerminalSession(core)) {
+          prEnrichPromises.push(
+            settlesWithin(
+              enrichSessionPR(dashboardSessions[i], scm, core.pr, { cacheOnly: true }),
+              PER_PR_ENRICH_TIMEOUT_MS,
+            ),
+          );
+          continue;
+        }
 
         prEnrichPromises.push(
           settlesWithin(

@@ -549,6 +549,83 @@ describe("API Routes", () => {
       enrichSpy.mockRestore();
       vi.useRealTimers();
     });
+
+    it("uses cache-only PR enrichment for terminal sessions", async () => {
+      const terminalLifecycle = createInitialCanonicalLifecycle("worker", new Date());
+      terminalLifecycle.session.state = "terminated";
+      terminalLifecycle.session.reason = "user_killed";
+      terminalLifecycle.session.terminatedAt = terminalLifecycle.session.lastTransitionAt;
+      terminalLifecycle.runtime.state = "exited";
+      terminalLifecycle.runtime.reason = "process_exited";
+
+      const sessionsWithPRs = [
+        makeSession({
+          id: "worker-live",
+          status: "pr_open",
+          activity: "idle",
+          pr: {
+            number: 201,
+            url: "https://github.com/acme/my-app/pull/201",
+            title: "Live PR",
+            owner: "acme",
+            repo: "my-app",
+            branch: "feat/live-pr",
+            baseBranch: "main",
+            isDraft: false,
+          },
+        }),
+        makeSession({
+          id: "worker-killed",
+          status: "killed",
+          activity: "exited",
+          lifecycle: terminalLifecycle,
+          pr: {
+            number: 202,
+            url: "https://github.com/acme/my-app/pull/202",
+            title: "Terminal PR",
+            owner: "acme",
+            repo: "my-app",
+            branch: "feat/terminal-pr",
+            baseBranch: "main",
+            isDraft: false,
+          },
+        }),
+      ];
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(sessionsWithPRs);
+
+      const metadataSpy = vi
+        .spyOn(serialize, "enrichSessionsMetadata")
+        .mockResolvedValue(undefined);
+
+      const enrichSpy = vi
+        .spyOn(serialize, "enrichSessionPR")
+        .mockResolvedValue(true);
+
+      const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
+
+      expect(res.status).toBe(200);
+      expect(enrichSpy).toHaveBeenCalledTimes(2);
+      const enrichCalls = enrichSpy.mock.calls;
+      expect(
+        enrichCalls.some(
+          (call) => call[2] === sessionsWithPRs[0]!.pr && call.length === 3,
+        ),
+      ).toBe(true);
+      expect(
+        enrichCalls.some(
+          (call) =>
+            call[2] === sessionsWithPRs[1]!.pr &&
+            call[3] !== undefined &&
+            call[3] !== null &&
+            typeof call[3] === "object" &&
+            "cacheOnly" in call[3] &&
+            call[3].cacheOnly === true,
+        ),
+      ).toBe(true);
+
+      metadataSpy.mockRestore();
+      enrichSpy.mockRestore();
+    });
   });
 
   describe("GET /api/runtime/terminal", () => {
