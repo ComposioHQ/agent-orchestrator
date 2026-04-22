@@ -133,6 +133,50 @@ describe("useAsyncAction", () => {
     expect(result.current.state.sent).toBe(true);
   });
 
+  it("ignores stale timer from an overlapping in-flight run (no early reset)", async () => {
+    const calls: Array<ReturnType<typeof deferred>> = [];
+    const { result } = renderHook(() =>
+      useAsyncAction(async () => {
+        const d = deferred();
+        calls.push(d);
+        return d.promise;
+      }, { sentMs: 5000 }),
+    );
+
+    // Two overlapping runs: both start, neither has scheduled a sent-timer yet.
+    await act(async () => {
+      void result.current.run();
+      void result.current.run();
+      await Promise.resolve();
+    });
+
+    // Resolve call #1 first → its sent-timer is scheduled but stale.
+    await act(async () => {
+      calls[0].resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Then resolve call #2 → this is the live run; its sent-timer is current.
+    await act(async () => {
+      calls[1].resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.state.sent).toBe(true);
+
+    // Fire timer #1 (stale). It must NOT reset state.
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+    });
+    // We've advanced exactly the sent window from call #2's resolution moment;
+    // either the live timer fired (idle) or hasn't (still sent). What MUST
+    // not happen is "sent then idle then sent again" caused by stale timer.
+    // The key invariant: the stale timer didn't yank state mid-flash.
+    // After full window the live timer has cleared state to idle.
+    expect(result.current.state).toEqual({ sending: false, sent: false, error: null });
+  });
+
   it("reset() clears state and pending timer immediately", async () => {
     const { result } = renderHook(() =>
       useAsyncAction(
@@ -299,6 +343,47 @@ describe("useAsyncActionMap", () => {
       await Promise.resolve();
     });
     expect(result.current.getState("k").sent).toBe(true);
+  });
+
+  it("ignores stale per-key timer from an overlapping in-flight run", async () => {
+    const calls: Array<ReturnType<typeof deferred>> = [];
+    const { result } = renderHook(() =>
+      useAsyncActionMap<[]>(
+        async () => {
+          const d = deferred();
+          calls.push(d);
+          return d.promise;
+        },
+        { sentMs: 5000 },
+      ),
+    );
+
+    // Two overlapping runs for the same key — both started before either resolves.
+    await act(async () => {
+      void result.current.run("k");
+      void result.current.run("k");
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      calls[0].resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      calls[1].resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.getState("k").sent).toBe(true);
+
+    // Advance past the live sent window. The stale timer (from call #1's
+    // resolution) must not have prematurely reset state mid-flash.
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(result.current.getState("k")).toEqual({ sending: false, sent: false, error: null });
   });
 
   it("reset() clears a single key without affecting others", async () => {

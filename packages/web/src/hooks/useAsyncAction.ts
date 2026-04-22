@@ -35,6 +35,7 @@ export function useAsyncAction<TArgs extends unknown[]>(
   const sentMs = opts?.sentMs ?? DEFAULT_SENT_MS;
   const errorMs = opts?.errorMs ?? DEFAULT_ERROR_MS;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const genRef = useRef(0);
   const mountedRef = useRef(true);
 
   const actionRef = useRef(action);
@@ -57,28 +58,33 @@ export function useAsyncAction<TArgs extends unknown[]>(
   }, []);
 
   const reset = useCallback(() => {
+    genRef.current += 1;
     clearPending();
     if (mountedRef.current) setState(IDLE_STATE);
   }, [clearPending]);
 
   const run = useCallback(
     async (...args: TArgs): Promise<boolean> => {
+      const gen = genRef.current + 1;
+      genRef.current = gen;
       clearPending();
       if (!mountedRef.current) return false;
       setState({ sending: true, sent: false, error: null });
       try {
         await actionRef.current(...args);
-        if (!mountedRef.current) return true;
+        if (!mountedRef.current || genRef.current !== gen) return true;
         setState({ sending: false, sent: true, error: null });
         timerRef.current = setTimeout(() => {
+          if (genRef.current !== gen) return;
           timerRef.current = null;
           if (mountedRef.current) setState(IDLE_STATE);
         }, sentMs);
         return true;
       } catch (err) {
-        if (!mountedRef.current) return false;
+        if (!mountedRef.current || genRef.current !== gen) return false;
         setState({ sending: false, sent: false, error: messageFromError(err) });
         timerRef.current = setTimeout(() => {
+          if (genRef.current !== gen) return;
           timerRef.current = null;
           if (mountedRef.current) setState(IDLE_STATE);
         }, errorMs);
@@ -104,6 +110,7 @@ export function useAsyncActionMap<TArgs extends unknown[]>(
   const sentMs = opts?.sentMs ?? DEFAULT_SENT_MS;
   const errorMs = opts?.errorMs ?? DEFAULT_ERROR_MS;
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const gensRef = useRef<Map<string, number>>(new Map());
   const mountedRef = useRef(true);
 
   const actionRef = useRef(action);
@@ -116,6 +123,12 @@ export function useAsyncActionMap<TArgs extends unknown[]>(
       timersRef.current.forEach((t) => clearTimeout(t));
       timersRef.current.clear();
     };
+  }, []);
+
+  const bumpGen = useCallback((key: string): number => {
+    const next = (gensRef.current.get(key) ?? 0) + 1;
+    gensRef.current.set(key, next);
+    return next;
   }, []);
 
   const clearPending = useCallback((key: string) => {
@@ -150,36 +163,41 @@ export function useAsyncActionMap<TArgs extends unknown[]>(
   const reset = useCallback(
     (key?: string) => {
       if (key === undefined) {
+        gensRef.current.forEach((_, k) => bumpGen(k));
         timersRef.current.forEach((t) => clearTimeout(t));
         timersRef.current.clear();
         if (mountedRef.current) setStates({});
         return;
       }
+      bumpGen(key);
       clearPending(key);
       if (mountedRef.current) writeState(key, IDLE_STATE);
     },
-    [clearPending, writeState],
+    [bumpGen, clearPending, writeState],
   );
 
   const run = useCallback(
     async (key: string, ...args: TArgs): Promise<boolean> => {
+      const gen = bumpGen(key);
       clearPending(key);
       if (!mountedRef.current) return false;
       writeState(key, { sending: true, sent: false, error: null });
       try {
         await actionRef.current(...args);
-        if (!mountedRef.current) return true;
+        if (!mountedRef.current || gensRef.current.get(key) !== gen) return true;
         writeState(key, { sending: false, sent: true, error: null });
         const timer = setTimeout(() => {
+          if (gensRef.current.get(key) !== gen) return;
           timersRef.current.delete(key);
           if (mountedRef.current) writeState(key, IDLE_STATE);
         }, sentMs);
         timersRef.current.set(key, timer);
         return true;
       } catch (err) {
-        if (!mountedRef.current) return false;
+        if (!mountedRef.current || gensRef.current.get(key) !== gen) return false;
         writeState(key, { sending: false, sent: false, error: messageFromError(err) });
         const timer = setTimeout(() => {
+          if (gensRef.current.get(key) !== gen) return;
           timersRef.current.delete(key);
           if (mountedRef.current) writeState(key, IDLE_STATE);
         }, errorMs);
@@ -187,7 +205,7 @@ export function useAsyncActionMap<TArgs extends unknown[]>(
         return false;
       }
     },
-    [clearPending, writeState, sentMs, errorMs],
+    [bumpGen, clearPending, writeState, sentMs, errorMs],
   );
 
   const getState = useCallback(

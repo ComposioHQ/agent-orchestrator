@@ -663,51 +663,51 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
 
         {!rateLimited && alerts.length > 0 && (
           <div className="card__alerts flex flex-col">
-            {alerts.slice(0, 3).map((alert) => (
-              <div key={alert.key} className={cn("alert-row", `alert-row--${alert.type}`)}>
-                <span className="alert-row__icon">{alert.icon}</span>
-                <span className="alert-row__text">
-                  <a
-                    href={alert.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {alert.count !== undefined && (
-                      <>
-                        <span className="font-bold">{alert.count}</span>{" "}
-                      </>
+            {alerts.slice(0, 3).map((alert) => {
+              const flash = actionFlash.getState(alert.key);
+              return (
+                <div key={alert.key} className={cn("alert-row", `alert-row--${alert.type}`)}>
+                  <span className="alert-row__icon">{alert.icon}</span>
+                  <span className="alert-row__text">
+                    <a
+                      href={alert.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {alert.count !== undefined && (
+                        <>
+                          <span className="font-bold">{alert.count}</span>{" "}
+                        </>
+                      )}
+                      {alert.label}
+                    </a>
+                    {alert.notified && (
+                      <span className="alert-row__notified" title="Agent has been notified">
+                        {" "}
+                        &middot; notified
+                      </span>
                     )}
-                    {alert.label}
-                  </a>
-                  {alert.notified && (
-                    <span className="alert-row__notified" title="Agent has been notified">
-                      {" "}
-                      &middot; notified
-                    </span>
-                  )}
-                </span>
-                {alert.actionLabel && (() => {
-                  const s = actionFlash.getState(alert.key);
-                  return (
+                  </span>
+                  {alert.actionLabel && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleAction(alert.key, alert.actionMessage ?? "");
                       }}
-                      disabled={s.sending}
+                      disabled={flash.sending}
                       className="alert-row__action"
                     >
-                      {s.sending || s.sent
+                      {flash.sending || flash.sent
                         ? "sent!"
-                        : s.error !== null
+                        : flash.error !== null
                           ? "failed"
                           : alert.actionLabel}
                     </button>
-                  );
-                })()}
-              </div>
-            ))}
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
