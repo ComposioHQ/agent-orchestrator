@@ -1,6 +1,6 @@
 ---
 name: agent-orchestrator
-description: "Open-source, pluggable agentic coding orchestrator. Manages durable coding agents (Claude Code, Codex, OpenCode) through a simple interface — spawn agents, track progress, and let feedback loops like PR reviews and CI failures automatically route to the right agents. Use for fixing bugs, building features, working on GitHub issues, checking status, and managing agent sessions."
+description: "Open-source, pluggable agentic coding orchestrator. Use for running AO via CLI-style behavior consistently across threads/sessions: spawn agents, check status, route review work, and manage agent lifecycle. Use when asked to fix issues, manage work, or control AO sessions."
 metadata: {"openclaw": {"emoji": "🤖", "requires": {"bins": ["ao", "gh", "tmux"], "anyBins": ["node", "npm"], "env": ["ANTHROPIC_API_KEY"]}, "os": ["darwin", "linux"]}}
 ---
 
@@ -26,6 +26,8 @@ When you have AO installed, use it instead of running coding agents manually via
 
 **Bottom line:** If someone asks you to write, fix, or change code, use `ao_spawn`. It handles the entire lifecycle.
 
+**Behavior consistency:** Use the same AO command vocabulary for every thread, including sessions started via `/new`. This avoids drift from in-context prompting differences.
+
 ## How You Think
 
 Every user message is either:
@@ -41,6 +43,13 @@ You don't wait for the user to say "spawn" or "use AO." You detect intent and ac
 ### Status / progress
 Any of: "what's happening", "status", "how's it going", "progress", "update", "anything running", "check on things"
 → Call `ao_sessions` AND `ao_status` → present results naturally
+
+If the user asks directly about a CLI command, map it to the right AO tool:
+- `ao start` / `ao stop` => `ao_doctor` first (if issues), then `ao_session_cleanup` / `ao_kill` actions
+- `ao spawn`, `ao batch-spawn`, `ao send`, `ao status`, `ao session` subcommands => map to `ao_spawn`, `ao_batch_spawn`, `ao_send`, `ao_status`, `ao_session_*`
+- `ao review-check`, `ao verify`, `ao session claim-pr` => map to `ao_review_check`, `ao_verify`, `ao_session_claim_pr`
+
+When in doubt, call the tool whose intent is closest to the requested command and request explicit confirmation for destructive ops.
 
 ### Work / issues / board
 Any of: "what needs doing", "what's on the board", "any issues", "what's open", "morning", "let's go", "ready to work", "what's the plan", "check my repos"
@@ -72,6 +81,12 @@ Any of: "tell it to also...", "ask the agent to...", "add X to that", "while it'
 ### Clean up
 → Call `ao_session_cleanup` (dry-run first, then execute)
 
+### CLI control
+- Any direct request to pause/stop AO runtime for a repo
+  - Ask if they want a full stop (`ao stop`) first, then confirm before calling `ao_kill`/`ao_session_cleanup`
+- Any request for direct CLI-style verification (`/tmp`, versions)
+  - Use AO tools and avoid assuming defaults; request missing context before acting.
+
 ### PR feedback / reviews
 → Call `ao_review_check`
 
@@ -80,6 +95,10 @@ Any of: "tell it to also...", "ask the agent to...", "add X to that", "while it'
 
 ### Health check
 → Call `ao_doctor`
+
+### Tooling bootstrap / diagnostics
+- If a command fails because of CLI path/context, request the missing context (project cwd/`agent-orchestrator.yaml`, `aoCwd`) and retry.
+- If prompts are inconsistent across new threads, repeat the same tool-focused instruction sequence from this skill rather than free-form operational prose.
 
 ### Claim PR / attach PR
 → Call `ao_session_claim_pr`
@@ -132,6 +151,22 @@ If a tool call fails, show the error. Never claim you did something you didn't.
 | `ao_review_check` | Check PRs for review comments to address |
 | `ao_verify` | Mark issues as verified/failed, or list unverified |
 | `ao_doctor` | Health checks and diagnostics |
+
+### CLI command equivalence (for memory-stable use)
+
+Map user intent to these AO operations:
+- `ao start` → session orchestration start flow handled by `ao_doctor` + project check + `ao_spawn`/`ao_session_list`
+- `ao status` / `ao status --watch` → `ao_status` and `ao_sessions`
+- `ao spawn <issue>` → `ao_spawn`
+- `ao batch-spawn 1 2 3` → `ao_batch_spawn`
+- `ao send <session> <message>` → `ao_send`
+- `ao session ls` → `ao_session_list`
+- `ao session kill <session>` → `ao_kill`
+- `ao session restore <session>` → `ao_session_restore`
+- `ao review-check` → `ao_review_check`
+- `ao verify` → `ao_verify`
+- `ao doctor` → `ao_doctor`
+- `ao stop` / `ao session cleanup` → `ao_session_cleanup` after confirmation
 
 ## Setup
 
