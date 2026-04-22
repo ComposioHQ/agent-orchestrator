@@ -7103,6 +7103,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex-wrap: wrap;
 }
 
 /* Project name + pills: inline on desktop, stacked column on mobile */
@@ -7184,6 +7185,10 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     font-size: 9px;
     padding: 1px 5px;
     gap: 3px;
+  }
+  /* Hide zone pill labels on mobile — count + color is enough */
+  .topbar-session-pills .topbar-zone-pill__label {
+    display: none;
   }
 }
 
