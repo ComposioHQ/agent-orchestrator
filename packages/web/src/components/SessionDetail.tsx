@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
@@ -183,8 +183,6 @@ export function SessionDetail({
     ? `/exit\nopencode --session ${opencodeSessionId}\n`
     : undefined;
   const dashboardHref = session.projectId ? projectDashboardPath(session.projectId) : "/";
-  const crumbHref = dashboardHref;
-  const crumbLabel = "Dashboard";
 
   const handleKill = useCallback(async () => {
     try {
