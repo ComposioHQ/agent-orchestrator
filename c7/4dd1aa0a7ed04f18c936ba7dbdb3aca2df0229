@@ -1,0 +1,29 @@
+.github/ISSUE_TEMPLATE/maintenance.yml
+  253cdeb15a7bdd81 12-17,89,91-93
+.github/ISSUE_TEMPLATE/bug.yml
+  253cdeb15a7bdd81 13-20,93,99,105,108,110-112,117
+.github/pull_request_template.md
+  253cdeb15a7bdd81 50
+.github/ISSUE_TEMPLATE/rfc.yml
+  253cdeb15a7bdd81 12-17,92,94-96,118-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "c74dd1aa0a7ed04f18c936ba7dbdb3aca2df0229",
+  "prompts": {
+    "253cdeb15a7bdd81": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db477-e0e4-7921-b463-cfb4f554a164",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 43,
+      "total_deletions": 43,
+      "accepted_lines": 43,
+      "overriden_lines": 0
+    }
+  }
+}
