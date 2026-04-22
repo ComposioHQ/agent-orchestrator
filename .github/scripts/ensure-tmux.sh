@@ -29,6 +29,6 @@ APT_FLAGS=(
   "-o" "Acquire::https::Timeout=30"
 )
 
-retry 3 sudo apt-get update "${APT_FLAGS[@]}"
-retry 3 sudo apt-get install -y tmux "${APT_FLAGS[@]}"
+retry 3 sudo apt-get "${APT_FLAGS[@]}" update
+retry 3 sudo apt-get "${APT_FLAGS[@]}" install -y tmux
 tmux -V
