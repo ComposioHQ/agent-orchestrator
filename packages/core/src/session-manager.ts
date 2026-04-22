@@ -869,6 +869,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       : undefined;
   }
 
+  function listLegacyNumberedOrchestrators(project: ProjectConfig): SessionId[] {
+    const sessionsDir = getProjectSessionsDir(project);
+    if (!existsSync(sessionsDir)) return [];
+
+    const numberedPattern = new RegExp(
+      `^${escapeRegex(project.sessionPrefix)}-orchestrator-\\d+$`,
+    );
+
+    return listMetadata(sessionsDir).filter((sessionId) => numberedPattern.test(sessionId));
+  }
+
   /** Resolve which plugins to use for a project. */
   function resolvePlugins(project: ProjectConfig, agentName?: string) {
     const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
@@ -1722,6 +1733,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const project = config.projects[orchestratorConfig.projectId];
     if (!project) {
       throw new Error(`Unknown project: ${orchestratorConfig.projectId}`);
+    }
+
+    const legacyNumberedOrchestrators = listLegacyNumberedOrchestrators(project);
+    if (legacyNumberedOrchestrators.length > 0) {
+      console.warn(
+        "Legacy numbered orchestrator sessions detected; AO now uses a single canonical orchestrator session. Clean up the legacy sessions with `ao session kill <session-id>` and restart with `ao stop && ao start`.",
+        {
+          projectId: orchestratorConfig.projectId,
+          legacySessionIds: legacyNumberedOrchestrators,
+        },
+      );
     }
 
     const canonicalSessionId = getCanonicalOrchestratorId(orchestratorConfig.projectId, project);

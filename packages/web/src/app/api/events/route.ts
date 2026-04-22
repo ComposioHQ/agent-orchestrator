@@ -10,7 +10,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-const SESSION_EVENTS_POLL_INTERVAL_MS = 2000;
+const SESSION_EVENTS_POLL_INTERVAL_MS = 5000;
 
 /**
  * GET /api/events — SSE stream for real-time lifecycle events

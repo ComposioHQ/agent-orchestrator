@@ -1683,6 +1683,31 @@ describe("spawn", () => {
       return lifecycle;
     }
 
+    it("warns when legacy numbered orchestrator sessions still exist", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      writeMetadata(sessionsDir, "app-orchestrator-2", {
+        worktree: config.projects["my-app"]!.path,
+        branch: "",
+        status: "working",
+        project: "my-app",
+        role: "orchestrator",
+      });
+
+      await sm.ensureOrchestrator({ projectId: "my-app", systemPrompt: "test" });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Legacy numbered orchestrator sessions detected"),
+        expect.objectContaining({
+          projectId: "my-app",
+          legacySessionIds: ["app-orchestrator-2"],
+        }),
+      );
+
+      warnSpy.mockRestore();
+    });
+
     it("reuses the live canonical orchestrator when it already exists", async () => {
       const sm = createSessionManager({ config, registry: mockRegistry });
 
