@@ -62,10 +62,14 @@ describe("stopDashboard", () => {
 
     await stopDashboard(3000);
 
-    const killCall = mockExec.mock.calls.find(([c]) => c === "kill");
-    expect(killCall).toBeDefined();
-    // Only the two dashboard PIDs should be killed, not the sidecar
-    expect(killCall![1]).toEqual(["100", "101"]);
+    // Collect every PID passed to `kill` across all calls. Using filter+flatMap
+    // (rather than .find) keeps the assertion honest if a future refactor
+    // changes the implementation from one batched `kill` call to one per PID —
+    // either way, exactly the dashboard PIDs must be killed.
+    const killedPids = mockExec.mock.calls
+      .filter(([c]) => c === "kill")
+      .flatMap(([, args]) => args as string[]);
+    expect(killedPids.sort()).toEqual(["100", "101"]);
   });
 
   it("does not kill when no co-listener matches the dashboard pattern", async () => {

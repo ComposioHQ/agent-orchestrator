@@ -95,6 +95,18 @@ describe("saveAgentOverride", () => {
     expect(written.projects.foo.worker.agent).toBe("codex");
   });
 
+  it("throws a clear error when the project is absent from the on-disk YAML", () => {
+    const config = writeConfig(
+      `port: 3000\nprojects:\n  foo:\n    name: foo\n    path: ${tmp}\n    defaultBranch: main\n`,
+    );
+    expect(() =>
+      saveAgentOverride(config.configPath, "missing", tmp, {
+        orchestratorAgent: "claude-code",
+        workerAgent: "codex",
+      }),
+    ).toThrow(/Project "missing" not found/);
+  });
+
   it("preserves existing orchestrator/worker subfields when merging", () => {
     const config = writeConfig(
       `port: 3000\nprojects:\n  foo:\n    name: foo\n    path: ${tmp}\n    defaultBranch: main\n    orchestrator:\n      agent: old\n      extra: keep-me\n`,

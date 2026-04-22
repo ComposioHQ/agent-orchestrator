@@ -110,7 +110,12 @@ export function saveAgentOverride(
   } else {
     const rawYaml = readFileSync(configPath, "utf-8");
     const rawConfig = yamlParse(rawYaml);
-    const proj = rawConfig.projects[projectId];
+    const proj = rawConfig.projects?.[projectId];
+    if (!proj) {
+      throw new Error(
+        `Project "${projectId}" not found in ${configPath}. The config may have been modified externally.`,
+      );
+    }
     proj.orchestrator = { ...(proj.orchestrator ?? {}), agent: orchestratorAgent };
     proj.worker = { ...(proj.worker ?? {}), agent: workerAgent };
     writeFileSync(configPath, yamlStringify(rawConfig, { indent: 2 }));

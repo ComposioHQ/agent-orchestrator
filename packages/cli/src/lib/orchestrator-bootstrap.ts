@@ -122,6 +122,8 @@ export async function runStartup(
     }
   }
 
+  // Start the lifecycle worker unless both dashboard and orchestrator are
+  // explicitly disabled (e.g. `ao start --no-dashboard --no-orchestrator`).
   const shouldStartLifecycle = opts?.dashboard !== false || opts?.orchestrator !== false;
   let lifecycleStatus: Awaited<ReturnType<typeof ensureLifecycleWorker>> | null = null;
   let port = config.port ?? DEFAULT_PORT;
