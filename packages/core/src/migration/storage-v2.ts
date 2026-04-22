@@ -31,11 +31,20 @@ import { compactTimestamp } from "../paths.js";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Regex to detect old hash-based directory names. */
+/** Regex to detect old hash-based directory names: {12-hex}-{projectId}. */
 const HASH_DIR_PATTERN = /^([0-9a-f]{12})-(.+)$/;
+
+/** Regex to detect bare 12-hex hash directories (no project suffix). */
+const BARE_HASH_DIR_PATTERN = /^([0-9a-f]{12})$/;
 
 /** Regex to detect .migrated directories (for rollback). */
 const MIGRATED_DIR_PATTERN = /^([0-9a-f]{12})-(.+)\.migrated$/;
+
+/** Regex to detect bare .migrated directories. */
+const BARE_MIGRATED_DIR_PATTERN = /^([0-9a-f]{12})\.migrated$/;
+
+/** Directory name suffixes that are NOT project data and must be skipped by migration. */
+const NON_PROJECT_SUFFIXES = new Set(["observability"]);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -87,13 +96,32 @@ export interface HashDirEntry {
 // Inventory — detect old hash-based directories
 // ---------------------------------------------------------------------------
 
-export function inventoryHashDirs(aoBaseDir: string): HashDirEntry[] {
+export function inventoryHashDirs(aoBaseDir: string, globalConfigPath?: string): HashDirEntry[] {
   if (!existsSync(aoBaseDir)) return [];
+
+  // Build a storageKey→projectId lookup from global config (for bare hash dirs)
+  const storageKeyToProject = buildStorageKeyLookup(globalConfigPath);
 
   const entries: HashDirEntry[] = [];
   for (const name of readdirSync(aoBaseDir)) {
-    const match = HASH_DIR_PATTERN.exec(name);
-    if (!match) continue;
+    let hash: string;
+    let projectId: string;
+
+    const hashNameMatch = HASH_DIR_PATTERN.exec(name);
+    const bareHashMatch = BARE_HASH_DIR_PATTERN.exec(name);
+
+    if (hashNameMatch) {
+      hash = hashNameMatch[1];
+      projectId = hashNameMatch[2];
+      // Skip non-project directories (e.g. {hash}-observability)
+      if (NON_PROJECT_SUFFIXES.has(projectId)) continue;
+    } else if (bareHashMatch) {
+      hash = bareHashMatch[1];
+      // Derive projectId: config lookup → session metadata → fallback to hash
+      projectId = storageKeyToProject.get(hash) ?? deriveProjectIdFromDir(join(aoBaseDir, name)) ?? hash;
+    } else {
+      continue;
+    }
 
     const dirPath = join(aoBaseDir, name);
     try {
@@ -114,13 +142,95 @@ export function inventoryHashDirs(aoBaseDir: string): HashDirEntry[] {
 
     entries.push({
       path: dirPath,
-      hash: match[1],
-      projectId: match[2],
+      hash,
+      projectId,
       empty: !hasSessions && !hasWorktrees && !hasArchive,
     });
   }
 
   return entries;
+}
+
+/**
+ * Build a storageKey → projectId lookup from the global config.
+ * Used to identify which project a bare hash directory belongs to.
+ */
+function buildStorageKeyLookup(globalConfigPath?: string): Map<string, string> {
+  const lookup = new Map<string, string>();
+  if (!globalConfigPath || !existsSync(globalConfigPath)) return lookup;
+
+  try {
+    const content = readFileSync(globalConfigPath, "utf-8");
+    const parsed = parseYaml(content) as Record<string, unknown>;
+    const projects = parsed?.["projects"] as Record<string, Record<string, unknown>> | undefined;
+    if (!projects || typeof projects !== "object") return lookup;
+
+    for (const [projectId, entry] of Object.entries(projects)) {
+      if (entry && typeof entry === "object" && typeof entry["storageKey"] === "string") {
+        lookup.set(entry["storageKey"], projectId);
+      }
+    }
+  } catch {
+    // Config unreadable — proceed without lookup
+  }
+  return lookup;
+}
+
+/**
+ * Extract known project name prefixes from the global config.
+ * Used by detectActiveSessions to match V2 tmux session names.
+ */
+function extractProjectPrefixes(globalConfigPath?: string): string[] {
+  if (!globalConfigPath || !existsSync(globalConfigPath)) return [];
+
+  try {
+    const content = readFileSync(globalConfigPath, "utf-8");
+    const parsed = parseYaml(content) as Record<string, unknown>;
+    const projects = parsed?.["projects"] as Record<string, Record<string, unknown>> | undefined;
+    if (!projects || typeof projects !== "object") return [];
+
+    // Project IDs themselves are often used as tmux prefixes
+    return Object.keys(projects);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Try to derive a projectId from session metadata files inside a directory.
+ * Reads the first session file that has a "project" field.
+ */
+function deriveProjectIdFromDir(dirPath: string): string | null {
+  const sessionsDir = join(dirPath, "sessions");
+  if (!existsSync(sessionsDir)) return null;
+
+  try {
+    for (const file of readdirSync(sessionsDir)) {
+      if (file === "archive" || file.startsWith(".")) continue;
+      const filePath = join(sessionsDir, file);
+      try {
+        if (!statSync(filePath).isFile()) continue;
+        const content = readFileSync(filePath, "utf-8").trim();
+        if (!content) continue;
+
+        // Try JSON first, then key=value
+        let projectField: string | undefined;
+        if (content.startsWith("{")) {
+          const parsed = JSON.parse(content) as Record<string, unknown>;
+          projectField = typeof parsed["project"] === "string" ? parsed["project"] : undefined;
+        } else {
+          const kv = parseKeyValueContent(content);
+          projectField = kv["project"];
+        }
+        if (projectField) return projectField;
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // Can't read sessions dir
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,8 +240,16 @@ export function inventoryHashDirs(aoBaseDir: string): HashDirEntry[] {
 /**
  * Detect active AO tmux sessions. Returns session names that match
  * either legacy ({hash}-{prefix}-{num}) or V2 ({prefix}-{num}) patterns.
+ *
+ * Legacy names:  {12-hex}-{prefix}-{num}   (e.g. abcdef012345-ao-1)
+ * V2 names:      {prefix}-{num}            (e.g. ao-17, app-orchestrator-1)
+ *
+ * To distinguish V2 names from unrelated tmux sessions, we match:
+ * - Any session ending in `-orchestrator-{num}` (always AO)
+ * - Sessions matching known AO prefixes: ao-{num}
+ * - If knownPrefixes are provided, also match {prefix}-{num}
  */
-export async function detectActiveSessions(): Promise<string[]> {
+export async function detectActiveSessions(knownPrefixes?: string[]): Promise<string[]> {
   try {
     const { execSync } = await import("node:child_process");
     const output = execSync("tmux list-sessions -F '#{session_name}' 2>/dev/null", {
@@ -141,18 +259,32 @@ export async function detectActiveSessions(): Promise<string[]> {
 
     if (!output) return [];
 
-    // Match legacy pattern: {12-hex}-{prefix}-{num}
-    // Match V2 pattern: {prefix}-{num} (but not random non-AO sessions)
+    // Legacy pattern: {12-hex}-{anything}-{num}
     const legacyPattern = /^[0-9a-f]{12}-.+-\d+$/;
-    const orchestratorPattern = /^[0-9a-f]{12}-.+-orchestrator-\d+$/;
+    // V2: any orchestrator session (always AO)
+    const v2OrchestratorPattern = /^.+-orchestrator-\d+$/;
+    // V2: default "ao" prefix
+    const v2DefaultPattern = /^ao-\d+$/;
+
+    // Build V2 prefix patterns from known project prefixes
+    const v2PrefixPatterns = (knownPrefixes ?? [])
+      .filter((p) => p && p !== "ao") // "ao" already covered above
+      .map((p) => new RegExp(`^${escapeRegExp(p)}-\\d+$`));
 
     return output.split("\n").filter((name) => {
-      return legacyPattern.test(name) || orchestratorPattern.test(name);
+      if (legacyPattern.test(name)) return true;
+      if (v2OrchestratorPattern.test(name)) return true;
+      if (v2DefaultPattern.test(name)) return true;
+      return v2PrefixPatterns.some((pattern) => pattern.test(name));
     });
   } catch {
     // tmux not available or no sessions
     return [];
   }
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // ---------------------------------------------------------------------------
@@ -632,9 +764,10 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     log("DRY RUN — no changes will be made.\n");
   }
 
-  // Pre-flight: detect active sessions
+  // Pre-flight: detect active sessions (include V2 prefix patterns from config)
   if (!options.force) {
-    const activeSessions = await detectActiveSessions();
+    const knownPrefixes = extractProjectPrefixes(effectiveConfigPath);
+    const activeSessions = await detectActiveSessions(knownPrefixes);
     if (activeSessions.length > 0) {
       throw new Error(
         `Found ${activeSessions.length} active AO tmux session(s): ${activeSessions.slice(0, 5).join(", ")}${activeSessions.length > 5 ? "..." : ""}. ` +
@@ -643,14 +776,14 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     }
   }
 
-  // Inventory hash directories
-  const hashDirs = inventoryHashDirs(aoBaseDir);
+  // Inventory hash directories (pass config path for bare-hash projectId lookup)
+  const hashDirs = inventoryHashDirs(aoBaseDir, effectiveConfigPath);
   if (hashDirs.length === 0) {
     log("No legacy hash-based directories found. Nothing to migrate.");
     return { projects: 0, sessions: 0, archives: 0, worktrees: 0, emptyDirsDeleted: 0, strayWorktreesMoved: 0 };
   }
 
-  log(`Found ${hashDirs.length} hash-based director${hashDirs.length === 1 ? "y" : "ies"}.`);
+  log(`Found ${hashDirs.length} legacy director${hashDirs.length === 1 ? "y" : "ies"}.`);
 
   // Group by projectId
   const projectGroups = new Map<string, HashDirEntry[]>();
@@ -760,11 +893,12 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
     return;
   }
 
-  // Find .migrated directories
+  // Find .migrated directories (both {hash}-{name}.migrated and {hash}.migrated)
   const migratedDirs: Array<{ path: string; hash: string; projectId: string }> = [];
   for (const name of readdirSync(aoBaseDir)) {
-    const match = MIGRATED_DIR_PATTERN.exec(name);
-    if (!match) continue;
+    const hashNameMatch = MIGRATED_DIR_PATTERN.exec(name);
+    const bareHashMatch = BARE_MIGRATED_DIR_PATTERN.exec(name);
+    if (!hashNameMatch && !bareHashMatch) continue;
 
     const dirPath = join(aoBaseDir, name);
     try {
@@ -773,11 +907,19 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
       continue;
     }
 
-    migratedDirs.push({
-      path: dirPath,
-      hash: match[1],
-      projectId: match[2],
-    });
+    if (hashNameMatch) {
+      migratedDirs.push({
+        path: dirPath,
+        hash: hashNameMatch[1],
+        projectId: hashNameMatch[2],
+      });
+    } else if (bareHashMatch) {
+      migratedDirs.push({
+        path: dirPath,
+        hash: bareHashMatch[1],
+        projectId: bareHashMatch[1], // bare hash — storageKey restoral uses hash
+      });
+    }
   }
 
   if (migratedDirs.length === 0) {
@@ -794,14 +936,36 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
     renameSync(dir.path, originalPath);
   }
 
-  // Delete projects/ directory
+  // Remove only the project subdirectories that correspond to .migrated dirs.
+  // Do NOT delete the entire projects/ directory — it may contain sessions
+  // created after migration that have no .migrated counterpart.
   const projectsDir = join(aoBaseDir, "projects");
   if (existsSync(projectsDir)) {
-    log("  Removing projects/ directory.");
-    rmSync(projectsDir, { recursive: true, force: true });
+    const migratedProjectIds = new Set(migratedDirs.map((d) => d.projectId));
+    for (const projectId of migratedProjectIds) {
+      const projectDir = join(projectsDir, projectId);
+      if (existsSync(projectDir)) {
+        log(`  Removing migrated project directory: projects/${projectId}`);
+        rmSync(projectDir, { recursive: true, force: true });
+      }
+    }
+    // Remove projects/ only if it's now empty
+    try {
+      const remaining = readdirSync(projectsDir);
+      if (remaining.length === 0) {
+        rmSync(projectsDir, { recursive: true, force: true });
+      } else {
+        log(`  Note: projects/ retained — contains ${remaining.length} non-migrated project(s).`);
+      }
+    } catch {
+      // Ignore
+    }
   }
 
-  // Re-add storageKey to config
+  // Re-add storageKey to config.
+  // Use the original directory name as storageKey — this ensures
+  // getProjectBaseDir(storageKey) finds the restored directory directly,
+  // regardless of whether the config used bare hash or {hash}-{projectName}.
   if (existsSync(effectiveConfigPath)) {
     const content = readFileSync(effectiveConfigPath, "utf-8");
     const parsed = parseYaml(content) as Record<string, unknown>;
@@ -812,7 +976,9 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
         for (const dir of migratedDirs) {
           const entry = projects[dir.projectId];
           if (entry && typeof entry === "object") {
-            entry["storageKey"] = dir.hash;
+            // storageKey = original directory name (e.g. "abcdef012345-myproject" or "abcdef012345")
+            const originalDirName = basename(dir.path).replace(/\.migrated$/, "");
+            entry["storageKey"] = originalDirName;
             restored++;
           }
         }

@@ -574,3 +574,309 @@ IMPACT OF INACCURACIES:
   All typed SessionMetadata changes are now done EXCEPT status computed-only (deferred).
   The detecting*, agentReport*, and reportWatcher* fields are NOT on SessionMetadata
   and do not need "removing" from it. They live in untyped metadata patch dictionaries.
+
+---
+
+# External Review Part 2
+
+Date: 2026-04-22
+
+Scope: Compared `harshitsinghbhandari/agent-orchestrator` branch `storage-redesign`
+against `ComposioHQ/agent-orchestrator` and reviewed the storage redesign diff with
+an explicit edge-case pass.
+
+Findings:
+
+1. Migration does not cover the legacy layout that upstream/main actually uses
+   STATUS: FIXED
+   SEVERITY: HIGH
+   FILES:
+     - packages/core/src/migration/storage-v2.ts
+     - packages/core/src/paths.ts
+   FIX:
+     - Added `BARE_HASH_DIR_PATTERN` (`/^([0-9a-f]{12})$/`) to detect bare 12-hex dirs.
+     - `inventoryHashDirs()` now accepts optional `globalConfigPath` and builds a
+       storageKey→projectId lookup from config. Falls back to reading session metadata
+       `project` field, then to hash itself as projectId.
+     - `migrateStorage()` passes `effectiveConfigPath` to `inventoryHashDirs()`.
+     - Rollback also handles bare `.migrated` dirs via `BARE_MIGRATED_DIR_PATTERN`.
+   TESTS: "detects bare 12-hex hash directories", "derives bare hash projectId from
+     global config storageKey", "falls back to hash as projectId when no config or
+     project field", "migrates bare 12-hex hash directories".
+
+2. Migration can delete observability directories as "empty hash dirs"
+   STATUS: FIXED
+   SEVERITY: HIGH
+   FILES:
+     - packages/core/src/migration/storage-v2.ts
+   FIX:
+     - Added `NON_PROJECT_SUFFIXES` set containing `"observability"`.
+     - `inventoryHashDirs()` skips any `{hash}-{suffix}` dir where suffix is in the set.
+   TESTS: "skips observability directories", "preserves observability directories
+     during migration".
+
+3. Active-session preflight misses live V2 tmux sessions
+   STATUS: FIXED
+   SEVERITY: HIGH
+   FILE:
+     - packages/core/src/migration/storage-v2.ts
+   FIX:
+     - `detectActiveSessions()` now accepts optional `knownPrefixes` array.
+     - Added V2 patterns: `ao-{num}` (default prefix), `*-orchestrator-{num}`,
+       and `{prefix}-{num}` for each known project prefix from config.
+     - `migrateStorage()` extracts project names via `extractProjectPrefixes()` and
+       passes them to `detectActiveSessions()`.
+   TESTS: "returns empty array when tmux is not available" (basic coverage).
+
+4. Migrated metadata drops stored status, but some readers still require it
+   STATUS: FIXED
+   SEVERITY: HIGH
+   FILES:
+     - packages/core/src/metadata.ts
+     - packages/core/src/portfolio-session-service.ts
+   FIX:
+     - `readMetadata()` now derives status from lifecycle via `deriveLegacyStatus()`
+       when `raw["status"]` is absent. Falls back to `"unknown"` only when neither
+       status nor lifecycle is present.
+     - `readMetadataRaw()` also derives status from lifecycle when absent, ensuring
+       `raw["status"]` is always populated for callers.
+     - `portfolio-session-service.ts`: `rawToMetadata()` and `getPortfolioSessionCounts()`
+       both derive status from lifecycle when stored status is missing.
+   TESTS: "readMetadata derives status from lifecycle when status is absent",
+     "readMetadataRaw derives status from lifecycle when status is absent",
+     "readMetadata falls back to 'unknown' when no status and no lifecycle",
+     "readMetadata prefers stored status over lifecycle-derived",
+     "migrated JSON without stored status derives status from lifecycle on read".
+
+Testing gaps resolved:
+  - Migration tests added for bare legacy directories (3 tests).
+  - Migration test proving observability directories are preserved (2 tests).
+  - Basic test coverage for `detectActiveSessions()` (1 test).
+  - Regression tests for migrated JSON with lifecycle but no status (5 tests).
+
+---
+
+# External Review Part 3
+
+Date: 2026-04-22
+
+Scope: Compared `harshitsinghbhandari/agent-orchestrator` branch `storage-redesign`
+(3 commits from merge base `f3ce113c` + uncommitted working-tree fixes) against
+`ComposioHQ/agent-orchestrator` main. Ran full PR review and edge-case hunt.
+Cross-referenced all findings against Parts 1 and 2 above.
+
+Method: Read every changed source file, all test files, ran `git diff f3ce113c...HEAD`
+plus `git diff` for uncommitted working-tree changes. Two parallel sub-agents:
+one for PR review (code quality, architecture, BC, security, testing), one for
+edge-case hunting (boundary conditions, failure injection, state corruption).
+
+Verified build/test/lint status:
+  - pnpm build: zero errors
+  - pnpm typecheck: zero errors
+  - Core: 824/824, CLI: 522/522, Web: 737/740 (3 pre-existing)
+  - pnpm lint: 0 errors, 35 warnings (pre-existing)
+
+---
+
+## BLOCKERS (must fix before merge)
+
+### B1. Rollback `storageKey` format is wrong
+
+STATUS: FIXED
+SEVERITY: HIGH
+FILE: packages/core/src/migration/storage-v2.ts
+FIX: Rollback now uses `basename(dir.path).replace('.migrated', '')` as storageKey,
+which is the original directory name. For `{hash}-{name}` dirs this produces
+`{hash}-{name}`, for bare hash dirs it produces `{hash}`. This ensures
+`getProjectBaseDir(storageKey)` finds the restored directory directly regardless
+of which config format (bare hash vs wrapped) was in use before migration.
+TEST: "writes storageKey in original directory name format"
+
+### B2. Rollback destroys post-migration data
+
+STATUS: FIXED
+SEVERITY: HIGH
+FILE: packages/core/src/migration/storage-v2.ts
+FIX: Rollback now only deletes `projects/{projectId}/` subdirectories that
+correspond to `.migrated` dirs (option a). `projects/` is only removed if empty
+afterward. Non-migrated project directories are preserved with a log note.
+TEST: "preserves post-migration sessions during rollback"
+
+### B3. Duplicated `flattenToStringRecord`
+
+STATUS: FIXED
+SEVERITY: MEDIUM
+FIX: Extracted to `packages/core/src/utils/metadata-flatten.ts`. Both
+`metadata.ts` and `portfolio-session-service.ts` now import from the shared utility.
+
+### B4. `status` doc vs code contradiction
+
+STATUS: FIXED
+SEVERITY: MEDIUM
+FILE: packages/core/src/metadata.ts:10
+FIX: Updated module comment to: "Status is derived from lifecycle when absent,
+but still persisted on write. Making status fully computed-only is deferred to
+a separate PR."
+
+### B5. `prAutoDetect` string `"true"`/`"false"` not handled in all read paths
+
+STATUS: FIXED
+SEVERITY: MEDIUM
+FILE: packages/core/src/metadata.ts:150-151
+FIX: Added `"true"` and `"false"` string checks alongside `"on"`/`"off"` and
+boolean `true`/`false` in `readMetadata`'s prAutoDetect parsing.
+
+---
+
+## NON-BLOCKERS (should fix, not merge-blocking)
+
+### N1. `migrateProject()` is 183 lines
+
+FILE: packages/core/src/migration/storage-v2.ts (lines 336-519 in committed, ~540 in working tree)
+
+Consider extracting the orchestrator-identification logic into a separate function
+for readability.
+
+### N2. `parseTmuxNameV2` rejects hyphenated custom prefixes
+
+FILE: packages/core/src/paths.ts:259-266
+
+```typescript
+const match = tmuxName.match(/^([a-zA-Z][a-zA-Z0-9_]*)-(\d+)$/);
+```
+
+The regex `[a-zA-Z][a-zA-Z0-9_]*` does NOT allow hyphens in the prefix. If
+`sessionPrefix` is configured as `"my-app"`, sessions become `my-app-17` and
+`parseTmuxNameV2` returns `null`. Low probability since `generateSessionPrefix`
+produces initial-only prefixes, but custom prefixes break.
+
+### N3. `assertSafeProjectId` allows reserved names
+
+FILE: packages/core/src/paths.ts:93-104
+
+ProjectId `"projects"`, `"archive"`, `".json"` would create confusing paths like
+`~/.agent-orchestrator/projects/projects/`. Consider a deny-list of reserved
+directory names.
+
+### N4. Symlink safety in migration
+
+FILE: packages/core/src/migration/storage-v2.ts:128
+
+Uses `statSync(dirPath)` which follows symlinks. A symlink at
+`~/.agent-orchestrator/{hash}-{project}/` pointing outside the AO dir would
+cause migration to read/rewrite external files. Use `lstatSync` for the
+top-level directory scan.
+
+### N5. `moveStrayWorktrees` takes first matching project
+
+FILE: packages/core/src/migration/storage-v2.ts (uncommitted, ~line 690-735)
+
+If two projects have a session with the same ID, the stray worktree is assigned
+to whichever `readdirSync` returns first. Should match against the worktree's
+`project` metadata field instead.
+
+### N6. `compactTimestamp` throws on invalid dates
+
+FILE: packages/core/src/paths.ts:149-151
+
+No fallback for `new Date("invalid")`. `toISOString()` throws `RangeError`.
+Callers should guard, but `compactTimestamp` could return a safe fallback value.
+
+### N7. Synchronous fs operations throughout migration
+
+FILE: packages/core/src/migration/storage-v2.ts (entire file)
+
+All fs operations are synchronous (`readdirSync`, `readFileSync`, etc.).
+Acceptable for a one-time CLI migration, but worth noting for installations
+with thousands of sessions.
+
+---
+
+## EDGE CASE FINDINGS (top 8 by Risk)
+
+| # | Edge Case | Impact | Prob | Risk | Location | Status |
+|---|-----------|--------|------|------|----------|--------|
+| 1 | Rollback `storageKey` format bug | 9 | 5 | 45 | `storage-v2.ts` | FIXED (B1) |
+| 2 | Rollback destroys post-migration sessions | 9 | 5 | 45 | `storage-v2.ts` | FIXED (B2) |
+| 3 | `moveStrayWorktrees` misassigns to first project | 7 | 5 | 35 | `storage-v2.ts:~700` | OPEN (N5) |
+| 4 | `loadProjectSessions` drops sessions from non-object JSON | 7 | 5 | 35 | `portfolio-session-service.ts:89` | LOW (catch handles it) |
+| 5 | `assertSafeProjectId` allows reserved names | 5 | 5 | 25 | `paths.ts:93-104` | OPEN (N3) |
+| 6 | `parseDashboardField` drops dashboard string value | 5 | 4 | 20 | `metadata.ts:93-111` | LOW |
+| 7 | `convertKeyValueToJson` catch-all adds case-duplicate keys | 5 | 4 | 20 | `storage-v2.ts:~265` | LOW |
+| 8 | `unflattenFromStringRecord` round-trip with `prAutoDetect` | 6 | 3 | 18 | `metadata.ts:191-215` | LOW |
+
+Suggested test for B1 (rollback storageKey format):
+```typescript
+test("rollback writes storageKey in {hash}-{projectId} format", async () => {
+  const aoDir = await mkdtemp(join(tmpdir(), "ao-"));
+
+  // Simulate migrated dir
+  mkdirSync(join(aoDir, "a3b4c5d6e7f8-myproject.migrated"), { recursive: true });
+
+  await rollbackStorage({ aoBaseDir: aoDir, globalConfigPath: configPath, log: () => {} });
+
+  const config = loadGlobalConfig(configPath);
+  expect(config?.projects.myproject?.storageKey).toBe("a3b4c5d6e7f8-myproject");
+  // BUG: currently writes "a3b4c5d6e7f8" (missing "-myproject")
+});
+```
+
+Suggested test for B2 (rollback destroys new sessions):
+```typescript
+test("rollback warns or aborts when post-migration sessions exist", async () => {
+  const aoDir = await mkdtemp(join(tmpdir(), "ao-"));
+
+  // Simulate migrated dir
+  mkdirSync(join(aoDir, "a3b4c5d6e7f8-myproject.migrated"), { recursive: true });
+  // Post-migration session (NOT from migration)
+  mkdirSync(join(aoDir, "projects", "myproject", "sessions"), { recursive: true });
+  writeFileSync(
+    join(aoDir, "projects", "myproject", "sessions", "ao-99.json"),
+    JSON.stringify({ status: "working", createdAt: new Date().toISOString() })
+  );
+
+  // Should either abort or warn, not silently destroy ao-99
+  await rollbackStorage({ aoBaseDir: aoDir, log: () => {} });
+  // BUG: ao-99.json is destroyed with no warning
+});
+```
+
+---
+
+## CROSS-REFERENCE WITH PARTS 1 AND 2
+
+Part 2 Findings — current status:
+  1. Migration does not cover legacy bare-hash layout → FIXED (uncommitted)
+  2. Migration deletes observability directories → FIXED (uncommitted)
+  3. Active-session preflight misses V2 tmux sessions → FIXED (uncommitted)
+  4. Migrated metadata drops stored status → FIXED (uncommitted, deriveLegacyStatus fallback added)
+
+Part 1 Findings — deferred items:
+  - Section 3.5 (status computed-only) → Still deferred. 100+ locations.
+  - Section 16.3 (path traversal) → Fixed via assertSafeProjectId.
+  - Section 11.4 (generateConfigHash dead code) → Fixed in scanner.ts.
+  - Section 12.9 (unknown fields dropped) → Fixed with catch-all.
+  - Section 12.7 (config backup) → Fixed with .pre-migration backup.
+
+New issues found in Part 3 not present in Parts 1 or 2:
+  - B1: Rollback storageKey format bug
+  - B2: Rollback destroys post-migration data
+  - B3: Duplicated flattenToStringRecord
+  - B4: Status doc/code contradiction
+  - B5: prAutoDetect string "true"/"false" gap
+
+---
+
+## RECOMMENDATION
+
+All 5 blockers have been addressed:
+1. B1 (rollback storageKey format) — FIXED: uses original dir name as storageKey
+2. B2 (rollback destroys data) — FIXED: only removes migrated project subdirs
+3. B3 (duplicated function) — FIXED: extracted to utils/metadata-flatten.ts
+4. B4 (misleading doc) — FIXED: comment updated
+5. B5 (prAutoDetect gap) — FIXED: added "true"/"false" string checks
+
+Verification after fixes:
+  - pnpm typecheck: zero errors (core, CLI, web)
+  - Core: 838/838, CLI: 522/522, Web: 737/740 (3 pre-existing)
+  - pnpm lint: 0 errors, 35 warnings (pre-existing)

@@ -9,26 +9,14 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { isOrchestratorSession, type CanonicalSessionLifecycle, type PortfolioProject, type PortfolioSession, type RuntimeHandle, type Session, type SessionMetadata } from "./types.js";
 import { getProjectSessionsDir } from "./paths.js";
+import { deriveLegacyStatus } from "./lifecycle-state.js";
+import { flattenToStringRecord } from "./utils/metadata-flatten.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 
 const JSON_EXTENSION = ".json";
 
 function tryParseJson<T>(value: string): T | undefined {
   try { return JSON.parse(value) as T; } catch { return undefined; }
-}
-
-/** Flatten a JSON object to Record<string, string> for backward compat with metadata consumers. */
-function flattenToStringRecord(data: Record<string, unknown>): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (value === undefined || value === null) continue;
-    if (typeof value === "object") {
-      result[key] = JSON.stringify(value);
-    } else {
-      result[key] = String(value);
-    }
-  }
-  return result;
 }
 
 const DEFAULT_PER_PROJECT_TIMEOUT_MS = 3_000;
@@ -103,10 +91,14 @@ async function loadProjectSessions(project: PortfolioProject): Promise<Portfolio
 }
 
 function rawToMetadata(raw: Record<string, string>): SessionMetadata {
+  const lifecycle = raw["lifecycle"] ? tryParseJson<CanonicalSessionLifecycle>(raw["lifecycle"]) : undefined;
+  const storedStatus = raw["status"];
+  const status = storedStatus ?? (lifecycle ? deriveLegacyStatus(lifecycle) : "unknown");
+
   return {
     worktree: raw["worktree"] ?? "",
     branch: raw["branch"] ?? "",
-    status: raw["status"] ?? "unknown",
+    status,
     tmuxName: raw["tmuxName"],
     issue: raw["issue"],
     pr: raw["pr"],
@@ -117,7 +109,7 @@ function rawToMetadata(raw: Record<string, string>): SessionMetadata {
     runtimeHandle: raw["runtimeHandle"] ? tryParseJson<RuntimeHandle>(raw["runtimeHandle"]) : undefined,
     restoredAt: raw["restoredAt"],
     role: raw["role"],
-    lifecycle: raw["lifecycle"] ? tryParseJson<CanonicalSessionLifecycle>(raw["lifecycle"]) : undefined,
+    lifecycle,
   };
 }
 
@@ -199,7 +191,13 @@ export async function getPortfolioSessionCounts(portfolio: PortfolioProject[]): 
           if (isOrchestratorSession({ id: sessionId, metadata: raw })) continue;
 
           total++;
-          if (!TERMINAL.has(raw["status"] ?? "")) active++;
+          // Derive status from lifecycle when not stored (post-migration JSON)
+          let sessionStatus = raw["status"];
+          if (!sessionStatus && raw["lifecycle"]) {
+            const lifecycle = tryParseJson<CanonicalSessionLifecycle>(raw["lifecycle"]);
+            if (lifecycle) sessionStatus = deriveLegacyStatus(lifecycle);
+          }
+          if (!TERMINAL.has(sessionStatus ?? "")) active++;
         } catch {
           continue;
         }

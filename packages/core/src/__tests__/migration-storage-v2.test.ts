@@ -12,9 +12,11 @@ import { tmpdir } from "node:os";
 import {
   inventoryHashDirs,
   convertKeyValueToJson,
+  detectActiveSessions,
   migrateStorage,
   rollbackStorage,
 } from "../migration/storage-v2.js";
+import { readMetadata } from "../metadata.js";
 
 function createTempDir(): string {
   const dir = join(tmpdir(), `ao-migration-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -75,6 +77,68 @@ describe("inventoryHashDirs", () => {
   it("returns empty array for non-existent directory", () => {
     const dirs = inventoryHashDirs(join(testDir, "nonexistent"));
     expect(dirs).toHaveLength(0);
+  });
+
+  it("detects bare 12-hex hash directories", () => {
+    mkdirSync(join(testDir, "abcdef012345", "sessions"), { recursive: true });
+    writeFileSync(
+      join(testDir, "abcdef012345", "sessions", "ao-1"),
+      "project=myproject\nstatus=working\n",
+    );
+
+    const dirs = inventoryHashDirs(testDir);
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0].hash).toBe("abcdef012345");
+    // projectId derived from session metadata
+    expect(dirs[0].projectId).toBe("myproject");
+    expect(dirs[0].empty).toBe(false);
+  });
+
+  it("derives bare hash projectId from global config storageKey", () => {
+    mkdirSync(join(testDir, "abcdef012345", "sessions"), { recursive: true });
+    writeFileSync(join(testDir, "abcdef012345", "sessions", "ao-1"), "status=working\n");
+
+    // Write a config that maps storageKey → projectId
+    const configPath = join(testDir, "config.yaml");
+    writeFileSync(configPath, [
+      "projects:",
+      "  my-app:",
+      "    path: /home/user/my-app",
+      "    storageKey: abcdef012345",
+      "",
+    ].join("\n"));
+
+    const dirs = inventoryHashDirs(testDir, configPath);
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0].projectId).toBe("my-app");
+  });
+
+  it("falls back to hash as projectId when no config or project field", () => {
+    mkdirSync(join(testDir, "abcdef012345", "sessions"), { recursive: true });
+    // Session file with no "project" field
+    writeFileSync(join(testDir, "abcdef012345", "sessions", "ao-1"), "status=working\n");
+
+    const dirs = inventoryHashDirs(testDir);
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0].projectId).toBe("abcdef012345");
+  });
+
+  it("skips observability directories", () => {
+    mkdirSync(join(testDir, "abcdef012345-observability"), { recursive: true });
+    mkdirSync(join(testDir, "abcdef012345-myproject", "sessions"), { recursive: true });
+    writeFileSync(join(testDir, "abcdef012345-myproject", "sessions", "ao-1"), "status=working\n");
+
+    const dirs = inventoryHashDirs(testDir);
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0].projectId).toBe("myproject");
+  });
+});
+
+describe("detectActiveSessions", () => {
+  it("returns empty array when tmux is not available", async () => {
+    // On CI or machines without tmux, this should return empty
+    const sessions = await detectActiveSessions();
+    expect(Array.isArray(sessions)).toBe(true);
   });
 });
 
@@ -502,6 +566,116 @@ describe("migrateStorage", () => {
     expect(session).not.toHaveProperty("statePayload");
     expect(session).not.toHaveProperty("stateVersion");
   });
+
+  it("migrated JSON without stored status derives status from lifecycle on read", async () => {
+    const hashDir = join(aoBaseDir, "abcdef012345-myproject");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+
+    const lifecycle = JSON.stringify({
+      version: 2,
+      session: { kind: "worker", state: "working", reason: "task_in_progress", startedAt: "2026-04-21T12:00:00.000Z", completedAt: null, terminatedAt: null, lastTransitionAt: "2026-04-21T12:00:00.000Z" },
+      pr: { state: "open", reason: "review_pending", url: "https://github.com/test/repo/pull/1", lastObservedAt: "2026-04-21T12:30:00.000Z" },
+      runtime: { handle: null, tmuxName: null },
+    });
+
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      [
+        "project=myproject",
+        "agent=claude-code",
+        "status=review_pending",
+        "createdAt=2026-04-21T12:00:00.000Z",
+        `statePayload=${lifecycle}`,
+        "stateVersion=2",
+        "branch=session/ao-1",
+        "worktree=/tmp/worktrees/ao-1",
+      ].join("\n"),
+    );
+
+    await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: () => {},
+    });
+
+    // Verify status is NOT stored in the JSON file
+    const rawJson = JSON.parse(
+      readFileSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"), "utf-8"),
+    );
+    expect(rawJson).not.toHaveProperty("status");
+    expect(rawJson.lifecycle).toBeDefined();
+
+    // Verify readMetadata derives the correct status from lifecycle
+    const sessionsDir = join(aoBaseDir, "projects", "myproject", "sessions");
+    const meta = readMetadata(sessionsDir, "ao-1");
+    expect(meta).not.toBeNull();
+    expect(meta!.status).toBe("review_pending");
+  });
+
+  it("migrates bare 12-hex hash directories", async () => {
+    const hashDir = join(aoBaseDir, "abcdef012345");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\nagent=claude-code\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+    );
+
+    // Config with storageKey for lookup
+    writeFileSync(configPath, [
+      "projects:",
+      "  myproject:",
+      "    path: /home/user/myproject",
+      "    storageKey: abcdef012345",
+      "",
+    ].join("\n"));
+
+    const result = await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: () => {},
+    });
+
+    expect(result.projects).toBe(1);
+    expect(result.sessions).toBe(1);
+
+    // Session should be under the correct project
+    const sessionPath = join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json");
+    expect(existsSync(sessionPath)).toBe(true);
+
+    // Old bare hash dir should be renamed to .migrated
+    expect(existsSync(`${hashDir}.migrated`)).toBe(true);
+    expect(existsSync(hashDir)).toBe(false);
+  });
+
+  it("preserves observability directories during migration", async () => {
+    // Create an observability dir that matches the hash-name pattern
+    const obsDir = join(aoBaseDir, "abcdef012345-observability");
+    mkdirSync(obsDir, { recursive: true });
+    writeFileSync(join(obsDir, "metrics.log"), "some observability data");
+
+    // Also create a real project dir
+    const hashDir = join(aoBaseDir, "abcdef012345-myproject");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+    );
+
+    const result = await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: () => {},
+    });
+
+    expect(result.projects).toBe(1);
+
+    // Observability dir must NOT be touched
+    expect(existsSync(obsDir)).toBe(true);
+    expect(readFileSync(join(obsDir, "metrics.log"), "utf-8")).toBe("some observability data");
+  });
 });
 
 describe("rollbackStorage", () => {
@@ -520,7 +694,7 @@ describe("rollbackStorage", () => {
     rmSync(testDir, { recursive: true, force: true });
   });
 
-  it("restores .migrated directories and removes projects/", async () => {
+  it("restores .migrated directories and removes migrated projects", async () => {
     // Simulate post-migration state
     mkdirSync(join(aoBaseDir, "abcdef012345-myproject.migrated", "sessions"), { recursive: true });
     mkdirSync(join(aoBaseDir, "projects", "myproject", "sessions"), { recursive: true });
@@ -551,13 +725,78 @@ describe("rollbackStorage", () => {
     expect(existsSync(join(aoBaseDir, "abcdef012345-myproject"))).toBe(true);
     expect(existsSync(join(aoBaseDir, "abcdef012345-myproject.migrated"))).toBe(false);
 
-    // projects/ should be gone
-    expect(existsSync(join(aoBaseDir, "projects"))).toBe(false);
+    // migrated project dir should be gone
+    expect(existsSync(join(aoBaseDir, "projects", "myproject"))).toBe(false);
 
-    // storageKey should be re-added to config
+    // storageKey should be re-added to config in {hash}-{projectId} format
     const configContent = readFileSync(configPath, "utf-8");
     expect(configContent).toContain("storageKey");
-    expect(configContent).toContain("abcdef012345");
+    expect(configContent).toContain("abcdef012345-myproject");
+  });
+
+  it("writes storageKey in original directory name format", async () => {
+    mkdirSync(join(aoBaseDir, "a3b4c5d6e7f8-myapp.migrated"), { recursive: true });
+    mkdirSync(join(aoBaseDir, "projects", "myapp"), { recursive: true });
+
+    writeFileSync(configPath, [
+      "projects:",
+      "  myapp:",
+      "    path: /home/user/myapp",
+      "",
+    ].join("\n"));
+
+    await rollbackStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      log: () => {},
+    });
+
+    const configContent = readFileSync(configPath, "utf-8");
+    // storageKey should be the full directory name, not just the hash
+    expect(configContent).toContain("a3b4c5d6e7f8-myapp");
+  });
+
+  it("preserves post-migration sessions during rollback", async () => {
+    // Simulate migrated dir
+    mkdirSync(join(aoBaseDir, "abcdef012345-myproject.migrated", "sessions"), { recursive: true });
+
+    // Migrated sessions (from migration)
+    mkdirSync(join(aoBaseDir, "projects", "myproject", "sessions"), { recursive: true });
+    writeFileSync(
+      join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"),
+      '{"project":"myproject"}',
+    );
+
+    // A DIFFERENT project that was NOT migrated (created post-migration)
+    mkdirSync(join(aoBaseDir, "projects", "new-project", "sessions"), { recursive: true });
+    writeFileSync(
+      join(aoBaseDir, "projects", "new-project", "sessions", "ao-99.json"),
+      '{"project":"new-project","status":"working"}',
+    );
+
+    writeFileSync(configPath, [
+      "projects:",
+      "  myproject:",
+      "    path: /home/user/myproject",
+      "  new-project:",
+      "    path: /home/user/new-project",
+      "",
+    ].join("\n"));
+
+    await rollbackStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      log: () => {},
+    });
+
+    // Migrated project dir should be cleaned up
+    expect(existsSync(join(aoBaseDir, "projects", "myproject"))).toBe(false);
+
+    // Non-migrated project dir must be preserved
+    expect(existsSync(join(aoBaseDir, "projects", "new-project", "sessions", "ao-99.json"))).toBe(true);
+
+    // projects/ dir should still exist (has remaining content)
+    expect(existsSync(join(aoBaseDir, "projects"))).toBe(true);
   });
 
   it("does nothing when no .migrated directories exist", async () => {

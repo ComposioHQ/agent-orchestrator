@@ -551,3 +551,80 @@ describe("listMetadata", () => {
     expect(list).toEqual([]);
   });
 });
+
+describe("status derivation from lifecycle", () => {
+  it("readMetadata derives status from lifecycle when status is absent", () => {
+    // Simulate migrated JSON: has lifecycle but no status field
+    writeFileSync(
+      join(dataDir, "no-status.json"),
+      JSON.stringify({
+        worktree: "/tmp/w",
+        branch: "main",
+        project: "myproject",
+        lifecycle: {
+          version: 2,
+          session: { kind: "worker", state: "working", reason: "task_in_progress", startedAt: "2025-01-01T00:00:00.000Z", completedAt: null, terminatedAt: null, lastTransitionAt: "2025-01-01T00:00:00.000Z" },
+          pr: { state: "open", reason: "review_pending", number: 42, url: "https://github.com/org/repo/pull/42", lastObservedAt: "2025-01-01T00:00:00.000Z" },
+          runtime: { state: "alive", reason: "process_running", lastObservedAt: "2025-01-01T00:00:00.000Z", handle: null, tmuxName: null },
+        },
+      }),
+    );
+
+    const meta = readMetadata(dataDir, "no-status");
+    expect(meta).not.toBeNull();
+    expect(meta!.status).toBe("review_pending");
+  });
+
+  it("readMetadataRaw derives status from lifecycle when status is absent", () => {
+    writeFileSync(
+      join(dataDir, "raw-no-status.json"),
+      JSON.stringify({
+        worktree: "/tmp/w",
+        branch: "main",
+        lifecycle: {
+          version: 2,
+          session: { kind: "worker", state: "done", reason: "research_complete", startedAt: "2025-01-01T00:00:00.000Z", completedAt: "2025-01-01T01:00:00.000Z", terminatedAt: null, lastTransitionAt: "2025-01-01T01:00:00.000Z" },
+          pr: { state: "merged", reason: "merge_complete", number: 42, url: null, lastObservedAt: null },
+          runtime: { state: "dead", reason: "process_exited", lastObservedAt: null, handle: null, tmuxName: null },
+        },
+      }),
+    );
+
+    const raw = readMetadataRaw(dataDir, "raw-no-status");
+    expect(raw).not.toBeNull();
+    expect(raw!["status"]).toBe("done");
+  });
+
+  it("readMetadata falls back to 'unknown' when no status and no lifecycle", () => {
+    writeFileSync(
+      join(dataDir, "bare.json"),
+      JSON.stringify({ worktree: "/tmp/w", branch: "main" }),
+    );
+
+    const meta = readMetadata(dataDir, "bare");
+    expect(meta).not.toBeNull();
+    expect(meta!.status).toBe("unknown");
+  });
+
+  it("readMetadata prefers stored status over lifecycle-derived", () => {
+    writeFileSync(
+      join(dataDir, "has-both.json"),
+      JSON.stringify({
+        worktree: "/tmp/w",
+        branch: "main",
+        status: "working",
+        lifecycle: {
+          version: 2,
+          session: { kind: "worker", state: "done", reason: "research_complete", startedAt: null, completedAt: null, terminatedAt: null, lastTransitionAt: null },
+          pr: { state: "none", reason: "not_created", number: null, url: null, lastObservedAt: null },
+          runtime: { state: "unknown", reason: "not_checked", lastObservedAt: null, handle: null, tmuxName: null },
+        },
+      }),
+    );
+
+    const meta = readMetadata(dataDir, "has-both");
+    expect(meta).not.toBeNull();
+    // Stored status wins over derived
+    expect(meta!.status).toBe("working");
+  });
+});

@@ -7,7 +7,8 @@
  * - Archives: ~/.agent-orchestrator/projects/{projectId}/archive/{sessionId}_{timestamp}.json
  *
  * Format: JSON (2-space indented), one object per file.
- * Status is computed on read from the lifecycle object, never stored.
+ * Status is derived from lifecycle when absent, but still persisted on write.
+ * Making status fully computed-only is deferred to a separate PR.
  */
 
 import {
@@ -27,9 +28,11 @@ import { atomicWriteFileSync } from "./atomic-write.js";
 import {
   buildLifecycleMetadataPatch,
   cloneLifecycle,
+  deriveLegacyStatus,
   parseCanonicalLifecycle,
 } from "./lifecycle-state.js";
 import { assertValidSessionIdComponent, SESSION_ID_COMPONENT_PATTERN } from "./utils/session-id.js";
+import { flattenToStringRecord } from "./utils/metadata-flatten.js";
 import { validateStatus } from "./utils/validation.js";
 import { compactTimestamp } from "./paths.js";
 
@@ -131,22 +134,27 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
   if (!content) return null; // empty file (e.g. from reserveSessionId)
   const raw = parseMetadataContent(content);
 
+  // Derive status: stored value → lifecycle-derived → fallback
+  const lifecycle = parseLifecycleField(raw);
+  const storedStatus = raw["status"] as string | undefined;
+  const status = storedStatus ?? (lifecycle ? deriveLegacyStatus(lifecycle) : "unknown");
+
   return {
     worktree: (raw["worktree"] as string) ?? "",
     branch: (raw["branch"] as string) ?? "",
-    status: (raw["status"] as string) ?? "unknown",
+    status,
     tmuxName: raw["tmuxName"] as string | undefined,
     issue: raw["issue"] as string | undefined,
     pr: raw["pr"] as string | undefined,
     prAutoDetect:
-      raw["prAutoDetect"] === "off" || raw["prAutoDetect"] === false ? false :
-      raw["prAutoDetect"] === "on" || raw["prAutoDetect"] === true ? true : undefined,
+      raw["prAutoDetect"] === "off" || raw["prAutoDetect"] === "false" || raw["prAutoDetect"] === false ? false :
+      raw["prAutoDetect"] === "on" || raw["prAutoDetect"] === "true" || raw["prAutoDetect"] === true ? true : undefined,
     summary: raw["summary"] as string | undefined,
     project: raw["project"] as string | undefined,
     agent: raw["agent"] as string | undefined,
     createdAt: raw["createdAt"] as string | undefined,
     runtimeHandle: parseRuntimeHandleField(raw["runtimeHandle"]),
-    lifecycle: parseLifecycleField(raw),
+    lifecycle,
     restoredAt: raw["restoredAt"] as string | undefined,
     role: raw["role"] as string | undefined,
     dashboard: parseDashboardField(raw),
@@ -168,23 +176,16 @@ export function readMetadataRaw(
   const content = readFileSync(path, "utf-8").trim();
   if (!content) return null; // empty file (e.g. from reserveSessionId)
   const raw = parseMetadataContent(content);
+  // Derive status from lifecycle when not stored (post-migration JSON)
+  if (!raw["status"] && raw["lifecycle"]) {
+    const lifecycle = parseLifecycleField(raw);
+    if (lifecycle) {
+      raw["status"] = deriveLegacyStatus(lifecycle);
+    }
+  }
   // Flatten to Record<string, string> for backward compatibility.
   // Objects (runtimeHandle, statePayload) are JSON-stringified.
   return flattenToStringRecord(raw);
-}
-
-/** Flatten a JSON object to a Record<string, string> for backward compat. */
-function flattenToStringRecord(data: Record<string, unknown>): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (value === undefined || value === null) continue;
-    if (typeof value === "object") {
-      result[key] = JSON.stringify(value);
-    } else {
-      result[key] = String(value);
-    }
-  }
-  return result;
 }
 
 /** Unflatten a Record<string, string> to proper types for JSON storage. */
