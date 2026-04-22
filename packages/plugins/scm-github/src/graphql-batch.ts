@@ -487,13 +487,6 @@ const PR_FIELDS = `
   reviewDecision
   headRefName
   headRefOid
-  reviews(last: 5) {
-    nodes {
-      author { login }
-      state
-      submittedAt
-    }
-  }
   commits(last: 1) {
     nodes {
       commit {
@@ -803,7 +796,6 @@ function extractPREnrichment(
   if (
     pr["state"] === undefined &&
     pr["title"] === undefined &&
-    pr["reviews"] === undefined &&
     pr["commits"] === undefined
   ) {
     return null;
