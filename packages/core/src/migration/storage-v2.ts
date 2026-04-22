@@ -771,7 +771,7 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     if (activeSessions.length > 0) {
       throw new Error(
         `Found ${activeSessions.length} active AO tmux session(s): ${activeSessions.slice(0, 5).join(", ")}${activeSessions.length > 5 ? "..." : ""}. ` +
-        `Kill active sessions first (ao kill --all) or use --force to migrate anyway.`,
+        `Kill active sessions first (ao session kill --all) or use --force to migrate anyway.`,
       );
     }
   }
