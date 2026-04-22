@@ -567,6 +567,9 @@ importers:
       '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
+      '@composio/core':
+        specifier: '*'
+        version: 0.6.10(ws@8.20.0)(zod@3.25.76)
     devDependencies:
       '@types/node':
         specifier: ^25.2.3
@@ -927,6 +930,19 @@ packages:
 
   '@cloudflare/workers-types@4.20260410.1':
     resolution: {integrity: sha512-dPZT4aXxwhGHFhWA9iZhWVfFoO8g9exiLzeaS8y43Dw0Sard6Gb3o5LJjReav3ejHbQLHUfGEiZsRPGW8qmgMg==}
+
+  '@composio/client@0.1.0-alpha.66':
+    resolution: {integrity: sha512-SDHcTWzz2dgdYAew/gQsRpjHpEzHKm6sW7KM4wCoJWNJuuMuey9Ahje91ZucNjfaqpI8CFW+pXY4nWkZf5LD7Q==}
+
+  '@composio/core@0.6.10':
+    resolution: {integrity: sha512-T/9MfYcmPs2EcSXhrJWvm0UFTfa79FcTo1L8vO13d5C5kX8/I4hLYLu+1wc4n7WGBSE9hq7o1g9L3FXJrOrlSQ==}
+    peerDependencies:
+      zod: ^3.25 || ^4
+
+  '@composio/json-schema-to-zod@0.1.20':
+    resolution: {integrity: sha512-d4V34itLrUWG/VBh7ciznKcxF/T22MBLHmuEzHoX0zsBOHsUmjYz5qtDh20S2p3FE+HHvLZxpXiv8yfdd4yI+Q==}
+    peerDependencies:
+      zod: '>=3.25.76 <5'
 
   '@composio/mcp@1.0.3-0':
     resolution: {integrity: sha512-IpbfST0SSs/CEv+PIf6+EL0feNuJhQyUrOHJLPge8NhyLLrCyVqvujRIPyRUUjy0NDsked/Mm5VpJmYM6OACbg==}
@@ -3585,6 +3601,9 @@ packages:
   pusher-js@8.4.0-rc2:
     resolution: {integrity: sha512-d87GjOEEl9QgO5BWmViSqW0LOzPvybvX6WA9zLUstNdB57jVJuR27zHkRnrav2a3+zAMlHbP2Og8wug+rG8T+g==}
 
+  pusher-js@8.5.0:
+    resolution: {integrity: sha512-V7uzGi9bqOOOyM/6IkJdpFyjGZj7llz1v0oWnYkZKcYLvbz6VcHVLmzKqkvegjuMumpfIEKGLmWHwFb39XFCpw==}
+
   quansync@0.2.11:
     resolution: {integrity: sha512-AifT7QEbW9Nri4tAwR5M/uzpBuqfZf+zwaEM/QkzEjj7NBuFD2rBuy0K3dE+8wltbezDV7JMA0WfnCPYRSYbXA==}
 
@@ -4603,6 +4622,26 @@ snapshots:
       sisteransi: 1.0.5
 
   '@cloudflare/workers-types@4.20260410.1': {}
+
+  '@composio/client@0.1.0-alpha.66': {}
+
+  '@composio/core@0.6.10(ws@8.20.0)(zod@3.25.76)':
+    dependencies:
+      '@composio/client': 0.1.0-alpha.66
+      '@composio/json-schema-to-zod': 0.1.20(zod@3.25.76)
+      '@types/json-schema': 7.0.15
+      chalk: 4.1.2
+      openai: 6.34.0(ws@8.20.0)(zod@3.25.76)
+      pusher-js: 8.5.0
+      semver: 7.7.4
+      zod: 3.25.76
+      zod-to-json-schema: 3.25.2(zod@3.25.76)
+    transitivePeerDependencies:
+      - ws
+
+  '@composio/json-schema-to-zod@0.1.20(zod@3.25.76)':
+    dependencies:
+      zod: 3.25.76
 
   '@composio/mcp@1.0.3-0': {}
 
@@ -7096,6 +7135,10 @@ snapshots:
   punycode@2.3.1: {}
 
   pusher-js@8.4.0-rc2:
+    dependencies:
+      tweetnacl: 1.0.3
+
+  pusher-js@8.5.0:
     dependencies:
       tweetnacl: 1.0.3
 
