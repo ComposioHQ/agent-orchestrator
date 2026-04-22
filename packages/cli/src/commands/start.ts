@@ -11,7 +11,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { resolve, basename } from "node:path";
+import { resolve, basename, dirname } from "node:path";
 import { cwd } from "node:process";
 import chalk from "chalk";
 import ora from "ora";
@@ -104,6 +104,41 @@ function readProjectBehaviorConfig(projectPath: string): LocalProjectConfig {
 
 function writeProjectBehaviorConfig(projectPath: string, config: LocalProjectConfig): void {
   writeLocalProjectConfig(projectPath, config);
+}
+
+/**
+ * Register a flat local config (agent-orchestrator.yaml without `projects:`)
+ * into the global config so loadConfig can resolve it.
+ * Returns the registered project ID, or null if registration failed.
+ */
+async function registerFlatConfig(configPath: string): Promise<string | null> {
+  const projectPath = resolve(dirname(configPath));
+  const projectId = basename(projectPath);
+
+  // Read flat config fields
+  const raw = readFileSync(configPath, "utf-8");
+  const parsed = yamlParse(raw) as Record<string, unknown> | null;
+  if (!parsed || typeof parsed !== "object") return null;
+  // If it has a projects key, it's not a flat config
+  if ("projects" in parsed) return null;
+
+  const repo = typeof parsed["repo"] === "string" ? parsed["repo"] : undefined;
+  const defaultBranch = typeof parsed["defaultBranch"] === "string"
+    ? parsed["defaultBranch"]
+    : await detectDefaultBranch(projectPath, repo ?? null);
+  const prefix = generateSessionPrefix(projectId);
+
+  console.log(chalk.dim(`\n  Registering project "${projectId}" in global config...\n`));
+
+  registerProjectInGlobalConfig(
+    projectId,
+    projectId,
+    projectPath,
+    { defaultBranch, sessionPrefix: prefix, ...(repo ? { repo } : {}) },
+  );
+
+  console.log(chalk.green(`  ✓ Registered "${projectId}"\n`));
+  return projectId;
 }
 
 /**
@@ -1575,7 +1610,20 @@ export function registerStart(program: Command): void {
                 // First run — auto-create config
                 loadedConfig = await autoCreateConfig(cwd());
               } else {
-                throw err;
+                // A config file exists but failed to load — likely a flat local
+                // config whose project isn't registered in the global config yet.
+                // Register it and retry.
+                const foundConfig = findConfigFile() ?? undefined;
+                if (foundConfig) {
+                  const addedId = await registerFlatConfig(foundConfig);
+                  if (addedId) {
+                    loadedConfig = loadConfig(foundConfig);
+                  } else {
+                    throw err;
+                  }
+                } else {
+                  throw err;
+                }
               }
             }
             config = loadedConfig;
