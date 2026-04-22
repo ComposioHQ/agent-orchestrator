@@ -79,7 +79,7 @@ describe("setupPathWrapperWorkspace", () => {
 
   it("skips wrapper rewrite when version matches", async () => {
     mockReadFile
-      .mockResolvedValueOnce("0.4.1") // version marker matches
+      .mockResolvedValueOnce("0.6.0") // version marker matches
       .mockRejectedValueOnce(new Error("ENOENT")); // AGENTS.md doesn't exist
 
     await setupPathWrapperWorkspace("/workspace");
@@ -161,6 +161,13 @@ describe("GH_WRAPPER", () => {
     expect(GH_WRAPPER).toContain("_ao_cacheable=false");
   });
 
+  it("passes through on unsupported --key=value flags for PR discovery", () => {
+    expect(GH_WRAPPER).toContain("--search=*");
+    expect(GH_WRAPPER).toContain("--state=*");
+    expect(GH_WRAPPER).toContain("--jq=*");
+    expect(GH_WRAPPER).toContain("--template=*");
+  });
+
   it("contains issue context cache intercept with 300s TTL", () => {
     expect(GH_WRAPPER).toContain('$1" == "issue" && "$2" == "view"');
     expect(GH_WRAPPER).toContain("issue-ctx-");
@@ -173,19 +180,57 @@ describe("GH_WRAPPER", () => {
     expect(GH_WRAPPER).toContain("--comments");
   });
 
-  it("populates PR discovery cache after gh pr create", () => {
-    expect(GH_WRAPPER).toContain("pr/create)");
-    expect(GH_WRAPPER).toContain("read_ao_metadata branch");
-    expect(GH_WRAPPER).toContain("ao_cache_write");
-    expect(GH_WRAPPER).toContain("pr-discovery-");
+  it("includes --json fields in PR discovery cache key", () => {
+    // _ao_json is captured from --json and --json= forms
+    expect(GH_WRAPPER).toContain('_ao_json=""');
+    expect(GH_WRAPPER).toContain('--json)     _ao_json=');
+    expect(GH_WRAPPER).toContain('--json=*)   _ao_json=');
+    // key includes -j- separator when --json is present
+    expect(GH_WRAPPER).toContain('-j-${_ao_safe_json}');
   });
 
-  it("still passes through unmatched commands", () => {
-    expect(GH_WRAPPER).toContain('exec "$real_gh" "$@"');
+  it("includes --json fields in issue context cache key", () => {
+    // Both PR discovery and issue view include --json in cache key
+    const issueSection = GH_WRAPPER.split('issue" && "$2" == "view"')[1];
+    expect(issueSection).toContain("_ao_json");
+    expect(issueSection).toContain("-j-");
+  });
+
+  it("handles --head=value and --limit=value equals-sign syntax", () => {
+    expect(GH_WRAPPER).toContain('--head=*)   _ao_head="${1#--head=}"');
+    expect(GH_WRAPPER).toContain('--limit=*)  _ao_limit="${1#--limit=}"');
+  });
+
+  it("does not pre-populate PR discovery cache from gh pr create", () => {
+    // PR create should update metadata but NOT write to the cache,
+    // because we cannot know what --json fields the next pr list will request
+    expect(GH_WRAPPER).toContain("pr/create)");
+    const prCreateSection = GH_WRAPPER.split("pr/create)")[1].split("exit $exit_code")[0];
+    expect(prCreateSection).not.toContain("ao_cache_write");
+  });
+
+  it("only caches stdout, not stderr, in cacheable paths", () => {
+    // The cacheable read paths (pr list, issue view) must redirect only stdout
+    // to the temp file, letting stderr pass through to the agent.
+    // Extract the two cacheable sections and verify no 2>&1 in their gh calls.
+    const prSection = GH_WRAPPER.split('$1" == "pr" && "$2" == "list"')[1].split("fi\nfi")[0];
+    const issueSection = GH_WRAPPER.split('$1" == "issue" && "$2" == "view"')[1].split("fi\nfi")[0];
+    // The real_gh call in cache paths should NOT have 2>&1
+    const prGhCall = prSection.match(/"\$real_gh" "\$@" > "\$_ao_tmpout"(.*)/)?.[1] ?? "";
+    const issueGhCall = issueSection.match(/"\$real_gh" "\$@" > "\$_ao_tmpout"(.*)/)?.[1] ?? "";
+    expect(prGhCall).not.toContain("2>&1");
+    expect(issueGhCall).not.toContain("2>&1");
+  });
+
+  it("still passes through unmatched commands without exec", () => {
+    // Default case runs real gh as child process (not exec) to allow post-call tracing
+    expect(GH_WRAPPER).not.toContain('exec "$real_gh" "$@"');
+    // Real gh is still called in the default case
+    expect(GH_WRAPPER).toContain('"$real_gh" "$@"');
   });
 
   it("uses current wrapper version in trace logging", () => {
-    expect(GH_WRAPPER).toContain("0.4.1");
+    expect(GH_WRAPPER).toContain("0.6.0");
   });
 
   it("logs cache outcomes (hit/miss-stored/miss-negative/miss-error) to trace", () => {
@@ -196,5 +241,44 @@ describe("GH_WRAPPER", () => {
     expect(GH_WRAPPER).toContain('"miss-error"');
     expect(GH_WRAPPER).toContain("cacheResult");
     expect(GH_WRAPPER).toContain("cacheKey");
+  });
+
+  it("logs passthrough for pr/create and default case", () => {
+    // Both pr/create and the default *) case must log passthrough
+    const matches = GH_WRAPPER.match(/"passthrough"/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+    // pr/create section logs passthrough
+    const prCreateSection = GH_WRAPPER.split("pr/create)")[1];
+    expect(prCreateSection).toContain('"passthrough"');
+  });
+
+  it("logs miss-write-failed when cache write fails", () => {
+    expect(GH_WRAPPER).toContain('"miss-write-failed"');
+    // miss-stored is conditional on ao_cache_write succeeding
+    const prSection = GH_WRAPPER.split('$1" == "pr" && "$2" == "list"')[1].split("fi\nfi")[0];
+    expect(prSection).toContain("if ao_cache_write");
+  });
+
+  it("includes durationMs, exitCode, ok in cache outcome rows", () => {
+    // log_ao_cache signature includes duration, exit code, ok
+    expect(GH_WRAPPER).toContain("duration_ms");
+    expect(GH_WRAPPER).toContain("exit_code");
+    expect(GH_WRAPPER).toContain('"durationMs"');
+    expect(GH_WRAPPER).toContain('"exitCode"');
+    expect(GH_WRAPPER).toContain('"ok"');
+  });
+
+  it("captures timing around real gh calls", () => {
+    // All paths that call real gh should have start/duration measurement
+    expect(GH_WRAPPER).toContain("_ao_start_s=$(date +%s)");
+    expect(GH_WRAPPER).toContain("_ao_duration_ms=$(");
+  });
+
+  it("includes operation field in invocation trace row", () => {
+    expect(GH_WRAPPER).toContain("_ao_op=");
+    expect(GH_WRAPPER).toContain("operation");
+    // operation format: gh.{arg1}.{arg2}
+    expect(GH_WRAPPER).toContain('"gh.$1"');
+    expect(GH_WRAPPER).toContain('"gh.$1.$2"');
   });
 });

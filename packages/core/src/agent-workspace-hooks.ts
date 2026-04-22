@@ -34,7 +34,7 @@ function getAoBinDir(): string {
 }
 
 /** Current version of wrapper scripts — bump when scripts change */
-const WRAPPER_VERSION = "0.4.1";
+const WRAPPER_VERSION = "0.6.0";
 
 // =============================================================================
 // PATH Builder
@@ -259,9 +259,15 @@ log_gh_invocation() {
   local args_json
   args_json="\$(printf '%s\n' "\$@" | jq -Rsc 'split("\n")[:-1]')" || return 0
 
+  # Compute operation: gh.{arg1}.{arg2} (mirrors AO-side extractOperation)
+  local _ao_op="gh"
+  [[ \$# -ge 1 ]] && _ao_op="gh.\$1"
+  [[ \$# -ge 2 && "\$2" != -* ]] && _ao_op="gh.\$1.\$2"
+
   jq -nc \
     --arg timestamp "\$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
     --arg cwd "\$PWD" \
+    --arg operation "\$_ao_op" \
     --arg aoSession "\${AO_SESSION:-}" \
     --arg aoSessionName "\${AO_SESSION_NAME:-}" \
     --arg aoProjectId "\${AO_PROJECT_ID:-}" \
@@ -274,6 +280,7 @@ log_gh_invocation() {
       timestamp: $timestamp,
       cwd: $cwd,
       args: $args,
+      operation: $operation,
       aoSession: (if $aoSession == "" then null else $aoSession end),
       aoSessionName: (if $aoSessionName == "" then null else $aoSessionName end),
       aoProjectId: (if $aoProjectId == "" then null else $aoProjectId end),
@@ -287,13 +294,14 @@ log_gh_invocation() {
 log_gh_invocation "\$@"
 
 # Best-effort cache-outcome tracing (appends to same JSONL trace file).
-# result: hit | miss-stored | miss-negative | miss-error | passthrough
+# result: hit | miss-stored | miss-write-failed | miss-negative | miss-error | passthrough
 log_ao_cache() {
-  local result="\$1" cache_key="\$2"
+  local result="\$1" cache_key="\$2" duration_ms="\${3:-0}" exit_code="\${4:-0}" ok="\${5:-true}"
   local trace_file="\${AO_AGENT_GH_TRACE:-}"
   [[ -z "\$trace_file" ]] && return 0
-  printf '{"timestamp":"%s","cacheResult":"%s","cacheKey":"%s","pid":%s}\\n' \
+  printf '{"timestamp":"%s","cacheResult":"%s","cacheKey":"%s","pid":%s,"durationMs":%s,"exitCode":%s,"ok":%s}\\n' \
     "\$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "\$result" "\$cache_key" "\$\$" \
+    "\$duration_ms" "\$exit_code" "\$ok" \
     >> "\$trace_file" 2>/dev/null || true
 }
 
@@ -304,15 +312,22 @@ log_ao_cache() {
 # ── 1. PR discovery: gh pr list --head <B> --limit 1 ────────────────────────
 # Infinite TTL for positive results (non-empty array). Never caches [].
 if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
-  _ao_head="" _ao_limit="" _ao_cacheable=true
+  _ao_head="" _ao_limit="" _ao_json="" _ao_cacheable=true
   _ao_saved_args=("\$@")
   shift 2
   while [[ \$# -gt 0 ]]; do
     case "\$1" in
       --head)     _ao_head="\$2"; shift 2 ;;
+      --head=*)   _ao_head="\${1#--head=}"; shift ;;
       --limit)    _ao_limit="\$2"; shift 2 ;;
-      --repo|--json) shift 2 ;;  # consumed but not needed for cache key
+      --limit=*)  _ao_limit="\${1#--limit=}"; shift ;;
+      --json)     _ao_json="\$2"; shift 2 ;;
+      --json=*)   _ao_json="\${1#--json=}"; shift ;;
+      --repo)     shift 2 ;;
+      --repo=*)   shift ;;
       --search|--state|--assignee|--label|--jq|--template)
+        _ao_cacheable=false; break ;;
+      --search=*|--state=*|--assignee=*|--label=*|--jq=*|--template=*)
         _ao_cacheable=false; break ;;
       -*)         shift ;;  # skip unknown flags
       *)          shift ;;  # skip positional
@@ -323,31 +338,40 @@ if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
   if [[ "\$_ao_cacheable" == true && "\$_ao_limit" == "1" && -n "\$_ao_head" ]]; then
     _ao_safe_branch=\$(printf '%s' "\$_ao_head" | tr -c 'a-zA-Z0-9._-' '-')
     _ao_cache_key="pr-discovery-\${_ao_safe_branch}"
+    if [[ -n "\$_ao_json" ]]; then
+      _ao_safe_json=\$(printf '%s' "\$_ao_json" | tr -c 'a-zA-Z0-9._,-' '-')
+      _ao_cache_key="\${_ao_cache_key}-j-\${_ao_safe_json}"
+    fi
 
     if ao_cache_fresh "\$_ao_cache_key" 0 2>/dev/null; then
-      log_ao_cache "hit" "\$_ao_cache_key"
+      log_ao_cache "hit" "\$_ao_cache_key" 0 0 true
       ao_cache_read "\$_ao_cache_key"
       exit 0
     fi
 
-    # Cache miss — call real gh, cache positive results
+    # Cache miss — call real gh, cache positive results (stderr passes through)
     _ao_tmpout="\$(mktemp)"
     trap 'rm -f "\$_ao_tmpout"' EXIT
-    "\$real_gh" "\$@" > "\$_ao_tmpout" 2>&1
+    _ao_start_s=\$(date +%s)
+    "\$real_gh" "\$@" > "\$_ao_tmpout"
     _ao_exit=\$?
+    _ao_duration_ms=\$(( (\$(date +%s) - _ao_start_s) * 1000 ))
+    _ao_ok=true; [[ \$_ao_exit -ne 0 ]] && _ao_ok=false
     cat "\$_ao_tmpout"
     if [[ \$_ao_exit -eq 0 ]]; then
-      _ao_out=\$(cat "\$_ao_tmpout")
-      _ao_trimmed=\$(printf '%s' "\$_ao_out" | tr -d '[:space:]')
+      _ao_trimmed=\$(tr -d '[:space:]' < "\$_ao_tmpout")
       # Only cache non-empty positive results
       if [[ -n "\$_ao_trimmed" && "\$_ao_trimmed" != "[]" ]]; then
-        printf '%s' "\$_ao_out" | ao_cache_write "\$_ao_cache_key" 2>/dev/null || true
-        log_ao_cache "miss-stored" "\$_ao_cache_key"
+        if ao_cache_write "\$_ao_cache_key" < "\$_ao_tmpout" 2>/dev/null; then
+          log_ao_cache "miss-stored" "\$_ao_cache_key" "\$_ao_duration_ms" "\$_ao_exit" "\$_ao_ok"
+        else
+          log_ao_cache "miss-write-failed" "\$_ao_cache_key" "\$_ao_duration_ms" "\$_ao_exit" "\$_ao_ok"
+        fi
       else
-        log_ao_cache "miss-negative" "\$_ao_cache_key"
+        log_ao_cache "miss-negative" "\$_ao_cache_key" "\$_ao_duration_ms" "\$_ao_exit" "\$_ao_ok"
       fi
     else
-      log_ao_cache "miss-error" "\$_ao_cache_key"
+      log_ao_cache "miss-error" "\$_ao_cache_key" "\$_ao_duration_ms" "\$_ao_exit" "\$_ao_ok"
     fi
     exit \$_ao_exit
   fi
@@ -356,7 +380,7 @@ fi
 # ── 2. Issue context: gh issue view <N> ─────────────────────────────────────
 # 300-second TTL. Caches any successful response.
 if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
-  _ao_issue_id="" _ao_cacheable=true
+  _ao_issue_id="" _ao_json="" _ao_cacheable=true
   _ao_saved_args=("\$@")
   shift 2
   # First non-flag arg is the issue identifier
@@ -364,8 +388,13 @@ if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
     case "\$1" in
       --web|--comments|--jq|--template)
         _ao_cacheable=false; break ;;
-      --repo|--json) shift 2 ;;
-      -*)           shift ;;
+      --jq=*|--template=*)
+        _ao_cacheable=false; break ;;
+      --json)     _ao_json="\$2"; shift 2 ;;
+      --json=*)   _ao_json="\${1#--json=}"; shift ;;
+      --repo)     shift 2 ;;
+      --repo=*)   shift ;;
+      -*)         shift ;;
       *)
         if [[ -z "\$_ao_issue_id" && "\$1" =~ ^[0-9]+$ ]]; then
           _ao_issue_id="\$1"
@@ -377,23 +406,33 @@ if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
 
   if [[ "\$_ao_cacheable" == true && -n "\$_ao_issue_id" ]]; then
     _ao_cache_key="issue-ctx-\${_ao_issue_id}"
+    if [[ -n "\$_ao_json" ]]; then
+      _ao_safe_json=\$(printf '%s' "\$_ao_json" | tr -c 'a-zA-Z0-9._,-' '-')
+      _ao_cache_key="\${_ao_cache_key}-j-\${_ao_safe_json}"
+    fi
 
     if ao_cache_fresh "\$_ao_cache_key" 300 2>/dev/null; then
-      log_ao_cache "hit" "\$_ao_cache_key"
+      log_ao_cache "hit" "\$_ao_cache_key" 0 0 true
       ao_cache_read "\$_ao_cache_key"
       exit 0
     fi
 
     _ao_tmpout="\$(mktemp)"
     trap 'rm -f "\$_ao_tmpout"' EXIT
-    "\$real_gh" "\$@" > "\$_ao_tmpout" 2>&1
+    _ao_start_s=\$(date +%s)
+    "\$real_gh" "\$@" > "\$_ao_tmpout"
     _ao_exit=\$?
+    _ao_duration_ms=\$(( (\$(date +%s) - _ao_start_s) * 1000 ))
+    _ao_ok=true; [[ \$_ao_exit -ne 0 ]] && _ao_ok=false
     cat "\$_ao_tmpout"
     if [[ \$_ao_exit -eq 0 ]]; then
-      cat "\$_ao_tmpout" | ao_cache_write "\$_ao_cache_key" 2>/dev/null || true
-      log_ao_cache "miss-stored" "\$_ao_cache_key"
+      if ao_cache_write "\$_ao_cache_key" < "\$_ao_tmpout" 2>/dev/null; then
+        log_ao_cache "miss-stored" "\$_ao_cache_key" "\$_ao_duration_ms" "\$_ao_exit" "\$_ao_ok"
+      else
+        log_ao_cache "miss-write-failed" "\$_ao_cache_key" "\$_ao_duration_ms" "\$_ao_exit" "\$_ao_ok"
+      fi
     else
-      log_ao_cache "miss-error" "\$_ao_cache_key"
+      log_ao_cache "miss-error" "\$_ao_cache_key" "\$_ao_duration_ms" "\$_ao_exit" "\$_ao_ok"
     fi
     exit \$_ao_exit
   fi
@@ -408,8 +447,11 @@ case "\$1/\$2" in
     tmpout="\$(mktemp)"
     trap 'rm -f "\$tmpout"' EXIT
 
+    _ao_start_s=\$(date +%s)
     "\$real_gh" "\$@" 2>&1 | tee "\$tmpout"
     exit_code=\${PIPESTATUS[0]}
+    _ao_duration_ms=\$(( (\$(date +%s) - _ao_start_s) * 1000 ))
+    _ao_ok=true; [[ \$exit_code -ne 0 ]] && _ao_ok=false
 
     if [[ \$exit_code -eq 0 ]]; then
       output="\$(cat "\$tmpout")"
@@ -434,26 +476,19 @@ case "\$1/\$2" in
       update_ao_metadata agentReportedState "\$report_state"
       update_ao_metadata agentReportedAt "\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       update_ao_metadata agentReportedPrIsDraft "\$report_draft"
-
-      # Populate PR discovery cache so subsequent gh pr list --head hits cache
-      _branch="\$(read_ao_metadata branch 2>/dev/null)" || true
-      if [[ -n "\$_branch" && -n "\$pr_url" && -n "\$pr_number" ]]; then
-        _safe_branch=\$(printf '%s' "\$_branch" | tr -c 'a-zA-Z0-9._-' '-')
-        _cache_key="pr-discovery-\${_safe_branch}"
-        _cache_dir="\$(ao_cache_dir 2>/dev/null)" || true
-        if [[ -n "\$_cache_dir" ]]; then
-          _draft_val="\${report_draft:-false}"
-          printf '[{"number":%s,"url":"%s","headRefName":"%s","isDraft":%s}]\\n' \
-            "\$pr_number" "\$pr_url" "\$_branch" "\$_draft_val" \
-            | ao_cache_write "\$_cache_key" 2>/dev/null || true
-        fi
-      fi
     fi
 
+    log_ao_cache "passthrough" "" "\$_ao_duration_ms" "\$exit_code" "\$_ao_ok"
     exit \$exit_code
     ;;
   *)
-    exec "\$real_gh" "\$@"
+    _ao_start_s=\$(date +%s)
+    "\$real_gh" "\$@"
+    _ao_exit=\$?
+    _ao_duration_ms=\$(( (\$(date +%s) - _ao_start_s) * 1000 ))
+    _ao_ok=true; [[ \$_ao_exit -ne 0 ]] && _ao_ok=false
+    log_ao_cache "passthrough" "" "\$_ao_duration_ms" "\$_ao_exit" "\$_ao_ok"
+    exit \$_ao_exit
     ;;
 esac
 `;
