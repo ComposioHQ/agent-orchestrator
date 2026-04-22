@@ -1857,7 +1857,7 @@ describe("setupWorkspaceHooks", () => {
     // Second call for AGENTS.md — file doesn't exist
     mockReadFile.mockImplementation((path: string) => {
       if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.3.0");
+        return Promise.resolve("0.4.0");
       }
       // AGENTS.md read attempt
       return Promise.reject(new Error("ENOENT"));
@@ -1893,7 +1893,7 @@ describe("setupWorkspaceHooks", () => {
         typeof call[0] === "string" && call[0].includes(".ao-version.tmp."),
     );
     expect(versionWriteCall).toBeDefined();
-    expect(versionWriteCall![1]).toBe("0.3.0");
+    expect(versionWriteCall![1]).toBe("0.4.0");
 
     const versionRenameCall = mockRename.mock.calls.find(
       (call: string[]) => typeof call[1] === "string" && call[1].endsWith(".ao-version"),
@@ -1905,7 +1905,7 @@ describe("setupWorkspaceHooks", () => {
     // Version marker matches (skip wrapper install)
     mockReadFile.mockImplementation((path: string) => {
       if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.3.0");
+        return Promise.resolve("0.4.0");
       }
       return Promise.reject(new Error("ENOENT"));
     });
@@ -1951,7 +1951,7 @@ describe("setupWorkspaceHooks", () => {
   it("writes .ao/AGENTS.md without modifying repo-tracked AGENTS.md", async () => {
     mockReadFile.mockImplementation((path: string) => {
       if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.3.0");
+        return Promise.resolve("0.4.0");
       }
       return Promise.reject(new Error("ENOENT"));
     });

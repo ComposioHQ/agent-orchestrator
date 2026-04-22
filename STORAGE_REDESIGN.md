@@ -33,15 +33,15 @@ Problems: 4 hash methods, ~8000 dirs (~5850 empty), worktrees sometimes at ~/.wo
       sessions/
         ao-84.json                      # worker session metadata
         ao-85.json
-      archive/
-        ao-83_20260420T143052Z.json    # archived worker sessions
+        archive/
+          ao-83_20260420T143052Z.json  # archived worker sessions
       worktrees/
         ao-84/                          # git worktree (code checkout)
         ao-85/
     my-saas-app/
       orchestrator.json
       sessions/
-      archive/
+        archive/
       worktrees/
 ```
 
@@ -52,9 +52,9 @@ Problems: 4 hash methods, ~8000 dirs (~5850 empty), worktrees sometimes at ~/.wo
 3. **Single orchestrator file** — `orchestrator.json` at the project root. One per project, always. No numbered IDs. Runs from the project directory itself (no worktree).
 4. **`sessions/` is workers only** — no orchestrator sessions mixed in.
 5. **Worktrees colocated** — no more `~/.worktrees/` split. Workers only — orchestrator doesn't get one.
-6. **`archive/` promoted** — sibling to `sessions/`, not nested inside it. Workers only.
+6. **`archive/` inside `sessions/`** — `sessions/archive/` keeps archives colocated with active session metadata. Workers only.
 7. **JSON format** — metadata files are `.json`. No more key=value with stringified JSON payloads inside.
-8. **No `status` field** — status is computed on read from the lifecycle object. Single source of truth.
+8. **`status` derived from lifecycle** — status is still persisted for now (100+ call sites), but `readMetadata` derives it from lifecycle when absent. Full computed-only deferred to a follow-up PR.
 9. **Relative worktree paths** — stored relative to project dir, not absolute.
 
 ### Global files
@@ -88,19 +88,19 @@ Currently every session file stores both:
 
 These are kept in sync by `deriveLegacyStatus()`, but two sources of truth is fragile and has caused bugs.
 
-**Post-migration rule:** `status` is never stored on disk. It's computed on read:
+**Post-migration rule (target):** `status` should be computed on read from `lifecycle`, not stored. The current implementation still persists `status` on every write (100+ call sites to update), but `readMetadata` derives it from lifecycle when absent — so migrated files that had `status` stripped will still work correctly:
 
 ```typescript
 function readSessionMetadata(path: string): SessionMetadata {
   const json = JSON.parse(readFileSync(path, "utf-8"));
   return {
     ...json,
-    status: deriveLegacyStatus(json.lifecycle),  // computed, not stored
+    status: json.status ?? deriveLegacyStatus(json.lifecycle),  // fallback to lifecycle
   };
 }
 ```
 
-The in-memory `SessionMetadata` type keeps the `status` field for backward compatibility — dashboard, CLI, and lifecycle manager can read it as before. But it's derived from `lifecycle`, never persisted.
+Making status fully computed-only (removing persistence) is deferred to a follow-up PR.
 
 ### Config changes
 

@@ -192,7 +192,7 @@ export function readMetadataRaw(
 /** Unflatten a Record<string, string> to proper types for JSON storage. */
 function unflattenFromStringRecord(data: Record<string, string>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  const jsonFields = new Set(["runtimeHandle", "lifecycle", "statePayload", "dashboard"]);
+  const jsonFields = new Set(["runtimeHandle", "lifecycle", "statePayload", "dashboard", "agentReport", "reportWatcher"]);
   const numberFields = new Set(["dashboardPort", "terminalWsPort", "directTerminalWsPort"]);
   const booleanFields = new Set(["prAutoDetect"]);
 

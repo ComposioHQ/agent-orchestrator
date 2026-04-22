@@ -533,7 +533,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       updates["pr"] = "";
     }
     if (repaired.raw["prAutoDetect"] !== "off" && repaired.raw["prAutoDetect"] !== "false") {
-      updates["prAutoDetect"] = "off";
+      updates["prAutoDetect"] = "false";
     }
     if (STALE_PR_OWNERSHIP_STATUSES.has(repaired.raw["status"] ?? "")) {
       updates["status"] = "working";
@@ -636,7 +636,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       for (const record of staleRecords) {
         const updates: Partial<Record<string, string>> = {
           pr: "",
-          prAutoDetect: "off",
+          prAutoDetect: "false",
           ...(PR_TRACKING_STATUSES.has(record.raw["status"] ?? "") ? { status: "working" } : {}),
         };
         const lifecycle = buildUpdatedLifecycle(record.sessionName, record.raw, (next) => {
@@ -2552,7 +2552,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       });
       updateMetadata(sessionsDir, previousSessionId, {
         pr: "",
-        prAutoDetect: "off",
+        prAutoDetect: "false",
         ...(PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "")
           ? { status: "working" }
           : {}),

@@ -227,7 +227,7 @@ describe("convertKeyValueToJson", () => {
     });
   });
 
-  it("groups detecting fields into lifecycle.detecting", () => {
+  it("keeps detecting fields at top level (matching runtime behavior)", () => {
     const lifecycle = {
       version: 2,
       session: { kind: "worker", state: "working" },
@@ -241,13 +241,15 @@ describe("convertKeyValueToJson", () => {
     ].join("\n");
 
     const result = convertKeyValueToJson(kv);
+    // Detecting fields stay at top level — the lifecycle manager reads them from
+    // session.metadata["detectingAttempts"] etc., not from lifecycle.detecting
+    expect(result["lifecycleEvidence"]).toBe("review_pending");
+    expect(result["detectingAttempts"]).toBe("3");
+    expect(result["detectingStartedAt"]).toBe("2026-04-21T12:00:00.000Z");
+    expect(result["detectingEvidenceHash"]).toBe("abc123");
+    // lifecycle object should NOT contain a detecting sub-object
     const resultLifecycle = result["lifecycle"] as Record<string, unknown>;
-    expect(resultLifecycle["detecting"]).toEqual({
-      evidence: "review_pending",
-      attempts: 3,
-      startedAt: "2026-04-21T12:00:00.000Z",
-      evidenceHash: "abc123",
-    });
+    expect(resultLifecycle).not.toHaveProperty("detecting");
   });
 
   it("parses runtimeHandle JSON string", () => {

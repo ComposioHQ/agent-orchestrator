@@ -369,19 +369,13 @@ export function convertKeyValueToJson(kvContent: string): Record<string, unknown
   }
   if (Object.keys(reportWatcher).length > 0) result["reportWatcher"] = reportWatcher;
 
-  // detecting fields → lifecycle.detecting
-  if (result["lifecycle"] && typeof result["lifecycle"] === "object") {
-    const lifecycle = result["lifecycle"] as Record<string, unknown>;
-    const detecting: Record<string, unknown> = {};
-    if (kv["lifecycleEvidence"]) detecting["evidence"] = kv["lifecycleEvidence"];
-    if (kv["detectingAttempts"]) {
-      const num = Number(kv["detectingAttempts"]);
-      detecting["attempts"] = Number.isFinite(num) ? num : 0;
-    }
-    if (kv["detectingStartedAt"]) detecting["startedAt"] = kv["detectingStartedAt"];
-    if (kv["detectingEvidenceHash"]) detecting["evidenceHash"] = kv["detectingEvidenceHash"];
-    if (Object.keys(detecting).length > 0) lifecycle["detecting"] = detecting;
-  }
+  // detecting fields — keep at top level to match runtime behavior.
+  // The lifecycle manager reads/writes these as flat top-level fields
+  // (session.metadata["detectingAttempts"], etc.), not from lifecycle.detecting.
+  if (kv["lifecycleEvidence"]) result["lifecycleEvidence"] = kv["lifecycleEvidence"];
+  if (kv["detectingAttempts"]) result["detectingAttempts"] = kv["detectingAttempts"];
+  if (kv["detectingStartedAt"]) result["detectingStartedAt"] = kv["detectingStartedAt"];
+  if (kv["detectingEvidenceHash"]) result["detectingEvidenceHash"] = kv["detectingEvidenceHash"];
 
   // Preserve unknown fields that weren't handled above.
   // This prevents data loss for custom or future metadata fields.
