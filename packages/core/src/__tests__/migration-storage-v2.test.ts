@@ -132,6 +132,15 @@ describe("inventoryHashDirs", () => {
     expect(dirs).toHaveLength(1);
     expect(dirs[0].projectId).toBe("myproject");
   });
+
+  it("skips .migrated directories (prevents .migrated.migrated on re-run)", () => {
+    // Simulate post-migration state: original renamed to .migrated
+    mkdirSync(join(testDir, "aaaaaa000000-myproject.migrated", "sessions"), { recursive: true });
+    writeFileSync(join(testDir, "aaaaaa000000-myproject.migrated", "sessions", "ao-1"), "status=working\n");
+
+    const dirs = inventoryHashDirs(testDir);
+    expect(dirs).toHaveLength(0);
+  });
 });
 
 describe("detectActiveSessions", () => {
@@ -676,6 +685,41 @@ describe("migrateStorage", () => {
     // Observability dir must NOT be touched
     expect(existsSync(obsDir)).toBe(true);
     expect(readFileSync(join(obsDir, "metrics.log"), "utf-8")).toBe("some observability data");
+  });
+
+  it("is idempotent — re-running migration skips .migrated dirs", async () => {
+    // First migration
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\nstatus=working\ncreatedAt=2026-04-21T12:00:00.000Z",
+    );
+
+    await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: () => {},
+    });
+
+    // After first migration: .migrated exists, projects/ exists
+    expect(existsSync(`${hashDir}.migrated`)).toBe(true);
+
+    // Second migration — should be a no-op
+    const logs: string[] = [];
+    const result = await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: (msg) => logs.push(msg),
+    });
+
+    expect(result.projects).toBe(0);
+    expect(result.sessions).toBe(0);
+    // Must NOT create .migrated.migrated
+    expect(existsSync(`${hashDir}.migrated.migrated`)).toBe(false);
+    expect(existsSync(`${hashDir}.migrated`)).toBe(true);
   });
 });
 

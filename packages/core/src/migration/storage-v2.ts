@@ -109,6 +109,9 @@ export function inventoryHashDirs(aoBaseDir: string, globalConfigPath?: string):
     let hash: string;
     let projectId: string;
 
+    // Skip already-migrated directories — prevents .migrated.migrated on re-run
+    if (name.endsWith(".migrated")) continue;
+
     const hashNameMatch = HASH_DIR_PATTERN.exec(name);
     const bareHashMatch = BARE_HASH_DIR_PATTERN.exec(name);
 
