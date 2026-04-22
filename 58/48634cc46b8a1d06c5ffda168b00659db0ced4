@@ -1,0 +1,25 @@
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  438ab6ea81c6b91b 1731-1751
+packages/core/src/session-manager.ts
+  438ab6ea81c6b91b 1728-1749,1768,1772
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "5848634cc46b8a1d06c5ffda168b00659db0ced4",
+  "prompts": {
+    "438ab6ea81c6b91b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db593-ee97-77e1-a749-e4a9a9837ec6",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 45,
+      "total_deletions": 6,
+      "accepted_lines": 45,
+      "overriden_lines": 0
+    }
+  }
+}
