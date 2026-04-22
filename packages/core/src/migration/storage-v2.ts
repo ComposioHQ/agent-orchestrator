@@ -64,6 +64,8 @@ export interface MigrationOptions {
 }
 
 export interface RollbackOptions {
+  /** Dry run — report what would be done without making changes. */
+  dryRun?: boolean;
   /** Override the base AO directory (for testing). */
   aoBaseDir?: string;
   /** Override the global config path (for testing). */
@@ -840,6 +842,7 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
 
 export async function rollbackStorage(options: RollbackOptions = {}): Promise<void> {
   const aoBaseDir = options.aoBaseDir ?? join(homedir(), ".agent-orchestrator");
+  const dryRun = options.dryRun ?? false;
   const log = options.log ?? console.log;
   const globalConfigPath = options.globalConfigPath ??
     join(process.env["XDG_CONFIG_HOME"] ?? join(homedir(), ".config"), "agent-orchestrator", "config.yaml");
@@ -849,6 +852,10 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
     : existsSync(join(aoBaseDir, "config.yaml"))
       ? join(aoBaseDir, "config.yaml")
       : globalConfigPath;
+
+  if (dryRun) {
+    log("DRY RUN — no changes will be made.\n");
+  }
 
   if (!existsSync(aoBaseDir)) {
     log("No AO base directory found. Nothing to rollback.");
@@ -895,7 +902,9 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
   for (const dir of migratedDirs) {
     const originalPath = dir.path.replace(/\.migrated$/, "");
     log(`  Restoring: ${basename(dir.path)} → ${basename(originalPath)}`);
-    renameSync(dir.path, originalPath);
+    if (!dryRun) {
+      renameSync(dir.path, originalPath);
+    }
   }
 
   // Remove only the project subdirectories that correspond to .migrated dirs.
@@ -908,26 +917,27 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
       const projectDir = join(projectsDir, projectId);
       if (existsSync(projectDir)) {
         log(`  Removing migrated project directory: projects/${projectId}`);
-        rmSync(projectDir, { recursive: true, force: true });
+        if (!dryRun) {
+          rmSync(projectDir, { recursive: true, force: true });
+        }
       }
     }
     // Remove projects/ only if it's now empty
-    try {
-      const remaining = readdirSync(projectsDir);
-      if (remaining.length === 0) {
-        rmSync(projectsDir, { recursive: true, force: true });
-      } else {
-        log(`  Note: projects/ retained — contains ${remaining.length} non-migrated project(s).`);
+    if (!dryRun) {
+      try {
+        const remaining = readdirSync(projectsDir);
+        if (remaining.length === 0) {
+          rmSync(projectsDir, { recursive: true, force: true });
+        } else {
+          log(`  Note: projects/ retained — contains ${remaining.length} non-migrated project(s).`);
+        }
+      } catch {
+        // Ignore
       }
-    } catch {
-      // Ignore
     }
   }
 
   // Re-add storageKey to config.
-  // Use the original directory name as storageKey — this ensures
-  // getProjectBaseDir(storageKey) finds the restored directory directly,
-  // regardless of whether the config used bare hash or {hash}-{projectName}.
   if (existsSync(effectiveConfigPath)) {
     const content = readFileSync(effectiveConfigPath, "utf-8");
     const parsed = parseYaml(content) as Record<string, unknown>;
@@ -938,7 +948,6 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
         for (const dir of migratedDirs) {
           const entry = projects[dir.projectId];
           if (entry && typeof entry === "object") {
-            // storageKey = original directory name (e.g. "abcdef012345-myproject" or "abcdef012345")
             const originalDirName = basename(dir.path).replace(/\.migrated$/, "");
             entry["storageKey"] = originalDirName;
             restored++;
@@ -946,7 +955,9 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
         }
         if (restored > 0) {
           log(`  Restored storageKey for ${restored} project(s) in config.`);
-          writeFileSync(effectiveConfigPath, stringifyYaml(parsed, { indent: 2 }));
+          if (!dryRun) {
+            writeFileSync(effectiveConfigPath, stringifyYaml(parsed, { indent: 2 }));
+          }
         }
       }
     }

@@ -809,4 +809,155 @@ describe("rollbackStorage", () => {
 
     expect(logs.some((l) => l.includes("Nothing to rollback"))).toBe(true);
   });
+
+  it("dry run reports actions without modifying files", async () => {
+    mkdirSync(join(aoBaseDir, "aaaaaa000000-myproject.migrated", "sessions"), { recursive: true });
+    writeFileSync(
+      join(aoBaseDir, "aaaaaa000000-myproject.migrated", "sessions", "ao-1"),
+      "project=myproject",
+    );
+    mkdirSync(join(aoBaseDir, "projects", "myproject", "sessions"), { recursive: true });
+    writeFileSync(
+      join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"),
+      '{"project":"myproject"}',
+    );
+
+    const logs: string[] = [];
+    await rollbackStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      dryRun: true,
+      log: (msg) => logs.push(msg),
+    });
+
+    expect(logs.some((l) => l.includes("DRY RUN"))).toBe(true);
+    // .migrated dir should still exist (not renamed)
+    expect(existsSync(join(aoBaseDir, "aaaaaa000000-myproject.migrated"))).toBe(true);
+    // migrated project dir should still exist (not deleted)
+    expect(existsSync(join(aoBaseDir, "projects", "myproject"))).toBe(true);
+  });
+});
+
+describe("migration edge cases", () => {
+  let testDir: string;
+  let aoBaseDir: string;
+  let configPath: string;
+
+  beforeEach(() => {
+    testDir = createTempDir();
+    aoBaseDir = join(testDir, ".agent-orchestrator");
+    mkdirSync(aoBaseDir, { recursive: true });
+    configPath = join(testDir, "config.yaml");
+    writeFileSync(configPath, "projects: {}\n");
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it("blocks migration when active sessions detected (or proceeds when none)", async () => {
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+    writeFileSync(join(hashDir, "sessions", "ao-1"), "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1");
+
+    try {
+      const result = await migrateStorage({
+        aoBaseDir,
+        globalConfigPath: configPath,
+        // force: false is default
+        log: () => {},
+      });
+      // No active sessions (CI) → migration proceeds
+      expect(result.sessions).toBe(1);
+    } catch (err) {
+      // Active sessions detected → throws with actionable message
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("active AO tmux session");
+      expect((err as Error).message).toContain("--force");
+    }
+  });
+
+  it("migrates worktree directories to new layout", async () => {
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+    mkdirSync(join(hashDir, "worktrees", "ao-1"), { recursive: true });
+    writeFileSync(join(hashDir, "worktrees", "ao-1", "file.txt"), "test");
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+    );
+
+    const result = await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: () => {},
+    });
+
+    expect(result.worktrees).toBe(1);
+    // Worktree should be moved to new location
+    const newWorktree = join(aoBaseDir, "projects", "myproject", "worktrees", "ao-1");
+    expect(existsSync(newWorktree)).toBe(true);
+    expect(readFileSync(join(newWorktree, "file.txt"), "utf-8")).toBe("test");
+  });
+
+  it("preserves status for pre-lifecycle sessions during migration", async () => {
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\nstatus=working\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+    );
+
+    await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: () => {},
+    });
+
+    // Pre-lifecycle session should retain status in migrated JSON
+    const session = JSON.parse(
+      readFileSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"), "utf-8"),
+    );
+    expect(session.status).toBe("working");
+    expect(session).not.toHaveProperty("lifecycle");
+
+    // readMetadata should use the stored status
+    const sessionsDir = join(aoBaseDir, "projects", "myproject", "sessions");
+    const meta = readMetadata(sessionsDir, "ao-1");
+    expect(meta!.status).toBe("working");
+  });
+
+  it("archive filenames are unique even for same-millisecond duplicates", async () => {
+    const hash1 = join(aoBaseDir, "aaaaaaaaaaaa-myproject");
+    const hash2 = join(aoBaseDir, "bbbbbbbbbbbb-myproject");
+    mkdirSync(join(hash1, "sessions"), { recursive: true });
+    mkdirSync(join(hash2, "sessions"), { recursive: true });
+
+    // Same session ID in both hash dirs
+    writeFileSync(
+      join(hash1, "sessions", "ao-1"),
+      "project=myproject\ncreatedAt=2026-04-21T10:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+    );
+    writeFileSync(
+      join(hash2, "sessions", "ao-1"),
+      "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+    );
+
+    await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: () => {},
+    });
+
+    // One session in sessions/, one archived
+    const archiveDir = join(aoBaseDir, "projects", "myproject", "sessions", "archive");
+    expect(existsSync(archiveDir)).toBe(true);
+    const archives = readdirSync(archiveDir).filter((f) => f.startsWith("ao-1_"));
+    expect(archives).toHaveLength(1);
+    // Archive filename should include counter suffix
+    expect(archives[0]).toMatch(/-\d+\.json$/);
+  });
 });

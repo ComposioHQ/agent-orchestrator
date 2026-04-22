@@ -7,8 +7,8 @@
  * - Archives: ~/.agent-orchestrator/projects/{projectId}/archive/{sessionId}_{timestamp}.json
  *
  * Format: JSON (2-space indented), one object per file.
- * Status is derived from lifecycle when absent, but still persisted on write.
- * Making status fully computed-only is deferred to a separate PR.
+ * Status is always computed on read from lifecycle (never persisted).
+ * Pre-lifecycle sessions retain a stored status field from migration.
  */
 
 import {
@@ -134,10 +134,10 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
   if (!content) return null; // empty file (e.g. from reserveSessionId)
   const raw = parseMetadataContent(content);
 
-  // Derive status: stored value → lifecycle-derived → fallback
+  // Derive status: lifecycle-derived (single source of truth) → stored fallback
   const lifecycle = parseLifecycleField(raw);
   const storedStatus = raw["status"] as string | undefined;
-  const status = storedStatus ?? (lifecycle ? deriveLegacyStatus(lifecycle) : "unknown");
+  const status = lifecycle ? deriveLegacyStatus(lifecycle) : (storedStatus ?? "unknown");
 
   return {
     worktree: (raw["worktree"] as string) ?? "",
@@ -177,8 +177,8 @@ export function readMetadataRaw(
   const content = readFileSync(path, "utf-8").trim();
   if (!content) return null; // empty file (e.g. from reserveSessionId)
   const raw = parseMetadataContent(content);
-  // Derive status from lifecycle when not stored (post-migration JSON)
-  if (!raw["status"] && raw["lifecycle"]) {
+  // Lifecycle is the single source of truth for status — always override stored status
+  if (raw["lifecycle"]) {
     const lifecycle = parseLifecycleField(raw);
     if (lifecycle) {
       raw["status"] = deriveLegacyStatus(lifecycle);
@@ -192,7 +192,6 @@ export function readMetadataRaw(
 /** Unflatten a Record<string, string> to proper types for JSON storage. */
 function unflattenFromStringRecord(data: Record<string, string>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  const jsonFields = new Set(["runtimeHandle", "lifecycle", "statePayload", "dashboard", "agentReport", "reportWatcher"]);
   const numberFields = new Set(["dashboardPort", "terminalWsPort", "directTerminalWsPort"]);
   const booleanFields = new Set(["prAutoDetect"]);
 
@@ -200,15 +199,16 @@ function unflattenFromStringRecord(data: Record<string, string>): Record<string,
     if (value === undefined || value === "") continue;
     if (booleanFields.has(key)) {
       result[key] = value === "on" || value === "true" ? true : value === "off" || value === "false" ? false : value;
-    } else if (jsonFields.has(key)) {
+    } else if (numberFields.has(key)) {
+      const num = Number(value);
+      result[key] = Number.isFinite(num) ? num : value;
+    } else if (value.startsWith("{") || value.startsWith("[")) {
+      // Auto-detect JSON objects/arrays — no whitelist needed
       try {
         result[key] = JSON.parse(value);
       } catch {
         result[key] = value;
       }
-    } else if (numberFields.has(key)) {
-      const num = Number(value);
-      result[key] = Number.isFinite(num) ? num : value;
     } else {
       result[key] = value;
     }
@@ -332,12 +332,11 @@ export function writeCanonicalLifecycle(
   dataDir: string,
   sessionId: SessionId,
   lifecycle: CanonicalSessionLifecycle,
-  previousStatus?: SessionStatus,
 ): void {
   updateMetadata(
     dataDir,
     sessionId,
-    buildLifecycleMetadataPatch(cloneLifecycle(lifecycle), previousStatus),
+    buildLifecycleMetadataPatch(cloneLifecycle(lifecycle)),
   );
 }
 
@@ -345,7 +344,6 @@ export function updateCanonicalLifecycle(
   dataDir: string,
   sessionId: SessionId,
   updater: (current: CanonicalSessionLifecycle) => CanonicalSessionLifecycle,
-  previousStatus?: SessionStatus,
 ): CanonicalSessionLifecycle | null {
   const raw = readMetadataRaw(dataDir, sessionId);
   if (!raw) return null;
@@ -354,7 +352,7 @@ export function updateCanonicalLifecycle(
     status: validateStatus(raw["status"]),
   });
   const next = updater(cloneLifecycle(current));
-  writeCanonicalLifecycle(dataDir, sessionId, next, previousStatus);
+  writeCanonicalLifecycle(dataDir, sessionId, next);
   return next;
 }
 

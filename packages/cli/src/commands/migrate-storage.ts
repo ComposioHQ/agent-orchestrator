@@ -16,6 +16,7 @@ export function registerMigrateStorage(program: Command): void {
         try {
           if (opts.rollback) {
             await rollbackStorage({
+              dryRun: opts.dryRun,
               log: (msg) => console.log(msg),
             });
           } else {

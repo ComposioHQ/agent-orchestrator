@@ -35,17 +35,30 @@ describe("deriveLegacyStatus", () => {
 
     expect(deriveLegacyStatus(needsInput)).toBe("needs_input");
     expect(deriveLegacyStatus(stuck)).toBe("stuck");
-    expect(deriveLegacyStatus(terminated)).toBe("terminated");
+    expect(deriveLegacyStatus(terminated)).toBe("killed");
   });
 
-  it("preserves prior terminal legacy statuses for terminated sessions", () => {
-    const terminated = createOpenPRLifecycle();
-    terminated.session.state = "terminated";
-    terminated.session.reason = "manually_killed";
+  it("derives specific terminal statuses from lifecycle reason", () => {
+    const killed = createOpenPRLifecycle();
+    killed.session.state = "terminated";
+    killed.session.reason = "manually_killed";
 
-    expect(deriveLegacyStatus(terminated, "killed")).toBe("killed");
-    expect(deriveLegacyStatus(terminated, "cleanup")).toBe("cleanup");
-    expect(deriveLegacyStatus(terminated, "errored")).toBe("errored");
+    const cleanup = createOpenPRLifecycle();
+    cleanup.session.state = "terminated";
+    cleanup.session.reason = "auto_cleanup";
+
+    const errored = createOpenPRLifecycle();
+    errored.session.state = "terminated";
+    errored.session.reason = "error_in_process";
+
+    const merged = createOpenPRLifecycle();
+    merged.session.state = "terminated";
+    merged.session.reason = "pr_merged";
+
+    expect(deriveLegacyStatus(killed)).toBe("killed");
+    expect(deriveLegacyStatus(cleanup)).toBe("cleanup");
+    expect(deriveLegacyStatus(errored)).toBe("errored");
+    expect(deriveLegacyStatus(merged)).toBe("cleanup");
   });
 
   it("keeps PR-oriented aliases for idle workers with open PRs", () => {
@@ -76,7 +89,7 @@ describe("parseCanonicalLifecycle", () => {
     expect(parsed.pr.state).toBe("merged");
     expect(parsed.pr.reason).toBe("merged");
     expect(parsed.pr.number).toBe(42);
-    expect(deriveLegacyStatus(parsed, "merged")).toBe("merged");
+    expect(deriveLegacyStatus(parsed)).toBe("merged");
   });
 
   it("preserves terminal merged state on legacy metadata with no pr URL", () => {
@@ -92,7 +105,7 @@ describe("parseCanonicalLifecycle", () => {
     expect(parsed.pr.reason).toBe("merged");
     expect(parsed.pr.number).toBeNull();
     expect(parsed.pr.url).toBeNull();
-    expect(deriveLegacyStatus(parsed, "merged")).toBe("merged");
+    expect(deriveLegacyStatus(parsed)).toBe("merged");
   });
 
   it("preserves explicit null payload fields instead of rehydrating stale flat metadata", () => {

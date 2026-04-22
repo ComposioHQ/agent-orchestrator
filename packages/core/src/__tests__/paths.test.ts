@@ -1,16 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import {
+  compactTimestamp,
+  generateProjectId,
   generateSessionName,
   generateSessionPrefix,
   generateTmuxName,
   getArchiveDir,
+  getArchiveFilePath,
   getFeedbackReportsDir,
+  getOrchestratorPath,
   getOriginFilePath,
   getProjectBaseDir,
+  getProjectDir,
+  getProjectSessionsDir,
+  getProjectArchiveDir,
+  getProjectWorktreesDir,
+  getSessionPath,
   getSessionsDir,
   getWorktreesDir,
   parseTmuxName,
+  parseTmuxNameV2,
 } from "../paths.js";
 
 describe("paths", () => {
@@ -45,5 +55,86 @@ describe("paths", () => {
   it("keeps parseTmuxName strict about the 12-hex storage key", () => {
     expect(parseTmuxName("not-a-key-ao-1")).toBeNull();
     expect(parseTmuxName("abc-ao-1")).toBeNull();
+  });
+});
+
+describe("V2 paths", () => {
+  const home = process.env["HOME"] ?? "";
+  const aoBase = join(home, ".agent-orchestrator");
+
+  it("getProjectDir returns projects/{projectId}", () => {
+    expect(getProjectDir("my-app")).toBe(join(aoBase, "projects", "my-app"));
+  });
+
+  it("getProjectSessionsDir returns projects/{projectId}/sessions", () => {
+    expect(getProjectSessionsDir("my-app")).toBe(join(aoBase, "projects", "my-app", "sessions"));
+  });
+
+  it("getProjectArchiveDir returns projects/{projectId}/sessions/archive", () => {
+    expect(getProjectArchiveDir("my-app")).toBe(join(aoBase, "projects", "my-app", "sessions", "archive"));
+  });
+
+  it("getProjectWorktreesDir returns projects/{projectId}/worktrees", () => {
+    expect(getProjectWorktreesDir("my-app")).toBe(join(aoBase, "projects", "my-app", "worktrees"));
+  });
+
+  it("getOrchestratorPath returns projects/{projectId}/orchestrator.json", () => {
+    expect(getOrchestratorPath("my-app")).toBe(join(aoBase, "projects", "my-app", "orchestrator.json"));
+  });
+
+  it("getSessionPath returns projects/{projectId}/sessions/{sessionId}.json", () => {
+    expect(getSessionPath("my-app", "ao-7")).toBe(join(aoBase, "projects", "my-app", "sessions", "ao-7.json"));
+  });
+
+  it("getArchiveFilePath returns archive path with compact timestamp", () => {
+    const date = new Date("2026-04-20T14:30:52.123Z");
+    const path = getArchiveFilePath("my-app", "ao-7", date);
+    expect(path).toBe(join(aoBase, "projects", "my-app", "sessions", "archive", "ao-7_20260420T143052Z.json"));
+  });
+
+  it("assertSafeProjectId rejects unsafe project IDs", () => {
+    expect(() => getProjectDir("")).toThrow("Unsafe project ID");
+    expect(() => getProjectDir(".")).toThrow("Unsafe project ID");
+    expect(() => getProjectDir("..")).toThrow("Unsafe project ID");
+    expect(() => getProjectDir("foo/bar")).toThrow("Unsafe project ID");
+    expect(() => getProjectDir("foo\\bar")).toThrow("Unsafe project ID");
+    expect(() => getProjectDir("foo\0bar")).toThrow("Unsafe project ID");
+  });
+
+  it("accepts valid project IDs", () => {
+    expect(() => getProjectDir("my-app")).not.toThrow();
+    expect(() => getProjectDir("app_v2")).not.toThrow();
+    expect(() => getProjectDir("...")).not.toThrow();
+  });
+});
+
+describe("generateProjectId", () => {
+  it("uses basename of path", () => {
+    expect(generateProjectId("/home/user/repos/integrator")).toBe("integrator");
+    expect(generateProjectId("~/repos/agent-orchestrator")).toBe("agent-orchestrator");
+  });
+});
+
+describe("compactTimestamp", () => {
+  it("formats ISO timestamp without dashes, colons, and milliseconds", () => {
+    expect(compactTimestamp(new Date("2026-04-20T14:30:52.123Z"))).toBe("20260420T143052Z");
+  });
+
+  it("handles midnight correctly", () => {
+    expect(compactTimestamp(new Date("2026-01-01T00:00:00.000Z"))).toBe("20260101T000000Z");
+  });
+});
+
+describe("parseTmuxNameV2", () => {
+  it("parses V2 format {prefix}-{num}", () => {
+    expect(parseTmuxNameV2("ao-84")).toEqual({ prefix: "ao", num: 84 });
+    expect(parseTmuxNameV2("my_app-1")).toEqual({ prefix: "my_app", num: 1 });
+  });
+
+  it("returns null for invalid formats", () => {
+    expect(parseTmuxNameV2("")).toBeNull();
+    expect(parseTmuxNameV2("ao")).toBeNull();
+    expect(parseTmuxNameV2("123-5")).toBeNull();
+    expect(parseTmuxNameV2("-5")).toBeNull();
   });
 });

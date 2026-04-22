@@ -474,7 +474,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     raw: Record<string, string>,
     lifecycle: ReturnType<typeof parseCanonicalLifecycle>,
   ): Partial<Record<string, string>> {
-    return buildLifecycleMetadataPatch(lifecycle, validateStatus(raw["status"]));
+    return buildLifecycleMetadataPatch(lifecycle);
   }
 
   function updateMetadataPreservingMtime(
@@ -2528,7 +2528,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
     updateMetadata(sessionsDir, sessionId, {
       pr: pr.url,
-      status: deriveLegacyStatus(claimLifecycle, validateStatus(raw["status"])),
+      status: deriveLegacyStatus(claimLifecycle),
       branch: pr.branch,
       prAutoDetect: "",
       ...lifecycleMetadataUpdates(raw, claimLifecycle),

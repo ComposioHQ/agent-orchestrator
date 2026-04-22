@@ -435,7 +435,7 @@ export function applyAgentReport(
         status: validateStatus(existing["status"]),
       }),
     );
-    previousLegacyStatus = deriveLegacyStatus(current, validateStatus(raw["status"]));
+    previousLegacyStatus = deriveLegacyStatus(current);
     before = buildAuditSnapshot(current, previousLegacyStatus);
     const validation = validateAgentReportTransition(current, input.state);
     if (!validation.ok) {
@@ -485,11 +485,11 @@ export function applyAgentReport(
     if (mapped.sessionState === "working" && current.session.startedAt === null) {
       current.session.startedAt = now;
     }
-    legacyStatus = deriveLegacyStatus(current, previousLegacyStatus);
+    legacyStatus = deriveLegacyStatus(current);
     const next = { ...existing };
     Object.assign(
       next,
-      buildLifecycleMetadataPatch(current, previousLegacyStatus),
+      buildLifecycleMetadataPatch(current),
       {
         [AGENT_REPORT_METADATA_KEYS.STATE]: input.state,
         [AGENT_REPORT_METADATA_KEYS.AT]: now,

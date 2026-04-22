@@ -22,7 +22,6 @@ import type {
 import { cloneLifecycle, deriveLegacyStatus } from "./lifecycle-state.js";
 import { updateMetadata, readMetadataRaw, readCanonicalLifecycle } from "./metadata.js";
 import type { LifecycleDecision } from "./lifecycle-status-decisions.js";
-import { validateStatus } from "./utils/validation.js";
 
 /**
  * Source of the lifecycle transition — used for audit and observability.
@@ -115,11 +114,10 @@ export function applyDecisionToLifecycle(
 export function buildTransitionMetadataPatch(
   lifecycle: CanonicalSessionLifecycle,
   decision: LifecycleDecision,
-  previousStatus: SessionStatus,
 ): Record<string, string> {
   const patch: Record<string, string> = {
     lifecycle: JSON.stringify(lifecycle),
-    status: deriveLegacyStatus(lifecycle, previousStatus),
+    // status is NOT persisted — computed on read via deriveLegacyStatus()
   };
 
   // Include lifecycle evidence
@@ -204,16 +202,13 @@ export function applyLifecycleDecision(
   }
 
   const previousLifecycle = cloneLifecycle(currentLifecycle);
-  const previousStatus = deriveLegacyStatus(
-    previousLifecycle,
-    validateStatus(rawMeta["status"]),
-  );
+  const previousStatus = deriveLegacyStatus(previousLifecycle);
 
   // Apply the decision to the lifecycle
   const nextLifecycle = cloneLifecycle(currentLifecycle);
   applyDecisionToLifecycle(nextLifecycle, input.decision, nowIso);
 
-  const nextStatus = deriveLegacyStatus(nextLifecycle, previousStatus);
+  const nextStatus = deriveLegacyStatus(nextLifecycle);
   const statusChanged = nextStatus !== previousStatus;
 
   // Build metadata patch, starting with additional metadata (so lifecycle keys take precedence)
@@ -230,7 +225,6 @@ export function applyLifecycleDecision(
   const lifecyclePatch = buildTransitionMetadataPatch(
     nextLifecycle,
     input.decision,
-    previousStatus,
   );
   for (const [key, value] of Object.entries(lifecyclePatch)) {
     metadataPatch[key] = value;

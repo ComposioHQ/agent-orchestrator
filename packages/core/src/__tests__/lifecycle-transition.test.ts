@@ -157,7 +157,7 @@ describe("buildTransitionMetadataPatch", () => {
       sessionReason: "probe_failure",
     };
 
-    const patch = buildTransitionMetadataPatch(lifecycle, decision, "working");
+    const patch = buildTransitionMetadataPatch(lifecycle, decision);
 
     expect(patch["lifecycleEvidence"]).toBe("probe_failed");
     expect(patch["detectingAttempts"]).toBe("2");
@@ -175,7 +175,7 @@ describe("buildTransitionMetadataPatch", () => {
       sessionReason: "task_in_progress",
     };
 
-    const patch = buildTransitionMetadataPatch(lifecycle, decision, "detecting");
+    const patch = buildTransitionMetadataPatch(lifecycle, decision);
 
     expect(patch["detectingAttempts"]).toBe("");
     expect(patch["detectingStartedAt"]).toBe("");
@@ -190,7 +190,7 @@ describe("buildTransitionMetadataPatch", () => {
       detecting: { attempts: 0 },
     };
 
-    const patch = buildTransitionMetadataPatch(lifecycle, decision, "working");
+    const patch = buildTransitionMetadataPatch(lifecycle, decision);
 
     expect(patch["lifecycle"]).toBeDefined();
     expect(JSON.parse(patch["lifecycle"])).toHaveProperty("version", 2);
@@ -206,7 +206,7 @@ describe("buildTransitionMetadataPatch", () => {
       sessionReason: "task_in_progress",
     };
 
-    const patch = buildTransitionMetadataPatch(lifecycle, decision, "working");
+    const patch = buildTransitionMetadataPatch(lifecycle, decision);
 
     expect(patch["pr"]).toBe("");
     expect(patch["runtimeHandle"]).toBe("");

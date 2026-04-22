@@ -58,7 +58,7 @@ export function sessionFromMetadata(
     createdAt: options.createdAt,
     sessionKind: options.sessionKind,
   });
-  const status = options.status ?? deriveLegacyStatus(lifecycle, validateStatus(meta["status"]));
+  const status = options.status ?? deriveLegacyStatus(lifecycle);
   const prUrl = lifecycle.pr.url ?? meta["pr"];
   const prIsDraft = meta[AGENT_REPORT_METADATA_KEYS.PR_IS_DRAFT] === "true";
 

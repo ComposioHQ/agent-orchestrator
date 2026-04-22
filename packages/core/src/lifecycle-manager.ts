@@ -492,7 +492,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     const commit = (
       decision: LifecycleDecision = {
-        status: deriveLegacyStatus(lifecycle, session.status),
+        status: deriveLegacyStatus(lifecycle),
         evidence: "lifecycle_commit",
         detecting: { attempts: currentDetectingAttempts },
       },
@@ -880,7 +880,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       return commit({
-        status: deriveLegacyStatus(lifecycle, session.status),
+        status: deriveLegacyStatus(lifecycle),
         evidence: activityEvidence,
         detecting: { attempts: 0 },
       });
@@ -1079,7 +1079,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       cleaned[key] = value;
     }
     session.metadata = cleaned;
-    session.status = deriveLegacyStatus(session.lifecycle, session.status);
+    session.status = deriveLegacyStatus(session.lifecycle);
   }
 
   function makeFingerprint(ids: string[]): string {

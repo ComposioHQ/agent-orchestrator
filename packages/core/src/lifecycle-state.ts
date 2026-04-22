@@ -413,18 +413,7 @@ export function parseCanonicalLifecycle(
 
 export function deriveLegacyStatus(
   lifecycle: CanonicalSessionLifecycle,
-  previousStatus: SessionStatus = "working",
 ): SessionStatus {
-  if (
-    lifecycle.session.state === "terminated" &&
-    (previousStatus === "cleanup" ||
-      previousStatus === "errored" ||
-      previousStatus === "killed" ||
-      previousStatus === "terminated")
-  ) {
-    return previousStatus;
-  }
-
   switch (lifecycle.session.state) {
     case "not_started":
       return "spawning";
@@ -435,7 +424,19 @@ export function deriveLegacyStatus(
     case "done":
       return "done";
     case "terminated":
-      return "terminated";
+      // Derive specific terminal status from lifecycle reason
+      switch (lifecycle.session.reason) {
+        case "manually_killed":
+          return "killed";
+        case "auto_cleanup":
+        case "pr_merged":
+          return "cleanup";
+        case "error_in_process":
+        case "probe_failure":
+          return "errored";
+        default:
+          return "terminated";
+      }
     case "detecting":
       return "detecting";
     default:
@@ -460,17 +461,16 @@ export function deriveLegacyStatus(
     case "working":
       return "working";
     default:
-      return previousStatus;
+      return "working";
   }
 }
 
 export function buildLifecycleMetadataPatch(
   lifecycle: CanonicalSessionLifecycle,
-  previousStatus?: SessionStatus,
 ): Partial<Record<string, string>> {
   return {
     lifecycle: JSON.stringify(lifecycle),
-    status: deriveLegacyStatus(lifecycle, previousStatus),
+    // status is NOT persisted — computed on read via deriveLegacyStatus()
     pr: lifecycle.pr.url ?? "",
     runtimeHandle: lifecycle.runtime.handle ? JSON.stringify(lifecycle.runtime.handle) : "",
     tmuxName: lifecycle.runtime.tmuxName ?? "",

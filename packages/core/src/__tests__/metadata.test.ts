@@ -622,7 +622,7 @@ describe("status derivation from lifecycle", () => {
     expect(meta!.status).toBe("unknown");
   });
 
-  it("readMetadata prefers stored status over lifecycle-derived", () => {
+  it("readMetadata prefers lifecycle-derived status over stored status", () => {
     writeFileSync(
       join(dataDir, "has-both.json"),
       JSON.stringify({
@@ -640,7 +640,7 @@ describe("status derivation from lifecycle", () => {
 
     const meta = readMetadata(dataDir, "has-both");
     expect(meta).not.toBeNull();
-    // Stored status wins over derived
-    expect(meta!.status).toBe("working");
+    // Lifecycle-derived status wins over stored (lifecycle is source of truth)
+    expect(meta!.status).toBe("done");
   });
 });
