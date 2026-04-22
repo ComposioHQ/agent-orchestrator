@@ -66,7 +66,7 @@ describe("restore", () => {
     const restored = await sm.restore("app-1");
 
     expect(restored.id).toBe("app-1");
-    expect(restored.status).toBe("spawning");
+    expect(restored.status).toBe("pr_open");
     expect(restored.activity).toBe("active");
     expect(restored.workspacePath).toBe(wsPath);
     expect(restored.branch).toBe("feat/TEST-1");
@@ -78,7 +78,7 @@ describe("restore", () => {
     expect(mockRuntime.create).toHaveBeenCalled();
     // Verify metadata was updated (not rewritten)
     const meta = readMetadataRaw(sessionsDir, "app-1");
-    expect(meta!["status"]).toBe("spawning");
+    expect(meta!["status"]).toBe("pr_open");
     expect(meta!["restoredAt"]).toBeDefined();
     // Verify original fields are preserved
     expect(meta!["issue"]).toBe("TEST-1");
@@ -118,7 +118,7 @@ describe("restore", () => {
     const sm = createSessionManager({ config, registry: registryWithFailingDestroy });
     const restored = await sm.restore("app-1");
 
-    expect(restored.status).toBe("spawning");
+    expect(restored.status).toBe("working");
     expect(failingRuntime.destroy).toHaveBeenCalled();
     expect(failingRuntime.create).toHaveBeenCalled();
   });
@@ -260,7 +260,7 @@ describe("restore", () => {
     const restored = await sm.restore("app-1");
 
     expect(restored.id).toBe("app-1");
-    expect(restored.status).toBe("spawning");
+    expect(restored.status).toBe("pr_open");
     expect(restored.branch).toBe("feat/TEST-1");
     expect(restored.workspacePath).toBe(wsPath);
 
@@ -409,7 +409,7 @@ describe("restore", () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
     const restored = await sm.restore("app-1");
 
-    expect(restored.status).toBe("spawning");
+    expect(restored.status).toBe("working");
     const meta = readMetadataRaw(sessionsDir, "app-1");
     expect(meta?.["opencodeSessionId"]).toBe("ses_restore_discovered");
   }, 15000);
@@ -739,7 +739,7 @@ describe("restore", () => {
     await sm.restore("app-1");
 
     const meta = readMetadataRaw(sessionsDir, "app-1");
-    expect(meta!["status"]).toBe("spawning");
+    expect(meta!["status"]).toBe("working");
     expect(meta!["runtimeHandle"]).toBe(JSON.stringify(makeHandle("rt-1")));
     expect(meta!["restoredAt"]).toBeDefined();
   });
@@ -780,7 +780,7 @@ describe("restore", () => {
     await sm.restore("app-1");
 
     const meta = readMetadataRaw(sessionsDir, "app-1");
-    expect(meta!["status"]).toBe("spawning");
+    expect(meta!["status"]).toBe("working");
     expect(meta!["runtimeHandle"]).toBe(JSON.stringify(makeHandle("rt-1")));
     expect(meta!["opencodeSessionId"]).toBe("ses_from_post_launch");
   });

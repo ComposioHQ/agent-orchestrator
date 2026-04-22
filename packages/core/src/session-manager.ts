@@ -1932,13 +1932,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // (which could double-purge opencode or race with concurrent archives).
     const existingLifecycle = parseCanonicalLifecycle(raw);
     if (existingLifecycle?.session.state === "terminated") {
-      // Lifecycle says terminated but metadata is still in active dir — finish
-      // the archive and return alreadyTerminated so the caller logs a no-op.
-      try {
-        deleteMetadata(sessionsDir, sessionId, true);
-      } catch {
-        // Already archived by a racing caller.
-      }
       return { cleaned: false, alreadyTerminated: true };
     }
 
@@ -2014,14 +2007,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
     updateMetadata(sessionsDir, sessionId, {
       ...lifecycleMetadataUpdates(raw, terminatedLifecycle),
+      ...(didPurgeOpenCodeSession && {
+        opencodeSessionId: "",
+        opencodeCleanedAt: new Date().toISOString(),
+      }),
     });
 
-    // Archive metadata
-    deleteMetadata(sessionsDir, sessionId, true);
     invalidateCache();
-    if (didPurgeOpenCodeSession) {
-      markArchivedOpenCodeCleanup(sessionsDir, sessionId);
-    }
     return { cleaned: true, alreadyTerminated: false };
   }
 
@@ -2833,19 +2825,29 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       },
     });
 
-    // 9. Update metadata — merge updates, preserving existing fields
+    // 9. Update metadata — reset lifecycle to working state
     const now = new Date().toISOString();
+    const restoredLifecycle = cloneLifecycle(session.lifecycle);
+    restoredLifecycle.session.state = "working";
+    restoredLifecycle.session.reason = "task_in_progress";
+    restoredLifecycle.session.lastTransitionAt = now;
+    restoredLifecycle.session.terminatedAt = null;
+    restoredLifecycle.session.completedAt = null;
+    restoredLifecycle.runtime.state = "alive";
+    restoredLifecycle.runtime.reason = "process_running";
+    restoredLifecycle.runtime.handle = handle;
+    restoredLifecycle.runtime.lastObservedAt = now;
     updateMetadata(sessionsDir, sessionId, {
-      status: "spawning",
-      runtimeHandle: JSON.stringify(handle),
+      ...buildLifecycleMetadataPatch(restoredLifecycle),
       restoredAt: now,
     });
     invalidateCache();
 
     // 10. Run postLaunchSetup (non-fatal)
+    const restoredStatus = deriveLegacyStatus(restoredLifecycle);
     const restoredSession: Session = {
       ...session,
-      status: "spawning",
+      status: restoredStatus,
       activity: "active",
       workspacePath,
       runtimeHandle: handle,

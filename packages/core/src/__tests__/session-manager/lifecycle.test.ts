@@ -10,6 +10,7 @@ import { createSessionManager } from "../../session-manager.js";
 import {
   writeMetadata,
   readMetadata,
+  readMetadataRaw,
   deleteMetadata,
 } from "../../metadata.js";
 import { getProjectSessionsDir, getProjectWorktreesDir } from "../../paths.js";
@@ -45,7 +46,7 @@ afterEach(() => {
 });
 
 describe("kill", () => {
-  it("destroys runtime, workspace, and archives metadata", async () => {
+  it("destroys runtime, workspace, and keeps terminated metadata", async () => {
     const managedWorktree = join(
       getProjectWorktreesDir("my-app"),
       "app-1",
@@ -63,7 +64,9 @@ describe("kill", () => {
 
     expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
     expect(mockWorkspace.destroy).toHaveBeenCalledWith(managedWorktree);
-    expect(readMetadata(sessionsDir, "app-1")).toBeNull(); // archived + deleted
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta).not.toBeNull();
+    expect(meta!["status"]).toMatch(/killed|terminated/);
   });
 
   it("does not destroy workspace paths outside managed roots", async () => {

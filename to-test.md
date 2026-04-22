@@ -19,7 +19,7 @@ getProjectSessionsDir("agent-orchestrator")
   → ends with "/projects/agent-orchestrator/sessions"  [PASS]
 
 getProjectArchiveDir("agent-orchestrator")
-  → ends with "/projects/agent-orchestrator/archive"  [PASS]
+  → ends with "/projects/agent-orchestrator/sessions/archive"  [PASS]
 
 getProjectWorktreesDir("agent-orchestrator")
   → ends with "/projects/agent-orchestrator/worktrees"  [PASS]
@@ -893,3 +893,58 @@ Merged `upstream/main` into `storage-redesign`. One conflict in `metadata.ts`:
     bare `app-6`, JSON.parse instead of string contains check).
   - Upstream `restore.test.ts` displayName test fixed: `runtimeHandle` passed as
     `RuntimeHandle` object instead of `JSON.stringify(makeHandle(...))` string.
+
+---
+
+## Runtime Fixes (2026-04-22, session 2)
+
+### R1. Metadata hooks fail with "Metadata file not found" (missing .json extension)
+
+STATUS: FIXED
+SEVERITY: HIGH
+FILES:
+  - packages/plugins/agent-claude-code/src/index.ts (METADATA_UPDATER_SCRIPT)
+  - packages/core/src/agent-workspace-hooks.ts (AO_METADATA_HELPER)
+FIX: Both hook scripts now try `$AO_DATA_DIR/${AO_SESSION}.json` first, falling
+back to `$AO_DATA_DIR/$AO_SESSION` for legacy layouts. JSON format detected by
+first-char check (`{`), updated via `jq`. Legacy key=value updated via `sed`.
+WRAPPER_VERSION bumped to `0.4.0` to force reinstall of wrapper scripts.
+
+### R2. Restore button shows success popup but session not actually restored
+
+STATUS: FIXED
+SEVERITY: HIGH
+FILE: packages/core/src/session-manager.ts (restore function, ~line 2836)
+ROOT CAUSE: `restore()` only set `status: "spawning"` and `runtimeHandle` in
+metadata, but did NOT reset the `lifecycle` object. Since lifecycle is now the
+source of truth, the lifecycle manager read the old terminal state and
+immediately transitioned the session back to Done/Terminated on the next poll.
+FIX: Reset lifecycle via `cloneLifecycle()` + `buildLifecycleMetadataPatch()`:
+  - `lifecycle.session.state = "working"`, `reason = "task_in_progress"`
+  - `lifecycle.session.terminatedAt = null`, `completedAt = null`
+  - `lifecycle.runtime.state = "alive"`, `reason = "process_running"`, handle set
+  - Return value uses `deriveLegacyStatus(restoredLifecycle)` instead of
+    hardcoded `"spawning"` (sessions with PRs correctly show `"pr_open"`)
+TESTS: 6 restore test assertions updated (3 files).
+
+### R3. Killed sessions don't appear in Done/Terminated; session detail shows "Page not found"
+
+STATUS: FIXED
+SEVERITY: HIGH
+FILE: packages/core/src/session-manager.ts (kill function, ~line 2020)
+ROOT CAUSE: `kill()` immediately archived session metadata (moved from
+`sessions/` to `sessions/archive/`). Since `list()` and `get()` only read
+active metadata, killed sessions vanished from the dashboard. The session
+detail API returned 404, triggering the global "Page not found" instead of
+the session-specific "Session not found".
+FIX: Removed `deleteMetadata(sessionsDir, sessionId, true)` from `kill()`.
+Sessions now stay in active metadata with terminal lifecycle status. Dashboard
+shows them in Done/Terminated. `get()` finds them for the detail page.
+Also removed the idempotent kill's redundant archive call.
+OpenCode cleanup metadata folded into the same `updateMetadata` call.
+TESTS: 2 test assertions updated (lifecycle.test.ts, cache.test.ts).
+
+### Verification after all R1-R3 fixes:
+  - pnpm typecheck: zero errors
+  - Core: 847/847
+  - pnpm build: zero errors

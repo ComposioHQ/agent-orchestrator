@@ -110,7 +110,7 @@ describe("listCached", () => {
     expect(afterSpawn).toHaveLength(1);
   });
 
-  it("reflects session removal immediately after kill (cache invalidated)", async () => {
+  it("reflects session status change immediately after kill (cache invalidated)", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp/w1",
       branch: "feat/a",
@@ -123,13 +123,15 @@ describe("listCached", () => {
     // Warm cache
     const before = await sm.listCached();
     expect(before).toHaveLength(1);
+    expect(before[0].status).toBe("working");
 
     // Kill invalidates cache
     await sm.kill("app-1");
 
-    // listCached must hit disk and see the session is gone
+    // listCached must hit disk and see the session is now terminated
     const after = await sm.listCached();
-    expect(after).toHaveLength(0);
+    expect(after).toHaveLength(1);
+    expect(after[0].status).toMatch(/killed|terminated/);
   });
 
   it("explicit invalidateCache() forces the next listCached to re-read disk", async () => {
