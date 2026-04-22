@@ -6,7 +6,14 @@ import {
   type AgentLaunchConfig,
   type ProjectConfig,
 } from "@aoagents/ao-core";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, utimesSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  utimesSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -410,6 +417,23 @@ describe("isProcessRunning", () => {
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
 
+  it("returns true when invoked as `python -m kimi`", async () => {
+    mockTmuxWithProcess("python -m kimi --print");
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
+  });
+
+  it("returns false when `kimi` appears only in argv[>0] (not as the executable)", async () => {
+    // A user running `cat kimi.log` or `vim ~/.kimi/config.toml` on the pane
+    // must NOT count as kimi running.
+    mockTmuxWithProcess("cat kimi.log", true);
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+  });
+
+  it("returns false for `/usr/bin/vim ~/.kimi/config.toml`", async () => {
+    mockTmuxWithProcess("/usr/bin/vim /home/harsh/.kimi/config.toml", true);
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+  });
+
   it("returns false when kimi is not on the pane TTY", async () => {
     mockTmuxWithProcess("zsh", false);
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
@@ -623,16 +647,38 @@ describe("getActivityState", () => {
     expect(result).toBeNull();
   });
 
-  it("ignores session dirs that have no live-signal files", async () => {
+  it("resolves symlinked workspace paths before hashing (kimi sees realpath as cwd)", async () => {
+    mockTmuxWithProcess("kimi");
+    // Create a real target dir + a symlink pointing at it. Kimi's process
+    // resolves symlinks via os.getcwd(), so its MD5 bucket is keyed by the
+    // realpath. Our plugin must match by realpath too.
+    const real = join(fakeHome, "workspaces", "real-project");
+    mkdirSync(real, { recursive: true });
+    const link = join(fakeHome, "workspaces", "link-to-project");
+    symlinkSync(real, link);
+
+    // Write a session under the realpath bucket, then look it up via the
+    // symlink path — our resolveWorkspacePath should make them equivalent.
+    writeKimiSession(real, "sess-abc");
+
+    const result = await agent.getActivityState(
+      makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: link }),
+    );
+    expect(result?.state).toBe("active");
+  });
+
+  it("falls back to UUID dir mtime when live-signal files aren't written yet (race window)", async () => {
     mockTmuxWithProcess("kimi");
     const bucket = join(fakeHome, ".kimi", "sessions", workspaceHash(workspace));
+    // UUID dir exists but context.jsonl / wire.jsonl haven't been created yet.
+    // This is the brief window during session creation — we should still
+    // report a valid state using the dir mtime, not flicker to "no signal".
     mkdirSync(join(bucket, "empty-session"), { recursive: true });
-    // no context.jsonl / wire.jsonl inside
 
     const result = await agent.getActivityState(
       makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: workspace }),
     );
-    expect(result).toBeNull();
+    expect(result?.state).toBe("active");
   });
 });
 
@@ -817,15 +863,34 @@ describe("workspace hooks", () => {
 // detect()
 // =============================================================================
 describe("detect", () => {
-  it("returns true when --version identifies the binary as kimi", async () => {
+  it("returns true when `kimi info` prints the kimi-cli vendor string", async () => {
     const { execFileSync } = await import("node:child_process");
     vi.mocked(execFileSync).mockImplementationOnce(
-      () => "kimi, version 1.38.0" as unknown as ReturnType<typeof execFileSync>,
+      () =>
+        "kimi-cli version: 1.38.0\nagent spec versions: 1\n" as unknown as ReturnType<
+          typeof execFileSync
+        >,
     );
     expect(detect()).toBe(true);
   });
 
-  it("returns false when `kimi --version` throws (binary missing)", async () => {
+  it("returns true for kimi-code vendor string", async () => {
+    const { execFileSync } = await import("node:child_process");
+    vi.mocked(execFileSync).mockImplementationOnce(
+      () => "package: kimi-code\n" as unknown as ReturnType<typeof execFileSync>,
+    );
+    expect(detect()).toBe(true);
+  });
+
+  it("returns true when output mentions Moonshot", async () => {
+    const { execFileSync } = await import("node:child_process");
+    vi.mocked(execFileSync).mockImplementationOnce(
+      () => "moonshot kimi 1.38\n" as unknown as ReturnType<typeof execFileSync>,
+    );
+    expect(detect()).toBe(true);
+  });
+
+  it("returns false when `kimi info` throws (binary missing or unrelated)", async () => {
     const { execFileSync } = await import("node:child_process");
     vi.mocked(execFileSync).mockImplementationOnce(() => {
       throw new Error("command not found");
@@ -833,26 +898,14 @@ describe("detect", () => {
     expect(detect()).toBe(false);
   });
 
-  it("falls back to `kimi info` when --version output is ambiguous, accepts on match", async () => {
+  it("rejects an unrelated `kimi` binary whose output lacks the vendor marker", async () => {
+    // E.g. a hypothetical keyboard-input-manager named `kimi` whose output
+    // contains plain "kimi" but no kimi-cli / kimi-code / moonshot marker.
     const { execFileSync } = await import("node:child_process");
-    vi.mocked(execFileSync)
-      .mockImplementationOnce(() => "1.0.0" as unknown as ReturnType<typeof execFileSync>)
-      .mockImplementationOnce(
-        () =>
-          "kimi-cli version: 1.38.0\nprotocol: wire\n" as unknown as ReturnType<
-            typeof execFileSync
-          >,
-      );
-    expect(detect()).toBe(true);
-  });
-
-  it("returns false when --version output is bare and `kimi info` has no moonshot/kimi marker", async () => {
-    const { execFileSync } = await import("node:child_process");
-    vi.mocked(execFileSync)
-      .mockImplementationOnce(() => "1.0.0" as unknown as ReturnType<typeof execFileSync>)
-      .mockImplementationOnce(
-        () => "some other tool info\n" as unknown as ReturnType<typeof execFileSync>,
-      );
+    vi.mocked(execFileSync).mockImplementationOnce(
+      () =>
+        "kimi v0.1 — keyboard input manager\n" as unknown as ReturnType<typeof execFileSync>,
+    );
     expect(detect()).toBe(false);
   });
 });

@@ -24,7 +24,7 @@ import {
 } from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
@@ -59,6 +59,25 @@ interface KimiSessionMatch {
  *  per-workspace bucket under ~/.kimi/sessions/. */
 function kimiWorkspaceHash(workspacePath: string): string {
   return createHash("md5").update(workspacePath).digest("hex");
+}
+
+/**
+ * Resolve the workspace path kimi would see as its cwd. kimi's process reads
+ * cwd via `os.getcwd()`, which on Linux returns the realpath (symlinks are
+ * resolved by the kernel via /proc/self/cwd). If AO hands us a symlinked
+ * workspacePath, our MD5 of the symlink won't match kimi's MD5 of the
+ * resolved path — session discovery would silently miss every session.
+ *
+ * realpath() is best-effort: if the path doesn't exist or isn't readable,
+ * fall back to the raw string so we don't regress workflows where the
+ * workspace is created later or the caller has stricter sandboxing.
+ */
+async function resolveWorkspacePath(workspacePath: string): Promise<string> {
+  try {
+    return await realpath(workspacePath);
+  } catch {
+    return workspacePath;
+  }
 }
 
 /** TTL for session match cache (ms) — avoids redundant scans when
@@ -97,11 +116,17 @@ async function getKimiLiveSignalMtime(sessionDir: string): Promise<Date | null> 
  *
  * There is no `state.json`. We hash the workspace path to find the bucket,
  * then pick the most-recently-modified UUID subdirectory inside it.
+ *
+ * Race handling: kimi creates the UUID directory before writing context.jsonl
+ * / wire.jsonl. During that brief window `getKimiLiveSignalMtime` returns
+ * null; we fall back to the UUID directory's own mtime so callers get a
+ * usable signal (dashboard won't flicker to "no signal" every session start).
  */
 async function findKimiSessionMatchUncached(
   workspacePath: string,
 ): Promise<KimiSessionMatch | null> {
-  const bucket = join(kimiShareDir(), "sessions", kimiWorkspaceHash(workspacePath));
+  const resolved = await resolveWorkspacePath(workspacePath);
+  const bucket = join(kimiShareDir(), "sessions", kimiWorkspaceHash(resolved));
   let entries: string[];
   try {
     entries = await readdir(bucket);
@@ -113,7 +138,17 @@ async function findKimiSessionMatchUncached(
 
   for (const entry of entries) {
     const dir = join(bucket, entry);
-    const mtime = await getKimiLiveSignalMtime(dir);
+    let mtime = await getKimiLiveSignalMtime(dir);
+    if (!mtime) {
+      // Race fallback — UUID dir exists but live files haven't been written
+      // yet. Use the directory's own mtime as a stand-in.
+      try {
+        const s = await stat(dir);
+        if (s.isDirectory()) mtime = s.mtime;
+      } catch {
+        // UUID entry vanished between readdir and stat — skip.
+      }
+    }
     if (!mtime) continue;
     const mtimeMs = mtime.getTime();
     if (!best || mtimeMs > best.mtimeMs) {
@@ -228,6 +263,14 @@ function createKimicodeAgent(): Agent {
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const parts: string[] = ["kimi"];
+
+      // NOTE: We'd like to pass --work-dir <session.workspacePath> to kill the
+      // silent failure mode where shell-rc / tmux-hook cwd drift makes our
+      // md5(cwd) hash diverge from kimi's. But AgentLaunchConfig only exposes
+      // projectConfig.path (the project root), not the per-session worktree,
+      // and passing the project root would actively break discovery. The
+      // runtime's cwd handling is load-bearing here; see README follow-up
+      // about exposing session.workspacePath on AgentLaunchConfig.
 
       appendApprovalFlags(parts, config.permissions);
 
@@ -373,15 +416,29 @@ function createKimicodeAgent(): Agent {
             timeout: 30_000,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          // Match both `kimi` and `.kimi` (some installers use a dot-prefixed
-          // shim), as well as `uv run kimi` / `python -m kimi` invocations.
-          const processRe = /(?:^|\/)\.?kimi(?:\s|$)|(?:\s|^)kimi(?:\s|$)/;
+          // Only consider argv[0] — this is the executable being run, not
+          // arbitrary filenames (e.g. `cat kimi.log`) that happen to contain
+          // "kimi". We accept:
+          //   - argv[0] basename == "kimi" or ".kimi" (dot-prefixed shim)
+          //   - argv[0] is a python/uv invocation followed by "kimi" as the
+          //     next token (e.g. `uv run kimi ...`, `python -m kimi ...`).
+          const argv0Re = /(?:^|\/)\.?kimi$/;
+          const viaRunnerRe = /(?:^|\/)(?:uv|python3?|node)$/;
           for (const line of psOut.split("\n")) {
             const cols = line.trimStart().split(/\s+/);
             if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
-            const args = cols.slice(2).join(" ");
-            if (processRe.test(args)) {
-              return true;
+            const argv = cols.slice(2);
+            const head = argv[0] ?? "";
+            if (argv0Re.test(head)) return true;
+            if (!viaRunnerRe.test(head)) continue;
+            // Skip runner-internal flags (`uv run`, `python -m`) and check the
+            // next positional argument.
+            for (let i = 1; i < argv.length; i++) {
+              const tok = argv[i];
+              if (!tok || tok.startsWith("-")) continue;
+              if (tok === "run" || tok === "tool" || tok === "-m") continue;
+              if (/(?:^|\/)\.?kimi$/.test(tok)) return true;
+              break;
             }
           }
           return false;
@@ -465,26 +522,27 @@ export function _resetSessionMatchCache(): void {
   sessionMatchCache.clear();
 }
 
+/** Vendor strings that positively identify MoonshotAI's kimi-cli. Plain "kimi"
+ *  alone is not enough — it matches unrelated binaries (e.g. a keyboard input
+ *  manager). `kimi info` on real kimi-cli prints "kimi-cli version: ..." which
+ *  is a distinct identifier. */
+const KIMI_VENDOR_RE = /kimi[-_](?:cli|code)|moonshot/i;
+/** Keep `kimi info` output capture bounded — real output is ~80 bytes, but a
+ *  hostile binary could print arbitrarily much. */
+const DETECT_BUFFER_BYTES = 4096;
+
 export function detect(): boolean {
-  // `kimi` is not a uniquely-claimed binary name, so verify the output looks
-  // like MoonshotAI's kimi-cli rather than trusting any binary that exits 0.
-  // `kimi info` prints the package name and protocol versions; `--version`
-  // is a lighter-weight cross-check.
   try {
-    const versionOut = execFileSync("kimi", ["--version"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 10_000,
-    });
-    if (/\bkimi[-_ ]?(?:cli|code)?\b/i.test(versionOut)) return true;
-    // Some builds of kimi-cli print just a version number — cross-check with
-    // `kimi info` which includes the package identifier.
+    // Use `kimi info` as the authoritative check — `kimi --version` prints
+    // just "kimi, version X.Y.Z" which is too generic to distinguish the
+    // MoonshotAI tool from any other binary named "kimi".
     const infoOut = execFileSync("kimi", ["info"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 10_000,
+      maxBuffer: DETECT_BUFFER_BYTES,
     });
-    return /\bkimi[-_ ]?(?:cli|code)?\b/i.test(infoOut) || /moonshot/i.test(infoOut);
+    return KIMI_VENDOR_RE.test(infoOut);
   } catch {
     return false;
   }
