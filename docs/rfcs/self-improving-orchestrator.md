@@ -43,8 +43,10 @@ Scope is explicitly **AO's own fault classes**. Not generalized AI ops. Not self
 Runs every registered diagnosis rule. Emits structured findings:
 
 ```jsonl
-{"diagnosisId":"state-flicker","severity":"high","sessionId":"ao-17","evidence":{...},"at":"2026-..."}
+{"ruleId":"state-flicker","fingerprint":"ao-17","severity":"high","summary":"...","evidence":{...},"at":"2026-..."}
 ```
+
+Fields match the `DiagnosisFinding` interface in §4.1 exactly. Any identifiers normally thought of as top-level (session id, workspace path) live in `evidence` unless they are also the `fingerprint`.
 
 Flags:
 
@@ -59,14 +61,36 @@ Exit codes: `0` clean, `1` findings present, `2` rules crashed.
 
 Maps findings to GitHub issues.
 
-- `--dry-run` (default): prints what would be filed, including the computed `<!-- ao-diagnose:{id}:{fingerprint} -->` marker used for dedupe.
-- `--file`: actually files, after deduping against open AND closed issues that contain the same marker.
+- `--dry-run` (default): prints what would be filed, including the computed `<!-- ao-diagnose id=<id> fp=<percent-encoded-fingerprint> -->` marker used for dedupe.
+- `--file`: actually files, after deduping against open AND closed issues that contain the same marker. Requires interactive `y/N` confirmation (or `--yes` to skip) when ≥1 issue would be filed — matches `gh`'s confirmation pattern and avoids accidental 20-issue batches.
 - One issue per `(rule, fingerprint)` pair. Fingerprint is rule-defined (typically `sessionId` or `workspacePath` or the minimal tuple that makes findings distinct).
 - Label applied: `ao-diagnosed`. The marker is the machine-readable dedupe key; the label is the human-readable filter.
 
+**Marker format.** The marker uses key=value attributes rather than colon-delimited positional fields so fingerprints may contain arbitrary characters (Windows paths with `C:\`, compound keys like `project:session`, etc.) without breaking the parser:
+
+```
+<!-- ao-diagnose id=state-flicker fp=ao-17 -->
+<!-- ao-diagnose id=orphan-worktree fp=C%3A%5Cworktrees%5Cao-42 -->
+```
+
+- `id` values are ASCII identifiers controlled by the rule author (`[a-z0-9-]+`) — no encoding required.
+- `fp` values are **percent-encoded** per RFC 3986 unreserved-character rules. Parsing: match `/<!-- ao-diagnose id=([a-z0-9-]+) fp=(\S+) -->/`, then `decodeURIComponent` the fingerprint.
+- Round-trip is total: any string the rule produces as a fingerprint can be encoded, stored in the marker, and decoded back byte-identical.
+- The marker format is versioned by the `id=`/`fp=` attribute set. Adding new attributes is backward-compatible (unknown attributes are ignored); changing existing ones is not, and would require a new marker prefix (`ao-diagnose-v2`).
+
+### 3.2.1 PR → issue resolution
+
+See §5.1. The cascade is:
+
+1. `session.issueId` from session metadata, if the PR was opened by an AO session we still have metadata for.
+2. `gh pr view --json closingIssuesReferences` if (1) is unavailable (session archived, operator-invoked verify on an arbitrary PR).
+3. If neither resolves a linked issue, `ao diagnose --verify` errors out explicitly rather than guessing.
+
+No scraping of PR bodies or commit messages — only the two structured sources above.
+
 ### 3.3 `ao diagnose --verify <pr|issue>`
 
-Given a PR or issue, extract the `ao-diagnose:{id}` marker from the issue body, look up the rule, and re-run its `detect()` against current state.
+Given a PR or issue, extract the `<!-- ao-diagnose id=... fp=... -->` marker from the issue body (§3.2 format), look up the rule by `id`, decode the fingerprint, and re-run `rule.verify(ctx, fingerprint)` against current state.
 
 Outputs:
 
@@ -182,7 +206,7 @@ The CLI command orchestrates existing primitives: `loadConfig`, `createSessionMa
 │   → finds 4 state-flicker findings, prints table             │
 │ ao diagnose --triage --file                                  │
 │   → files issue #X with body containing:                     │
-│     <!-- ao-diagnose:state-flicker:ao-17 -->                 │
+│     <!-- ao-diagnose id=state-flicker fp=ao-17 -->           │
 │     label: ao-diagnosed                                      │
 │ ao spawn --from-issue X --verify-with state-flicker          │
 │   → session metadata gets verifyWith=state-flicker           │
@@ -280,8 +304,15 @@ Each rule is ~50 lines. The harness is ~150 lines. The CLI is ~250 lines. Total 
 
 ## 9. Open questions
 
-1. **Should `ao diagnose --triage --file` require a second confirmation flag?** Filing 20+ issues in a batch is semi-destructive (reviewer noise, GitHub rate limits). Proposal: default `--dry-run`, require `--file --yes` or an interactive `y/N` prompt. Matches `gh`'s own confirmation pattern.
-2. **Where does the phase-2 automated verify-on-merge hook live?** Most likely the lifecycle reaction that fires on `pr.merged` — it already runs after merge detection. Adding a reaction that invokes `diagnose.verify(session.verifyWith, session.id)` is a ~10-line addition. Defer to phase 2 so the contract can settle first.
+1. **Confirmation flow for `--triage --file`** — resolved in §3.2: default `--dry-run`, interactive `y/N` when ≥1 issue would be filed, `--yes` to skip. Remaining question for maintainers: should batches above a threshold (say, 10 issues) require a separate `--batch` opt-in? Pre-MVP nicety, not a blocker.
+2. **Where does the phase-2 automated verify-on-merge hook live?** Most likely the lifecycle reaction that fires on `pr.merged` — it already runs after merge detection. The reaction assembles a `DiagnosisContext` and invokes the helper defined in §4.3:
+
+   ```typescript
+   const ctx = await buildDiagnosisContext(config);
+   const result = await verifyDiagnosis(ctx, session.verifyWith, session.id);
+   ```
+
+   (Not the two-arg sketch shown in earlier revisions — that was inconsistent with the helper signature.) Defer to phase 2 so the contract can settle first.
 3. **Does the diagnosis marker belong only in the issue body, or also in session metadata?** Both: body is the durable source for dedupe and orchestrator lookup; session metadata has `verifyWith` so the PR→rule resolution does not require scraping issue bodies on every merge. Both are one string each.
 4. **How does diagnose interact with #1414 (CanonicalSessionState unification)?** Rules that read `session.state` / `session.statePayload.*` will benefit directly — less field aliasing. No blocker, but rules should be written against the canonical shape once #1414 lands.
 5. **Attempt cap of 3 — is it configurable?** Keep it hard-coded for phase 1. If users hit it in practice, make it a per-rule field on `DiagnosisRule` (`maxVerifyAttempts?: number`). Don't pre-build configurability.
@@ -343,7 +374,10 @@ export const stateFlickerRule: DiagnosisRule = {
   async verify(ctx, fingerprint) {
     const session = ctx.sessions.find((s) => s.id === fingerprint);
     if (!session) return "indeterminate";
-    const findings = await this.detect({ ...ctx, sessions: [session] });
+    // Reference the outer constant by name; do NOT use `this.detect(...)`.
+    // Method-shorthand on an object literal loses `this` when extracted
+    // (e.g. `const { verify } = rule`), and the framework MAY extract it.
+    const findings = await stateFlickerRule.detect({ ...ctx, sessions: [session] });
     return findings.length === 0 ? "pass" : "fail";
   },
 };
@@ -351,7 +385,7 @@ export const stateFlickerRule: DiagnosisRule = {
 
 ## Appendix B — example issue body template
 
-```markdown
+````markdown
 ## Summary
 State flicker detected on session `ao-17` (runtime alive but session latched to terminated).
 
@@ -369,7 +403,7 @@ State flicker detected on session `ao-17` (runtime alive but session latched to 
 ## Related
 - #1454 (parent fault class)
 
-<!-- ao-diagnose:state-flicker:ao-17 -->
-```
+<!-- ao-diagnose id=state-flicker fp=ao-17 -->
+````
 
 The HTML-comment marker is the only thing `ao diagnose --verify` relies on. Everything above it is for human readers.
