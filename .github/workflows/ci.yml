@@ -66,8 +66,8 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-      - name: Install tmux
-        run: sudo apt-get update && sudo apt-get install -y tmux
+      - name: Ensure tmux
+        run: ./.github/scripts/ensure-tmux.sh
       - name: Start tmux server
         run: tmux start-server
       - run: pnpm install --frozen-lockfile
