@@ -74,6 +74,54 @@ const LEVEL_LABELS: Record<AttentionLevel, string> = {
   done: "done",
 };
 
+type ProjectHealth = "red" | "yellow" | "green" | "gray";
+
+function getProjectHealth(sessions: DashboardSession[]): ProjectHealth {
+  if (sessions.some((session) => getAttentionLevel(session) === "respond")) {
+    return "red";
+  }
+  if (sessions.some((session) => {
+    const level = getAttentionLevel(session);
+    return level === "review" || level === "pending" || level === "action";
+  })) {
+    return "yellow";
+  }
+  if (sessions.some((session) => getAttentionLevel(session) === "merge")) {
+    return "green";
+  }
+  if (sessions.length > 0) {
+    return "green";
+  }
+  return "gray";
+}
+
+function getProjectStatusSummary(sessions: DashboardSession[]): { tone: AttentionLevel | "done"; detail: string } {
+  const counts = sessions.reduce<Record<AttentionLevel, number>>(
+    (accumulator, session) => {
+      const level = getAttentionLevel(session);
+      accumulator[level] += 1;
+      return accumulator;
+    },
+    {
+      merge: 0,
+      action: 0,
+      respond: 0,
+      review: 0,
+      pending: 0,
+      working: 0,
+      done: 0,
+    },
+  );
+
+  if (counts.respond > 0) return { tone: "respond", detail: `${counts.respond} need response` };
+  if (counts.action > 0) return { tone: "action", detail: `${counts.action} need action` };
+  if (counts.review > 0) return { tone: "review", detail: `${counts.review} need review` };
+  if (counts.merge > 0) return { tone: "merge", detail: `${counts.merge} ready to merge` };
+  if (counts.pending > 0) return { tone: "pending", detail: `${counts.pending} waiting` };
+  if (counts.working > 0) return { tone: "working", detail: `${counts.working} active now` };
+  return { tone: "done", detail: "No active sessions" };
+}
+
 export function ProjectSidebar(props: ProjectSidebarProps) {
   if (props.projects.length === 0) {
     return null;
@@ -210,6 +258,17 @@ function ProjectSidebarInner({
       list.push(s);
       map.set(s.projectId, list);
     }
+
+    for (const list of map.values()) {
+      list.sort((left, right) => {
+        const priority = ["respond", "action", "review", "merge", "pending", "working", "done"];
+        const levelDelta =
+          priority.indexOf(getAttentionLevel(left)) - priority.indexOf(getAttentionLevel(right));
+        if (levelDelta !== 0) return levelDelta;
+        return Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt);
+      });
+    }
+
     return map;
   }, [sessions, prefixByProject, allPrefixes, visibleProjects, showKilled, showDone]);
 
@@ -389,13 +448,17 @@ function ProjectSidebarInner({
             // sessionsByProject already applies the showDone filter consistently.
             const visibleSessions = workerSessions;
             const hasActiveSessions = visibleSessions.length > 0;
+            const health = getProjectHealth(visibleSessions);
+            const statusSummary = isLoading
+              ? { tone: "pending" as const, detail: "Loading sessions" }
+              : getProjectStatusSummary(visibleSessions);
 
             const orchestratorSession = sessions?.find(
               (s) => isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes) && s.projectId === project.id
             );
 
             return (
-              <div key={project.id} className="project-sidebar__project">
+              <div key={project.id} className="project-sidebar__project" data-health={health}>
                 {/* Project row: toggle + action buttons */}
                 <div className="project-sidebar__proj-row flex items-center">
                   {isDegraded ? (
@@ -412,6 +475,7 @@ function ProjectSidebarInner({
                       )}
                       aria-current={isActive ? "page" : undefined}
                     >
+                      <span className="sidebar-health-dot project-sidebar__proj-health" data-health="amber" aria-hidden="true" />
                       <svg
                         className="project-sidebar__proj-chevron project-sidebar__proj-chevron--degraded"
                         width="10"
@@ -442,6 +506,11 @@ function ProjectSidebarInner({
                       aria-expanded={isExpanded}
                       aria-current={isActive ? "page" : undefined}
                     >
+                      <span
+                        className="sidebar-health-dot project-sidebar__proj-health"
+                        data-health={health}
+                        aria-hidden="true"
+                      />
                       <svg
                         className={cn(
                           "project-sidebar__proj-chevron",
@@ -556,7 +625,19 @@ function ProjectSidebarInner({
 
                 {isDegraded ? (
                   <div className="project-sidebar__degraded-note">Config needs repair</div>
-                ) : null}
+                ) : (
+                  <div className="project-sidebar__proj-summary" aria-hidden="true">
+                    <span
+                      className={cn(
+                        "project-sidebar__proj-summary-pill",
+                        `project-sidebar__proj-summary-pill--${statusSummary.tone}`,
+                      )}
+                    >
+                      {LEVEL_LABELS[statusSummary.tone] ?? "done"}
+                    </span>
+                    <span className="project-sidebar__proj-summary-text">{statusSummary.detail}</span>
+                  </div>
+                )}
 
                 {/* Sessions */}
                 {!isDegraded && isExpanded && (
