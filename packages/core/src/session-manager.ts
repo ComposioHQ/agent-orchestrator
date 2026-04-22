@@ -1966,6 +1966,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         markArchivedOpenCodeCleanup(sessionsDir, sessionId);
       }
     } else {
+      // Note: markArchivedOpenCodeCleanup is intentionally skipped here.
+      // When a subsequent normal kill() drains this preserved session, it
+      // will hit the already-terminated guard which archives the metadata,
+      // and any re-purge attempt will fail gracefully (session already gone).
       invalidateCache();
     }
     return { cleaned: true, alreadyTerminated: false };
