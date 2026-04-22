@@ -167,7 +167,7 @@ describe("sessionToDashboard", () => {
     expect(dashboard.attentionLevel).toBe("working");
   });
 
-  it("should expose detecting guidance and evidence from legacy metadata", () => {
+  it("should expose detecting evidence from legacy metadata without card guidance copy", () => {
     const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
     lifecycle.session.state = "detecting";
     lifecycle.session.reason = "probe_failure";
@@ -184,7 +184,7 @@ describe("sessionToDashboard", () => {
 
     const dashboard = sessionToDashboard(coreSession);
 
-    expect(dashboard.lifecycle?.guidance).toContain("Retry 2");
+    expect(dashboard.lifecycle?.guidance).toBeNull();
     expect(dashboard.lifecycle?.evidence).toContain("signal_disagreement");
     expect(dashboard.attentionLevel).toBe("respond");
   });
