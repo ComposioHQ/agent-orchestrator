@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { SessionId, OrchestratorConfig, ProjectConfig } from "../types.js";
 import { listMetadata, readMetadataRaw } from "../metadata.js";
-import { getProjectSessionsDir, getProjectDir } from "../paths.js";
+import { getProjectSessionsDir, getProjectDir, getAoBaseDir } from "../paths.js";
 
 export interface ScannedSession {
   sessionId: SessionId;
@@ -45,6 +45,6 @@ export function getRecoveryLogPath(_configPath: string, projectId?: string): str
   if (projectId) {
     return join(getProjectDir(projectId), "recovery.log");
   }
-  // Fallback: store at the AO base dir level
-  return join(getProjectDir("_recovery"), "recovery.log");
+  // Fallback: store at the AO base dir level (not under projects/)
+  return join(getAoBaseDir(), "recovery.log");
 }

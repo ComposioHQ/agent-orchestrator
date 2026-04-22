@@ -4,7 +4,7 @@
  * V2 layout (projects/{projectId}/):
  *   getProjectDir(projectId)          → ~/.agent-orchestrator/projects/{projectId}
  *   getProjectSessionsDir(projectId)  → .../projects/{projectId}/sessions
- *   getProjectArchiveDir(projectId)   → .../projects/{projectId}/archive
+ *   getProjectArchiveDir(projectId)   → .../projects/{projectId}/sessions/archive
  *   getProjectWorktreesDir(projectId) → .../projects/{projectId}/worktrees
  *   getOrchestratorPath(projectId)    → .../projects/{projectId}/orchestrator.json
  *   getSessionPath(projectId, sid)    → .../projects/{projectId}/sessions/{sid}.json
@@ -114,9 +114,9 @@ export function getProjectSessionsDir(projectId: string): string {
   return join(getProjectDir(projectId), "sessions");
 }
 
-/** Get the archive directory for a project (sibling to sessions). */
+/** Get the archive directory for a project (inside sessions/). */
 export function getProjectArchiveDir(projectId: string): string {
-  return join(getProjectDir(projectId), "archive");
+  return join(getProjectSessionsDir(projectId), "archive");
 }
 
 /** Get the worktrees directory for a project. */

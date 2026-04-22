@@ -55,7 +55,7 @@ Nested calls (sessionsDir, archiveDir, worktreesDir) create parent if missing  [
 
 ---
 
-JSON Metadata Read/Write (metadata.ts) — [PASS] (37 tests pass)
+JSON Metadata Read/Write (metadata.ts) — [PASS] (42 tests pass)
 2.1 Write and read back a session — [PASS]
 2.2 File format is valid JSON — [PASS]
 Written file is parseable by JSON.parse()  [PASS]
@@ -257,7 +257,7 @@ Config (config.ts, global-config.ts) — [PASS] (66 tests pass)
 
 ---
 
-Migration Command (ao migrate-storage) — [PASS] (24 tests pass)
+Migration Command (ao migrate-storage) — [PASS] (38 tests pass)
 12.1 Pre-flight checks — [PASS]
   Detects active tmux sessions → aborts  [PASS]
   --force bypasses active session check  [PASS]
@@ -375,7 +375,7 @@ No Regressions
   pnpm build: zero errors
 
 15.6 All existing tests pass — [PASS] (with known exceptions)
-  Core: 824/824  [PASS]
+  Core: 847/847  [PASS]
   CLI: 522/522  [PASS]
   Web: 737/740  [PASS — 3 pre-existing AddProjectModal failures on main branch]
   Integration: passes  [PASS]
@@ -478,7 +478,7 @@ Fix #1: LifecycleDecision nested detecting fields
     buildTransitionMetadataPatch. The full SessionMetadata field rename (statePayload→
     lifecycle, agentReported*→agentReport, dashboard*, reportWatcher*) is NOT yet done.
     That is tracked in Section 3.
-  VERIFICATION: typecheck clean, Core 824/824, CLI 522/522, Web 737/740 (pre-existing), lint 0 errors.
+  VERIFICATION: typecheck clean, Core 847/847, CLI 522/522, Web 737/740 (pre-existing), lint 0 errors.
 
 Fix #2: Path traversal via malicious projectId
   STATUS: FIXED
@@ -541,7 +541,7 @@ VERIFIED CORRECT:
   - Section 12 (migration): convertKeyValueToJson preserves unknown fields (Fix #4),
     stripStorageKeysFromConfig creates backup (Fix #5). Accurate.
   - Section 15.5: pnpm build — zero errors. Confirmed.
-  - Section 15.6: Core 824/824, CLI 522/522, Web 737/740 (3 pre-existing). Exact match.
+  - Section 15.6: Core 847/847, CLI 522/522, Web 737/740 (3 pre-existing). Exact match.
   - Section 15.7: pnpm typecheck — zero errors. Confirmed.
   - Section 15.8: pnpm lint — 0 errors, 35 warnings. Exact match.
 
@@ -673,7 +673,7 @@ edge-case hunting (boundary conditions, failure injection, state corruption).
 Verified build/test/lint status:
   - pnpm build: zero errors
   - pnpm typecheck: zero errors
-  - Core: 824/824, CLI: 522/522, Web: 737/740 (3 pre-existing)
+  - Core: 847/847, CLI: 522/522, Web: 737/740 (3 pre-existing)
   - pnpm lint: 0 errors, 35 warnings (pre-existing)
 
 ---
@@ -846,10 +846,10 @@ test("rollback warns or aborts when post-migration sessions exist", async () => 
 ## CROSS-REFERENCE WITH PARTS 1 AND 2
 
 Part 2 Findings — current status:
-  1. Migration does not cover legacy bare-hash layout → FIXED (uncommitted)
-  2. Migration deletes observability directories → FIXED (uncommitted)
-  3. Active-session preflight misses V2 tmux sessions → FIXED (uncommitted)
-  4. Migrated metadata drops stored status → FIXED (uncommitted, deriveLegacyStatus fallback added)
+  1. Migration does not cover legacy bare-hash layout → FIXED (committed)
+  2. Migration deletes observability directories → FIXED (committed)
+  3. Active-session preflight misses V2 tmux sessions → FIXED (committed)
+  4. Migrated metadata drops stored status → FIXED (committed, deriveLegacyStatus fallback added)
 
 Part 1 Findings — deferred items:
   - Section 3.5 (status computed-only) → Still deferred. 100+ locations.
@@ -878,5 +878,18 @@ All 5 blockers have been addressed:
 
 Verification after fixes:
   - pnpm typecheck: zero errors (core, CLI, web)
-  - Core: 838/838, CLI: 522/522, Web: 737/740 (3 pre-existing)
+  - Core: 847/847, CLI: 522/522, Web: 737/740 (3 pre-existing)
   - pnpm lint: 0 errors, 35 warnings (pre-existing)
+
+---
+
+## Merge Conflict Resolution (2026-04-22)
+
+Merged `upstream/main` into `storage-redesign`. One conflict in `metadata.ts`:
+  - Upstream added `displayName` field to `readMetadata` (key=value format).
+  - Resolved: kept storage-redesign changes (typed fields, lifecycle derivation,
+    boolean prAutoDetect, dashboard nesting) and added `displayName` field.
+  - Upstream `displayName` test updated for JSON format (`app-6.json` instead of
+    bare `app-6`, JSON.parse instead of string contains check).
+  - Upstream `restore.test.ts` displayName test fixed: `runtimeHandle` passed as
+    `RuntimeHandle` object instead of `JSON.stringify(makeHandle(...))` string.

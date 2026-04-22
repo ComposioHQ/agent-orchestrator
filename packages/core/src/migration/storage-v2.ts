@@ -457,7 +457,15 @@ function fixArchiveFilename(filename: string): string {
   const timestampPart = match[2];
 
   try {
-    const date = new Date(timestampPart);
+    let iso = timestampPart;
+    // Legacy timestamps may have colons/dots replaced with dashes on some filesystems
+    // e.g. "2026-04-20T14-30-52-000Z" → "2026-04-20T14:30:52.000Z"
+    const sanitizedTime = iso.match(/T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/);
+    if (sanitizedTime) {
+      const datePart = iso.slice(0, iso.indexOf("T"));
+      iso = `${datePart}T${sanitizedTime[1]}:${sanitizedTime[2]}:${sanitizedTime[3]}.${sanitizedTime[4]}Z`;
+    }
+    const date = new Date(iso);
     if (Number.isNaN(date.getTime())) return filename;
     return `${sessionPart}_${compactTimestamp(date)}.json`;
   } catch {
@@ -474,7 +482,7 @@ function migrateProject(
 ): ProjectMigrationResult {
   const projectDir = join(aoBaseDir, "projects", projectId);
   const sessionsDir = join(projectDir, "sessions");
-  const archiveDir = join(projectDir, "archive");
+  const archiveDir = join(sessionsDir, "archive");
   const worktreesDir = join(projectDir, "worktrees");
 
   if (!dryRun) {
@@ -615,12 +623,11 @@ function migrateProject(
         result.archives++;
       }
     } else {
-      // Worker session — update worktree path to relative
+      // Worker session — update worktree path to new V2 location
       if (typeof metadata["worktree"] === "string" && metadata["worktree"]) {
         const worktreePath = metadata["worktree"];
-        // Convert absolute path to relative: ./worktrees/{sessionId}
         if (worktreePath.startsWith("/") || worktreePath.startsWith("~")) {
-          metadata["worktree"] = `./worktrees/${sessionId}`;
+          metadata["worktree"] = join(worktreesDir, sessionId);
         }
       }
 

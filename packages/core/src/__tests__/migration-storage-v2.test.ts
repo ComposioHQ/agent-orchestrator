@@ -321,7 +321,7 @@ describe("migrateStorage", () => {
     const session = JSON.parse(readFileSync(sessionPath, "utf-8"));
     expect(session.project).toBe("myproject");
     expect(session.agent).toBe("claude-code");
-    expect(session.worktree).toBe("./worktrees/ao-1");
+    expect(session.worktree).toBe(join(aoBaseDir, "projects", "myproject", "worktrees", "ao-1"));
     // status should not be stored
     expect(session).not.toHaveProperty("status");
 
@@ -512,7 +512,7 @@ describe("migrateStorage", () => {
     expect(result.archives).toBe(1);
 
     // Archive should exist in the new location with fixed filename
-    const archiveDir = join(aoBaseDir, "projects", "myproject", "archive");
+    const archiveDir = join(aoBaseDir, "projects", "myproject", "sessions", "archive");
     const archiveFiles = readdirSync(archiveDir);
     expect(archiveFiles.length).toBe(1);
     expect(archiveFiles[0]).toBe("ao-83_20260420T143052Z.json");
