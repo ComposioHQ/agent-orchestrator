@@ -6,7 +6,14 @@ import type {
   PREnrichmentData,
   SCM,
 } from "../types.js";
+import type { ProjectObserver } from "../observability.js";
 import { createMockSCM, makePR, makeSession } from "./test-utils.js";
+
+const noopObserver: ProjectObserver = {
+  component: "test",
+  recordOperation: () => {},
+  setHealth: () => {},
+};
 
 function makeConfig(): OrchestratorConfig {
   return {
@@ -59,7 +66,7 @@ describe("pr-enrichment-cache", () => {
     const cache = createPREnrichmentCache({
       config: makeConfig(),
       registry: makeRegistry(scm),
-      observer: undefined,
+      observer: noopObserver,
     });
     const session = makeSession({ pr: makePR({ owner: "org", repo: "repo", number: 42 }) });
 
@@ -76,7 +83,7 @@ describe("pr-enrichment-cache", () => {
     const cache = createPREnrichmentCache({
       config: makeConfig(),
       registry: makeRegistry(scm),
-      observer: undefined,
+      observer: noopObserver,
     });
     const pr = makePR({ owner: "org", repo: "repo", number: 42 });
     const sessions = [
@@ -101,7 +108,7 @@ describe("pr-enrichment-cache", () => {
     const cache = createPREnrichmentCache({
       config: makeConfig(),
       registry: makeRegistry(scm),
-      observer: undefined,
+      observer: noopObserver,
     });
     const session = makeSession({ pr: makePR({ owner: "org", repo: "repo", number: 42 }) });
 
@@ -121,7 +128,7 @@ describe("pr-enrichment-cache", () => {
     const cache = createPREnrichmentCache({
       config,
       registry: makeRegistry(scm),
-      observer: undefined,
+      observer: noopObserver,
     });
     await cache.populate([makeSession({ pr: makePR() })]);
 
@@ -135,7 +142,7 @@ describe("pr-enrichment-cache", () => {
     const cache = createPREnrichmentCache({
       config: makeConfig(),
       registry: makeRegistry(scm),
-      observer: undefined,
+      observer: noopObserver,
     });
     const session = makeSession({ pr: makePR({ owner: "org", repo: "repo", number: 42 }) });
 
