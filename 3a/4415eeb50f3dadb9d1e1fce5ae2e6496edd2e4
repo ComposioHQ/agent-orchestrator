@@ -1,0 +1,25 @@
+packages/web/src/lib/__tests__/serialize.test.ts
+  cb3a55836e913d02 170,187
+packages/web/src/lib/serialize.ts
+  cb3a55836e913d02 148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "3a4415eeb50f3dadb9d1e1fce5ae2e6496edd2e4",
+  "prompts": {
+    "cb3a55836e913d02": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db5e0-c09f-76e0-a09e-fdbb9a19f2ac",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 19,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
