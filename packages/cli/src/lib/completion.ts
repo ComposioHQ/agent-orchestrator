@@ -293,6 +293,10 @@ function flattenCommandFunctions(node: CompletionCommandNode): string[] {
   return lines;
 }
 
+function sanitizeSuggestionText(text: string): string {
+  return text.replace(/[\r\n\t]+/g, " ").trim();
+}
+
 function sanitizeSuggestionDescription(text: string): string {
   return text.replace(/[\r\n\t]+/g, " ").trim();
 }
@@ -484,5 +488,7 @@ _ao_complete_report_states() {
 }
 
 ${functions}
+
+_ao "$@"
 `;
 }

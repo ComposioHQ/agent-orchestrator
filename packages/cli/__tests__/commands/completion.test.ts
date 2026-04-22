@@ -23,7 +23,11 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
 }));
 
 import { registerCompletion } from "../../src/commands/completion.js";
-import { formatCompletionSuggestions, getCompletionSuggestions } from "../../src/lib/completion.js";
+import {
+  formatCompletionSuggestions,
+  generateZshCompletion,
+  getCompletionSuggestions,
+} from "../../src/lib/completion.js";
 
 function makeSession(
   id: string,
@@ -126,6 +130,11 @@ describe("completion commands", () => {
     expect(output).toContain("_ao_completion_zsh");
   });
 
+  it("emits a zsh completion file that runs on the first autoloaded invocation", () => {
+    const output = generateZshCompletion(program);
+    expect(output).toContain('_ao "$@"');
+  });
+
   it("prints configured project suggestions for the hidden helper", async () => {
     await program.parseAsync(["node", "test", "__complete", "projects"]);
 
@@ -202,7 +211,7 @@ describe("completion commands", () => {
       { value: "plain", description: undefined },
     ]);
 
-    expect(formatted).toContain("a value\thas:\tweird chars");
+    expect(formatted).toContain("a value\thas: weird chars");
     expect(formatted).toContain("plain");
   });
 

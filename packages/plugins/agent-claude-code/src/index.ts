@@ -138,6 +138,7 @@ if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
   sanitized_output=$(printf '%s' "$output" | sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g')
   # Extract PR URL from output
   pr_url=""
+  # GitHub PR URLs are whitespace-delimited in gh output after ANSI stripping.
   if [[ "$sanitized_output" =~ (https://github[.]com/[^[:space:]]+/[^[:space:]]+/pull/[0-9]+) ]]; then
     pr_url="\${BASH_REMATCH[1]}"
   fi
