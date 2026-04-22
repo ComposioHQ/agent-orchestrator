@@ -1094,21 +1094,26 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
     lastReviewBacklogCheckAt.set(session.id, Date.now());
 
-    const [pendingResult, automatedResult] = await Promise.allSettled([
-      scm.getPendingComments(session.pr),
-      scm.getAutomatedComments(session.pr),
-    ]);
+    // Single GraphQL call for all review threads (human + bot).
+    // Split locally by isBot for separate reaction pipelines.
+    let allThreads: import("./types.js").ReviewComment[] | null = null;
+    try {
+      if (scm.getReviewThreads) {
+        allThreads = await scm.getReviewThreads(session.pr);
+      } else {
+        // Fallback for SCM plugins that don't implement getReviewThreads yet
+        allThreads = await scm.getPendingComments(session.pr);
+      }
+    } catch {
+      // Failed to fetch — preserve existing metadata
+    }
 
-    // null means "failed to fetch" — preserve existing metadata.
-    // [] means "confirmed no comments" — safe to clear.
-    const pendingComments =
-      pendingResult.status === "fulfilled" && Array.isArray(pendingResult.value)
-        ? pendingResult.value
-        : null;
-    const automatedComments =
-      automatedResult.status === "fulfilled" && Array.isArray(automatedResult.value)
-        ? automatedResult.value
-        : null;
+    const pendingComments = allThreads
+      ? allThreads.filter((c) => !c.isBot)
+      : null;
+    const automatedComments = allThreads
+      ? allThreads.filter((c) => c.isBot)
+      : null;
 
     // --- Pending (human) review comments ---
     // null = SCM fetch failed; skip processing to preserve existing metadata.
@@ -1156,11 +1161,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           reactionConfig.action &&
           (reactionConfig.auto !== false || reactionConfig.action === "notify")
         ) {
+          const enrichedConfig = {
+            ...reactionConfig,
+            message: formatReviewCommentsMessage(pendingComments, "reviewer"),
+          };
           const result = await executeReaction(
             session.id,
             session.projectId,
             humanReactionKey,
-            reactionConfig,
+            enrichedConfig,
           );
           if (result.success) {
             updateSessionMetadata(session, {
@@ -1202,26 +1211,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           reactionConfig.action &&
           (reactionConfig.auto !== false || reactionConfig.action === "notify")
         ) {
-          // Inject the detailed comment listing + correct-API guidance into the
-          // message so the agent doesn't re-fetch with stale or unpaginated calls
-          // (see #895 — fixes the pagination + stale `gh pr checks` failure modes).
-          // Only override when the message is the built-in sentinel — a user who
-          // customized `reactions.bugbot-comments.message` in their YAML gets
-          // exactly what they wrote, nothing more.
-          const usingDefaultMessage =
-            reactionConfig.message === DEFAULT_BUGBOT_COMMENTS_MESSAGE;
-          const detailedConfig: ReactionConfig =
-            reactionConfig.action === "send-to-agent" && usingDefaultMessage
-              ? {
-                  ...reactionConfig,
-                  message: formatAutomatedCommentsMessage(automatedComments, session.pr),
-                }
-              : reactionConfig;
+          const enrichedConfig = {
+            ...reactionConfig,
+            message: formatReviewCommentsMessage(automatedComments, "bot"),
+          };
           const result = await executeReaction(
             session.id,
             session.projectId,
             automatedReactionKey,
-            detailedConfig,
+            enrichedConfig,
           );
           if (result.success) {
             updateSessionMetadata(session, {
@@ -1232,6 +1230,30 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         }
       }
     }
+  }
+
+  /**
+   * Format review comments into a message with inline data for the agent.
+   * Includes file, line, author, body, and URL so the agent doesn't need
+   * to re-fetch via gh api.
+   */
+  function formatReviewCommentsMessage(
+    comments: import("./types.js").ReviewComment[],
+    source: "reviewer" | "bot",
+  ): string {
+    const header =
+      source === "reviewer"
+        ? `The following ${comments.length} unresolved review comment(s) are on your PR (as of just now). You should not need to re-fetch this data unless you need additional context.`
+        : `The following ${comments.length} automated review comment(s) are on your PR (as of just now). You should not need to re-fetch this data unless you need additional context.`;
+    const lines = [header, ""];
+    for (let i = 0; i < comments.length; i++) {
+      const c = comments[i];
+      const location = c.path ? `${c.path}${c.line ? `:${c.line}` : ""}` : "(general)";
+      lines.push(`${i + 1}. ${location} (@${c.author}): "${c.body}"`);
+      if (c.url) lines.push(`   ${c.url}`);
+    }
+    lines.push("", "Address each comment, push fixes.");
+    return lines.join("\n");
   }
 
   /**

@@ -993,6 +993,97 @@ function createGitHubSCM(): SCM {
       });
     },
 
+    async getReviewThreads(pr: PRInfo): Promise<ReviewComment[]> {
+      return withPRCache(pr.owner, pr.repo, String(pr.number), "getPendingComments", async () => {
+        try {
+          const raw = await gh([
+            "api",
+            "graphql",
+            "-f",
+            `owner=${pr.owner}`,
+            "-f",
+            `name=${pr.repo}`,
+            "-F",
+            `number=${pr.number}`,
+            "-f",
+            `query=query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $number) {
+                  reviewThreads(first: 100) {
+                    nodes {
+                      isResolved
+                      comments(first: 1) {
+                        nodes {
+                          id
+                          author { login }
+                          body
+                          path
+                          line
+                          url
+                          createdAt
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }`,
+          ]);
+
+          const data: {
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    nodes: Array<{
+                      isResolved: boolean;
+                      comments: {
+                        nodes: Array<{
+                          id: string;
+                          author: { login: string } | null;
+                          body: string;
+                          path: string | null;
+                          line: number | null;
+                          url: string;
+                          createdAt: string;
+                        }>;
+                      };
+                    }>;
+                  };
+                };
+              };
+            };
+          } = JSON.parse(raw);
+
+          const threads = data.data.repository.pullRequest.reviewThreads.nodes;
+
+          return threads
+            .filter((t) => {
+              if (t.isResolved) return false;
+              const c = t.comments.nodes[0];
+              return !!c;
+            })
+            .map((t) => {
+              const c = t.comments.nodes[0];
+              const author = c.author?.login ?? "unknown";
+              return {
+                id: c.id,
+                author,
+                body: c.body,
+                path: c.path || undefined,
+                line: c.line ?? undefined,
+                isResolved: t.isResolved,
+                createdAt: parseDate(c.createdAt),
+                url: c.url,
+                isBot: BOT_AUTHORS.has(author),
+              };
+            });
+        } catch (err) {
+          throw new Error("Failed to fetch review threads", { cause: err });
+        }
+      });
+    },
+
     async getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]> {
       try {
         const perPage = 100;

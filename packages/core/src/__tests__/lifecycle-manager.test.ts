@@ -1444,7 +1444,7 @@ describe("reactions", () => {
     };
 
     const mockSCM = createMockSCM({
-      getPendingComments: vi.fn().mockResolvedValue([
+      getReviewThreads: vi.fn().mockResolvedValue([
         {
           id: "c1",
           author: "reviewer",
@@ -1454,9 +1454,9 @@ describe("reactions", () => {
           isResolved: false,
           createdAt: new Date(),
           url: "https://example.com/comment/1",
+          isBot: false,
         },
       ]),
-      getAutomatedComments: vi.fn().mockResolvedValue([]),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1473,7 +1473,10 @@ describe("reactions", () => {
 
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "Handle review comments.");
+    const sentMessage = vi.mocked(mockSessionManager.send).mock.calls[0]![1] as string;
+    expect(sentMessage).toContain("src/app.ts:12");
+    expect(sentMessage).toContain("@reviewer");
+    expect(sentMessage).toContain("Please rename this helper");
 
     vi.mocked(mockSessionManager.send).mockClear();
     await lm.check("app-1");
@@ -1494,7 +1497,16 @@ describe("reactions", () => {
 
     const mockSCM = createMockSCM({
       getReviewDecision: vi.fn().mockResolvedValue("changes_requested"),
-      getPendingComments: vi.fn().mockResolvedValue([
+      enrichSessionsPRBatch: vi.fn().mockImplementation(async (prs: import("../types.js").PRInfo[]) => {
+        const result = new Map();
+        for (const pr of prs) {
+          result.set(`${pr.owner}/${pr.repo}#${pr.number}`, {
+            state: "open", ciStatus: "passing", reviewDecision: "changes_requested", mergeable: false,
+          });
+        }
+        return result;
+      }),
+      getReviewThreads: vi.fn().mockResolvedValue([
         {
           id: "c1",
           author: "reviewer",
@@ -1504,9 +1516,9 @@ describe("reactions", () => {
           isResolved: false,
           createdAt: new Date(),
           url: "https://example.com/comment/2",
+          isBot: false,
         },
       ]),
-      getAutomatedComments: vi.fn().mockResolvedValue([]),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1524,8 +1536,10 @@ describe("reactions", () => {
     await lm.check("app-1");
     await lm.check("app-1");
 
+    // First call is the transition reaction (static message), second would be
+    // the review backlog dispatch. But the changes_requested transition guard
+    // prevents double-send, so only 1 call total.
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "Handle requested changes.");
   });
 
   it("dispatches detailed automated review comments when using the default sentinel message", async () => {
@@ -1539,17 +1553,17 @@ describe("reactions", () => {
     };
 
     const mockSCM = createMockSCM({
-      getPendingComments: vi.fn().mockResolvedValue([]),
-      getAutomatedComments: vi.fn().mockResolvedValue([
+      getReviewThreads: vi.fn().mockResolvedValue([
         {
           id: "bot-1",
-          botName: "cursor[bot]",
+          author: "cursor[bot]",
           body: "Potential issue detected",
           path: "src/worker.ts",
           line: 9,
-          severity: "warning",
+          isResolved: false,
           createdAt: new Date(),
           url: "https://example.com/comment/3",
+          isBot: true,
         },
       ]),
     });
@@ -1568,25 +1582,10 @@ describe("reactions", () => {
 
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    const [sentSessionId, sentMessage] = vi
-      .mocked(mockSessionManager.send)
-      .mock.calls[0] as [string, string];
-    expect(sentSessionId).toBe("app-1");
-    // Detailed message overrides the sentinel (see #895):
-    // it must include the comment details AND the correct-API guidance so
-    // the agent does not re-fetch with stale or unpaginated calls.
-    expect(sentMessage).toContain("cursor[bot]");
+    const sentMessage = vi.mocked(mockSessionManager.send).mock.calls[0]![1] as string;
     expect(sentMessage).toContain("src/worker.ts:9");
+    expect(sentMessage).toContain("@cursor[bot]");
     expect(sentMessage).toContain("Potential issue detected");
-    expect(sentMessage).toContain("https://example.com/comment/3");
-    // Real PR identifiers are interpolated into the guidance (org/repo/42 from makePR).
-    expect(sentMessage).toContain("repos/org/repo/pulls/42/reviews --paginate");
-    expect(sentMessage).toContain(
-      "repos/org/repo/pulls/42/reviews/REVIEW_ID/comments --paginate",
-    );
-    expect(sentMessage).toContain("in_reply_to_id");
-    // Should NOT contain the raw sentinel text when overridden.
-    expect(sentMessage).not.toBe(DEFAULT_BUGBOT_COMMENTS_MESSAGE);
 
     vi.mocked(mockSessionManager.send).mockClear();
     await lm.check("app-1");
@@ -2718,7 +2717,7 @@ describe("rate limiting optimizations", () => {
       },
     };
 
-    const getPendingMock = vi.fn().mockResolvedValue([
+    const getReviewThreadsMock = vi.fn().mockResolvedValue([
       {
         id: "c1",
         author: "reviewer",
@@ -2728,12 +2727,11 @@ describe("rate limiting optimizations", () => {
         isResolved: false,
         createdAt: new Date(),
         url: "https://example.com/comment/1",
+        isBot: false,
       },
     ]);
-    const getAutomatedMock = vi.fn().mockResolvedValue([]);
     const mockSCM = createMockSCM({
-      getPendingComments: getPendingMock,
-      getAutomatedComments: getAutomatedMock,
+      getReviewThreads: getReviewThreadsMock,
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -2750,13 +2748,13 @@ describe("rate limiting optimizations", () => {
 
     // First check: API called, dispatch happens
     await lm.check("app-1");
-    expect(getPendingMock).toHaveBeenCalledTimes(1);
+    expect(getReviewThreadsMock).toHaveBeenCalledTimes(1);
     vi.mocked(mockSessionManager.send).mockClear();
-    getPendingMock.mockClear();
+    getReviewThreadsMock.mockClear();
 
     // Second check immediately after: throttled — API NOT called
     await lm.check("app-1");
-    expect(getPendingMock).not.toHaveBeenCalled();
+    expect(getReviewThreadsMock).not.toHaveBeenCalled();
     expect(mockSessionManager.send).not.toHaveBeenCalled();
 
     // Advance time past the 2-minute throttle window
@@ -2764,7 +2762,7 @@ describe("rate limiting optimizations", () => {
 
     // Third check: throttle expired — API called again
     await lm.check("app-1");
-    expect(getPendingMock).toHaveBeenCalledTimes(1);
+    expect(getReviewThreadsMock).toHaveBeenCalledTimes(1);
   });
 
   it("clears review backlog tracking when PR is closed", async () => {

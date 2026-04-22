@@ -784,7 +784,14 @@ export interface SCM {
   /** Get pending (unresolved) review comments */
   getPendingComments(pr: PRInfo): Promise<ReviewComment[]>;
 
-  /** Get automated review comments (bots, linters, security scanners) */
+  /**
+   * Get all review threads (human + bot) with isBot flag.
+   * Single GraphQL call replaces separate getPendingComments + getAutomatedComments.
+   * Returns unresolved threads only.
+   */
+  getReviewThreads?(pr: PRInfo): Promise<ReviewComment[]>;
+
+  /** @deprecated Use getReviewThreads() instead. Kept for backward compatibility. */
   getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]>;
 
   // --- Merge Readiness ---
@@ -962,6 +969,8 @@ export interface ReviewComment {
   isResolved: boolean;
   createdAt: Date;
   url: string;
+  /** Whether the comment was authored by a known bot */
+  isBot?: boolean;
 }
 
 export interface AutomatedComment {
