@@ -839,11 +839,7 @@ function createClaudeCodeAgent(): Agent {
       const parts: string[] = ["claude", "--resume", shellEscape(sessionUuid)];
 
       const permissionMode = normalizeAgentPermissionMode(project.agentConfig?.permissions);
-      const isOrchestrator = session.metadata?.["role"] === "orchestrator";
-      if (
-        isOrchestrator &&
-        (permissionMode === "permissionless" || permissionMode === "auto-edit")
-      ) {
+      if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
       }
 
