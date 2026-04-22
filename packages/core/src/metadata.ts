@@ -189,6 +189,12 @@ export function readMetadataRaw(
   return flattenToStringRecord(raw);
 }
 
+/** Fields that are stored as JSON objects and should be parsed when unflattening. */
+const jsonFields = new Set([
+  "runtimeHandle", "lifecycle", "statePayload", "dashboard",
+  "agentReport", "reportWatcher",
+]);
+
 /** Unflatten a Record<string, string> to proper types for JSON storage. */
 function unflattenFromStringRecord(data: Record<string, string>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -202,8 +208,7 @@ function unflattenFromStringRecord(data: Record<string, string>): Record<string,
     } else if (numberFields.has(key)) {
       const num = Number(value);
       result[key] = Number.isFinite(num) ? num : value;
-    } else if (value.startsWith("{") || value.startsWith("[")) {
-      // Auto-detect JSON objects/arrays — no whitelist needed
+    } else if (jsonFields.has(key) && (value.startsWith("{") || value.startsWith("["))) {
       try {
         result[key] = JSON.parse(value);
       } catch {

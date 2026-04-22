@@ -266,20 +266,21 @@ export async function detectActiveSessions(knownPrefixes?: string[]): Promise<st
 
     // Legacy pattern: {12-hex}-{anything}-{num}
     const legacyPattern = /^[0-9a-f]{12}-.+-\d+$/;
-    // V2: any orchestrator session (always AO)
-    const v2OrchestratorPattern = /^.+-orchestrator-\d+$/;
     // V2: default "ao" prefix
     const v2DefaultPattern = /^ao-\d+$/;
 
-    // Build V2 prefix patterns from known project prefixes
+    // Build V2 prefix patterns from known project prefixes (workers + orchestrators)
     const v2PrefixPatterns = (knownPrefixes ?? [])
       .filter((p) => p && p !== "ao") // "ao" already covered above
-      .map((p) => new RegExp(`^${escapeRegExp(p)}-\\d+$`));
+      .flatMap((p) => [
+        new RegExp(`^${escapeRegExp(p)}-\\d+$`),
+        new RegExp(`^${escapeRegExp(p)}-orchestrator-\\d+$`),
+      ]);
 
     return output.split("\n").filter((name) => {
       if (legacyPattern.test(name)) return true;
-      if (v2OrchestratorPattern.test(name)) return true;
       if (v2DefaultPattern.test(name)) return true;
+      if (/^ao-orchestrator-\d+$/.test(name)) return true;
       return v2PrefixPatterns.some((pattern) => pattern.test(name));
     });
   } catch {
@@ -1012,15 +1013,36 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
     }
   }
 
-  // Remove project directories that are safe to delete (no post-migration sessions)
+  // Move worktrees back to restored hash dirs, then remove project directories
   if (existsSync(projectsDir)) {
     for (const projectId of safeToDeleteProjects) {
       const projectDir = join(projectsDir, projectId);
-      if (existsSync(projectDir)) {
-        log(`  Removing migrated project directory: projects/${projectId}`);
-        if (!dryRun) {
-          rmSync(projectDir, { recursive: true, force: true });
+      if (!existsSync(projectDir)) continue;
+
+      // Move worktrees back before deleting the project directory
+      const v2WorktreesDir = join(projectDir, "worktrees");
+      if (existsSync(v2WorktreesDir)) {
+        const projectMigratedDirs = migratedDirs.filter((d) => d.projectId === projectId);
+        const targetHashDir = projectMigratedDirs[0]
+          ? projectMigratedDirs[0].path.replace(/\.migrated$/, "")
+          : null;
+        if (targetHashDir && existsSync(targetHashDir)) {
+          const oldWorktreesDir = join(targetHashDir, "worktrees");
+          if (!dryRun) mkdirSync(oldWorktreesDir, { recursive: true });
+          for (const wt of readdirSync(v2WorktreesDir)) {
+            const src = join(v2WorktreesDir, wt);
+            const dest = join(oldWorktreesDir, wt);
+            if (!existsSync(dest)) {
+              log(`  Moving worktree back: projects/${projectId}/worktrees/${wt} → ${basename(targetHashDir)}/worktrees/${wt}`);
+              if (!dryRun) renameSync(src, dest);
+            }
+          }
         }
+      }
+
+      log(`  Removing migrated project directory: projects/${projectId}`);
+      if (!dryRun) {
+        rmSync(projectDir, { recursive: true, force: true });
       }
     }
     // Remove projects/ only if it's now empty

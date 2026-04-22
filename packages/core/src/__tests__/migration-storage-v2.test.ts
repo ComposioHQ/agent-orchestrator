@@ -891,6 +891,48 @@ describe("rollbackStorage", () => {
     expect(existsSync(join(aoBaseDir, "projects", "myproject"))).toBe(false);
   });
 
+  it("moves worktrees back to restored hash dir before deleting project dir", async () => {
+    // Simulate post-migration state: worktree was moved to projects/
+    mkdirSync(join(aoBaseDir, "aaaaaa000000-myproject.migrated", "sessions"), { recursive: true });
+    mkdirSync(join(aoBaseDir, "aaaaaa000000-myproject.migrated", "worktrees"), { recursive: true });
+    writeFileSync(
+      join(aoBaseDir, "aaaaaa000000-myproject.migrated", "sessions", "ao-1"),
+      "project=myproject",
+    );
+
+    mkdirSync(join(aoBaseDir, "projects", "myproject", "sessions"), { recursive: true });
+    mkdirSync(join(aoBaseDir, "projects", "myproject", "worktrees", "ao-1"), { recursive: true });
+    writeFileSync(
+      join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"),
+      '{"project":"myproject"}',
+    );
+    // Simulate a file inside the worktree
+    writeFileSync(
+      join(aoBaseDir, "projects", "myproject", "worktrees", "ao-1", "README.md"),
+      "# test",
+    );
+
+    writeFileSync(configPath, [
+      "projects:",
+      "  myproject:",
+      "    path: /home/user/myproject",
+      "",
+    ].join("\n"));
+
+    await rollbackStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      log: () => {},
+    });
+
+    // Worktree should be moved back to restored hash dir
+    expect(existsSync(join(aoBaseDir, "aaaaaa000000-myproject", "worktrees", "ao-1"))).toBe(true);
+    expect(readFileSync(join(aoBaseDir, "aaaaaa000000-myproject", "worktrees", "ao-1", "README.md"), "utf-8")).toBe("# test");
+
+    // Project dir should be deleted
+    expect(existsSync(join(aoBaseDir, "projects", "myproject"))).toBe(false);
+  });
+
   it("does nothing when no .migrated directories exist", async () => {
     const logs: string[] = [];
     await rollbackStorage({

@@ -266,6 +266,23 @@ describe("updateMetadata", () => {
     });
     expect(readMetadataRaw(dataDir, "upd-5")).toEqual(next);
   });
+
+  it("does not auto-parse string fields that look like JSON", () => {
+    writeMetadata(dataDir, "upd-json-safe", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+      summary: '["step1","step2"]',
+      userPrompt: '{"fix": "bug"}',
+    });
+
+    const raw = readMetadataRaw(dataDir, "upd-json-safe");
+    // summary and userPrompt must stay as strings, not parsed into objects
+    expect(typeof raw!["summary"]).toBe("string");
+    expect(typeof raw!["userPrompt"]).toBe("string");
+    expect(raw!["summary"]).toBe('["step1","step2"]');
+    expect(raw!["userPrompt"]).toBe('{"fix": "bug"}');
+  });
 });
 
 describe("readCanonicalLifecycle", () => {
