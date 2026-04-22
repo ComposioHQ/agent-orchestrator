@@ -1,0 +1,29 @@
+packages/web/src/app/api/events/route.ts
+  cb3a55836e913d02 13
+packages/core/src/session-manager.ts
+  cb3a55836e913d02 872-882,1738-1746
+.changeset/canonical-orchestrator-migration.md
+  cb3a55836e913d02 1-3,13-18
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  cb3a55836e913d02 1666-1690
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "8cdbbe75351c668932932de005f733384d77da95",
+  "prompts": {
+    "cb3a55836e913d02": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db5e0-c09f-76e0-a09e-fdbb9a19f2ac",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 57,
+      "total_deletions": 4,
+      "accepted_lines": 57,
+      "overriden_lines": 0
+    }
+  }
+}
