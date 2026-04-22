@@ -4,16 +4,16 @@
  * Uses the `gh` CLI for all GitHub API interactions.
  */
 
-import type {
-  PluginModule,
-  Tracker,
-  Issue,
-  IssueFilters,
-  IssueUpdate,
-  CreateIssueInput,
-  ProjectConfig,
+import {
+  execGhObserved,
+  type PluginModule,
+  type Tracker,
+  type Issue,
+  type IssueFilters,
+  type IssueUpdate,
+  type CreateIssueInput,
+  type ProjectConfig,
 } from "@aoagents/ao-core";
-import { execGhObserved } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -114,11 +114,59 @@ function requireRepo(project: ProjectConfig): string {
   return project.repo;
 }
 
+// Issue cache: 5 min TTL, bounded to 500 entries. Issue metadata (title, body,
+// labels, state) rarely changes during a session, and the lifecycle worker
+// polls `getIssue` / `isCompleted` repeatedly — same (repo, id) seen 64+ times
+// per 5-session tier-5 run in our traces.
+const ISSUE_CACHE_TTL_MS = 5 * 60_000;
+const ISSUE_CACHE_MAX = 500;
+
+interface CachedIssue {
+  issue: Issue;
+  expiresAt: number;
+}
+
+function issueCacheKey(repo: string, identifier: string): string {
+  return `${repo}#${identifier.replace(/^#/, "")}`;
+}
+
 function createGitHubTracker(): Tracker {
-  return {
+  const issueCache = new Map<string, CachedIssue>();
+
+  function readCachedIssue(repo: string, identifier: string): Issue | null {
+    const key = issueCacheKey(repo, identifier);
+    const entry = issueCache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      issueCache.delete(key);
+      return null;
+    }
+    return entry.issue;
+  }
+
+  function writeCachedIssue(repo: string, identifier: string, issue: Issue): void {
+    if (issueCache.size >= ISSUE_CACHE_MAX) {
+      const oldest = issueCache.keys().next().value;
+      if (oldest !== undefined) issueCache.delete(oldest);
+    }
+    issueCache.set(issueCacheKey(repo, identifier), {
+      issue,
+      expiresAt: Date.now() + ISSUE_CACHE_TTL_MS,
+    });
+  }
+
+  function invalidateCachedIssue(repo: string, identifier: string): void {
+    issueCache.delete(issueCacheKey(repo, identifier));
+  }
+
+  const tracker: Tracker = {
     name: "github",
 
     async getIssue(identifier: string, project: ProjectConfig): Promise<Issue> {
+      const repo = requireRepo(project);
+      const cached = readCachedIssue(repo, identifier);
+      if (cached) return cached;
+
       const raw = await ghIssueViewJson(identifier, project);
 
       const data: {
@@ -132,7 +180,7 @@ function createGitHubTracker(): Tracker {
         assignees: Array<{ login: string }>;
       } = JSON.parse(raw);
 
-      return {
+      const issue: Issue = {
         id: String(data.number),
         title: data.title,
         description: data.body ?? "",
@@ -141,20 +189,16 @@ function createGitHubTracker(): Tracker {
         labels: data.labels.map((l) => l.name),
         assignee: data.assignees[0]?.login,
       };
+
+      writeCachedIssue(repo, identifier, issue);
+      return issue;
     },
 
     async isCompleted(identifier: string, project: ProjectConfig): Promise<boolean> {
-      const raw = await gh([
-        "issue",
-        "view",
-        identifier,
-        "--repo",
-        requireRepo(project),
-        "--json",
-        "state",
-      ]);
-      const data: { state: string } = JSON.parse(raw);
-      return data.state.toUpperCase() === "CLOSED";
+      // Route through getIssue so the cache covers the hot isCompleted poll path too.
+      // "closed" and "cancelled" (CLOSED + NOT_PLANNED stateReason) both count as completed.
+      const issue = await tracker.getIssue(identifier, project);
+      return issue.state === "closed" || issue.state === "cancelled";
     },
 
     issueUrl(identifier: string, project: ProjectConfig): string {
@@ -259,6 +303,8 @@ function createGitHubTracker(): Tracker {
       project: ProjectConfig,
     ): Promise<void> {
       const repo = requireRepo(project);
+      // Any mutation invalidates the cached Issue for this (repo, identifier).
+      invalidateCachedIssue(repo, identifier);
       // Handle state change — GitHub Issues only supports open/closed.
       // "in_progress" is not a GitHub state, so it is intentionally a no-op.
       if (update.state === "closed") {
@@ -350,9 +396,11 @@ function createGitHubTracker(): Tracker {
       }
       const number = match[1];
 
-      return this.getIssue(number, project);
+      return tracker.getIssue(number, project);
     },
   };
+
+  return tracker;
 }
 
 // ---------------------------------------------------------------------------
