@@ -1082,6 +1082,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
               session.status = "detecting";
             }
           }
+          // Clear any stale activity signal — once the runtime is missing,
+          // the previously-cached activity (e.g. "active") is no longer
+          // trustworthy and would render misleadingly alongside `detecting`.
+          session.activitySignal = createActivitySignal("unavailable");
           return;
         }
       } catch {

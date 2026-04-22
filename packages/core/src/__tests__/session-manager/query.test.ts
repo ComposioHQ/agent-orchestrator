@@ -228,6 +228,10 @@ describe("list", () => {
     expect(sessions[0].lifecycle.session.state).toBe("detecting");
     expect(sessions[0].lifecycle.session.reason).toBe("runtime_lost");
     expect(sessions[0].lifecycle.runtime.state).toBe("missing");
+    // Stale activity signal must be cleared — once the runtime is missing,
+    // the cached "active"/"ready" is no longer trustworthy and would render
+    // misleadingly alongside `detecting` in the dashboard.
+    expect(sessions[0].activitySignal.state).toBe("unavailable");
   });
 
   it("detects activity using agent-native mechanism", async () => {
