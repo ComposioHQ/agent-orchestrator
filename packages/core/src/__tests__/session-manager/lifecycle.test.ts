@@ -9,7 +9,6 @@ import { homedir } from "node:os";
 import { createSessionManager } from "../../session-manager.js";
 import {
   writeMetadata,
-  readMetadata,
   readMetadataRaw,
   deleteMetadata,
 } from "../../metadata.js";
