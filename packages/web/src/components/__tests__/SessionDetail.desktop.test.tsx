@@ -20,8 +20,18 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("../DirectTerminal", () => ({
-  DirectTerminal: ({ sessionId }: { sessionId: string }) => (
-    <div data-testid="direct-terminal">{sessionId}</div>
+  DirectTerminal: ({
+    sessionId,
+    appearance,
+  }: {
+    sessionId: string;
+    appearance?: string;
+  }) => (
+    <div
+      data-testid="direct-terminal"
+      data-session-id={sessionId}
+      data-appearance={appearance ?? ""}
+    />
   ),
 }));
 
@@ -293,5 +303,18 @@ describe("SessionDetail desktop layout", () => {
     });
 
     expect(routerPushMock).toHaveBeenCalledWith("/projects/my-app");
+  });
+
+  it("lets the terminal follow the active app theme on desktop", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-themed",
+          projectId: "my-app",
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("direct-terminal")).toHaveAttribute("data-appearance", "theme");
   });
 });

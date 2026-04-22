@@ -12,8 +12,18 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("../DirectTerminal", () => ({
-  DirectTerminal: ({ sessionId }: { sessionId: string }) => (
-    <div data-testid="direct-terminal">{sessionId}</div>
+  DirectTerminal: ({
+    sessionId,
+    appearance,
+  }: {
+    sessionId: string;
+    appearance?: string;
+  }) => (
+    <div
+      data-testid="direct-terminal"
+      data-session-id={sessionId}
+      data-appearance={appearance ?? ""}
+    />
   ),
 }));
 
@@ -36,6 +46,11 @@ function mockMobileViewport() {
 describe("SessionDetail unified layout (mobile viewport)", () => {
   beforeEach(() => {
     mockMobileViewport();
+    window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    window.cancelAnimationFrame = vi.fn();
   });
 
   it("shows hamburger toggle button in topbar on mobile", () => {
@@ -153,5 +168,19 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
 
     expect(screen.getAllByRole("link", { name: /PR #89/i }).length).toBeGreaterThan(0);
     expect(screen.getAllByText("worker-merged").length).toBeGreaterThan(0);
+  });
+
+  it("lets the terminal follow the active app theme on mobile", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-mobile-theme",
+          projectId: "my-app",
+        })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    expect(screen.getByTestId("direct-terminal")).toHaveAttribute("data-appearance", "theme");
   });
 });
