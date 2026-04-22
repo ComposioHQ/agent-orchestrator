@@ -452,21 +452,25 @@ function parseDate(val: string | undefined | null): Date {
 // ---------------------------------------------------------------------------
 
 // In-process PR cache. Per-method TTLs balance call reduction against
-// staleness on decision-influencing fields. Fast-changing decision-critical
-// fields (CI, mergeability, review decision, pending comments) use 5s —
-// well under one poll cycle so the lifecycle worker still sees transitions
-// on its next pass. detectPR caches positive results only (never [])
-// so a freshly created PR is discovered on the very next poll.
+// staleness. Tightest TTLs (5s) on the fastest-changing decision-critical
+// fields (state, CI, mergeability) — well under one poll cycle. Slightly
+// looser (10s) on review-state and review-comments which tolerate up to
+// 10-30s staleness per the agreed policy and benefit measurably from a
+// looser window in trace replay. detectPR uses 30s because once a PR is
+// discovered for a branch, that fact is stable for the session — and 5s was
+// far below the per-branch poll cadence (~30s), making the cache near-useless.
+// detectPR caches positive results only (never []) so a freshly created PR
+// is discovered on the very next poll.
 const PR_CACHE_TTL_MS = {
   resolvePR: 60_000, // identity metadata (number, url, title, branch refs, isDraft)
   getPRState: 5_000, // open / merged / closed
   getPRSummary: 5_000, // state + title + additions/deletions
-  getReviews: 5_000, // review array (state, body, author)
-  getReviewDecision: 5_000, // approved / changes_requested / pending
+  getReviews: 10_000, // review array (state, body, author)
+  getReviewDecision: 10_000, // approved / changes_requested / pending
   getCIChecks: 5_000, // CI check list (name, state, link, timestamps)
   getMergeability: 5_000, // composite merge readiness
-  getPendingComments: 5_000, // unresolved review threads (GraphQL)
-  detectPR: 5_000, // positive hits only — see detectPR impl
+  getPendingComments: 10_000, // unresolved review threads (GraphQL)
+  detectPR: 30_000, // positive hits only — branch-PR mapping is stable once known
 } as const;
 
 const PR_CACHE_MAX_ENTRIES = 1000;
