@@ -1,5 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { generateOrchestratorPrompt, generateSessionPrefix } from "@aoagents/ao-core";
+import {
+  generateOrchestratorPrompt,
+  generateSessionPrefix,
+  type ProjectConfig,
+} from "@aoagents/ao-core";
 import { getServices } from "@/lib/services";
 import { validateIdentifier, validateConfiguredProject } from "@/lib/validation";
 import { mapSessionsToOrchestrators } from "@/lib/orchestrator-utils";
@@ -55,9 +59,10 @@ export async function GET(request: NextRequest) {
     }
     const project = config.projects[projectId];
     const sessionPrefix = project.sessionPrefix ?? projectId;
+    const projects = Object.entries(config.projects) as Array<[string, ProjectConfig]>;
 
     const allSessions = await sessionManager.list(projectId);
-    const allSessionPrefixes = Object.entries(config.projects).map(
+    const allSessionPrefixes = projects.map(
       ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
     );
     const orchestrators = mapSessionsToOrchestrators(allSessions, sessionPrefix, project.name, allSessionPrefixes);

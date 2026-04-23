@@ -23,6 +23,7 @@ import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
 import { ConnectionBar } from "./ConnectionBar";
 import { CopyDebugBundleButton } from "./CopyDebugBundleButton";
+import { ThemeToggle } from "./ThemeToggle";
 import { SidebarContext } from "./workspace/SidebarContext";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 
@@ -198,6 +199,13 @@ function DashboardInner({
   const activeProject = projectId ? projects.find((project) => project.id === projectId) ?? null : null;
   const isSpawningCurrentProject = projectId ? spawningProjectIds.includes(projectId) : false;
   const currentProjectSpawnError = projectId ? spawnErrors[projectId] ?? null : null;
+  const headerOrchestrators = useMemo(() => {
+    if (allProjectsView) return EMPTY_ORCHESTRATORS;
+    if (projectId) {
+      return currentProjectOrchestrator ? [currentProjectOrchestrator] : EMPTY_ORCHESTRATORS;
+    }
+    return activeOrchestrators;
+  }, [activeOrchestrators, allProjectsView, currentProjectOrchestrator, projectId]);
 
   const displaySessions = useMemo(() => {
     if (allProjectsView || !activeSessionId) return sessions;
@@ -486,8 +494,8 @@ function DashboardInner({
                     viewBox="0 0 24 24"
                     aria-hidden="true"
                   >
-                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                    <path d="M9 3v18" />
+                    <rect x="3" y="3" width="7" height="18" rx="1.5" />
+                    <rect x="14" y="3" width="7" height="18" rx="1.5" />
                   </svg>
                 )}
               </button>
@@ -504,35 +512,14 @@ function DashboardInner({
             ) : null}
             {showDebugBundleButton ? <CopyDebugBundleButton projectId={projectId} /> : null}
             <div className="dashboard-app-header__spacer" />
-            <div className="dashboard-app-header__actions">
-              {!allProjectsView && orchestratorHref ? (
-                <Link
-                  href={orchestratorHref}
-                  className="dashboard-app-btn dashboard-app-btn--amber"
-                  aria-label="Orchestrator"
-                >
-                  <svg
-                    width="12"
-                    height="12"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                  >
-                    <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
-                    <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
-                    <circle cx="6" cy="17" r="2" />
-                    <circle cx="12" cy="17" r="2" />
-                    <circle cx="18" cy="17" r="2" />
-                  </svg>
-                  Orchestrator
-                </Link>
-              ) : canSpawnProjectOrchestrator && activeProject ? (
+            <div className="dashboard-app-header__actions" data-testid="dashboard-header-actions">
+              <ThemeToggle />
+              {canSpawnProjectOrchestrator && activeProject ? (
                 <button
                   type="button"
                   className="dashboard-app-btn dashboard-app-btn--amber"
                   aria-label="Spawn Orchestrator"
+                  data-testid="dashboard-header-orchestrator-action"
                   onClick={() => void handleSpawnOrchestrator(activeProject)}
                   disabled={isSpawningCurrentProject}
                 >
@@ -553,7 +540,9 @@ function DashboardInner({
                   </svg>
                   {isSpawningCurrentProject ? "Spawning..." : "Spawn Orchestrator"}
                 </button>
-              ) : null}
+              ) : (
+                <OrchestratorControl orchestrators={headerOrchestrators} />
+              )}
             </div>
           </header>
 
@@ -664,7 +653,6 @@ function DashboardInner({
                     spawnDisabled={isSpawningCurrentProject}
                   />
                 ) : null}
-
                 {!allProjectsView && currentProjectSpawnError ? (
                   <p className="mt-3 text-[11px] text-[var(--color-status-error)]">
                     {currentProjectSpawnError}
@@ -718,6 +706,109 @@ export function Dashboard(props: DashboardProps) {
   );
 }
 
+function OrchestratorControl({ orchestrators }: { orchestrators: DashboardOrchestratorLink[] }) {
+  if (orchestrators.length === 0) return null;
+
+  if (orchestrators.length === 1) {
+    const orchestrator = orchestrators[0];
+    return (
+      <Link
+        data-testid="dashboard-header-orchestrator-action"
+        href={projectSessionPath(orchestrator.projectId, orchestrator.id)}
+        className="dashboard-app-btn dashboard-app-btn--amber"
+        aria-label="Orchestrator"
+      >
+        <svg
+          width="12"
+          height="12"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+          <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+          <circle cx="6" cy="17" r="2" />
+          <circle cx="12" cy="17" r="2" />
+          <circle cx="18" cy="17" r="2" />
+        </svg>
+        Orchestrator
+        <svg
+          width="12"
+          height="12"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
+        </svg>
+      </Link>
+    );
+  }
+
+  return (
+    <details className="group relative" data-testid="dashboard-header-orchestrator-action">
+      <summary className="dashboard-app-btn dashboard-app-btn--amber flex cursor-pointer list-none items-center gap-2">
+        <svg
+          width="12"
+          height="12"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+          <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+          <circle cx="6" cy="17" r="2" />
+          <circle cx="12" cy="17" r="2" />
+          <circle cx="18" cy="17" r="2" />
+        </svg>
+        {orchestrators.length} orchestrators
+        <svg
+          width="12"
+          height="12"
+          className="transition-transform group-open:rotate-90"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path d="m9 18 6-6-6-6" />
+        </svg>
+      </summary>
+      <div className="absolute right-0 top-[calc(100%+0.5rem)] z-10 min-w-[220px] overflow-hidden border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] shadow-[0_18px_40px_rgba(0,0,0,0.18)]">
+        {orchestrators.map((orchestrator, index) => (
+          <Link
+            key={orchestrator.id}
+            href={projectSessionPath(orchestrator.projectId, orchestrator.id)}
+            className={`flex items-center justify-between gap-3 px-4 py-3 text-[12px] hover:bg-[var(--color-bg-hover)] hover:no-underline ${
+              index > 0 ? "border-t border-[var(--color-border-subtle)]" : ""
+            }`}
+          >
+            <span className="flex min-w-0 items-center gap-2 text-[var(--color-text-primary)]">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent)] opacity-80" />
+              <span className="truncate">{orchestrator.projectName}</span>
+            </span>
+            <svg
+              className="h-3 w-3 shrink-0 opacity-60"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
+              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
+            </svg>
+          </Link>
+        ))}
+      </div>
+    </details>
+  );
+}
 function ProjectOverviewGrid({
   overviews,
   onSpawnOrchestrator,

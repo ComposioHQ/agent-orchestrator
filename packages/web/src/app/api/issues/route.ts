@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getServices } from "@/lib/services";
 import { validateString, validateConfiguredProject } from "@/lib/validation";
-import type { Tracker } from "@aoagents/ao-core";
+import type { ProjectConfig, Tracker } from "@aoagents/ao-core";
 
 export const dynamic = "force-dynamic";
 
@@ -18,8 +18,9 @@ export async function GET(request: NextRequest) {
   try {
     const { config, registry } = await getServices();
     const allIssues: Array<{ projectId: string; id: string; title: string; url: string; state: string; labels: string[] }> = [];
+    const projects = Object.entries(config.projects) as Array<[string, ProjectConfig]>;
 
-    for (const [projectId, project] of Object.entries(config.projects)) {
+    for (const [projectId, project] of projects) {
       if (projectFilter && projectId !== projectFilter) continue;
       if (!project.tracker?.plugin) continue;
 

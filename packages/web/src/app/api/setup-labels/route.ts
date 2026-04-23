@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServices } from "@/lib/services";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import type { ProjectConfig } from "@aoagents/ao-core";
 
 const execFileAsync = promisify(execFile);
 
@@ -22,8 +23,9 @@ export async function POST() {
   try {
     const { config } = await getServices();
     const results: Array<{ repo: string; label: string; status: string }> = [];
+    const projects = Object.values(config.projects) as ProjectConfig[];
 
-    for (const project of Object.values(config.projects)) {
+    for (const project of projects) {
       if (!project.repo) continue;
 
       for (const label of LABELS) {

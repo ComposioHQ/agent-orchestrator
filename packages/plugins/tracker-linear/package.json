@@ -36,6 +36,14 @@
   "dependencies": {
     "@aoagents/ao-core": "workspace:*"
   },
+  "peerDependencies": {
+    "@composio/core": "*"
+  },
+  "peerDependenciesMeta": {
+    "@composio/core": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^25.2.3",
     "typescript": "^5.7.0",

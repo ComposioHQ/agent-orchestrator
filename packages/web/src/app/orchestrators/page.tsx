@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { OrchestratorSelector, type Orchestrator } from "@/components/OrchestratorSelector";
 import { getServices } from "@/lib/services";
 import { getAllProjects } from "@/lib/project-name";
-import { generateSessionPrefix } from "@aoagents/ao-core";
+import { generateSessionPrefix, type ProjectConfig } from "@aoagents/ao-core";
 import { mapSessionsToOrchestrators } from "@/lib/orchestrator-utils";
 
 export const dynamic = "force-dynamic";
@@ -57,8 +57,9 @@ export default async function OrchestratorsRoute(props: {
     } else {
       projectName = project.name;
       const sessionPrefix = project.sessionPrefix ?? projectId;
+      const projects = Object.entries(config.projects) as Array<[string, ProjectConfig]>;
       const allSessions = await sessionManager.list(projectId);
-      const allSessionPrefixes = Object.entries(config.projects).map(
+      const allSessionPrefixes = projects.map(
         ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
       );
       orchestrators = mapSessionsToOrchestrators(allSessions, sessionPrefix, project.name, allSessionPrefixes);

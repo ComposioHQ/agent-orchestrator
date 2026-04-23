@@ -14,6 +14,9 @@ const nextConfig = {
   serverExternalPackages: [
     "yaml",
     "zod",
+    // Optional dependency used only when the Linear tracker plugin routes
+    // through Composio at runtime. Keep it out of the Next server bundle.
+    "@composio/core",
   ],
   async headers() {
     return [

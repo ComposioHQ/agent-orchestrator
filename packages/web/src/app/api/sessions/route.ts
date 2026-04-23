@@ -118,7 +118,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const allSessionPrefixes = Object.entries(config.projects).map(
+    const allSessionPrefixes = (Object.entries(config.projects) as Array<[string, { sessionPrefix?: string }]>).map(
       ([projectId, p]) => p.sessionPrefix ?? projectId,
     );
     let workerSessions = visibleSessions.filter(

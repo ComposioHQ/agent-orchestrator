@@ -72,5 +72,11 @@ jobs:
         run: tmux start-server
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r --filter '!@aoagents/ao-web' build
+      - name: Run dashboard header invariants
+        run: >-
+          pnpm --filter @aoagents/ao-web exec vitest run
+          src/components/__tests__/Dashboard.headerActions.test.tsx
+          src/components/__tests__/Dashboard.projectOverview.test.tsx
+          src/components/__tests__/Dashboard.mobile.test.tsx
       - name: Run web server tests (unit + integration)
         run: pnpm --filter @aoagents/ao-web exec vitest run server/__tests__/
