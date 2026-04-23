@@ -125,11 +125,10 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
     console.warn("[dashboard-page-data] metadata fast enrichment failed:", err);
   }
 
-    // PR enrichment from session metadata (no API calls).
-    for (let i = 0; i < coreSessions.length; i++) {
-      if (!coreSessions[i].pr) continue;
-      enrichSessionPR(pageData.sessions[i]);
-    }
+  // PR enrichment from session metadata (no API calls).
+  for (let i = 0; i < coreSessions.length; i++) {
+    if (!coreSessions[i].pr) continue;
+    enrichSessionPR(pageData.sessions[i]);
   }
 
   return pageData;

@@ -1,4 +1,4 @@
-import { ACTIVITY_STATE, isOrchestratorSession } from "@aoagents/ao-core";
+import { ACTIVITY_STATE, isOrchestratorSession, isTerminalSession } from "@aoagents/ao-core";
 import { getServices } from "@/lib/services";
 import {
   sessionToDashboard,
