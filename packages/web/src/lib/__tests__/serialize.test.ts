@@ -2,7 +2,7 @@
  * Tests for session serialization and PR enrichment
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   createInitialCanonicalLifecycle,
   type Session,
