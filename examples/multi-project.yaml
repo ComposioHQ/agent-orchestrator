@@ -46,7 +46,7 @@ projects:
 notifiers:
   slack:
     plugin: slack
-    webhook: ${SLACK_WEBHOOK_URL}
+    webhookUrl: ${SLACK_WEBHOOK_URL}
     channel: "#agent-updates"
 
 # Route notifications by priority
