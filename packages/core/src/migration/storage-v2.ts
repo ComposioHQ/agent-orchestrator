@@ -668,6 +668,57 @@ function migrateProject(
 }
 
 // ---------------------------------------------------------------------------
+// Git worktree repair — fix references broken by directory moves
+// ---------------------------------------------------------------------------
+
+/**
+ * After moving worktree directories, git's internal references
+ * (.git/worktrees/{id}/gitdir) still point to the old location.
+ * Run `git worktree repair` from each project's repo root to fix them.
+ */
+async function repairGitWorktrees(aoBaseDir: string, globalConfigPath: string, log: (message: string) => void): Promise<void> {
+  // Build projectId → repo path lookup from global config
+  const repoPathByProject = new Map<string, string>();
+  try {
+    if (existsSync(globalConfigPath)) {
+      const content = readFileSync(globalConfigPath, "utf-8");
+      const parsed = parseYaml(content) as Record<string, unknown>;
+      const projects = parsed?.["projects"] as Record<string, Record<string, unknown>> | undefined;
+      if (projects && typeof projects === "object") {
+        for (const [projectId, entry] of Object.entries(projects)) {
+          if (entry && typeof entry["path"] === "string") {
+            repoPathByProject.set(projectId, entry["path"]);
+          }
+        }
+      }
+    }
+  } catch {
+    // Config unreadable — skip repair
+    return;
+  }
+
+  const projectsDir = join(aoBaseDir, "projects");
+  if (!existsSync(projectsDir)) return;
+
+  const { execSync } = await import("node:child_process");
+
+  for (const projectId of readdirSync(projectsDir)) {
+    const worktreesDir = join(projectsDir, projectId, "worktrees");
+    if (!existsSync(worktreesDir)) continue;
+
+    const repoPath = repoPathByProject.get(projectId);
+    if (!repoPath || !existsSync(repoPath)) continue;
+
+    try {
+      execSync(`git worktree repair`, { cwd: repoPath, timeout: 10_000, stdio: "ignore" });
+      log(`  Repaired git worktree references for ${projectId}`);
+    } catch {
+      log(`  Warning: git worktree repair failed for ${projectId} — run manually in ${repoPath}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Config update — strip storageKey
 // ---------------------------------------------------------------------------
 
@@ -924,6 +975,11 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
 
   // Move stray worktrees from ~/.worktrees/
   totals.strayWorktreesMoved = moveStrayWorktrees(aoBaseDir, dryRun, log);
+
+  // Repair git worktree references broken by directory moves
+  if (!dryRun && totals.worktrees > 0) {
+    await repairGitWorktrees(aoBaseDir, effectiveConfigPath, log);
+  }
 
   // Strip storageKey from config
   log("\nUpdating config...");

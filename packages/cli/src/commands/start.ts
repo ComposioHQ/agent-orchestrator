@@ -35,6 +35,8 @@ import {
   ConfigNotFoundError,
   loadLocalProjectConfigDetailed,
   registerProjectInGlobalConfig,
+  getAoBaseDir,
+  inventoryHashDirs,
   type OrchestratorConfig,
   type LocalProjectConfig,
   type ProjectConfig,
@@ -1040,6 +1042,29 @@ async function ensureTmux(): Promise<void> {
   process.exit(1);
 }
 
+function warnAboutLegacyStorage(): void {
+  try {
+    const hashDirs = inventoryHashDirs(getAoBaseDir(), getGlobalConfigPath());
+    if (hashDirs.length === 0) return;
+
+    const sessionCount = hashDirs.reduce((sum, d) => {
+      if (d.empty) return sum;
+      return sum + 1;
+    }, 0);
+    if (sessionCount === 0) return;
+
+    console.log(
+      chalk.yellow(
+        `\n  ⚠ Found ${hashDirs.length} legacy storage director${hashDirs.length === 1 ? "y" : "ies"} that need${hashDirs.length === 1 ? "s" : ""} migration.\n` +
+        `    Sessions stored in the old format won't appear until migrated.\n` +
+        `    Run ${chalk.bold("ao migrate-storage")} to upgrade (use ${chalk.bold("--dry-run")} to preview).\n`,
+      ),
+    );
+  } catch {
+    // Non-critical — don't block startup
+  }
+}
+
 async function warnAboutOpenClawStatus(config: OrchestratorConfig): Promise<void> {
   const openclawConfig = config.notifiers?.["openclaw"];
   const openclawConfigured =
@@ -1093,6 +1118,7 @@ async function runStartup(
   if (runtime === "tmux") {
     await ensureTmux();
   }
+  warnAboutLegacyStorage();
   await warnAboutOpenClawStatus(config);
 
   // Prevent macOS idle sleep while AO is running (if enabled in config)
