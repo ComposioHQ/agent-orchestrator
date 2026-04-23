@@ -18,10 +18,34 @@
 
 ## Rate-Limit Budget
 
-| Budget | Before | After | Consumed | Projected/hour |
-|--------|--------|-------|----------|----------------|
+| Budget | Before | After | Consumed (snapshot) | Projected/hour |
+|--------|--------|-------|---------------------|----------------|
 | **GraphQL** (5,000/hr) | 8 used | 370 used | **362** | **~905** (18%) |
-| **REST** (5,000/hr) | 4 used | 6 used | **2** | **~5** (<1%) |
+| **REST** (5,000/hr) | 4 used | 6 used | **2** (see note) | **~110** (~2%) |
+
+### REST budget note
+
+The snapshot shows only 2 REST points consumed, but the actual REST usage is higher. This is because:
+
+1. **304 responses are free.** Guard 1 returned 304 × 26 times, Guard 2 returned 304 × 72 times. These don't consume rate limit points.
+2. **Rate limit window reset.** The before/after snapshots have different `reset` timestamps (before: `1776929003`, after: `1776929003`). If the hourly window reset between snapshots, the counter restarts from zero, making the delta unreliable.
+3. **Actual REST calls that consume points:**
+
+| Call type | Total calls | 200 responses (cost points) | 304 responses (free) |
+|-----------|:-----------:|:---------------------------:|:--------------------:|
+| Guard 1 (`gh api GET .../pulls`) | 42 | 16 | 26 |
+| Guard 2 (`gh api GET .../status`) | 83 | 11 | 72 |
+| `gh pr list` (CLI, REST under the hood) | 36 | 36 | — |
+| `gh pr view` (CLI, REST under the hood) | 6 | 6 | — |
+| `gh pr checks` (CLI, REST under the hood) | 3 | 3 | — |
+| `gh pr merge` (CLI, REST under the hood) | 2 | 2 | — |
+| `gh issue view` (CLI, REST under the hood) | 35 | 35 | — |
+| `gh issue list` (CLI, REST under the hood) | 1 | 1 | — |
+| **Total** | **208** | **~110** | **98** |
+
+**Estimated actual REST consumption: ~110 points / 24 min → ~275/hr (5.5%).** The 98 free 304 responses from ETag guards are the biggest REST saving — without guards, those would be 98 additional 200 responses costing points.
+
+The rate limit headers are only captured from `gh api -i` calls (guards and batch). The `gh` CLI commands (`pr list`, `pr view`, etc.) consume REST points but don't expose rate limit headers in the trace.
 
 ## Call Summary (266 total)
 
