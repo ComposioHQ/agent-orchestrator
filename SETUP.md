@@ -812,8 +812,10 @@ ao session ls
 ao session kill <session-name>
 
 # Cleanup script (example)
-ao session ls --json | jq -r '.[] | select(.status == "merged") | .id' | xargs -I{} ao session kill {}
+ao session ls --json --include-terminated | jq -r '.data[] | select(.status == "merged") | .id' | xargs -I{} ao session kill {}
 ```
+
+> **Note:** `ao session ls --json` and `ao status --json` emit `{ data: [...], meta: { hiddenTerminatedCount } }`. By default terminated sessions (`killed`, `terminated`, `done`, `merged`, `errored`, `cleanup`) are hidden — pass `--include-terminated` to include them in `data`.
 
 ### Can I run multiple orchestrators?
 

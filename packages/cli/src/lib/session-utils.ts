@@ -16,7 +16,8 @@ export function stripHashPrefix(name: string): string {
 
 /** Check whether a session name matches a project prefix (strict: prefix-\d+ only). */
 export function matchesPrefix(sessionName: string, prefix: string): boolean {
-  return new RegExp(`^${escapeRegex(prefix)}-\\d+$`).test(sessionName);
+  const normalizedName = stripHashPrefix(sessionName);
+  return new RegExp(`^${escapeRegex(prefix)}-\\d+$`).test(normalizedName);
 }
 
 /** Find which project a session belongs to by matching its name against session prefixes. */
@@ -28,7 +29,7 @@ export function findProjectForSession(
     [string, OrchestratorConfig["projects"][string]]
   >) {
     const prefix = project.sessionPrefix || id;
-    if (matchesPrefix(sessionName, prefix)) {
+    if (matchesPrefix(sessionName, prefix) || isOrchestratorSessionName(config, sessionName, id)) {
       return id;
     }
   }
@@ -40,6 +41,8 @@ export function isOrchestratorSessionName(
   sessionName: string,
   projectId?: string,
 ): boolean {
+  const normalizedName = stripHashPrefix(sessionName);
+
   // If sessionName is a numbered worker for any configured project, it is not an orchestrator.
   // This guard runs first to prevent cross-project false positives: e.g. prefix "app" would
   // match "app-orchestrator-1" as an orchestrator pattern, but if another project has prefix
@@ -48,7 +51,7 @@ export function isOrchestratorSessionName(
     [string, OrchestratorConfig["projects"][string]]
   >) {
     const prefix = project.sessionPrefix || id;
-    if (matchesPrefix(sessionName, prefix)) return false;
+    if (matchesPrefix(normalizedName, prefix)) return false;
   }
 
   if (projectId) {
@@ -56,8 +59,8 @@ export function isOrchestratorSessionName(
     if (project) {
       const prefix = project.sessionPrefix || projectId;
       if (
-        sessionName === `${prefix}-orchestrator` ||
-        new RegExp(`^${escapeRegex(prefix)}-orchestrator-\\d+$`).test(sessionName)
+        normalizedName === `${prefix}-orchestrator` ||
+        new RegExp(`^${escapeRegex(prefix)}-orchestrator-\\d+$`).test(normalizedName)
       ) {
         return true;
       }
@@ -69,12 +72,12 @@ export function isOrchestratorSessionName(
   >) {
     const prefix = project.sessionPrefix || id;
     if (
-      sessionName === `${prefix}-orchestrator` ||
-      new RegExp(`^${escapeRegex(prefix)}-orchestrator-\\d+$`).test(sessionName)
+      normalizedName === `${prefix}-orchestrator` ||
+      new RegExp(`^${escapeRegex(prefix)}-orchestrator-\\d+$`).test(normalizedName)
     ) {
       return true;
     }
   }
 
-  return sessionName.endsWith("-orchestrator");
+  return normalizedName.endsWith("-orchestrator");
 }

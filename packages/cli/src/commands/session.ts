@@ -2,12 +2,21 @@ import { spawn } from "node:child_process";
 import { connect as netConnect } from "node:net";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { generateConfigHash, isOrchestratorSession, isWindows, loadConfig, SessionNotRestorableError, WorkspaceMissingError } from "@aoagents/ao-core";
+import {
+  generateConfigHash,
+  isOrchestratorSession,
+  isTerminalSession,
+  isWindows,
+  loadConfig,
+  SessionNotRestorableError,
+  WorkspaceMissingError,
+} from "@aoagents/ao-core";
 import { DEFAULT_PORT } from "../lib/constants.js";
 import { git, getTmuxActivity, tmux } from "../lib/shell.js";
 import { formatAge } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { isOrchestratorSessionName } from "../lib/session-utils.js";
+import { projectSessionUrl } from "../lib/routes.js";
 
 interface SessionListEntry {
   id: string;
@@ -32,8 +41,17 @@ export function registerSession(program: Command): void {
     .description("List all sessions")
     .option("-p, --project <id>", "Filter by project ID")
     .option("-a, --all", "Include orchestrator sessions")
+    .option(
+      "--include-terminated",
+      "Include terminated sessions (killed/done/merged/terminated/errored/cleanup)",
+    )
     .option("--json", "Output as JSON")
-    .action(async (opts: { project?: string; all?: boolean; json?: boolean }) => {
+    .action(async (opts: {
+      project?: string;
+      all?: boolean;
+      includeTerminated?: boolean;
+      json?: boolean;
+    }) => {
       const config = loadConfig();
       if (opts.project && !config.projects[opts.project]) {
         console.error(chalk.red(`Unknown project: ${opts.project}`));
@@ -44,11 +62,20 @@ export function registerSession(program: Command): void {
       const allSessions = await sm.list(opts.project);
 
       // Filter out orchestrator sessions unless --all is passed
-      const sessions = opts.all
+      const withoutOrchestrators = opts.all
         ? allSessions
         : allSessions.filter(
             (s) => !isOrchestratorSessionName(config, s.id, s.projectId),
           );
+
+      // Count terminal sessions that would be hidden by default, then
+      // drop them unless --include-terminated is passed.
+      const hiddenTerminatedCount = opts.includeTerminated
+        ? 0
+        : withoutOrchestrators.filter(isTerminalSession).length;
+      const sessions = opts.includeTerminated
+        ? withoutOrchestrators
+        : withoutOrchestrators.filter((s) => !isTerminalSession(s));
 
       // Group sessions by project
       const byProject = new Map<string, typeof sessions>();
@@ -149,8 +176,22 @@ export function registerSession(program: Command): void {
       }
 
       if (opts.json) {
-        console.log(JSON.stringify(jsonOutput, null, 2));
+        console.log(
+          JSON.stringify(
+            { data: jsonOutput, meta: { hiddenTerminatedCount } },
+            null,
+            2,
+          ),
+        );
         return;
+      }
+
+      if (hiddenTerminatedCount > 0) {
+        console.log(
+          chalk.dim(
+            `  ${hiddenTerminatedCount} terminated session${hiddenTerminatedCount !== 1 ? "s" : ""} hidden. Use --include-terminated to show.`,
+          ),
+        );
       }
 
       console.log();
@@ -319,7 +360,7 @@ export function registerSession(program: Command): void {
 
   session
     .command("cleanup")
-    .description("Kill sessions where PR is merged or issue is closed")
+    .description("Kill cleanup-eligible sessions with closed work or dead runtimes")
     .option("-p, --project <id>", "Filter by project ID")
     .option("--dry-run", "Show what would be cleaned up without doing it")
     .action(async (opts: { project?: string; dryRun?: boolean }) => {
@@ -480,7 +521,7 @@ export function registerSession(program: Command): void {
           console.log(chalk.dim(`  Branch:   ${restored.branch}`));
         }
         const port = config.port ?? DEFAULT_PORT;
-        console.log(chalk.dim(`  View:     http://localhost:${port}/sessions/${sessionName}`));
+        console.log(chalk.dim(`  View:     ${projectSessionUrl(port, restored.projectId, sessionName)}`));
       } catch (err) {
         if (err instanceof SessionNotRestorableError) {
           console.error(chalk.red(`Cannot restore: ${err.reason}`));

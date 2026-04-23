@@ -15,11 +15,14 @@ import {
 } from "../recovery/types.js";
 import type { OrchestratorConfig, PluginRegistry, Runtime, Workspace } from "../types.js";
 
+const STORAGE_KEY = "111111111111";
+
 function makeConfig(rootDir: string): OrchestratorConfig {
   return {
     configPath: join(rootDir, "agent-orchestrator.yaml"),
     port: 3000,
     readyThresholdMs: 300_000,
+    power: { preventIdleSleep: false },
     defaults: {
       runtime: "tmux",
       agent: "claude-code",
@@ -31,6 +34,7 @@ function makeConfig(rootDir: string): OrchestratorConfig {
         name: "app",
         repo: "org/repo",
         path: join(rootDir, "project"),
+        storageKey: STORAGE_KEY,
         defaultBranch: "main",
         sessionPrefix: "app",
       },
@@ -63,6 +67,10 @@ function makeAssessment(overrides: Partial<RecoveryAssessment> = {}): RecoveryAs
     classification: "live",
     action: "recover",
     reason: "Session is running normally",
+    runtimeProbeSucceeded: true,
+    processProbeSucceeded: true,
+    signalDisagreement: false,
+    recoveryRule: "auto",
     runtimeAlive: true,
     runtimeHandle: { id: "rt-1", runtimeName: "tmux", data: {} },
     workspaceExists: true,
@@ -101,9 +109,7 @@ describe("recoverSession", () => {
 
   afterEach(() => {
     if (rootDir) {
-      const configPath = join(rootDir, "agent-orchestrator.yaml");
-      const projectPath = join(rootDir, "project");
-      const projectBaseDir = getProjectBaseDir(configPath, projectPath);
+      const projectBaseDir = getProjectBaseDir(STORAGE_KEY);
       if (existsSync(projectBaseDir)) {
         rmSync(projectBaseDir, { recursive: true, force: true });
       }
@@ -123,7 +129,7 @@ describe("recoverSession", () => {
     const context = makeContext(rootDir);
 
     const result = await recoverSession(assessment, config, registry, context);
-    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    const sessionsDir = getSessionsDir(STORAGE_KEY);
     const metadata = readMetadataRaw(sessionsDir, assessment.sessionId);
 
     expect(result.success).toBe(true);
@@ -214,6 +220,23 @@ describe("recoverSession", () => {
     expect(result.requiresManualIntervention).toBe(true);
     expect(result.reason).toBe("Exceeded max recovery attempts (3)");
   });
+
+  it("calls context.invalidateCache() after mutating metadata", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment();
+    const invalidateCache = vi.fn();
+    const context = makeContext(rootDir, { invalidateCache });
+
+    await recoverSession(assessment, config, registry, context);
+
+    expect(invalidateCache).toHaveBeenCalled();
+  });
 });
 
 describe("escalateSession", () => {
@@ -221,9 +244,7 @@ describe("escalateSession", () => {
 
   afterEach(() => {
     if (rootDir) {
-      const configPath = join(rootDir, "agent-orchestrator.yaml");
-      const projectPath = join(rootDir, "project");
-      const projectBaseDir = getProjectBaseDir(configPath, projectPath);
+      const projectBaseDir = getProjectBaseDir(STORAGE_KEY);
       if (existsSync(projectBaseDir)) {
         rmSync(projectBaseDir, { recursive: true, force: true });
       }
@@ -259,9 +280,7 @@ describe("cleanupSession", () => {
 
   afterEach(() => {
     if (rootDir) {
-      const configPath = join(rootDir, "agent-orchestrator.yaml");
-      const projectPath = join(rootDir, "project");
-      const projectBaseDir = getProjectBaseDir(configPath, projectPath);
+      const projectBaseDir = getProjectBaseDir(STORAGE_KEY);
       if (existsSync(projectBaseDir)) {
         rmSync(projectBaseDir, { recursive: true, force: true });
       }
@@ -308,7 +327,7 @@ describe("cleanupSession", () => {
     const context = makeContext(rootDir);
 
     const result = await cleanupSession(assessment, config, registry, context);
-    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    const sessionsDir = getSessionsDir(STORAGE_KEY);
 
     expect(mockWorkspace.destroy).toHaveBeenCalled();
     expect(result.success).toBe(true);
@@ -363,7 +382,7 @@ describe("cleanupSession", () => {
     const context = makeContext(rootDir);
 
     const result = await cleanupSession(assessment, config, registry, context);
-    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    const sessionsDir = getSessionsDir(STORAGE_KEY);
 
     expect(mockRuntime.destroy).toHaveBeenCalled();
     expect(mockWorkspace.destroy).toHaveBeenCalled();
@@ -377,9 +396,7 @@ describe("recovery manager and scanner", () => {
 
   afterEach(() => {
     if (rootDir) {
-      const configPath = join(rootDir, "agent-orchestrator.yaml");
-      const projectPath = join(rootDir, "project");
-      const projectBaseDir = getProjectBaseDir(configPath, projectPath);
+      const projectBaseDir = getProjectBaseDir(STORAGE_KEY);
       if (existsSync(projectBaseDir)) {
         rmSync(projectBaseDir, { recursive: true, force: true });
       }
@@ -394,7 +411,7 @@ describe("recovery manager and scanner", () => {
     writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
 
     const config = makeConfig(rootDir);
-    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    const sessionsDir = getSessionsDir(STORAGE_KEY);
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(
       join(sessionsDir, "app-1"),
@@ -428,7 +445,7 @@ describe("recovery manager and scanner", () => {
     writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
 
     const config = makeConfig(rootDir);
-    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    const sessionsDir = getSessionsDir(STORAGE_KEY);
     mkdirSync(sessionsDir, { recursive: true });
 
     writeFileSync(join(sessionsDir, "app-1"), "project=app\nstatus=working\n", "utf-8");

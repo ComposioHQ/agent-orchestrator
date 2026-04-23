@@ -3,36 +3,52 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type {
-  Session,
-  PRInfo,
-  SCM,
-  Agent,
-  Tracker,
-  ProjectConfig,
-  OrchestratorConfig,
-  PluginRegistry,
+import {
+  createInitialCanonicalLifecycle,
+  type Session,
+  type PRInfo,
+  type SCM,
+  type Agent,
+  type Tracker,
+  type ProjectConfig,
+  type OrchestratorConfig,
+  type PluginRegistry,
 } from "@aoagents/ao-core";
 import {
   sessionToDashboard,
   resolveProject,
   enrichSessionPR,
+  enrichSessionIssue,
   enrichSessionAgentSummary,
   enrichSessionIssueTitle,
   enrichSessionsMetadata,
   enrichSessionsMetadataFast,
   computeStats,
+  listDashboardOrchestrators,
 } from "../serialize";
 import { prCache, prCacheKey } from "../cache";
 import type { DashboardSession } from "../types";
 
 // Helper to create a minimal Session for testing
 function createCoreSession(overrides?: Partial<Session>): Session {
+  const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
+  lifecycle.session.state = "working";
+  lifecycle.session.reason = "task_in_progress";
+  lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+  lifecycle.runtime.state = "alive";
+  lifecycle.runtime.reason = "process_running";
   return {
     id: "test-1",
     projectId: "test",
     status: "working",
     activity: "active",
+    activitySignal: {
+      state: "valid",
+      activity: "active",
+      timestamp: new Date("2025-01-01T01:00:00Z"),
+      source: "native",
+    },
+    lifecycle,
     branch: "feat/test",
     issueId: null,
     pr: null,
@@ -122,9 +138,76 @@ describe("sessionToDashboard", () => {
     expect(dashboard.projectId).toBe("test");
     expect(dashboard.status).toBe("working");
     expect(dashboard.activity).toBe("active");
+    expect(dashboard.activitySignal).toEqual({
+      state: "valid",
+      activity: "active",
+      timestamp: "2025-01-01T01:00:00.000Z",
+      source: "native",
+      detail: undefined,
+    });
     expect(dashboard.branch).toBe("feat/test");
     expect(dashboard.createdAt).toBe("2025-01-01T00:00:00.000Z");
     expect(dashboard.lastActivityAt).toBe("2025-01-01T01:00:00.000Z");
+  });
+
+  it("should expose canonical lifecycle fields", () => {
+    const coreSession = createCoreSession();
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.lifecycle?.sessionState).toBe("working");
+    expect(dashboard.lifecycle?.sessionReason).toBe("task_in_progress");
+    expect(dashboard.lifecycle?.prState).toBe("none");
+    expect(dashboard.lifecycle?.prReason).toBe("not_created");
+    expect(dashboard.lifecycle?.runtimeState).toBe("alive");
+    expect(dashboard.lifecycle?.runtimeReason).toBe("process_running");
+    expect(dashboard.lifecycle?.session.label).toBe("working");
+    expect(dashboard.lifecycle?.pr.label).toBe("not created");
+    expect(dashboard.lifecycle?.runtime.label).toBe("alive");
+    expect(dashboard.lifecycle?.summary).toContain("Session working");
+    expect(dashboard.attentionLevel).toBe("working");
+  });
+
+  it("should expose detecting guidance and evidence from legacy metadata", () => {
+    const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
+    lifecycle.session.state = "detecting";
+    lifecycle.session.reason = "probe_failure";
+    lifecycle.runtime.state = "probe_failed";
+    lifecycle.runtime.reason = "probe_error";
+    const coreSession = createCoreSession({
+      lifecycle,
+      status: "detecting",
+      metadata: {
+        lifecycleEvidence: "signal_disagreement runtime_alive process_unknown",
+        detectingAttempts: "2",
+      },
+    });
+
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.lifecycle?.guidance).toContain("Retry 2");
+    expect(dashboard.lifecycle?.evidence).toContain("signal_disagreement");
+    expect(dashboard.attentionLevel).toBe("respond");
+  });
+
+  it("should seed dashboard PR state from canonical lifecycle truth", () => {
+    const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
+    lifecycle.session.state = "idle";
+    lifecycle.session.reason = "merged_waiting_decision";
+    lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+    lifecycle.pr.state = "merged";
+    lifecycle.pr.reason = "merged";
+    lifecycle.runtime.state = "alive";
+    lifecycle.runtime.reason = "process_running";
+
+    const coreSession = createCoreSession({
+      status: "idle",
+      lifecycle,
+      pr: createPRInfo(),
+    });
+
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.pr?.state).toBe("merged");
   });
 
   it("should use agentInfo summary with summaryIsFallback false", () => {
@@ -442,6 +525,12 @@ describe("enrichSessionPR", () => {
       projectId: "test",
       status: "working",
       activity: "active",
+      activitySignal: {
+        state: "valid",
+        activity: "active",
+        timestamp: new Date().toISOString(),
+        source: "native",
+      },
       branch: "feat/test",
       issueId: null,
       issueUrl: null,
@@ -649,6 +738,12 @@ describe("enrichSessionIssueTitle", () => {
       projectId: "test",
       status: "working",
       activity: "active",
+      activitySignal: {
+        state: "valid",
+        activity: "active",
+        timestamp: new Date().toISOString(),
+        source: "native",
+      },
       branch: "feat/test",
       issueId: null,
       issueUrl: null,
@@ -746,6 +841,25 @@ describe("enrichSessionIssueTitle", () => {
     expect(dashboard.issueTitle).toBeNull();
   });
 
+  it("should avoid repeated issue lookups after a recent failure", async () => {
+    const issueUrl = "https://github.com/test/repo/issues/failure-cache";
+    const dashboard = makeDashboard({
+      issueUrl,
+      issueLabel: "#failure-cache",
+    });
+    const tracker: Tracker = {
+      ...createMockTracker(),
+      getIssue: vi.fn().mockRejectedValue(new Error("API error")),
+    };
+    const project = makeProject();
+
+    await enrichSessionIssueTitle(dashboard, tracker, project);
+    await enrichSessionIssueTitle(dashboard, tracker, project);
+
+    expect(tracker.getIssue).toHaveBeenCalledTimes(1);
+    expect(dashboard.issueTitle).toBeNull();
+  });
+
   it("should cache results across calls", async () => {
     // Unique URL to avoid cache from other tests
     const issueUrl = "https://github.com/test/repo/issues/cache-test";
@@ -778,7 +892,7 @@ describe("enrichSessionsMetadata", () => {
         labels: [],
       }),
       isCompleted: vi.fn().mockResolvedValue(false),
-      issueUrl: vi.fn().mockReturnValue(`${urlBase}-default`),
+      issueUrl: vi.fn().mockImplementation((identifier: string) => `${urlBase}-${identifier}`),
       issueLabel: vi.fn().mockReturnValue("#42"),
       branchName: vi.fn().mockReturnValue("feat/issue-42"),
       generatePrompt: vi.fn().mockResolvedValue("prompt"),
@@ -853,6 +967,64 @@ describe("enrichSessionsMetadata", () => {
     expect(dashboard.summary).toBe("Implementing auth fix");
     // Issue title enriched (async, depends on issueLabel from sync step)
     expect(dashboard.issueTitle).toBe("Fix auth bug");
+  });
+
+  it("should derive issue URL from issue identifier via tracker", async () => {
+    const tracker = mockTracker("Fix auth bug");
+    const agent = mockAgent("Implementing auth fix");
+    const registry = mockRegistry(tracker, agent);
+
+    const core = createCoreSession({ issueId: "42" });
+    const dashboard = sessionToDashboard(core);
+    expect(dashboard.issueUrl).toBeNull();
+
+    await enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+
+    expect(tracker.issueUrl).toHaveBeenCalledWith("42", testProject);
+    expect(dashboard.issueUrl).toBe(`${urlBase}-42`);
+    expect(dashboard.issueLabel).toBe("#42");
+    expect(dashboard.issueTitle).toBe("Fix auth bug");
+  });
+
+  it("preserves URL-shaped issueId without passing it through tracker.issueUrl", async () => {
+    const tracker = mockTracker("Fix auth bug");
+    const agent = mockAgent("Implementing auth fix");
+    const registry = mockRegistry(tracker, agent);
+    const originalUrl = "https://github.com/acme/repo/issues/99";
+    const core = createCoreSession({ issueId: originalUrl });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+
+    expect(dashboard.issueUrl).toBe(originalUrl);
+    expect(tracker.issueUrl).not.toHaveBeenCalledWith(originalUrl, testProject);
+  });
+
+  it("does not create synthetic URLs for free-text issueId", async () => {
+    const tracker = mockTracker();
+    const agent = mockAgent();
+    const registry = mockRegistry(tracker, agent);
+    const core = createCoreSession({ issueId: "fix login bug" });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+
+    expect(dashboard.issueUrl).toBeNull();
+    expect(dashboard.issueLabel).toBeNull();
+    expect(tracker.getIssue).not.toHaveBeenCalled();
+  });
+
+  it("keeps URL unset when tracker.issueUrl throws", async () => {
+    const tracker = mockTracker();
+    tracker.issueUrl = vi.fn().mockImplementation(() => {
+      throw new Error("bad template");
+    });
+    const dashboard = sessionToDashboard(createCoreSession({ issueId: "42" }));
+
+    enrichSessionIssue(dashboard, tracker, testProject);
+
+    expect(dashboard.issueUrl).toBeNull();
+    expect(dashboard.issueLabel).toBeNull();
   });
 
   it("starts issue-title fetches before agent summaries finish", async () => {
@@ -1143,6 +1315,130 @@ describe("computeStats", () => {
     const stats = computeStats(sessions);
     expect(stats.totalSessions).toBe(5);
     expect(stats.workingSessions).toBe(3); // active + idle + ready
+  });
+});
+
+describe("listDashboardOrchestrators (issue #1048)", () => {
+  // ProjectConfig only needs the fields the function reads.
+  const projects = {
+    "my-app": { name: "My App", sessionPrefix: "app" },
+  } as unknown as Record<string, ProjectConfig>;
+
+  it("excludes stale {projectId}-orchestrator legacy records that lack role metadata", () => {
+    // Pre-numbered AO version wrote bare-named records without `role`. After
+    // tightening isOrchestratorSession, these must NOT leak into the dashboard's
+    // orchestrator list, otherwise the dashboard link points at a stale id while
+    // the CLI prints a different (numbered) id.
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "my-app-orchestrator", // legacy bare name
+        projectId: "my-app",
+        metadata: {}, // no role stamp
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toEqual([]);
+  });
+
+  it("includes the numbered live orchestrator with the matching id", () => {
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "app-orchestrator-3",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      id: "app-orchestrator-3",
+      projectId: "my-app",
+      projectName: "My App",
+    });
+  });
+
+  it("still includes legacy bare records when they have explicit role metadata", () => {
+    // When `role: orchestrator` is explicitly stamped on a record,
+    // `isOrchestratorSession` honors it unconditionally — the id shape check
+    // is a fallback, not a gate.
+    //
+    // Note: for this specific fixture (id `my-app-orchestrator`, sessionPrefix
+    // `app`), the SM repair-on-read path does NOT stamp role (wrong prefix —
+    // see `isRepairableOrchestratorRecord`). This test passes in a synthetic
+    // role-stamped session directly to exercise the explicit-role branch,
+    // which matters for records that got their role from some other source
+    // (hand-crafted metadata, external tooling, or a correct-prefix bare
+    // record that the repair path did stamp).
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "my-app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("my-app-orchestrator");
+  });
+
+  it("prefers the live orchestrator over stale exited ones for the same project", () => {
+    const now = Date.now();
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "ao-orchestrator-9",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        lastActivityAt: new Date(now - 60_000),
+        metadata: { role: "orchestrator" },
+      }),
+      createCoreSession({
+        id: "ao-orchestrator-26",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        lastActivityAt: new Date(now),
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe("ao-orchestrator-26");
+  });
+
+  it("prefers the most recently active live orchestrator when multiple are running", () => {
+    const now = Date.now();
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "app-orchestrator-12",
+        projectId: "my-app",
+        status: "working",
+        activity: "idle",
+        lastActivityAt: new Date(now - 120_000),
+        metadata: { role: "orchestrator" },
+      }),
+      createCoreSession({
+        id: "app-orchestrator-13",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        lastActivityAt: new Date(now),
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe("app-orchestrator-13");
   });
 });
 

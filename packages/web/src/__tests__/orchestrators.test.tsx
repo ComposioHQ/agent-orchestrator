@@ -39,10 +39,11 @@ describe("Orchestrators Page (OrchestratorsRoute)", () => {
     const mockSessionManager = {
       list: vi.fn().mockResolvedValue([
         {
-          id: "app-orchestrator",
+          id: "app-orchestrator-1",
           projectId: "my-app",
           status: "working",
           activity: "active",
+          metadata: { role: "orchestrator" },
           createdAt: new Date(),
           lastActivityAt: new Date(),
         },
@@ -65,7 +66,7 @@ describe("Orchestrators Page (OrchestratorsRoute)", () => {
     render(jsx);
 
     expect(screen.getByText("My App")).toBeInTheDocument();
-    expect(screen.getByText("app-orchestrator")).toBeInTheDocument();
+    expect(screen.getByText("app-orchestrator-1")).toBeInTheDocument();
   });
 
   it("shows error when project is missing in searchParams", async () => {

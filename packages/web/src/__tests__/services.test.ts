@@ -2,11 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockLoadConfig,
+  mockGetGlobalConfigPath,
+  MockConfigNotFoundError,
   mockRegister,
   mockCreateSessionManager,
   mockRegistry,
   tmuxPlugin,
   claudePlugin,
+  codexPlugin,
   opencodePlugin,
   worktreePlugin,
   scmPlugin,
@@ -14,6 +17,13 @@ const {
   trackerLinearPlugin,
 } = vi.hoisted(() => {
   const mockLoadConfig = vi.fn();
+  const mockGetGlobalConfigPath = vi.fn();
+  class MockConfigNotFoundError extends Error {
+    constructor(message?: string) {
+      super(message ?? "Config not found");
+      this.name = "ConfigNotFoundError";
+    }
+  }
   const mockRegister = vi.fn();
   const mockCreateSessionManager = vi.fn();
   const mockRegistry = {
@@ -26,11 +36,14 @@ const {
 
   return {
     mockLoadConfig,
+    mockGetGlobalConfigPath,
+    MockConfigNotFoundError,
     mockRegister,
     mockCreateSessionManager,
     mockRegistry,
     tmuxPlugin: { manifest: { name: "tmux" } },
     claudePlugin: { manifest: { name: "claude-code" } },
+    codexPlugin: { manifest: { name: "codex" } },
     opencodePlugin: { manifest: { name: "opencode" } },
     worktreePlugin: { manifest: { name: "worktree" } },
     scmPlugin: { manifest: { name: "github" } },
@@ -41,6 +54,8 @@ const {
 
 vi.mock("@aoagents/ao-core", () => ({
   loadConfig: mockLoadConfig,
+  getGlobalConfigPath: mockGetGlobalConfigPath,
+  ConfigNotFoundError: MockConfigNotFoundError,
   createPluginRegistry: () => mockRegistry,
   createSessionManager: mockCreateSessionManager,
   createLifecycleManager: () => ({
@@ -54,6 +69,7 @@ vi.mock("@aoagents/ao-core", () => ({
 
 vi.mock("@aoagents/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
+vi.mock("@aoagents/ao-plugin-agent-codex", () => ({ default: codexPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
 vi.mock("@aoagents/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));
 vi.mock("@aoagents/ao-plugin-scm-github", () => ({ default: scmPlugin }));
@@ -66,6 +82,8 @@ describe("services", () => {
     mockRegister.mockClear();
     mockCreateSessionManager.mockReset();
     mockLoadConfig.mockReset();
+    mockGetGlobalConfigPath.mockReset();
+    mockGetGlobalConfigPath.mockReturnValue("/tmp/global-config.yaml");
     mockLoadConfig.mockReturnValue({
       configPath: "/tmp/agent-orchestrator.yaml",
       port: 3000,
@@ -94,6 +112,14 @@ describe("services", () => {
     expect(mockRegister).toHaveBeenCalledWith(opencodePlugin);
   });
 
+  it("registers the Codex agent plugin with web services", async () => {
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockRegister).toHaveBeenCalledWith(codexPlugin);
+  });
+
   it("caches initialized services across repeated calls", async () => {
     const { getServices } = await import("../lib/services");
 
@@ -102,6 +128,41 @@ describe("services", () => {
 
     expect(first).toBe(second);
     expect(mockCreateSessionManager).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads config from the canonical global config path", async () => {
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockGetGlobalConfigPath).toHaveBeenCalledTimes(1);
+    expect(mockLoadConfig).toHaveBeenCalledWith("/tmp/global-config.yaml");
+  });
+
+  it("falls back to discovered config when the canonical global config is missing", async () => {
+    mockLoadConfig
+      .mockImplementationOnce(() => {
+        const error = new Error("ENOENT: no such file or directory");
+        (error as Error & { code?: string }).code = "ENOENT";
+        throw error;
+      })
+      .mockReturnValueOnce({
+        configPath: "/tmp/local/agent-orchestrator.yaml",
+        port: 3000,
+        readyThresholdMs: 300_000,
+        defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+        projects: {},
+        notifiers: {},
+        notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+        reactions: {},
+      });
+
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockLoadConfig).toHaveBeenNthCalledWith(1, "/tmp/global-config.yaml");
+    expect(mockLoadConfig).toHaveBeenNthCalledWith(2);
   });
 });
 

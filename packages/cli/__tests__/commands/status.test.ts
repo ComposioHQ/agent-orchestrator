@@ -14,6 +14,9 @@ import {
   type Session,
   type SessionManager,
   type ActivityState,
+  createInitialCanonicalLifecycle,
+  createActivitySignal,
+  sessionFromMetadata,
 } from "@aoagents/ao-core";
 
 const {
@@ -157,7 +160,13 @@ function parseMetadata(content: string): Record<string, string> {
   return meta;
 }
 
-/** Build Session objects from metadata files in sessionsDir. */
+/**
+ * Build Session objects from metadata files in sessionsDir.
+ *
+ * Routes through the real `sessionFromMetadata()` so lifecycle reconstruction
+ * runs exactly as in production `sm.list()`. Tests that assert filter behavior
+ * against on-disk metadata therefore exercise the full path.
+ */
 function buildSessionsFromDir(
   dir: string,
   projectId: string,
@@ -168,21 +177,11 @@ function buildSessionsFromDir(
   return files.map((name) => {
     const content = readFileSync(join(dir, name), "utf-8");
     const meta = parseMetadata(content);
-    return {
-      id: name,
+    return sessionFromMetadata(name, meta, {
       projectId,
-      status: (meta["status"] as Session["status"]) || "spawning",
-      activity: activityOverride !== undefined ? activityOverride : null,
-      branch: meta["branch"] || null,
-      issueId: meta["issue"] || null,
-      pr: null,
-      workspacePath: meta["worktree"] || null,
       runtimeHandle: { id: name, runtimeName: "tmux", data: {} },
-      agentInfo: null,
-      createdAt: new Date(),
-      lastActivityAt: new Date(),
-      metadata: meta,
-    } satisfies Session;
+      activity: activityOverride !== undefined ? activityOverride : null,
+    });
   });
 }
 
@@ -573,7 +572,7 @@ describe("status command", () => {
     await program.parseAsync(["node", "test", "status", "--json"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
-    const parsed = JSON.parse(jsonCalls);
+    const parsed = JSON.parse(jsonCalls).data;
     expect(parsed).toHaveLength(1);
     expect(parsed[0].prNumber).toBe(10);
     expect(parsed[0].ciStatus).toBe("passing");
@@ -709,7 +708,7 @@ describe("status command", () => {
     await program.parseAsync(["node", "test", "status", "--json"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
-    const parsed = JSON.parse(jsonCalls);
+    const parsed = JSON.parse(jsonCalls).data;
     expect(parsed[0].pendingThreads).toBeNull();
   });
 
@@ -734,7 +733,7 @@ describe("status command", () => {
     await program.parseAsync(["node", "test", "status", "--json"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
-    const parsed = JSON.parse(jsonCalls);
+    const parsed = JSON.parse(jsonCalls).data;
     expect(parsed[0].activity).toBe("ready");
   });
 
@@ -755,7 +754,7 @@ describe("status command", () => {
     await program.parseAsync(["node", "test", "status", "--json"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
-    const parsed = JSON.parse(jsonCalls);
+    const parsed = JSON.parse(jsonCalls).data;
     expect(parsed[0].activity).toBeNull();
   });
 
@@ -776,7 +775,7 @@ describe("status command", () => {
     await program.parseAsync(["node", "test", "status", "--json"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
-    const parsed = JSON.parse(jsonCalls);
+    const parsed = JSON.parse(jsonCalls).data;
     expect(parsed[0].activity).toBeNull();
   });
 
@@ -800,7 +799,7 @@ describe("status command", () => {
     await program.parseAsync(["node", "test", "status", "--json"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
-    const parsed = JSON.parse(jsonCalls);
+    const parsed = JSON.parse(jsonCalls).data;
     expect(parsed[0].activity).toBeNull();
   });
 
@@ -821,10 +820,16 @@ describe("status command", () => {
     });
     mockGit.mockResolvedValue("feat/dead");
 
-    await program.parseAsync(["node", "test", "status", "--json"]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "status",
+      "--json",
+      "--include-terminated",
+    ]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
-    const parsed = JSON.parse(jsonCalls);
+    const parsed = JSON.parse(jsonCalls).data;
     expect(parsed[0].activity).toBe("exited");
   });
 
@@ -859,7 +864,7 @@ describe("status command", () => {
 
     await program.parseAsync(["node", "test", "status", "--json"]);
 
-    const parsed = JSON.parse(consoleSpy.mock.calls.map((c) => c[0]).join(""));
+    const parsed = JSON.parse(consoleSpy.mock.calls.map((c) => c[0]).join("")).data;
     expect(parsed[0].name).toBe("app-orchestrator");
     expect(parsed[0].pr).toBeNull();
     expect(parsed[0].prNumber).toBeNull();
@@ -933,7 +938,7 @@ describe("status command", () => {
     await program.parseAsync(["node", "test", "status", "--json"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
-    const parsed = JSON.parse(jsonCalls);
+    const parsed = JSON.parse(jsonCalls).data;
     expect(parsed).toHaveLength(2);
     expect(
       parsed.find((entry: { name: string }) => entry.name === "app-orchestrator"),
@@ -1161,5 +1166,160 @@ describe("status command", () => {
       value: originalIsTTY,
       configurable: true,
     });
+  });
+
+  it("hides terminated sessions by default and prints a footer", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=merged\n");
+    writeFileSync(join(sessionsDir, "app-3"), "branch=feat/c\nstatus=done\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("app-1");
+    expect(output).not.toContain("app-2");
+    expect(output).not.toContain("app-3");
+    expect(output).toContain("2 terminated sessions hidden");
+    expect(output).toContain("--include-terminated");
+  });
+
+  it("shows terminated sessions when --include-terminated is passed", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=killed\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "status",
+      "--include-terminated",
+    ]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("app-1");
+    expect(output).toContain("app-2");
+    expect(output).not.toContain("terminated sessions hidden");
+  });
+
+  it("reports hiddenTerminatedCount in JSON output when filtering terminal sessions", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=merged\n");
+    writeFileSync(join(sessionsDir, "app-3"), "branch=feat/c\nstatus=done\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed.data).toHaveLength(1);
+    expect(parsed.data[0].name).toBe("app-1");
+    expect(parsed.meta.hiddenTerminatedCount).toBe(2);
+  });
+
+  it("returns hiddenTerminatedCount=0 in JSON when --include-terminated is passed", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=merged\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "status",
+      "--json",
+      "--include-terminated",
+    ]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed.data).toHaveLength(2);
+    expect(parsed.meta.hiddenTerminatedCount).toBe(0);
+  });
+
+  it("hides legacy on-disk metadata with status=merged even when pr= URL is absent", async () => {
+    // Regression test for the reviewer's smoke-test case on PR #1340: a legacy
+    // metadata file with `status=merged` but no `pr=` URL must still be treated
+    // as terminal. Routes through the real sessionFromMetadata → lifecycle path.
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=merged\n"); // no pr=
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed.data.map((e: { name: string }) => e.name)).toEqual(["app-1"]);
+    expect(parsed.meta.hiddenTerminatedCount).toBe(1);
+  });
+
+  it("filters lifecycle-driven terminal sessions (runtime exited, pr merged, session terminated)", async () => {
+    // Exercises the lifecycle branch of isTerminalSession — legacy status stays
+    // "working" but canonical lifecycle puts the session in a terminal state.
+    const makeLifecycleSession = (
+      id: string,
+      mutate: (lc: ReturnType<typeof createInitialCanonicalLifecycle>) => void,
+    ): Session => {
+      const lifecycle = createInitialCanonicalLifecycle("worker", new Date());
+      lifecycle.session.state = "working";
+      lifecycle.session.reason = "task_in_progress";
+      lifecycle.runtime.state = "alive";
+      lifecycle.runtime.reason = "process_running";
+      mutate(lifecycle);
+      return {
+        id,
+        projectId: "my-app",
+        status: "working",
+        activity: null,
+        activitySignal: createActivitySignal("unavailable"),
+        lifecycle,
+        branch: null,
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: null,
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } satisfies Session;
+    };
+
+    mockSessionManager.list.mockResolvedValue([
+      makeLifecycleSession("app-1", () => {
+        // alive — should remain visible
+      }),
+      makeLifecycleSession("app-2", (lc) => {
+        lc.runtime.state = "exited";
+        lc.runtime.reason = "process_not_running";
+      }),
+      makeLifecycleSession("app-3", (lc) => {
+        lc.pr.state = "merged";
+        lc.pr.reason = "merged_by_user";
+      }),
+      makeLifecycleSession("app-4", (lc) => {
+        lc.session.state = "terminated";
+        lc.session.reason = "manually_killed";
+      }),
+    ]);
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed.data.map((e: { name: string }) => e.name)).toEqual(["app-1"]);
+    expect(parsed.meta.hiddenTerminatedCount).toBe(3);
   });
 });

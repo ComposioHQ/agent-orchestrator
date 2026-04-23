@@ -1,6 +1,8 @@
 import chalk from "chalk";
 import type { Command } from "commander";
 import {
+  createInitialCanonicalLifecycle,
+  createActivitySignal,
   type Agent,
   type SCM,
   type Session,
@@ -11,6 +13,7 @@ import {
   type Tracker,
   type ProjectConfig,
   isOrchestratorSession,
+  isTerminalSession,
   isWindows,
   loadConfig,
 } from "@aoagents/ao-core";
@@ -50,6 +53,7 @@ interface StatusOptions {
   json?: boolean;
   watch?: boolean;
   interval?: string;
+  includeTerminated?: boolean;
 }
 
 const DEFAULT_WATCH_INTERVAL_SECONDS = 5;
@@ -247,6 +251,10 @@ export function registerStatus(program: Command): void {
     .option("--json", "Output as JSON")
     .option("-w, --watch", "Refresh the status view continuously")
     .option("--interval <seconds>", "Refresh interval in seconds (default: 5)")
+    .option(
+      "--include-terminated",
+      "Include terminated sessions (killed/done/merged/terminated/errored/cleanup)",
+    )
     .action(async (opts: StatusOptions) => {
       if (opts.watch && opts.json) {
         console.error(chalk.red("--watch cannot be used with --json."));
@@ -286,7 +294,17 @@ export function registerStatus(program: Command): void {
         // Use session manager to list sessions (metadata-based, not tmux-based)
         const sm = await getSessionManager(config);
         const registry = await getPluginRegistry(config);
-        const sessions = await sm.list(opts.project);
+        const allSessions = await sm.list(opts.project);
+
+        // Count terminal sessions that would be hidden by default, then drop
+        // them unless --include-terminated is passed. Recomputed each render
+        // so --watch reflects transitions to terminal state live.
+        const hiddenTerminatedCount = opts.includeTerminated
+          ? 0
+          : allSessions.filter(isTerminalSession).length;
+        const sessions = opts.includeTerminated
+          ? allSessions
+          : allSessions.filter((s) => !isTerminalSession(s));
 
         if (!opts.json) {
           console.log(banner("AGENT ORCHESTRATOR STATUS"));
@@ -381,7 +399,13 @@ export function registerStatus(program: Command): void {
         }
 
         if (opts.json) {
-          console.log(JSON.stringify(jsonOutput, null, 2));
+          console.log(
+            JSON.stringify(
+              { data: jsonOutput, meta: { hiddenTerminatedCount } },
+              null,
+              2,
+            ),
+          );
         } else {
           console.log(
             chalk.dim(
@@ -391,6 +415,14 @@ export function registerStatus(program: Command): void {
                   : ""),
             ),
           );
+
+          if (hiddenTerminatedCount > 0) {
+            console.log(
+              chalk.dim(
+                `  ${hiddenTerminatedCount} terminated session${hiddenTerminatedCount !== 1 ? "s" : ""} hidden. Use --include-terminated to show.`,
+              ),
+            );
+          }
 
           // Check for issues awaiting verification across all projects
           try {
@@ -485,17 +517,26 @@ async function showFallbackStatus(): Promise<void> {
   const details = await Promise.all(
     sortedSessions.map(async (session) => {
       const activityTsPromise = getTmuxActivity(session).catch(() => null);
+      const lifecycle = createInitialCanonicalLifecycle("worker", new Date());
+      lifecycle.session.state = "working";
+      lifecycle.session.reason = "task_in_progress";
+      lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+      lifecycle.runtime.state = "alive";
+      lifecycle.runtime.reason = "process_running";
+      lifecycle.runtime.handle = { id: session, runtimeName: "tmux", data: {} };
 
       const sessionObj: Session = {
         id: session,
         projectId: "",
         status: "working",
         activity: null,
+        activitySignal: createActivitySignal("unavailable"),
+        lifecycle,
         branch: null,
         issueId: null,
         pr: null,
         workspacePath: null,
-        runtimeHandle: { id: session, runtimeName: "tmux", data: {} },
+        runtimeHandle: lifecycle.runtime.handle,
         agentInfo: null,
         createdAt: new Date(),
         lastActivityAt: new Date(),

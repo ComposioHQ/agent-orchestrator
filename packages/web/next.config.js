@@ -3,16 +3,20 @@ import os from "os";
 /** @type {import('next').NextConfig} */
 const homeDir = os.homedir().replace(/\\/g, "/");
 const nextConfig = {
-  serverExternalPackages: ["@composio/core"],
   transpilePackages: [
     "@aoagents/ao-core",
     "@aoagents/ao-plugin-agent-claude-code",
+    "@aoagents/ao-plugin-agent-codex",
     "@aoagents/ao-plugin-agent-opencode",
     "@aoagents/ao-plugin-runtime-tmux",
     "@aoagents/ao-plugin-scm-github",
     "@aoagents/ao-plugin-tracker-github",
     "@aoagents/ao-plugin-tracker-linear",
     "@aoagents/ao-plugin-workspace-worktree",
+  ],
+  serverExternalPackages: [
+    "yaml",
+    "zod",
   ],
   webpack: (config, { isServer }) => {
     if (process.platform === "win32") {

@@ -76,7 +76,7 @@ class MockWebSocket {
   close() {}
 }
 
-vi.mock("xterm", () => ({
+vi.mock("@xterm/xterm", () => ({
   Terminal: MockTerminal,
 }));
 
@@ -108,7 +108,14 @@ describe("DirectTerminal render", () => {
     MockWebSocket.instances = [];
     Object.defineProperty(document, "fonts", {
       configurable: true,
-      value: { ready: Promise.resolve() },
+      value: {
+        ready: Promise.resolve(),
+        // FontFaceSet is an EventTarget in real browsers; the component
+        // listens for 'loadingdone' to re-fit after webfont swap. Stub the
+        // methods so init doesn't throw.
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
     });
     vi.stubGlobal("WebSocket", MockWebSocket);
     vi.stubGlobal(

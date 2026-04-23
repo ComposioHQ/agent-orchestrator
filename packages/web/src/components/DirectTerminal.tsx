@@ -5,13 +5,70 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
 import { useMux } from "@/hooks/useMux";
+import { attachTouchScroll } from "@/lib/terminal-touch-scroll";
 
 // Import xterm CSS (must be imported in client component)
-import "xterm/css/xterm.css";
+import "@xterm/xterm/css/xterm.css";
 
-// Dynamically import xterm types for TypeScript
-import type { ITheme, Terminal as TerminalType } from "xterm";
+// Static type-only imports (erased at compile time, no SSR impact).
+// The runtime Terminal class is loaded via dynamic import() inside useEffect to avoid SSR.
+import type { ITheme, Terminal as TerminalType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
+
+// Font size constants
+const FONT_SIZE_KEY = "ao-terminal-font-size";
+const FONT_SIZE_MIN = 9;
+const FONT_SIZE_MAX = 18;
+const FONT_SIZE_DEFAULT = 13;
+
+// Fallback mono stack used when the CSS custom property isn't resolvable yet.
+const MONO_FONT_FALLBACK =
+  '"JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace';
+
+/**
+ * Resolve the app's configured mono font token to a concrete font-family string.
+ *
+ * xterm's internal char-size measurement ultimately hits canvas ctx.font, which
+ * cannot evaluate `var(...)`. Reading `--font-jetbrains-mono` with
+ * getComputedStyle gives us the generated next/font family name (e.g.
+ * `__JetBrains_Mono_abc123`), which we can safely feed into xterm while still
+ * honouring the app's font configuration.
+ *
+ * NOTE: we deliberately read `--font-jetbrains-mono` and NOT `--font-mono`.
+ * `--font-mono` in globals.css is itself a composed stack that contains
+ * `var(--font-jetbrains-mono)` — if we forwarded that to xterm, the raw
+ * `var(...)` token would end up back in canvas ctx.font and reintroduce the
+ * original measurement bug this helper exists to fix.
+ *
+ * Exported for unit testing.
+ */
+export function resolveMonoFontFamily(): string {
+  if (typeof window === "undefined") return MONO_FONT_FALLBACK;
+  try {
+    const resolved = getComputedStyle(document.documentElement)
+      .getPropertyValue("--font-jetbrains-mono")
+      .trim();
+    return resolved ? `${resolved}, ${MONO_FONT_FALLBACK}` : MONO_FONT_FALLBACK;
+  } catch {
+    return MONO_FONT_FALLBACK;
+  }
+}
+
+function getStoredFontSize(): number {
+  if (typeof window === "undefined") return FONT_SIZE_DEFAULT;
+  try {
+    const stored = localStorage.getItem(FONT_SIZE_KEY);
+    if (stored) {
+      const size = parseInt(stored, 10);
+      if (!Number.isNaN(size)) {
+        return Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, size));
+      }
+    }
+  } catch {
+    // localStorage might be unavailable
+  }
+  return FONT_SIZE_DEFAULT;
+}
 
 interface DirectTerminalProps {
   sessionId: string;
@@ -19,12 +76,13 @@ interface DirectTerminalProps {
   /** Visual variant. Orchestrator keeps the same design-system blue accent as the rest of the app. */
   variant?: "agent" | "orchestrator";
   appearance?: "theme" | "dark";
-  /** CSS height for the terminal container in normal (non-fullscreen) mode.
-   *  Defaults to "max(440px, calc(100vh - 440px))". */
+  /** @deprecated Terminal now fills its flex parent via flex:1. This prop is ignored. */
   height?: string;
   isOpenCodeSession?: boolean;
   reloadCommand?: string;
   chromeless?: boolean;
+  /** When true, focus the terminal immediately after it mounts so keyboard input works without clicking first. */
+  autoFocus?: boolean;
 }
 
 type TerminalVariant = "agent" | "orchestrator";
@@ -109,10 +167,11 @@ export function DirectTerminal({
   startFullscreen = false,
   variant = "agent",
   appearance = "theme",
-  height = "max(440px, calc(100dvh - 440px))",
+  height: _height = "max(440px, calc(100dvh - 440px))",
   isOpenCodeSession = false,
   reloadCommand,
   chromeless = false,
+  autoFocus = false,
 }: DirectTerminalProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -130,6 +189,9 @@ export function DirectTerminal({
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+  const [fontSize, setFontSize] = useState(getStoredFontSize());
+  const followOutputRef = useRef(true);
+  const [followOutput, setFollowOutput] = useState(true);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -194,7 +256,7 @@ export function DirectTerminal({
     let unsubscribe: (() => void) | null = null;
 
     Promise.all([
-      import("xterm").then((mod) => mod.Terminal),
+      import("@xterm/xterm").then((mod) => mod.Terminal),
       import("@xterm/addon-fit").then((mod) => mod.FitAddon),
       import("@xterm/addon-web-links").then((mod) => mod.WebLinksAddon),
       document.fonts.ready,
@@ -206,18 +268,23 @@ export function DirectTerminal({
         const activeTheme = isDark ? terminalThemes.dark : terminalThemes.light;
 
         // Initialize xterm.js Terminal
+        // NOTE: xterm's internal char-size measurement uses canvas ctx.font which
+        // cannot resolve `var(...)`. resolveMonoFontFamily() reads the CSS custom
+        // property at runtime so we still honour the app's configured font token
+        // (next/font generated name) while handing xterm a concrete string.
         const terminal = new Terminal({
           cursorBlink: true,
-          fontSize: 13,
-          fontFamily:
-            'var(--font-jetbrains-mono), "JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
+          fontSize: fontSize,
+          fontFamily: resolveMonoFontFamily(),
+          // xterm v6 default lineHeight (1.0) collides rows with JetBrains Mono's
+          // tall x-height. 1.2 restores visual breathing room between lines.
+          lineHeight: 1.2,
           theme: activeTheme,
           // Light mode needs an explicit contrast floor because agent UIs often emit
           // dim/faint ANSI sequences that become unreadable on a near-white background.
           minimumContrastRatio: isDark ? 1 : 7,
           scrollback: 10000,
           allowProposedApi: true,
-          fastScrollModifier: "alt",
           fastScrollSensitivity: 3,
           scrollSensitivity: 1,
         });
@@ -269,8 +336,82 @@ export function DirectTerminal({
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
 
+        if (autoFocus) {
+          terminal.focus();
+        }
+
         // Fit terminal to container
         fit.fit();
+
+        // Deferred fit to handle cases where container wasn't sized yet
+        const deferredFitTimeout = setTimeout(() => {
+          if (mounted && fitAddon.current) {
+            try {
+              fitAddon.current.fit();
+              resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+            } catch {
+              // Ignore fit errors
+            }
+          }
+        }, 100);
+
+        // Re-measure when webfonts finish loading. next/font uses font-display:swap,
+        // so document.fonts.ready can resolve before JetBrains Mono actually swaps
+        // in. Without this, xterm's initial cell measurement stays pinned to the
+        // fallback font — producing wide-looking horizontal cells once the real
+        // font swaps. Listening to 'loadingdone' forces a re-fit when the swap
+        // actually completes.
+        const handleFontsLoadingDone = () => {
+          if (!mounted || !fitAddon.current || !terminalInstance.current) return;
+          try {
+            // Re-resolve the CSS var in case next/font registered its family
+            // name after initial construction, then force a re-measure.
+            terminalInstance.current.options.fontFamily = resolveMonoFontFamily();
+            terminalInstance.current.clearTextureAtlas?.();
+            fitAddon.current.fit();
+            resizeTerminalMux(sessionId, terminalInstance.current.cols, terminalInstance.current.rows);
+          } catch {
+            // Ignore fit errors
+          }
+        };
+        // Feature-detect `FontFaceSet.addEventListener` — it's missing in
+        // jsdom's `document.fonts` mock and some older runtimes. Without the
+        // guard, init throws a TypeError and the terminal never attaches.
+        const fontsFace =
+          typeof document !== "undefined" ? document.fonts : undefined;
+        const fontsListenerAttached =
+          !!fontsFace && typeof fontsFace.addEventListener === "function";
+        if (fontsListenerAttached) {
+          fontsFace!.addEventListener("loadingdone", handleFontsLoadingDone);
+        }
+
+        // Grab viewport element for manual follow-output scroll
+        const viewport = terminal.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
+
+        // Attach touch scroll for mobile — disable follow-output while user is scrolling
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const cleanupTouchScroll = attachTouchScroll(terminal as any, (data) => {
+          writeTerminal(sessionId, data);
+        }, {
+          onScrollAway: () => { followOutputRef.current = false; setFollowOutput(false); },
+          onScrollTowardLatest: () => { followOutputRef.current = true; setFollowOutput(true); },
+        });
+
+        // Set up ResizeObserver to handle flex layout changes
+        let resizeObserver: ResizeObserver | null = null;
+        if (terminalRef.current) {
+          resizeObserver = new ResizeObserver(() => {
+            if (mounted && fitAddon.current) {
+              try {
+                fitAddon.current.fit();
+                resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+              } catch {
+                // Ignore fit errors
+              }
+            }
+          });
+          resizeObserver.observe(terminalRef.current);
+        }
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
@@ -346,8 +487,31 @@ export function DirectTerminal({
             }
           } else {
             terminal.write(data);
+            if (followOutputRef.current && viewport) {
+              programmaticScroll = true;
+              viewport.scrollTop = viewport.scrollHeight;
+            }
           }
         });
+
+        // Track whether our own write()-driven scrollTop change triggered this event
+        let programmaticScroll = false;
+        const handleViewportScroll = () => {
+          if (!viewport) return;
+          if (programmaticScroll) {
+            programmaticScroll = false;
+            return;
+          }
+          const distFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+          if (distFromBottom < 24) {
+            followOutputRef.current = true;
+            setFollowOutput(true);
+          } else {
+            followOutputRef.current = false;
+            setFollowOutput(false);
+          }
+        };
+        viewport?.addEventListener("scroll", handleViewportScroll, { passive: true });
 
         // Handle window resize
         const handleResize = () => {
@@ -369,9 +533,16 @@ export function DirectTerminal({
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
+          clearTimeout(deferredFitTimeout);
+          resizeObserver?.disconnect();
+          cleanupTouchScroll();
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
           window.removeEventListener("resize", handleResize);
+          if (fontsListenerAttached && fontsFace) {
+            fontsFace.removeEventListener("loadingdone", handleFontsLoadingDone);
+          }
+          viewport?.removeEventListener("scroll", handleViewportScroll);
           inputDisposable?.dispose();
           inputDisposable = null;
           unsubscribe?.();
@@ -388,6 +559,10 @@ export function DirectTerminal({
       mounted = false;
       cleanup?.();
     };
+    // fontSize intentionally NOT in deps — it's handled by a dedicated effect
+    // below that mutates terminal.options.fontSize in place. Adding it here
+    // would tear down and recreate the terminal (and WebSocket) on every
+    // stepper click, losing scrollback and flashing content.
   }, [
     appearance,
     sessionId,
@@ -420,6 +595,25 @@ export function DirectTerminal({
     terminal.options.theme = isDark ? terminalThemes.dark : terminalThemes.light;
     terminal.options.minimumContrastRatio = isDark ? 1 : 7;
   }, [appearance, resolvedTheme, terminalThemes]);
+
+  // Font size change effect
+  useEffect(() => {
+    const terminal = terminalInstance.current;
+    const fit = fitAddon.current;
+    if (!terminal || !fit) return;
+    terminal.options.fontSize = fontSize;
+    try {
+      localStorage.setItem(FONT_SIZE_KEY, String(fontSize));
+    } catch {
+      // localStorage might be unavailable
+    }
+    // Re-fit locally AND tell the server-side PTY about the new cols/rows.
+    // Without the mux resize, the shell keeps wrapping at the old dimensions
+    // and the rendered output stops matching the visible grid until the
+    // next resize event (window resize, tab switch, etc.).
+    fit.fit();
+    resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+  }, [fontSize, sessionId, resizeTerminalMux]);
 
   // Re-fit terminal when fullscreen changes
   useEffect(() => {
@@ -530,6 +724,31 @@ export function DirectTerminal({
         ? "text-[var(--color-status-error)]"
         : "text-[var(--color-text-tertiary)]";
   const isDarkChrome = appearance === "dark" || resolvedTheme !== "light";
+
+  const fontSizeControls = (
+    <div className="flex items-center">
+      <button
+        onClick={() => setFontSize((prev) => Math.max(FONT_SIZE_MIN, prev - 1))}
+        disabled={fontSize <= FONT_SIZE_MIN}
+        className="w-5 h-5 text-xs flex items-center justify-center rounded hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        aria-label="Decrease font size"
+      >
+        −
+      </button>
+      <span className="w-9 text-center text-xs font-medium text-[var(--color-text-secondary)]">
+        {fontSize}px
+      </span>
+      <button
+        onClick={() => setFontSize((prev) => Math.min(FONT_SIZE_MAX, prev + 1))}
+        disabled={fontSize >= FONT_SIZE_MAX}
+        className="w-5 h-5 text-xs flex items-center justify-center rounded hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        aria-label="Increase font size"
+      >
+        +
+      </button>
+    </div>
+  );
+
   const fullscreenButton = (
     <button
       onClick={() => setFullscreen(!fullscreen)}
@@ -572,39 +791,48 @@ export function DirectTerminal({
   return (
     <div
       className={cn(
-        "overflow-hidden border border-[var(--color-border-default)]",
-        fullscreen ? "fixed inset-0 z-50 rounded-none border-0" : "relative",
+        "overflow-hidden border border-[var(--color-border-default)] flex flex-col",
+        fullscreen ? "fixed inset-0 z-50 rounded-none border-0" : "relative h-full",
         isDarkChrome ? "bg-[#0a0a0f]" : "bg-[#fafafa]",
         chromeless && "border-0",
       )}
     >
       {!chromeless ? (
-        <div className="flex items-center gap-2 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
-          <div className={cn("h-2 w-2 shrink-0 rounded-full", statusDotClass)} />
-          <span className="font-[var(--font-mono)] text-[11px]" style={{ color: accentColor }}>
-            {sessionId}
-          </span>
-          <span
-            className={cn("text-[10px] font-medium uppercase tracking-[0.06em]", statusTextColor)}
-          >
-            {statusText}
-          </span>
-          <span
-            className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em]"
-            style={{
-              color: accentColor,
-              background: `color-mix(in srgb, ${accentColor} 12%, transparent)`,
-            }}
-          >
-            XDA
-          </span>
+        <div className="terminal-chrome-bar flex items-center gap-2 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
+          {/* Pane label — matches the workspace pane-header style used elsewhere */}
+          <span className="terminal-chrome-pane-label">TERMINAL</span>
+          {/* Identity group: session name on top, status+XDA below on mobile */}
+          <div className="terminal-chrome-identity">
+            <span className="terminal-chrome-session-id font-[var(--font-mono)] text-[11px]" style={{ color: accentColor }}>
+              {sessionId}
+            </span>
+            <div className="terminal-chrome-status-row">
+              <div className={cn("h-2 w-2 shrink-0 rounded-full", statusDotClass)} />
+              <span
+                className={cn("text-[10px] font-medium uppercase tracking-[0.06em]", statusTextColor)}
+              >
+                {statusText}
+              </span>
+              <span
+                className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em]"
+                style={{
+                  color: accentColor,
+                  background: `color-mix(in srgb, ${accentColor} 12%, transparent)`,
+                }}
+              >
+                XDA
+              </span>
+            </div>
+          </div>
+          <div className="flex-1" />
+          {fontSizeControls}
           {isOpenCodeSession ? (
             <button
               onClick={handleReload}
               disabled={reloading || muxStatus !== "connected"}
               title="Restart OpenCode session (/exit then resume mapped session)"
               aria-label="Restart OpenCode session"
-              className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
+              className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
             >
               {reloading ? (
                 <>
@@ -690,17 +918,34 @@ export function DirectTerminal({
           {fullscreenButton}
         </div>
       ) : null}
-      {/* Terminal area */}
-      <div
-        ref={terminalRef}
-        className={cn("w-full p-1.5")}
-        style={{
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-          height: fullscreen ? `calc(100dvh - ${chromeless ? "0px" : "37px"})` : height,
-        }}
-      />
+      {/* Terminal area — flex:1 so it fills remaining space after the chrome bar */}
+      <div className="relative flex-1 min-h-0 flex flex-col">
+        {!followOutput ? (
+          <button
+            type="button"
+            onClick={() => {
+              followOutputRef.current = true;
+              setFollowOutput(true);
+              const t = terminalInstance.current;
+              if (t) {
+                const vp = t.element?.querySelector<HTMLElement>(".xterm-viewport");
+                if (vp) vp.scrollTop = vp.scrollHeight;
+              }
+            }}
+            className="absolute bottom-3 right-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] shadow-md active:scale-95"
+            aria-label="Jump to latest"
+            title="Jump to latest"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
+          </button>
+        ) : null}
+        <div
+          ref={terminalRef}
+          className="w-full flex flex-col flex-1 min-h-0 overflow-hidden"
+        />
+      </div>
     </div>
   );
 }

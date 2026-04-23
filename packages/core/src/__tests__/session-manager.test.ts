@@ -281,3 +281,31 @@ describe("deleteSession retry loop", () => {
     expect(deleteCallCount).toBe(1);
   });
 });
+
+describe("spawning session liveness (#1035)", () => {
+  it("does not call runtime.isAlive for spawning sessions, preventing false 'killed' status", async () => {
+    // Write a session in "spawning" status with a persisted runtime handle
+    writeMetadata(sessionsDir, "app-spawn", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "spawning",
+      project: "my-app",
+      agent: "opencode",
+      runtimeHandle: JSON.stringify(makeHandle("rt-spawn")),
+    });
+
+    // Make isAlive return false — if it were called, the session would become "killed"
+    vi.mocked(ctx.mockRuntime.isAlive).mockResolvedValue(false);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const sessions = await sm.list();
+    const spawning = sessions.find((s) => s.id === "app-spawn");
+
+    // isAlive must NOT have been called for the spawning session
+    expect(ctx.mockRuntime.isAlive).not.toHaveBeenCalled();
+
+    // Status must remain "spawning", not "killed"
+    expect(spawning).toBeDefined();
+    expect(spawning!.status).toBe("spawning");
+  });
+});

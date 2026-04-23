@@ -10,6 +10,8 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const SESSION_EVENTS_POLL_INTERVAL_MS = 2000;
+
 /**
  * GET /api/events — SSE stream for real-time lifecycle events
  *
@@ -81,6 +83,7 @@ export async function GET(request: Request): Promise<Response> {
           const dashboardSessions = workerSessions.map(sessionToDashboard);
           const projectObserver = ensureObserver(config);
 
+          const attentionZones = config.dashboard?.attentionZones ?? "simple";
           const initialEvent = {
             type: "snapshot",
             correlationId,
@@ -89,7 +92,7 @@ export async function GET(request: Request): Promise<Response> {
               id: s.id,
               status: s.status,
               activity: s.activity,
-              attentionLevel: getAttentionLevel(s),
+              attentionLevel: getAttentionLevel(s, attentionZones),
               lastActivityAt: s.lastActivityAt,
             })),
           };
@@ -125,7 +128,8 @@ export async function GET(request: Request): Promise<Response> {
         }
       }, 15000);
 
-      // Poll for session state changes every 5 seconds
+      // Poll for session state changes frequently enough that new workers
+      // appear in the dashboard/sidebar quickly after the orchestrator spawns them.
       updates = setInterval(() => {
         void (async () => {
           let dashboardSessions;
@@ -155,6 +159,7 @@ export async function GET(request: Request): Promise<Response> {
             }
 
             try {
+              const attentionZones = config.dashboard?.attentionZones ?? "simple";
               const event = {
                 type: "snapshot",
                 correlationId,
@@ -163,7 +168,7 @@ export async function GET(request: Request): Promise<Response> {
                   id: s.id,
                   status: s.status,
                   activity: s.activity,
-                  attentionLevel: getAttentionLevel(s),
+                  attentionLevel: getAttentionLevel(s, attentionZones),
                   lastActivityAt: s.lastActivityAt,
                 })),
               };
@@ -189,7 +194,7 @@ export async function GET(request: Request): Promise<Response> {
             return;
           }
         })();
-      }, 5000);
+      }, SESSION_EVENTS_POLL_INTERVAL_MS);
     },
     cancel() {
       clearInterval(heartbeat);

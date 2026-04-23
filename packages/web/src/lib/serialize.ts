@@ -9,6 +9,7 @@ import "server-only";
 
 import {
   isOrchestratorSession,
+  isTerminalSession,
   type Session,
   type Agent,
   type SCM,
@@ -18,16 +19,28 @@ import {
   type OrchestratorConfig,
   type PluginRegistry,
 } from "@aoagents/ao-core";
-import type {
-  DashboardSession,
-  DashboardPR,
-  DashboardStats,
-  DashboardOrchestratorLink,
-} from "./types.js";
+import {
+  type DashboardSession,
+  type DashboardPR,
+  type DashboardStats,
+  type DashboardOrchestratorLink,
+  getAttentionLevel,
+} from "./types";
 import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
 const issueTitleCache = new TTLCache<string>(300_000);
+/** Cache failed issue-title lookups to avoid repeated tracker API calls. */
+const issueTitleMissCache = new TTLCache<boolean>(120_000);
+
+function isAbsoluteUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 /** Resolve which project a session belongs to. */
 export function resolveProject(
@@ -47,29 +60,154 @@ export function resolveProject(
   return firstKey ? projects[firstKey] : undefined;
 }
 
+function humanizeLifecycleToken(token: string): string {
+  return token.replace(/_/g, " ");
+}
+
+function buildLifecycleLabel(state: string, reason: string): string {
+  if (state === "idle" && reason === "merged_waiting_decision") {
+    return "merged, waiting decision";
+  }
+  if (state === "none") {
+    return "not created";
+  }
+  if (state === "alive") {
+    return "alive";
+  }
+  if (state === "missing") {
+    return "missing";
+  }
+  return humanizeLifecycleToken(state);
+}
+
+function buildLifecycleSummary(session: Session): string {
+  const { lifecycle } = session;
+  if (lifecycle.session.state === "detecting") {
+    return `Detecting runtime truth (${humanizeLifecycleToken(lifecycle.session.reason)})`;
+  }
+  if (lifecycle.pr.state === "merged") {
+    return session.metadata["mergedPendingCleanupSince"]
+      ? "PR merged; worker session will be cleaned up automatically"
+      : "PR merged";
+  }
+  if (lifecycle.pr.state === "closed") {
+    return "PR closed without merge";
+  }
+  if (lifecycle.pr.reason === "ci_failing") {
+    return "PR is open and CI is failing";
+  }
+  if (lifecycle.pr.reason === "changes_requested") {
+    return "PR is open with requested changes";
+  }
+  if (lifecycle.pr.reason === "review_pending") {
+    return "PR is open and waiting on review";
+  }
+  return `Session ${humanizeLifecycleToken(lifecycle.session.state)} (${humanizeLifecycleToken(lifecycle.session.reason)})`;
+}
+
+function buildLifecycleGuidance(session: Session): string | null {
+  const { lifecycle, metadata } = session;
+  if (lifecycle.session.state !== "detecting") {
+    return null;
+  }
+  const attempts = Number.parseInt(metadata["detectingAttempts"] ?? "0", 10);
+  const normalizedAttempts = Number.isFinite(attempts) ? attempts : 0;
+  if (metadata["detectingEscalatedAt"]) {
+    return "Detection retries exhausted. Inspect runtime evidence or restore the session manually.";
+  }
+  if (normalizedAttempts > 0) {
+    return `Checking runtime and process evidence now. Retry ${normalizedAttempts} is in progress.`;
+  }
+  return "Checking runtime and process evidence now.";
+}
+
+function buildDashboardLifecycle(session: Session): NonNullable<DashboardSession["lifecycle"]> {
+  const lifecycle = session.lifecycle;
+  return {
+    sessionState: lifecycle.session.state,
+    sessionReason: lifecycle.session.reason,
+    prState: lifecycle.pr.state,
+    prReason: lifecycle.pr.reason,
+    runtimeState: lifecycle.runtime.state,
+    runtimeReason: lifecycle.runtime.reason,
+    session: {
+      state: lifecycle.session.state,
+      reason: lifecycle.session.reason,
+      label: buildLifecycleLabel(lifecycle.session.state, lifecycle.session.reason),
+      reasonLabel: humanizeLifecycleToken(lifecycle.session.reason),
+      startedAt: lifecycle.session.startedAt,
+      completedAt: lifecycle.session.completedAt,
+      terminatedAt: lifecycle.session.terminatedAt,
+      lastTransitionAt: lifecycle.session.lastTransitionAt,
+    },
+    pr: {
+      state: lifecycle.pr.state,
+      reason: lifecycle.pr.reason,
+      label: buildLifecycleLabel(lifecycle.pr.state, lifecycle.pr.reason),
+      reasonLabel: humanizeLifecycleToken(lifecycle.pr.reason),
+      number: lifecycle.pr.number,
+      url: lifecycle.pr.url,
+      lastObservedAt: lifecycle.pr.lastObservedAt,
+    },
+    runtime: {
+      state: lifecycle.runtime.state,
+      reason: lifecycle.runtime.reason,
+      label: buildLifecycleLabel(lifecycle.runtime.state, lifecycle.runtime.reason),
+      reasonLabel: humanizeLifecycleToken(lifecycle.runtime.reason),
+      lastObservedAt: lifecycle.runtime.lastObservedAt,
+    },
+    legacyStatus: session.status,
+    evidence: session.metadata["lifecycleEvidence"] ?? null,
+    detectingAttempts: Number.parseInt(session.metadata["detectingAttempts"] ?? "0", 10) || 0,
+    detectingEscalatedAt: session.metadata["detectingEscalatedAt"] ?? null,
+    summary: buildLifecycleSummary(session),
+    guidance: buildLifecycleGuidance(session),
+  };
+}
+
+export function refreshDashboardSessionDerivedFields(session: DashboardSession): DashboardSession {
+  session.attentionLevel = getAttentionLevel(session);
+  return session;
+}
+
 /** Convert a core Session to a DashboardSession (without PR/issue enrichment). */
 export function sessionToDashboard(session: Session): DashboardSession {
   const agentSummary = session.agentInfo?.summary;
   const summary = agentSummary ?? session.metadata["summary"] ?? null;
 
-  return {
+  return refreshDashboardSessionDerivedFields({
     id: session.id,
     projectId: session.projectId,
     status: session.status,
     activity: session.activity,
+    activitySignal: {
+      state: session.activitySignal.state,
+      activity: session.activitySignal.activity,
+      timestamp: session.activitySignal.timestamp?.toISOString() ?? null,
+      source: session.activitySignal.source,
+      detail: session.activitySignal.detail,
+    },
+    lifecycle: buildDashboardLifecycle(session),
     branch: session.branch,
     issueId: session.issueId, // Deprecated: kept for backwards compatibility
-    issueUrl: session.issueId, // issueId is actually the full URL
+    issueUrl: session.issueId && isAbsoluteUrl(session.issueId) ? session.issueId : null,
     issueLabel: null, // Will be enriched by enrichSessionIssue()
     issueTitle: null, // Will be enriched by enrichSessionIssueTitle()
     userPrompt: session.metadata["userPrompt"] ?? null,
+    displayName: session.metadata["displayName"] ?? null,
     summary,
     summaryIsFallback: agentSummary ? (session.agentInfo?.summaryIsFallback ?? false) : false,
     createdAt: session.createdAt.toISOString(),
     lastActivityAt: session.lastActivityAt.toISOString(),
-    pr: session.pr ? basicPRToDashboard(session.pr) : null,
+    pr: session.pr
+      ? {
+          ...basicPRToDashboard(session.pr),
+          state: normalizeDashboardPRState(session.lifecycle.pr.state),
+        }
+      : null,
     metadata: session.metadata,
-  };
+    agentReportAudit: [],
+  });
 }
 
 export function listDashboardOrchestrators(
@@ -79,14 +217,47 @@ export function listDashboardOrchestrators(
   const allSessionPrefixes = Object.entries(projects).map(
     ([projectId, p]) => p.sessionPrefix ?? projectId,
   );
-  return sessions
-    .filter((session) =>
-      isOrchestratorSession(
+  const bestByProject = new Map<string, Session>();
+
+  for (const session of sessions) {
+    if (
+      !isOrchestratorSession(
         session,
         projects[session.projectId]?.sessionPrefix ?? session.projectId,
         allSessionPrefixes,
-      ),
-    )
+      )
+    ) {
+      continue;
+    }
+
+    const current = bestByProject.get(session.projectId);
+    if (!current) {
+      bestByProject.set(session.projectId, session);
+      continue;
+    }
+
+    const currentIsTerminal = isTerminalSession(current);
+    const candidateIsTerminal = isTerminalSession(session);
+    if (currentIsTerminal !== candidateIsTerminal) {
+      if (!candidateIsTerminal) {
+        bestByProject.set(session.projectId, session);
+      }
+      continue;
+    }
+
+    const currentActivity = current.lastActivityAt?.getTime() ?? current.createdAt?.getTime() ?? 0;
+    const candidateActivity = session.lastActivityAt?.getTime() ?? session.createdAt?.getTime() ?? 0;
+    if (candidateActivity > currentActivity) {
+      bestByProject.set(session.projectId, session);
+      continue;
+    }
+
+    if (candidateActivity === currentActivity && session.id.localeCompare(current.id) > 0) {
+      bestByProject.set(session.projectId, session);
+    }
+  }
+
+  return [...bestByProject.values()]
     .map((session) => ({
       id: session.id,
       projectId: session.projectId,
@@ -129,6 +300,17 @@ function basicPRToDashboard(pr: PRInfo): DashboardPR {
   };
 }
 
+function normalizeDashboardPRState(state: Session["lifecycle"]["pr"]["state"]): DashboardPR["state"] {
+  switch (state) {
+    case "merged":
+      return "merged";
+    case "closed":
+      return "closed";
+    default:
+      return "open";
+  }
+}
+
 /**
  * Enrich a DashboardSession's PR with live data from the SCM plugin.
  * Uses cache to reduce API calls and handles rate limit errors gracefully.
@@ -157,6 +339,7 @@ export async function enrichSessionPR(
     dashboard.pr.unresolvedThreads = cached.unresolvedThreads;
     dashboard.pr.unresolvedComments = cached.unresolvedComments;
     dashboard.pr.enriched = true;
+    refreshDashboardSessionDerivedFields(dashboard);
     return true;
   }
 
@@ -268,6 +451,7 @@ export async function enrichSessionPR(
       unresolvedComments: dashboard.pr.unresolvedComments,
     };
     prCache.set(cacheKey, rateLimitedData, 60 * 60_000); // 60 min — GitHub rate limit resets hourly
+    refreshDashboardSessionDerivedFields(dashboard);
     return true;
   }
 
@@ -284,15 +468,45 @@ export async function enrichSessionPR(
     unresolvedComments: dashboard.pr.unresolvedComments,
   };
   prCache.set(cacheKey, cacheData);
+  refreshDashboardSessionDerivedFields(dashboard);
   return true;
 }
 
-/** Enrich a DashboardSession's issue label using the tracker plugin. */
+/** Enrich a DashboardSession's issue URL and label using the tracker plugin. */
 export function enrichSessionIssue(
   dashboard: DashboardSession,
   tracker: Tracker,
   project: ProjectConfig,
 ): void {
+  const issueReference = dashboard.issueId ?? dashboard.issueUrl;
+  if (!issueReference) return;
+
+  if (isAbsoluteUrl(issueReference)) {
+    dashboard.issueUrl = issueReference;
+  } else if (/\s/.test(issueReference)) {
+    // Free-text issue IDs are user notes, not tracker identifiers.
+    dashboard.issueUrl = null;
+  } else if (tracker.issueUrl) {
+    try {
+      const candidateUrl = tracker.issueUrl(issueReference, project);
+      if (candidateUrl && isAbsoluteUrl(candidateUrl)) {
+        dashboard.issueUrl = candidateUrl;
+      } else {
+        console.warn("[enrichSessionIssue] tracker.issueUrl() returned a non-absolute URL", {
+          tracker: tracker.name,
+          issueReference,
+          candidateUrl,
+        });
+      }
+    } catch (error) {
+      console.warn("[enrichSessionIssue] tracker.issueUrl() failed", {
+        tracker: tracker.name,
+        issueReference,
+        error: String(error),
+      });
+    }
+  }
+
   if (!dashboard.issueUrl) return;
 
   // Use tracker plugin to extract human-readable label from URL
@@ -351,6 +565,9 @@ export async function enrichSessionIssueTitle(
     dashboard.issueTitle = cached;
     return;
   }
+  if (issueTitleMissCache.get(dashboard.issueUrl)) {
+    return;
+  }
 
   try {
     // Strip "#" prefix from GitHub-style labels to get the identifier
@@ -361,6 +578,7 @@ export async function enrichSessionIssueTitle(
       issueTitleCache.set(dashboard.issueUrl, issue.title);
     }
   } catch {
+    issueTitleMissCache.set(dashboard.issueUrl, true);
     // Can't fetch issue — keep issueTitle null
   }
 }
@@ -398,7 +616,9 @@ function prepareSessionMetadataEnrichment(
 
   // Issue labels (synchronous string parsing, no API calls)
   projects.forEach((project, i) => {
-    if (!dashboardSessions[i].issueUrl || !project?.tracker?.plugin) return;
+    if ((!dashboardSessions[i].issueUrl && !dashboardSessions[i].issueId) || !project?.tracker?.plugin) {
+      return;
+    }
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
     if (!tracker) return;
     enrichSessionIssue(dashboardSessions[i], tracker, project);
