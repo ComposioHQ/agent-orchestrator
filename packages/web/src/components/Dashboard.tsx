@@ -150,7 +150,7 @@ function DashboardInner({
     }
     return levels;
   }, [initialSessions, attentionZones]);
-  const { sessions, connectionStatus, sseAttentionLevels, liveSessionsResolved } = useSessionEvents({
+  const { sessions, connectionStatus, sseAttentionLevels, liveSessionsResolved, loadError } = useSessionEvents({
     initialSessions,
     project: projectId,
     muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
@@ -158,7 +158,7 @@ function DashboardInner({
     attentionZones,
   });
   const recoveredFromLoadError = Boolean(dashboardLoadError) && liveSessionsResolved;
-  const visibleDashboardLoadError = recoveredFromLoadError ? undefined : dashboardLoadError;
+  const visibleDashboardLoadError = loadError ?? (recoveredFromLoadError ? undefined : dashboardLoadError);
   const searchParams = useSearchParams();
   const activeSessionId = searchParams.get("session") ?? undefined;
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);

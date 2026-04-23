@@ -12,6 +12,7 @@ import { useSSESessionActivity } from "@/hooks/useSSESessionActivity";
 import { useMuxOptional } from "@/providers/MuxProvider";
 import type { SessionPatch } from "@/lib/mux-protocol";
 import { projectSessionPath } from "@/lib/routes";
+import { fetchJsonWithTimeout } from "@/lib/client-fetch";
 
 function truncate(s: string, max: number): string {
   // Split on code points so emoji / astral characters aren't cleaved into
@@ -67,6 +68,9 @@ interface ProjectSessionsBody {
 let cachedProjects: ProjectInfo[] | null = null;
 let cachedSidebarSessions: DashboardSession[] | null = null;
 const SESSION_PAGE_REFRESH_INTERVAL_MS = 2000;
+const SESSION_FETCH_TIMEOUT_MS = 8000;
+const PROJECT_SIDEBAR_FETCH_TIMEOUT_MS = 5000;
+const PROJECTS_FETCH_TIMEOUT_MS = 5000;
 const validSessionStatuses = new Set<string>(Object.values(SESSION_STATUS));
 const validActivityStates = new Set<string>(Object.values(ACTIVITY_STATE));
 const warnedMuxPatchValues = new Set<string>();
@@ -230,12 +234,10 @@ export default function SessionPage() {
     }
 
     try {
-      const res = await fetch("/api/projects");
-      if (!res.ok) {
-        console.error("Failed to fetch projects:", new Error(`HTTP ${res.status}`));
-        return;
-      }
-      const data = (await res.json()) as { projects?: ProjectInfo[] } | null;
+      const data = await fetchJsonWithTimeout<{ projects?: ProjectInfo[] } | null>("/api/projects", {
+        timeoutMs: PROJECTS_FETCH_TIMEOUT_MS,
+        timeoutMessage: `Projects request timed out after ${PROJECTS_FETCH_TIMEOUT_MS}ms`,
+      });
       if (!data?.projects) return;
       if (!areProjectsEqual(cachedProjects, data.projects)) {
         cachedProjects = data.projects;
@@ -292,21 +294,27 @@ export default function SessionPage() {
     if (fetchingSessionRef.current) return;
     fetchingSessionRef.current = true;
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
-      if (res.status === 404) {
+      const data = await fetchJsonWithTimeout<DashboardSession | { error: string }>(
+        `/api/sessions/${encodeURIComponent(id)}`,
+        {
+          timeoutMs: SESSION_FETCH_TIMEOUT_MS,
+          timeoutMessage: `Session request timed out after ${SESSION_FETCH_TIMEOUT_MS}ms`,
+        },
+      );
+      setSession(data as DashboardSession);
+      setRouteError(null);
+      setSessionMissing(false);
+      hasLoadedSessionRef.current = true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load session";
+      const normalizedMessage = message.toLowerCase();
+      if (normalizedMessage.includes("session not found") || normalizedMessage.includes("http 404")) {
         if (!hasLoadedSessionRef.current) {
           setSessionMissing(true);
         }
         setLoading(false);
         return;
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as DashboardSession;
-      setSession(data);
-      setRouteError(null);
-      setSessionMissing(false);
-      hasLoadedSessionRef.current = true;
-    } catch (err) {
       console.error("Failed to fetch session:", err);
       if (!hasLoadedSessionRef.current) {
         setRouteError(err instanceof Error ? err : new Error("Failed to load session"));
@@ -327,14 +335,12 @@ export default function SessionPage() {
     fetchingProjectSessionsRef.current = true;
     try {
       const query = isOrchestrator
-        ? `/api/sessions?project=${encodeURIComponent(projectId)}&fresh=true`
-        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true&fresh=true`;
-      const res = await fetch(query);
-      if (!res.ok) {
-        console.error("Failed to fetch project sessions for", projectId, new Error(`HTTP ${res.status}`));
-        return;
-      }
-      const body = (await res.json()) as ProjectSessionsBody;
+        ? `/api/sessions?project=${encodeURIComponent(projectId)}`
+        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true`;
+      const body = await fetchJsonWithTimeout<ProjectSessionsBody>(query, {
+        timeoutMs: PROJECT_SIDEBAR_FETCH_TIMEOUT_MS,
+        timeoutMessage: `Project sessions request timed out after ${PROJECT_SIDEBAR_FETCH_TIMEOUT_MS}ms`,
+      });
       const sessions = body.sessions ?? [];
       const orchestratorId =
         body.orchestratorId ??
@@ -366,8 +372,8 @@ export default function SessionPage() {
         }
       }
       setZoneCounts(counts);
-    } catch {
-      // non-critical - status strip just won't show
+    } catch (err) {
+      console.error("Failed to fetch project sessions:", err);
     } finally {
       fetchingProjectSessionsRef.current = false;
     }
@@ -377,11 +383,10 @@ export default function SessionPage() {
     if (fetchingSidebarRef.current) return;
     fetchingSidebarRef.current = true;
     try {
-      const res = await fetch("/api/sessions?fresh=true");
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const body = (await res.json()) as { sessions?: DashboardSession[] } | null;
+      const body = await fetchJsonWithTimeout<{ sessions?: DashboardSession[] } | null>("/api/sessions", {
+        timeoutMs: PROJECT_SIDEBAR_FETCH_TIMEOUT_MS,
+        timeoutMessage: `Sidebar sessions request timed out after ${PROJECT_SIDEBAR_FETCH_TIMEOUT_MS}ms`,
+      });
       const restSessions = body?.sessions ?? [];
       const nextSessions =
         applyMuxSessionPatches(restSessions, pendingMuxSessionsRef.current ?? []) ?? restSessions;

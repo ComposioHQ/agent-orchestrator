@@ -8,6 +8,7 @@ import {
   type DashboardSession,
   type SSESnapshotEvent,
 } from "@/lib/types";
+import { fetchJsonWithTimeout } from "@/lib/client-fetch";
 
 /** Debounce before fetching full session list after membership change. */
 const MEMBERSHIP_REFRESH_DELAY_MS = 120;
@@ -15,6 +16,7 @@ const MEMBERSHIP_REFRESH_DELAY_MS = 120;
 const STALE_REFRESH_INTERVAL_MS = 15000;
 /** Grace period before declaring "disconnected" (allows for transient reconnects). */
 const DISCONNECTED_GRACE_PERIOD_MS = 4000;
+const LIVE_REFRESH_TIMEOUT_MS = 6000;
 
 type ConnectionStatus = "connected" | "reconnecting" | "disconnected";
 
@@ -25,6 +27,7 @@ export type SSEAttentionMap = Readonly<Record<string, AttentionLevel>>;
 interface State {
   sessions: DashboardSession[];
   connectionStatus: ConnectionStatus;
+  loadError?: string;
   /** Attention levels from the latest SSE snapshot (server-computed, includes PR state). */
   sseAttentionLevels: SSEAttentionMap;
   /**
@@ -38,6 +41,7 @@ interface State {
 type Action =
   | { type: "reset"; sessions: DashboardSession[]; sseAttentionLevels?: SSEAttentionMap }
   | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] }
+  | { type: "setLoadError"; message?: string }
   | { type: "setConnection"; status: ConnectionStatus }
   | { type: "markLiveSessionsResolved" };
 
@@ -47,10 +51,14 @@ function reducer(state: State, action: Action): State {
       return {
         ...state,
         sessions: action.sessions,
+        loadError: undefined,
         ...(action.sseAttentionLevels !== undefined
           ? { sseAttentionLevels: action.sseAttentionLevels }
           : {}),
       };
+    case "setLoadError":
+      if (state.loadError === action.message) return state;
+      return { ...state, loadError: action.message };
     case "markLiveSessionsResolved":
       if (state.liveSessionsResolved) return state;
       return { ...state, liveSessionsResolved: true };
@@ -89,6 +97,7 @@ function reducer(state: State, action: Action): State {
       return {
         ...state,
         sessions: sessionsChanged ? next : state.sessions,
+        loadError: undefined,
         sseAttentionLevels: levelsChanged ? levels : state.sseAttentionLevels,
       };
     }
@@ -136,6 +145,7 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
     connectionStatus: "connected" as ConnectionStatus,
+    loadError: undefined,
     sseAttentionLevels: initialAttentionLevels ?? ({} as SSEAttentionMap),
     liveSessionsResolved: false,
   });
@@ -190,10 +200,14 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
         ? `/api/sessions?project=${encodeURIComponent(project)}`
         : "/api/sessions";
 
-      void fetch(sessionsUrl, { signal: refreshController.signal, cache: "no-store" })
-        .then((res) => (res.ok ? res.json() : null))
+      void fetchJsonWithTimeout<{ sessions?: DashboardSession[] } | null>(sessionsUrl, {
+        signal: refreshController.signal,
+        cache: "no-store",
+        timeoutMs: LIVE_REFRESH_TIMEOUT_MS,
+        timeoutMessage: `Dashboard refresh timed out after ${LIVE_REFRESH_TIMEOUT_MS}ms`,
+      })
         .then(
-          (updated: { sessions?: DashboardSession[] } | null) => {
+          (updated) => {
             if (refreshController.signal.aborted || !updated?.sessions) {
               // Update timestamp even for non-OK responses to prevent retry storms
               if (!refreshController.signal.aborted) {
@@ -217,6 +231,10 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
         .catch((err: unknown) => {
           if (err instanceof DOMException && err.name === "AbortError") return;
           console.warn("[useSessionEvents] refresh failed:", err);
+          dispatch({
+            type: "setLoadError",
+            message: err instanceof Error ? err.message : "Dashboard refresh failed",
+          });
           // Update timestamp on failure to prevent retry loops on every SSE snapshot
           lastRefreshAtRef.current = Date.now();
         })
@@ -325,7 +343,14 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
 
     es.onmessage = (event: MessageEvent) => {
       try {
-        const data = JSON.parse(event.data as string) as { type: string };
+        const data = JSON.parse(event.data as string) as { type: string; error?: string };
+        if (data.type === "error") {
+          dispatch({
+            type: "setLoadError",
+            message: data.error ?? "Live dashboard updates failed",
+          });
+          return;
+        }
         if (data.type === "snapshot") {
           const snapshot = data as SSESnapshotEvent;
           dispatch({ type: "markLiveSessionsResolved" });
