@@ -1,0 +1,9 @@
+packages/web/src/app/sessions/[id]/page.tsx
+  82f4506761e23ef5 20-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "80162a22fb20b7106ec24b390666e32c1f5d1ec7",
+  "prompts": {}
+}

@@ -1,0 +1,46 @@
+packages/core/src/session-manager.ts
+  82f4506761e23ef5 228-280,1310-1318,1347,1365,1639-1644,1676,1693,2744
+  cb3a55836e913d02 871,855,860,1786,872-874,876-878,880-881,1738-1746
+  438ab6ea81c6b91b 854,856,862,1784,1750-1771,1790,1794,875,879,882,1748
+.changeset/canonical-orchestrator-migration.md
+  cb3a55836e913d02 1-3,13-18
+packages/web/src/app/api/events/route.ts
+  cb3a55836e913d02 13
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  h_e1aac9baf373c4 1077-1163,1804,1812
+  438ab6ea81c6b91b 1671,1685,1712-1713,1722,1724,1727-1728,1730-1731,1741,1743,1746-1747,1749,1754,1764,1766,1768,1774-1775,1805-1807,1809,1811,1745,1776-1796,1687,1689,1697,1699,1707,1709-1710
+  cb3a55836e913d02 1715-1719,1721,1733-1734,1736-1737,1740,1750,1756-1757,1759-1760,1763,1769,1772-1773,1686,1688,1690-1696,1698,1700-1706,1708
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "d3d68e98b0b4ac54234f98df50dfa7c617db3a0d",
+  "prompts": {
+    "438ab6ea81c6b91b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db593-ee97-77e1-a749-e4a9a9837ec6",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 45,
+      "total_deletions": 6,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    },
+    "cb3a55836e913d02": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db5e0-c09f-76e0-a09e-fdbb9a19f2ac",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 19,
+      "accepted_lines": 45,
+      "overriden_lines": 0
+    }
+  }
+}
