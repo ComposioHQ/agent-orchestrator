@@ -1,0 +1,23 @@
+packages/web/src/app/api/sessions/route.ts
+  389eab536bbca8aa 1,21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "3290bee2ea55bb5d2befc476b3a7a2898c119571",
+  "prompts": {
+    "389eab536bbca8aa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dba1c-6ef1-7542-82d5-774658c19b60",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1598,
+      "total_deletions": 54,
+      "accepted_lines": 1598,
+      "overriden_lines": 0
+    }
+  }
+}
