@@ -1,8 +1,8 @@
 import "server-only";
 
 import { cache } from "react";
-import { realpathSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
 import { ConfigNotFoundError, getGlobalConfigPath, loadConfig } from "@aoagents/ao-core";
 
 export interface ProjectInfo {
@@ -36,23 +36,79 @@ function getCanonicalPath(path: string): string {
   }
 }
 
-function findCurrentRepoProjectId(): string | undefined {
-  try {
-    const config = loadProjectDiscoveryConfig();
-    const cwd = getCanonicalPath(process.cwd());
+function findProjectIdForPath(projectPath: string, config: ReturnType<typeof loadProjectDiscoveryConfig>): string | undefined {
+  const canonicalProjectPath = getCanonicalPath(projectPath);
 
-    for (const [projectId, project] of Object.entries(config.projects)) {
-      if (typeof project.path !== "string") continue;
-      if (getCanonicalPath(project.path) === cwd) {
-        return projectId;
+  for (const [projectId, project] of Object.entries(config.projects)) {
+    if (typeof project.path !== "string") continue;
+    if (getCanonicalPath(project.path) === canonicalProjectPath) {
+      return projectId;
+    }
+  }
+
+  const pathBase = basename(canonicalProjectPath);
+  const basenameMatch = Object.entries(config.projects).find(([, project]) => {
+    return typeof project.path === "string" && basename(project.path) === pathBase;
+  });
+  return basenameMatch?.[0];
+}
+
+function findLocalConfigPath(startDir: string): string | undefined {
+  let currentDir = resolve(startDir);
+
+  while (true) {
+    for (const filename of ["agent-orchestrator.yaml", "agent-orchestrator.yml"]) {
+      const candidate = resolve(currentDir, filename);
+      if (existsSync(candidate)) {
+        return candidate;
       }
     }
 
-    const cwdBase = basename(cwd);
-    const basenameMatch = Object.entries(config.projects).find(([, project]) => {
-      return typeof project.path === "string" && basename(project.path) === cwdBase;
-    });
-    return basenameMatch?.[0];
+    const parentDir = dirname(currentDir);
+    if (parentDir === currentDir) {
+      return undefined;
+    }
+    currentDir = parentDir;
+  }
+}
+
+function findDiscoveredRepoProjectId(config: ReturnType<typeof loadProjectDiscoveryConfig>): string | undefined {
+  try {
+    const localConfigPath = findLocalConfigPath(process.cwd());
+    if (!localConfigPath) {
+      return undefined;
+    }
+
+    const discoveredConfig = loadConfig(localConfigPath);
+    const canonicalGlobalConfigPath = getCanonicalPath(getGlobalConfigPath());
+    const canonicalDiscoveredConfigPath = getCanonicalPath(discoveredConfig.configPath);
+
+    if (canonicalDiscoveredConfigPath !== canonicalGlobalConfigPath) {
+      for (const project of Object.values(discoveredConfig.projects)) {
+        if (typeof project.path !== "string") continue;
+        const projectId = findProjectIdForPath(project.path, config);
+        if (projectId) return projectId;
+      }
+
+      return findProjectIdForPath(dirname(discoveredConfig.configPath), config);
+    }
+  } catch {
+    // Fall through to cwd-based discovery for environments without a local config.
+  }
+
+  return undefined;
+}
+
+function findCurrentRepoProjectId(): string | undefined {
+  try {
+    const config = loadProjectDiscoveryConfig();
+    const discoveredProjectId = findDiscoveredRepoProjectId(config);
+    if (discoveredProjectId) {
+      return discoveredProjectId;
+    }
+
+    const cwd = getCanonicalPath(process.cwd());
+    return findProjectIdForPath(cwd, config);
   } catch {
     return undefined;
   }
