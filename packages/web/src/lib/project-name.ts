@@ -99,9 +99,10 @@ function findDiscoveredRepoProjectId(config: ReturnType<typeof loadProjectDiscov
   return undefined;
 }
 
-function findCurrentRepoProjectId(): string | undefined {
+function findCurrentRepoProjectId(
+  config: ReturnType<typeof loadProjectDiscoveryConfig> = loadProjectDiscoveryConfig(),
+): string | undefined {
   try {
-    const config = loadProjectDiscoveryConfig();
     const discoveredProjectId = findDiscoveredRepoProjectId(config);
     if (discoveredProjectId) {
       return discoveredProjectId;
@@ -117,7 +118,7 @@ function findCurrentRepoProjectId(): string | undefined {
 export const getProjectName = cache((): string => {
   try {
     const config = loadProjectDiscoveryConfig();
-    const currentProjectId = findCurrentRepoProjectId();
+    const currentProjectId = findCurrentRepoProjectId(config);
     if (currentProjectId) {
       const currentProject = config.projects[currentProjectId];
       return currentProject?.name ?? currentProjectId;
@@ -134,11 +135,10 @@ export const getProjectName = cache((): string => {
 });
 
 export const getPrimaryProjectId = cache((): string => {
-  const currentProjectId = findCurrentRepoProjectId();
-  if (currentProjectId) return currentProjectId;
-
   try {
     const config = loadProjectDiscoveryConfig();
+    const currentProjectId = findCurrentRepoProjectId(config);
+    if (currentProjectId) return currentProjectId;
     const firstKey = Object.keys(config.projects)[0];
     if (firstKey) return firstKey;
   } catch {

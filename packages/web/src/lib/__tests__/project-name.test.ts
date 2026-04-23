@@ -86,28 +86,35 @@ describe("project-name fallback discovery", () => {
   });
 
   it("prefers the repo discovered from local config when the dashboard is running from packages/web", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "ao-project-name-web-"));
+    const repoRoot = join(tempRoot, "agent-orchestrator");
+    const webDir = join(repoRoot, "packages", "web");
+    mkdirSync(webDir, { recursive: true });
+    const localConfigPath = join(repoRoot, "agent-orchestrator.yaml");
+    writeFileSync(localConfigPath, "projects: {}\n");
+
     const globalConfig = {
       configPath: "/tmp/global-config.yaml",
       projects: {
         "vinesight-web": {
           name: "vinesight-web",
-          path: "/Users/ashishhuddar/vinesight",
+          path: join(tempRoot, "vinesight"),
           sessionPrefix: "vw",
         },
         "agent-orchestrator": {
           name: "Agent Orchestrator",
-          path: "/Users/ashishhuddar/agent-orchestrator",
+          path: repoRoot,
           sessionPrefix: "ao",
         },
       },
       degradedProjects: {},
     };
     const localConfig = {
-      configPath: "/Users/ashishhuddar/agent-orchestrator/agent-orchestrator.yaml",
+      configPath: localConfigPath,
       projects: {
         "agent-orchestrator": {
           name: "Agent Orchestrator",
-          path: "/Users/ashishhuddar/agent-orchestrator",
+          path: repoRoot,
           sessionPrefix: "ao",
         },
       },
@@ -118,9 +125,12 @@ describe("project-name fallback discovery", () => {
       if (configPath === "/tmp/global-config.yaml") {
         return globalConfig;
       }
-      return localConfig;
+      if (configPath === localConfigPath) {
+        return localConfig;
+      }
+      throw new Error(`unexpected config path: ${String(configPath)}`);
     });
-    vi.spyOn(process, "cwd").mockReturnValue("/Users/ashishhuddar/agent-orchestrator/packages/web");
+    vi.spyOn(process, "cwd").mockReturnValue(webDir);
 
     const { getPrimaryProjectId, getProjectName } = await import("../project-name");
 
