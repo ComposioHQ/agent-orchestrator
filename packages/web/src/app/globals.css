@@ -476,7 +476,8 @@ a:hover {
 /* ── xterm.js terminal viewport scrollbar — macOS-style auto-hide ──── */
 
 .xterm .xterm-viewport {
-  overflow-y: overlay !important;
+  overflow-y: scroll !important;
+  scrollbar-width: none !important;
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar {
