@@ -1074,6 +1074,93 @@ describe("spawn", () => {
     vi.useRealTimers();
   }, 20_000);
 
+  describe("displayName derivation", () => {
+    it("persists the issue title as displayName when tracker returns one", async () => {
+      const mockTracker: Tracker = {
+        name: "mock-tracker",
+        getIssue: vi.fn().mockResolvedValue({
+          id: "INT-100",
+          title: "Refactor session manager to use flat metadata files",
+          description: "",
+          url: "https://tracker.test/INT-100",
+          state: "open",
+          labels: [],
+        }),
+        isCompleted: vi.fn().mockResolvedValue(false),
+        issueUrl: vi.fn().mockReturnValue(""),
+        branchName: vi.fn().mockReturnValue("feat/INT-100"),
+        generatePrompt: vi.fn().mockResolvedValue(""),
+      };
+      const registryWithTracker: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return mockAgent;
+          if (slot === "workspace") return mockWorkspace;
+          if (slot === "tracker") return mockTracker;
+          return null;
+        }),
+      };
+
+      const sm = createSessionManager({ config, registry: registryWithTracker });
+      await sm.spawn({ projectId: "my-app", issueId: "INT-100" });
+
+      const meta = readMetadataRaw(sessionsDir, "app-1");
+      expect(meta?.["displayName"]).toBe("Refactor session manager to use flat metadata files");
+    });
+
+    it("persists the first line of a user prompt as displayName when there is no issue", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      await sm.spawn({
+        projectId: "my-app",
+        prompt:
+          "Add rate limiting to /api/upload\n\nUse a sliding-window counter keyed by IP.",
+      });
+
+      const meta = readMetadataRaw(sessionsDir, "app-1");
+      expect(meta?.["displayName"]).toBe("Add rate limiting to /api/upload");
+    });
+
+    it("truncates long displayName values with an ellipsis", async () => {
+      const longPrompt =
+        "Implement a comprehensive rate-limiter that supports sliding windows, token buckets, and per-route overrides with distributed counters";
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      await sm.spawn({ projectId: "my-app", prompt: longPrompt });
+
+      const meta = readMetadataRaw(sessionsDir, "app-1");
+      expect(meta?.["displayName"]).toBeDefined();
+      expect(meta!["displayName"].length).toBeLessThanOrEqual(80);
+      expect(meta!["displayName"].endsWith("…")).toBe(true);
+    });
+
+    it("truncates on code-point boundaries without splitting surrogate pairs", async () => {
+      // Place a 4-byte emoji (2 UTF-16 code units) right where a naive
+      // `slice(0, 79)` would split it, producing a lone surrogate.
+      const prompt = "a".repeat(78) + "😀" + "b".repeat(20);
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      await sm.spawn({ projectId: "my-app", prompt });
+
+      const meta = readMetadataRaw(sessionsDir, "app-1");
+      const displayName = meta?.["displayName"];
+      expect(displayName).toBeDefined();
+      expect(displayName!.endsWith("…")).toBe(true);
+      // No lone surrogates — every code unit belongs to a valid code point.
+      for (const ch of displayName!) {
+        expect(ch.codePointAt(0)).toBeGreaterThan(0);
+      }
+      // Round-trip through UTF-8 should be lossless (no U+FFFD replacement).
+      expect(Buffer.from(displayName!, "utf8").toString("utf8")).toBe(displayName);
+    });
+
+    it("does not write displayName when there is no issue or prompt", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      await sm.spawn({ projectId: "my-app" });
+
+      const meta = readMetadataRaw(sessionsDir, "app-1");
+      expect(meta?.["displayName"]).toBeUndefined();
+    });
+  });
+
   describe("spawnOrchestrator", () => {
     it("throws when no workspace plugin is configured", async () => {
       const registryNoWorkspace: PluginRegistry = {
@@ -1814,6 +1901,29 @@ describe("spawn", () => {
       expect(existsSync(promptFile)).toBe(true);
       const { readFileSync } = await import("node:fs");
       expect(readFileSync(promptFile, "utf-8")).toBe("You are the orchestrator.");
+    });
+
+    it("persists displayName derived from the orchestrator system prompt", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      await sm.spawnOrchestrator({
+        projectId: "my-app",
+        systemPrompt: "Audit test coverage for session-manager and open PRs for gaps",
+      });
+
+      const meta = readMetadataRaw(sessionsDir, "app-orchestrator-1");
+      expect(meta?.["displayName"]).toBe(
+        "Audit test coverage for session-manager and open PRs for gaps",
+      );
+    });
+
+    it("omits displayName when no system prompt is supplied", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      await sm.spawnOrchestrator({ projectId: "my-app" });
+
+      const meta = readMetadataRaw(sessionsDir, "app-orchestrator-1");
+      expect(meta?.["displayName"]).toBeUndefined();
     });
 
     it("writes the orchestrator AGENTS.md block for OpenCode orchestrators", async () => {

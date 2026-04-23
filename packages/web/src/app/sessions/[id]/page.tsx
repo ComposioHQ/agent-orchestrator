@@ -14,7 +14,10 @@ import type { SessionPatch } from "@/lib/mux-protocol";
 import { projectSessionPath } from "@/lib/routes";
 
 function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max) + "..." : s;
+  // Split on code points so emoji / astral characters aren't cleaved into
+  // lone UTF-16 surrogates at the truncation boundary.
+  const codePoints = Array.from(s);
+  return codePoints.length > max ? codePoints.slice(0, max).join("") + "..." : s;
 }
 
 /** Build a descriptive tab title from session data. */

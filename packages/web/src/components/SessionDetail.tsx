@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
@@ -91,112 +91,32 @@ function normalizeActivityLabelForClass(activityLabel: string): string {
   return activityLabel.toLowerCase().replace(/\s+/g, "-");
 }
 
-function OrchestratorTopStrip({
-  headline,
-  crumbId,
-  activityLabel,
-  activityColor,
-  branch,
-  pr,
-  crumbHref,
-  crumbLabel,
-  rightSlot,
-}: {
-  headline: string;
-  crumbId: string;
-  activityLabel: string;
-  activityColor: string;
-  branch: string | null;
-  pr: DashboardPR | null;
-  crumbHref: string;
-  crumbLabel: string;
-  rightSlot?: ReactNode;
-}) {
+/**
+ * Compact agent-zone breakdown for orchestrator sessions, rendered inline in
+ * the topbar pill row. Replaces the previous stacked status strip that sat
+ * above the terminal.
+ */
+function OrchestratorZonePills({ zones }: { zones: OrchestratorZones }) {
+  const stats: Array<{ value: number; label: string; toneClass: string }> = [
+    { value: zones.merge,   label: "merge",   toneClass: "topbar-zone-pill--merge" },
+    { value: zones.respond, label: "respond", toneClass: "topbar-zone-pill--respond" },
+    { value: zones.review,  label: "review",  toneClass: "topbar-zone-pill--review" },
+    { value: zones.working, label: "working", toneClass: "topbar-zone-pill--working" },
+    { value: zones.pending, label: "pending", toneClass: "topbar-zone-pill--pending" },
+    { value: zones.done,    label: "done",    toneClass: "topbar-zone-pill--done" },
+  ].filter((s) => s.value > 0);
+
+  if (stats.length === 0) return null;
+
   return (
-    <div className="session-detail-top-strip">
-      {/* Breadcrumbs */}
-      <div className="session-detail-crumbs">
-        <a
-          href={crumbHref}
-          className="session-detail-crumb-back"
-        >
-          <svg
-            className="h-3 w-3 opacity-60"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            viewBox="0 0 24 24"
-          >
-            <path d="M15 18l-6-6 6-6" />
-          </svg>
-          {crumbLabel}
-        </a>
-        <span className="session-detail-crumb-sep">/</span>
-        <span className="session-detail-crumb-id">{crumbId}</span>
-        <span className="session-detail-mode-badge">orchestrator</span>
-      </div>
-
-      {/* Identity strip */}
-      <div className="session-detail-identity">
-        <div className="session-detail-identity__info">
-          <h1 className="session-detail-identity__title">
-            {headline}
-          </h1>
-          <div className="session-detail-identity__pills">
-            <div
-              className="session-detail-status-pill"
-            >
-              <span
-                className="session-detail-status-pill__dot"
-                style={{ background: activityColor }}
-              />
-              <span className="session-detail-status-pill__label">
-                {activityLabel}
-              </span>
-            </div>
-            {branch ? (
-              pr ? (
-                <a
-                  href={buildGitHubBranchUrl(pr)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="session-detail-link-pill session-detail-link-pill--branch session-detail-link-pill--branch-link hover:no-underline"
-                >
-                  {branch}
-                </a>
-              ) : (
-                <span className="session-detail-link-pill session-detail-link-pill--branch">
-                  {branch}
-                </span>
-              )
-            ) : null}
-            {pr ? (
-              <a
-                href={pr.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="session-detail-link-pill session-detail-link-pill--pr hover:no-underline"
-              >
-                PR #{pr.number}
-              </a>
-            ) : null}
-            {pr && (pr.additions > 0 || pr.deletions > 0) ? (
-              <span className="session-detail-link-pill session-detail-link-pill--diff">
-                <span className="session-detail-diff--add">+{pr.additions}</span>
-                {" "}
-                <span className="session-detail-diff--del">-{pr.deletions}</span>
-              </span>
-            ) : null}
-          </div>
-        </div>
-
-        {rightSlot ? (
-          <div className="session-detail-identity__actions session-detail-identity__actions--custom">
-            {rightSlot}
-          </div>
-        ) : null}
-      </div>
-    </div>
+    <>
+      {stats.map((s) => (
+        <span key={s.label} className={cn("topbar-zone-pill", s.toneClass)}>
+          <span className="topbar-zone-pill__value">{s.value}</span>
+          <span className="topbar-zone-pill__label">{s.label}</span>
+        </span>
+      ))}
+    </>
   );
 }
 
@@ -220,147 +140,6 @@ async function askAgentToFix(
     console.error("Failed to send message to agent:", err);
     onError();
   }
-}
-
-// ── Orchestrator status strip ─────────────────────────────────────────
-
-function _OrchestratorStatusStrip({
-  zones,
-  createdAt,
-  headline,
-  activityLabel,
-  activityColor,
-  branch,
-  pr,
-  crumbHref,
-  crumbLabel,
-}: {
-  zones: OrchestratorZones;
-  createdAt: string;
-  headline: string;
-  activityLabel: string;
-  activityColor: string;
-  branch: string | null;
-  pr: DashboardPR | null;
-  crumbHref: string;
-  crumbLabel: string;
-}) {
-  const [uptime, setUptime] = useState<string>("");
-
-  useEffect(() => {
-    const compute = () => {
-      const diff = Date.now() - new Date(createdAt).getTime();
-      const h = Math.floor(diff / 3_600_000);
-      const m = Math.floor((diff % 3_600_000) / 60_000);
-      setUptime(h > 0 ? `${h}h ${m}m` : `${m}m`);
-    };
-    compute();
-    const id = setInterval(compute, 30_000);
-    return () => clearInterval(id);
-  }, [createdAt]);
-
-  const stats: Array<{ value: number; label: string; color: string; bg: string }> = [
-    {
-      value: zones.merge,
-      label: "merge-ready",
-      color: "var(--color-status-ready)",
-      bg: "color-mix(in srgb, var(--color-status-ready) 10%, transparent)",
-    },
-    {
-      value: zones.respond,
-      label: "responding",
-      color: "var(--color-status-error)",
-      bg: "color-mix(in srgb, var(--color-status-error) 10%, transparent)",
-    },
-    {
-      value: zones.review,
-      label: "review",
-      color: "var(--color-accent-orange)",
-      bg: "color-mix(in srgb, var(--color-accent-orange) 10%, transparent)",
-    },
-    {
-      value: zones.working,
-      label: "working",
-      color: "var(--color-accent-blue)",
-      bg: "color-mix(in srgb, var(--color-accent-blue) 10%, transparent)",
-    },
-    {
-      value: zones.pending,
-      label: "pending",
-      color: "var(--color-status-attention)",
-      bg: "color-mix(in srgb, var(--color-status-attention) 10%, transparent)",
-    },
-    {
-      value: zones.done,
-      label: "done",
-      color: "var(--color-text-tertiary)",
-      bg: "color-mix(in srgb, var(--color-text-tertiary) 14%, transparent)",
-    },
-  ].filter((s) => s.value > 0);
-
-  const total =
-    zones.merge + zones.respond + zones.review + zones.working + zones.pending + zones.done;
-
-  return (
-    <div className="mx-auto max-w-[1180px] px-5 pt-5 lg:px-8">
-      <OrchestratorTopStrip
-        headline={headline}
-        crumbId={headline}
-        activityLabel={activityLabel}
-        activityColor={activityColor}
-        branch={branch}
-        pr={pr}
-        crumbHref={crumbHref}
-        crumbLabel={crumbLabel}
-        rightSlot={
-          <div className="flex flex-wrap items-center gap-3 lg:justify-end">
-            <div className="flex items-baseline gap-1.5 mr-2">
-              <span className="text-[22px] font-bold leading-none tabular-nums text-[var(--color-text-primary)]">
-                {total}
-              </span>
-              <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
-            </div>
-
-            <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
-
-            {/* Per-zone pills */}
-            {stats.length > 0 ? (
-              stats.map((s) => (
-                <div
-                  key={s.label}
-                  className="flex items-center gap-1.5 px-2.5 py-1"
-                  style={{ background: s.bg }}
-                >
-                  <span
-                    className="text-[15px] font-bold leading-none tabular-nums"
-                    style={{ color: s.color }}
-                  >
-                    {s.value}
-                  </span>
-                  <span
-                    className="text-[10px] font-medium"
-                    style={{ color: s.color, opacity: 0.8 }}
-                  >
-                    {s.label}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <span className="text-[12px] text-[var(--color-text-tertiary)]">
-                no active agents
-              </span>
-            )}
-
-            {uptime && (
-              <span className="ml-auto font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
-                up {uptime}
-              </span>
-            )}
-          </div>
-        }
-      />
-    </div>
-  );
 }
 
 // ── Main component ────────────────────────────────────────────────────
@@ -404,8 +183,6 @@ export function SessionDetail({
     ? `/exit\nopencode --session ${opencodeSessionId}\n`
     : undefined;
   const dashboardHref = session.projectId ? projectDashboardPath(session.projectId) : "/";
-  const crumbHref = dashboardHref;
-  const crumbLabel = "Dashboard";
 
   const handleKill = useCallback(async () => {
     try {
@@ -525,44 +302,42 @@ export function SessionDetail({
             {showHeaderProjectLabel && (
               <span className="dashboard-app-header__project">{headerProjectLabel}</span>
             )}
-            {!isOrchestrator && (
-              <span className="dashboard-app-header__session-id topbar-mobile-only">
-                {session.id}
-              </span>
+            <span className="dashboard-app-header__session-id topbar-mobile-only">
+              {session.id}
+            </span>
+            {isOrchestrator && (
+              <span className="session-detail-mode-badge">orchestrator</span>
             )}
           </div>
-          {!isOrchestrator && (
-            <div className="topbar-session-pills">
-              <div className={cn("topbar-status-pill", `topbar-status-pill--${normalizeActivityLabelForClass(activity.label)}`)}>
-                <span className="topbar-status-pill__dot" style={{ background: activity.color }} />
-                <span className="topbar-status-pill__label">{activity.label}</span>
-              </div>
-              {session.branch ? (
-                pr ? (
-                  <a
-                    href={buildGitHubBranchUrl(pr)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="topbar-branch-pill topbar-branch-pill--link"
-                  >
-                    {session.branch}
-                  </a>
-                ) : (
-                  <span className="topbar-branch-pill">{session.branch}</span>
-                )
-              ) : null}
+          <div className="topbar-session-pills">
+            <div className={cn("topbar-status-pill", `topbar-status-pill--${normalizeActivityLabelForClass(activity.label)}`)}>
+              <span className="topbar-status-pill__dot" style={{ background: activity.color }} />
+              <span className="topbar-status-pill__label">{activity.label}</span>
             </div>
-          )}
+            {session.branch ? (
+              pr ? (
+                <a
+                  href={buildGitHubBranchUrl(pr)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="topbar-branch-pill topbar-branch-pill--link"
+                >
+                  {session.branch}
+                </a>
+              ) : (
+                <span className="topbar-branch-pill">{session.branch}</span>
+              )
+            ) : null}
+            {isOrchestrator && orchestratorZones ? (
+              <OrchestratorZonePills zones={orchestratorZones} />
+            ) : null}
+          </div>
         </div>
         {/* Desktop-only session title + session id.
             On mobile the session id lives next to the project name (above). */}
-        {!isOrchestrator && (
-          <>
-            <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />
-            <span className="dashboard-app-header__session-title topbar-desktop-only">{headline}</span>
-            <span className="dashboard-app-header__session-id topbar-desktop-only">{session.id}</span>
-          </>
-        )}
+        <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />
+        <span className="dashboard-app-header__session-title topbar-desktop-only">{headline}</span>
+        <span className="dashboard-app-header__session-id topbar-desktop-only">{session.id}</span>
         <div className="dashboard-app-header__spacer" />
         <div className="dashboard-app-header__actions">
           {pr ? (
@@ -626,7 +401,7 @@ export function SessionDetail({
           {!isOrchestrator && orchestratorHref ? (
             <a
               href={orchestratorHref}
-              className="dashboard-app-btn dashboard-app-btn--amber topbar-desktop-only"
+              className="dashboard-app-btn dashboard-app-btn--amber"
               aria-label="Orchestrator"
             >
               <svg
@@ -675,21 +450,6 @@ export function SessionDetail({
 
         <div className="dashboard-main dashboard-main--desktop">
           <main className="session-detail-page flex-1 min-h-0 flex flex-col bg-[var(--color-bg-base)]">
-            {/* Orchestrator status strip — rendered above terminal only on orchestrator pages */}
-            {isOrchestrator && orchestratorZones && (
-              <_OrchestratorStatusStrip
-                zones={orchestratorZones}
-                createdAt={session.createdAt}
-                headline={headline}
-                activityLabel={activity.label}
-                activityColor={activity.color}
-                branch={session.branch}
-                pr={pr}
-                crumbHref={crumbHref}
-                crumbLabel={crumbLabel}
-              />
-            )}
-
             {/* Terminal — fills all remaining height */}
             <div className="flex-1 min-h-0 flex flex-col">
               {!showTerminal ? (

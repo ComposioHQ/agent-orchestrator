@@ -38,6 +38,8 @@ import {
   type PREnrichmentData,
   type CICheck,
 } from "./types.js";
+import { formatAutomatedCommentsMessage } from "./format-automated-comments.js";
+import { DEFAULT_BUGBOT_COMMENTS_MESSAGE } from "./config.js";
 import { buildLifecycleMetadataPatch, cloneLifecycle, deriveLegacyStatus } from "./lifecycle-state.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
@@ -1245,11 +1247,26 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           reactionConfig.action &&
           (reactionConfig.auto !== false || reactionConfig.action === "notify")
         ) {
+          // Inject the detailed comment listing + correct-API guidance into the
+          // message so the agent doesn't re-fetch with stale or unpaginated calls
+          // (see #895 — fixes the pagination + stale `gh pr checks` failure modes).
+          // Only override when the message is the built-in sentinel — a user who
+          // customized `reactions.bugbot-comments.message` in their YAML gets
+          // exactly what they wrote, nothing more.
+          const usingDefaultMessage =
+            reactionConfig.message === DEFAULT_BUGBOT_COMMENTS_MESSAGE;
+          const detailedConfig: ReactionConfig =
+            reactionConfig.action === "send-to-agent" && usingDefaultMessage
+              ? {
+                  ...reactionConfig,
+                  message: formatAutomatedCommentsMessage(automatedComments, session.pr),
+                }
+              : reactionConfig;
           const result = await executeReaction(
             session.id,
             session.projectId,
             automatedReactionKey,
-            reactionConfig,
+            detailedConfig,
           );
           if (result.success) {
             updateSessionMetadata(session, {

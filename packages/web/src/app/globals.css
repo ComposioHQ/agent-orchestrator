@@ -7103,6 +7103,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex-wrap: wrap;
 }
 
 /* Project name + pills: inline on desktop, stacked column on mobile */
@@ -7180,4 +7181,35 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     padding: 1px 5px;
     max-width: 90px;
   }
+  .topbar-session-pills .topbar-zone-pill {
+    font-size: 9px;
+    padding: 1px 5px;
+    gap: 3px;
+  }
+  /* Hide zone pill labels on mobile — count + color is enough */
+  .topbar-session-pills .topbar-zone-pill__label {
+    display: none;
+  }
 }
+
+/* Orchestrator agent-zone pills — compact topbar variant. Replaces the
+   stacked status strip that used to sit above the terminal. */
+.topbar-zone-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+.topbar-zone-pill__value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.topbar-zone-pill__label { opacity: 0.85; }
+.topbar-zone-pill--merge   { background: color-mix(in srgb, var(--color-status-ready)     12%, transparent); color: var(--color-status-ready); }
+.topbar-zone-pill--respond { background: color-mix(in srgb, var(--color-status-error)     12%, transparent); color: var(--color-status-error); }
+.topbar-zone-pill--review  { background: color-mix(in srgb, var(--color-accent-orange)    12%, transparent); color: var(--color-accent-orange); }
+.topbar-zone-pill--working { background: color-mix(in srgb, var(--color-accent-blue)      12%, transparent); color: var(--color-accent-blue); }
+.topbar-zone-pill--pending { background: color-mix(in srgb, var(--color-status-attention) 12%, transparent); color: var(--color-status-attention); }
+.topbar-zone-pill--done    { background: color-mix(in srgb, var(--color-text-tertiary)    14%, transparent); color: var(--color-text-tertiary); }
