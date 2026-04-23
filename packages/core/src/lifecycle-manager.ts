@@ -316,6 +316,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  // Reaction keys that survive status transitions — their trackers are not cleared
+  // on exit to prevent stale prEnrichmentCache oscillation from resetting retry budgets.
+  const persistentReactionKeys = new Set(["ci-failed", "merge-conflicts"]);
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -1745,11 +1748,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // that are genuinely resolved, not for conditions that may be stale-cached.
       // CI failure and merge conflict trackers survive oscillation so the retry
       // budget is not reset when stale prEnrichmentCache causes status to flap.
-      const PERSISTENT_REACTION_KEYS = new Set(["ci-failed", "merge-conflicts"]);
       const oldEventType = statusToEventType(undefined, oldStatus);
       if (oldEventType) {
         const oldReactionKey = eventToReactionKey(oldEventType);
-        if (oldReactionKey && !PERSISTENT_REACTION_KEYS.has(oldReactionKey)) {
+        if (oldReactionKey && !persistentReactionKeys.has(oldReactionKey)) {
           clearReactionTracker(session.id, oldReactionKey);
         }
       }

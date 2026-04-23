@@ -3034,7 +3034,10 @@ describe("reaction tracker oscillation protection (#1409)", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const session = makeSession({ id: "s-osc-2", status: "working", pr });
+    // Start in pr_open — an eligible status for maybeDispatchMergeConflicts.
+    // The enrichment data (ciStatus: passing, reviewDecision: none, mergeable: false)
+    // keeps the session in pr_open across polls, so conflict checks always run.
+    const session = makeSession({ id: "s-osc-2", status: "pr_open", pr });
     vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
 
     const lm = createLifecycleManager({ config, registry, sessionManager: mockSessionManager });
@@ -3120,7 +3123,8 @@ describe("reaction tracker oscillation protection (#1409)", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    const session = makeSession({ id: "s-osc-3", status: "working", pr });
+    // Start in pr_open — directly eligible for maybeDispatchMergeConflicts.
+    const session = makeSession({ id: "s-osc-3", status: "pr_open", pr });
     vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
 
     const lm = createLifecycleManager({ config, registry, sessionManager: mockSessionManager });
