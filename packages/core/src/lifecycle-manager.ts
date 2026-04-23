@@ -12,6 +12,7 @@
 
 import { randomUUID } from "node:crypto";
 import {
+  ACTIVITY_STATE,
   SESSION_STATUS,
   TERMINAL_STATUSES,
   type LifecycleManager,
@@ -480,7 +481,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
       if (session.metadata["prEnrichment"] === blob) continue;
 
-      const sessionsDir = getSessionsDir(config.configPath, project.path);
+      const sessionsDir = getSessionsDir(project.storageKey);
       updateMetadata(sessionsDir, session.id, { prEnrichment: blob });
       session.metadata["prEnrichment"] = blob;
     }
