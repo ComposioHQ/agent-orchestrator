@@ -1293,6 +1293,33 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       subagent: spawnConfig.subagent ?? selection.subagent,
     };
 
+    // Setup agent hooks BEFORE launching the runtime so the workspace is
+    // trusted (e.g. .claude/settings.json exists) when the agent process starts.
+    // Without this, Claude Code shows a trust prompt and blocks.
+    try {
+      if (plugins.agent.setupWorkspaceHooks) {
+        await plugins.agent.setupWorkspaceHooks(workspacePath, { dataDir: sessionsDir });
+      }
+    } catch (err) {
+      // Clean up workspace and metadata on hook setup failure
+      if (
+        plugins.workspace &&
+        shouldDestroyWorkspacePath(project, spawnConfig.projectId, workspacePath)
+      ) {
+        try {
+          await plugins.workspace.destroy(workspacePath);
+        } catch {
+          /* best effort */
+        }
+      }
+      try {
+        deleteMetadata(sessionsDir, sessionId, false);
+      } catch {
+        /* best effort */
+      }
+      throw err;
+    }
+
     let handle: RuntimeHandle;
     try {
       const launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
@@ -1581,16 +1608,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     };
 
-    // Setup agent hooks for automatic metadata updates
-    try {
-      if (plugins.agent.setupWorkspaceHooks) {
-        await plugins.agent.setupWorkspaceHooks(workspacePath, { dataDir: sessionsDir });
-      }
-    } catch (err) {
-      await cleanupWorktreeAndMetadata();
-      throw err;
-    }
-
     // Write system prompt to a file to avoid shell/tmux truncation.
     // Long prompts (2000+ chars) get mangled when inlined in shell commands
     // via tmux send-keys or paste-buffer. File-based approach is reliable.
@@ -1659,6 +1676,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     const launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
     const environment = plugins.agent.getEnvironment(agentLaunchConfig);
+
+    // Setup agent hooks BEFORE launching the runtime so the workspace is
+    // trusted (e.g. .claude/settings.json exists) when the agent process starts.
+    // Without this, Claude Code shows a trust prompt and blocks.
+    try {
+      if (plugins.agent.setupWorkspaceHooks) {
+        await plugins.agent.setupWorkspaceHooks(workspacePath, { dataDir: sessionsDir });
+      }
+    } catch (err) {
+      await cleanupWorktreeAndMetadata(systemPromptFile);
+      throw err;
+    }
 
     // Create runtime — clean up worktree and metadata on failure
     let handle: RuntimeHandle;
