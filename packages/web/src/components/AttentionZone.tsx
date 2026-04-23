@@ -190,7 +190,12 @@ function AttentionZoneView({
               />
             ))}
           </div>
-        ) : null}
+        ) : (
+          <div className="kanban-column__empty">
+            <span className="kanban-column__empty-kicker">clear</span>
+            <span className="kanban-column__empty-label">{config.emptyMessage}</span>
+          </div>
+        )}
       </div>
     </div>
   );
