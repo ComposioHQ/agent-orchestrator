@@ -17,6 +17,11 @@ const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 const PR_ENRICH_TIMEOUT_MS = 4_000;
 const PER_PR_ENRICH_TIMEOUT_MS = 1_500;
 
+function hasTerminalPRState(session: Parameters<typeof isTerminalSession>[0]): boolean {
+  const prState = session.lifecycle?.pr.state;
+  return prState === "merged" || prState === "closed";
+}
+
 function compareOrchestratorRecency(a: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string }, b: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string }): number {
   return (
     (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0) ||
@@ -151,25 +156,23 @@ export async function GET(request: Request) {
 
       for (let i = 0; i < workerSessions.length; i++) {
         const core = workerSessions[i];
-        if (!core?.pr) continue;
+        const pr = core?.pr;
+        if (!pr) continue;
 
         const project = resolveProject(core, config.projects);
         const scm = getSCM(registry, project);
         if (!scm) continue;
 
-        if (isTerminalSession(core)) {
-          prEnrichPromises.push(
-            settlesWithin(
-              enrichSessionPR(dashboardSessions[i], scm, core.pr, { cacheOnly: true }),
-              PER_PR_ENRICH_TIMEOUT_MS,
-            ),
-          );
-          continue;
-        }
-
         prEnrichPromises.push(
           settlesWithin(
-            enrichSessionPR(dashboardSessions[i], scm, core.pr),
+            hasTerminalPRState(core)
+              ? enrichSessionPR(dashboardSessions[i], scm, pr, { cacheOnly: true }).then(
+                  (cached) =>
+                    cached
+                      ? true
+                      : enrichSessionPR(dashboardSessions[i], scm, pr),
+                )
+              : enrichSessionPR(dashboardSessions[i], scm, pr),
             PER_PR_ENRICH_TIMEOUT_MS,
           ),
         );
