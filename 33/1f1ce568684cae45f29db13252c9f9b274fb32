@@ -1,0 +1,52 @@
+packages/core/src/__tests__/metadata.test.ts
+  82f4506761e23ef5 118-132
+packages/web/src/components/ProjectSidebar.tsx
+  82f4506761e23ef5 10,306-307,581
+packages/web/src/__tests__/helpers.ts
+  82f4506761e23ef5 202-204,207
+packages/web/src/lib/__tests__/format.test.ts
+  82f4506761e23ef5 30-31,71-88,198-291
+packages/web/src/lib/types.ts
+  82f4506761e23ef5 102-108
+packages/core/src/session-manager.ts
+  82f4506761e23ef5 228-280,1299-1307,1336,1354,1628-1633,1665,1682,2704
+packages/web/src/app/sessions/[id]/page.tsx
+  82f4506761e23ef5 20-23
+packages/web/src/lib/serialize.ts
+  82f4506761e23ef5 197
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  h_e1aac9baf373c4 1077-1163,1573-1577
+packages/core/src/metadata.ts
+  82f4506761e23ef5 102,156
+packages/core/src/types.ts
+  82f4506761e23ef5 1645-1652
+packages/core/src/__tests__/session-manager/restore.test.ts
+  82f4506761e23ef5 274-301
+packages/web/src/lib/format.ts
+  82f4506761e23ef5 10-24,26-29,31,34-41,53-69,78-89,92-99,101,105,110,113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "331f1ce568684cae45f29db13252c9f9b274fb32",
+  "prompts": {
+    "82f4506761e23ef5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db3c7-b9e6-7873-80b8-f71cca8be3dc",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 331,
+      "total_deletions": 55,
+      "accepted_lines": 331,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e1aac9baf373c4": {
+      "author": "Ashish Huddar"
+    }
+  }
+}
