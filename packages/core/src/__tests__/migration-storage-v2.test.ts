@@ -1157,4 +1157,99 @@ describe("migration edge cases", () => {
     // Path should NOT be rewritten since no worktree was moved to the new location
     expect(session.worktree).toBe("/tmp/external-worktree/ao-1");
   });
+
+  it("writes and removes .migration-in-progress marker file", async () => {
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+    );
+
+    const markerPath = join(aoBaseDir, ".migration-in-progress");
+
+    await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: () => {},
+    });
+
+    // Marker should be removed after successful migration
+    expect(existsSync(markerPath)).toBe(false);
+    // Migration should have completed
+    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"))).toBe(true);
+  });
+
+  it("detects interrupted migration on re-run", async () => {
+    const markerPath = join(aoBaseDir, ".migration-in-progress");
+    // Simulate interrupted migration: marker exists, partial state
+    writeFileSync(markerPath, "2026-04-21T12:00:00.000Z");
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+    );
+
+    const logs: string[] = [];
+    await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: (msg) => logs.push(msg),
+    });
+
+    // Should warn about interrupted migration
+    expect(logs.some((m) => m.includes("interrupted"))).toBe(true);
+    // Should still complete successfully
+    expect(existsSync(markerPath)).toBe(false);
+    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"))).toBe(true);
+  });
+
+  it("does not write marker file in dry-run mode", async () => {
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+    );
+
+    await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      dryRun: true,
+      log: () => {},
+    });
+
+    expect(existsSync(join(aoBaseDir, ".migration-in-progress"))).toBe(false);
+  });
+
+  it("handles corrupt session metadata during migration without crashing", async () => {
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+
+    // Good session
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+    );
+    // Corrupt session (binary garbage)
+    writeFileSync(join(hashDir, "sessions", "ao-2"), Buffer.from([0x00, 0xff, 0xfe]));
+    // Empty session
+    writeFileSync(join(hashDir, "sessions", "ao-3"), "");
+
+    const result = await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: () => {},
+    });
+
+    // Good session should be migrated
+    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"))).toBe(true);
+    // Migration should not crash
+    expect(result.projects).toBe(1);
+  });
 });

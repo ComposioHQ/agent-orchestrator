@@ -7,8 +7,8 @@
  * - Archives: ~/.agent-orchestrator/projects/{projectId}/archive/{sessionId}_{timestamp}.json
  *
  * Format: JSON (2-space indented), one object per file.
- * Status is always computed on read from lifecycle (never persisted).
- * Pre-lifecycle sessions retain a stored status field from migration.
+ * Status: computed on read from lifecycle via deriveLegacyStatus().
+ * Pre-lifecycle sessions retain a stored status field; lifecycle sessions omit it on write.
  */
 
 import {
@@ -16,6 +16,7 @@ import {
   existsSync,
   mkdirSync,
   unlinkSync,
+  renameSync,
   readdirSync,
   statSync,
   openSync,
@@ -43,9 +44,15 @@ function serializeMetadata(data: Record<string, unknown>): string {
   return JSON.stringify(data, null, 2) + "\n";
 }
 
-/** Parse JSON metadata file content. */
-function parseMetadataContent(content: string): Record<string, unknown> {
-  return JSON.parse(content) as Record<string, unknown>;
+/** Parse JSON metadata file content. Returns null on invalid JSON. */
+function parseMetadataContent(content: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(content);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -133,6 +140,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
   const content = readFileSync(path, "utf-8").trim();
   if (!content) return null; // empty file (e.g. from reserveSessionId)
   const raw = parseMetadataContent(content);
+  if (!raw) return null; // corrupt JSON — treat as missing
 
   // Derive status: lifecycle-derived (single source of truth) → stored fallback
   const lifecycle = parseLifecycleField(raw);
@@ -177,6 +185,7 @@ export function readMetadataRaw(
   const content = readFileSync(path, "utf-8").trim();
   if (!content) return null; // empty file (e.g. from reserveSessionId)
   const raw = parseMetadataContent(content);
+  if (!raw) return null; // corrupt JSON — treat as missing
   // Lifecycle is the single source of truth for status — always override stored status
   if (raw["lifecycle"]) {
     const lifecycle = parseLifecycleField(raw);
@@ -235,7 +244,10 @@ export function writeMetadata(
   const data: Record<string, unknown> = {
     worktree: metadata.worktree,
     branch: metadata.branch,
-    status: metadata.status,
+    // Only persist status for pre-lifecycle sessions; lifecycle sessions derive it on read.
+    // Check for object type specifically — buildLifecycleMetadataPatch spreads lifecycle as
+    // a JSON string, which should still trigger status persistence as a safety net.
+    ...(typeof metadata.lifecycle === "object" && metadata.lifecycle !== null ? {} : { status: metadata.status }),
   };
 
   if (metadata.tmuxName) data["tmuxName"] = metadata.tmuxName;
@@ -311,7 +323,8 @@ export function mutateMetadata(
     const content = readFileSync(path, "utf-8").trim();
     if (content) {
       const raw = parseMetadataContent(content);
-      existing = flattenToStringRecord(raw);
+      if (raw) existing = flattenToStringRecord(raw);
+      // corrupt JSON → treat as empty record (preserves createIfMissing semantics)
     }
   } else if (!options.createIfMissing) {
     return null;
@@ -374,10 +387,21 @@ export function deleteMetadata(dataDir: string, sessionId: SessionId, archive = 
     mkdirSync(archiveDir, { recursive: true });
     const timestamp = compactTimestamp(new Date());
     const archivePath = join(archiveDir, `${sessionId}_${timestamp}${JSON_EXTENSION}`);
-    atomicWriteFileSync(archivePath, readFileSync(path, "utf-8"));
+    // Use rename for atomic archival — avoids TOCTOU race between concurrent deletes
+    try {
+      renameSync(path, archivePath);
+      return; // rename succeeded, file is now archived
+    } catch {
+      // rename failed (cross-device, or file already gone) — fall through to unlink
+      if (!existsSync(path)) return; // already deleted by another process
+    }
   }
 
-  unlinkSync(path);
+  try {
+    unlinkSync(path);
+  } catch {
+    // File may already be deleted by a concurrent process — not an error
+  }
 }
 
 /**
@@ -409,8 +433,10 @@ export function readArchivedMetadataRaw(
 
   if (!latest) return null;
   try {
-    const content = readFileSync(join(archiveDir, latest), "utf-8");
+    const content = readFileSync(join(archiveDir, latest), "utf-8").trim();
+    if (!content) return null;
     const raw = parseMetadataContent(content);
+    if (!raw) return null;
     return flattenToStringRecord(raw);
   } catch {
     return null;
@@ -441,8 +467,10 @@ export function updateArchivedMetadata(
   const archivePath = join(archiveDir, latest);
   let existing: Record<string, string>;
   try {
-    const content = readFileSync(archivePath, "utf-8");
+    const content = readFileSync(archivePath, "utf-8").trim();
+    if (!content) return false;
     const raw = parseMetadataContent(content);
+    if (!raw) return false;
     existing = flattenToStringRecord(raw);
   } catch {
     return false;

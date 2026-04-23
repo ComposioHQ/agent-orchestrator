@@ -14,6 +14,21 @@ describe("AddProjectModal", () => {
     mockPush.mockReset();
     mockRefresh.mockReset();
     vi.restoreAllMocks();
+
+    // jsdom's localStorage lacks setItem/getItem — provide a working implementation
+    const store = new Map<string, string>();
+    Object.defineProperty(window, "localStorage", {
+      value: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => store.set(key, value),
+        removeItem: (key: string) => store.delete(key),
+        clear: () => store.clear(),
+        get length() { return store.size; },
+        key: (index: number) => [...store.keys()][index] ?? null,
+      },
+      writable: true,
+      configurable: true,
+    });
   });
 
   afterEach(() => {

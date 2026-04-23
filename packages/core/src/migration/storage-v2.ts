@@ -20,6 +20,7 @@ import {
   statSync,
   writeFileSync,
   copyFileSync,
+  unlinkSync,
 } from "node:fs";
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
@@ -45,6 +46,9 @@ const BARE_MIGRATED_DIR_PATTERN = /^([0-9a-f]{12})\.migrated$/;
 
 /** Directory name suffixes that are NOT project data and must be skipped by migration. */
 const NON_PROJECT_SUFFIXES = new Set(["observability"]);
+
+/** Marker file written during migration for crash-safety detection on re-run. */
+const MIGRATION_MARKER = ".migration-in-progress";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -446,14 +450,24 @@ interface ProjectMigrationResult {
 /**
  * Fix archive filenames: replace colons and dots in timestamps with compact format.
  * Old: ao-83_2026-04-20T14:30:52.000Z → New: ao-83_20260420T143052Z
+ * Also handles: dash-sanitized (T14-30-52-000Z), already-compact (20260420T143052Z),
+ * and .json-suffixed timestamps.
  */
 function fixArchiveFilename(filename: string): string {
-  // Match: {sessionId}_{iso-timestamp-with-colons}
-  const match = filename.match(/^(.+?)_(\d{4}-\d{2}-\d{2}T.+)$/);
+  // Strip .json suffix if present (re-added at the end)
+  const baseName = filename.endsWith(".json") ? filename.slice(0, -5) : filename;
+
+  // Match: {sessionId}_{timestamp-part}
+  const match = baseName.match(/^(.+?)_(\d{4,}.+)$/);
   if (!match) return filename;
 
   const sessionPart = match[1];
   const timestampPart = match[2];
+
+  // Already in compact format (e.g. 20260420T143052Z)
+  if (/^\d{8}T\d{6}Z$/.test(timestampPart)) {
+    return `${sessionPart}_${timestampPart}.json`;
+  }
 
   try {
     let iso = timestampPart;
@@ -465,7 +479,7 @@ function fixArchiveFilename(filename: string): string {
       iso = `${datePart}T${sanitizedTime[1]}:${sanitizedTime[2]}:${sanitizedTime[3]}.${sanitizedTime[4]}Z`;
     }
     const date = new Date(iso);
-    if (Number.isNaN(date.getTime())) return filename;
+    if (Number.isNaN(date.getTime())) return filename; // unparseable — leave unchanged
     return `${sessionPart}_${compactTimestamp(date)}.json`;
   } catch {
     return filename;
@@ -524,8 +538,8 @@ function migrateProject(
       // Handle duplicate session IDs across hash dirs
       const existing = allSessions.get(sessionId);
       if (existing) {
-        const existingCreated = String(existing.metadata["createdAt"] ?? "");
-        const newCreated = String(metadata["createdAt"] ?? "");
+        const existingCreated = new Date(String(existing.metadata["createdAt"] ?? "")).getTime() || 0;
+        const newCreated = new Date(String(metadata["createdAt"] ?? "")).getTime() || 0;
         if (newCreated > existingCreated) {
           // Archive the older one
           if (!dryRun) {
@@ -777,6 +791,12 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     log("DRY RUN — no changes will be made.\n");
   }
 
+  // Crash-safety: detect incomplete previous migration
+  const markerPath = join(aoBaseDir, MIGRATION_MARKER);
+  if (existsSync(markerPath)) {
+    log("WARNING: Previous migration was interrupted. Resuming — some data may already be migrated.\n");
+  }
+
   // Pre-flight: detect active sessions (include V2 prefix patterns from config)
   if (!options.force) {
     const knownPrefixes = extractProjectPrefixes(effectiveConfigPath);
@@ -789,10 +809,18 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     }
   }
 
+  // Write marker file before making any changes (removed on success)
+  if (!dryRun) {
+    writeFileSync(markerPath, new Date().toISOString());
+  }
+
   // Inventory hash directories (pass config path for bare-hash projectId lookup)
   const hashDirs = inventoryHashDirs(aoBaseDir, effectiveConfigPath);
   if (hashDirs.length === 0) {
     log("No legacy hash-based directories found. Nothing to migrate.");
+    if (!dryRun && existsSync(markerPath)) {
+      try { unlinkSync(markerPath); } catch { /* best-effort */ }
+    }
     return { projects: 0, sessions: 0, archives: 0, worktrees: 0, emptyDirsDeleted: 0, strayWorktreesMoved: 0 };
   }
 
@@ -881,6 +909,11 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     log(`Deleted ${totals.emptyDirsDeleted} empty director${totals.emptyDirsDeleted !== 1 ? "ies" : "y"}.`);
   }
   log("Old directories renamed to *.migrated — verify and rm -rf when ready.");
+
+  // Remove crash-safety marker on success
+  if (!dryRun && existsSync(markerPath)) {
+    try { unlinkSync(markerPath); } catch { /* best-effort */ }
+  }
 
   return totals;
 }
@@ -1019,7 +1052,10 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
       const projectDir = join(projectsDir, projectId);
       if (!existsSync(projectDir)) continue;
 
-      // Move worktrees back before deleting the project directory
+      // Move worktrees back before deleting the project directory.
+      // If multiple hash dirs existed for this project, consolidate worktrees into the
+      // first restored hash dir. The original hash→worktree mapping is lost after
+      // forward migration (worktrees were merged), so this is best-effort.
       const v2WorktreesDir = join(projectDir, "worktrees");
       if (existsSync(v2WorktreesDir)) {
         const projectMigratedDirs = migratedDirs.filter((d) => d.projectId === projectId);

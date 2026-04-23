@@ -109,7 +109,10 @@ export function applyDecisionToLifecycle(
 }
 
 /**
- * Build the metadata patch for persisting a lifecycle transition.
+ * Build the full metadata patch for a lifecycle poll transition.
+ * Unlike buildLifecycleMetadataPatch(), this includes detecting metadata
+ * (attempts, startedAt, evidenceHash) and lifecycle evidence from the decision.
+ * Used exclusively by the lifecycle manager polling loop.
  */
 export function buildTransitionMetadataPatch(
   lifecycle: CanonicalSessionLifecycle,

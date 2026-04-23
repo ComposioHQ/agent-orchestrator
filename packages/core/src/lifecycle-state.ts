@@ -440,6 +440,9 @@ export function deriveLegacyStatus(
     case "detecting":
       return "detecting";
     default:
+      // "idle" and "working" fall through to PR-state checks below.
+      // idle + merged PR → "merged"; idle + open PR → PR-specific status;
+      // working + open PR → PR-specific status; otherwise → session state directly.
       break;
   }
 
@@ -465,6 +468,11 @@ export function deriveLegacyStatus(
   }
 }
 
+/**
+ * Build a minimal metadata patch for persisting lifecycle state outside the polling loop.
+ * Used by writeCanonicalLifecycle() and agent-report writes. Does NOT include detecting
+ * or evidence metadata — use buildTransitionMetadataPatch() for lifecycle poll transitions.
+ */
 export function buildLifecycleMetadataPatch(
   lifecycle: CanonicalSessionLifecycle,
 ): Partial<Record<string, string>> {

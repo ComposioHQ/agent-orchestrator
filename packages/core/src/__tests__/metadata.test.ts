@@ -661,3 +661,48 @@ describe("status derivation from lifecycle", () => {
     expect(meta!.status).toBe("done");
   });
 });
+
+describe("corrupt JSON handling", () => {
+  it("readMetadata returns null for truncated JSON", () => {
+    writeFileSync(join(dataDir, "corrupt-1.json"), '{"worktree":"/tmp/w","bran', "utf-8");
+    expect(readMetadata(dataDir, "corrupt-1")).toBeNull();
+  });
+
+  it("readMetadataRaw returns null for invalid JSON", () => {
+    writeFileSync(join(dataDir, "corrupt-2.json"), "not json at all", "utf-8");
+    expect(readMetadataRaw(dataDir, "corrupt-2")).toBeNull();
+  });
+
+  it("readMetadata returns null for JSON array (not an object)", () => {
+    writeFileSync(join(dataDir, "corrupt-3.json"), '[1, 2, 3]', "utf-8");
+    expect(readMetadata(dataDir, "corrupt-3")).toBeNull();
+  });
+
+  it("listMetadata + readMetadata does not crash when one file is corrupt", () => {
+    writeMetadata(dataDir, "good-1", { worktree: "/tmp/w", branch: "main", status: "working" });
+    writeFileSync(join(dataDir, "bad-1.json"), "{invalid", "utf-8");
+    writeMetadata(dataDir, "good-2", { worktree: "/tmp/w", branch: "main", status: "idle" });
+
+    const list = listMetadata(dataDir);
+    expect(list).toContain("good-1");
+    expect(list).toContain("bad-1");
+    expect(list).toContain("good-2");
+
+    // Reading each individually — corrupt one returns null, good ones return data
+    expect(readMetadata(dataDir, "good-1")).not.toBeNull();
+    expect(readMetadata(dataDir, "bad-1")).toBeNull();
+    expect(readMetadata(dataDir, "good-2")).not.toBeNull();
+  });
+
+  it("mutateMetadata treats corrupt file as empty record", () => {
+    writeFileSync(join(dataDir, "corrupt-mut.json"), "{{bad json", "utf-8");
+
+    mutateMetadata(dataDir, "corrupt-mut", (existing) => {
+      return { ...existing, status: "working", worktree: "/tmp/w", branch: "main" };
+    }, { createIfMissing: true });
+
+    const meta = readMetadata(dataDir, "corrupt-mut");
+    expect(meta).not.toBeNull();
+    expect(meta!.status).toBe("working");
+  });
+});
