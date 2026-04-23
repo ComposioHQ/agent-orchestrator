@@ -1457,6 +1457,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       clearReactionTracker(session.id, conflictReactionKey);
       updateSessionMetadata(session, {
         lastMergeConflictDispatched: "",
+        conflictClearCount: "0",
       });
       return;
     }
@@ -1495,8 +1496,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     const lastDispatched = session.metadata["lastMergeConflictDispatched"] ?? "";
+    const conflictClearCount = parseInt(session.metadata["conflictClearCount"] ?? "0", 10);
 
     if (hasConflicts) {
+      // Conflicts detected — reset clear counter since they're still present
+      if (conflictClearCount > 0) {
+        updateSessionMetadata(session, { conflictClearCount: "0" });
+      }
       // Already dispatched for current conflict state — skip
       if (lastDispatched === "true") return;
 
@@ -1529,14 +1535,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         }
       }
     } else if (lastDispatched === "true") {
-      // Conflicts appear resolved — but only clear tracking if we have
-      // authoritative data (live API call), not stale batch enrichment.
-      // Batch enrichment data can oscillate, causing repeated dispatch cycles.
-      if (!cachedData) {
+      // No conflicts detected — require 2 consecutive clear polls before clearing
+      // the dispatch flag. This debounces against single-cycle stale cache oscillation
+      // while still allowing genuine conflict resolution to clear through.
+      if (conflictClearCount >= 1) {
         clearReactionTracker(session.id, conflictReactionKey);
         updateSessionMetadata(session, {
           lastMergeConflictDispatched: "",
+          conflictClearCount: "0",
         });
+      } else {
+        updateSessionMetadata(session, { conflictClearCount: String(conflictClearCount + 1) });
       }
     }
   }

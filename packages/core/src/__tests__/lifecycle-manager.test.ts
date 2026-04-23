@@ -3047,10 +3047,11 @@ describe("reaction tracker oscillation protection (#1409)", () => {
     );
     expect(firstCalls.length).toBe(1);
 
-    // Poll 2: enrichment says no conflicts — should NOT clear dispatch flag
+    // Poll 2: enrichment says no conflicts — should NOT clear dispatch flag (debounce)
     await vi.advanceTimersByTimeAsync(60_000);
 
     // Poll 3: enrichment says conflicts again — should NOT re-dispatch
+    // (flag wasn't cleared because debounce requires 2 consecutive clear polls)
     vi.mocked(mockSessionManager.send).mockClear();
     await vi.advanceTimersByTimeAsync(60_000);
 
@@ -3058,6 +3059,104 @@ describe("reaction tracker oscillation protection (#1409)", () => {
       (c) => typeof c[1] === "string" && (c[1] as string).includes("merge conflicts"),
     );
     expect(reDispatchCalls.length).toBe(0);
+
+    lm.stop();
+  });
+
+  it("re-dispatches merge conflicts after genuine resolution followed by new conflicts", async () => {
+    config.reactions = {
+      "merge-conflicts": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Your branch has merge conflicts. Rebase on the default branch and resolve them.",
+      },
+    };
+
+    const conflictEnrichment = new Map([
+      [
+        `${pr.owner}/${pr.repo}#${pr.number}`,
+        {
+          state: "open" as const,
+          ciStatus: "passing" as const,
+          reviewDecision: "none" as const,
+          mergeable: false,
+          hasConflicts: true,
+        },
+      ],
+    ]);
+
+    const noConflictEnrichment = new Map([
+      [
+        `${pr.owner}/${pr.repo}#${pr.number}`,
+        {
+          state: "open" as const,
+          ciStatus: "passing" as const,
+          reviewDecision: "none" as const,
+          mergeable: false,
+          hasConflicts: false,
+        },
+      ],
+    ]);
+
+    const mockSCM = createMockSCM({
+      enrichSessionsPRBatch: vi.fn()
+        // Poll 1: conflicts → dispatch
+        .mockResolvedValueOnce(conflictEnrichment)
+        // Poll 2: no conflicts → first clear (debounce count = 1)
+        .mockResolvedValueOnce(noConflictEnrichment)
+        // Poll 3: no conflicts → second clear (debounce count >= 2) → flag cleared
+        .mockResolvedValueOnce(noConflictEnrichment)
+        // Poll 4: new conflicts → should dispatch again
+        .mockResolvedValueOnce(conflictEnrichment)
+        // Poll 5: conflicts still — should NOT dispatch again
+        .mockResolvedValue(conflictEnrichment),
+    });
+
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    const session = makeSession({ id: "s-osc-3", status: "working", pr });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
+
+    const lm = createLifecycleManager({ config, registry, sessionManager: mockSessionManager });
+    lm.start(60_000);
+
+    // Poll 1: conflicts detected → dispatch
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      vi.mocked(mockSessionManager.send).mock.calls.filter(
+        (c) => typeof c[1] === "string" && (c[1] as string).includes("merge conflicts"),
+      ).length,
+    ).toBe(1);
+
+    // Poll 2: no conflicts → debounce count = 1
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // Poll 3: no conflicts → debounce count = 2 → flag cleared
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // Poll 4: new conflicts → should dispatch again!
+    vi.mocked(mockSessionManager.send).mockClear();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(
+      vi.mocked(mockSessionManager.send).mock.calls.filter(
+        (c) => typeof c[1] === "string" && (c[1] as string).includes("merge conflicts"),
+      ).length,
+    ).toBe(1);
+
+    // Poll 5: conflicts persist → should NOT dispatch again
+    vi.mocked(mockSessionManager.send).mockClear();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(
+      vi.mocked(mockSessionManager.send).mock.calls.filter(
+        (c) => typeof c[1] === "string" && (c[1] as string).includes("merge conflicts"),
+      ).length,
+    ).toBe(0);
 
     lm.stop();
   });
