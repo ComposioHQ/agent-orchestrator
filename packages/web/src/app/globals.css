@@ -3446,31 +3446,40 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px 8px;
-  border-bottom: 1px solid var(--sidebar-border);
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-accent) 6%, transparent) 0%,
+    transparent 100%
+  );
   flex-shrink: 0;
 }
 
 .project-sidebar__sect-label {
   font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
+  font-weight: 700;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--color-text-muted);
+  color: var(--color-accent);
 }
 
 .project-sidebar__add-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
-  color: var(--color-text-muted);
-  background: transparent;
-  border: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-bg-base) 52%, transparent);
+  border: 1px solid var(--color-border-subtle);
   cursor: pointer;
-  transition: background 100ms, color 100ms;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
   flex-shrink: 0;
 }
 
@@ -3480,8 +3489,10 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__add-btn:hover {
-  background: var(--sidebar-row-hover);
-  color: var(--color-text-secondary);
+  background: var(--color-hover-overlay);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-default);
+  transform: translateY(-1px);
 }
 
 /* ── Project tree ──────────────────────────────────────────────────── */
@@ -3499,16 +3510,35 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 /* Project accordion item */
 .project-sidebar__project {
-  border-bottom: 1px solid var(--sidebar-border);
+  margin: 10px 12px 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--color-bg-surface) 88%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
+  overflow: hidden;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
 }
 .project-sidebar__project:last-child {
-  border-bottom: none;
+  margin-bottom: 12px;
+}
+
+.project-sidebar__project:hover {
+  border-color: var(--color-border-default);
+  background: color-mix(in srgb, var(--color-bg-elevated-hover) 92%, transparent);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
 }
 
 /* Project row container */
 .project-sidebar__proj-row {
   display: flex;
   align-items: center;
+  gap: 4px;
+  padding: 8px 8px 0;
 }
 
 .project-sidebar__proj-row > .project-sidebar__proj-toggle {
@@ -3521,17 +3551,22 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: none;
-  border: none;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 14px;
   cursor: pointer;
   color: var(--color-text-primary);
   font-family: var(--font-sans);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   text-align: left;
-  transition: background 80ms;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 
 .project-sidebar__proj-toggle--link {
@@ -3539,11 +3574,18 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__proj-toggle:hover {
-  background: var(--sidebar-row-hover);
+  background: color-mix(in srgb, var(--color-hover-overlay) 92%, transparent);
+  border-color: color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
 }
 
 .project-sidebar__proj-toggle--active {
-  color: var(--color-accent-amber);
+  color: var(--color-text-primary);
+  border-color: color-mix(in srgb, var(--color-accent) 24%, var(--color-border-default));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent) 10%, transparent),
+    transparent 90%
+  );
 }
 
 .project-sidebar__proj-toggle--degraded {
@@ -3570,23 +3612,29 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   color: var(--color-text-muted);
-  border-radius: 4px;
-  transition: background 80ms, color 80ms;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
   text-decoration: none;
 }
 
 .project-sidebar__proj-action:hover {
-  background: var(--sidebar-row-hover);
+  background: color-mix(in srgb, var(--color-hover-overlay) 92%, transparent);
   color: var(--color-text-primary);
+  border-color: color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
 }
 
 .project-sidebar__proj-action--menu[aria-expanded="true"] {
-  background: var(--sidebar-row-hover);
+  background: color-mix(in srgb, var(--color-hover-overlay) 92%, transparent);
   color: var(--color-text-primary);
+  border-color: color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
 }
 
 .project-sidebar__proj-menu {
@@ -3898,6 +3946,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 /* Project badge (session count) */
@@ -3905,19 +3955,20 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   flex-shrink: 0;
   font-size: 10px;
   font-family: var(--font-mono);
-  font-weight: 500;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--color-bg-subtle);
+  font-weight: 700;
+  min-width: 24px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-bg-base) 54%, transparent);
   border: 1px solid var(--color-border-subtle);
-  color: var(--color-text-muted);
+  color: var(--color-text-secondary);
   line-height: 1.4;
 }
 
 .project-sidebar__proj-badge--active {
-  background: var(--color-accent-amber-dim);
-  border-color: var(--color-accent-amber-border);
-  color: var(--color-accent-amber);
+  background: color-mix(in srgb, var(--color-status-working) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-status-working) 24%, transparent);
+  color: var(--color-status-working);
 }
 
 .project-sidebar__proj-badge--degraded {
@@ -3928,17 +3979,86 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__degraded-note {
-  padding: 0 12px 8px 28px;
+  padding: 0 16px 12px;
   font-size: 11px;
-  color: var(--color-text-muted);
+  color: var(--color-status-attention);
+}
+
+.project-sidebar__proj-health {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+}
+
+.project-sidebar__proj-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 16px 12px 34px;
+}
+
+.project-sidebar__proj-summary-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-bg-base) 48%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.project-sidebar__proj-summary-pill--respond {
+  border-color: color-mix(in srgb, var(--color-status-error) 24%, transparent);
+  background: color-mix(in srgb, var(--color-status-error) 10%, transparent);
+  color: var(--color-status-error);
+}
+
+.project-sidebar__proj-summary-pill--action,
+.project-sidebar__proj-summary-pill--review {
+  border-color: color-mix(in srgb, var(--color-status-review) 24%, transparent);
+  background: color-mix(in srgb, var(--color-status-review) 10%, transparent);
+  color: var(--color-status-review);
+}
+
+.project-sidebar__proj-summary-pill--merge {
+  border-color: color-mix(in srgb, var(--color-status-ready) 24%, transparent);
+  background: color-mix(in srgb, var(--color-status-ready) 10%, transparent);
+  color: var(--color-status-ready);
+}
+
+.project-sidebar__proj-summary-pill--pending {
+  border-color: color-mix(in srgb, var(--color-status-attention) 24%, transparent);
+  background: color-mix(in srgb, var(--color-status-attention) 10%, transparent);
+  color: var(--color-status-attention);
+}
+
+.project-sidebar__proj-summary-pill--working {
+  border-color: color-mix(in srgb, var(--color-status-working) 24%, transparent);
+  background: color-mix(in srgb, var(--color-status-working) 10%, transparent);
+  color: var(--color-status-working);
+}
+
+.project-sidebar__proj-summary-pill--done {
+  color: var(--color-text-tertiary);
+}
+
+.project-sidebar__proj-summary-text {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
 }
 
 /* Session list */
 .project-sidebar__sessions {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 2px 0 4px;
+  gap: 6px;
+  padding: 0 10px 12px 16px;
 }
 
 /* Collapsed icon styles */
@@ -4048,16 +4168,21 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .project-sidebar__sess-row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 12px 0 26px;
+  gap: 8px;
+  padding: 10px 12px 10px 14px;
   width: 100%;
-  border: 0;
+  border: 1px solid transparent;
+  border-radius: 14px;
   background: transparent;
   cursor: pointer;
-  transition: background 80ms;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
   text-align: left;
   text-decoration: none;
   color: inherit;
+  position: relative;
 }
 
 .project-sidebar__sess-row:hover,
@@ -4068,35 +4193,43 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__sess-row:hover {
-  background: var(--sidebar-row-hover);
+  background: color-mix(in srgb, var(--color-hover-overlay) 92%, transparent);
+  border-color: color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
 }
 
 .project-sidebar__sess-row--active {
-  background: transparent;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent) 10%, transparent),
+    transparent 92%
+  );
+  border-color: color-mix(in srgb, var(--color-accent) 20%, var(--color-border-subtle));
+  box-shadow: inset 2px 0 0 var(--color-accent);
 }
 
 /* Session label */
 .project-sidebar__sess-label {
   flex: 1;
   font-size: 11.5px;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
 }
 
 .project-sidebar__sess-label--active {
-  color: var(--color-accent-amber);
-  font-weight: 500;
+  color: var(--color-text-primary);
+  font-weight: 700;
 }
 
 /* Session meta row: ID + status on one line */
 .project-sidebar__sess-meta {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-top: -4px;
+  gap: 6px;
+  margin-top: 5px;
 }
 
 .project-sidebar__sess-id {
@@ -4114,9 +4247,13 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .project-sidebar__sess-status {
   font-size: 9px;
   font-family: var(--font-mono);
-  color: var(--color-text-muted);
+  color: var(--color-text-secondary);
   flex-shrink: 0;
   white-space: nowrap;
+  padding: 1px 6px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-bg-base) 48%, transparent);
 }
 
 /* Inline status (compact variant — name + status on one line) */
@@ -4164,7 +4301,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 /* Empty state inside project */
 .project-sidebar__empty {
-  padding: 18px 12px;
+  padding: 16px 12px 18px;
   text-align: center;
   color: var(--color-text-muted);
   font-size: 11px;
@@ -4172,6 +4309,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 .project-sidebar__footer {
   margin-top: auto;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
+  background: color-mix(in srgb, var(--color-bg-base) 22%, transparent);
 }
 
 .project-sidebar__theme-toggle {
