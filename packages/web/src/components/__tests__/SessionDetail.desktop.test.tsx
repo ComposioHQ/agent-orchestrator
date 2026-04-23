@@ -20,8 +20,18 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("../DirectTerminal", () => ({
-  DirectTerminal: ({ sessionId }: { sessionId: string }) => (
-    <div data-testid="direct-terminal">{sessionId}</div>
+  DirectTerminal: ({
+    sessionId,
+    appearance,
+  }: {
+    sessionId: string;
+    appearance?: "theme" | "dark";
+  }) => (
+    <div
+      data-testid="direct-terminal"
+      data-session-id={sessionId}
+      data-appearance={appearance ?? ""}
+    />
   ),
 }));
 
@@ -47,22 +57,23 @@ describe("SessionDetail desktop layout", () => {
     routerPushMock.mockReset();
     routerReplaceMock.mockReset();
     routerRefreshMock.mockReset();
-    window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => {
       callback(0);
       return 1;
-    });
-    window.cancelAnimationFrame = vi.fn();
-    global.fetch = vi.fn(() =>
+    }));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    vi.stubGlobal("fetch", vi.fn(() =>
       Promise.resolve({
         ok: true,
         status: 200,
         text: () => Promise.resolve(""),
       } as Response),
-    );
+    ));
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("renders the desktop shell, PR blockers, and unresolved comments", () => {
@@ -293,5 +304,18 @@ describe("SessionDetail desktop layout", () => {
     });
 
     expect(routerPushMock).toHaveBeenCalledWith("/projects/my-app");
+  });
+
+  it("lets the terminal follow the active app theme on desktop", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-themed",
+          projectId: "my-app",
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("direct-terminal")).toHaveAttribute("data-appearance", "theme");
   });
 });

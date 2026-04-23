@@ -703,7 +703,7 @@ export function SessionDetail({
                   sessionId={session.id}
                   startFullscreen={startFullscreen}
                   variant={terminalVariant}
-                  appearance="dark"
+                  appearance="theme"
                   height="100%"
                   isOpenCodeSession={isOpenCodeSession}
                   reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
