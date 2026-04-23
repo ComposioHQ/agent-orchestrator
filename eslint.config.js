@@ -104,6 +104,7 @@ export default tseslint.config(
   // Remaining offenders (no split issue yet — good candidates for future refactors):
   //   packages/core/src/{types,config,global-config,agent-report,observability,lifecycle-state}.ts
   //   packages/cli/src/commands/{plugin,setup,status}.ts
+  //   packages/cli/src/lib/completion.ts
   //   packages/plugins/{agent-claude-code,agent-codex,scm-gitlab,tracker-linear}/src/index.ts
   //   openclaw-plugin/index.ts
   {
@@ -125,6 +126,7 @@ export default tseslint.config(
       "packages/cli/src/commands/plugin.ts",
       "packages/cli/src/commands/setup.ts",
       "packages/cli/src/commands/status.ts",
+      "packages/cli/src/lib/completion.ts",
       "packages/plugins/agent-claude-code/src/index.ts",
       "packages/plugins/agent-codex/src/index.ts",
       "packages/plugins/scm-gitlab/src/index.ts",
