@@ -27,6 +27,8 @@ function makeSession(overrides?: Partial<DashboardSession>): DashboardSession {
     issueUrl: null,
     issueLabel: null,
     issueTitle: null,
+    userPrompt: null,
+    displayName: null,
     summary: null,
     summaryIsFallback: false,
     createdAt: new Date().toISOString(),
@@ -64,6 +66,24 @@ describe("humanizeBranch", () => {
 
   it("handles session/ prefix", () => {
     expect(humanizeBranch("session/ao-52")).toBe("Ao 52");
+  });
+
+  it("handles orchestrator/ prefix", () => {
+    expect(humanizeBranch("orchestrator/ao-orchestrator-8")).toBe("Ao Orchestrator 8");
+  });
+
+  it("returns empty when the branch is just the session ID (session/)", () => {
+    // Signals to getSessionTitle that this branch carries no task info.
+    expect(humanizeBranch("session/ao-42", "ao-42")).toBe("");
+  });
+
+  it("returns empty when the branch is just the session ID (orchestrator/)", () => {
+    expect(humanizeBranch("orchestrator/ao-orchestrator-8", "ao-orchestrator-8")).toBe("");
+  });
+
+  it("keeps real content when the branch contains more than the session ID", () => {
+    // feat/INT-1327 is a meaningful branch even if the session is ao-5.
+    expect(humanizeBranch("feat/INT-1327", "ao-5")).toBe("INT 1327");
   });
 
   it("handles underscores", () => {
@@ -173,6 +193,102 @@ describe("getSessionTitle", () => {
       branch: "feat/infer-project-id",
     });
     expect(getSessionTitle(session)).toBe("Infer Project Id");
+  });
+
+  it("returns displayName when no PR / issue title / user prompt", () => {
+    const session = makeSession({
+      id: "ao-5",
+      summary: null,
+      issueTitle: null,
+      userPrompt: null,
+      displayName: "Add OAuth2 refresh token support",
+      branch: "feat/auth-refresh",
+    });
+    expect(getSessionTitle(session)).toBe("Add OAuth2 refresh token support");
+  });
+
+  it("prefers cleaned displayName over raw userPrompt for prompt-only sessions", () => {
+    // Regression: both `userPrompt` and `displayName` come from the same
+    // `spawnConfig.prompt` for prompt-only sessions. `userPrompt` stores the
+    // raw multi-line prompt; `displayName` is the single-line 80-char-
+    // truncated version. If `userPrompt` were checked first, kanban cards
+    // would show the raw multi-line text and the deriveDisplayName cleanup
+    // would never surface.
+    const session = makeSession({
+      id: "ao-42",
+      summary: null,
+      issueTitle: null,
+      userPrompt:
+        "Add rate limiting to /api/upload\n\nUse a sliding-window counter keyed by IP.",
+      displayName: "Add rate limiting to /api/upload",
+      branch: "session/ao-42",
+    });
+    expect(getSessionTitle(session)).toBe("Add rate limiting to /api/upload");
+  });
+
+  it("falls through to raw userPrompt when displayName is absent", () => {
+    // Backwards-compat safety net for sessions spawned before displayName.
+    const session = makeSession({
+      summary: null,
+      issueTitle: null,
+      displayName: null,
+      userPrompt: "Fix the race condition",
+      branch: "session/ao-42",
+      id: "ao-42",
+    });
+    expect(getSessionTitle(session)).toBe("Fix the race condition");
+  });
+
+  it("prefers issue title over displayName when both are present", () => {
+    const session = makeSession({
+      issueTitle: "Live issue title",
+      displayName: "Stale captured display name",
+      branch: "feat/auth",
+    });
+    expect(getSessionTitle(session)).toBe("Live issue title");
+  });
+
+  it("prefers displayName over a noisy orchestrator branch fallback", () => {
+    // Repro of the original bug: an orchestrator used to render as
+    // "Orchestrator/Ao Orchestrator 8". displayName fixes that.
+    const session = makeSession({
+      id: "ao-orchestrator-8",
+      summary: null,
+      issueTitle: null,
+      userPrompt: null,
+      displayName: "Audit test coverage for session-manager",
+      branch: "orchestrator/ao-orchestrator-8",
+    });
+    expect(getSessionTitle(session)).toBe("Audit test coverage for session-manager");
+  });
+
+  it("skips branch fallback when it is just the session ID and falls through to summary", () => {
+    const session = makeSession({
+      id: "ao-42",
+      summary: "Exploring the cache invalidation path",
+      summaryIsFallback: false,
+      issueTitle: null,
+      userPrompt: null,
+      displayName: null,
+      branch: "session/ao-42",
+    });
+    // The branch "session/ao-42" would previously have rendered as "Ao 42".
+    // Now it returns empty and we fall through to the quality summary.
+    expect(getSessionTitle(session)).toBe("Exploring the cache invalidation path");
+  });
+
+  it("skips branch fallback when it is just the orchestrator session ID", () => {
+    const session = makeSession({
+      id: "ao-orchestrator-8",
+      summary: null,
+      issueTitle: null,
+      userPrompt: null,
+      displayName: null,
+      branch: "orchestrator/ao-orchestrator-8",
+      status: "working",
+    });
+    // No other signal: fall all the way to status.
+    expect(getSessionTitle(session)).toBe("working");
   });
 
   it("returns status as absolute last resort", () => {

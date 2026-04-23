@@ -140,6 +140,8 @@ function buildSessionsFromDir(dir: string, projectId: string): Session[] {
 let tmpDir: string;
 let configPath: string;
 let sessionsDir: string;
+let originalHome: string | undefined;
+const STORAGE_KEY = "111111111112";
 
 import { Command } from "commander";
 import { registerSession } from "../../src/commands/session.js";
@@ -149,6 +151,8 @@ let consoleSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-session-test-"));
+  originalHome = process.env["HOME"];
+  process.env["HOME"] = tmpDir;
 
   configPath = join(tmpDir, "agent-orchestrator.yaml");
   writeFileSync(configPath, "projects: {}");
@@ -167,6 +171,7 @@ beforeEach(() => {
         name: "My App",
         repo: "org/my-app",
         path: join(tmpDir, "main-repo"),
+        storageKey: STORAGE_KEY,
         defaultBranch: "main",
         sessionPrefix: "app",
       },
@@ -179,7 +184,7 @@ beforeEach(() => {
   mkdirSync(join(tmpDir, "main-repo"), { recursive: true });
 
   // Calculate and create sessions directory for hash-based architecture
-  sessionsDir = getSessionsDir(configPath, join(tmpDir, "main-repo"));
+  sessionsDir = getSessionsDir(STORAGE_KEY);
   mkdirSync(sessionsDir, { recursive: true });
   sessionsDirRef.current = sessionsDir;
 
@@ -245,8 +250,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  process.env["HOME"] = originalHome;
   // Clean up hash-based directories in ~/.agent-orchestrator
-  const projectBaseDir = getProjectBaseDir(configPath, join(tmpDir, "main-repo"));
+  const projectBaseDir = getProjectBaseDir(STORAGE_KEY);
   if (existsSync(projectBaseDir)) {
     rmSync(projectBaseDir, { recursive: true, force: true });
   }

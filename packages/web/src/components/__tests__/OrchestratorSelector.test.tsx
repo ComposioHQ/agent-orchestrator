@@ -54,6 +54,7 @@ describe("OrchestratorSelector", () => {
 
     expect(screen.getByText("My Project")).toBeInTheDocument();
     expect(screen.getByText("Select an orchestrator")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/projects/my-project");
   });
 
   it("shows count of existing sessions", () => {
@@ -103,7 +104,7 @@ describe("OrchestratorSelector", () => {
     });
 
     await waitFor(() => {
-      expect(mockPush).toHaveBeenCalledWith("/sessions/app-orchestrator-3");
+      expect(mockPush).toHaveBeenCalledWith("/projects/my-project/sessions/app-orchestrator-3");
     });
   });
 
@@ -144,7 +145,7 @@ describe("OrchestratorSelector", () => {
     render(<OrchestratorSelector {...defaultProps} />);
 
     const link = screen.getByRole("link", { name: /app-orchestrator-1/i });
-    expect(link).toHaveAttribute("href", "/sessions/app-orchestrator-1");
+    expect(link).toHaveAttribute("href", "/projects/my-project/sessions/app-orchestrator-1");
   });
 
   it("displays status and activity for each orchestrator", () => {

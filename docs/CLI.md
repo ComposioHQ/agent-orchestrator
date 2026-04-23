@@ -48,3 +48,9 @@ ao config-help                         # Show full config schema reference
 `ao doctor` checks PATH and launcher resolution, required binaries, configured plugin resolution, tmux and GitHub CLI health, config support directories, stale AO temp files, and core build/runtime sanity.
 
 `ao update` fast-forwards the local install on `main`, reinstalls dependencies, clean-rebuilds core packages, refreshes the launcher, and runs smoke tests. Use `ao update --skip-smoke` to stop after rebuild, or `ao update --smoke-only` to rerun just the smoke checks.
+
+## Multi-Project Rollout
+
+Portfolio mode is enabled by default. Users do not need to set `AO_ENABLE_PORTFOLIO` unless they explicitly want to disable portfolio/project-management flows.
+
+The web add-project directory picker is separately gated by `AO_ALLOW_FILESYSTEM_BROWSE=1`. Treat this as a release requirement for the multi-project rollout: without it, users can still use config- and CLI-based project registration, but the web filesystem browser in the add-project flow is unavailable.

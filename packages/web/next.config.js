@@ -11,6 +11,10 @@ const nextConfig = {
     "@aoagents/ao-plugin-tracker-linear",
     "@aoagents/ao-plugin-workspace-worktree",
   ],
+  serverExternalPackages: [
+    "yaml",
+    "zod",
+  ],
   async headers() {
     return [
       {

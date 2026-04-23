@@ -17,6 +17,7 @@ export {
   findConfig,
   findConfigFile,
 } from "./config.js";
+export { isPortfolioEnabled } from "./feature-flags.js";
 
 // Plugin registry
 export {
@@ -158,6 +159,8 @@ export {
   writeOpenCodeConfig,
 } from "./opencode-config.js";
 export { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
+export { resolveSpawnTarget } from "./spawn-target.js";
+export type { SpawnTarget } from "./spawn-target.js";
 
 // Activity log — JSONL activity tracking for agents without native JSONL
 export {
@@ -195,9 +198,9 @@ export {
 } from "./observability.js";
 export { resolveNotifierTarget } from "./notifier-resolution.js";
 export type {
+  ObservabilityLevel,
   ObservabilityMetricName,
   ObservabilityHealthStatus,
-  ObservabilityLevel,
   ObservabilitySummary,
   ProjectObserver,
 } from "./observability.js";
@@ -225,7 +228,6 @@ export type {
 export {
   generateConfigHash,
   generateProjectId,
-  generateInstanceId,
   generateSessionPrefix,
   getProjectBaseDir,
   getSessionsDir,
@@ -241,6 +243,45 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+export {
+  normalizeOriginUrl,
+  relativeSubdir,
+  deriveStorageKey,
+} from "./storage-key.js";
+
+// Global config — Option C hybrid architecture (global registry + local behavior)
+export {
+  getGlobalConfigPath,
+  loadGlobalConfig,
+  saveGlobalConfig,
+  loadLocalProjectConfig,
+  LocalProjectConfigSchema,
+  loadLocalProjectConfigDetailed,
+  getLocalProjectConfigPath,
+  repairWrappedLocalProjectConfig,
+  registerProjectInGlobalConfig,
+  relinkProjectInGlobalConfig,
+  StorageKeyCollisionError,
+  buildEffectiveProjectConfig,
+  resolveProjectIdentity,
+  isOldConfigFormat,
+  migrateToGlobalConfig,
+  writeLocalProjectConfig,
+} from "./global-config.js";
+export type {
+  GlobalConfig,
+  GlobalProjectEntry,
+  LocalProjectConfig,
+  LocalProjectConfigLoadResult,
+  RegisterProjectOptions,
+  RelinkProjectOptions,
+} from "./global-config.js";
+
+export {
+  loadEffectiveProjectConfig,
+  iterateAllProjects,
+} from "./project-resolver.js";
+
 // Config generator — auto-generate config from repo URL
 export {
   isRepoUrl,
@@ -253,6 +294,7 @@ export {
   isRepoAlreadyCloned,
   resolveCloneTarget,
   sanitizeProjectId,
+  readOriginRemoteUrl,
 } from "./config-generator.js";
 export type {
   ParsedRepoUrl,
@@ -260,3 +302,48 @@ export type {
   DetectedProjectInfo,
   GenerateConfigOptions,
 } from "./config-generator.js";
+
+// Portfolio — cross-project aggregation
+export type {
+  PortfolioProject,
+  PortfolioPreferences,
+  PortfolioRegistered,
+  PortfolioSession,
+} from "./types.js";
+
+export {
+  getAoBaseDir,
+  getPortfolioDir,
+  getPreferencesPath,
+  getRegisteredPath,
+} from "./paths.js";
+
+export {
+  discoverProjects,
+  loadRegistered,
+  loadPreferences,
+  savePreferences,
+  updatePreferences,
+  saveRegistered,
+  getPortfolio,
+  registerProject,
+  relinkProject,
+  unregisterProject,
+  refreshProject,
+} from "./portfolio-registry.js";
+
+export {
+  resolveProjectConfig,
+  clearConfigCache,
+} from "./portfolio-projects.js";
+
+export {
+  listPortfolioSessions,
+  getPortfolioSessionCounts,
+} from "./portfolio-session-service.js";
+
+export {
+  resolvePortfolioProject,
+  resolvePortfolioSession,
+  derivePortfolioProjectId,
+} from "./portfolio-routing.js";

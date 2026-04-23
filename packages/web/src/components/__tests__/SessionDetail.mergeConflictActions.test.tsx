@@ -3,8 +3,19 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { SessionDetail } from "../SessionDetail";
 import { makePR, makeSession } from "../../__tests__/helpers";
 
+const { routerPushMock, routerReplaceMock, routerRefreshMock } = vi.hoisted(() => ({
+  routerPushMock: vi.fn(),
+  routerReplaceMock: vi.fn(),
+  routerRefreshMock: vi.fn(),
+}));
+
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({
+    push: routerPushMock,
+    replace: routerReplaceMock,
+    refresh: routerRefreshMock,
+  }),
 }));
 
 vi.mock("../DirectTerminal", () => ({
@@ -32,6 +43,9 @@ function mockDesktopViewport() {
 describe("SessionDetail merge conflict actions", () => {
   beforeEach(() => {
     mockDesktopViewport();
+    routerPushMock.mockReset();
+    routerReplaceMock.mockReset();
+    routerRefreshMock.mockReset();
     global.fetch = vi.fn(() =>
       Promise.resolve({
         ok: true,

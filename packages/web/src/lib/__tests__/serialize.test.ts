@@ -18,6 +18,7 @@ import {
   sessionToDashboard,
   resolveProject,
   enrichSessionPR,
+  enrichSessionIssue,
   enrichSessionAgentSummary,
   enrichSessionIssueTitle,
   enrichSessionsMetadata,
@@ -840,6 +841,25 @@ describe("enrichSessionIssueTitle", () => {
     expect(dashboard.issueTitle).toBeNull();
   });
 
+  it("should avoid repeated issue lookups after a recent failure", async () => {
+    const issueUrl = "https://github.com/test/repo/issues/failure-cache";
+    const dashboard = makeDashboard({
+      issueUrl,
+      issueLabel: "#failure-cache",
+    });
+    const tracker: Tracker = {
+      ...createMockTracker(),
+      getIssue: vi.fn().mockRejectedValue(new Error("API error")),
+    };
+    const project = makeProject();
+
+    await enrichSessionIssueTitle(dashboard, tracker, project);
+    await enrichSessionIssueTitle(dashboard, tracker, project);
+
+    expect(tracker.getIssue).toHaveBeenCalledTimes(1);
+    expect(dashboard.issueTitle).toBeNull();
+  });
+
   it("should cache results across calls", async () => {
     // Unique URL to avoid cache from other tests
     const issueUrl = "https://github.com/test/repo/issues/cache-test";
@@ -872,7 +892,7 @@ describe("enrichSessionsMetadata", () => {
         labels: [],
       }),
       isCompleted: vi.fn().mockResolvedValue(false),
-      issueUrl: vi.fn().mockReturnValue(`${urlBase}-default`),
+      issueUrl: vi.fn().mockImplementation((identifier: string) => `${urlBase}-${identifier}`),
       issueLabel: vi.fn().mockReturnValue("#42"),
       branchName: vi.fn().mockReturnValue("feat/issue-42"),
       generatePrompt: vi.fn().mockResolvedValue("prompt"),
@@ -947,6 +967,64 @@ describe("enrichSessionsMetadata", () => {
     expect(dashboard.summary).toBe("Implementing auth fix");
     // Issue title enriched (async, depends on issueLabel from sync step)
     expect(dashboard.issueTitle).toBe("Fix auth bug");
+  });
+
+  it("should derive issue URL from issue identifier via tracker", async () => {
+    const tracker = mockTracker("Fix auth bug");
+    const agent = mockAgent("Implementing auth fix");
+    const registry = mockRegistry(tracker, agent);
+
+    const core = createCoreSession({ issueId: "42" });
+    const dashboard = sessionToDashboard(core);
+    expect(dashboard.issueUrl).toBeNull();
+
+    await enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+
+    expect(tracker.issueUrl).toHaveBeenCalledWith("42", testProject);
+    expect(dashboard.issueUrl).toBe(`${urlBase}-42`);
+    expect(dashboard.issueLabel).toBe("#42");
+    expect(dashboard.issueTitle).toBe("Fix auth bug");
+  });
+
+  it("preserves URL-shaped issueId without passing it through tracker.issueUrl", async () => {
+    const tracker = mockTracker("Fix auth bug");
+    const agent = mockAgent("Implementing auth fix");
+    const registry = mockRegistry(tracker, agent);
+    const originalUrl = "https://github.com/acme/repo/issues/99";
+    const core = createCoreSession({ issueId: originalUrl });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+
+    expect(dashboard.issueUrl).toBe(originalUrl);
+    expect(tracker.issueUrl).not.toHaveBeenCalledWith(originalUrl, testProject);
+  });
+
+  it("does not create synthetic URLs for free-text issueId", async () => {
+    const tracker = mockTracker();
+    const agent = mockAgent();
+    const registry = mockRegistry(tracker, agent);
+    const core = createCoreSession({ issueId: "fix login bug" });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+
+    expect(dashboard.issueUrl).toBeNull();
+    expect(dashboard.issueLabel).toBeNull();
+    expect(tracker.getIssue).not.toHaveBeenCalled();
+  });
+
+  it("keeps URL unset when tracker.issueUrl throws", async () => {
+    const tracker = mockTracker();
+    tracker.issueUrl = vi.fn().mockImplementation(() => {
+      throw new Error("bad template");
+    });
+    const dashboard = sessionToDashboard(createCoreSession({ issueId: "42" }));
+
+    enrichSessionIssue(dashboard, tracker, testProject);
+
+    expect(dashboard.issueUrl).toBeNull();
+    expect(dashboard.issueLabel).toBeNull();
   });
 
   it("starts issue-title fetches before agent summaries finish", async () => {
@@ -1307,6 +1385,60 @@ describe("listDashboardOrchestrators (issue #1048)", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("my-app-orchestrator");
+  });
+
+  it("prefers the live orchestrator over stale exited ones for the same project", () => {
+    const now = Date.now();
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "ao-orchestrator-9",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        lastActivityAt: new Date(now - 60_000),
+        metadata: { role: "orchestrator" },
+      }),
+      createCoreSession({
+        id: "ao-orchestrator-26",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        lastActivityAt: new Date(now),
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe("ao-orchestrator-26");
+  });
+
+  it("prefers the most recently active live orchestrator when multiple are running", () => {
+    const now = Date.now();
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "app-orchestrator-12",
+        projectId: "my-app",
+        status: "working",
+        activity: "idle",
+        lastActivityAt: new Date(now - 120_000),
+        metadata: { role: "orchestrator" },
+      }),
+      createCoreSession({
+        id: "app-orchestrator-13",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        lastActivityAt: new Date(now),
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe("app-orchestrator-13");
   });
 });
 

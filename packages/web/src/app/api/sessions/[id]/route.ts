@@ -24,7 +24,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     const dashboardSession = sessionToDashboard(coreSession);
     const project = resolveProject(coreSession, config.projects);
     if (project) {
-      const sessionsDir = getSessionsDir(config.configPath, project.path);
+      const sessionsDir = getSessionsDir(project.storageKey);
       dashboardSession.agentReportAudit = await readAgentReportAuditTrailAsync(
         sessionsDir,
         coreSession.id,

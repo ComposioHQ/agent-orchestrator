@@ -9,12 +9,17 @@ const notFoundError = new Error("NEXT_NOT_FOUND");
 const notFoundSpy = vi.fn(() => {
   throw notFoundError;
 });
+const replaceSpy = vi.fn();
+let mockPathname = "/projects/my-app/sessions/worker-1";
+let mockParams: Record<string, string> = { id: "worker-1" };
 const mockMuxState: {
   current?: { sessions: SessionPatch[]; status?: "connecting" | "connected" | "reconnecting" | "disconnected" };
 } = {};
 
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ id: "worker-1" }),
+  useParams: () => mockParams,
+  usePathname: () => mockPathname,
+  useRouter: () => ({ replace: replaceSpy }),
   notFound: notFoundSpy,
 }));
 
@@ -81,6 +86,9 @@ describe("SessionPage project polling", () => {
     vi.useFakeTimers();
     vi.resetModules();
     sessionDetailSpy.mockClear();
+    replaceSpy.mockClear();
+    mockPathname = "/projects/my-app/sessions/worker-1";
+    mockParams = { id: "worker-1", projectId: "my-app" };
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
     mockMuxState.current = undefined;
@@ -127,7 +135,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=true") {
         return {
           ok: true,
           status: 200,
@@ -135,7 +143,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
         return {
           ok: true,
           status: 200,
@@ -162,13 +170,13 @@ describe("SessionPage project polling", () => {
 
     expect(fetch).toHaveBeenCalledWith("/api/projects");
     expect(fetch).toHaveBeenCalledWith("/api/sessions/worker-1");
-    expect(fetch).toHaveBeenCalledWith("/api/sessions");
+    expect(fetch).toHaveBeenCalledWith("/api/sessions?fresh=true");
 
-    expect(fetch).toHaveBeenCalledWith("/api/sessions?project=my-app&orchestratorOnly=true");
+    expect(fetch).toHaveBeenCalledWith("/api/sessions?project=my-app&orchestratorOnly=true&fresh=true");
 
     expect(
       vi.mocked(fetch).mock.calls.filter(
-        ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true",
+        ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true",
       ),
     ).toHaveLength(1);
 
@@ -179,13 +187,81 @@ describe("SessionPage project polling", () => {
 
     expect(
       vi.mocked(fetch).mock.calls.filter(
-        ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true",
+        ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true",
       ),
     ).toHaveLength(1);
 
     expect(
-      vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/sessions"),
-    ).toHaveLength(2);
+      vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/sessions?fresh=true"),
+    ).toHaveLength(3);
+  });
+
+  it("does not deadlock project polling after a cached worker poll is skipped", async () => {
+    const workerSession = makeWorkerSession();
+    let sessionFetchCount = 0;
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            projects: [{ id: "my-app", name: "My App", sessionPrefix: "my-app" }],
+          }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        sessionFetchCount += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () =>
+            sessionFetchCount >= 3
+              ? { ...workerSession, metadata: { role: "orchestrator" } }
+              : workerSession,
+        } as Response;
+      }
+
+      if (url === "/api/sessions?fresh=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [workerSession] }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ orchestratorId: "my-app-orchestrator" }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions?project=my-app&fresh=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [workerSession], orchestratorId: "worker-1" }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+
+    render(<SessionPage />);
+    await flushAsyncWork();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    await flushAsyncWork();
+
+    expect(fetch).toHaveBeenCalledWith("/api/sessions?project=my-app&fresh=true");
   });
 
   it("routes 404 responses through notFound()", async () => {
@@ -278,13 +354,13 @@ describe("SessionPage project polling", () => {
         } as Response);
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=true") {
         return new Promise<Response>((resolve) => {
           resolveSidebarSessions = resolve;
         });
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -348,7 +424,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=true") {
         return {
           ok: true,
           status: 200,
@@ -356,7 +432,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
         return {
           ok: true,
           status: 200,
@@ -381,7 +457,7 @@ describe("SessionPage project polling", () => {
       fetchMock.mock.calls.filter(([url]) => url === "/api/projects"),
     ).toHaveLength(2);
     expect(
-      fetchMock.mock.calls.filter(([url]) => url === "/api/sessions"),
+      fetchMock.mock.calls.filter(([url]) => url === "/api/sessions?fresh=true"),
     ).toHaveLength(2);
   });
 
@@ -408,7 +484,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=true") {
         return {
           ok: false,
           status: 500,
@@ -416,7 +492,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
         return {
           ok: true,
           status: 200,
@@ -481,13 +557,13 @@ describe("SessionPage project polling", () => {
         } as Response);
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=true") {
         return new Promise<Response>((resolve) => {
           resolveSidebarSessions = resolve;
         });
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -523,5 +599,162 @@ describe("SessionPage project polling", () => {
         lastActivityAt: muxPatchedLastActivityAt,
       },
     ]);
+  });
+
+  it("redirects the legacy session URL to the project-scoped route for clean projects", async () => {
+    mockPathname = "/sessions/worker-1";
+    const workerSession = makeWorkerSession();
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            projects: [{ id: "my-app", name: "My App", sessionPrefix: "my-app" }],
+          }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => workerSession,
+        } as Response;
+      }
+
+      if (url === "/api/sessions?fresh=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [workerSession] }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ orchestratorId: null, orchestrators: [] }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+    render(<SessionPage />);
+    await flushAsyncWork();
+
+    expect(replaceSpy).toHaveBeenCalledWith("/projects/my-app/sessions/worker-1");
+  });
+
+  it("redirects the legacy session URL for degraded projects too", async () => {
+    mockPathname = "/sessions/worker-1";
+    mockParams = { id: "worker-1" };
+    const workerSession = makeWorkerSession();
+    workerSession.projectId = "broken-app";
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            projects: [{ id: "broken-app", name: "broken-app", resolveError: "bad config" }],
+          }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => workerSession,
+        } as Response;
+      }
+
+      if (url === "/api/sessions?fresh=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [workerSession] }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions?project=broken-app&orchestratorOnly=true&fresh=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ orchestratorId: null, orchestrators: [] }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+    render(<SessionPage />);
+    await flushAsyncWork();
+
+    expect(replaceSpy).toHaveBeenCalledWith("/projects/broken-app/sessions/worker-1");
+  });
+
+  it("redirects project-scoped routes to the owning project when the URL project id is wrong", async () => {
+    mockPathname = "/projects/my-app/sessions/worker-1";
+    mockParams = { id: "worker-1", projectId: "my-app" };
+    const workerSession = makeWorkerSession();
+    workerSession.projectId = "other-app";
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            projects: [
+              { id: "my-app", name: "My App", sessionPrefix: "my-app" },
+              { id: "other-app", name: "Other App", sessionPrefix: "other-app" },
+            ],
+          }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => workerSession,
+        } as Response;
+      }
+
+      if (url === "/api/sessions?fresh=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [workerSession] }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions?project=other-app&orchestratorOnly=true&fresh=true") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ orchestratorId: null, orchestrators: [] }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+    render(<SessionPage />);
+    await flushAsyncWork();
+
+    expect(replaceSpy).toHaveBeenCalledWith("/projects/other-app/sessions/worker-1");
   });
 });

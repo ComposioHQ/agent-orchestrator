@@ -336,6 +336,24 @@ describe("API Routes", () => {
       expect(mockSessionManager.listCached).toHaveBeenCalledWith("docs-app");
     });
 
+    it("uses the live session list when fresh=true is requested", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        async (projectId?: string) =>
+          multiProjectSessions.filter((session) => !projectId || session.projectId === projectId),
+      );
+
+      const res = await sessionsGET(
+        makeRequest("http://localhost:3000/api/sessions?project=docs-app&fresh=true"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.orchestratorId).toBe("docs-orchestrator");
+      expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
+      expect(mockSessionManager.list).toHaveBeenCalledWith("docs-app");
+      expect(mockSessionManager.listCached).not.toHaveBeenCalledWith("docs-app");
+    });
+
     it("prefers the most recently active live orchestrator for project-scoped worker navigation", async () => {
       const deadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T11:00:00.000Z"));
       deadLifecycle.session.state = "terminated";
@@ -530,6 +548,138 @@ describe("API Routes", () => {
       metadataSpy.mockRestore();
       enrichSpy.mockRestore();
       vi.useRealTimers();
+    });
+
+    it("uses cache-first PR enrichment with live fallback for terminal PR states", async () => {
+      const terminalLifecycle = createInitialCanonicalLifecycle("worker", new Date());
+      terminalLifecycle.session.state = "terminated";
+      terminalLifecycle.session.reason = "user_killed";
+      terminalLifecycle.session.terminatedAt = terminalLifecycle.session.lastTransitionAt;
+      terminalLifecycle.runtime.state = "exited";
+      terminalLifecycle.runtime.reason = "process_exited";
+      terminalLifecycle.pr.state = "merged";
+      terminalLifecycle.pr.reason = "merged";
+
+      const sessionsWithPRs = [
+        makeSession({
+          id: "worker-live",
+          status: "pr_open",
+          activity: "idle",
+          pr: {
+            number: 201,
+            url: "https://github.com/acme/my-app/pull/201",
+            title: "Live PR",
+            owner: "acme",
+            repo: "my-app",
+            branch: "feat/live-pr",
+            baseBranch: "main",
+            isDraft: false,
+          },
+        }),
+        makeSession({
+          id: "worker-killed",
+          status: "killed",
+          activity: "exited",
+          lifecycle: terminalLifecycle,
+          pr: {
+            number: 202,
+            url: "https://github.com/acme/my-app/pull/202",
+            title: "Terminal PR",
+            owner: "acme",
+            repo: "my-app",
+            branch: "feat/terminal-pr",
+            baseBranch: "main",
+            isDraft: false,
+          },
+        }),
+      ];
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(sessionsWithPRs);
+
+      const metadataSpy = vi
+        .spyOn(serialize, "enrichSessionsMetadata")
+        .mockResolvedValue(undefined);
+
+      const enrichSpy = vi
+        .spyOn(serialize, "enrichSessionPR")
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+
+      const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
+
+      expect(res.status).toBe(200);
+      expect(enrichSpy).toHaveBeenCalledTimes(3);
+      expect(enrichSpy.mock.calls[0]).toEqual([
+        expect.objectContaining({ id: "worker-live" }),
+        expect.anything(),
+        sessionsWithPRs[0]!.pr,
+      ]);
+      expect(enrichSpy.mock.calls[1]).toEqual([
+        expect.objectContaining({ id: "worker-killed" }),
+        expect.anything(),
+        sessionsWithPRs[1]!.pr,
+        { cacheOnly: true },
+      ]);
+      expect(enrichSpy.mock.calls[2]).toEqual([
+        expect.objectContaining({ id: "worker-killed" }),
+        expect.anything(),
+        sessionsWithPRs[1]!.pr,
+      ]);
+
+      metadataSpy.mockRestore();
+      enrichSpy.mockRestore();
+    });
+
+    it("keeps live PR refreshes for killed sessions whose PR is still open", async () => {
+      const runtimeTerminalLifecycle = createInitialCanonicalLifecycle("worker", new Date());
+      runtimeTerminalLifecycle.session.state = "terminated";
+      runtimeTerminalLifecycle.session.reason = "user_killed";
+      runtimeTerminalLifecycle.session.terminatedAt = runtimeTerminalLifecycle.session.lastTransitionAt;
+      runtimeTerminalLifecycle.runtime.state = "missing";
+      runtimeTerminalLifecycle.runtime.reason = "process_missing";
+      runtimeTerminalLifecycle.pr.state = "open";
+      runtimeTerminalLifecycle.pr.reason = "in_progress";
+
+      const sessionWithOpenPR = [
+        makeSession({
+          id: "worker-open-pr",
+          status: "killed",
+          activity: "exited",
+          lifecycle: runtimeTerminalLifecycle,
+          pr: {
+            number: 203,
+            url: "https://github.com/acme/my-app/pull/203",
+            title: "Open PR on killed runtime",
+            owner: "acme",
+            repo: "my-app",
+            branch: "feat/open-pr-runtime-dead",
+            baseBranch: "main",
+            isDraft: false,
+          },
+        }),
+      ];
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(sessionWithOpenPR);
+
+      const metadataSpy = vi
+        .spyOn(serialize, "enrichSessionsMetadata")
+        .mockResolvedValue(undefined);
+
+      const enrichSpy = vi
+        .spyOn(serialize, "enrichSessionPR")
+        .mockResolvedValue(true);
+
+      const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
+
+      expect(res.status).toBe(200);
+      expect(enrichSpy).toHaveBeenCalledTimes(1);
+      expect(enrichSpy.mock.calls[0]).toEqual([
+        expect.objectContaining({ id: "worker-open-pr" }),
+        expect.anything(),
+        sessionWithOpenPR[0]!.pr,
+      ]);
+
+      metadataSpy.mockRestore();
+      enrichSpy.mockRestore();
     });
   });
 
@@ -774,6 +924,31 @@ describe("API Routes", () => {
       expect(res.status).toBe(500);
       const data = await res.json();
       expect(data.error).toBe("boom");
+    });
+
+    it("returns a guided recovery message for registered orchestrator worktree collisions", async () => {
+      (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error(
+          'Worktree path "/Users/test/.worktrees/my-app/my-app-orchestrator-1" already exists and is still registered with git',
+        ),
+      );
+
+      const req = makeRequest("/api/orchestrators", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app" }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await orchestratorsPOST(req);
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data).toEqual({
+        error: expect.stringContaining(
+          'AO found older orchestrator workspaces for "my-app" that are still registered with git.',
+        ),
+        code: "orchestrator_workspace_conflict",
+        recovery: "remove-and-readd-project",
+      });
     });
   });
 

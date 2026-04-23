@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createLifecycleManager } from "../lifecycle-manager.js";
+import { DEFAULT_BUGBOT_COMMENTS_MESSAGE } from "../config.js";
 import {
   resolvePREnrichmentDecision,
   resolvePRLiveDecision,
@@ -11,7 +12,7 @@ import { readObservabilitySummary } from "../observability.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
-  SessionManager,
+  OpenCodeSessionManager,
   Agent,
   ActivityState,
   SessionStatus,
@@ -32,7 +33,7 @@ import {
 let env: TestEnvironment;
 let plugins: MockPlugins;
 let mockRegistry: PluginRegistry;
-let mockSessionManager: SessionManager;
+let mockSessionManager: OpenCodeSessionManager;
 let config: OrchestratorConfig;
 
 beforeEach(() => {
@@ -1030,6 +1031,7 @@ describe("check (single session)", () => {
     expect(meta?.["statePayload"]).toContain('"state":"merged"');
     expect(meta?.["statePayload"]).toContain('"reason":"merged"');
     expect(meta?.["statePayload"]).not.toContain('"reason":"not_created"');
+    expect(mockSessionManager.invalidateCache).toHaveBeenCalled();
   });
 
   it("keeps closed PR sessions idle and emits a PR-closed notification", async () => {
@@ -1397,12 +1399,13 @@ describe("reactions", () => {
     expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "Handle requested changes.");
   });
 
-  it("dispatches automated review comments only once for an unchanged backlog", async () => {
+  it("dispatches detailed automated review comments when using the default sentinel message", async () => {
     config.reactions = {
       "bugbot-comments": {
         auto: true,
         action: "send-to-agent",
-        message: "Handle automated review findings.",
+        // Sentinel — dispatcher replaces with formatted detail listing.
+        message: DEFAULT_BUGBOT_COMMENTS_MESSAGE,
       },
     };
 
@@ -1436,10 +1439,25 @@ describe("reactions", () => {
 
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    expect(mockSessionManager.send).toHaveBeenCalledWith(
-      "app-1",
-      "Handle automated review findings.",
+    const [sentSessionId, sentMessage] = vi
+      .mocked(mockSessionManager.send)
+      .mock.calls[0] as [string, string];
+    expect(sentSessionId).toBe("app-1");
+    // Detailed message overrides the sentinel (see #895):
+    // it must include the comment details AND the correct-API guidance so
+    // the agent does not re-fetch with stale or unpaginated calls.
+    expect(sentMessage).toContain("cursor[bot]");
+    expect(sentMessage).toContain("src/worker.ts:9");
+    expect(sentMessage).toContain("Potential issue detected");
+    expect(sentMessage).toContain("https://example.com/comment/3");
+    // Real PR identifiers are interpolated into the guidance (org/repo/42 from makePR).
+    expect(sentMessage).toContain("repos/org/repo/pulls/42/reviews --paginate");
+    expect(sentMessage).toContain(
+      "repos/org/repo/pulls/42/reviews/REVIEW_ID/comments --paginate",
     );
+    expect(sentMessage).toContain("in_reply_to_id");
+    // Should NOT contain the raw sentinel text when overridden.
+    expect(sentMessage).not.toBe(DEFAULT_BUGBOT_COMMENTS_MESSAGE);
 
     vi.mocked(mockSessionManager.send).mockClear();
     await lm.check("app-1");
@@ -1447,6 +1465,51 @@ describe("reactions", () => {
 
     const metadata = readMetadataRaw(env.sessionsDir, "app-1");
     expect(metadata?.["lastAutomatedReviewDispatchHash"]).toBe("bot-1");
+  });
+
+  it("respects a user-customized bugbot-comments message (no silent override)", async () => {
+    // Regression guard: if a project customizes the message in their YAML,
+    // the dispatcher must not overwrite it with the formatted detail listing.
+    const customMessage = "Custom internal playbook. Follow ORG-1234.";
+    config.reactions = {
+      "bugbot-comments": {
+        auto: true,
+        action: "send-to-agent",
+        message: customMessage,
+      },
+    };
+
+    const mockSCM = createMockSCM({
+      getPendingComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([
+        {
+          id: "bot-1",
+          botName: "cursor[bot]",
+          body: "Potential issue detected",
+          path: "src/worker.ts",
+          line: 9,
+          severity: "warning",
+          createdAt: new Date(),
+          url: "https://example.com/comment/3",
+        },
+      ]),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", customMessage);
   });
 
   it("dispatches CI failure details with check names and URLs on subsequent polls", async () => {
