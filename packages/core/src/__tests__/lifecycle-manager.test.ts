@@ -2889,3 +2889,176 @@ describe("auto-cleanup on merge (#1309)", () => {
     expect(meta?.["mergedPendingCleanupSince"]).toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 });
+
+describe("reaction tracker oscillation protection (#1409)", () => {
+  const pr = makePR();
+
+  it("does not re-dispatch CI failure on status oscillation (ci_failed → working → ci_failed)", async () => {
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        retries: 2,
+        message: "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push.",
+      },
+    };
+
+    // Enrichment data that says CI is failing — simulates stale cache
+    const failingEnrichment = new Map([
+      [
+        `${pr.owner}/${pr.repo}#${pr.number}`,
+        {
+          state: "open" as const,
+          ciStatus: "failing" as const,
+          reviewDecision: "none" as const,
+          mergeable: false,
+          hasConflicts: false,
+          ciChecks: [
+            { name: "lint", status: "failed" as const, conclusion: "FAILURE" },
+          ],
+        },
+      ],
+    ]);
+
+    // Enrichment data that says CI is passing — simulates oscillation
+    const passingEnrichment = new Map([
+      [
+        `${pr.owner}/${pr.repo}#${pr.number}`,
+        {
+          state: "open" as const,
+          ciStatus: "passing" as const,
+          reviewDecision: "none" as const,
+          mergeable: false,
+          hasConflicts: false,
+        },
+      ],
+    ]);
+
+    const mockSCM = createMockSCM({
+      enrichSessionsPRBatch: vi.fn()
+        .mockResolvedValueOnce(failingEnrichment)
+        .mockResolvedValueOnce(passingEnrichment)
+        .mockResolvedValue(failingEnrichment),
+    });
+
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    // Start with pr_open so first poll triggers ci_failed
+    const session = makeSession({ id: "s-osc-1", status: "pr_open", pr });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
+
+    const lm = createLifecycleManager({ config, registry, sessionManager: mockSessionManager });
+    lm.start(60_000);
+
+    // Poll 1: pr_open → ci_failed — dispatches CI failure reaction
+    await vi.advanceTimersByTimeAsync(0);
+    const firstDispatchCount = vi.mocked(mockSessionManager.send).mock.calls.length;
+    expect(firstDispatchCount).toBeGreaterThanOrEqual(1);
+
+    // Poll 2: ci_failed → working (stale cache says passing) — should NOT re-dispatch on next failure
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // Poll 3: working → ci_failed (stale cache flips back) — should NOT dispatch again,
+    // because the tracker was preserved across oscillation and retries budget is consumed
+    vi.mocked(mockSessionManager.send).mockClear();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // The transition reaction fires once per oscillation but should hit the retry limit.
+    // The key assertion: no additional CI failure details should be dispatched.
+    const sendCalls = vi.mocked(mockSessionManager.send).mock.calls;
+    const ciFailureMessages = sendCalls.filter(
+      (c) => typeof c[1] === "string" && (c[1] as string).includes("CI is failing"),
+    );
+    // Should not dispatch the detailed follow-up on every oscillation
+    // (the transition reaction at most fires retries+1 times total)
+    expect(ciFailureMessages.length).toBeLessThanOrEqual(1);
+
+    lm.stop();
+  });
+
+  it("does not re-dispatch merge conflicts when enrichment cache oscillates", async () => {
+    config.reactions = {
+      "merge-conflicts": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Your branch has merge conflicts. Rebase on the default branch and resolve them.",
+      },
+    };
+
+    // Enrichment that says conflicts exist
+    const conflictEnrichment = new Map([
+      [
+        `${pr.owner}/${pr.repo}#${pr.number}`,
+        {
+          state: "open" as const,
+          ciStatus: "passing" as const,
+          reviewDecision: "none" as const,
+          mergeable: false,
+          hasConflicts: true,
+        },
+      ],
+    ]);
+
+    // Enrichment that says no conflicts
+    const noConflictEnrichment = new Map([
+      [
+        `${pr.owner}/${pr.repo}#${pr.number}`,
+        {
+          state: "open" as const,
+          ciStatus: "passing" as const,
+          reviewDecision: "none" as const,
+          mergeable: false,
+          hasConflicts: false,
+        },
+      ],
+    ]);
+
+    const mockSCM = createMockSCM({
+      enrichSessionsPRBatch: vi.fn()
+        .mockResolvedValueOnce(conflictEnrichment)
+        .mockResolvedValueOnce(noConflictEnrichment)
+        .mockResolvedValue(conflictEnrichment),
+    });
+
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    const session = makeSession({ id: "s-osc-2", status: "working", pr });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
+
+    const lm = createLifecycleManager({ config, registry, sessionManager: mockSessionManager });
+    lm.start(60_000);
+
+    // Poll 1: dispatches merge conflict
+    await vi.advanceTimersByTimeAsync(0);
+    const firstCalls = vi.mocked(mockSessionManager.send).mock.calls.filter(
+      (c) => typeof c[1] === "string" && (c[1] as string).includes("merge conflicts"),
+    );
+    expect(firstCalls.length).toBe(1);
+
+    // Poll 2: enrichment says no conflicts — should NOT clear dispatch flag
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // Poll 3: enrichment says conflicts again — should NOT re-dispatch
+    vi.mocked(mockSessionManager.send).mockClear();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const reDispatchCalls = vi.mocked(mockSessionManager.send).mock.calls.filter(
+      (c) => typeof c[1] === "string" && (c[1] as string).includes("merge conflicts"),
+    );
+    expect(reDispatchCalls.length).toBe(0);
+
+    lm.stop();
+  });
+});

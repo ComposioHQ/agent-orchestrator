@@ -1332,10 +1332,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // Only dispatch CI details when in ci_failed state
     if (newStatus !== "ci_failed") {
-      // CI is no longer failing — clear tracking so next failure is dispatched fresh
+      // CI is no longer failing — but don't clear the reaction tracker here.
+      // The transition handler already protects against clearing ci-failed
+      // trackers on oscillation (stale cache flapping). Only clear fingerprint
+      // metadata so stale data doesn't pollute the next genuine failure.
       const lastFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
       if (lastFingerprint) {
-        clearReactionTracker(session.id, ciReactionKey);
         updateSessionMetadata(session, {
           lastCIFailureFingerprint: "",
           lastCIFailureDispatchHash: "",
@@ -1527,11 +1529,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         }
       }
     } else if (lastDispatched === "true") {
-      // Conflicts resolved — clear so we can re-dispatch if they recur
-      clearReactionTracker(session.id, conflictReactionKey);
-      updateSessionMetadata(session, {
-        lastMergeConflictDispatched: "",
-      });
+      // Conflicts appear resolved — but only clear tracking if we have
+      // authoritative data (live API call), not stale batch enrichment.
+      // Batch enrichment data can oscillate, causing repeated dispatch cycles.
+      if (!cachedData) {
+        clearReactionTracker(session.id, conflictReactionKey);
+        updateSessionMetadata(session, {
+          lastMergeConflictDispatched: "",
+        });
+      }
     }
   }
 
@@ -1726,11 +1732,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         allCompleteEmitted = false;
       }
 
-      // Clear reaction trackers for the old status so retries reset on state changes
+      // Clear reaction trackers for the old status — but only for reactions
+      // that are genuinely resolved, not for conditions that may be stale-cached.
+      // CI failure and merge conflict trackers survive oscillation so the retry
+      // budget is not reset when stale prEnrichmentCache causes status to flap.
+      const PERSISTENT_REACTION_KEYS = new Set(["ci-failed", "merge-conflicts"]);
       const oldEventType = statusToEventType(undefined, oldStatus);
       if (oldEventType) {
         const oldReactionKey = eventToReactionKey(oldEventType);
-        if (oldReactionKey) {
+        if (oldReactionKey && !PERSISTENT_REACTION_KEYS.has(oldReactionKey)) {
           clearReactionTracker(session.id, oldReactionKey);
         }
       }
