@@ -953,7 +953,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   height: 27px;
   padding: 0 10px;
   border: 1px solid var(--color-border-default);
-  border-radius: 0;
+  border-radius: 5px;
   background: transparent;
   color: var(--color-text-secondary);
   text-decoration: none;
@@ -1159,86 +1159,20 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .dashboard-main__subhead {
-  padding: 18px 16px 0;
+  padding: 14px 16px 0;
   flex-shrink: 0;
 }
 
-.dashboard-main__eyebrow {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-
-.dashboard-main__subhead-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 8px;
-}
-
-.dashboard-main__subhead-copy {
-  min-width: 0;
-}
-
 .dashboard-main__title {
-  font-family: var(--font-mono);
-  font-size: clamp(22px, 2.4vw, 30px);
+  font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--color-text-primary);
 }
 
 .dashboard-main__subtitle {
-  margin-top: 6px;
-  max-width: 62ch;
+  margin-top: 1px;
   font-size: 12px;
-  line-height: 1.55;
-  color: var(--color-text-secondary);
-}
-
-.dashboard-main__overview {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.dashboard-main__overview-stat {
-  display: flex;
-  min-width: 92px;
-  flex-direction: column;
-  gap: 2px;
-  border: 1px solid var(--color-border-subtle);
-  background: color-mix(in srgb, var(--color-bg-elevated) 92%, transparent);
-  padding: 8px 10px;
-}
-
-.dashboard-main__overview-stat--live {
-  border-color: color-mix(in srgb, var(--color-status-working) 24%, var(--color-border-subtle));
-}
-
-.dashboard-main__overview-stat--attention {
-  border-color: color-mix(in srgb, var(--color-status-attention) 28%, var(--color-border-subtle));
-  background: color-mix(in srgb, var(--color-status-attention) 7%, var(--color-bg-elevated));
-}
-
-.dashboard-main__overview-value {
-  font-family: var(--font-mono);
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1;
-  color: var(--color-text-primary);
-}
-
-.dashboard-main__overview-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--color-text-muted);
 }
 
@@ -2242,9 +2176,9 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .session-card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
-  border-left-width: 2px;
+  border-left-width: 3px;
   border-left-style: solid;
-  border-radius: 0;
+  border-radius: 6px;
   box-shadow: none;
   color: color-mix(in srgb, var(--color-text-primary) 96%, transparent);
   contain: layout style paint;
@@ -2342,8 +2276,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .session-card__header {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 8px 11px 4px;
+  gap: 6px;
+  padding: 7px 10px 3px;
 }
 
 .card__id {
@@ -2409,13 +2343,13 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .card__title-wrap {
-  padding: 0 11px 5px;
+  padding: 0 10px 4px;
 }
 
 .card__title {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
-  line-height: 1.42;
+  line-height: 1.45;
   color: var(--color-text-primary);
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -2432,18 +2366,18 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 5px;
-  padding: 0 11px 6px;
+  gap: 4px;
+  padding: 0 10px 5px;
 }
 
 .card__branch {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   color: var(--color-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 132px;
+  max-width: 104px;
 }
 
 .card__meta-sep {
@@ -2459,7 +2393,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: var(--color-bg-subtle);
   border: 1px solid var(--color-border-default);
   padding: 1px 5px;
-  border-radius: 0;
+  border-radius: 3px;
   text-decoration: none;
   white-space: nowrap;
   transition: color 80ms, border-color 80ms, background 80ms;
@@ -2475,7 +2409,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .card__diff {
   background: var(--color-bg-subtle);
   padding: 1px 5px;
-  border-radius: 0;
+  border-radius: 3px;
   font-family: var(--font-mono);
   font-size: 9.5px;
   gap: 2px;
@@ -2507,7 +2441,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   font-size: 9.5px;
   font-family: var(--font-mono);
   padding: 1px 6px;
-  border-radius: 0;
+  border-radius: 3px;
 }
 
 .ci-chip--pass {
@@ -2531,7 +2465,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   align-items: center;
   gap: 6px;
   padding: 4px 8px 4px 7px;
-  border-radius: 0;
+  border-radius: 4px;
   font-size: 11px;
   border-left: 2px solid var(--ar-color);
   background: var(--ar-bg);
@@ -2584,7 +2518,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   flex-shrink: 0;
   padding: 2px 7px;
   border: 1px solid var(--ar-color);
-  border-radius: 0;
+  border-radius: 3px;
   background: transparent;
   color: var(--ar-color);
   font-size: 9.5px;
@@ -2593,7 +2527,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   transition: background 100ms, color 100ms;
   cursor: pointer;
   white-space: nowrap;
-  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
 }
 
 .alert-row__action:hover {
@@ -2626,7 +2561,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-height: 1.45;
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--color-text-muted);
 }
 
@@ -2660,7 +2595,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   gap: 6px;
   border-top: 1px solid var(--color-border-subtle);
   background: transparent;
-  padding: 6px 11px 8px;
+  padding: 5px 10px 7px;
 }
 
 .card__status {
@@ -2706,11 +2641,11 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .session-card__terminal-link {
-  font-size: 11px;
+  font-size: 10.5px;
   font-family: var(--font-sans);
   font-weight: 500;
   padding: 2px 8px 2px 6px;
-  border-radius: 0;
+  border-radius: 4px;
   border: 1px solid var(--color-border-default);
   background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
@@ -2727,7 +2662,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   width: 26px;
   height: 26px;
   padding: 0;
-  border-radius: 0;
+  border-radius: 4px;
   border: 1px solid rgba(239, 68, 68, 0.2);
   background: rgba(239, 68, 68, 0.04);
   color: rgba(239, 68, 68, 0.45);
@@ -2772,7 +2707,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   font-size: 11px;
   font-weight: 600;
   padding: 3px 10px;
-  border-radius: 0;
+  border-radius: 4px;
   border: 1px solid var(--color-accent-amber-border);
   background: var(--color-accent-amber-dim);
   color: var(--color-accent-amber);
@@ -3574,7 +3509,6 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .project-sidebar__proj-row {
   display: flex;
   align-items: center;
-  position: relative;
 }
 
 .project-sidebar__proj-row > .project-sidebar__proj-toggle {
@@ -3587,9 +3521,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 8px 12px;
+  gap: 6px;
+  padding: 6px 12px;
   background: none;
   border: none;
   cursor: pointer;
@@ -3610,9 +3543,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__proj-toggle--active {
-  background: color-mix(in srgb, var(--color-accent-amber) 7%, transparent);
   color: var(--color-accent-amber);
-  box-shadow: inset 2px 0 0 var(--color-accent-amber);
 }
 
 .project-sidebar__proj-toggle--degraded {
@@ -3643,16 +3574,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   height: 24px;
   flex-shrink: 0;
   color: var(--color-text-muted);
-  border-radius: 0;
-  opacity: 0.6;
-  transition: background 80ms, color 80ms, opacity 80ms;
+  border-radius: 4px;
+  transition: background 80ms, color 80ms;
   text-decoration: none;
 }
 
 .project-sidebar__proj-action:hover {
   background: var(--sidebar-row-hover);
   color: var(--color-text-primary);
-  opacity: 1;
 }
 
 .project-sidebar__proj-action--menu[aria-expanded="true"] {
@@ -3978,7 +3907,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   font-family: var(--font-mono);
   font-weight: 500;
   padding: 1px 5px;
-  border-radius: 0;
+  border-radius: 3px;
   background: var(--color-bg-subtle);
   border: 1px solid var(--color-border-subtle);
   color: var(--color-text-muted);
@@ -4008,8 +3937,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .project-sidebar__sessions {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 4px 0 8px;
+  gap: 1px;
+  padding: 2px 0 4px;
 }
 
 /* Collapsed icon styles */
@@ -4120,7 +4049,6 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   display: flex;
   align-items: center;
   gap: 7px;
-  min-height: 30px;
   padding: 0 12px 0 26px;
   width: 100%;
   border: 0;
@@ -4144,8 +4072,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__sess-row--active {
-  background: color-mix(in srgb, var(--color-accent-amber) 6%, transparent);
-  box-shadow: inset 2px 0 0 var(--color-accent-amber);
+  background: transparent;
 }
 
 /* Session label */
@@ -4237,12 +4164,10 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 /* Empty state inside project */
 .project-sidebar__empty {
-  padding: 8px 12px 12px 28px;
-  text-align: left;
-  color: var(--color-text-tertiary);
+  padding: 18px 12px;
+  text-align: center;
+  color: var(--color-text-muted);
   font-size: 11px;
-  font-family: var(--font-mono);
-  letter-spacing: 0.02em;
 }
 
 .project-sidebar__footer {
@@ -4697,7 +4622,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .kanban-board {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
   height: calc(100vh - 240px);
   height: calc(100dvh - 240px);
   overflow-x: auto;
@@ -4762,7 +4687,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   min-width: 0;
   flex-direction: column;
   border: 1px solid var(--color-border-subtle);
-  min-height: 0;
+  border-radius: 7px;
   background: var(--color-column-bg);
   overflow: hidden;
 }
@@ -4770,7 +4695,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 .kanban-column__header {
   flex-shrink: 0;
-  padding: 10px 12px 8px;
+  padding: 8px 10px 7px;
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -4787,18 +4712,19 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .kanban-column__title {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 500;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   font-family: var(--font-mono);
-  color: var(--color-text-secondary);
+  color: var(--color-text-muted);
 }
 
 .kanban-column__count {
   margin-left: auto;
-  padding: 1px 6px;
+  padding: 0 4px;
   border: 1px solid var(--color-border-subtle);
+  border-radius: 3px;
   background: var(--color-bg-subtle);
   font-family: var(--font-mono);
   font-size: 10px;
@@ -4813,7 +4739,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .kanban-column-body {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px;
 }
 
 .kanban-column-body > div {
@@ -4825,7 +4751,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .kanban-column__stack {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
 }
 
 .kanban-column-body::-webkit-scrollbar {
@@ -4903,7 +4829,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .done-card {
   background: var(--color-bg-card);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 0;
+  border-radius: 6px;
   padding: 8px 10px;
   opacity: 0.75;
   transition: opacity 0.15s;
@@ -4997,34 +4923,11 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 /* ── Session card zone glow (hover) ──────────────────────────────────── */
 
 .kanban-column__empty {
-  display: flex;
-  min-height: 168px;
-  align-items: center;
-  justify-content: center;
-  border: 1px dashed color-mix(in srgb, var(--color-border-default) 55%, transparent);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-surface) 42%, transparent), transparent);
-  padding: 18px 14px;
-  text-align: center;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.kanban-column__empty-kicker {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
+  display: none;
 }
 
 .kanban-column__empty-label {
-  display: block;
-  max-width: 18ch;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--color-text-secondary);
+  display: none;
 }
 
 /* Card glow effects removed for Linear-clean look */
@@ -5063,20 +4966,6 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 @media (max-width: 640px) {
-  .dashboard-main__subhead-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .dashboard-main__overview {
-    justify-content: flex-start;
-  }
-
-  .dashboard-main__overview-stat {
-    min-width: 0;
-    flex: 1 1 96px;
-  }
-
   .dashboard-title {
     font-size: 19px;
   }

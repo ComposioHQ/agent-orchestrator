@@ -444,42 +444,12 @@ function DashboardInner({
     () => sessions.some((session) => session.pr && isPRRateLimited(session.pr)),
     [sessions],
   );
-  const overviewStats = useMemo(() => {
-    const needsAttentionCount =
-      grouped.action.length + grouped.respond.length + grouped.review.length + grouped.merge.length;
-
-    return [
-      {
-        label: "active",
-        value: displaySessions.length,
-        tone: displaySessions.length > 0 ? "live" : "muted",
-      },
-      {
-        label: "needs attention",
-        value: needsAttentionCount,
-        tone: needsAttentionCount > 0 ? "attention" : "muted",
-      },
-      {
-        label: "done",
-        value: grouped.done.length,
-        tone: grouped.done.length > 0 ? "subtle" : "muted",
-      },
-    ];
-  }, [displaySessions.length, grouped]);
   const normalizedProjectName = projectName?.trim().toLowerCase();
   const headerProjectLabel =
     normalizedProjectName === "agent orchestrator"
       ? (projectId ?? projectName ?? (allProjectsView ? "All projects" : "Dashboard"))
       : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
   const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
-  const dashboardHeading = allProjectsView
-    ? "Portfolio overview"
-    : `${projectName ?? activeProject?.name ?? "Project"} board`;
-  const dashboardSubtitle = allProjectsView
-    ? "Scan every project, spot the blockers, and jump straight to the session that needs you."
-    : hasAnySessions
-      ? "Live agent sessions, pull requests, and merge status."
-      : "No live sessions yet. Start an orchestrator and this board becomes your control surface.";
 
   const handleToggleSidebar = () => {
     if (typeof window !== "undefined" && window.innerWidth < 768) {
@@ -610,24 +580,10 @@ function DashboardInner({
             <main className="dashboard-main dashboard-main--desktop overflow-y-auto">
               <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName} />
               <div className="dashboard-main__subhead">
-                <div className="dashboard-main__eyebrow">Operations board</div>
-                <div className="dashboard-main__subhead-row">
-                  <div className="dashboard-main__subhead-copy">
-                    <h1 className="dashboard-main__title">{dashboardHeading}</h1>
-                    <p className="dashboard-main__subtitle">{dashboardSubtitle}</p>
-                  </div>
-                  <div className="dashboard-main__overview">
-                    {overviewStats.map((stat) => (
-                      <div
-                        key={stat.label}
-                        className={`dashboard-main__overview-stat dashboard-main__overview-stat--${stat.tone}`}
-                      >
-                        <span className="dashboard-main__overview-value">{stat.value}</span>
-                        <span className="dashboard-main__overview-label">{stat.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <h1 className="dashboard-main__title">Dashboard</h1>
+                <p className="dashboard-main__subtitle">
+                  Live agent sessions, pull requests, and merge status.
+                </p>
               </div>
 
               <div className="dashboard-main__body">
