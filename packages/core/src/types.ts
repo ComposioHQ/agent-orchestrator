@@ -992,6 +992,8 @@ export interface MergeReadiness {
 export interface PREnrichmentData {
   /** Current PR state */
   state: PRState;
+  /** Head commit SHA used to derive this enrichment snapshot */
+  headSha?: string;
   /** Overall CI status */
   ciStatus: CIStatus;
   /** Review decision */

@@ -1300,6 +1300,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return lines.join("\n");
   }
 
+  function addHeadShaToFingerprint(fingerprint: string, headSha?: string): string {
+    return headSha ? `${headSha}:${fingerprint}` : fingerprint;
+  }
+
   /**
    * Dispatch CI failure details to the agent session when new or changed
    * failures are detected. Follows the same fingerprinting/deduplication
@@ -1368,8 +1372,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     );
     if (failedChecks.length === 0) return;
 
-    const ciFingerprint = makeFingerprint(
+    const failureFingerprint = makeFingerprint(
       failedChecks.map((c) => `${c.name}:${c.status}:${c.conclusion ?? ""}`),
+    );
+    const ciFingerprint = addHeadShaToFingerprint(
+      failureFingerprint,
+      cachedEnrichment?.headSha,
     );
     const lastCIFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
     const lastCIDispatchHash = session.metadata["lastCIFailureDispatchHash"] ?? "";
@@ -1472,31 +1480,35 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     // Check for conflicts using cached enrichment data or fallback to individual call.
-    // When batch enrichment ran (cachedData is present), use its hasConflicts value
-    // to avoid 3 redundant REST calls from getMergeability() — the batch already
-    // fetched the mergeable/mergeStateStatus fields via GraphQL.
+    // Only trust cached hasConflicts when GitHub returned an authoritative mergeable
+    // state. UNKNOWN / computing should fall back to a live getMergeability() check
+    // rather than being treated as conflict-free.
     const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
     const cachedData = prEnrichmentCache.get(prKey);
 
     let hasConflicts: boolean;
-    if (cachedData) {
-      // Batch ran — trust its data (undefined means CONFLICTING wasn't set → no conflicts)
-      hasConflicts = cachedData.hasConflicts ?? false;
+    if (cachedData?.hasConflicts !== undefined) {
+      hasConflicts = cachedData.hasConflicts;
     } else {
-      // Batch didn't run this cycle — fall back to individual API call
+      // Batch did not run this cycle, or GitHub returned an indeterminate mergeability
+      // state. Fall back to a live per-PR mergeability check.
       try {
         const mergeReadiness = await scm.getMergeability(session.pr);
-        hasConflicts = !mergeReadiness.noConflicts;
+        hasConflicts = mergeReadiness.blockers.includes("Merge conflicts");
       } catch {
         return;
       }
     }
 
     const lastDispatched = session.metadata["lastMergeConflictDispatched"] ?? "";
+    const conflictFingerprint = addHeadShaToFingerprint(
+      "merge-conflicts",
+      cachedData?.headSha,
+    );
 
     if (hasConflicts) {
       // Already dispatched for current conflict state — skip
-      if (lastDispatched === "true") return;
+      if (lastDispatched === conflictFingerprint) return;
 
       const reactionConfig = getReactionConfigForSession(session, conflictReactionKey);
       if (
@@ -1520,13 +1532,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           }
 
           updateSessionMetadata(session, {
-            lastMergeConflictDispatched: "true",
+            lastMergeConflictDispatched: conflictFingerprint,
           });
         } catch {
           // Send failed — will retry on next poll cycle
         }
       }
-    } else if (lastDispatched === "true") {
+    } else if (lastDispatched) {
       // Conflicts resolved — clear so we can re-dispatch if they recur
       clearReactionTracker(session.id, conflictReactionKey);
       updateSessionMetadata(session, {
