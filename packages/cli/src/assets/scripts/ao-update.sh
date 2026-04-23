@@ -56,11 +56,81 @@ run_cmd() {
   "$@"
 }
 
+has_remote() {
+  git remote get-url "$1" >/dev/null 2>&1
+}
+
+get_remote_url() {
+  git remote get-url "$1" 2>/dev/null || true
+}
+
+get_github_repo_slug() {
+  local remote_name="$1"
+  local remote_url
+  remote_url="$(get_remote_url "$remote_name")"
+
+  case "$remote_url" in
+    https://github.com/*)
+      remote_url="${remote_url#https://github.com/}"
+      ;;
+    http://github.com/*)
+      remote_url="${remote_url#http://github.com/}"
+      ;;
+    ssh://git@github.com/*)
+      remote_url="${remote_url#ssh://git@github.com/}"
+      ;;
+    git@github.com:*)
+      remote_url="${remote_url#git@github.com:}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  remote_url="${remote_url%.git}"
+  printf '%s\n' "$remote_url"
+}
+
+resolve_update_remote() {
+  if has_remote upstream; then
+    printf 'upstream\n'
+    return
+  fi
+
+  printf 'origin\n'
+}
+
+maybe_sync_origin_with_upstream() {
+  local origin_repo
+  local upstream_repo
+
+  if ! has_remote origin || ! has_remote upstream; then
+    return
+  fi
+
+  if ! command -v gh >/dev/null 2>&1; then
+    printf 'Skipping fork sync: gh is not installed. Local update will use upstream/%s directly.\n' \
+      "$TARGET_BRANCH"
+    return
+  fi
+
+  origin_repo="$(get_github_repo_slug origin)" || return
+  upstream_repo="$(get_github_repo_slug upstream)" || return
+
+  printf '\nSyncing %s/%s with %s/%s via gh...\n' \
+    "$origin_repo" "$TARGET_BRANCH" "$upstream_repo" "$TARGET_BRANCH"
+
+  if ! run_cmd gh repo sync "$origin_repo" --source "$upstream_repo" --branch "$TARGET_BRANCH"; then
+    printf 'WARNING: Failed to sync %s/%s from %s/%s via gh. Continuing with upstream/%s for the local update.\n' \
+      "$origin_repo" "$TARGET_BRANCH" "$upstream_repo" "$TARGET_BRANCH" "$TARGET_BRANCH" >&2
+  fi
+}
+
 run_smoke_tests() {
   printf '\nRunning smoke tests...\n'
-  run_cmd node "$REPO_ROOT/packages/agent-orchestrator/bin/ao.js" --version
-  run_cmd node "$REPO_ROOT/packages/agent-orchestrator/bin/ao.js" doctor --help
-  run_cmd node "$REPO_ROOT/packages/agent-orchestrator/bin/ao.js" update --help
+  run_cmd node "$REPO_ROOT/packages/ao/bin/ao.js" --version
+  run_cmd node "$REPO_ROOT/packages/ao/bin/ao.js" doctor --help
+  run_cmd node "$REPO_ROOT/packages/ao/bin/ao.js" update --help
 }
 
 ensure_repo_clean() {
@@ -89,6 +159,8 @@ require_command node "install Node.js 20+"
 
 cd "$REPO_ROOT"
 
+UPDATE_REMOTE="$(resolve_update_remote)"
+
 if [ "$SMOKE_ONLY" = false ]; then
   require_command git "install git 2.25+"
   require_command pnpm "enable corepack or run npm install -g pnpm"
@@ -102,8 +174,10 @@ if [ "$SMOKE_ONLY" = false ]; then
   ensure_repo_clean "Working tree is dirty. Fix: commit or stash local changes before running ao update."
   ensure_on_target_branch
 
-  run_cmd git fetch origin "$TARGET_BRANCH"
-  run_cmd git pull --ff-only origin "$TARGET_BRANCH"
+  maybe_sync_origin_with_upstream
+
+  run_cmd git fetch "$UPDATE_REMOTE" "$TARGET_BRANCH"
+  run_cmd git pull --ff-only "$UPDATE_REMOTE" "$TARGET_BRANCH"
   run_cmd pnpm install
 
   run_cmd pnpm --filter @aoagents/ao-core clean
