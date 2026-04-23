@@ -325,9 +325,15 @@ export async function enrichSessionPR(
 
   const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
 
-  // Check cache first
+  // Check cache first — but bypass if CI state is stale (lifecycle recovered but cache still says failing)
   const cached = prCache.get(cacheKey);
-  if (cached && dashboard.pr) {
+  const lifecycleCIRecovered =
+    dashboard.lifecycle?.prReason !== "ci_failing" &&
+    cached?.ciStatus === "failing";
+  if (lifecycleCIRecovered) {
+    prCache.delete(cacheKey);
+  }
+  if (cached && !lifecycleCIRecovered && dashboard.pr) {
     dashboard.pr.state = cached.state;
     dashboard.pr.title = cached.title;
     dashboard.pr.additions = cached.additions;

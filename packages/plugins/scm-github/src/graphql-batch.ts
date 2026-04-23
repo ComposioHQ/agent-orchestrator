@@ -224,19 +224,17 @@ export async function shouldRefreshPREnrichment(
       const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
       const cached = prMetadataCache.get(prKey);
 
-      // Check for incomplete cache (cached but no headSha)
-      // This happens when PR was cached but headSha wasn't captured
-      // We need to refresh to get complete data including headSha
-      if (cached && cached.headSha === null) {
-        shouldRefresh = true;
-        details.push(`First time seeing PR #${pr.number} (Guard 2: no cached head SHA)`);
+      // No cached metadata — skip Guard 2. Since Guard 1 didn't detect changes
+      // and we have no cached data, there's nothing to check.
+      if (!cached) {
         continue;
       }
 
-      // Only check commit status ETag if we have cached data with a non-null head SHA
-      if (!cached || !cached.headSha) {
-        // No cached metadata - skip Guard 2. Since Guard 1 didn't detect changes
-        // and we have no cached data, there's nothing to check.
+      // Cached with null headSha — must refresh to get complete data.
+      // Re-check every poll since we can't do ETag comparison without a SHA.
+      if (cached.headSha === null) {
+        shouldRefresh = true;
+        details.push(`PR #${pr.number} needs refresh (Guard 2: cached with no head SHA)`);
         continue;
       }
 

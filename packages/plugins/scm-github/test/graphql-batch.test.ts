@@ -1040,7 +1040,7 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       const result = await shouldRefreshPREnrichment(prs);
 
       expect(result.shouldRefresh).toBe(true);
-      expect(result.details).toContain("First time seeing PR #123 (Guard 2: no cached head SHA)");
+      expect(result.details).toContain("PR #123 needs refresh (Guard 2: cached with no head SHA)");
       // Guard 1 called for PR list, Guard 2 skipped (no head SHA to check)
       expect(mockExecFileImpl).toHaveBeenCalledTimes(1);
     });

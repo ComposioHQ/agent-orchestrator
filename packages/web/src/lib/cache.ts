@@ -2,7 +2,7 @@
  * Simple in-memory TTL cache for SCM API data.
  *
  * Reduces GitHub API rate limit exhaustion by caching PR enrichment data.
- * Default TTL: 60 seconds (data is fresh enough for dashboard refresh).
+ * Default TTL: 5 minutes (balances freshness with API rate limits).
  */
 
 interface CacheEntry<T> {
@@ -50,6 +50,11 @@ export class TTLCache<T> {
       value,
       expiresAt: Date.now() + (ttlMs ?? this.ttlMs),
     });
+  }
+
+  /** Delete a specific cache entry */
+  delete(key: string): boolean {
+    return this.cache.delete(key);
   }
 
   /** Evict all expired entries */
@@ -105,7 +110,7 @@ export interface PREnrichmentData {
   }>;
 }
 
-/** Global PR enrichment cache (60s TTL) */
+/** Global PR enrichment cache (5 min TTL) */
 export const prCache = new TTLCache<PREnrichmentData>();
 
 /** Generate cache key for a PR: `owner/repo#123` */

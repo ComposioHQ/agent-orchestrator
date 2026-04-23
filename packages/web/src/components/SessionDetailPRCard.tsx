@@ -36,10 +36,7 @@ function buildBlockerChips(
   const reviewNotified = Boolean(metadata["lastPendingReviewDispatchHash"]);
   const lifecycleStatus = metadata["status"];
 
-  const ciIsFailing =
-    pr.ciStatus === CI_STATUS.FAILING ||
-    lifecyclePrReason === "ci_failing" ||
-    lifecycleStatus === "ci_failed";
+  const ciIsFailing = pr.ciStatus === CI_STATUS.FAILING;
   const hasChangesRequested =
     pr.reviewDecision === "changes_requested" ||
     lifecyclePrReason === "changes_requested" ||
