@@ -79,17 +79,20 @@ export function resolveTmuxSession(
     // Not an exact match
   }
 
-  // Search for hash-prefixed tmux session (e.g., "8474d6f29887-ao-15" for "ao-15")
-  // Validate the 12-char hex prefix to avoid ambiguous suffix matches where
-  // "hash-my-app-1" could falsely match a lookup for "app-1".
+  // Search for hash-prefixed tmux session.
+  // storageKey can be just a 12-hex hash ("a3b4c5d6e7f8") or a wrapped
+  // legacy key ("a3b4c5d6e7f8-projectName"). So the tmux name is either
+  // "{hash}-{sessionId}" or "{hash}-{projectName}-{sessionId}".
+  // Match any session that starts with a 12-hex hash and ends with "-{sessionId}".
   try {
     const output = execFn(tmuxPath, ["list-sessions", "-F", "#{session_name}"], {
       timeout: 5000,
       encoding: "utf8",
     }) as string;
     const sessions = output.split("\n").filter(Boolean);
+    const suffix = `-${sessionId}`;
     const match = sessions.find((s) =>
-      HASH_PREFIX_PATTERN.test(s) && s.substring(13) === sessionId,
+      HASH_PREFIX_PATTERN.test(s) && s.endsWith(suffix),
     );
     if (match) {
       return match;
