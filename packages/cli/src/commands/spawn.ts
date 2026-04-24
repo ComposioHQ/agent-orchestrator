@@ -219,8 +219,7 @@ export function registerSpawn(program: Command): void {
             chalk.red(
               `✗ \`ao spawn\` accepts at most 1 argument, but ${command.args.length} were provided.\n\n` +
                 `Use:\n` +
-                `  ao spawn <issue>\n` +
-                `  ao spawn`,
+                `  ao spawn [issue]`,
             ),
           );
           process.exit(1);

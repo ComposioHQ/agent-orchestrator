@@ -509,8 +509,7 @@ describe("spawn command", () => {
     const errors = errorSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(errors).toContain("accepts at most 1 argument, but 2 were provided");
     expect(errors).toContain("Use:");
-    expect(errors).toContain("ao spawn <issue>");
-    expect(errors).toContain("ao spawn");
+    expect(errors).toContain("ao spawn [issue]");
     expect(mockSessionManager.spawn).not.toHaveBeenCalled();
   });
 
