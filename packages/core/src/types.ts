@@ -866,6 +866,8 @@ export interface BatchObserver {
   }): void;
   /** Log a message at a specific level */
   log(level: ObservabilityLevel, message: string): void;
+  /** Called after ETag guards with repos where Guard 1 returned 304 (no PR list changes). */
+  reportPRListUnchangedRepos?(repos: Set<string>): void;
 }
 
 // --- PR Types ---

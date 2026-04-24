@@ -1266,7 +1266,8 @@ function createGitHubSCM(): SCM {
       prs: PRInfo[],
       observer?: BatchObserver,
     ): Promise<Map<string, PREnrichmentData>> {
-      return enrichSessionsPRBatchImpl(prs, observer);
+      const batchResult = await enrichSessionsPRBatchImpl(prs, observer);
+      return batchResult.enrichment;
     },
   };
 }

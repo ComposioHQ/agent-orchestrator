@@ -249,10 +249,48 @@ if (
 
 ## Future Steps (not yet planned in detail)
 
-### Step 4: Increase review backlog throttle
+### Step 4: Gate detectPR behind Guard 1 ETag
+
+Currently `detectPR()` runs individually per session (`gh pr list --head <branch> --limit 1`) every poll cycle for sessions without a PR — regardless of whether Guard 1 already told us nothing changed in the repo's PR list.
+
+If Guard 1 returns 304 (no PR list changes), no new PRs were created in the repo — every `detectPR` call is guaranteed to return nothing. We're paying for information we already have.
+
+**Proposed flow:**
+- Move detectPR out of `determineStatus()` entirely
+- Run it inside `populatePREnrichmentCache()`, which already calls Guard 1
+- Guard 1 returns 304 → skip all detectPR calls (nothing changed)
+- Guard 1 returns 200 → run detectPR for all PR-less sessions, update metadata
+
+```
+pollAll()
+  → populatePREnrichmentCache(sessions)
+      → enrichSessionsPRBatch(prs)
+          → Guard 1 → Guard 2 → batch query
+      → if Guard 1 returned 200:
+          → detectPR for all PR-less sessions
+          → if found: update metadata
+  → checkSession(s) for each session
+      → determineStatus(s)
+          → no detectPR call — already handled above
+```
+
+No body parsing, no `per_page` change, no flags, no fallback. Just move detectPR to after Guard 1 and only run it when Guard 1 says something changed.
+
+**Impact (10 sessions, no PRs for 10 minutes):**
+
+| Metric | Current | Proposed | Saving |
+|--------|---------|----------|--------|
+| detectPR calls (10 sessions, 20 cycles) | 200 | ~10 (only on 200 cycles) | **-95%** |
+| Guard 1 calls | ~20 | ~20 | 0 |
+
+**Tradeoff:** max 30-second delay (one poll cycle) in discovering a just-created PR. If an agent creates a PR at T+5s and Guard 1 ran at T+0s (returned 304), discovery waits until T+30s when Guard 1 returns 200. Agents aren't blocked on PR discovery.
+
+In the original 5-session trace, `detectPR` was 82 calls out of 465 total (18%). At 10+ sessions with slow PR creation, it dominates.
+
+### Step 5: Increase review backlog throttle
 Change `REVIEW_BACKLOG_THROTTLE_MS` from 2 minutes to 5 minutes. Simple config change, cuts ~60% of review backlog traffic. Would reduce the 55 GraphQL calls to ~22.
 
-### Step 5: Cache issue data in session metadata
+### Step 6: Cache issue data in session metadata
 Persist issue data (number, title, body, url, state, labels, assignees) to session metadata at spawn time. Currently fetched 27 times for 5 sessions — should be 5 (once per session).
 
 The tracker plugin already has a 5-minute TTL in-memory cache (`ISSUE_CACHE_TTL_MS` at `tracker-github/index.ts:121`), but it's per-process — both CLI and web create their own instance.

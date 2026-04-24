@@ -324,6 +324,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
    */
   const prEnrichmentCache = new Map<string, PREnrichmentData>();
 
+  /** Repos where Guard 1 returned 304 in the current poll — safe to skip detectPR. */
+  let prListUnchangedRepos = new Set<string>();
+
   /**
    * Per-session timestamp of last review backlog API check.
    * Used to throttle getPendingComments/getAutomatedComments to at most once per 2 minutes.
@@ -341,6 +344,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   async function populatePREnrichmentCache(sessions: Session[]): Promise<void> {
     // Clear previous cache
     prEnrichmentCache.clear();
+    prListUnchangedRepos = new Set();
 
     // Collect all unique PRs keyed by their owning session's project/plugin.
     const prsByPlugin = new Map<string, Array<NonNullable<Session["pr"]>>>();
@@ -421,6 +425,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 },
               });
             },
+            reportPRListUnchangedRepos(repos) {
+              for (const repo of repos) {
+                prListUnchangedRepos.add(repo);
+              }
+            },
           },
         );
 
@@ -441,6 +450,36 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           level: "warn",
           data: { plugin: pluginKey, prCount: pluginPRs.length },
         });
+      }
+    }
+
+    // Discover PRs for sessions that don't have one yet.
+    // Only run detectPR when Guard 1 returned 200 (repo's PR list changed).
+    // When Guard 1 returned 304, the repo is in prListUnchangedRepos — no new PRs exist.
+    for (const session of sessions) {
+      if (session.pr) continue;
+      if (!session.branch) continue;
+      if (session.metadata["prAutoDetect"] === "off") continue;
+      if (session.metadata["role"] === "orchestrator" || session.id.endsWith("-orchestrator")) continue;
+
+      const project = config.projects[session.projectId];
+      if (!project?.repo || !project.scm?.plugin) continue;
+
+      // Skip if Guard 1 confirmed no PR list changes for this repo
+      if (prListUnchangedRepos.has(project.repo)) continue;
+
+      const scm = registry.get<SCM>("scm", project.scm.plugin);
+      if (!scm?.detectPR) continue;
+
+      try {
+        const detectedPR = await scm.detectPR(session, project);
+        if (detectedPR) {
+          session.pr = detectedPR;
+          const sessionsDir = getSessionsDir(project.storageKey);
+          updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
+        }
+      } catch {
+        // Best-effort — will retry next poll cycle
       }
     }
   }
@@ -732,39 +771,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       return commit(probeDecision);
     }
 
-    if (
-      !session.pr &&
-      scm &&
-      session.branch &&
-      session.metadata["prAutoDetect"] !== "off" &&
-      session.metadata["role"] !== "orchestrator" &&
-      !session.id.endsWith("-orchestrator")
-    ) {
-      try {
-        const detectedPR = await scm.detectPR(session, project);
-        if (detectedPR) {
-          session.pr = detectedPR;
-          lifecycle.pr.state = "open";
-          lifecycle.pr.reason = "in_progress";
-          lifecycle.pr.number = detectedPR.number;
-          lifecycle.pr.url = detectedPR.url;
-          lifecycle.pr.lastObservedAt = nowIso;
-          const sessionsDir = getSessionsDir(project.storageKey);
-          updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
-        }
-      } catch (error) {
-        observer?.recordOperation?.({
-          metric: "lifecycle_poll",
-          operation: "scm.detect_pr",
-          outcome: "failure",
-          correlationId: createCorrelationId("lifecycle-poll"),
-          projectId: session.projectId,
-          sessionId: session.id,
-          reason: error instanceof Error ? error.message : String(error),
-          level: "warn",
-        });
-      }
-    }
+    // detectPR is handled in populatePREnrichmentCache (gated by Guard 1 ETag).
+    // By this point, session.pr is already set if a PR was discovered.
 
     if (session.pr && scm) {
       try {

@@ -77,6 +77,15 @@ const etagCache: ETagCache = {
 interface ETagGuardResult {
   shouldRefresh: boolean;
   details: string[];
+  /** Repos where Guard 1 returned 304 — no PR list changes, detectPR can be skipped. */
+  prListUnchangedRepos: Set<string>;
+}
+
+/** Result of enrichSessionsPRBatch including Guard 1 PR-discovery info. */
+export interface BatchEnrichmentResult {
+  enrichment: Map<string, PREnrichmentData>;
+  /** Repos where Guard 1 returned 304 — safe to skip detectPR. */
+  prListUnchangedRepos: Set<string>;
 }
 
 /**
@@ -191,7 +200,7 @@ export async function shouldRefreshPREnrichment(
   let shouldRefresh = false;
 
   if (prs.length === 0) {
-    return { shouldRefresh: false, details: ["No PRs to check"] };
+    return { shouldRefresh: false, details: ["No PRs to check"], prListUnchangedRepos: new Set() };
   }
 
   // Group PRs by repository for Guard 1 (PR list check)
@@ -210,6 +219,7 @@ export async function shouldRefreshPREnrichment(
 
   // Guard 1: Check PR list ETag for each repository
   let guard1DetectedChanges = false;
+  const prListUnchangedRepos = new Set<string>();
   for (const [repoKey] of repos) {
     const [owner, repo] = repoKey.split("/");
     const prListChanged = await checkPRListETag(owner, repo);
@@ -217,6 +227,8 @@ export async function shouldRefreshPREnrichment(
       guard1DetectedChanges = true;
       shouldRefresh = true;
       details.push(`PR list changed for ${repoKey} (Guard 1)`);
+    } else {
+      prListUnchangedRepos.add(repoKey);
     }
   }
 
@@ -264,7 +276,7 @@ export async function shouldRefreshPREnrichment(
     }
   }
 
-  return { shouldRefresh, details };
+  return { shouldRefresh, details, prListUnchangedRepos };
 }
 
 /**
@@ -917,15 +929,18 @@ function extractPREnrichment(
 export async function enrichSessionsPRBatch(
   prs: PRInfo[],
   observer?: BatchObserver,
-): Promise<Map<string, PREnrichmentData>> {
+): Promise<BatchEnrichmentResult> {
   const result = new Map<string, PREnrichmentData>();
 
   if (prs.length === 0) {
-    return result;
+    return { enrichment: result, prListUnchangedRepos: new Set() };
   }
 
   // Step 1: Check if we need to refresh using 2-Guard ETag Strategy
   const guardResult = await shouldRefreshPREnrichment(prs);
+
+  // Report which repos had no PR list changes so the lifecycle can skip detectPR
+  observer?.reportPRListUnchangedRepos?.(guardResult.prListUnchangedRepos);
 
   if (!guardResult.shouldRefresh) {
     // No changes detected - try to return cached data
@@ -948,7 +963,7 @@ export async function enrichSessionsPRBatch(
         "info",
         `[ETag Guard] Skipping GraphQL batch - all ${result.size} PRs cached. Reasons: ${guardResult.details.join(", ")}`,
       );
-      return result;
+      return { enrichment: result, prListUnchangedRepos: guardResult.prListUnchangedRepos };
     }
 
     // Some PRs not cached - fetch missing PRs via GraphQL
@@ -1041,7 +1056,7 @@ export async function enrichSessionsPRBatch(
     }
   }
 
-  return result;
+  return { enrichment: result, prListUnchangedRepos: guardResult.prListUnchangedRepos };
 }
 
 // Export internal functions for testing
