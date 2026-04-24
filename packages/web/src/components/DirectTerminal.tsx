@@ -192,6 +192,7 @@ export function DirectTerminal({
   const [fontSize, setFontSize] = useState(getStoredFontSize());
   const followOutputRef = useRef(true);
   const [followOutput, setFollowOutput] = useState(true);
+  const programmaticScrollRef = useRef(false);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -385,16 +386,16 @@ export function DirectTerminal({
           fontsFace!.addEventListener("loadingdone", handleFontsLoadingDone);
         }
 
-        // Grab viewport element for manual follow-output scroll
-        const viewport = terminal.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
-
-        // Attach touch scroll for mobile — disable follow-output while user is scrolling
+        // Attach touch scroll for mobile — disable follow-output while user is scrolling.
+        // Note: onScrollTowardLatest intentionally does NOT hide the button. In normal
+        // buffer, terminal.onScroll fires after scrollLines() and decides based on real
+        // position. In alternate buffer (tmux), there's no way to detect when the user
+        // has truly returned to the live tail, so the button stays visible until clicked.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const cleanupTouchScroll = attachTouchScroll(terminal as any, (data) => {
           writeTerminal(sessionId, data);
         }, {
           onScrollAway: () => { followOutputRef.current = false; setFollowOutput(false); },
-          onScrollTowardLatest: () => { followOutputRef.current = true; setFollowOutput(true); },
         });
 
         // Set up ResizeObserver to handle flex layout changes
@@ -487,31 +488,31 @@ export function DirectTerminal({
             }
           } else {
             terminal.write(data);
-            if (followOutputRef.current && viewport) {
-              programmaticScroll = true;
-              viewport.scrollTop = viewport.scrollHeight;
+            if (followOutputRef.current) {
+              programmaticScrollRef.current = true;
+              terminal.scrollToBottom();
             }
           }
         });
 
-        // Track whether our own write()-driven scrollTop change triggered this event
-        let programmaticScroll = false;
-        const handleViewportScroll = () => {
-          if (!viewport) return;
-          if (programmaticScroll) {
-            programmaticScroll = false;
+        // Use xterm's onScroll event (fires with new viewportY) instead of a DOM
+        // scroll listener — xterm v6 may update scrollTop via RAF, making DOM
+        // "scroll" events unreliable for detecting user-initiated scrolls.
+        const scrollDisposable = terminal.onScroll(() => {
+          if (programmaticScrollRef.current) {
+            programmaticScrollRef.current = false;
             return;
           }
-          const distFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-          if (distFromBottom < 24) {
+          const buf = terminal.buffer.active;
+          const atBottom = buf.viewportY + terminal.rows >= buf.length;
+          if (atBottom) {
             followOutputRef.current = true;
             setFollowOutput(true);
           } else {
             followOutputRef.current = false;
             setFollowOutput(false);
           }
-        };
-        viewport?.addEventListener("scroll", handleViewportScroll, { passive: true });
+        });
 
         // Handle window resize
         const handleResize = () => {
@@ -542,7 +543,7 @@ export function DirectTerminal({
           if (fontsListenerAttached && fontsFace) {
             fontsFace.removeEventListener("loadingdone", handleFontsLoadingDone);
           }
-          viewport?.removeEventListener("scroll", handleViewportScroll);
+          scrollDisposable.dispose();
           inputDisposable?.dispose();
           inputDisposable = null;
           unsubscribe?.();
@@ -924,13 +925,21 @@ export function DirectTerminal({
           <button
             type="button"
             onClick={() => {
-              followOutputRef.current = true;
-              setFollowOutput(true);
               const t = terminalInstance.current;
               if (t) {
-                const vp = t.element?.querySelector<HTMLElement>(".xterm-viewport");
-                if (vp) vp.scrollTop = vp.scrollHeight;
+                if (t.buffer.active.type === "normal") {
+                  // Normal buffer: scrollback exists in xterm, use its API.
+                  programmaticScrollRef.current = true;
+                  t.scrollToBottom();
+                } else {
+                  // Alternate buffer (tmux/vim): xterm has no scrollback to scroll
+                  // to. The user is in tmux copy-mode (entered by attachTouchScroll
+                  // on swipe). Send 'q' to exit copy-mode and return to live tail.
+                  writeTerminal(sessionId, "q");
+                }
               }
+              followOutputRef.current = true;
+              setFollowOutput(true);
             }}
             className="absolute bottom-3 right-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] shadow-md active:scale-95"
             aria-label="Jump to latest"
