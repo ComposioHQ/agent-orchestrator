@@ -35,7 +35,13 @@ interface FsAdapter {
 }
 
 const defaultFs: FsAdapter = {
-  readdir: (p) => readdirSync(p),
+  // Only return subdirectory names. `readdirSync` without withFileTypes
+  // includes plain files, so a stray file like `aabbccddeef0` would pass
+  // STORAGE_KEY_PATTERN and trigger an unnecessary existsSync probe.
+  readdir: (p) =>
+    readdirSync(p, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name),
   exists: (p) => existsSync(p),
   homedir,
 };
