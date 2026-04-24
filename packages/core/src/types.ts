@@ -786,13 +786,10 @@ export interface SCM {
 
   /**
    * Get all review threads (human + bot) with isBot flag.
-   * Single GraphQL call replaces separate getPendingComments + getAutomatedComments.
+   * Single GraphQL call for all review threads (human + bot) with review summaries.
    * Returns unresolved threads only.
    */
   getReviewThreads?(pr: PRInfo): Promise<ReviewThreadsResult>;
-
-  /** @deprecated Use getReviewThreads() instead. Kept for backward compatibility. */
-  getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]>;
 
   // --- Merge Readiness ---
 

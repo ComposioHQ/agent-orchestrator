@@ -35,9 +35,9 @@ import {
   type ProjectConfig as _ProjectConfig,
   type PREnrichmentData,
   type CICheck,
+  type ReviewComment,
+  type ReviewSummary,
 } from "./types.js";
-import { formatAutomatedCommentsMessage } from "./format-automated-comments.js";
-import { DEFAULT_BUGBOT_COMMENTS_MESSAGE } from "./config.js";
 import { buildLifecycleMetadataPatch, cloneLifecycle, deriveLegacyStatus } from "./lifecycle-state.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
@@ -329,7 +329,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   /**
    * Per-session timestamp of last review backlog API check.
-   * Used to throttle getPendingComments/getAutomatedComments to at most once per 2 minutes.
+   * Used to throttle review thread checks to at most once per 2 minutes.
    * In-memory only — resets on restart (acceptable since it's a rate-limit hint, not state).
    */
   const lastReviewBacklogCheckAt = new Map<SessionId, number>();
@@ -1138,7 +1138,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // Throttle review backlog API calls to at most once per 2 minutes.
     // Comments don't change faster than this in practice, and the SCM calls
-    // (getPendingComments + getAutomatedComments) consume API quota on every poll.
+    // (getReviewThreads) consumes API quota on every poll.
     //
     // Exception: bypass throttle when a transition reaction just fired for a
     // review reaction key. The transitionReaction branch records
@@ -1159,8 +1159,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // Single GraphQL call for all review threads (human + bot) + review summaries.
     // Split locally by isBot for separate reaction pipelines.
-    let allThreads: import("./types.js").ReviewComment[] | null = null;
-    let reviewSummaries: import("./types.js").ReviewSummary[] = [];
+    let allThreads: ReviewComment[] | null = null;
+    let reviewSummaries: ReviewSummary[] = [];
     try {
       if (scm.getReviewThreads) {
         const result = await scm.getReviewThreads(session.pr);
@@ -1327,9 +1327,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
    * to re-fetch via gh api.
    */
   function formatReviewCommentsMessage(
-    comments: import("./types.js").ReviewComment[],
+    comments: ReviewComment[],
     source: "reviewer" | "bot",
-    reviews: import("./types.js").ReviewSummary[] = [],
+    reviews: ReviewSummary[] = [],
   ): string {
     const lines: string[] = [];
 

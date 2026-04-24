@@ -1819,9 +1819,9 @@ describe("shell wrapper content", () => {
       expect(content).toContain("pr/create)");
     });
 
-    it("uses exec for non-PR commands (transparent passthrough)", async () => {
+    it("passes through non-PR commands to real gh", async () => {
       const content = await getWrapperContent("gh");
-      expect(content).toContain('exec "$real_gh"');
+      expect(content).toContain('"$real_gh" "$@"');
     });
 
     it("prefers GH_PATH when provided and executable", async () => {

@@ -16,6 +16,7 @@ import type {
   Agent,
   ActivityState,
   SessionStatus,
+  SessionMetadata,
   PRInfo,
 } from "../types.js";
 import {
@@ -159,7 +160,7 @@ function setupCheck(
     },
   });
 
-  writeMetadata(env.sessionsDir, sessionId, persistedMetadata);
+  writeMetadata(env.sessionsDir, sessionId, persistedMetadata as unknown as SessionMetadata);
 
   return createLifecycleManager({
     config: opts.configOverride ?? config,
@@ -240,7 +241,7 @@ function setupPollCheck(
   vi.mocked(mockSessionManager.list).mockResolvedValue([enrichedSession]);
   vi.mocked(mockSessionManager.get).mockResolvedValue(enrichedSession);
 
-  writeMetadata(env.sessionsDir, sessionId, persistedMetadata);
+  writeMetadata(env.sessionsDir, sessionId, persistedMetadata as unknown as SessionMetadata);
 
   return createLifecycleManager({
     config: opts.configOverride ?? config,
@@ -1497,7 +1498,7 @@ describe("reactions", () => {
 
     const mockSCM = createMockSCM({
       getReviewDecision: vi.fn().mockResolvedValue("changes_requested"),
-      enrichSessionsPRBatch: vi.fn().mockImplementation(async (prs: import("../types.js").PRInfo[]) => {
+      enrichSessionsPRBatch: vi.fn().mockImplementation(async (prs: PRInfo[]) => {
         const result = new Map();
         for (const pr of prs) {
           result.set(`${pr.owner}/${pr.repo}#${pr.number}`, {
@@ -2478,7 +2479,6 @@ describe("rate limiting optimizations", () => {
     const mockSCM = createMockSCM({
       getPRState: vi.fn().mockResolvedValue("closed"),
       getPendingComments: getPendingMock,
-      getAutomatedComments: getAutomatedMock,
       enrichSessionsPRBatch: mockBatchEnrichment({ state: "closed" }),
     });
     const registry = createMockRegistry({

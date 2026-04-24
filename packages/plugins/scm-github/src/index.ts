@@ -27,7 +27,6 @@ import {
   type ReviewComment,
   type ReviewSummary,
   type ReviewThreadsResult,
-  type AutomatedComment,
   type MergeReadiness,
   type PREnrichmentData,
   type BatchObserver,
@@ -1134,85 +1133,6 @@ function createGitHubSCM(): SCM {
         return result;
       } catch (err) {
         throw new Error("Failed to fetch review threads", { cause: err });
-      }
-    },
-
-    async getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]> {
-      try {
-        const perPage = 100;
-        const comments: Array<{
-          id: number;
-          user: { login: string };
-          body: string;
-          path: string;
-          line: number | null;
-          original_line: number | null;
-          created_at: string;
-          html_url: string;
-        }> = [];
-
-        for (let page = 1; ; page++) {
-          const raw = await gh([
-            "api",
-            "--method",
-            "GET",
-            `repos/${repoFlag(pr)}/pulls/${pr.number}/comments?per_page=${perPage}&page=${page}`,
-          ]);
-          const pageComments: Array<{
-            id: number;
-            user: { login: string };
-            body: string;
-            path: string;
-            line: number | null;
-            original_line: number | null;
-            created_at: string;
-            html_url: string;
-          }> = JSON.parse(raw);
-
-          if (pageComments.length === 0) {
-            break;
-          }
-
-          comments.push(...pageComments);
-          if (pageComments.length < perPage) {
-            break;
-          }
-        }
-
-        return comments
-          .filter((c) => BOT_AUTHORS.has(c.user?.login ?? ""))
-          .map((c) => {
-            // Determine severity from body content
-            let severity: AutomatedComment["severity"] = "info";
-            const bodyLower = c.body.toLowerCase();
-            if (
-              bodyLower.includes("error") ||
-              bodyLower.includes("bug") ||
-              bodyLower.includes("critical") ||
-              bodyLower.includes("potential issue")
-            ) {
-              severity = "error";
-            } else if (
-              bodyLower.includes("warning") ||
-              bodyLower.includes("suggest") ||
-              bodyLower.includes("consider")
-            ) {
-              severity = "warning";
-            }
-
-            return {
-              id: String(c.id),
-              botName: c.user?.login ?? "unknown",
-              body: c.body,
-              path: c.path || undefined,
-              line: c.line ?? c.original_line ?? undefined,
-              severity,
-              createdAt: parseDate(c.created_at),
-              url: c.html_url,
-            };
-          });
-      } catch (err) {
-        throw new Error("Failed to fetch automated comments", { cause: err });
       }
     },
 

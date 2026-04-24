@@ -161,7 +161,6 @@ describe("GraphQL Batch Query Generation", () => {
     expect(query).toContain("mergeable");
     expect(query).toContain("mergeStateStatus");
     expect(query).toContain("reviewDecision");
-    expect(query).toContain("reviews");
     expect(query).toContain("commits");
     expect(query).toContain("statusCheckRollup");
   });

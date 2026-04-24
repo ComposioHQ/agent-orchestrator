@@ -7,15 +7,15 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { execGhObserved } from "@aoagents/ao-core";
-import type {
-  BatchObserver,
-  CICheck,
-  CIStatus,
-  PREnrichmentData,
-  PRInfo,
-  PRState,
-  ReviewDecision,
+import {
+  execGhObserved,
+  type BatchObserver,
+  type CICheck,
+  type CIStatus,
+  type PREnrichmentData,
+  type PRInfo,
+  type PRState,
+  type ReviewDecision,
 } from "@aoagents/ao-core";
 import { LRUCache } from "./lru-cache.js";
 
@@ -567,7 +567,7 @@ const PR_FIELDS = `
       commit {
         statusCheckRollup {
           state
-          contexts(first: 10) {
+          contexts(first: 11) {
             nodes {
               ... on CheckRun {
                 name

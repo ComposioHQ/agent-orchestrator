@@ -22,7 +22,6 @@ import {
   type Review,
   type ReviewDecision,
   type ReviewComment,
-  type AutomatedComment,
   type MergeReadiness,
 } from "@aoagents/ao-core";
 import {
@@ -105,21 +104,6 @@ function mapPRState(state: string): PRState {
   return "open";
 }
 
-function inferSeverity(body: string): AutomatedComment["severity"] {
-  const lower = body.toLowerCase();
-  if (
-    lower.includes("error") ||
-    lower.includes("bug") ||
-    lower.includes("critical") ||
-    lower.includes("potential issue")
-  ) {
-    return "error";
-  }
-  if (lower.includes("warning") || lower.includes("suggest") || lower.includes("consider")) {
-    return "warning";
-  }
-  return "info";
-}
 
 function getGitLabWebhookConfig(project: ProjectConfig) {
   const webhook = project.scm?.webhook;
@@ -694,34 +678,6 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
           path: note.position?.new_path || undefined,
           line: note.position?.new_line ?? undefined,
           isResolved: false,
-          createdAt: parseDate(note.created_at),
-          url: "",
-        });
-      }
-      return comments;
-    },
-
-    async getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]> {
-      const discussions = await fetchDiscussions(
-        pr,
-        resolveHostname(pr),
-        `getAutomatedComments for MR !${pr.number}`,
-      );
-
-      const comments: AutomatedComment[] = [];
-      for (const d of discussions) {
-        const note = d.notes[0];
-        if (!note) continue;
-        const author = note.author?.username ?? "";
-        if (!isBot(author)) continue;
-
-        comments.push({
-          id: String(note.id),
-          botName: author,
-          body: note.body,
-          path: note.position?.new_path || undefined,
-          line: note.position?.new_line ?? undefined,
-          severity: inferSeverity(note.body),
           createdAt: parseDate(note.created_at),
           url: "",
         });

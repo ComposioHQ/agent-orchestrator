@@ -183,7 +183,6 @@ export function createMockSCM(overrides: Partial<SCM> = {}): SCM {
     getReviewDecision: vi.fn().mockResolvedValue("none"),
     getPendingComments: vi.fn().mockResolvedValue([]),
     getReviewThreads: vi.fn().mockResolvedValue({ threads: [], reviews: [] }),
-    getAutomatedComments: vi.fn().mockResolvedValue([]),
     getMergeability: vi.fn().mockResolvedValue({
       mergeable: false,
       ciPassing: true,

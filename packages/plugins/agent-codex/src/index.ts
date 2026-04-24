@@ -740,7 +740,7 @@ function createCodexAgent(): Agent {
       // PATH wrappers are installed by session-manager for all agents.
     },
 
-    async postLaunchSetup(session: Session): Promise<void> {
+    async postLaunchSetup(_session: Session): Promise<void> {
       // Resolve binary path on first launch (cached for subsequent calls).
       // Uses a promise guard to prevent concurrent calls from racing.
       if (!resolvedBinary) {
