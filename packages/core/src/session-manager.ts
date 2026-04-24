@@ -1507,14 +1507,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw new Error(`Agent plugin '${selection.agentName}' not found`);
     }
 
+    // Get the sessions directory for this project
+    const sessionsDir = getProjectSessionsDir(orchestratorConfig.projectId);
+
     const orchestratorSessionStrategy = normalizeOrchestratorSessionStrategy(
       project.orchestratorSessionStrategy,
     );
 
-    // Get the sessions directory for this project
-    const sessionsDir = getProjectSessionsDir(orchestratorConfig.projectId);
-
-    // Reserve a new unique orchestrator identity (e.g. {prefix}-orchestrator-1, -2, …).
+    // Reserve a new unique orchestrator identity (e.g. {prefix}-orchestrator-1, -2, ...).
     // Each spawnOrchestrator call gets its own numbered session and isolated worktree.
     const identity = reserveNextOrchestratorIdentity(project, sessionsDir);
     const sessionId = identity.sessionId;

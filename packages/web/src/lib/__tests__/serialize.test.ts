@@ -167,7 +167,7 @@ describe("sessionToDashboard", () => {
     expect(dashboard.attentionLevel).toBe("working");
   });
 
-  it("should expose detecting guidance and evidence from legacy metadata", () => {
+  it("should expose detecting evidence from legacy metadata without card guidance copy", () => {
     const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
     lifecycle.session.state = "detecting";
     lifecycle.session.reason = "probe_failure";
@@ -184,7 +184,7 @@ describe("sessionToDashboard", () => {
 
     const dashboard = sessionToDashboard(coreSession);
 
-    expect(dashboard.lifecycle?.guidance).toContain("Retry 2");
+    expect(dashboard.lifecycle?.guidance).toBeNull();
     expect(dashboard.lifecycle?.evidence).toContain("signal_disagreement");
     expect(dashboard.attentionLevel).toBe("respond");
   });
@@ -1028,15 +1028,18 @@ describe("enrichSessionsMetadata", () => {
   });
 
   it("starts issue-title fetches before agent summaries finish", async () => {
-    let resolveSummary: ((value: { summary: string; summaryIsFallback: false; agentSessionId: string }) => void) | null = null;
+    let resolveSummary:
+      | ((value: { summary: string; summaryIsFallback: false; agentSessionId: string }) => void)
+      | null = null;
 
     const tracker = mockTracker("Fix auth bug");
     const agent = {
       ...mockAgent(),
       getSessionInfo: vi.fn().mockImplementation(
-        () => new Promise((resolve) => {
-          resolveSummary = resolve;
-        }),
+        () =>
+          new Promise((resolve) => {
+            resolveSummary = resolve;
+          }),
       ),
     } as Agent;
     const registry = mockRegistry(tracker, agent);
@@ -1207,7 +1210,9 @@ describe("enrichSessionsMetadataFast", () => {
     const urlBase = "https://github.com/test/repo/issues/fast";
     const tracker: Tracker = {
       name: "mock-tracker",
-      getIssue: vi.fn().mockResolvedValue({ id: "99", title: "Should not be called", url: urlBase }),
+      getIssue: vi
+        .fn()
+        .mockResolvedValue({ id: "99", title: "Should not be called", url: urlBase }),
       issueLabel: vi.fn().mockReturnValue("#99"),
     } as unknown as Tracker;
     const agent: Agent = {

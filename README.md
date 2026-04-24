@@ -66,6 +66,32 @@ cd agent-orchestrator && bash scripts/setup.sh
 ```
 </details>
 
+### Zsh Completion
+
+Generate the completion file from the installed CLI:
+
+```bash
+mkdir -p ~/.zsh/completions
+ao completion zsh > ~/.zsh/completions/_ao
+```
+
+Then make sure the directory is on your `fpath` before `compinit` runs:
+
+```zsh
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit
+compinit
+```
+
+For Oh My Zsh, install the same generated file into a custom plugin directory and add `ao` to your plugin list:
+
+```bash
+mkdir -p "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/ao"
+ao completion zsh > "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/ao/_ao"
+```
+
+If you are contributing from a source checkout, you can also symlink the repo copy at [`completions/_ao`](completions/_ao).
+
 ### Start
 
 Point it at any repo — it clones, configures, and launches the dashboard in one command:

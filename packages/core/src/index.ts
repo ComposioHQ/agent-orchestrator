@@ -156,6 +156,8 @@ export {
   writeWorkspaceOpenCodeAgentsMd,
 } from "./opencode-agents-md.js";
 export { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
+export { resolveSpawnTarget } from "./spawn-target.js";
+export type { SpawnTarget } from "./spawn-target.js";
 
 // Activity log — JSONL activity tracking for agents without native JSONL
 export {

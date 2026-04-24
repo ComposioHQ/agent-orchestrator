@@ -55,6 +55,10 @@ fixed() {
   printf 'FIXED %s\n' "$1"
 }
 
+strip_ansi() {
+  sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g'
+}
+
 expand_home() {
   case "$1" in
     ~/*)
@@ -104,6 +108,7 @@ read_config_value() {
   local raw
   local value
   raw="$(grep -E "^[[:space:]]*${key}:" "$file" | head -n 1 | cut -d: -f2- || true)"
+  raw="$(printf '%s' "$raw" | strip_ansi)"
   raw="${raw%%[[:space:]]#*}"
   value="$(printf '%s' "$raw" | tr -d '"' | xargs 2>/dev/null || true)"
   printf '%s' "$value"
@@ -168,8 +173,10 @@ check_git() {
   if ! check_command "git" "required" "install git 2.25+ and reopen your shell"; then
     return
   fi
-  local version major minor
-  version="$(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1)"
+  local version_output version major minor
+  version_output="$(git --version 2>/dev/null || true)"
+  version_output="$(printf '%s' "$version_output" | strip_ansi)"
+  version="$(printf '%s\n' "$version_output" | awk '{print $3}' | head -n 1)"
   major="${version%%.*}"
   minor="${version#*.}"
   minor="${minor%%.*}"

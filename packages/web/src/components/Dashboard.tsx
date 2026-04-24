@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   NON_RESTORABLE_STATUSES,
@@ -105,7 +105,14 @@ function DoneCard({
             className="done-card__pr"
             onClick={(e) => e.stopPropagation()}
           >
-            <svg width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+            <svg
+              width="9"
+              height="9"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              viewBox="0 0 24 24"
+            >
               <circle cx="18" cy="18" r="3" />
               <circle cx="6" cy="6" r="3" />
               <path d="M6 9v3a6 6 0 0 0 6 6h3" />
@@ -142,7 +149,8 @@ function DashboardInner({
 }: DashboardProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
   const mux = useMuxOptional();
-  const kanbanLevels = attentionZones === "detailed" ? DETAILED_KANBAN_LEVELS : SIMPLE_KANBAN_LEVELS;
+  const kanbanLevels =
+    attentionZones === "detailed" ? DETAILED_KANBAN_LEVELS : SIMPLE_KANBAN_LEVELS;
   const initialAttentionLevels = useMemo(() => {
     const levels: Record<string, AttentionLevel> = {};
     for (const s of initialSessions) {
@@ -150,16 +158,21 @@ function DashboardInner({
     }
     return levels;
   }, [initialSessions, attentionZones]);
-  const { sessions, connectionStatus, sseAttentionLevels, liveSessionsResolved } = useSessionEvents({
-    initialSessions,
-    project: projectId,
-    muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
-    initialAttentionLevels,
-    attentionZones,
-  });
+  const { sessions, connectionStatus, sseAttentionLevels, liveSessionsResolved, loadError } =
+    useSessionEvents({
+      initialSessions,
+      project: projectId,
+      muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
+      initialAttentionLevels,
+      attentionZones,
+    });
   const recoveredFromLoadError = Boolean(dashboardLoadError) && liveSessionsResolved;
-  const visibleDashboardLoadError = recoveredFromLoadError ? undefined : dashboardLoadError;
+  const visibleDashboardLoadError =
+    loadError ?? (recoveredFromLoadError ? undefined : dashboardLoadError);
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const routerRef = useRef(router);
+  routerRef.current = router;
   const activeSessionId = searchParams.get("session") ?? undefined;
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const [activeOrchestrators, setActiveOrchestrators] =
@@ -195,9 +208,11 @@ function DashboardInner({
     Boolean(projectId) &&
     projects.some((project) => project.id === projectId && !project.resolveError) &&
     !orchestratorHref;
-  const activeProject = projectId ? projects.find((project) => project.id === projectId) ?? null : null;
+  const activeProject = projectId
+    ? (projects.find((project) => project.id === projectId) ?? null)
+    : null;
   const isSpawningCurrentProject = projectId ? spawningProjectIds.includes(projectId) : false;
-  const currentProjectSpawnError = projectId ? spawnErrors[projectId] ?? null : null;
+  const currentProjectSpawnError = projectId ? (spawnErrors[projectId] ?? null) : null;
 
   const displaySessions = useMemo(() => {
     if (allProjectsView || !activeSessionId) return sessions;
@@ -218,7 +233,6 @@ function DashboardInner({
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [searchParams]);
-
 
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
@@ -278,7 +292,6 @@ function DashboardInner({
       };
     });
   }, [activeOrchestrators, allProjectsView, attentionZones, projects, sessionsByProject]);
-
 
   const handleSend = useCallback(
     async (sessionId: string, message: string) => {
@@ -342,7 +355,6 @@ function DashboardInner({
     [killSession],
   );
 
-
   const handleMerge = useCallback(
     async (prNumber: number) => {
       try {
@@ -375,6 +387,7 @@ function DashboardInner({
           showToast(`Restore failed: ${text}`, "error");
         } else {
           showToast("Session restored", "success");
+          routerRef.current.refresh();
         }
       } catch (error) {
         console.error(`Network error restoring ${sessionId}:`, error);
@@ -431,11 +444,15 @@ function DashboardInner({
       role="alert"
       aria-live="assertive"
     >
-      <span className="font-semibold text-[var(--color-status-error)]">Orchestrator failed to load</span>
-      <span className="break-words text-[var(--color-text-secondary)]">{visibleDashboardLoadError}</span>
+      <span className="font-semibold text-[var(--color-status-error)]">
+        Orchestrator failed to load
+      </span>
+      <span className="break-words text-[var(--color-text-secondary)]">
+        {visibleDashboardLoadError}
+      </span>
       <span className="text-[var(--color-text-secondary)]">
-        Confirm <span className="font-mono text-[10px]">agent-orchestrator.yaml</span> exists and is valid, then run{" "}
-        <span className="font-mono text-[10px]">ao doctor</span> for diagnostics.
+        Confirm <span className="font-mono text-[10px]">agent-orchestrator.yaml</span> exists and is
+        valid, then run <span className="font-mono text-[10px]">ao doctor</span> for diagnostics.
       </span>
     </div>
   ) : null;
@@ -460,7 +477,9 @@ function DashboardInner({
   };
 
   return (
-    <SidebarContext.Provider value={{ onToggleSidebar: handleToggleSidebar, mobileSidebarOpen: mobileMenuOpen }}>
+    <SidebarContext.Provider
+      value={{ onToggleSidebar: handleToggleSidebar, mobileSidebarOpen: mobileMenuOpen }}
+    >
       <>
         <ConnectionBar status={connectionStatus} />
         <div className="dashboard-app-shell">
@@ -473,7 +492,15 @@ function DashboardInner({
                 aria-label="Toggle sidebar"
               >
                 {isMobile ? (
-                  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                  <svg
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
                     <path d="M4 6h16M4 12h16M4 18h16" />
                   </svg>
                 ) : (
@@ -561,7 +588,9 @@ function DashboardInner({
             className={`dashboard-shell dashboard-shell--desktop${sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
           >
             {showSidebar && (
-              <div className={`sidebar-wrapper${mobileMenuOpen ? " sidebar-wrapper--mobile-open" : ""}`}>
+              <div
+                className={`sidebar-wrapper${mobileMenuOpen ? " sidebar-wrapper--mobile-open" : ""}`}
+              >
                 <ProjectSidebar
                   projects={projects}
                   sessions={sessions}
@@ -634,7 +663,15 @@ function DashboardInner({
 
                 {!allProjectsView && hasAnySessions && (
                   <div className="kanban-board-wrap">
-                    <div className="kanban-board">
+                    <div
+                      className="kanban-board"
+                      data-columns={kanbanLevels.length}
+                      style={
+                        {
+                          "--kanban-column-count": kanbanLevels.length,
+                        } as React.CSSProperties
+                      }
+                    >
                       {kanbanLevels.map((level) => (
                         <AttentionZone
                           key={level}
@@ -739,7 +776,7 @@ function ProjectOverviewGrid({
 }) {
   return (
     <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {overviews.map(({ project, orchestrator, sessionCount, openPRCount, counts }) => (
+      {overviews.map(({ project, orchestrator, sessionCount, openPRCount, counts }) =>
         (() => {
           const isDegraded = Boolean(project.resolveError);
           const projectHref = projectDashboardPath(project.id);
@@ -760,7 +797,9 @@ function ProjectOverviewGrid({
                     ) : (
                       <>
                         {sessionCount} active session{sessionCount !== 1 ? "s" : ""}
-                        {openPRCount > 0 ? ` · ${openPRCount} open PR${openPRCount !== 1 ? "s" : ""}` : ""}
+                        {openPRCount > 0
+                          ? ` · ${openPRCount} open PR${openPRCount !== 1 ? "s" : ""}`
+                          : ""}
                       </>
                     )}
                   </div>
@@ -793,8 +832,8 @@ function ProjectOverviewGrid({
                     {isDegraded
                       ? "Project config could not be resolved"
                       : orchestrator
-                      ? "Per-project orchestrator available"
-                      : "No running orchestrator"}
+                        ? "Per-project orchestrator available"
+                        : "No running orchestrator"}
                   </div>
                   {isDegraded ? (
                     <Link
@@ -818,7 +857,9 @@ function ProjectOverviewGrid({
                       disabled={spawningProjectIds.includes(project.id)}
                       className="orchestrator-btn px-3 py-1.5 text-[11px] font-semibold disabled:cursor-wait disabled:opacity-70"
                     >
-                      {spawningProjectIds.includes(project.id) ? "Spawning..." : "Spawn Orchestrator"}
+                      {spawningProjectIds.includes(project.id)
+                        ? "Spawning..."
+                        : "Spawn Orchestrator"}
                     </button>
                   )}
                 </div>
@@ -830,8 +871,8 @@ function ProjectOverviewGrid({
               </div>
             </section>
           );
-        })()
-      ))}
+        })(),
+      )}
     </div>
   );
 }

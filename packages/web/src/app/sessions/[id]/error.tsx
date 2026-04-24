@@ -6,6 +6,9 @@ import { ErrorDisplay } from "@/components/ErrorDisplay";
 
 function getSessionErrorMessage(error: Error): string {
   const normalized = error.message.toLowerCase();
+  if (normalized.includes("timed out")) {
+    return "The session request did not complete in time. Check the backend process and try again once the API is responsive.";
+  }
   if (normalized.includes("network")) {
     return "The session request failed before the dashboard got a response. Check the server connection and try again.";
   }
@@ -17,6 +20,9 @@ function getSessionErrorMessage(error: Error): string {
   }
   if (normalized.includes("500")) {
     return "The server returned an internal error while loading this session. Try re-fetching the session data.";
+  }
+  if (error.message.trim().length > 0) {
+    return error.message;
   }
   return "The dashboard could not load this session cleanly. Try again to re-fetch the latest state.";
 }
