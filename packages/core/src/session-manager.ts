@@ -70,6 +70,7 @@ import {
   getWorktreesDir,
   getProjectBaseDir,
   generateTmuxName,
+  requireStorageKey,
   validateAndStoreOrigin,
 } from "./paths.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
@@ -872,7 +873,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     return {
       sessionId,
-      tmuxName: config.configPath ? `${project.storageKey}-${sessionId}` : undefined,
+      tmuxName: config.configPath ? `${requireStorageKey(project.storageKey)}-${sessionId}` : undefined,
     };
   }
 
@@ -1764,22 +1765,22 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const sessionId = getOrchestratorSessionId(project);
     const existing = await get(sessionId);
     if (existing) {
+      if (existing.lifecycle.session.state === "done") {
+        throw new SessionNotRestorableError(
+          sessionId,
+          `canonical orchestrator session is terminal with status "${existing.status}". Remove or clean up this session before starting a new orchestrator.`,
+        );
+      }
       if (isRestorable(existing)) {
         return restore(sessionId);
       }
       if (!isTerminalSession(existing)) {
         return existing;
       }
-      try {
-        return await restore(sessionId);
-      } catch (err) {
-        throw new Error(
-          `Canonical orchestrator session ${sessionId} exists but could not be restored: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-          { cause: err },
-        );
-      }
+      throw new SessionNotRestorableError(
+        sessionId,
+        `canonical orchestrator session is terminal with status "${existing.status}". Remove or clean up this session before starting a new orchestrator.`,
+      );
     }
 
     try {

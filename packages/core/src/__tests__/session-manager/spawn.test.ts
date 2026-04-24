@@ -5,6 +5,10 @@ import { createSessionManager } from "../../session-manager.js";
 import { validateConfig } from "../../config.js";
 import { getWorkspaceAgentsMdPath } from "../../opencode-agents-md.js";
 import {
+  buildLifecycleMetadataPatch,
+  createInitialCanonicalLifecycle,
+} from "../../lifecycle-state.js";
+import {
   writeMetadata,
   readMetadata,
   readMetadataRaw,
@@ -1297,6 +1301,31 @@ describe("spawn", () => {
           branch: "orchestrator/app-orchestrator",
         }),
       );
+    });
+
+    it("ensureOrchestrator fails clearly when canonical session is done and non-restorable", async () => {
+      const lifecycle = createInitialCanonicalLifecycle("orchestrator");
+      lifecycle.session.state = "done";
+      lifecycle.session.reason = "research_complete";
+      lifecycle.session.completedAt = new Date().toISOString();
+      lifecycle.runtime.state = "exited";
+      lifecycle.runtime.reason = "process_missing";
+      const doneWorktree = join(tmpDir, "done-orchestrator");
+      mkdirSync(doneWorktree, { recursive: true });
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        role: "orchestrator",
+        project: "my-app",
+        status: "done",
+        branch: "orchestrator/app-orchestrator",
+        worktree: doneWorktree,
+        ...buildLifecycleMetadataPatch(lifecycle, "done"),
+      });
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      await expect(sm.ensureOrchestrator({ projectId: "my-app" })).rejects.toThrow(
+        'canonical orchestrator session is terminal with status "done"',
+      );
+      expect(mockWorkspace.create).not.toHaveBeenCalled();
     });
 
     it("cleans up reserved metadata on workspace creation failure", async () => {

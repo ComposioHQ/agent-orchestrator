@@ -366,7 +366,7 @@ describe("API Routes", () => {
       deadLifecycle.runtime.lastObservedAt = "2026-04-19T11:00:00.000Z";
 
       const olderLive = makeSession({
-        id: "my-app-orchestrator",
+        id: "my-app-orchestrator-1",
         projectId: "my-app",
         metadata: { role: "orchestrator" },
         lastActivityAt: new Date("2026-04-19T09:00:00.000Z"),
@@ -407,7 +407,7 @@ describe("API Routes", () => {
       expect(data.orchestratorId).toBe("my-app-orchestrator");
       expect(data.orchestrators.map((session: { id: string }) => session.id)).toEqual([
         "my-app-orchestrator",
-        "my-app-orchestrator",
+        "my-app-orchestrator-1",
       ]);
       expect(data.sessions).toEqual([]);
       expect(mockSessionManager.listCached).toHaveBeenCalledWith("my-app");

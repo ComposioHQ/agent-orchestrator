@@ -238,6 +238,7 @@ export {
   getOriginFilePath,
   generateSessionName,
   generateTmuxName,
+  requireStorageKey,
   parseTmuxName,
   expandHome,
   validateAndStoreOrigin,
