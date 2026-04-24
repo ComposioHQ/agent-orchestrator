@@ -1262,6 +1262,20 @@ describe("spawn", () => {
       expect(mockWorkspace.create).toHaveBeenCalledTimes(1);
     });
 
+    it("ensureOrchestrator coalesces concurrent creation calls", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const [s1, s2] = await Promise.all([
+        sm.ensureOrchestrator({ projectId: "my-app" }),
+        sm.ensureOrchestrator({ projectId: "my-app" }),
+      ]);
+
+      expect(s1.id).toBe("app-orchestrator");
+      expect(s2.id).toBe("app-orchestrator");
+      expect(mockWorkspace.create).toHaveBeenCalledTimes(1);
+      expect(mockRuntime.create).toHaveBeenCalledTimes(1);
+    });
+
     it("ensureOrchestrator ignores numbered legacy orchestrators and creates the canonical session", async () => {
       writeMetadata(sessionsDir, "app-orchestrator-5", {
         role: "orchestrator",

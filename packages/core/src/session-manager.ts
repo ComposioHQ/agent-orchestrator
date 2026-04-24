@@ -286,9 +286,15 @@ const SEND_CONFIRMATION_POLL_MS = 500;
 const SEND_CONFIRMATION_OUTPUT_LINES = 20;
 const SEND_BOOTSTRAP_READY_TIMEOUT_MS = 20_000;
 const SEND_BOOTSTRAP_STABLE_POLLS = 2;
+const ENSURE_ORCHESTRATOR_CONFLICT_WAIT_MS = 20_000;
+const ENSURE_ORCHESTRATOR_CONFLICT_POLL_MS = 250;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isFixedOrchestratorReservationError(err: unknown, sessionId: string): boolean {
+  return err instanceof Error && err.message.includes(`Orchestrator session "${sessionId}" already exists`);
 }
 
 async function getTmuxForegroundCommand(sessionName: string): Promise<string | null> {
@@ -509,6 +515,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         expiresAt: number;
       }
     | null = null;
+  const ensureOrchestratorPromises = new Map<string, Promise<Session>>();
 
   function invalidateCache(): void {
     sessionCache = null;
@@ -1736,7 +1743,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return session;
   }
 
-  async function ensureOrchestrator(orchestratorConfig: OrchestratorSpawnConfig): Promise<Session> {
+  async function waitForConcurrentOrchestrator(sessionId: string): Promise<Session | null> {
+    const deadline = Date.now() + ENSURE_ORCHESTRATOR_CONFLICT_WAIT_MS;
+    while (Date.now() < deadline) {
+      const existing = await get(sessionId);
+      if (existing?.metadata["role"] === "orchestrator") {
+        return existing;
+      }
+      await sleep(ENSURE_ORCHESTRATOR_CONFLICT_POLL_MS);
+    }
+    return null;
+  }
+
+  async function ensureOrchestratorInternal(orchestratorConfig: OrchestratorSpawnConfig): Promise<Session> {
     const project = config.projects[orchestratorConfig.projectId];
     if (!project) {
       throw new Error(`Unknown project: ${orchestratorConfig.projectId}`);
@@ -1763,7 +1782,34 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    return spawnOrchestrator(orchestratorConfig);
+    try {
+      return await spawnOrchestrator(orchestratorConfig);
+    } catch (err) {
+      if (!isFixedOrchestratorReservationError(err, sessionId)) {
+        throw err;
+      }
+
+      const concurrent = await waitForConcurrentOrchestrator(sessionId);
+      if (concurrent) return concurrent;
+      throw err;
+    }
+  }
+
+  async function ensureOrchestrator(orchestratorConfig: OrchestratorSpawnConfig): Promise<Session> {
+    const project = config.projects[orchestratorConfig.projectId];
+    if (!project) {
+      throw new Error(`Unknown project: ${orchestratorConfig.projectId}`);
+    }
+
+    const sessionId = getOrchestratorSessionId(project);
+    const existingPromise = ensureOrchestratorPromises.get(sessionId);
+    if (existingPromise) return existingPromise;
+
+    const promise = ensureOrchestratorInternal(orchestratorConfig).finally(() => {
+      ensureOrchestratorPromises.delete(sessionId);
+    });
+    ensureOrchestratorPromises.set(sessionId, promise);
+    return promise;
   }
 
   async function list(projectId?: string): Promise<Session[]> {
