@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
 import type { ProjectInfo } from "@/lib/project-name";
 import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@/lib/types";
+import { getOrchestratorSessionId } from "@aoagents/ao-core";
 import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { getSessionTitle, humanizeBranch } from "@/lib/format";
 import { usePopoverClamp } from "@/hooks/usePopoverClamp";
@@ -390,8 +391,12 @@ function ProjectSidebarInner({
             const visibleSessions = workerSessions;
             const hasActiveSessions = visibleSessions.length > 0;
 
+            const projectPrefix = prefixByProject.get(project.id);
+            const canonicalOrchestratorId = projectPrefix
+              ? getOrchestratorSessionId({ sessionPrefix: projectPrefix })
+              : null;
             const orchestratorSession = sessions?.find(
-              (s) => isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes) && s.projectId === project.id
+              (s) => s.projectId === project.id && s.id === canonicalOrchestratorId
             );
 
             return (

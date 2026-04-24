@@ -155,7 +155,10 @@ export {
   getWorkspaceAgentsMdPath,
   writeWorkspaceOpenCodeAgentsMd,
 } from "./opencode-agents-md.js";
-export { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
+export {
+  getOrchestratorSessionId,
+  normalizeOrchestratorSessionStrategy,
+} from "./orchestrator-session-strategy.js";
 export { resolveSpawnTarget } from "./spawn-target.js";
 export type { SpawnTarget } from "./spawn-target.js";
 

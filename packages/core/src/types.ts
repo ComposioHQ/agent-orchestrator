@@ -345,6 +345,9 @@ export function isOrchestratorSession(
     return false;
   }
   const escaped = sessionPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (session.id === `${sessionPrefix}-orchestrator`) {
+    return true;
+  }
   if (!new RegExp(`^${escaped}-orchestrator-\\d+$`).test(session.id)) {
     return false;
   }
@@ -1695,6 +1698,7 @@ export interface KillOptions {
 export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
   spawnOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
+  ensureOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;

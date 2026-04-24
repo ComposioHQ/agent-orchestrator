@@ -19,6 +19,7 @@ import { promisify } from "node:util";
 import {
   isIssueNotFoundError,
   isRestorable,
+  isTerminalSession,
   SessionNotFoundError,
   SessionNotRestorableError,
   WorkspaceMissingError,
@@ -75,7 +76,10 @@ import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import {
   writeWorkspaceOpenCodeAgentsMd,
 } from "./opencode-agents-md.js";
-import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
+import {
+  getOrchestratorSessionId,
+  normalizeOrchestratorSessionStrategy,
+} from "./orchestrator-session-strategy.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse, validateStatus } from "./utils/validation.js";
 import { isGitBranchNameSafe } from "./utils.js";
@@ -848,64 +852,21 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
   }
 
-  /**
-   * Reserve a unique orchestrator identity ({prefix}-orchestrator-N) for a worktree-based orchestrator.
-   * Unlike worker sessions, orchestrator IDs are assigned locally without remote branch checks.
-   */
-  function reserveNextOrchestratorIdentity(
+  function reserveFixedOrchestratorIdentity(
     project: ProjectConfig,
     sessionsDir: string,
-  ): { num: number; sessionId: string; tmuxName: string | undefined } {
-    const orchestratorPrefix = `${project.sessionPrefix}-orchestrator`;
-    const usedNumbers = new Set<number>();
-
-    const orchestratorPattern = new RegExp(`^${escapeRegex(orchestratorPrefix)}-(\\d+)$`);
-    for (const sessionName of [
-      ...listMetadata(sessionsDir),
-      ...listArchivedSessionIds(sessionsDir),
-    ]) {
-      const match = sessionName.match(orchestratorPattern);
-      if (match) {
-        const parsed = Number.parseInt(match[1], 10);
-        if (!Number.isNaN(parsed)) usedNumbers.add(parsed);
-      }
+  ): { sessionId: string; tmuxName: string | undefined } {
+    const sessionId = getOrchestratorSessionId(project);
+    if (!reserveSessionId(sessionsDir, sessionId)) {
+      throw new Error(
+        `Orchestrator session "${sessionId}" already exists. Use ensureOrchestrator() to reuse or restore it.`,
+      );
     }
 
-    // Build worker-ID patterns for all other projects. If another project has
-    // sessionPrefix === orchestratorPrefix (e.g. project B has prefix "app-orchestrator"),
-    // then its workers are named "app-orchestrator-1", "app-orchestrator-2", etc. — which
-    // would collide with our orchestrator IDs. Detect this impossible configuration early.
-    for (const [otherProjectId, otherProject] of Object.entries(config.projects)) {
-      const otherPrefix = otherProject.sessionPrefix ?? otherProjectId;
-      if (otherPrefix === project.sessionPrefix) continue;
-      if (otherPrefix === orchestratorPrefix) {
-        // Another project's workers are "{otherPrefix}-\d+" which equals "{orchestratorPrefix}-\d+".
-        // Every candidate ID we would generate collides — fail immediately with a clear message.
-        throw new Error(
-          `Cannot spawn orchestrator for project "${project.sessionPrefix}": the orchestrator ID prefix "${orchestratorPrefix}" ` +
-            `conflicts with the session prefix of project "${otherProjectId}" ("${otherPrefix}"). ` +
-            `Rename one of the project sessionPrefix values to avoid this overlap.`,
-        );
-      }
-    }
-
-    let num = 1;
-    for (let attempts = 0; attempts < 10_000; attempts++) {
-      if (!usedNumbers.has(num)) {
-        const sessionId = `${orchestratorPrefix}-${num}`;
-        const tmuxName = config.configPath
-          ? generateTmuxName(project.storageKey, orchestratorPrefix, num)
-          : undefined;
-        if (reserveSessionId(sessionsDir, sessionId)) {
-          return { num, sessionId, tmuxName };
-        }
-      }
-      num += 1;
-    }
-
-    throw new Error(
-      `Failed to reserve orchestrator session ID after 10000 attempts (prefix: ${orchestratorPrefix})`,
-    );
+    return {
+      sessionId,
+      tmuxName: config.configPath ? `${project.storageKey}-${sessionId}` : undefined,
+    };
   }
 
   /** Resolve which plugins to use for a project. */
@@ -1520,13 +1481,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       validateAndStoreOrigin(config.configPath, project.storageKey!);
     }
 
-    // Reserve a new unique orchestrator identity (e.g. {prefix}-orchestrator-1, -2, …).
-    // Each spawnOrchestrator call gets its own numbered session and isolated worktree.
-    const identity = reserveNextOrchestratorIdentity(project, sessionsDir);
+    const identity = reserveFixedOrchestratorIdentity(project, sessionsDir);
     const sessionId = identity.sessionId;
     const tmuxName = identity.tmuxName;
 
-    // Each orchestrator gets an isolated worktree on its own branch.
+    // The main orchestrator is deterministic, but still uses an isolated worktree.
     const branch = `orchestrator/${sessionId}`;
 
     if (!plugins.workspace) {
@@ -1775,6 +1734,36 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     return session;
+  }
+
+  async function ensureOrchestrator(orchestratorConfig: OrchestratorSpawnConfig): Promise<Session> {
+    const project = config.projects[orchestratorConfig.projectId];
+    if (!project) {
+      throw new Error(`Unknown project: ${orchestratorConfig.projectId}`);
+    }
+
+    const sessionId = getOrchestratorSessionId(project);
+    const existing = await get(sessionId);
+    if (existing) {
+      if (isRestorable(existing)) {
+        return restore(sessionId);
+      }
+      if (!isTerminalSession(existing)) {
+        return existing;
+      }
+      try {
+        return await restore(sessionId);
+      } catch (err) {
+        throw new Error(
+          `Canonical orchestrator session ${sessionId} exists but could not be restored: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          { cause: err },
+        );
+      }
+    }
+
+    return spawnOrchestrator(orchestratorConfig);
   }
 
   async function list(projectId?: string): Promise<Session[]> {
@@ -2888,6 +2877,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   return {
     spawn,
     spawnOrchestrator,
+    ensureOrchestrator,
     restore,
     list,
     listCached,

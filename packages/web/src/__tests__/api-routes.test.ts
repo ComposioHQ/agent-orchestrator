@@ -127,6 +127,7 @@ const mockSessionManager: SessionManager = {
   }),
   cleanup: vi.fn(async () => ({ killed: [], skipped: [], errors: [] })),
   spawnOrchestrator: vi.fn(),
+  ensureOrchestrator: vi.fn(),
   remap: vi.fn(async () => "ses_mock"),
   restore: vi.fn(async (id: string) => {
     const session = testSessions.find((s) => s.id === id);
@@ -365,13 +366,13 @@ describe("API Routes", () => {
       deadLifecycle.runtime.lastObservedAt = "2026-04-19T11:00:00.000Z";
 
       const olderLive = makeSession({
-        id: "my-app-orchestrator-1",
+        id: "my-app-orchestrator",
         projectId: "my-app",
         metadata: { role: "orchestrator" },
         lastActivityAt: new Date("2026-04-19T09:00:00.000Z"),
       });
       const newerLive = makeSession({
-        id: "my-app-orchestrator-2",
+        id: "my-app-orchestrator",
         projectId: "my-app",
         metadata: { role: "orchestrator" },
         lastActivityAt: new Date("2026-04-19T10:00:00.000Z"),
@@ -403,10 +404,10 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
 
-      expect(data.orchestratorId).toBe("my-app-orchestrator-2");
+      expect(data.orchestratorId).toBe("my-app-orchestrator");
       expect(data.orchestrators.map((session: { id: string }) => session.id)).toEqual([
-        "my-app-orchestrator-1",
-        "my-app-orchestrator-2",
+        "my-app-orchestrator",
+        "my-app-orchestrator",
       ]);
       expect(data.sessions).toEqual([]);
       expect(mockSessionManager.listCached).toHaveBeenCalledWith("my-app");
@@ -841,7 +842,7 @@ describe("API Routes", () => {
 
   describe("POST /api/orchestrators", () => {
     it("creates a per-project orchestrator with the generated prompt", async () => {
-      (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      (mockSessionManager.ensureOrchestrator as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         makeSession({
           id: "my-app-orchestrator",
           projectId: "my-app",
@@ -857,7 +858,7 @@ describe("API Routes", () => {
       const res = await orchestratorsPOST(req);
 
       expect(res.status).toBe(201);
-      expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith({
+      expect(mockSessionManager.ensureOrchestrator).toHaveBeenCalledWith({
         projectId: "my-app",
         systemPrompt: expect.stringContaining("# My App Orchestrator"),
       });
@@ -910,7 +911,7 @@ describe("API Routes", () => {
     });
 
     it("returns 500 when orchestrator spawn fails", async () => {
-      (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      (mockSessionManager.ensureOrchestrator as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error("boom"),
       );
 
@@ -927,9 +928,9 @@ describe("API Routes", () => {
     });
 
     it("returns a guided recovery message for registered orchestrator worktree collisions", async () => {
-      (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      (mockSessionManager.ensureOrchestrator as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error(
-          'Worktree path "/Users/test/.worktrees/my-app/my-app-orchestrator-1" already exists and is still registered with git',
+          'Worktree path "/Users/test/.worktrees/my-app/my-app-orchestrator" already exists and is still registered with git',
         ),
       );
 
