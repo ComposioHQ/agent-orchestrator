@@ -1,0 +1,25 @@
+packages/web/src/lib/__tests__/project-name.test.ts
+  8d515a3de6d4fe36 24,56-80
+packages/web/src/lib/project-name.ts
+  8d515a3de6d4fe36 4-5,31-60,64-68,81-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "6dfd3be92c9f324a511a9687d352182256316c27",
+  "prompts": {
+    "8d515a3de6d4fe36": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dba13-6e90-77e2-accf-c00d57a853cb",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 11623,
+      "total_deletions": 7093,
+      "accepted_lines": 66,
+      "overriden_lines": 0
+    }
+  }
+}
