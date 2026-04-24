@@ -1,0 +1,42 @@
+packages/core/src/orchestrator-session-strategy.ts
+  f691d4319c75f69a 5-8
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  f691d4319c75f69a 1181,1190,1193,1205-1206,1216-1217,1225,1233,1237,1247,1249,1254,1257-1258,1260-1285,1299,1306-1307,1320,1327-1328,1353,1361-1362,1404,1411,1423,1461,1472,1517,1526,1576,1619,1665,1767,1814,1916-1917,1937,1948
+packages/core/src/session-manager.ts
+  f691d4319c75f69a 22,79-82,855,858-863,866-869,1484,1488,1739-1768,2880
+packages/web/src/__tests__/orchestrators.test.tsx
+  f691d4319c75f69a 42,69
+packages/core/src/index.ts
+  f691d4319c75f69a 158-161
+packages/web/src/__tests__/api-routes.test.ts
+  f691d4319c75f69a 130,369,375,407,409-410,845,861,914,931,933
+packages/cli/__tests__/commands/start.test.ts
+  f691d4319c75f69a 39,261-264,266-282,843,855,914,980,1000,1034,1069,1076-1077,1110,1144,1153,1166,1170,1180,1185-1186,1199,1210-1211,1214-1215,1236,1249,1268,1295,1307,1316,1332,1410,1427,1507,1516,1529,1553,1567
+packages/core/src/types.ts
+  f691d4319c75f69a 348-350,1701
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "e814f919e0583f0d106a696f1cee3903518aa889",
+  "prompts": {
+    "f691d4319c75f69a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dbef8-bd9c-7002-bc74-5f4747390b57",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 203,
+      "total_deletions": 165,
+      "accepted_lines": 198,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e1aac9baf373c4": {
+      "author": "Ashish Huddar"
+    }
+  }
+}
