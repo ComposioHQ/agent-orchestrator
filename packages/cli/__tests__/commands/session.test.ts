@@ -393,7 +393,7 @@ describe("session ls", () => {
     expect(parsed.meta.hiddenTerminatedCount).toBe(1);
   });
 
-  it("marks metadata-based orchestrators correctly in JSON output", async () => {
+  it("does not mark legacy sessions as orchestrators from metadata alone in JSON output", async () => {
     writeFileSync(
       join(sessionsDir, "app-control"),
       "branch=control\nstatus=working\nrole=orchestrator\n",
@@ -411,7 +411,7 @@ describe("session ls", () => {
           id: "app-control",
           projectId: "my-app",
           projectName: "My App",
-          role: "orchestrator",
+          role: "worker",
           branch: "control",
           status: "working",
           issueId: null,

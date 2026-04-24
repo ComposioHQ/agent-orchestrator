@@ -233,8 +233,32 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    expect(within(screen.getByRole("banner")).getByRole("button", { name: "Restore" })).toBeInTheDocument();
+    expect(within(screen.getByRole("banner")).getByRole("button", { name: "Restore" })).toHaveClass(
+      "dashboard-app-btn--restore",
+    );
     expect(within(screen.getByRole("banner")).queryByRole("button", { name: "Kill" })).not.toBeInTheDocument();
+  });
+
+  it("restores without using router refresh on the client-only session page", async () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-restore",
+          projectId: "my-app",
+          status: "terminated",
+          activity: "exited",
+          pr: null,
+        })}
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+
+    await act(async () => {});
+
+    expect(global.fetch).toHaveBeenCalledWith("/api/sessions/worker-restore/restore", { method: "POST" });
+    expect(routerRefreshMock).not.toHaveBeenCalled();
   });
 
   it("hides the desktop orchestrator button on orchestrator session pages", () => {

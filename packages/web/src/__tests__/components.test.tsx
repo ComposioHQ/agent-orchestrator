@@ -204,6 +204,54 @@ describe("SessionCard", () => {
     expect(screen.getByText("feat/cool-thing")).toBeInTheDocument();
   });
 
+  it("does not render lifecycle guidance as a pill on kanban cards", () => {
+    const session = makeSession({
+      lifecycle: {
+        sessionState: "detecting",
+        sessionReason: "runtime_lost",
+        prState: "none",
+        prReason: "not_created",
+        runtimeState: "missing",
+        runtimeReason: "tmux_missing",
+        session: {
+          state: "detecting",
+          reason: "runtime_lost",
+          label: "detecting",
+          reasonLabel: "runtime lost",
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          terminatedAt: null,
+          lastTransitionAt: new Date().toISOString(),
+        },
+        pr: {
+          state: "none",
+          reason: "not_created",
+          label: "not created",
+          reasonLabel: "not created",
+          number: null,
+          url: null,
+          lastObservedAt: null,
+        },
+        runtime: {
+          state: "missing",
+          reason: "tmux_missing",
+          label: "missing",
+          reasonLabel: "tmux missing",
+          lastObservedAt: new Date().toISOString(),
+        },
+        legacyStatus: "detecting",
+        evidence: null,
+        detectingAttempts: 1,
+        detectingEscalatedAt: null,
+        summary: "Detecting runtime truth (runtime lost)",
+        guidance: "Checking runtime and process evidence now.",
+      },
+    });
+
+    render(<SessionCard session={session} />);
+    expect(screen.queryByText("Checking runtime and process evidence now.")).not.toBeInTheDocument();
+  });
+
   it("renders terminal link", () => {
     const session = makeSession({ id: "backend-5" });
     render(<SessionCard session={session} />);
@@ -215,7 +263,7 @@ describe("SessionCard", () => {
     const session = makeSession({ activity: "exited" });
     render(<SessionCard session={session} />);
     // Header shows compact "restore"; expanded panel shows "restore session"
-    expect(screen.getByText("restore")).toBeInTheDocument();
+    expect(screen.getByText("restore")).toHaveClass("session-card__restore-control");
   });
 
   it("does not show restore button when agent is active", () => {

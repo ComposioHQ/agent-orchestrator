@@ -1,26 +1,44 @@
-import type { Session } from "@aoagents/ao-core";
-import { isOrchestratorSession, isTerminalSession } from "@aoagents/ao-core/types";
+import {
+  type Session,
+  isOrchestratorSession,
+} from "@aoagents/ao-core";
 import type { Orchestrator } from "@/components/OrchestratorSelector";
 
-/**
- * Filter and map sessions to orchestrator DTOs.
- * Shared between page.tsx and API route to ensure consistent orchestrator listing.
- */
+export function selectCanonicalProjectOrchestrator(
+  sessions: Session[],
+  sessionPrefix: string,
+  allSessionPrefixes?: string[],
+): Session | null {
+  return (
+    sessions.find(
+      (session) =>
+        session.id === `${sessionPrefix}-orchestrator` &&
+        isOrchestratorSession(session, sessionPrefix, allSessionPrefixes),
+    ) ?? null
+  );
+}
+
+export function mapSessionToOrchestrator(
+  session: Session,
+  projectName: string,
+): Orchestrator {
+  return {
+    id: session.id,
+    projectId: session.projectId,
+    projectName,
+    status: session.status,
+    activity: session.activity,
+    createdAt: session.createdAt?.toISOString() ?? null,
+    lastActivityAt: session.lastActivityAt?.toISOString() ?? null,
+  };
+}
+
 export function mapSessionsToOrchestrators(
   sessions: Session[],
   sessionPrefix: string,
   projectName: string,
   allSessionPrefixes?: string[],
 ): Orchestrator[] {
-  return sessions
-    .filter((s) => isOrchestratorSession(s, sessionPrefix, allSessionPrefixes) && !isTerminalSession(s))
-    .map((s) => ({
-      id: s.id,
-      projectId: s.projectId,
-      projectName,
-      status: s.status,
-      activity: s.activity,
-      createdAt: s.createdAt?.toISOString() ?? null,
-      lastActivityAt: s.lastActivityAt?.toISOString() ?? null,
-    }));
+  const canonical = selectCanonicalProjectOrchestrator(sessions, sessionPrefix, allSessionPrefixes);
+  return canonical ? [mapSessionToOrchestrator(canonical, projectName)] : [];
 }

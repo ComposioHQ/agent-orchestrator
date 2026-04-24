@@ -139,8 +139,14 @@ describe("update-check", () => {
 
     it("returns 'npm-global' for Windows global path", () => {
       expect(
-        classifyInstallPath("C:\\Users\\test\\AppData\\Roaming\\npm\\lib\\node_modules\\@aoagents\\ao-cli\\dist\\lib\\update-check.js"),
+        classifyInstallPath("C:\\Users\\test\\AppData\\Roaming\\npm\\node_modules\\@aoagents\\ao-cli\\dist\\lib\\update-check.js"),
       ).toBe("npm-global");
+    });
+
+    it("returns 'unknown' for Windows local project node_modules", () => {
+      expect(
+        classifyInstallPath("C:\\Users\\test\\projects\\ao\\node_modules\\@aoagents\\ao-cli\\dist\\lib\\update-check.js"),
+      ).toBe("unknown");
     });
 
     it("returns 'pnpm-global' for pnpm global store path", () => {

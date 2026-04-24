@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
-import { validateConfig } from "../../config.js";
+import { createInitialCanonicalLifecycle } from "../../lifecycle-state.js";
 import { getWorkspaceAgentsMdPath } from "../../opencode-agents-md.js";
 import {
   writeMetadata,
@@ -1162,128 +1162,101 @@ describe("spawn", () => {
   });
 
   describe("spawnOrchestrator", () => {
-    it("throws when no workspace plugin is configured", async () => {
+    const projectPath = () => config.projects["my-app"]!.path;
+
+    it("does not require a workspace plugin and runs from the project path", async () => {
       const registryNoWorkspace: PluginRegistry = {
         ...mockRegistry,
         get: vi.fn().mockImplementation((slot: string) => {
           if (slot === "runtime") return mockRuntime;
           if (slot === "agent") return mockAgent;
-          return null; // no workspace plugin
+          return null;
         }),
       };
       const sm = createSessionManager({ config, registry: registryNoWorkspace });
 
-      await expect(sm.spawnOrchestrator({ projectId: "my-app" })).rejects.toThrow(
-        "spawnOrchestrator requires a workspace plugin",
-      );
-
-      // Reserved session metadata should be cleaned up
-      expect(readMetadataRaw(sessionsDir, "app-orchestrator-1")).toBeNull();
-      expect(mockRuntime.create).not.toHaveBeenCalled();
-    });
-
-    it("creates orchestrator session with correct ID", async () => {
-      const sm = createSessionManager({ config, registry: mockRegistry });
-
       const session = await sm.spawnOrchestrator({ projectId: "my-app" });
 
-      expect(session.id).toBe("app-orchestrator-1");
-      expect(session.status).toBe("working");
-      expect(session.projectId).toBe("my-app");
-      expect(session.branch).toBe("orchestrator/app-orchestrator-1");
-      expect(session.issueId).toBeNull();
-      expect(session.workspacePath).toBe("/tmp/ws");
+      expect(session.id).toBe("app-orchestrator");
+      expect(session.workspacePath).toBe(projectPath());
+      expect(session.branch).toBeNull();
+      expect(mockRuntime.create).toHaveBeenCalled();
     });
 
-    it("creates a worktree with an orchestrator branch", async () => {
+    it("creates the canonical orchestrator session and reuses it on later calls", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const first = await sm.spawnOrchestrator({ projectId: "my-app" });
+      const second = await sm.spawnOrchestrator({ projectId: "my-app" });
+
+      expect(first.id).toBe("app-orchestrator");
+      expect(second.id).toBe("app-orchestrator");
+      expect(mockRuntime.create).toHaveBeenCalledTimes(1);
+      expect(mockWorkspace.create).not.toHaveBeenCalled();
+    });
+
+    it("writes metadata with canonical orchestrator fields", async () => {
       const sm = createSessionManager({ config, registry: mockRegistry });
 
       await sm.spawnOrchestrator({ projectId: "my-app" });
 
-      expect(mockWorkspace.create).toHaveBeenCalledWith(
+      const meta = readMetadata(sessionsDir, "app-orchestrator");
+      const raw = readMetadataRaw(sessionsDir, "app-orchestrator");
+      expect(meta).not.toBeNull();
+      expect(meta!.status).toBe("working");
+      expect(meta!.project).toBe("my-app");
+      expect(meta!.branch).toBe("");
+      expect(meta!.tmuxName).toBeDefined();
+      expect(meta!.runtimeHandle).toBeDefined();
+      expect(raw?.["role"]).toBe("orchestrator");
+      expect(raw?.["agent"]).toBe("mock-agent");
+      expect(raw?.["worktree"]).toBe(projectPath());
+    });
+
+    it("calls agent.setupWorkspaceHooks on the project path", async () => {
+      const agentWithHooks: Agent = {
+        ...mockAgent,
+        setupWorkspaceHooks: vi.fn().mockResolvedValue(undefined),
+      };
+      const registryWithHooks: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return agentWithHooks;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
+
+      const sm = createSessionManager({ config, registry: registryWithHooks });
+      await sm.spawnOrchestrator({ projectId: "my-app" });
+
+      expect(agentWithHooks.setupWorkspaceHooks).toHaveBeenCalledWith(
+        projectPath(),
+        expect.objectContaining({ dataDir: sessionsDir }),
+      );
+    });
+
+    it("calls runtime.create with the project path and canonical session id", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      await sm.spawnOrchestrator({ projectId: "my-app" });
+
+      expect(mockRuntime.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          sessionId: "app-orchestrator-1",
-          branch: "orchestrator/app-orchestrator-1",
-          projectId: "my-app",
+          sessionId: expect.stringContaining("-app-orchestrator"),
+          workspacePath: projectPath(),
+          launchCommand: "mock-agent --start",
+          environment: expect.objectContaining({
+            AO_SESSION: "app-orchestrator",
+            AO_SESSION_NAME: "app-orchestrator",
+            AO_PROJECT_ID: "my-app",
+          }),
         }),
       );
     });
 
-    it("uses the worktree path returned by the workspace plugin", async () => {
-      const worktreePath = join(tmpDir, "orchestrator-ws");
-      (mockWorkspace.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        path: worktreePath,
-        branch: "orchestrator/app-orchestrator-1",
-        sessionId: "app-orchestrator-1",
-        projectId: "my-app",
-      });
-      const sm = createSessionManager({ config, registry: mockRegistry });
-
-      const session = await sm.spawnOrchestrator({ projectId: "my-app" });
-
-      expect(session.workspacePath).toBe(worktreePath);
-      expect(session.branch).toBe("orchestrator/app-orchestrator-1");
-    });
-
-    it("writes metadata with proper fields", async () => {
-      const sm = createSessionManager({ config, registry: mockRegistry });
-
-      await sm.spawnOrchestrator({ projectId: "my-app" });
-
-      const meta = readMetadata(sessionsDir, "app-orchestrator-1");
-      expect(meta).not.toBeNull();
-      expect(meta!.status).toBe("working");
-      expect(meta!.project).toBe("my-app");
-      expect(meta!.branch).toBe("orchestrator/app-orchestrator-1");
-      expect(meta!.tmuxName).toBeDefined();
-      expect(meta!.runtimeHandle).toBeDefined();
-    });
-
-    it("writes metadata with worktree path and orchestrator role", async () => {
-      const sm = createSessionManager({ config, registry: mockRegistry });
-
-      await sm.spawnOrchestrator({ projectId: "my-app" });
-
-      const meta = readMetadataRaw(sessionsDir, "app-orchestrator-1");
-      expect(meta?.["role"]).toBe("orchestrator");
-      expect(meta?.["branch"]).toBe("orchestrator/app-orchestrator-1");
-      expect(meta?.["status"]).toBe("working");
-      expect(meta?.["project"]).toBe("my-app");
-    });
-
-    it("increments the orchestrator counter for each new session", async () => {
-      const sm = createSessionManager({ config, registry: mockRegistry });
-
-      const s1 = await sm.spawnOrchestrator({ projectId: "my-app" });
-      const s2 = await sm.spawnOrchestrator({ projectId: "my-app" });
-
-      expect(s1.id).toBe("app-orchestrator-1");
-      expect(s2.id).toBe("app-orchestrator-2");
-      expect(mockWorkspace.create).toHaveBeenCalledTimes(2);
-    });
-
-    it("cleans up reserved metadata on workspace creation failure", async () => {
-      (mockWorkspace.create as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new Error("workspace creation failed"),
-      );
-      const sm = createSessionManager({ config, registry: mockRegistry });
-
-      await expect(sm.spawnOrchestrator({ projectId: "my-app" })).rejects.toThrow(
-        "workspace creation failed",
-      );
-
-      // Reserved session file should be cleaned up
-      expect(readMetadataRaw(sessionsDir, "app-orchestrator-1")).toBeNull();
-    });
-
-    it("destroys the worktree and metadata when runtime creation fails", async () => {
-      const worktreePath = join(tmpDir, "orchestrator-ws-rt-fail");
-      (mockWorkspace.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        path: worktreePath,
-        branch: "orchestrator/app-orchestrator-1",
-        sessionId: "app-orchestrator-1",
-        projectId: "my-app",
-      });
+    it("cleans up metadata when runtime creation fails", async () => {
       (mockRuntime.create as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error("runtime creation failed"),
       );
@@ -1293,18 +1266,11 @@ describe("spawn", () => {
         "runtime creation failed",
       );
 
-      expect(mockWorkspace.destroy).toHaveBeenCalledWith(worktreePath);
-      expect(readMetadataRaw(sessionsDir, "app-orchestrator-1")).toBeNull();
+      expect(mockWorkspace.destroy).not.toHaveBeenCalled();
+      expect(readMetadataRaw(sessionsDir, "app-orchestrator")).toBeNull();
     });
 
-    it("destroys the worktree when post-launch setup fails", async () => {
-      const worktreePath = join(tmpDir, "orchestrator-ws-postlaunch-fail");
-      (mockWorkspace.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        path: worktreePath,
-        branch: "orchestrator/app-orchestrator-1",
-        sessionId: "app-orchestrator-1",
-        projectId: "my-app",
-      });
+    it("cleans up metadata and runtime when post-launch setup fails", async () => {
       const postLaunchError = new Error("post-launch setup failed");
       const agentWithPostLaunch: typeof mockAgent = {
         ...mockAgent,
@@ -1326,8 +1292,8 @@ describe("spawn", () => {
       );
 
       expect(mockRuntime.destroy).toHaveBeenCalled();
-      expect(mockWorkspace.destroy).toHaveBeenCalledWith(worktreePath);
-      expect(readMetadataRaw(sessionsDir, "app-orchestrator-1")).toBeNull();
+      expect(mockWorkspace.destroy).not.toHaveBeenCalled();
+      expect(readMetadataRaw(sessionsDir, "app-orchestrator")).toBeNull();
     });
 
     it("deletes previous OpenCode orchestrator sessions before starting", async () => {
@@ -1335,17 +1301,14 @@ describe("spawn", () => {
       const mockBin = installMockOpencode(
         tmpDir,
         JSON.stringify([
-          { id: "ses_old", title: "AO:app-orchestrator-1", updated: "2025-01-01T00:00:00.000Z" },
-          { id: "ses_new", title: "AO:app-orchestrator-1", updated: "2025-01-02T00:00:00.000Z" },
+          { id: "ses_old", title: "AO:app-orchestrator", updated: "2025-01-01T00:00:00.000Z" },
+          { id: "ses_new", title: "AO:app-orchestrator", updated: "2025-01-02T00:00:00.000Z" },
         ]),
         deleteLogPath,
       );
       process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
 
-      const opencodeAgent: Agent = {
-        ...mockAgent,
-        name: "opencode",
-      };
+      const opencodeAgent: Agent = { ...mockAgent, name: "opencode" };
       const registryWithOpenCode: PluginRegistry = {
         ...mockRegistry,
         get: vi.fn().mockImplementation((slot: string) => {
@@ -1355,7 +1318,6 @@ describe("spawn", () => {
           return null;
         }),
       };
-
       const configWithDelete: OrchestratorConfig = {
         ...config,
         defaults: { ...config.defaults, agent: "opencode" },
@@ -1375,29 +1337,28 @@ describe("spawn", () => {
       const deleteLog = readFileSync(deleteLogPath, "utf-8");
       expect(deleteLog).toContain("session delete ses_old");
       expect(deleteLog).toContain("session delete ses_new");
-
       expect(opencodeAgent.getLaunchCommand).toHaveBeenCalledWith(
         expect.objectContaining({
-          sessionId: "app-orchestrator-1",
+          sessionId: "app-orchestrator",
           projectConfig: expect.objectContaining({
             agentConfig: expect.not.objectContaining({ opencodeSessionId: expect.any(String) }),
           }),
         }),
       );
 
-      const meta = readMetadataRaw(sessionsDir, "app-orchestrator-1");
+      const meta = readMetadataRaw(sessionsDir, "app-orchestrator");
       expect(meta?.["agent"]).toBe("opencode");
       expect(meta?.["opencodeSessionId"]).toBeUndefined();
     });
 
-    it("discovers and persists OpenCode session id by title when strategy is reuse", async () => {
-      const deleteLogPath = join(tmpDir, "opencode-delete-orchestrator-reuse-discovery.log");
+    it("discovers and persists OpenCode session ids by canonical title when strategy is reuse", async () => {
+      const deleteLogPath = join(tmpDir, "opencode-delete-orchestrator-reuse.log");
       const mockBin = installMockOpencode(
         tmpDir,
         JSON.stringify([
           {
             id: "ses_discovered_orchestrator",
-            title: "AO:app-orchestrator-1",
+            title: "AO:app-orchestrator",
             updated: 1_772_777_000_000,
           },
         ]),
@@ -1405,10 +1366,7 @@ describe("spawn", () => {
       );
       process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
 
-      const opencodeAgent: Agent = {
-        ...mockAgent,
-        name: "opencode",
-      };
+      const opencodeAgent: Agent = { ...mockAgent, name: "opencode" };
       const registryWithOpenCode: PluginRegistry = {
         ...mockRegistry,
         get: vi.fn().mockImplementation((slot: string) => {
@@ -1418,7 +1376,6 @@ describe("spawn", () => {
           return null;
         }),
       };
-
       const configWithReuse: OrchestratorConfig = {
         ...config,
         defaults: { ...config.defaults, agent: "opencode" },
@@ -1435,268 +1392,17 @@ describe("spawn", () => {
       const sm = createSessionManager({ config: configWithReuse, registry: registryWithOpenCode });
       await sm.spawnOrchestrator({ projectId: "my-app" });
 
-      const meta = readMetadataRaw(sessionsDir, "app-orchestrator-1");
+      expect(opencodeAgent.getLaunchCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectConfig: expect.objectContaining({
+            agentConfig: expect.objectContaining({
+              opencodeSessionId: "ses_discovered_orchestrator",
+            }),
+          }),
+        }),
+      );
+      const meta = readMetadataRaw(sessionsDir, "app-orchestrator");
       expect(meta?.["opencodeSessionId"]).toBe("ses_discovered_orchestrator");
-    });
-
-    it("reuses mapped OpenCode session id when strategy is reuse and opencode lists it by title", async () => {
-      const deleteLogPath = join(tmpDir, "opencode-delete-orchestrator-reuse-restart.log");
-      const mockBin = installMockOpencode(
-        tmpDir,
-        JSON.stringify([
-          {
-            id: "ses_existing",
-            title: "AO:app-orchestrator-1",
-            updated: 1_772_777_000_000,
-          },
-        ]),
-        deleteLogPath,
-      );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
-
-      const opencodeAgent: Agent = {
-        ...mockAgent,
-        name: "opencode",
-      };
-      const registryWithOpenCode: PluginRegistry = {
-        ...mockRegistry,
-        get: vi.fn().mockImplementation((slot: string) => {
-          if (slot === "runtime") return mockRuntime;
-          if (slot === "agent") return opencodeAgent;
-          if (slot === "workspace") return mockWorkspace;
-          return null;
-        }),
-      };
-
-      const configWithReuse: OrchestratorConfig = {
-        ...config,
-        defaults: { ...config.defaults, agent: "opencode" },
-        projects: {
-          ...config.projects,
-          "my-app": {
-            ...config.projects["my-app"],
-            agent: "opencode",
-            orchestratorSessionStrategy: "reuse",
-          },
-        },
-      };
-
-      const sm = createSessionManager({ config: configWithReuse, registry: registryWithOpenCode });
-      await sm.spawnOrchestrator({ projectId: "my-app" });
-
-      expect(opencodeAgent.getLaunchCommand).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectConfig: expect.objectContaining({
-            agentConfig: expect.objectContaining({ opencodeSessionId: "ses_existing" }),
-          }),
-        }),
-      );
-      const meta = readMetadataRaw(sessionsDir, "app-orchestrator-1");
-      expect(meta?.["opencodeSessionId"]).toBe("ses_existing");
-    });
-
-    it("discovers OpenCode mapping by title when no archived mapping exists for new session id", async () => {
-      const deleteLogPath = join(tmpDir, "opencode-delete-orchestrator-reuse-title-fallback.log");
-      const mockBin = installMockOpencode(
-        tmpDir,
-        JSON.stringify([
-          { id: "ses_existing", title: "AO:app-orchestrator-1", updated: 1_772_777_000_000 },
-        ]),
-        deleteLogPath,
-      );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
-
-      const opencodeAgent: Agent = {
-        ...mockAgent,
-        name: "opencode",
-      };
-      const registryWithOpenCode: PluginRegistry = {
-        ...mockRegistry,
-        get: vi.fn().mockImplementation((slot: string) => {
-          if (slot === "runtime") return mockRuntime;
-          if (slot === "agent") return opencodeAgent;
-          if (slot === "workspace") return mockWorkspace;
-          return null;
-        }),
-      };
-
-      const configWithReuse: OrchestratorConfig = {
-        ...config,
-        defaults: { ...config.defaults, agent: "opencode" },
-        projects: {
-          ...config.projects,
-          "my-app": {
-            ...config.projects["my-app"],
-            agent: "opencode",
-            orchestratorSessionStrategy: "reuse",
-          },
-        },
-      };
-
-      const sm = createSessionManager({ config: configWithReuse, registry: registryWithOpenCode });
-      await sm.spawnOrchestrator({ projectId: "my-app" });
-
-      expect(opencodeAgent.getLaunchCommand).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectConfig: expect.objectContaining({
-            agentConfig: expect.objectContaining({ opencodeSessionId: "ses_existing" }),
-          }),
-        }),
-      );
-    });
-
-    it("reuses OpenCode session by title when orchestrator mapping is missing", async () => {
-      const deleteLogPath = join(tmpDir, "opencode-delete-orchestrator-reuse-title.log");
-      const mockBin = installMockOpencode(
-        tmpDir,
-        JSON.stringify([
-          { id: "ses_title_match", title: "AO:app-orchestrator-1", updated: 1_772_777_000_000 },
-        ]),
-        deleteLogPath,
-      );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
-
-      const opencodeAgent: Agent = {
-        ...mockAgent,
-        name: "opencode",
-      };
-      const registryWithOpenCode: PluginRegistry = {
-        ...mockRegistry,
-        get: vi.fn().mockImplementation((slot: string) => {
-          if (slot === "runtime") return mockRuntime;
-          if (slot === "agent") return opencodeAgent;
-          if (slot === "workspace") return mockWorkspace;
-          return null;
-        }),
-      };
-
-      const configWithReuse: OrchestratorConfig = {
-        ...config,
-        defaults: { ...config.defaults, agent: "opencode" },
-        projects: {
-          ...config.projects,
-          "my-app": {
-            ...config.projects["my-app"],
-            agent: "opencode",
-            orchestratorSessionStrategy: "reuse",
-          },
-        },
-      };
-
-      const sm = createSessionManager({ config: configWithReuse, registry: registryWithOpenCode });
-      await sm.spawnOrchestrator({ projectId: "my-app" });
-
-      expect(opencodeAgent.getLaunchCommand).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectConfig: expect.objectContaining({
-            agentConfig: expect.objectContaining({ opencodeSessionId: "ses_title_match" }),
-          }),
-        }),
-      );
-      const meta = readMetadataRaw(sessionsDir, "app-orchestrator-1");
-      expect(meta?.["opencodeSessionId"]).toBe("ses_title_match");
-    });
-
-    it("calls agent.setupWorkspaceHooks on worktree path", async () => {
-      const agentWithHooks: Agent = {
-        ...mockAgent,
-        setupWorkspaceHooks: vi.fn().mockResolvedValue(undefined),
-      };
-      const registryWithHooks: PluginRegistry = {
-        ...mockRegistry,
-        get: vi.fn().mockImplementation((slot: string) => {
-          if (slot === "runtime") return mockRuntime;
-          if (slot === "agent") return agentWithHooks;
-          if (slot === "workspace") return mockWorkspace;
-          return null;
-        }),
-      };
-
-      const sm = createSessionManager({ config, registry: registryWithHooks });
-      await sm.spawnOrchestrator({ projectId: "my-app" });
-
-      expect(agentWithHooks.setupWorkspaceHooks).toHaveBeenCalledWith(
-        "/tmp/ws",
-        expect.objectContaining({ dataDir: sessionsDir }),
-      );
-    });
-
-    it("calls runtime.create with proper config", async () => {
-      const sm = createSessionManager({ config, registry: mockRegistry });
-
-      await sm.spawnOrchestrator({ projectId: "my-app" });
-
-      expect(mockRuntime.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          workspacePath: "/tmp/ws",
-          launchCommand: "mock-agent --start",
-        }),
-      );
-    });
-
-    it("does not persist orchestratorSessionReused metadata on newly created sessions", async () => {
-      const sm = createSessionManager({ config, registry: mockRegistry });
-
-      await sm.spawnOrchestrator({ projectId: "my-app" });
-
-      const meta = readMetadataRaw(sessionsDir, "app-orchestrator-1");
-      expect(meta?.["orchestratorSessionReused"]).toBeUndefined();
-    });
-
-    it("uses orchestratorModel when configured", async () => {
-      const configWithOrchestratorModel: OrchestratorConfig = {
-        ...config,
-        projects: {
-          ...config.projects,
-          "my-app": {
-            ...config.projects["my-app"],
-            agentConfig: {
-              model: "worker-model",
-              orchestratorModel: "orchestrator-model",
-            },
-          },
-        },
-      };
-
-      const sm = createSessionManager({
-        config: configWithOrchestratorModel,
-        registry: mockRegistry,
-      });
-      await sm.spawnOrchestrator({ projectId: "my-app" });
-
-      expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
-        expect.objectContaining({ model: "orchestrator-model" }),
-      );
-    });
-
-    it("keeps orchestrator launch permissionless even when shared config sets permissions", async () => {
-      const configWithSharedPermissions: OrchestratorConfig = {
-        ...config,
-        projects: {
-          ...config.projects,
-          "my-app": {
-            ...config.projects["my-app"],
-            agentConfig: {
-              permissions: "suggest",
-            },
-          },
-        },
-      };
-
-      const sm = createSessionManager({
-        config: configWithSharedPermissions,
-        registry: mockRegistry,
-      });
-      await sm.spawnOrchestrator({ projectId: "my-app" });
-
-      expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
-        expect.objectContaining({
-          permissions: "permissionless",
-          projectConfig: expect.objectContaining({
-            agentConfig: expect.objectContaining({ permissions: "permissionless" }),
-          }),
-        }),
-      );
     });
 
     it("uses project orchestrator agent when configured", async () => {
@@ -1726,9 +1432,7 @@ describe("spawn", () => {
           "my-app": {
             ...config.projects["my-app"],
             agent: "mock-agent",
-            orchestrator: {
-              agent: "codex",
-            },
+            orchestrator: { agent: "codex" },
           },
         },
       };
@@ -1741,7 +1445,7 @@ describe("spawn", () => {
 
       expect(mockCodexAgent.getLaunchCommand).toHaveBeenCalled();
       expect(mockAgent.getLaunchCommand).not.toHaveBeenCalled();
-      expect(readMetadataRaw(sessionsDir, "app-orchestrator-1")?.["agent"]).toBe("codex");
+      expect(readMetadataRaw(sessionsDir, "app-orchestrator")?.["agent"]).toBe("codex");
     });
 
     it("uses defaults orchestrator agent when project agent is not set", async () => {
@@ -1768,9 +1472,7 @@ describe("spawn", () => {
         ...config,
         defaults: {
           ...config.defaults,
-          orchestrator: {
-            agent: "codex",
-          },
+          orchestrator: { agent: "codex" },
         },
         projects: {
           ...config.projects,
@@ -1788,11 +1490,11 @@ describe("spawn", () => {
       await sm.spawnOrchestrator({ projectId: "my-app" });
 
       expect(mockCodexAgent.getLaunchCommand).toHaveBeenCalled();
-      expect(readMetadataRaw(sessionsDir, "app-orchestrator-1")?.["agent"]).toBe("codex");
+      expect(readMetadataRaw(sessionsDir, "app-orchestrator")?.["agent"]).toBe("codex");
     });
 
-    it("keeps shared worker permissions when role-specific config only overrides model", async () => {
-      const configWithSharedPermissions: OrchestratorConfig = {
+    it("uses orchestratorModel and remains permissionless", async () => {
+      const configWithOrchestratorModel: OrchestratorConfig = {
         ...config,
         projects: {
           ...config.projects,
@@ -1800,57 +1502,27 @@ describe("spawn", () => {
             ...config.projects["my-app"],
             agentConfig: {
               permissions: "suggest",
-            },
-            worker: {
-              agentConfig: {
-                model: "worker-model",
-              },
-            },
-          },
-        },
-      };
-
-      const validatedConfig = validateConfig(configWithSharedPermissions);
-      validatedConfig.configPath = config.configPath;
-      const sm = createSessionManager({
-        config: validatedConfig,
-        registry: mockRegistry,
-      });
-      await sm.spawn({ projectId: "my-app" });
-
-      expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
-        expect.objectContaining({ permissions: "suggest", model: "worker-model" }),
-      );
-    });
-
-    it("uses role-specific orchestratorModel when configured", async () => {
-      const configWithRoleOrchestratorModel: OrchestratorConfig = {
-        ...config,
-        projects: {
-          ...config.projects,
-          "my-app": {
-            ...config.projects["my-app"],
-            agentConfig: {
               model: "worker-model",
-              orchestratorModel: "shared-orchestrator-model",
-            },
-            orchestrator: {
-              agentConfig: {
-                orchestratorModel: "role-orchestrator-model",
-              },
+              orchestratorModel: "orchestrator-model",
             },
           },
         },
       };
 
       const sm = createSessionManager({
-        config: configWithRoleOrchestratorModel,
+        config: configWithOrchestratorModel,
         registry: mockRegistry,
       });
       await sm.spawnOrchestrator({ projectId: "my-app" });
 
       expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
-        expect.objectContaining({ model: "role-orchestrator-model" }),
+        expect.objectContaining({
+          permissions: "permissionless",
+          model: "orchestrator-model",
+          projectConfig: expect.objectContaining({
+            agentConfig: expect.objectContaining({ permissions: "permissionless" }),
+          }),
+        }),
       );
     });
 
@@ -1861,9 +1533,7 @@ describe("spawn", () => {
           ...config.projects,
           "my-app": {
             ...config.projects["my-app"],
-            agentConfig: {
-              subagent: "oracle",
-            },
+            agentConfig: { subagent: "oracle" },
           },
         },
       };
@@ -1887,19 +1557,16 @@ describe("spawn", () => {
         systemPrompt: "You are the orchestrator.",
       });
 
-      // Should pass systemPromptFile (not inline systemPrompt) to avoid tmux truncation
       expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
         expect.objectContaining({
-          sessionId: "app-orchestrator-1",
-          systemPromptFile: expect.stringContaining("orchestrator-prompt-app-orchestrator-1.md"),
+          sessionId: "app-orchestrator",
+          systemPromptFile: expect.stringContaining("orchestrator-prompt-app-orchestrator.md"),
         }),
       );
 
-      // Verify the file was actually written
       const callArgs = vi.mocked(mockAgent.getLaunchCommand).mock.calls[0][0];
       const promptFile = callArgs.systemPromptFile!;
       expect(existsSync(promptFile)).toBe(true);
-      const { readFileSync } = await import("node:fs");
       expect(readFileSync(promptFile, "utf-8")).toBe("You are the orchestrator.");
     });
 
@@ -1911,7 +1578,7 @@ describe("spawn", () => {
         systemPrompt: "Audit test coverage for session-manager and open PRs for gaps",
       });
 
-      const meta = readMetadataRaw(sessionsDir, "app-orchestrator-1");
+      const meta = readMetadataRaw(sessionsDir, "app-orchestrator");
       expect(meta?.["displayName"]).toBe(
         "Audit test coverage for session-manager and open PRs for gaps",
       );
@@ -1922,15 +1589,12 @@ describe("spawn", () => {
 
       await sm.spawnOrchestrator({ projectId: "my-app" });
 
-      const meta = readMetadataRaw(sessionsDir, "app-orchestrator-1");
+      const meta = readMetadataRaw(sessionsDir, "app-orchestrator");
       expect(meta?.["displayName"]).toBeUndefined();
     });
 
-    it("writes the orchestrator AGENTS.md block for OpenCode orchestrators", async () => {
-      const opencodeAgent: Agent = {
-        ...mockAgent,
-        name: "opencode",
-      };
+    it("writes the orchestrator AGENTS.md block into the project workspace for OpenCode", async () => {
+      const opencodeAgent: Agent = { ...mockAgent, name: "opencode" };
       const registryWithOpenCode: PluginRegistry = {
         ...mockRegistry,
         get: vi.fn().mockImplementation((slot: string) => {
@@ -1962,7 +1626,7 @@ describe("spawn", () => {
         systemPrompt: "You are the orchestrator.",
       });
 
-      const agentsMdPath = getWorkspaceAgentsMdPath("/tmp/ws");
+      const agentsMdPath = getWorkspaceAgentsMdPath(projectPath());
       expect(existsSync(agentsMdPath)).toBe(true);
       expect(readFileSync(agentsMdPath, "utf-8")).toBe(
         "<!-- AO_ORCHESTRATOR_PROMPT_START -->\n## Agent Orchestrator\n\nYou are the orchestrator.\n<!-- AO_ORCHESTRATOR_PROMPT_END -->\n",
@@ -2003,6 +1667,147 @@ describe("spawn", () => {
 
       expect(session.runtimeHandle).toEqual(makeHandle("rt-1"));
     });
+  });
 
+  describe("ensureOrchestrator", () => {
+    function makeDeadOrchestratorLifecycle(timestamp: string) {
+      const lifecycle = createInitialCanonicalLifecycle("orchestrator", new Date(timestamp));
+      lifecycle.session.state = "terminated";
+      lifecycle.session.reason = "runtime_lost";
+      lifecycle.session.startedAt = timestamp;
+      lifecycle.session.terminatedAt = timestamp;
+      lifecycle.session.lastTransitionAt = timestamp;
+      lifecycle.runtime.state = "missing";
+      lifecycle.runtime.reason = "process_missing";
+      lifecycle.runtime.lastObservedAt = timestamp;
+      return lifecycle;
+    }
+
+    it("warns when legacy numbered orchestrator sessions still exist", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      writeMetadata(sessionsDir, "app-orchestrator-2", {
+        worktree: config.projects["my-app"]!.path,
+        branch: "",
+        status: "working",
+        project: "my-app",
+        role: "orchestrator",
+      });
+
+      await sm.ensureOrchestrator({ projectId: "my-app", systemPrompt: "test" });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Legacy numbered orchestrator sessions detected"),
+        expect.objectContaining({
+          projectId: "my-app",
+          legacySessionIds: ["app-orchestrator-2"],
+        }),
+      );
+
+      warnSpy.mockRestore();
+    });
+
+    it("reuses the live canonical orchestrator when it already exists", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        worktree: config.projects["my-app"]!.path,
+        branch: "",
+        status: "working",
+        project: "my-app",
+        role: "orchestrator",
+        createdAt: "2026-04-20T10:00:00.000Z",
+      });
+
+      const session = await sm.ensureOrchestrator({ projectId: "my-app", systemPrompt: "test" });
+
+      expect(session.id).toBe("app-orchestrator");
+      expect(mockRuntime.create).not.toHaveBeenCalled();
+    });
+
+    it("restores the canonical orchestrator when it is terminal but restorable", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        worktree: config.projects["my-app"]!.path,
+        branch: "",
+        status: "killed",
+        project: "my-app",
+        role: "orchestrator",
+        createdAt: "2026-04-21T10:00:00.000Z",
+        statePayload: JSON.stringify(makeDeadOrchestratorLifecycle("2026-04-21T10:00:00.000Z")),
+      });
+
+      const session = await sm.ensureOrchestrator({ projectId: "my-app", systemPrompt: "test" });
+
+      expect(session.id).toBe("app-orchestrator");
+      expect(mockRuntime.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("falls through to create when restoring the canonical orchestrator fails", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockAgent.getRestoreCommand = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("restore command failed"));
+
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        worktree: config.projects["my-app"]!.path,
+        branch: "",
+        status: "killed",
+        project: "my-app",
+        role: "orchestrator",
+        createdAt: "2026-04-21T10:00:00.000Z",
+        statePayload: JSON.stringify(makeDeadOrchestratorLifecycle("2026-04-21T10:00:00.000Z")),
+      });
+
+      const session = await sm.ensureOrchestrator({ projectId: "my-app", systemPrompt: "test" });
+
+      expect(session.id).toBe("app-orchestrator");
+      expect(mockRuntime.create).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "Failed to restore orchestrator session during ensure; falling back",
+        expect.objectContaining({ orchestratorId: "app-orchestrator" }),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("reuses the canonical orchestrator when concurrent ensure calls race to create it", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const results = await Promise.allSettled([
+        sm.ensureOrchestrator({ projectId: "my-app", systemPrompt: "test" }),
+        sm.ensureOrchestrator({ projectId: "my-app", systemPrompt: "test" }),
+      ]);
+
+      expect(results).toHaveLength(2);
+      expect(results[0]?.status).toBe("fulfilled");
+      expect(results[1]?.status).toBe("fulfilled");
+
+      if (results[0]?.status !== "fulfilled" || results[1]?.status !== "fulfilled") {
+        throw new Error("Expected both ensureOrchestrator calls to fulfill");
+      }
+
+      expect(results[0].value.id).toBe("app-orchestrator");
+      expect(results[1].value.id).toBe("app-orchestrator");
+      expect(mockRuntime.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws a clear error when the canonical orchestrator id collides with another project prefix", async () => {
+      config.projects["other-app"] = {
+        ...config.projects["my-app"]!,
+        name: "Other App",
+        storageKey: `${ctx.storageKey}-other`,
+        path: join(tmpDir, "other-app"),
+        sessionPrefix: "app-orchestrator",
+      };
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      await expect(
+        sm.ensureOrchestrator({ projectId: "my-app", systemPrompt: "test" }),
+      ).rejects.toThrow(/collides with sessionPrefix of project "other-app"/);
+    });
   });
 });

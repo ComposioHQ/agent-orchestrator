@@ -426,6 +426,9 @@ export function teardownTestContext(ctx: TestContext): void {
 export function createMockSessionManager(): OpenCodeSessionManager {
   return {
     spawn: vi.fn().mockResolvedValue(makeSession()),
+    ensureOrchestrator: vi
+      .fn()
+      .mockResolvedValue(makeSession({ id: "app-orchestrator", metadata: { role: "orchestrator" } })),
     spawnOrchestrator: vi.fn().mockResolvedValue(makeSession({ id: "app-orchestrator", metadata: { role: "orchestrator" } })),
     restore: vi.fn().mockResolvedValue(makeSession()),
     list: vi.fn().mockResolvedValue([]),

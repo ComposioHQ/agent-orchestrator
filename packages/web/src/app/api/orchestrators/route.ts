@@ -1,8 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { generateOrchestratorPrompt, generateSessionPrefix } from "@aoagents/ao-core";
+import { generateOrchestratorPrompt, generateSessionPrefix, isRestorable, isTerminalSession } from "@aoagents/ao-core";
 import { getServices } from "@/lib/services";
 import { validateIdentifier, validateConfiguredProject } from "@/lib/validation";
-import { mapSessionsToOrchestrators } from "@/lib/orchestrator-utils";
+import { mapSessionToOrchestrator, mapSessionsToOrchestrators, selectCanonicalProjectOrchestrator } from "@/lib/orchestrator-utils";
 
 function classifySpawnError(projectId: string, error: unknown): {
   status: number;
@@ -90,19 +90,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: configProjectErr }, { status: 404 });
     }
     const project = config.projects[projectId];
+    const sessionPrefix = project.sessionPrefix ?? projectId;
+    const allSessions = await sessionManager.list(projectId);
+    const allSessionPrefixes = Object.entries(config.projects).map(
+      ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
+    );
+    const canonical = selectCanonicalProjectOrchestrator(
+      allSessions,
+      sessionPrefix,
+      allSessionPrefixes,
+    );
 
     const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-    const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt });
+    const session = await sessionManager.ensureOrchestrator({ projectId, systemPrompt });
+    const reusedExisting =
+      canonical !== null && !isTerminalSession(canonical) && canonical.id === session.id;
+    const restoredExisting =
+      canonical !== null &&
+      isRestorable(canonical) &&
+      canonical.id === session.id &&
+      session.restoredAt !== undefined;
 
     return NextResponse.json(
       {
-        orchestrator: {
-          id: session.id,
-          projectId,
-          projectName: project.name,
-        },
+        orchestrator: mapSessionToOrchestrator(session, project.name),
+        ...(reusedExisting ? { reusedExisting: true } : {}),
+        ...(restoredExisting ? { reusedExisting: true, restoredExisting: true } : {}),
       },
-      { status: 201 },
+      { status: reusedExisting || restoredExisting ? 200 : 201 },
     );
   } catch (err) {
     const classified = classifySpawnError(body.projectId as string, err);

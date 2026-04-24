@@ -333,37 +333,23 @@ export interface Session {
   metadata: Record<string, string>;
 }
 
+export function selectPreferredOrchestratorSession(
+  sessions: Session[],
+  canonicalSessionId: string,
+): Session | null {
+  return sessions.find((session) => session.id === canonicalSessionId) ?? null;
+}
+
 export function isOrchestratorSession(
   session: { id: SessionId; metadata?: Record<string, string> },
   sessionPrefix?: string,
   allSessionPrefixes?: string[],
 ): boolean {
-  if (session.metadata?.["role"] === "orchestrator") {
-    return true;
-  }
   if (!sessionPrefix) {
-    return false;
+    return session.metadata?.["role"] === "orchestrator";
   }
-  const escaped = sessionPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (!new RegExp(`^${escaped}-orchestrator-\\d+$`).test(session.id)) {
-    return false;
-  }
-  // Guard against cross-project false positives: if the session ID is a plain
-  // numbered worker for any other known prefix (e.g. prefix "app-orchestrator"
-  // matches "app-orchestrator-1" as a worker), it is not an orchestrator.
-  if (allSessionPrefixes) {
-    for (const prefix of allSessionPrefixes) {
-      if (prefix === sessionPrefix) continue;
-      if (
-        new RegExp(
-          `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`,
-        ).test(session.id)
-      ) {
-        return false;
-      }
-    }
-  }
-  return true;
+  void allSessionPrefixes;
+  return session.id === `${sessionPrefix}-orchestrator`;
 }
 
 /** Config for creating a new session */
@@ -1694,6 +1680,7 @@ export interface KillOptions {
 /** Session manager — CRUD for sessions */
 export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
+  ensureOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   spawnOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;

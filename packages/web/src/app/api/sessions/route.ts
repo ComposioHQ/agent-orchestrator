@@ -1,4 +1,4 @@
-import { ACTIVITY_STATE, isOrchestratorSession, isTerminalSession } from "@aoagents/ao-core";
+import { ACTIVITY_STATE, isOrchestratorSession, type Session } from "@aoagents/ao-core";
 import { getServices, getSCM } from "@/lib/services";
 import {
   sessionToDashboard,
@@ -12,68 +12,16 @@ import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/l
 import { filterProjectSessions } from "@/lib/project-utils";
 import { settlesWithin } from "@/lib/async-utils";
 import type { DashboardOrchestratorLink } from "@/lib/types";
+import { selectCanonicalProjectOrchestrator } from "@/lib/orchestrator-utils";
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 const PR_ENRICH_TIMEOUT_MS = 4_000;
 const PER_PR_ENRICH_TIMEOUT_MS = 1_500;
 
-function hasTerminalPRState(session: Parameters<typeof isTerminalSession>[0]): boolean {
+function hasTerminalPRState(session: Session): boolean {
   const prState = session.lifecycle?.pr.state;
   return prState === "merged" || prState === "closed";
 }
-
-function compareOrchestratorRecency(a: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string }, b: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string }): number {
-  return (
-    (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0) ||
-    (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0) ||
-    a.id.localeCompare(b.id)
-  );
-}
-
-function listProjectOrchestratorSessions(
-  sessions: Parameters<typeof listDashboardOrchestrators>[0],
-  projects: Parameters<typeof listDashboardOrchestrators>[1],
-): Parameters<typeof listDashboardOrchestrators>[0] {
-  const allSessionPrefixes = Object.entries(projects).map(
-    ([projectId, project]) => project.sessionPrefix ?? projectId,
-  );
-
-  const projectOrchestrators = sessions
-    .filter((session) =>
-      isOrchestratorSession(
-        session,
-        projects[session.projectId]?.sessionPrefix ?? session.projectId,
-        allSessionPrefixes,
-      ),
-    )
-    .sort(compareOrchestratorRecency);
-
-  const liveOrchestrators = projectOrchestrators.filter((session) => !isTerminalSession(session));
-  return liveOrchestrators.length > 0 ? liveOrchestrators : projectOrchestrators;
-}
-
-function selectPreferredOrchestratorId(
-  sessions: Parameters<typeof listDashboardOrchestrators>[0],
-  projects: Parameters<typeof listDashboardOrchestrators>[1],
-): string | null {
-  return listProjectOrchestratorSessions(sessions, projects)[0]?.id ?? null;
-}
-
-function listPreferredProjectOrchestrators(
-  sessions: Parameters<typeof listDashboardOrchestrators>[0],
-  projects: Parameters<typeof listDashboardOrchestrators>[1],
-) : DashboardOrchestratorLink[] {
-  const preferredOrchestrators = listProjectOrchestratorSessions(sessions, projects);
-
-  return preferredOrchestrators
-    .map((session) => ({
-      id: session.id,
-      projectId: session.projectId,
-      projectName: projects[session.projectId]?.name ?? session.projectId,
-    }))
-    .sort((a, b) => a.projectName.localeCompare(b.projectName) || a.id.localeCompare(b.id));
-}
-
 export async function GET(request: Request) {
   const correlationId = getCorrelationId(request);
   const startedAt = Date.now();
@@ -93,12 +41,30 @@ export async function GET(request: Request) {
       ? await sessionManager.list(requestedProjectId)
       : await sessionManager.listCached(requestedProjectId);
     const visibleSessions = filterProjectSessions(coreSessions, projectFilter, config.projects);
+    const allSessionPrefixes = Object.entries(config.projects).map(
+      ([projectId, p]) => p.sessionPrefix ?? projectId,
+    );
     const orchestrators = requestedProjectId
-      ? listPreferredProjectOrchestrators(visibleSessions, config.projects)
+      ? (() => {
+          const project = config.projects[requestedProjectId];
+          const canonical = project
+            ? selectCanonicalProjectOrchestrator(
+                visibleSessions,
+                project.sessionPrefix ?? requestedProjectId,
+                allSessionPrefixes,
+              )
+            : null;
+          return canonical
+            ? [{
+                id: canonical.id,
+                projectId: canonical.projectId,
+                projectName: project?.name ?? canonical.projectId,
+              } satisfies DashboardOrchestratorLink]
+            : [];
+        })()
       : listDashboardOrchestrators(visibleSessions, config.projects);
-    const orchestratorId = requestedProjectId
-      ? selectPreferredOrchestratorId(visibleSessions, config.projects)
-      : (orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null);
+    const orchestratorId =
+      requestedProjectId || orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null;
 
     if (orchestratorOnly) {
       recordApiObservation({
@@ -123,9 +89,6 @@ export async function GET(request: Request) {
       );
     }
 
-    const allSessionPrefixes = Object.entries(config.projects).map(
-      ([projectId, p]) => p.sessionPrefix ?? projectId,
-    );
     let workerSessions = visibleSessions.filter(
       (session) =>
         !isOrchestratorSession(

@@ -105,22 +105,6 @@ function buildLifecycleSummary(session: Session): string {
   return `Session ${humanizeLifecycleToken(lifecycle.session.state)} (${humanizeLifecycleToken(lifecycle.session.reason)})`;
 }
 
-function buildLifecycleGuidance(session: Session): string | null {
-  const { lifecycle, metadata } = session;
-  if (lifecycle.session.state !== "detecting") {
-    return null;
-  }
-  const attempts = Number.parseInt(metadata["detectingAttempts"] ?? "0", 10);
-  const normalizedAttempts = Number.isFinite(attempts) ? attempts : 0;
-  if (metadata["detectingEscalatedAt"]) {
-    return "Detection retries exhausted. Inspect runtime evidence or restore the session manually.";
-  }
-  if (normalizedAttempts > 0) {
-    return `Checking runtime and process evidence now. Retry ${normalizedAttempts} is in progress.`;
-  }
-  return "Checking runtime and process evidence now.";
-}
-
 function buildDashboardLifecycle(session: Session): NonNullable<DashboardSession["lifecycle"]> {
   const lifecycle = session.lifecycle;
   return {
@@ -161,7 +145,7 @@ function buildDashboardLifecycle(session: Session): NonNullable<DashboardSession
     detectingAttempts: Number.parseInt(session.metadata["detectingAttempts"] ?? "0", 10) || 0,
     detectingEscalatedAt: session.metadata["detectingEscalatedAt"] ?? null,
     summary: buildLifecycleSummary(session),
-    guidance: buildLifecycleGuidance(session),
+    guidance: null,
   };
 }
 

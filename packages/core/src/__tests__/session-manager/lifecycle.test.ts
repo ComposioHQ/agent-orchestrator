@@ -512,7 +512,7 @@ describe("cleanup", () => {
     expect(result.skipped).toContain("app-1");
   });
 
-  it("skips orchestrator sessions by role metadata", async () => {
+  it("does not protect legacy sessions by role metadata alone", async () => {
     const deadRuntime: Runtime = {
       ...mockRuntime,
       isAlive: vi.fn().mockResolvedValue(false),
@@ -527,8 +527,8 @@ describe("cleanup", () => {
       }),
     };
 
-    // Session with role=orchestrator but a name that does NOT end in "-orchestrator"
-    // so only the role metadata check can protect it (not the name fallback)
+    // A non-canonical session that still carries stale orchestrator metadata should
+    // now be treated like any other cleanup candidate.
     writeMetadata(sessionsDir, "app-99", {
       worktree: "/tmp",
       branch: "main",
@@ -541,8 +541,8 @@ describe("cleanup", () => {
     const sm = createSessionManager({ config, registry: registryWithDead });
     const result = await sm.cleanup();
 
-    expect(result.killed).toHaveLength(0);
-    expect(result.skipped).toContain("app-99");
+    expect(result.killed).toContain("app-99");
+    expect(result.skipped).not.toContain("app-99");
   });
 
   it("skips orchestrator sessions by name fallback (no role metadata)", async () => {

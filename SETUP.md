@@ -826,6 +826,8 @@ Yes! Each orchestrator instance should have:
 
 AO derives runtime directories from the config location, so separate config locations already produce separate hash-scoped runtime paths under `~/.agent-orchestrator/`. Terminal WebSocket ports are auto-detected by default, so you typically only need to set `port:` differently. If you need explicit control, you can also set `terminalPort:` and `directTerminalPort:` per config.
 
+Orchestrator IDs are deterministic per project: AO uses exactly one orchestrator session per project, named `{sessionPrefix}-orchestrator`.
+
 Useful for:
 
 - Separating projects

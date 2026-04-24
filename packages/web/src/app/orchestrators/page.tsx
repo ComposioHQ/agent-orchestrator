@@ -20,7 +20,7 @@ export async function generateMetadata(props: {
       projectName = project.name;
     }
   }
-  return { title: { absolute: `ao | ${projectName} - Select Orchestrator` } };
+  return { title: { absolute: `ao | ${projectName} - Orchestrator` } };
 }
 
 export default async function OrchestratorsRoute(props: {
