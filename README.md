@@ -64,6 +64,7 @@ To install from source (for contributors):
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
 ```
+
 </details>
 
 ### Zsh Completion
@@ -173,7 +174,7 @@ AO keeps your Mac awake while running, so you can access the dashboard remotely 
 ```yaml
 # agent-orchestrator.yaml
 power:
-  preventIdleSleep: true  # Default on macOS, no-op on Linux
+  preventIdleSleep: true # Default on macOS, no-op on Linux
 ```
 
 Set to `false` if you want to allow idle sleep while AO runs.
@@ -184,15 +185,15 @@ Set to `false` if you want to allow idle sleep while AO runs.
 
 Seven plugin slots. Lifecycle stays in core.
 
-| Slot      | Default     | Alternatives             |
-| --------- | ----------- | ------------------------ |
-| Runtime   | tmux        | process                  |
-| Agent     | claude-code | codex, aider, cursor, opencode   |
-| Workspace | worktree    | clone                    |
-| Tracker   | github      | linear, gitlab           |
-| SCM       | github      | gitlab                   |
+| Slot      | Default     | Alternatives                                |
+| --------- | ----------- | ------------------------------------------- |
+| Runtime   | tmux        | process                                     |
+| Agent     | claude-code | codex, aider, cursor, opencode              |
+| Workspace | worktree    | clone                                       |
+| Tracker   | github      | linear, gitlab                              |
+| SCM       | github      | gitlab                                      |
 | Notifier  | desktop     | slack, discord, composio, webhook, openclaw |
-| Terminal  | iterm2      | web                      |
+| Terminal  | iterm2      | web                                         |
 
 All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
 
@@ -206,13 +207,14 @@ Running one AI agent in a terminal is easy. Running 30 across different issues, 
 
 ## Documentation
 
-| Doc                                      | What it covers                                               |
-| ---------------------------------------- | ------------------------------------------------------------ |
-| [Setup Guide](SETUP.md)                  | Detailed installation, configuration, and troubleshooting    |
-| [CLI Reference](docs/CLI.md)             | All `ao` commands (mostly used by the orchestrator agent)    |
-| [Examples](examples/)                    | Config templates (GitHub, Linear, multi-project, auto-merge) |
-| [Development Guide](docs/DEVELOPMENT.md) | Architecture, conventions, plugin pattern                    |
-| [Contributing](CONTRIBUTING.md)          | How to contribute, build plugins, PR process                 |
+| Doc                                                      | What it covers                                               |
+| -------------------------------------------------------- | ------------------------------------------------------------ |
+| [Setup Guide](SETUP.md)                                  | Detailed installation, configuration, and troubleshooting    |
+| [CLI Reference](docs/CLI.md)                             | All `ao` commands (mostly used by the orchestrator agent)    |
+| [Multi-Project Workflow](docs/MULTI_PROJECT_WORKFLOW.md) | Running many agents across many repos from one dashboard     |
+| [Examples](examples/)                                    | Config templates (GitHub, Linear, multi-project, auto-merge) |
+| [Development Guide](docs/DEVELOPMENT.md)                 | Architecture, conventions, plugin pattern                    |
+| [Contributing](CONTRIBUTING.md)                          | How to contribute, build plugins, PR process                 |
 
 ## Development
 

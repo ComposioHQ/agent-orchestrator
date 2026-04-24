@@ -1,0 +1,84 @@
+# Multiple projects, different trackers per project
+# See docs/MULTI_PROJECT_WORKFLOW.md for the full multi-project guide.
+#
+# This example shows three projects, each using a different tracker:
+#   - web   → GitHub Issues
+#   - platform → Linear (needs LINEAR_API_KEY)
+#   - infra → GitLab (needs GITLAB_TOKEN)
+#
+# One dashboard, one lifecycle loop, one notification pipeline.
+# All three show up side-by-side in the project sidebar.
+
+port: 3000
+
+defaults:
+  runtime: tmux
+  agent: claude-code
+  workspace: worktree
+  notifiers: [desktop, slack]
+
+projects:
+  web:
+    name: Marketing Site
+    repo: org/web
+    path: ~/code/web
+    defaultBranch: main
+    sessionPrefix: web
+
+    tracker:
+      plugin: github
+
+    agentRules: |
+      Use TypeScript strict mode.
+      All new components need tests.
+      Run `pnpm lint` before pushing.
+
+  platform:
+    name: Platform API
+    repo: org/platform
+    path: ~/code/platform
+    defaultBranch: main
+    sessionPrefix: plat
+
+    tracker:
+      plugin: linear
+      teamId: PLAT
+
+    agentRules: |
+      All endpoints require auth middleware.
+      Add OpenAPI specs for new routes.
+      Run `pnpm test` and `pnpm lint` before pushing.
+
+    # Platform gets auto-merge — tests are trusted here
+    reactions:
+      approved-and-green:
+        auto: true
+
+  infra:
+    name: Infrastructure
+    repo: org/infra
+    path: ~/code/infra
+    defaultBranch: main
+    sessionPrefix: inf
+
+    tracker:
+      plugin: gitlab
+      projectId: "12345"
+
+    agentRules: |
+      All changes need a `plan` output in the PR description.
+      Never edit production state files directly.
+
+# Slack notifier — shared across all three projects
+notifiers:
+  slack:
+    plugin: slack
+    webhook: ${SLACK_WEBHOOK_URL}
+    channel: "#agent-updates"
+
+# Route low-value events to Slack only, keep desktop popups for things that matter
+notificationRouting:
+  urgent: [desktop, slack]
+  action: [desktop, slack]
+  warning: [slack]
+  info: [slack]

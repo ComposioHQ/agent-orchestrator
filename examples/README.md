@@ -53,6 +53,19 @@ Use this if:
 - You want Slack notifications in addition to desktop
 - You need different rules per project
 
+For a full walkthrough of multi-session, multi-project workflows (shared vs per-project orchestrators, batch spawning, resource management), see [docs/MULTI_PROJECT_WORKFLOW.md](../docs/MULTI_PROJECT_WORKFLOW.md).
+
+### [multi-project-mixed-trackers.yaml](./multi-project-mixed-trackers.yaml)
+
+**Three projects, three trackers (GitHub + Linear + GitLab)**
+
+Extends `multi-project.yaml` with a third project on GitLab, plus per-project reaction overrides (auto-merge on one project only).
+
+Use this if:
+
+- You work across repos that live on different platforms
+- You want per-project automation policies (e.g. auto-merge enabled only where tests are trusted)
+
 ### [auto-merge.yaml](./auto-merge.yaml)
 
 **Aggressive automation with auto-merge**
