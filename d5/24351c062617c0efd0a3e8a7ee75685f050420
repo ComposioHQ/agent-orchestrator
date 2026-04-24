@@ -1,0 +1,23 @@
+packages/web/server/tmux-utils.ts
+  c0a31474a67a65f4 38-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "d524351c062617c0efd0a3e8a7ee75685f050420",
+  "prompts": {
+    "c0a31474a67a65f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c5addfcd-192e-4ba6-950a-99ee9d0f94ce",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 1,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
