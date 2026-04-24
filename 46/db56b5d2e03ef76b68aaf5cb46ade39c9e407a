@@ -1,0 +1,89 @@
+packages/web/src/components/__tests__/Dashboard.kanbanLayout.test.tsx
+  fa5537da28d3cf4b 1-68
+packages/web/src/components/__tests__/Dashboard.mobile.test.tsx
+  fa5537da28d3cf4b 6-7,9,32,76,99-101,221,249
+packages/web/src/components/__tests__/OrchestratorSelector.test.tsx
+  fa5537da28d3cf4b 12,39,46-50,53,56,60,66,69,77,84,92,104,108,121,132-133,183,204,221,236
+packages/web/src/components/__tests__/ProjectSidebar.test.tsx
+  fa5537da28d3cf4b 4,205-208,260-347,435
+packages/web/src/components/__tests__/Dashboard.emptyState.test.tsx
+  fa5537da28d3cf4b 6-10,24,119-145
+packages/web/src/components/SessionCard.tsx
+  fa5537da28d3cf4b 23-29,87-91,139-155,220-223,356-362,493-494,511,519,522,528-531,538-542,564,568,605-613,619,655-663,692,710-711,740-749,762-816,864-866,909-910,1007-1015
+packages/web/src/lib/__tests__/serialize.test.ts
+  fa5537da28d3cf4b 170,187,1031-1033,1039-1042,1213-1215
+packages/web/src/components/__tests__/SessionCard.coverage.test.tsx
+  fa5537da28d3cf4b 1-2,7-29,112-136
+packages/web/src/lib/client-fetch.ts
+  fa5537da28d3cf4b 1-94
+packages/web/src/components/OrchestratorSelector.tsx
+  fa5537da28d3cf4b 157,174-175,182,226,259,262
+packages/web/src/hooks/__tests__/useSessionEvents.mux.test.ts
+  fa5537da28d3cf4b 27-40,57-110
+packages/web/src/app/api/orchestrators/route.ts
+  fa5537da28d3cf4b 95
+packages/web/src/hooks/useSessionEvents.ts
+  fa5537da28d3cf4b 11,19-32,42,56,66,71-73,93-98,112-118,123,142-148,177,190,210-225,249-259,261-262,264-274,276-277,279-282,391-398
+packages/web/src/app/sessions/[id]/page.test.tsx
+  fa5537da28d3cf4b 11-14,146-157,159-162,165-169,178-182,255-258,261,288-289,293,317-359,361-363,366-406,532-594
+packages/web/src/components/__tests__/SessionDetail.desktop.test.tsx
+  fa5537da28d3cf4b 123-125,193,201-202,208-224,253-258,261-285,306-308,312-362,382-386
+packages/web/src/app/globals.css
+  fa5537da28d3cf4b 29-32,167,170,172,174,176,313,316,318,320,322,542-787,913-916,1152-1154,1235-1251,1295-1306,1308-1310,1318-1320,1337-1342,1375-1383,1404-1406,1510-1513,2334-2343,2706-2709,2786-2805,2852-2854,2988-3004,3453-3459,3464-3470,3503-3509,3514-3520,3593-3597,3693-3698,3704-3706,3748-3752,3767-3771,3775-3784,3863-3865,3970-3972,4413-4421,5023,5025,5027-5028,5316-5318,6673,7344-7348,7443-7448,7484-7487,7513-7521,7552-7554,7557-7562
+packages/web/src/app/layout.tsx
+  fa5537da28d3cf4b 36
+packages/web/src/lib/__tests__/project-name.test.ts
+  fa5537da28d3cf4b 2-4,27,32,60-214
+packages/web/src/components/ProjectSidebar.tsx
+  fa5537da28d3cf4b 31,198-204,278-282,305-307,334-336,346-377,379,381-449,451-452,454-459,461-464,466-467,470-473,475-493,495-498,500-518,520-527,529-545,547-564,566-573,575-587,589,591-593,595-603,605-674,676-702,704-736,739,742,744-747,749-759,762-766,769-778,780,782-788
+packages/web/src/app/api/events/route.ts
+  fa5537da28d3cf4b 13,31,48-56,59-69,120,132-138,144,148,196,208-214,216-222,228
+packages/web/src/app/api/sessions/[id]/route.ts
+  fa5537da28d3cf4b 10,13-17,32,34-37,41-44,50-58,61-64
+packages/web/src/__tests__/api-routes.test.ts
+  fa5537da28d3cf4b 215,688-713,872,888,941,958
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  fa5537da28d3cf4b 1283-1313
+packages/core/src/session-manager.ts
+  fa5537da28d3cf4b 1488-1491,1768-1777
+packages/web/src/app/sessions/[id]/error.tsx
+  fa5537da28d3cf4b 9-11,24-25
+packages/web/src/__tests__/components.test.tsx
+  fa5537da28d3cf4b 207-256,261-264,271,330-334,584-606,670-672
+packages/web/src/app/sessions/[id]/page.tsx
+  fa5537da28d3cf4b 3-4,7-9,18,37-41,78-80,118-286,367-369,375-377,379-382,403-406,417-418,422-428,433,437-438,443,484-485,487-508,522-524,536-537,542-546,552-554,580-584,587-589,596-597,599-606,612-614,616-618,624-626,679,698-720,723-747,752-776,780-813,817-841
+packages/web/src/lib/dashboard-page-data.ts
+  fa5537da28d3cf4b 93,101
+packages/web/src/lib/project-name.ts
+  fa5537da28d3cf4b 4-5,31-113,117-121,136-137
+packages/web/src/lib/serialize.ts
+  fa5537da28d3cf4b 148,233-234,288-290,606-609
+packages/web/src/app/orchestrators/page.tsx
+  fa5537da28d3cf4b 23,64-69
+packages/web/src/lib/__tests__/dashboard-page-data.fast-path.test.ts
+  fa5537da28d3cf4b 76,119,150,184,201
+packages/web/src/components/Dashboard.tsx
+  fa5537da28d3cf4b 5,108-115,152-153,161-168,170-171,173-175,211-213,215,390,447-452,454-455,480-482,495-503,591-593,666-674,779,800-802,835-836,860-862,874-875
+packages/web/src/components/SessionDetail.tsx
+  fa5537da28d3cf4b 18,93-221,224,226,229-230,236-239,312-314,328-334,365,368-369,390-434,437-447,449-492,494,497-507,509-531,533-543,545-551,553-563,565-579,584,586-590,592-609,611,613-631,633-665,667-676,684-692,768-769,815,893-896,899-905,1028-1029,1036-1037,1045-1050,1056-1061
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "46db56b5d2e03ef76b68aaf5cb46ade39c9e407a",
+  "prompts": {
+    "fa5537da28d3cf4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dbf92-9051-7ed2-8f70-151ae425d2aa",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 10085,
+      "total_deletions": 1205,
+      "accepted_lines": 9856,
+      "overriden_lines": 2
+    }
+  }
+}
