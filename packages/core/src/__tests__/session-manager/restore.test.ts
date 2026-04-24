@@ -332,6 +332,32 @@ describe("restore", () => {
     );
   });
 
+  it("preserves issueTitle when restoring from archive", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      issue: "TEST-1",
+      issueTitle: "Add retry logic to webhook handler",
+      createdAt: "2025-01-01T00:00:00.000Z",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    deleteMetadata(sessionsDir, "app-1");
+    expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.restore("app-1");
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta).not.toBeNull();
+    expect(meta!["issueTitle"]).toBe("Add retry logic to webhook handler");
+  });
+
   it("restores from archive with multiple archived versions (picks latest)", async () => {
     const wsPath = join(tmpDir, "ws-app-1");
     mkdirSync(wsPath, { recursive: true });

@@ -68,8 +68,14 @@ function tryAcquire(lockFile: string): (() => void) | null {
       pid: process.pid,
       acquiredAt: new Date().toISOString(),
     };
-    writeFileSync(fd, JSON.stringify(metadata), "utf-8");
-    closeSync(fd);
+    try {
+      writeFileSync(fd, JSON.stringify(metadata), "utf-8");
+    } catch {
+      try { unlinkSync(lockFile); } catch { /* best effort */ }
+      return null;
+    } finally {
+      try { closeSync(fd); } catch { /* best effort */ }
+    }
     return () => {
       try { unlinkSync(lockFile); } catch { /* best effort */ }
     };

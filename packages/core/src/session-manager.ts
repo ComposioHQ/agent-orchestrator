@@ -2812,6 +2812,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         role: raw["role"],
         tmuxName: raw["tmuxName"],
         issue: raw["issue"],
+        issueTitle: raw["issueTitle"],
         pr: raw["pr"],
         prAutoDetect:
           raw["prAutoDetect"] === "off" ? "off" : raw["prAutoDetect"] === "on" ? "on" : undefined,

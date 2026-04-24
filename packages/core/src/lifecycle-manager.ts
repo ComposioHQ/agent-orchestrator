@@ -307,6 +307,8 @@ function buildEventContext(
 
     pr = {
       url: session.pr.url,
+      // agentInfo.summary is a best-effort fallback — it's the task summary
+      // (not necessarily the PR title) and may be absent early in the session.
       title: cached?.title ?? session.agentInfo?.summary ?? null,
       number: session.pr.number,
       branch: session.pr.branch,
@@ -2194,6 +2196,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           data: {
             oldPRState: previousPRState,
             newPRState: session.lifecycle.pr.state,
+            // prNumber/prUrl are intentionally duplicated alongside context.pr
+            // for backward compatibility with existing webhook consumers.
             prNumber: session.lifecycle.pr.number,
             prUrl: session.lifecycle.pr.url,
             ...context,
