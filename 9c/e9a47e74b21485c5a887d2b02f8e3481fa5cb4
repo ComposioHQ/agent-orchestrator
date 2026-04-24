@@ -1,0 +1,38 @@
+packages/core/src/paths.ts
+  f691d4319c75f69a 231
+.changeset/fixed-orchestrator-identity.md
+  f691d4319c75f69a 1-10
+packages/web/src/__tests__/api-routes.test.ts
+  f691d4319c75f69a 369,410
+packages/core/src/index.ts
+  f691d4319c75f69a 241
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  f691d4319c75f69a 8-10,1306-1328
+packages/core/src/session-manager.ts
+  f691d4319c75f69a 73,876,1768-1773,1780-1783
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "9ce9a47e74b21485c5a887d2b02f8e3481fa5cb4",
+  "prompts": {
+    "f691d4319c75f69a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dbef8-bd9c-7002-bc74-5f4747390b57",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 55,
+      "total_deletions": 14,
+      "accepted_lines": 55,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e1aac9baf373c4": {
+      "author": "Ashish Huddar"
+    }
+  }
+}
