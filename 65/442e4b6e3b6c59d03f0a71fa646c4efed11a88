@@ -1,0 +1,81 @@
+packages/core/src/__tests__/lifecycle-manager.test.ts
+  8d515a3de6d4fe36 3,1402,1407-1408,1442-1456,1458-1460,1470-1512
+packages/integration-tests/src/agent-claude-code.integration.test.ts
+  8d515a3de6d4fe36 146
+packages/web/src/__tests__/api-routes.test.ts
+  8d515a3de6d4fe36 553-684
+packages/web/src/app/api/sessions/route.ts
+  8d515a3de6d4fe36 20-24,159-160,168-175
+packages/cli/__tests__/scripts/doctor-script.test.ts
+  8d515a3de6d4fe36 116,122
+packages/core/src/index.ts
+  8d515a3de6d4fe36 159-160
+packages/core/src/__tests__/spawn-target.test.ts
+  8d515a3de6d4fe36 1-89
+packages/cli/src/commands/spawn.ts
+  8d515a3de6d4fe36 7,195-198,235-246,285-288,293-305,308-325,330-333,335,341,343-350,353-361,363-390,392-401
+packages/core/src/spawn-target.ts
+  8d515a3de6d4fe36 1-48
+docs/CLI.md
+  8d515a3de6d4fe36 15,49-65
+skills/release-notes/ao-weekly-release/run.py
+  8d515a3de6d4fe36 1-630
+packages/core/src/format-automated-comments.ts
+  8d515a3de6d4fe36 1-84
+packages/core/src/lifecycle-manager.ts
+  8d515a3de6d4fe36 41-42,1250-1264,1269
+packages/cli/__tests__/commands/completion.test.ts
+  8d515a3de6d4fe36 1-222
+packages/web/src/app/globals.css
+  8d515a3de6d4fe36 7529,7613-7635,7637-7644
+packages/cli/__tests__/commands/spawn.test.ts
+  8d515a3de6d4fe36 74,248-381,883-1019
+completions/_ao
+  8d515a3de6d4fe36 1-8
+packages/cli/src/commands/completion.ts
+  8d515a3de6d4fe36 1-38
+packages/web/server/mux-websocket.ts
+  8d515a3de6d4fe36 287-288,290
+scripts/ao-doctor.sh
+  8d515a3de6d4fe36 58-61,111,176-179
+packages/web/src/components/DirectTerminal.tsx
+  8d515a3de6d4fe36 195,389-393,491-493,498-503,506-508,515,546,930-939,941-942
+packages/cli/src/lib/completion.ts
+  8d515a3de6d4fe36 1-494
+packages/core/src/config.ts
+  8d515a3de6d4fe36 658-666,695-699
+packages/plugins/agent-claude-code/src/index.ts
+  8d515a3de6d4fe36 138,140-144
+README.md
+  8d515a3de6d4fe36 69-94
+skills/release-notes/ao-weekly-release/SKILL.md
+  8d515a3de6d4fe36 1-90
+packages/cli/src/program.ts
+  8d515a3de6d4fe36 17,47
+packages/core/src/__tests__/format-automated-comments.test.ts
+  8d515a3de6d4fe36 1-177
+packages/web/src/components/SessionDetail.tsx
+  8d515a3de6d4fe36 3,222-230,232,234-242,442-446,449-457,459-476,480-486
+.changeset/fix-bugbot-detail-dispatch.md
+  8d515a3de6d4fe36 1-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "65442e4b6e3b6c59d03f0a71fa646c4efed11a88",
+  "prompts": {
+    "8d515a3de6d4fe36": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dba13-6e90-77e2-accf-c00d57a853cb",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 4371,
+      "total_deletions": 825,
+      "accepted_lines": 10425,
+      "overriden_lines": 20
+    }
+  }
+}
