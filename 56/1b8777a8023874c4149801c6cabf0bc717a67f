@@ -1,0 +1,27 @@
+.changeset/fix-web-tmux-resolver-wrapped-storagekey.md
+  c0a31474a67a65f4 1-7
+packages/web/server/tmux-utils.ts
+  c0a31474a67a65f4 9-11,19-76,116-118,120,122-130,135,142,153-180,187-188
+packages/web/server/__tests__/tmux-utils.test.ts
+  c0a31474a67a65f4 11-20,368,377,391,404,414,439,454,472,492,504,521,537,549,562,574,593,597-598,607-826,840,858,866,878,890,902,914,932,944,956,971,987,999,1011,1019
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "561b8777a8023874c4149801c6cabf0bc717a67f",
+  "prompts": {
+    "c0a31474a67a65f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c5addfcd-192e-4ba6-950a-99ee9d0f94ce",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 427,
+      "total_deletions": 94,
+      "accepted_lines": 377,
+      "overriden_lines": 0
+    }
+  }
+}
