@@ -30,7 +30,7 @@ type ServerMessage =
   | { ch: "terminal"; id: string; type: "data"; data: string }
   | { ch: "terminal"; id: string; type: "exited"; code: number }
   | { ch: "terminal"; id: string; type: "opened" }
-  | { ch: "terminal"; id: string; type: "error"; message: string }
+  | { ch: "terminal"; id: string; type: "error"; message: string; code?: number }
   | { ch: "sessions"; type: "snapshot"; sessions: SessionPatch[] }
   | { ch: "system"; type: "pong" }
   | { ch: "system"; type: "error"; message: string };
@@ -229,6 +229,14 @@ interface ManagedTerminal {
 
 const RING_BUFFER_MAX = 50 * 1024; // 50KB max per terminal
 const MAX_REATTACH_ATTEMPTS = 3;
+
+/**
+ * Custom close code for "session not found" — mirrors
+ * TERMINAL_CLOSE_SESSION_NOT_FOUND in src/lib/mux-protocol.ts. Kept duplicated
+ * because tsconfig.server.json isolates the server tree from src/.
+ */
+const TERMINAL_CLOSE_SESSION_NOT_FOUND = 4004;
+const SESSION_NOT_FOUND_PREFIX = "Session not found:";
 
 /**
  * TerminalManager manages PTY processes independently of WebSocket connections.
@@ -557,11 +565,14 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
             }
           } catch (err) {
             if (ws.readyState === WebSocket.OPEN) {
+              const message = err instanceof Error ? err.message : String(err);
+              const isNotFound = message.startsWith(SESSION_NOT_FOUND_PREFIX);
               const errorMsg: ServerMessage = {
                 ch: "terminal",
                 id,
                 type: "error",
-                message: err instanceof Error ? err.message : String(err),
+                message,
+                ...(isNotFound ? { code: TERMINAL_CLOSE_SESSION_NOT_FOUND } : {}),
               };
               ws.send(JSON.stringify(errorMsg));
             }

@@ -2,6 +2,7 @@ import React from "react";
 import { renderHook, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { MuxProvider, useMux, useMuxOptional } from "../MuxProvider";
+import { TERMINAL_CLOSE_SESSION_NOT_FOUND } from "@/lib/mux-protocol";
 
 // ---------------------------------------------------------------------------
 // Mock WebSocket
@@ -527,6 +528,206 @@ describe("MuxProvider terminal operations", () => {
 // ---------------------------------------------------------------------------
 // buildMuxWsUrl — via provider behaviour
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Reconnect cap + session-not-found handling
+// ---------------------------------------------------------------------------
+
+describe("MuxProvider reconnect cap", () => {
+  it("caps reconnects at 8 attempts and transitions to disconnected", async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useMux(), { wrapper });
+      await flushInit();
+
+      // Drive 8 close events through failing reconnect cycles. The very
+      // first close increments reconnectAttempt → 1 and schedules attempt 1.
+      // Subsequent closes on each new instance do the same. After 8 closes
+      // we've used all attempts and the 9th close must transition to
+      // "disconnected" with NO further socket being created.
+      for (let i = 0; i < 8; i++) {
+        expect(MockWebSocket.instances.length).toBe(i + 1);
+        const ws = MockWebSocket.instances[i];
+        act(() => ws.simulateClose());
+        expect(result.current.status).toBe("reconnecting");
+        // Advance past the backoff delay so the next socket is constructed.
+        act(() => vi.advanceTimersByTime(60_000));
+        await flushInit();
+      }
+
+      // 9th socket now exists; closing it exceeds the cap.
+      expect(MockWebSocket.instances.length).toBe(9);
+      const lastWs = MockWebSocket.instances[8];
+      const countBeforeFinalClose = MockWebSocket.instances.length;
+      act(() => lastWs.simulateClose());
+
+      expect(result.current.status).toBe("disconnected");
+
+      // Advance well past any backoff — no new socket should be scheduled.
+      act(() => vi.advanceTimersByTime(120_000));
+      await flushInit();
+      expect(MockWebSocket.instances.length).toBe(countBeforeFinalClose);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resets reconnect attempt counter after a successful open", async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useMux(), { wrapper });
+      await flushInit();
+
+      // Burn through a handful of failed reconnects.
+      for (let i = 0; i < 5; i++) {
+        const ws = MockWebSocket.instances[i];
+        act(() => ws.simulateClose());
+        act(() => vi.advanceTimersByTime(60_000));
+        await flushInit();
+      }
+
+      // The next socket succeeds — this must reset reconnectAttempt to 0.
+      const okWs = MockWebSocket.instances[5];
+      act(() => okWs.simulateOpen());
+      expect(result.current.status).toBe("connected");
+
+      // Now fail 8 more times; because the counter reset, we should get
+      // 8 fresh reconnect instances (not hit the cap after a handful).
+      const baseline = MockWebSocket.instances.length;
+      for (let i = 0; i < 8; i++) {
+        const ws = MockWebSocket.instances[baseline - 1 + i];
+        act(() => ws.simulateClose());
+        expect(result.current.status).toBe("reconnecting");
+        act(() => vi.advanceTimersByTime(60_000));
+        await flushInit();
+      }
+      expect(MockWebSocket.instances.length).toBe(baseline + 8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("MuxProvider session-not-found (code 4004) handling", () => {
+  async function setupConnected() {
+    const { result } = renderHook(() => useMux(), { wrapper });
+    await flushInit();
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    act(() => ws.simulateOpen());
+    return { result, ws };
+  }
+
+  it("dispatches the unavailable notice to subscribers on 4004 error", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { result, ws } = await setupConnected();
+
+    const received: string[] = [];
+    act(() => {
+      result.current.subscribeTerminal("s-gone", (d) => received.push(d));
+    });
+
+    act(() =>
+      ws.simulateMessage({
+        ch: "terminal",
+        id: "s-gone",
+        type: "error",
+        message: "Session not found: s-gone",
+        code: TERMINAL_CLOSE_SESSION_NOT_FOUND,
+      }),
+    );
+
+    expect(received.some((m) => m.includes("Session not found"))).toBe(true);
+    expect(received.some((m) => m.includes("terminal unavailable"))).toBe(true);
+    spy.mockRestore();
+  });
+
+  it("does not re-open the terminal on reconnect after a 4004 error", async () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { result } = renderHook(() => useMux(), { wrapper });
+      await flushInit();
+
+      const ws1 = MockWebSocket.instances[0];
+      act(() => ws1.simulateOpen());
+
+      // Mark the terminal as opened on this connection, then the server
+      // reports it vanished with the custom 4004 code.
+      act(() => {
+        result.current.openTerminal("s-gone");
+      });
+      act(() => ws1.simulateMessage({ ch: "terminal", id: "s-gone", type: "opened" }));
+      act(() =>
+        ws1.simulateMessage({
+          ch: "terminal",
+          id: "s-gone",
+          type: "error",
+          message: "Session not found: s-gone",
+          code: TERMINAL_CLOSE_SESSION_NOT_FOUND,
+        }),
+      );
+
+      // Force a reconnect and confirm s-gone is NOT in the re-open set.
+      act(() => ws1.simulateClose());
+      act(() => vi.advanceTimersByTime(1_100));
+      await flushInit();
+
+      const ws2 = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+      act(() => ws2.simulateOpen());
+
+      const reopened = ws2.sentMessages.some((m) => {
+        const p = JSON.parse(m) as Record<string, unknown>;
+        return p.ch === "terminal" && p.type === "open" && p.id === "s-gone";
+      });
+      expect(reopened).toBe(false);
+    } finally {
+      spy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores generic terminal errors (no code) without clearing the opened set", async () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { result } = renderHook(() => useMux(), { wrapper });
+      await flushInit();
+
+      const ws1 = MockWebSocket.instances[0];
+      act(() => ws1.simulateOpen());
+
+      act(() => {
+        result.current.openTerminal("s-ok");
+      });
+      act(() => ws1.simulateMessage({ ch: "terminal", id: "s-ok", type: "opened" }));
+      // Generic error — no 4004 code — should NOT remove the terminal.
+      act(() =>
+        ws1.simulateMessage({
+          ch: "terminal",
+          id: "s-ok",
+          type: "error",
+          message: "PTY failed",
+        }),
+      );
+
+      act(() => ws1.simulateClose());
+      act(() => vi.advanceTimersByTime(1_100));
+      await flushInit();
+
+      const ws2 = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+      act(() => ws2.simulateOpen());
+
+      const reopened = ws2.sentMessages.some((m) => {
+        const p = JSON.parse(m) as Record<string, unknown>;
+        return p.ch === "terminal" && p.type === "open" && p.id === "s-ok";
+      });
+      expect(reopened).toBe(true);
+    } finally {
+      spy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("buildMuxWsUrl", () => {
   it("uses directTerminalPort from runtime config when on a custom port", async () => {

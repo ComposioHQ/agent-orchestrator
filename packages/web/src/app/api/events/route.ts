@@ -28,6 +28,23 @@ export async function GET(request: Request): Promise<Response> {
   let updates: ReturnType<typeof setInterval> | undefined;
   let observerProjectId: string | undefined;
   let observer: ProjectObserver | null = null;
+  let closed = false;
+
+  const safeEnqueue = (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    chunk: Uint8Array,
+  ): boolean => {
+    if (closed) return false;
+    try {
+      controller.enqueue(chunk);
+      return true;
+    } catch {
+      closed = true;
+      if (heartbeat) clearInterval(heartbeat);
+      if (updates) clearInterval(updates);
+      return false;
+    }
+  };
 
   const ensureObserver = (config: ServicesConfig): ProjectObserver | null => {
     if (!observerProjectId) {
@@ -96,7 +113,7 @@ export async function GET(request: Request): Promise<Response> {
               lastActivityAt: s.lastActivityAt,
             })),
           };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(initialEvent)}\n\n`));
+          safeEnqueue(controller, encoder.encode(`data: ${JSON.stringify(initialEvent)}\n\n`));
           if (projectObserver && observerProjectId) {
             projectObserver.recordOperation({
               metric: "sse_snapshot",
@@ -110,7 +127,8 @@ export async function GET(request: Request): Promise<Response> {
           }
         } catch {
           // If services aren't available, send empty snapshot
-          controller.enqueue(
+          safeEnqueue(
+            controller,
             encoder.encode(
               `data: ${JSON.stringify({ type: "snapshot", correlationId, emittedAt: new Date().toISOString(), sessions: [] })}\n\n`,
             ),
@@ -120,17 +138,22 @@ export async function GET(request: Request): Promise<Response> {
 
       // Send periodic heartbeat
       heartbeat = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(`: heartbeat\n\n`));
-        } catch {
+        if (closed) {
           clearInterval(heartbeat);
           clearInterval(updates);
+          return;
         }
+        safeEnqueue(controller, encoder.encode(`: heartbeat\n\n`));
       }, 15000);
 
       // Poll for session state changes frequently enough that new workers
       // appear in the dashboard/sidebar quickly after the orchestrator spawns them.
       updates = setInterval(() => {
+        if (closed) {
+          clearInterval(heartbeat);
+          clearInterval(updates);
+          return;
+        }
         void (async () => {
           let dashboardSessions;
           try {
@@ -158,36 +181,33 @@ export async function GET(request: Request): Promise<Response> {
               });
             }
 
-            try {
-              const attentionZones = config.dashboard?.attentionZones ?? "simple";
-              const event = {
-                type: "snapshot",
+            const attentionZones = config.dashboard?.attentionZones ?? "simple";
+            const event = {
+              type: "snapshot",
+              correlationId,
+              emittedAt: new Date().toISOString(),
+              sessions: dashboardSessions.map((s) => ({
+                id: s.id,
+                status: s.status,
+                activity: s.activity,
+                attentionLevel: getAttentionLevel(s, attentionZones),
+                lastActivityAt: s.lastActivityAt,
+              })),
+            };
+            const delivered = safeEnqueue(
+              controller,
+              encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+            );
+            if (delivered && projectObserver && observerProjectId) {
+              projectObserver.recordOperation({
+                metric: "sse_snapshot",
+                operation: "sse.snapshot",
+                outcome: "success",
                 correlationId,
-                emittedAt: new Date().toISOString(),
-                sessions: dashboardSessions.map((s) => ({
-                  id: s.id,
-                  status: s.status,
-                  activity: s.activity,
-                  attentionLevel: getAttentionLevel(s, attentionZones),
-                  lastActivityAt: s.lastActivityAt,
-                })),
-              };
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-              if (projectObserver && observerProjectId) {
-                projectObserver.recordOperation({
-                  metric: "sse_snapshot",
-                  operation: "sse.snapshot",
-                  outcome: "success",
-                  correlationId,
-                  projectId: observerProjectId,
-                  data: { sessionCount: dashboardSessions.length, initial: false },
-                  level: "info",
-                });
-              }
-            } catch {
-              // enqueue failure means the stream is closed — clean up both intervals
-              clearInterval(updates);
-              clearInterval(heartbeat);
+                projectId: observerProjectId,
+                data: { sessionCount: dashboardSessions.length, initial: false },
+                level: "info",
+              });
             }
           } catch {
             // Transient service error — skip this poll, retry on next interval
@@ -197,6 +217,7 @@ export async function GET(request: Request): Promise<Response> {
       }, SESSION_EVENTS_POLL_INTERVAL_MS);
     },
     cancel() {
+      closed = true;
       clearInterval(heartbeat);
       clearInterval(updates);
       void (async () => {

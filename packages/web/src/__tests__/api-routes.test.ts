@@ -1285,6 +1285,182 @@ describe("API Routes", () => {
       expect(event.sessions[0]).toHaveProperty("id");
       expect(event.sessions[0]).toHaveProperty("attentionLevel");
     });
+
+    // ── Helpers for the SSE cancel / closed-flag tests ─────────────────
+    //
+    // Intercepts the ReadableStream constructor the route uses so the test
+    // can reach the actual controller and spy on .enqueue(), and wraps
+    // setInterval/clearInterval to capture the two specific handles the
+    // route schedules (heartbeat at 15s, poll at 5s) and their callbacks.
+    interface SseInstrumentation {
+      enqueueSpy: ReturnType<typeof vi.fn>;
+      intervals: Array<{
+        id: ReturnType<typeof setInterval>;
+        handler: () => void;
+        ms: number;
+        cleared: boolean;
+      }>;
+      restore: () => void;
+    }
+
+    function instrumentSse(): SseInstrumentation {
+      const origRS = globalThis.ReadableStream;
+      const origSet = globalThis.setInterval;
+      const origClear = globalThis.clearInterval;
+
+      const intervals: SseInstrumentation["intervals"] = [];
+      const enqueueSpy = vi.fn();
+
+      class TrackedRS<R = Uint8Array> extends (origRS as unknown as {
+        new <T>(source?: UnderlyingSource<T>): ReadableStream<T>;
+      })<R> {
+        constructor(source?: UnderlyingSource<R>) {
+          const wrapped: UnderlyingSource<R> = {
+            ...(source ?? {}),
+            start(controller) {
+              const realEnqueue = controller.enqueue.bind(controller);
+              controller.enqueue = ((chunk: R) => {
+                enqueueSpy(chunk);
+                return realEnqueue(chunk);
+              }) as typeof controller.enqueue;
+              return source?.start?.(controller);
+            },
+          };
+          super(wrapped);
+        }
+      }
+
+      (globalThis as unknown as { ReadableStream: typeof ReadableStream }).ReadableStream =
+        TrackedRS as unknown as typeof ReadableStream;
+
+      globalThis.setInterval = ((handler: () => void, ms?: number) => {
+        const id = origSet(handler, ms);
+        intervals.push({ id, handler, ms: ms ?? 0, cleared: false });
+        return id;
+      }) as typeof setInterval;
+
+      globalThis.clearInterval = ((id: ReturnType<typeof setInterval> | undefined) => {
+        const entry = intervals.find((e) => e.id === id);
+        if (entry) entry.cleared = true;
+        return origClear(id);
+      }) as typeof clearInterval;
+
+      return {
+        enqueueSpy,
+        intervals,
+        restore() {
+          (globalThis as unknown as { ReadableStream: typeof ReadableStream }).ReadableStream =
+            origRS;
+          globalThis.setInterval = origSet;
+          globalThis.clearInterval = origClear;
+        },
+      };
+    }
+
+    /** Flush microtasks while fake timers are active. */
+    async function flushMicrotasks() {
+      // Multiple ticks — the route awaits getServices() twice before enqueue.
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+    }
+
+    it("makes no enqueue calls after cancel, even when heartbeat and update timers fire", async () => {
+      vi.useFakeTimers();
+      const sse = instrumentSse();
+      try {
+        const req = makeRequest("/api/events", { method: "GET" });
+        const res = await eventsGET(req);
+        const reader = res.body!.getReader();
+
+        // Flush the async init so the initial snapshot is enqueued.
+        await flushMicrotasks();
+        await reader.read();
+
+        // Cancel mid-flight. After this the closed flag must short-circuit
+        // any further enqueue from heartbeat / update / observer callbacks.
+        await reader.cancel();
+        await flushMicrotasks();
+
+        const callsAtCancel = sse.enqueueSpy.mock.calls.length;
+
+        // Drive the heartbeat interval (15s) and update interval (5s)
+        // several cycles past cancel. Without the closed flag this is where
+        // the old code attempted to enqueue into a cancelled controller.
+        await vi.advanceTimersByTimeAsync(60_000);
+        await flushMicrotasks();
+
+        expect(sse.enqueueSpy.mock.calls.length).toBe(callsAtCancel);
+      } finally {
+        sse.restore();
+        vi.useRealTimers();
+      }
+    });
+
+    it("clears the specific heartbeat and update interval handles on cancel", async () => {
+      vi.useFakeTimers();
+      const sse = instrumentSse();
+      try {
+        const req = makeRequest("/api/events", { method: "GET" });
+        const res = await eventsGET(req);
+        const reader = res.body!.getReader();
+
+        await flushMicrotasks();
+        await reader.read();
+
+        // Exactly two intervals are scheduled by the route: the 15s
+        // heartbeat and the 5s session-state poll. Grab them by their ms.
+        const heartbeat = sse.intervals.find((e) => e.ms === 15_000);
+        const update = sse.intervals.find((e) => e.ms === 5_000);
+        expect(heartbeat).toBeDefined();
+        expect(update).toBeDefined();
+        expect(heartbeat!.cleared).toBe(false);
+        expect(update!.cleared).toBe(false);
+
+        await reader.cancel();
+        await flushMicrotasks();
+
+        expect(heartbeat!.cleared).toBe(true);
+        expect(update!.cleared).toBe(true);
+      } finally {
+        sse.restore();
+        vi.useRealTimers();
+      }
+    });
+
+    it("short-circuits the poll callback post-cancel (closed flag, not swallow)", async () => {
+      vi.useFakeTimers();
+      const sse = instrumentSse();
+      try {
+        const req = makeRequest("/api/events", { method: "GET" });
+        const res = await eventsGET(req);
+        const reader = res.body!.getReader();
+
+        await flushMicrotasks();
+        await reader.read();
+
+        const update = sse.intervals.find((e) => e.ms === 5_000);
+        const heartbeat = sse.intervals.find((e) => e.ms === 15_000);
+        expect(update).toBeDefined();
+        expect(heartbeat).toBeDefined();
+
+        await reader.cancel();
+        await flushMicrotasks();
+
+        const callsAtCancel = sse.enqueueSpy.mock.calls.length;
+
+        // Directly invoke the captured callbacks as if a lingering timer
+        // fired. The `closed` flag must short-circuit BOTH paths — they
+        // must not even attempt to enqueue (which would otherwise be
+        // caught by safeEnqueue, masking a bug where the path still ran).
+        update!.handler();
+        heartbeat!.handler();
+        await flushMicrotasks();
+
+        expect(sse.enqueueSpy.mock.calls.length).toBe(callsAtCancel);
+      } finally {
+        sse.restore();
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe("GET /api/observability", () => {

@@ -1,7 +1,12 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useMemo, useCallback, type ReactNode } from "react";
-import type { ClientMessage, ServerMessage, SessionPatch } from "@/lib/mux-protocol";
+import {
+  TERMINAL_CLOSE_SESSION_NOT_FOUND,
+  type ClientMessage,
+  type ServerMessage,
+  type SessionPatch,
+} from "@/lib/mux-protocol";
 
 interface MuxContextValue {
   subscribeTerminal: (id: string, callback: (data: string) => void) => () => void;
@@ -46,6 +51,9 @@ function normalizePathValue(value: unknown): string | undefined {
   if (!trimmed.startsWith("/")) return undefined;
   return trimmed;
 }
+
+/** Cap on reconnect attempts before giving up and surfacing a permanent error. */
+const MAX_RECONNECT_ATTEMPTS = 8;
 
 function buildMuxWsUrl(runtimeConfig: { directTerminalPort?: string; proxyWsPath?: string }): string {
   const loc = window.location;
@@ -151,6 +159,19 @@ export function MuxProvider({ children }: { children: ReactNode }) {
               }
             } else if (msg.type === "error") {
               console.error(`[MuxProvider] Terminal error for ${msg.id}:`, msg.message);
+              // "Session not found" is a permanent condition — don't re-open this
+              // terminal on reconnect, and surface a terminal-level notice so the
+              // DirectTerminal component can stop trying.
+              if (msg.code === TERMINAL_CLOSE_SESSION_NOT_FOUND) {
+                openedTerminalsRef.current.delete(msg.id);
+                const subs = subscribersRef.current.get(msg.id);
+                if (subs) {
+                  const notice = `\r\n\x1b[31m[Session not found — terminal unavailable]\x1b[0m\r\n`;
+                  for (const callback of subs) {
+                    callback(notice);
+                  }
+                }
+              }
             }
           } else if (msg.ch === "sessions" && msg.type === "snapshot") {
             setSessions(msg.sessions);
@@ -170,6 +191,16 @@ export function MuxProvider({ children }: { children: ReactNode }) {
 
         // Don't reconnect if the provider has been unmounted
         if (isDestroyedRef.current) return;
+
+        // Cap reconnect attempts to avoid an infinite loop after the server
+        // (or individual session) has gone away for good.
+        if (reconnectAttempt.current >= MAX_RECONNECT_ATTEMPTS) {
+          console.warn(
+            `[MuxProvider] Reached ${MAX_RECONNECT_ATTEMPTS} reconnect attempts, giving up`,
+          );
+          setStatus("disconnected");
+          return;
+        }
 
         // Reconnect with exponential backoff
         const delayMs = Math.min(1000 * Math.pow(2, reconnectAttempt.current), 30_000);
