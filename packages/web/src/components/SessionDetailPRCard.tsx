@@ -3,7 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { CI_STATUS } from "@aoagents/ao-core/types";
 import { cn } from "@/lib/cn";
-import { isPRMergeReady, type DashboardPR } from "@/lib/types";
+import {
+  isPRMergeReady,
+  isPRRateLimited,
+  isPRUnenriched,
+  type DashboardPR,
+} from "@/lib/types";
+import { buildGitHubCompareUrl } from "@/lib/github-links";
 import { cleanBugbotComment } from "./session-detail-utils";
 
 interface SessionDetailPRCardProps {
@@ -22,6 +28,11 @@ interface BlockerChip {
   text: string;
   variant: "fail" | "warn" | "muted";
   notified?: boolean;
+}
+
+function hasMergeConflicts(pr: DashboardPR): boolean {
+  const mergeabilityReliable = !isPRUnenriched(pr) && !isPRRateLimited(pr);
+  return mergeabilityReliable && pr.state !== "merged" && !pr.mergeability.noConflicts;
 }
 
 function buildBlockerChips(
@@ -44,34 +55,34 @@ function buildBlockerChips(
     pr.reviewDecision === "changes_requested" ||
     lifecyclePrReason === "changes_requested" ||
     lifecycleStatus === "changes_requested";
-  const hasConflicts = pr.state !== "merged" && !pr.mergeability.noConflicts;
+  const hasConflicts = hasMergeConflicts(pr);
 
   if (ciIsFailing) {
     const failCount = pr.ciChecks.filter((check) => check.status === "failed").length;
     chips.push({
-      icon: "\u2717",
+      icon: "✗",
       variant: "fail",
       text: failCount > 0 ? `${failCount} check${failCount !== 1 ? "s" : ""} failing` : "CI failing",
       notified: ciNotified,
     });
   } else if (pr.ciStatus === CI_STATUS.PENDING) {
-    chips.push({ icon: "\u25CF", variant: "warn", text: "CI pending" });
+    chips.push({ icon: "●", variant: "warn", text: "CI pending" });
   }
 
   if (hasChangesRequested) {
     chips.push({
-      icon: "\u2717",
+      icon: "✗",
       variant: "fail",
       text: "Changes requested",
       notified: reviewNotified,
     });
   } else if (!pr.mergeability.approved) {
-    chips.push({ icon: "\u25CB", variant: "muted", text: "Awaiting reviewer" });
+    chips.push({ icon: "○", variant: "muted", text: "Awaiting reviewer" });
   }
 
   if (hasConflicts) {
     chips.push({
-      icon: "\u2717",
+      icon: "✗",
       variant: "fail",
       text: "Merge conflicts",
       notified: conflictNotified,
@@ -79,7 +90,7 @@ function buildBlockerChips(
   }
 
   if (pr.isDraft) {
-    chips.push({ icon: "\u25CB", variant: "muted", text: "Draft" });
+    chips.push({ icon: "○", variant: "muted", text: "Draft" });
   }
 
   return chips;
@@ -94,6 +105,7 @@ export function SessionDetailPRCard({
   const [sendingComments, setSendingComments] = useState<Set<string>>(new Set());
   const [sentComments, setSentComments] = useState<Set<string>>(new Set());
   const [errorComments, setErrorComments] = useState<Set<string>>(new Set());
+  const [branchCopied, setBranchCopied] = useState(false);
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
@@ -163,6 +175,30 @@ export function SessionDetailPRCard({
   const blockerIssues = buildBlockerChips(pr, metadata, lifecyclePrReason);
   const fileCount = pr.changedFiles ?? 0;
 
+  const showConflictActions = hasMergeConflicts(pr) && pr.state === "open";
+  const compareUrl = showConflictActions ? buildGitHubCompareUrl(pr) : "";
+
+  const handleCopyBranch = () => {
+    const clipboardWrite = navigator.clipboard?.writeText(pr.branch);
+    if (!clipboardWrite) return;
+
+    void clipboardWrite
+      .then(() => {
+        setBranchCopied(true);
+        const timerKey = "__copy-branch";
+        const existing = timersRef.current.get(timerKey);
+        if (existing) clearTimeout(existing);
+        const timer = setTimeout(() => {
+          setBranchCopied(false);
+          timersRef.current.delete(timerKey);
+        }, 2000);
+        timersRef.current.set(timerKey, timer);
+      })
+      .catch(() => {
+        /* clipboard unavailable */
+      });
+  };
+
   return (
     <div className={cn("session-detail-pr-card", allGreen && "session-detail-pr-card--green")}>
       <div className="session-detail-pr-card__row">
@@ -188,6 +224,31 @@ export function SessionDetailPRCard({
           <span className="session-detail-pr-card__diff-label">Merged</span>
         ) : null}
       </div>
+
+      {showConflictActions ? (
+        <div
+          className="session-detail-pr-card__merge-actions"
+          role="group"
+          aria-label="Resolve merge conflicts"
+        >
+          <a
+            href={compareUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="session-detail-pr-merge-action"
+          >
+            Compare with base branch
+          </a>
+          <button
+            type="button"
+            onClick={handleCopyBranch}
+            aria-label={branchCopied ? "Head branch name copied" : "Copy head branch name"}
+            className="session-detail-pr-merge-action session-detail-pr-merge-action--btn"
+          >
+            {branchCopied ? "Copied branch name" : "Copy head branch name"}
+          </button>
+        </div>
+      ) : null}
 
       <div className="session-detail-pr-card__details">
         {allGreen ? (
@@ -242,12 +303,12 @@ export function SessionDetailPRCard({
                   )}
                 >
                   {check.status === "passed"
-                    ? "\u2713"
+                    ? "✓"
                     : check.status === "failed"
-                      ? "\u2717"
+                      ? "✗"
                       : check.status === "pending"
-                        ? "\u25CF"
-                        : "\u25CB"}{" "}
+                        ? "●"
+                        : "○"}{" "}
                   {check.name}
                 </span>
               );
@@ -330,9 +391,9 @@ export function SessionDetailPRCard({
                       )}
                     >
                       {sendingComments.has(comment.url)
-                        ? "Sending\u2026"
+                        ? "Sending…"
                         : sentComments.has(comment.url)
-                          ? "Sent \u2713"
+                          ? "Sent ✓"
                           : errorComments.has(comment.url)
                             ? "Failed"
                             : "Ask Agent to Fix"}
