@@ -2,7 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { ConfigNotFoundError, getGlobalConfigPath, loadConfig } from "@aoagents/ao-core";
 
 export interface ProjectInfo {
@@ -46,11 +46,7 @@ function findProjectIdForPath(projectPath: string, config: ReturnType<typeof loa
     }
   }
 
-  const pathBase = basename(canonicalProjectPath);
-  const basenameMatch = Object.entries(config.projects).find(([, project]) => {
-    return typeof project.path === "string" && basename(project.path) === pathBase;
-  });
-  return basenameMatch?.[0];
+  return undefined;
 }
 
 function findLocalConfigPath(startDir: string): string | undefined {

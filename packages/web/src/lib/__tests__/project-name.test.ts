@@ -85,6 +85,33 @@ describe("project-name fallback discovery", () => {
     expect(getProjectName()).toBe("Agent Orchestrator");
   });
 
+  it("does not infer the current project from an ambiguous path basename", async () => {
+    const config = {
+      configPath: "/tmp/global-config.yaml",
+      projects: {
+        first: {
+          name: "First",
+          path: "/repos/client-a/integrator",
+          sessionPrefix: "first",
+        },
+        second: {
+          name: "Second",
+          path: "/repos/client-b/integrator",
+          sessionPrefix: "second",
+        },
+      },
+      degradedProjects: {},
+    };
+
+    mockLoadConfig.mockReturnValue(config);
+    vi.spyOn(process, "cwd").mockReturnValue("/tmp/checkout/integrator");
+
+    const { getPrimaryProjectId, getProjectName } = await import("../project-name");
+
+    expect(getPrimaryProjectId()).toBe("first");
+    expect(getProjectName()).toBe("First");
+  });
+
   it("prefers the repo discovered from local config when the dashboard is running from packages/web", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-project-name-web-"));
     const repoRoot = join(tempRoot, "agent-orchestrator");
