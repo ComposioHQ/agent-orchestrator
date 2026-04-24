@@ -1013,9 +1013,10 @@ function createGitHubSCM(): SCM {
       }
 
       try {
-        const raw = await gh([
+        const rawWithHeaders = await gh([
           "api",
           "graphql",
+          "-i",
           "-f",
           `owner=${pr.owner}`,
           "-f",
@@ -1055,6 +1056,8 @@ function createGitHubSCM(): SCM {
             }
           }`,
         ]);
+        // Strip HTTP headers from -i response to get JSON body
+        const raw = rawWithHeaders.replace(/^[\s\S]*?\r?\n\r?\n/, "");
 
         const data: {
           data: {

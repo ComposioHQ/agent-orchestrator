@@ -567,7 +567,7 @@ const PR_FIELDS = `
       commit {
         statusCheckRollup {
           state
-          contexts(first: 20) {
+          contexts(first: 10) {
             nodes {
               ... on CheckRun {
                 name
