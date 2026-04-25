@@ -1704,7 +1704,13 @@ export function registerStart(program: Command): void {
  * Paths contain / or ~ or . at the start.
  */
 function isLocalPath(arg: string): boolean {
-  return arg.startsWith("/") || arg.startsWith("~") || arg.startsWith("./") || arg.startsWith("..");
+  if (arg.startsWith("/") || arg.startsWith("~") || arg.startsWith("./") || arg.startsWith("..")) {
+    return true;
+  }
+  // Windows paths: drive-letter (C:\, D:/), UNC (\\server\share), or relative backslash paths.
+  if (/^[A-Za-z]:[\\/]/.test(arg)) return true;
+  if (arg.startsWith("\\\\") || arg.startsWith(".\\") || arg.startsWith("..\\")) return true;
+  return false;
 }
 
 export function registerStop(program: Command): void {

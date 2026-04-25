@@ -204,9 +204,11 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe("agent --force --sandbox disabled --approve-mcps --model 'sonnet' -- 'Go'");
   });
 
-  it("escapes single quotes in prompt (POSIX shell escaping)", () => {
+  it("escapes single quotes in prompt", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "it's broken" }));
-    expect(cmd).toContain("'it'\\''s broken'");
+    // shellEscape picks POSIX ('\'') on Unix, PowerShell ('') on Windows.
+    const expected = process.platform === "win32" ? "'it''s broken'" : "'it'\\''s broken'";
+    expect(cmd).toContain(expected);
   });
 
   it("omits optional flags when not provided", () => {
@@ -510,7 +512,8 @@ describe("getEnvironment PATH", () => {
 
   it("prepends ~/.ao/bin to PATH", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["PATH"]).toMatch(/\.ao\/bin/);
+    // Windows uses backslash separators, so match both.
+    expect(env["PATH"]).toMatch(/[\\/]\.ao[\\/]bin/);
   });
 
   it("sets GH_PATH", () => {

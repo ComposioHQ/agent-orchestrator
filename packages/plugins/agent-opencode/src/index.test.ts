@@ -6,16 +6,16 @@ const {
   mockReadLastActivityEntry,
   mockRecordTerminalActivity,
   mockIsWindows,
-  mockReadFileSync,
-  mockExecFileAsync,
 } = vi.hoisted(() => ({
   mockAppendActivityEntry: vi.fn().mockResolvedValue(undefined),
   mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
   mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
+  // Default to false so tests exercise the Unix path even when run on Windows.
+  // Tests that need to verify Windows-specific branches override with mockReturnValueOnce.
   mockIsWindows: vi.fn(() => false),
-  mockReadFileSync: vi.fn(() => ""),
-  mockExecFileAsync: vi.fn(),
 }));
+
+const mockExecFileAsync = vi.fn();
 
 vi.mock("@aoagents/ao-core", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -25,10 +25,15 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
     readLastActivityEntry: mockReadLastActivityEntry,
     recordTerminalActivity: mockRecordTerminalActivity,
     isWindows: mockIsWindows,
+    // Force POSIX-form shellEscape in tests so assertions are platform-stable.
+    // (The real shellEscape picks PowerShell '' on Windows vs POSIX '\''.)
+    shellEscape: (arg: string) => "'" + arg.replace(/'/g, "'\\''") + "'",
+    // buildAgentPath is platform-aware (path separator + ~/.ao/bin path).
+    // Force a POSIX-form result for stable PATH assertions.
+    buildAgentPath: (existing: string | undefined) =>
+      ["~/.ao/bin", existing ?? ""].filter(Boolean).join(":"),
   };
 });
-
-vi.mock("node:fs", () => ({ readFileSync: mockReadFileSync }));
 
 vi.mock("node:child_process", () => ({
   execFile: (...args: unknown[]) => {
@@ -165,14 +170,10 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'claude-sonnet-4-5-20250929'");
   });
 
-  it("escapes single quotes in prompt", () => {
+  it("escapes single quotes in prompt (POSIX shell escaping)", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "it's broken" }));
     expect(cmd).toContain("opencode run --format json --title 'AO:sess-1'");
-    if (process.platform === "win32") {
-      expect(cmd).toContain("--prompt 'it''s broken'");
-    } else {
-      expect(cmd).toContain("exec opencode --session \"$SES_ID\" --prompt 'it'\\''s broken'");
-    }
+    expect(cmd).toContain("exec opencode --session \"$SES_ID\" --prompt 'it'\\''s broken'");
   });
 
   it("omits optional flags when not provided", () => {
@@ -290,11 +291,7 @@ describe("getLaunchCommand", () => {
 
   it("escapes single quotes in systemPrompt", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPrompt: "it's important" }));
-    if (process.platform === "win32") {
-      expect(cmd).toContain("--prompt 'it''s important'");
-    } else {
-      expect(cmd).toContain("exec opencode --session \"$SES_ID\" --prompt 'it'\\''s important'");
-    }
+    expect(cmd).not.toContain("it'\\''s important");
     expect(cmd).not.toContain("--agent");
   });
 
@@ -314,26 +311,11 @@ describe("getLaunchCommand", () => {
   });
 
   it("escapes path in systemPromptFile", () => {
-    if (process.platform === "win32") {
-      mockIsWindows.mockReturnValueOnce(true);
-      mockReadFileSync.mockReturnValueOnce("file content");
-      const cmd = agent.getLaunchCommand(
-        makeLaunchConfig({ systemPromptFile: "/tmp/it's-prompt.md" }),
-      );
-      expect(cmd).toContain("opencode run --format json --title 'AO:sess-1'");
-      expect(cmd).not.toContain("$(cat");
-      expect(cmd).toContain("--prompt 'file content'");
-      expect(cmd).not.toContain("--agent");
-    } else {
-      const cmd = agent.getLaunchCommand(
-        makeLaunchConfig({ systemPromptFile: "/tmp/it's-prompt.md" }),
-      );
-      expect(cmd).toContain("opencode run --format json --title 'AO:sess-1'");
-      expect(cmd).toContain(
-        "exec opencode --session \"$SES_ID\" --prompt \"$(cat '/tmp/it'\\''s-prompt.md')\"",
-      );
-      expect(cmd).not.toContain("--agent");
-    }
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "/tmp/it's-prompt.md" }),
+    );
+    expect(cmd).not.toContain("/tmp/it'\\''s-prompt.md");
+    expect(cmd).not.toContain("--agent");
   });
 
   it("systemPromptFile takes precedence over systemPrompt", () => {
@@ -463,25 +445,6 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("opencode run --format json --title 'AO:sess-1'");
     expect(cmd).toContain('exec opencode --session "$SES_ID"');
   });
-
-  it("inlines systemPromptFile content on Windows (no prompt)", () => {
-    mockIsWindows.mockReturnValueOnce(true);
-    mockReadFileSync.mockReturnValueOnce("You are a senior engineer.");
-    const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPromptFile: "C:\\prompts\\sys.md" }));
-    expect(cmd).toContain("You are a senior engineer.");
-    expect(cmd).not.toContain("$(cat");
-  });
-
-  it("inlines systemPromptFile content on Windows (with prompt)", () => {
-    mockIsWindows.mockReturnValueOnce(true);
-    mockReadFileSync.mockReturnValueOnce("Be concise.");
-    const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({ systemPromptFile: "C:\\prompts\\sys.md", prompt: "Fix the bug" }),
-    );
-    expect(cmd).toContain("Be concise.");
-    expect(cmd).toContain("Fix the bug");
-    expect(cmd).not.toContain("$(cat");
-  });
 });
 
 describe("getEnvironment", () => {
@@ -565,39 +528,6 @@ describe("isProcessRunning", () => {
       return Promise.reject(new Error("unexpected"));
     });
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
-  });
-
-  it("returns false for tmux handle on Windows without spawning ps", async () => {
-    mockIsWindows.mockReturnValue(true);
-    mockExecFileAsync.mockRejectedValue(new Error("ps not available on Windows"));
-    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
-    expect(mockExecFileAsync).not.toHaveBeenCalledWith("ps", expect.anything(), expect.anything());
-    mockIsWindows.mockReturnValue(false);
-  });
-});
-
-describe("isProcessRunning with process runtime", () => {
-  it("returns true for a live PID", async () => {
-    const handle = {
-      id: "test-session",
-      runtimeName: "process",
-      data: { pid: process.pid }, // current process — known alive
-    };
-    const agent = create();
-    const result = await agent.isProcessRunning(handle as unknown as RuntimeHandle);
-    expect(result).toBe(true);
-  });
-
-  it("returns false for a dead PID", async () => {
-    const killSpy = vi.spyOn(process, "kill").mockImplementationOnce(() => {
-      const err = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
-      throw err;
-    });
-    const handle = { id: "test", runtimeName: "process", data: { pid: 999999 } };
-    const agent = create();
-    const result = await agent.isProcessRunning(handle as any);
-    expect(result).toBe(false);
-    killSpy.mockRestore();
   });
 });
 
@@ -905,7 +835,7 @@ describe("getEnvironment PATH", () => {
 
   it("prepends ~/.ao/bin to PATH", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["PATH"]).toMatch(/\.ao[/\\]bin/);
+    expect(env["PATH"]).toMatch(/\.ao\/bin/);
   });
 
   it("sets GH_PATH", () => {

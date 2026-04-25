@@ -25,7 +25,6 @@ import {
 } from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { readFileSync } from "node:fs";
 
 const execFileAsync = promisify(execFile);
 
@@ -232,30 +231,7 @@ function createOpenCodeAgent(): Agent {
         sharedOptions.push("--agent", shellEscape(selectedAgentName));
       }
 
-      let promptValue: string | undefined;
-      if (config.prompt) {
-        if (config.systemPromptFile) {
-          if (isWindows()) {
-            const sysContent = readFileSync(config.systemPromptFile, "utf-8");
-            promptValue = shellEscape(`${sysContent}\n\n${config.prompt}`);
-          } else {
-            promptValue = `"$(cat ${shellEscape(config.systemPromptFile)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt)})"`;
-          }
-        } else if (config.systemPrompt) {
-          promptValue = shellEscape(`${config.systemPrompt}\n\n${config.prompt}`);
-        } else {
-          promptValue = shellEscape(config.prompt);
-        }
-      } else if (config.systemPromptFile) {
-        if (isWindows()) {
-          const sysContent = readFileSync(config.systemPromptFile, "utf-8");
-          promptValue = shellEscape(sysContent);
-        } else {
-          promptValue = `"$(cat ${shellEscape(config.systemPromptFile)})"`;
-        }
-      } else if (config.systemPrompt) {
-        promptValue = shellEscape(config.systemPrompt);
-      }
+      const promptValue = config.prompt ? shellEscape(config.prompt) : undefined;
 
       if (config.model) {
         sharedOptions.push("--model", shellEscape(config.model));
@@ -277,16 +253,6 @@ function createOpenCodeAgent(): Agent {
         const missingSessionError = shellEscape(
           `failed to discover OpenCode session ID for AO:${config.sessionId}`,
         );
-
-        if (isWindows()) {
-          // PowerShell: capture session ID, fallback to lookup, then resume
-          return [
-            `$SES_ID = (${runCommand} | node -e ${shellEscape(captureScript)})`,
-            `if (-not $SES_ID) { $SES_ID = (opencode session list --format json | node -e ${shellEscape(fallbackScript)} ${shellEscape(`AO:${config.sessionId}`)}) }`,
-            `if ($SES_ID) { opencode --session $SES_ID${resumeOptionsSuffix} } else { Write-Error ${missingSessionError}; exit 1 }`,
-          ].join("; ");
-        }
-
         return [
           `SES_ID=$(${runCommand} | node -e ${shellEscape(captureScript)})`,
           `if [ -z "$SES_ID" ]; then SES_ID=$(opencode session list --format json | node -e ${shellEscape(fallbackScript)} ${shellEscape(`AO:${config.sessionId}`)}); fi`,
@@ -393,7 +359,7 @@ function createOpenCodeAgent(): Agent {
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
-          // tmux and ps are Unix-only; guard before any tmux calls on Windows
+          // tmux and ps are Unix-only; guard before any tmux calls on Windows.
           if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
@@ -406,6 +372,7 @@ function createOpenCodeAgent(): Agent {
             .map((t) => t.trim())
             .filter(Boolean);
           if (ttys.length === 0) return false;
+
           const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
             timeout: 30_000,
           });

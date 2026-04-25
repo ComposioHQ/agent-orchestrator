@@ -62,6 +62,17 @@ export function create(): Runtime {
         throw new Error(`Session "${handleId}" already exists — destroy it before re-creating`);
       }
 
+      // Reserve the slot synchronously for both platforms so duplicate-create,
+      // getMetrics, and getAttachInfo see the entry on Windows too. Unix used
+      // to create this further down; we hoist it so the Windows branch shares
+      // the same bookkeeping.
+      const entry: ProcessEntry = {
+        process: null,
+        outputBuffer: [],
+        createdAt: Date.now(),
+      };
+      processes.set(handleId, entry);
+
       // --- Windows: spawn via PTY host (ConPTY) ---
       if (isWindows()) {
         const pipePath = getPipePath(handleId);
@@ -72,77 +83,80 @@ export function create(): Runtime {
         );
 
         const ptyEnv = { ...process.env, ...config.environment };
-        const ptyChild = spawn(
-          process.execPath,
-          [
-            ptyHostScript,
-            handleId,
-            pipePath,
-            config.workspacePath,
-            shellInfo.cmd,
-            ...shellInfo.args(config.launchCommand),
-          ],
-          {
-            cwd: config.workspacePath,
-            env: ptyEnv,
-            stdio: ["ignore", "pipe", "pipe"],
-            detached: true, // Must survive parent exit (like tmux daemon)
-          },
-        );
+        try {
+          const ptyChild = spawn(
+            process.execPath,
+            [
+              ptyHostScript,
+              handleId,
+              pipePath,
+              config.workspacePath,
+              shellInfo.cmd,
+              ...shellInfo.args(config.launchCommand),
+            ],
+            {
+              cwd: config.workspacePath,
+              env: ptyEnv,
+              stdio: ["ignore", "pipe", "pipe"],
+              detached: true, // Must survive parent exit (like tmux daemon)
+              // Suppress the console window node-pty's conpty helper would
+              // otherwise flash on screen when a ConPTY child fails. Without
+              // this, errors from node-pty's internal conpty_console_list_agent
+              // surface as visible Windows error dialogs (0x800700e8).
+              windowsHide: true,
+            },
+          );
 
-        // Wait for PTY host to signal readiness (writes "READY:<pid>\n" to stdout)
-        const ptyPid = await new Promise<number>((resolveReady, reject) => {
-          const timeout = setTimeout(() => {
-            ptyChild.kill();
-            reject(new Error("PTY host startup timeout (10s)"));
-          }, 10_000);
-          let data = "";
-          ptyChild.stdout?.on("data", (chunk: Buffer) => {
-            data += chunk.toString();
-            const match = data.match(/READY:(\d+)/);
-            if (match) {
+          // Wait for PTY host to signal readiness (writes "READY:<pid>\n" to stdout)
+          const ptyPid = await new Promise<number>((resolveReady, reject) => {
+            const timeout = setTimeout(() => {
+              ptyChild.kill();
+              reject(new Error("PTY host startup timeout (10s)"));
+            }, 10_000);
+            let data = "";
+            ptyChild.stdout?.on("data", (chunk: Buffer) => {
+              data += chunk.toString();
+              const match = data.match(/READY:(\d+)/);
+              if (match) {
+                clearTimeout(timeout);
+                resolveReady(parseInt(match[1], 10));
+              }
+            });
+            ptyChild.stderr?.on("data", (chunk: Buffer) => {
+              data += chunk.toString();
+            });
+            ptyChild.on("error", (err) => {
               clearTimeout(timeout);
-              resolveReady(parseInt(match[1], 10));
-            }
+              reject(new Error(`PTY host spawn error: ${err.message}`));
+            });
+            ptyChild.on("exit", (code) => {
+              clearTimeout(timeout);
+              reject(new Error(`PTY host exited during startup with code ${code}: ${data}`));
+            });
           });
-          ptyChild.stderr?.on("data", (chunk: Buffer) => {
-            data += chunk.toString();
-          });
-          ptyChild.on("error", (err) => {
-            clearTimeout(timeout);
-            reject(new Error(`PTY host spawn error: ${err.message}`));
-          });
-          ptyChild.on("exit", (code) => {
-            clearTimeout(timeout);
-            reject(new Error(`PTY host exited during startup with code ${code}: ${data}`));
-          });
-        });
 
-        // Unref so this process can exit while pty-host stays alive
-        ptyChild.unref();
-        ptyChild.stdout?.destroy();
-        ptyChild.stderr?.destroy();
+          // Unref so this process can exit while pty-host stays alive
+          ptyChild.unref();
+          ptyChild.stdout?.destroy();
+          ptyChild.stderr?.destroy();
 
-        return {
-          id: handleId,
-          runtimeName: "process",
-          data: {
-            pid: ptyPid,
-            ptyHostPid: ptyChild.pid,
-            pipePath,
-            createdAt: Date.now(),
-          },
-        };
+          return {
+            id: handleId,
+            runtimeName: "process",
+            data: {
+              pid: ptyPid,
+              ptyHostPid: ptyChild.pid,
+              pipePath,
+              createdAt: entry.createdAt,
+            },
+          };
+        } catch (err) {
+          processes.delete(handleId);
+          throw err;
+        }
       }
 
       // --- Unix: existing piped stdio path (unchanged below) ---
-      const entry: ProcessEntry = {
-        process: null, // set after spawn — methods guard against null
-        outputBuffer: [],
-        createdAt: Date.now(),
-      };
-      processes.set(handleId, entry);
-
       // Use explicit shell args instead of spawn's shell: option.
       // When shell is a string, Node.js internally passes -c which is ambiguous
       // on PowerShell 5.1 (-c matches both -Command and -ConfigurationName).
@@ -238,11 +252,27 @@ export function create(): Runtime {
       // PTY host path (Windows) — kill via named pipe + process tree
       const pipePath = (handle.data as Record<string, unknown>)?.pipePath as string | undefined;
       if (pipePath) {
+        // Ask the pty-host to dispose its ConPTY handle and exit gracefully.
         await ptyHostKill(pipePath);
         const ptyHostPid = (handle.data as Record<string, unknown>)?.ptyHostPid;
         if (typeof ptyHostPid === "number" && ptyHostPid > 0) {
+          // Give the host ~500ms to shut down cleanly so node-pty can release
+          // the ConPTY. SIGKILLing immediately orphans the
+          // conpty_console_list_agent helper and triggers Windows Error
+          // Reporting dialogs (0x800700e8).
+          const deadline = Date.now() + 500;
+          while (Date.now() < deadline) {
+            try {
+              process.kill(ptyHostPid, 0); // probe
+            } catch {
+              processes.delete(handle.id);
+              return; // already gone — clean exit
+            }
+            await new Promise((r) => setTimeout(r, 25));
+          }
           await killProcessTree(ptyHostPid, "SIGKILL");
         }
+        processes.delete(handle.id);
         return;
       }
 

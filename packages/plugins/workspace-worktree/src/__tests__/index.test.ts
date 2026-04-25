@@ -31,6 +31,14 @@ vi.mock("node:os", () => ({
   homedir: () => "/mock-home",
 }));
 
+// Force POSIX path semantics in tests so assertions like "/mock-home/..." match
+// on Windows too. The real source uses platform-native path.join at runtime; we
+// only override it for this test file's scope.
+vi.mock("node:path", async () => {
+  const actual = (await vi.importActual("node:path")) as { posix: unknown };
+  return { ...(actual.posix as Record<string, unknown>), default: actual.posix };
+});
+
 // ---------------------------------------------------------------------------
 // Imports (after mocks)
 // ---------------------------------------------------------------------------

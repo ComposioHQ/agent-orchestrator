@@ -836,20 +836,27 @@ describe("Windows compatibility", () => {
     processSpy.mockRestore();
   });
 
-  it("calls ptyHostKill and killProcessTree(ptyHostPid) on win32 destroy", async () => {
+  it("calls ptyHostKill and killProcessTree(ptyHostPid) on win32 destroy when graceful shutdown times out", async () => {
     mockIsWindows.mockReturnValue(true);
 
     const child = createWindowsMockChild(12345);
     mockSpawn.mockReturnValue(child);
+
+    // Simulate a pty-host that ignores MSG_KILL_REQ so destroy falls through
+    // to the SIGKILL path. Otherwise the probe (`process.kill(pid, 0)`) would
+    // see PID 12345 as already-gone and return early — which is the desired
+    // real-world behavior but defeats this test's intent.
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
 
     const runtime = create();
     const handle = await runtime.create(defaultConfig({ sessionId: "win-sigkill-test" }));
 
     await runtime.destroy(handle);
 
-    // Windows destroy path: ptyHostKill via pipe + killProcessTree on ptyHostPid
     expect(mockPtyHostKill).toHaveBeenCalledWith(expect.stringContaining("win-sigkill-test"));
     expect(mockKillProcessTree).toHaveBeenCalledWith(12345, "SIGKILL");
+
+    killSpy.mockRestore();
   });
 });
 

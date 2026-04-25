@@ -24,6 +24,17 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return stdout.trimEnd();
 }
 
+/**
+ * Normalize a path for cross-platform comparison. `git worktree list --porcelain`
+ * emits forward-slash paths on Windows even when callers constructed the
+ * directory with backslashes via `path.join`. Lowercase the drive letter so
+ * `C:` and `c:` match.
+ */
+function toComparablePath(p: string): string {
+  const slash = p.replace(/\\/g, "/");
+  return slash.replace(/^([a-zA-Z]):/, (_, d: string) => d.toLowerCase() + ":");
+}
+
 async function hasOriginRemote(cwd: string): Promise<boolean> {
   try {
     await git(cwd, "remote", "get-url", "origin");
@@ -68,9 +79,10 @@ async function resolveBaseRef(
 async function isRegisteredWorktree(repoPath: string, worktreePath: string): Promise<boolean> {
   try {
     const output = await git(repoPath, "worktree", "list", "--porcelain");
+    const target = toComparablePath(worktreePath);
     return output
       .split("\n")
-      .some((line) => line.startsWith("worktree ") && line.slice("worktree ".length) === worktreePath);
+      .some((line) => line.startsWith("worktree ") && toComparablePath(line.slice("worktree ".length)) === target);
   } catch {
     return false;
   }
@@ -234,6 +246,7 @@ export function create(config?: Record<string, unknown>): Workspace {
       // Parse porcelain output — only include worktrees within our project directory
       const infos: WorkspaceInfo[] = [];
       const blocks = worktreeListOutput.split("\n\n");
+      const projectDirCmp = toComparablePath(projectWorktreeDir);
 
       for (const block of blocks) {
         const lines = block.trim().split("\n");
@@ -249,7 +262,8 @@ export function create(config?: Record<string, unknown>): Workspace {
           }
         }
 
-        if (path && (path === projectWorktreeDir || path.startsWith(projectWorktreeDir + "/"))) {
+        const pathCmp = path ? toComparablePath(path) : "";
+        if (path && (pathCmp === projectDirCmp || pathCmp.startsWith(projectDirCmp + "/"))) {
           const sessionId = basename(path);
           infos.push({
             path,

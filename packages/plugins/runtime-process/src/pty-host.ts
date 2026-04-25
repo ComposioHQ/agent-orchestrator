@@ -319,9 +319,12 @@ async function runPtyHost(): Promise<void> {
       }
 
       case MSG_KILL_REQ: {
-        if (ptyExitCode === undefined) {
-          pty.kill();
-        }
+        // Full teardown — dispose the ConPTY handle, drop clients, close the
+        // pipe server, then exit. Previously we only called pty.kill() and
+        // kept the pipe alive, which left a stale host lingering until the OS
+        // reaped it (and caused the orphaned conpty_console_list_agent
+        // helpers that show Windows Error Reporting dialogs).
+        shutdown("MSG_KILL_REQ");
         break;
       }
 
@@ -343,9 +346,55 @@ async function runPtyHost(): Promise<void> {
     });
   });
 
-  // Keep the process alive — the named pipe server holds the event loop open.
-  // Also suppress unhandled rejection noise from normal operation.
+  // -------------------------------------------------------------------------
+  // Graceful shutdown
+  //
+  // If this process dies without first disposing the ConPTY handle, node-pty's
+  // `conpty_console_list_agent.exe` helper gets its pipe severed mid-operation
+  // and Windows Error Reporting pops a "0x800700e8" dialog. Intercept every
+  // common exit path and run the same teardown (pty.kill → close clients →
+  // close server) so the helper can shut down cleanly.
+  // -------------------------------------------------------------------------
+
+  let shuttingDown = false;
+  function shutdown(reason: string): void {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      if (ptyExitCode === undefined) {
+        try { pty.kill(); } catch { /* already dead */ }
+      }
+    } catch { /* noop */ }
+    for (const sock of clients) {
+      try { sock.destroy(); } catch { /* noop */ }
+    }
+    clients.clear();
+    try { server.close(); } catch { /* noop */ }
+    // Give node-pty a tick to release the ConPTY handle before the event loop
+    // exits. Without this, the conpty_console_list_agent helper may still be
+    // mid-cleanup when the parent node process terminates.
+    setTimeout(() => process.exit(0), 50).unref();
+    process.stderr.write(`pty-host [${sessionId}] shutdown: ${reason}\n`);
+  }
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGHUP", () => shutdown("SIGHUP"));
+  process.on("SIGBREAK", () => shutdown("SIGBREAK"));
+  process.on("beforeExit", () => shutdown("beforeExit"));
   process.on("uncaughtException", (err) => {
     process.stderr.write(`pty-host [${sessionId}] uncaught: ${String(err)}\n`);
+    shutdown("uncaughtException");
   });
+  process.on("unhandledRejection", (reason) => {
+    process.stderr.write(`pty-host [${sessionId}] unhandled rejection: ${String(reason)}\n`);
+  });
+  // Last resort: dispose the PTY even on a clean exit before the event loop
+  // unwinds so node-pty's native cleanup gets a chance to run.
+  process.on("exit", () => {
+    try {
+      if (ptyExitCode === undefined) pty.kill();
+    } catch { /* noop */ }
+  });
+
 }

@@ -27,6 +27,13 @@ vi.mock("node:os", () => ({
   homedir: () => "/mock-home",
 }));
 
+// Force POSIX path semantics in tests so "/mock-home/..." assertions match on
+// Windows too. Only this test file uses the posix override.
+vi.mock("node:path", async () => {
+  const actual = (await vi.importActual("node:path")) as { posix: unknown };
+  return { ...(actual.posix as Record<string, unknown>), default: actual.posix };
+});
+
 // Get reference to the promisify-custom mock — this is what the plugin actually calls
 const mockExecFileAsync = (childProcess.execFile as any)[
   Symbol.for("nodejs.util.promisify.custom")
