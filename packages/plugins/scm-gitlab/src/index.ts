@@ -22,6 +22,8 @@ import {
   type Review,
   type ReviewDecision,
   type ReviewComment,
+  type ReviewSummary,
+  type ReviewThreadsResult,
   type MergeReadiness,
 } from "@aoagents/ao-core";
 import {
@@ -683,6 +685,59 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
         });
       }
       return comments;
+    },
+
+    async getReviewThreads(pr: PRInfo): Promise<ReviewThreadsResult> {
+      const hostname = resolveHostname(pr);
+      const discussions = await fetchDiscussions(
+        pr,
+        hostname,
+        `getReviewThreads for MR !${pr.number}`,
+      );
+
+      // Unresolved threads — includes both human and bot comments (with isBot flag)
+      const threads: ReviewComment[] = [];
+      for (const d of discussions) {
+        const note = d.notes[0];
+        if (!note) continue;
+        if (!note.resolvable || note.resolved) continue;
+
+        const author = note.author?.username ?? "unknown";
+        threads.push({
+          id: String(note.id),
+          threadId: d.id,
+          author,
+          body: note.body,
+          path: note.position?.new_path || undefined,
+          line: note.position?.new_line ?? undefined,
+          isResolved: false,
+          createdAt: parseDate(note.created_at),
+          url: "",
+          isBot: isBot(author),
+        });
+      }
+
+      // Review summaries from approvals
+      const reviews: ReviewSummary[] = [];
+      try {
+        const approvalsRaw = await glab(["api", `${mrApiPath(pr)}/approvals`], hostname);
+        const approvals = parseJSON<{
+          approved_by: Array<{ user: { username: string } }>;
+        }>(approvalsRaw, `getReviewThreads approvals for MR !${pr.number}`);
+
+        for (const a of approvals.approved_by ?? []) {
+          reviews.push({
+            author: a.user?.username ?? "unknown",
+            state: "APPROVED",
+            body: "",
+            submittedAt: new Date(0),
+          });
+        }
+      } catch {
+        // Best-effort — threads are the critical data
+      }
+
+      return { threads, reviews };
     },
 
     async getMergeability(pr: PRInfo): Promise<MergeReadiness> {

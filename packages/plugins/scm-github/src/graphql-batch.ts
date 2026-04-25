@@ -567,6 +567,10 @@ const PR_FIELDS = `
       commit {
         statusCheckRollup {
           state
+          # 11 keeps per-PR node cost under budget for 25-PR batch queries
+          # (total cost ≤5000). Repos with >11 checks lose individual check
+          # visibility, but the rollup "state" still reflects all checks —
+          # overall pass/fail detection remains correct.
           contexts(first: 11) {
             nodes {
               ... on CheckRun {

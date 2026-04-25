@@ -356,7 +356,7 @@ describe("plugin integration", () => {
       expect(result.killed).toContain("app-1");
       // Verify the gh CLI was called with the right args
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         expect.arrayContaining(["issue", "view", "99", "--repo", "acme/app"]),
         expect.any(Object),
       );
@@ -443,7 +443,7 @@ describe("plugin integration", () => {
       expect(result.skipped).toContain("app-1");
       // Verify gh CLI was called for PR state check
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         expect.arrayContaining(["pr", "view", "42"]),
         expect.any(Object),
       );

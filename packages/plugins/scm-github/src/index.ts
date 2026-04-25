@@ -518,6 +518,7 @@ function createGitHubSCM(): SCM {
       if (key.startsWith(prefix)) prCache.delete(key);
     }
     prCache.delete(prCacheKey(pr.owner, pr.repo, pr.branch, "detectPR"));
+    reviewThreadsCache.delete(`${pr.owner}/${pr.repo}#${pr.number}`);
   }
 
   async function withPRCache<T>(

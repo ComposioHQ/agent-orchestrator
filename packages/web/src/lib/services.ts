@@ -115,10 +115,13 @@ async function initServices(): Promise<Services> {
 
   const sessionManager = createSessionManager({ config, registry });
 
-  // Lifecycle manager for webhook-triggered checks only — no polling.
-  // The CLI process runs the 30s polling loop and writes enrichment data to
-  // session metadata. The dashboard reads from metadata instead of calling
-  // GitHub API directly.
+  // Lifecycle manager for webhook-triggered checks only — no independent polling.
+  // The CLI process (`ao`) runs the 30s polling loop and writes PR enrichment
+  // data to session metadata files. The dashboard reads from metadata instead
+  // of calling GitHub API directly. This means the dashboard is NOT self-sufficient:
+  // if the CLI process isn't running, sessions will have no PR enrichment data,
+  // no state transitions, and no reactions. The SSE endpoint surfaces whatever
+  // metadata the CLI has written — stale data is expected when CLI is down.
   const lifecycleManager = createLifecycleManager({ config, registry, sessionManager });
 
   return { config, registry, sessionManager, lifecycleManager };

@@ -185,10 +185,12 @@ ao_cache_fresh() {
   local ts_file="\$cache_dir/\${cache_key}.ts"
   local stdout_file="\$cache_dir/\${cache_key}.stdout"
   [[ -f "\$stdout_file" && -f "\$ts_file" ]] || return 1
-  # max_age=0 means infinite TTL
-  [[ "\$max_age" -eq 0 ]] 2>/dev/null && return 0
   local cached_ts now
   cached_ts=\$(cat "\$ts_file" 2>/dev/null) || return 1
+  # Sanity check: cached_ts must be a positive integer (epoch seconds)
+  [[ "\$cached_ts" =~ ^[0-9]+$ && "\$cached_ts" -gt 0 ]] || return 1
+  # max_age=0 means infinite TTL
+  [[ "\$max_age" -eq 0 ]] 2>/dev/null && return 0
   now=\$(date +%s)
   (( now - cached_ts < max_age ))
 }
@@ -312,7 +314,7 @@ log_ao_cache() {
 # ── 1. PR discovery: gh pr list --head <B> --limit 1 ────────────────────────
 # Infinite TTL for positive results (non-empty array). Never caches [].
 if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
-  _ao_head="" _ao_limit="" _ao_json="" _ao_cacheable=true
+  _ao_head="" _ao_limit="" _ao_json="" _ao_repo="" _ao_cacheable=true
   _ao_saved_args=("\$@")
   shift 2
   while [[ \$# -gt 0 ]]; do
@@ -323,8 +325,8 @@ if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
       --limit=*)  _ao_limit="\${1#--limit=}"; shift ;;
       --json)     _ao_json="\$2"; shift 2 ;;
       --json=*)   _ao_json="\${1#--json=}"; shift ;;
-      --repo)     shift 2 ;;
-      --repo=*)   shift ;;
+      --repo)     _ao_repo="\$2"; shift 2 ;;
+      --repo=*)   _ao_repo="\${1#--repo=}"; shift ;;
       --search|--state|--assignee|--label|--jq|--template)
         _ao_cacheable=false; break ;;
       --search=*|--state=*|--assignee=*|--label=*|--jq=*|--template=*)
@@ -337,7 +339,8 @@ if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
 
   if [[ "\$_ao_cacheable" == true && "\$_ao_limit" == "1" && -n "\$_ao_head" ]]; then
     _ao_safe_branch=\$(printf '%s' "\$_ao_head" | tr -c 'a-zA-Z0-9._-' '-')
-    _ao_cache_key="pr-discovery-\${_ao_safe_branch}"
+    _ao_safe_repo=\$(printf '%s' "\$_ao_repo" | tr -c 'a-zA-Z0-9._-' '-')
+    _ao_cache_key="pr-discovery-\${_ao_safe_repo}-\${_ao_safe_branch}"
     if [[ -n "\$_ao_json" ]]; then
       _ao_safe_json=\$(printf '%s' "\$_ao_json" | tr -c 'a-zA-Z0-9._,-' '-')
       _ao_cache_key="\${_ao_cache_key}-j-\${_ao_safe_json}"
@@ -380,7 +383,7 @@ fi
 # ── 2. Issue context: gh issue view <N> ─────────────────────────────────────
 # 300-second TTL. Caches any successful response.
 if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
-  _ao_issue_id="" _ao_json="" _ao_cacheable=true
+  _ao_issue_id="" _ao_json="" _ao_repo="" _ao_cacheable=true
   _ao_saved_args=("\$@")
   shift 2
   # First non-flag arg is the issue identifier
@@ -392,8 +395,8 @@ if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
         _ao_cacheable=false; break ;;
       --json)     _ao_json="\$2"; shift 2 ;;
       --json=*)   _ao_json="\${1#--json=}"; shift ;;
-      --repo)     shift 2 ;;
-      --repo=*)   shift ;;
+      --repo)     _ao_repo="\$2"; shift 2 ;;
+      --repo=*)   _ao_repo="\${1#--repo=}"; shift ;;
       -*)         shift ;;
       *)
         if [[ -z "\$_ao_issue_id" && "\$1" =~ ^[0-9]+$ ]]; then
@@ -405,7 +408,8 @@ if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
   set -- "\${_ao_saved_args[@]}"
 
   if [[ "\$_ao_cacheable" == true && -n "\$_ao_issue_id" ]]; then
-    _ao_cache_key="issue-ctx-\${_ao_issue_id}"
+    _ao_safe_repo=\$(printf '%s' "\$_ao_repo" | tr -c 'a-zA-Z0-9._-' '-')
+    _ao_cache_key="issue-ctx-\${_ao_safe_repo}-\${_ao_issue_id}"
     if [[ -n "\$_ao_json" ]]; then
       _ao_safe_json=\$(printf '%s' "\$_ao_json" | tr -c 'a-zA-Z0-9._,-' '-')
       _ao_cache_key="\${_ao_cache_key}-j-\${_ao_safe_json}"

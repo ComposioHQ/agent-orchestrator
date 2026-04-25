@@ -73,7 +73,9 @@ export function create(): Runtime {
       const pathValue = config.environment?.["PATH"];
       let launchCommand = config.launchCommand;
       if (pathValue) {
-        launchCommand = `export PATH='${pathValue}'\n${launchCommand}`;
+        // Use printf with JSON-escaped value to avoid shell injection if
+        // PATH contains single quotes or other shell metacharacters.
+        launchCommand = `export PATH=$(printf '%s' ${JSON.stringify(pathValue)})\n${launchCommand}`;
       }
 
       // Send the launch command — clean up the session if this fails.

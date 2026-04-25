@@ -1,5 +1,6 @@
-import { execFile, execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { access, appendFile, mkdir } from "node:fs/promises";
+import { constants } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
@@ -14,34 +15,35 @@ const execFileAsync = promisify(execFile);
  * Strips ~/.ao/bin from PATH and resolves gh from the clean PATH.
  * Cached after first resolution.
  */
-let resolvedGhPath: string | null = null;
-function getGhBinaryPath(): string {
-  if (resolvedGhPath !== null) return resolvedGhPath;
+let resolvedGhPromise: Promise<string> | null = null;
+async function getGhBinaryPath(): Promise<string> {
+  if (!resolvedGhPromise) {
+    resolvedGhPromise = resolveGhBinary();
+  }
+  return resolvedGhPromise;
+}
 
-  // Build a clean PATH without ~/.ao/bin
+async function resolveGhBinary(): Promise<string> {
+  // Build a clean PATH without ~/.ao/bin and walk each directory looking
+  // for an executable `gh`. Uses fs.access instead of spawning a shell —
+  // avoids blocking the event loop and shell injection concerns.
   const aoBinDir = join(homedir(), ".ao", "bin");
-  const cleanPath = (process.env["PATH"] ?? "")
+  const dirs = (process.env["PATH"] ?? "")
     .split(":")
-    .filter((entry) => entry !== aoBinDir)
-    .join(":");
+    .filter((entry) => entry && entry !== aoBinDir);
 
-  try {
-    // Resolve gh from the clean PATH using `which` equivalent
-    const resolved = execFileSync("sh", ["-c", `PATH='${cleanPath}' command -v gh`], {
-      timeout: 3000,
-      encoding: "utf-8",
-    }).trim();
-    if (resolved) {
-      resolvedGhPath = resolved;
-      return resolvedGhPath;
+  for (const dir of dirs) {
+    const candidate = join(dir, "gh");
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Not found or not executable — try next
     }
-  } catch {
-    // Fall through
   }
 
   // Last resort — bare "gh" (may hit wrapper, but better than failing)
-  resolvedGhPath = "gh";
-  return resolvedGhPath;
+  return "gh";
 }
 
 const GH_TRACE_FILE_ENV = "AO_GH_TRACE_FILE";
@@ -206,12 +208,27 @@ function extractSignal(err: unknown): string | undefined {
   return typeof candidate.signal === "string" ? candidate.signal : undefined;
 }
 
+const ensuredDirs = new Set<string>();
+
 function writeTrace(entry: GhTraceEntry): void {
   const target = process.env[GH_TRACE_FILE_ENV];
   if (!target) return;
 
-  mkdirSync(dirname(target), { recursive: true });
-  appendFileSync(target, `${JSON.stringify(entry)}\n`, "utf-8");
+  const dir = dirname(target);
+  const line = `${JSON.stringify(entry)}\n`;
+
+  // Fire-and-forget async write — best-effort tracing should not block callers.
+  // Skip mkdir once the directory has been successfully created.
+  if (ensuredDirs.has(dir)) {
+    appendFile(target, line, "utf-8").catch(() => {});
+  } else {
+    mkdir(dir, { recursive: true })
+      .then(() => {
+        ensuredDirs.add(dir);
+        return appendFile(target, line, "utf-8");
+      })
+      .catch(() => {});
+  }
 }
 
 function buildTraceEntry(
@@ -284,8 +301,11 @@ export async function execGhObserved(
   const startedAt = Date.now();
 
   try {
-    const { stdout, stderr } = await execFileAsync(getGhBinaryPath(), args, {
+    const ghPath = await getGhBinaryPath();
+    const { stdout, stderr } = await execFileAsync(ghPath, args, {
       ...(ctx.cwd ? { cwd: ctx.cwd } : {}),
+      // 10 MB — matches the previous per-caller maxBuffer in scm-github.
+      // GraphQL batch queries for 25 PRs can produce multi-MB responses.
       maxBuffer: 10 * 1024 * 1024,
       timeout,
     });

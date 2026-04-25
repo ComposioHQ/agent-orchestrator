@@ -68,6 +68,7 @@ import {
   isDetectingTimedOut,
   parseAttemptCount,
   resolvePREnrichmentDecision,
+  resolvePRLiveDecision,
   resolveProbeDecision,
   type LifecycleDecision,
 } from "./lifecycle-status-decisions.js";
@@ -489,8 +490,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           const sessionsDir = getSessionsDir(project.storageKey);
           updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
         }
-      } catch {
-        // Best-effort — will retry next poll cycle
+      } catch (error) {
+        observer?.recordOperation?.({
+          metric: "lifecycle_poll",
+          operation: "scm.detect_pr",
+          outcome: "failure",
+          correlationId: createCorrelationId("detect-pr"),
+          projectId: session.projectId,
+          sessionId: session.id,
+          reason: error instanceof Error ? error.message : String(error),
+          level: "warn",
+        });
       }
     }
   }
@@ -807,10 +817,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           );
         }
 
-        // No fallback to individual REST calls — the batch enrichment cache
-        // will populate on the next cycle (30s). Status stays unchanged for
-        // this cycle. This eliminates ~110 individual pr view/checks calls
-        // per 15-minute window.
+        // Batch enrichment cache miss — fall back to getPRState for terminal
+        // states (merged/closed) only. Detecting these promptly prevents
+        // delayed cleanup. Non-terminal state updates wait for the next batch
+        // cycle (30s) to avoid ~110 individual REST calls per 15-min window.
+        try {
+          const prState = await scm.getPRState(session.pr);
+          if (prState === "merged" || prState === "closed") {
+            return commit(
+              resolvePRLiveDecision({
+                prState,
+                ciStatus: "none",
+                reviewDecision: "none",
+                mergeable: false,
+                shouldEscalateIdleToStuck,
+                idleWasBlocked,
+                activityEvidence,
+              }),
+            );
+          }
+        } catch {
+          // Best-effort — batch will retry next cycle
+        }
       } catch (error) {
         observer?.recordOperation?.({
           metric: "lifecycle_poll",
