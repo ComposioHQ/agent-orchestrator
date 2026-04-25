@@ -15,7 +15,9 @@ vi.mock("node:child_process", () => {
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(),
   lstatSync: vi.fn(),
+  statSync: vi.fn(),
   symlinkSync: vi.fn(),
+  linkSync: vi.fn(),
   cpSync: vi.fn(),
   rmSync: vi.fn(),
   mkdirSync: vi.fn(),
@@ -47,7 +49,9 @@ import * as childProcess from "node:child_process";
 import {
   existsSync,
   lstatSync,
+  statSync,
   symlinkSync,
+  linkSync,
   cpSync,
   rmSync,
   mkdirSync,
@@ -66,7 +70,9 @@ const mockExecFileAsync = (childProcess.execFile as any)[
 
 const mockExistsSync = existsSync as ReturnType<typeof vi.fn>;
 const mockLstatSync = lstatSync as ReturnType<typeof vi.fn>;
+const mockStatSync = statSync as ReturnType<typeof vi.fn>;
 const mockSymlinkSync = symlinkSync as ReturnType<typeof vi.fn>;
+const mockLinkSync = linkSync as ReturnType<typeof vi.fn>;
 const mockCpSync = cpSync as ReturnType<typeof vi.fn>;
 const mockRmSync = rmSync as ReturnType<typeof vi.fn>;
 const mockMkdirSync = mkdirSync as ReturnType<typeof vi.fn>;
@@ -986,13 +992,41 @@ describe("workspace.postCreate()", () => {
     );
   });
 
-  it("falls back to cpSync when symlinkSync fails on Windows (B19)", async () => {
+  it("falls back to junction for directories on Windows (B19)", async () => {
     const ws = create();
-    // Use workspaceInfo as-is — path check now uses sep so it works on all platforms
     const project = makeProject({ symlinks: ["node_modules"] });
 
     mockIsWindows.mockReturnValue(true);
-    mockExistsSync.mockReturnValueOnce(true); // sourcePath exists
+    mockExistsSync.mockReturnValueOnce(true);
+    mockLstatSync.mockImplementationOnce(() => {
+      throw new Error("ENOENT");
+    });
+
+    const symlinkError = Object.assign(new Error("symlink requires elevation"), { code: "EPERM" });
+    mockSymlinkSync
+      .mockImplementationOnce(() => {
+        throw symlinkError;
+      })
+      .mockImplementationOnce(() => undefined); // junction succeeds
+    mockStatSync.mockReturnValueOnce({ isDirectory: () => true });
+
+    await ws.postCreate!(workspaceInfo, project);
+
+    expect(mockSymlinkSync).toHaveBeenLastCalledWith(
+      expect.stringContaining("node_modules"),
+      expect.stringContaining("node_modules"),
+      "junction",
+    );
+    expect(mockLinkSync).not.toHaveBeenCalled();
+    expect(mockCpSync).not.toHaveBeenCalled();
+  });
+
+  it("falls back to hardlink for files on Windows (B19)", async () => {
+    const ws = create();
+    const project = makeProject({ symlinks: [".env"] });
+
+    mockIsWindows.mockReturnValue(true);
+    mockExistsSync.mockReturnValueOnce(true);
     mockLstatSync.mockImplementationOnce(() => {
       throw new Error("ENOENT");
     });
@@ -1001,6 +1035,37 @@ describe("workspace.postCreate()", () => {
     mockSymlinkSync.mockImplementationOnce(() => {
       throw symlinkError;
     });
+    mockStatSync.mockReturnValueOnce({ isDirectory: () => false });
+    mockLinkSync.mockImplementationOnce(() => undefined);
+
+    await ws.postCreate!(workspaceInfo, project);
+
+    expect(mockLinkSync).toHaveBeenCalledWith(
+      expect.stringContaining(".env"),
+      expect.stringContaining(".env"),
+    );
+    expect(mockCpSync).not.toHaveBeenCalled();
+  });
+
+  it("falls back to cpSync when junction also fails on Windows (B19)", async () => {
+    const ws = create();
+    const project = makeProject({ symlinks: ["node_modules"] });
+
+    mockIsWindows.mockReturnValue(true);
+    mockExistsSync.mockReturnValueOnce(true);
+    mockLstatSync.mockImplementationOnce(() => {
+      throw new Error("ENOENT");
+    });
+
+    const symlinkError = Object.assign(new Error("symlink requires elevation"), { code: "EPERM" });
+    mockSymlinkSync
+      .mockImplementationOnce(() => {
+        throw symlinkError;
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("junction failed");
+      });
+    mockStatSync.mockReturnValueOnce({ isDirectory: () => true });
 
     await ws.postCreate!(workspaceInfo, project);
 

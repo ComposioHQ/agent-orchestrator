@@ -1,7 +1,16 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import * as fs from "node:fs";
-import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  statSync,
+  symlinkSync,
+  linkSync,
+  rmSync,
+  mkdirSync,
+  readdirSync,
+} from "node:fs";
 import { join, resolve, basename, dirname, sep } from "node:path";
 import { homedir } from "node:os";
 import {
@@ -410,8 +419,26 @@ export function create(config?: Record<string, unknown>): Workspace {
             symlinkSync(sourcePath, targetPath);
           } catch (err) {
             if (isWindows()) {
-              // Symlinks require admin/Developer Mode on Windows — fall back to copy
-              fs.cpSync(sourcePath, targetPath, { recursive: true });
+              // Symlinks need admin/Developer Mode on Windows. Try unprivileged
+              // alternatives first — junctions for dirs, hardlinks for files —
+              // before falling back to a recursive copy (slow + bloats every
+              // worktree, especially for node_modules).
+              const isDir = (() => {
+                try {
+                  return statSync(sourcePath).isDirectory();
+                } catch {
+                  return false;
+                }
+              })();
+              try {
+                if (isDir) {
+                  symlinkSync(sourcePath, targetPath, "junction");
+                } else {
+                  linkSync(sourcePath, targetPath);
+                }
+              } catch {
+                fs.cpSync(sourcePath, targetPath, { recursive: true });
+              }
             } else {
               throw err;
             }
