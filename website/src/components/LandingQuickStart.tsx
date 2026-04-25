@@ -35,7 +35,7 @@ export function LandingQuickStart() {
         ))}
       </div>
       <div className="landing-reveal mt-8 text-center">
-        <a href="/docs/getting-started" className="landing-card inline-flex rounded-lg px-4 py-2 text-[0.8125rem] text-[var(--landing-muted)] no-underline hover:text-white transition-colors">
+        <a href="/docs/" className="landing-card inline-flex rounded-lg px-4 py-2 text-[0.8125rem] text-[var(--landing-muted)] no-underline hover:text-white transition-colors">
           Explore docs for setup and workflows
         </a>
       </div>
