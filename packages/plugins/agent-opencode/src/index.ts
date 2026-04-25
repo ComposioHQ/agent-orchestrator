@@ -33,6 +33,67 @@ interface OpenCodeSessionListEntry {
   updated?: string | number;
 }
 
+interface OpenCodeSessionListCache {
+  entries: OpenCodeSessionListEntry[];
+  timestamp: number;
+  promise?: Promise<OpenCodeSessionListEntry[]>;
+}
+
+interface OpenCodeSessionLookupFound {
+  status: "found";
+  entry: OpenCodeSessionListEntry;
+}
+
+interface OpenCodeSessionLookupNotFound {
+  status: "not_found";
+}
+
+interface OpenCodeSessionLookupUnavailable {
+  status: "unavailable";
+}
+
+type OpenCodeSessionLookupResult =
+  | OpenCodeSessionLookupFound
+  | OpenCodeSessionLookupNotFound
+  | OpenCodeSessionLookupUnavailable;
+
+const OPENCODE_SESSION_LIST_CACHE_TTL_MS = 250;
+const OPENCODE_SESSION_LIST_TIMEOUT_MS = 30_000;
+const OPENCODE_SESSION_LIST_WARNING_INTERVAL_MS = 10_000;
+
+let sessionListCache: OpenCodeSessionListCache | null = null;
+let sessionListWarningCache: { signature: string; timestamp: number } | null = null;
+
+/**
+ * Reset the OpenCode session list cache. Exported for testing only.
+ * @internal
+ */
+export function resetOpenCodeSessionListCache(): void {
+  sessionListCache = null;
+  sessionListWarningCache = null;
+}
+
+function getSessionListErrorSignature(error: unknown): string {
+  if (error instanceof Error) {
+    const withCode = error as Error & { code?: unknown };
+    const code = typeof withCode.code === "string" ? withCode.code : "";
+    return `${error.name}:${error.message}:${code}`;
+  }
+  return String(error);
+}
+
+function warnSessionListFailure(error: unknown): void {
+  const now = Date.now();
+  const signature = getSessionListErrorSignature(error);
+  const shouldWarn =
+    !sessionListWarningCache ||
+    sessionListWarningCache.signature !== signature ||
+    now - sessionListWarningCache.timestamp >= OPENCODE_SESSION_LIST_WARNING_INTERVAL_MS;
+  if (!shouldWarn) return;
+  sessionListWarningCache = { signature, timestamp: now };
+  console.warn("[agent-opencode] Failed to list OpenCode sessions", error);
+}
+
 function parseUpdatedTimestamp(updated: string | number | undefined): Date | null {
   if (typeof updated === "number") {
     if (!Number.isFinite(updated)) return null;
@@ -58,18 +119,48 @@ function parseUpdatedTimestamp(updated: string | number | undefined): Date | nul
 }
 
 function parseSessionList(raw: string): OpenCodeSessionListEntry[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
+  const parsed: unknown = JSON.parse(raw);
   if (!Array.isArray(parsed)) return [];
   return parsed.filter((item): item is OpenCodeSessionListEntry => {
     if (!item || typeof item !== "object") return false;
     const record = item as Record<string, unknown>;
     return asValidOpenCodeSessionId(record["id"]) !== undefined;
   });
+}
+
+async function getCachedSessionList(): Promise<OpenCodeSessionListEntry[]> {
+  const now = Date.now();
+  if (sessionListCache) {
+    // Always reuse an in-flight promise, regardless of TTL, to dedupe concurrent calls.
+    if (sessionListCache.promise) {
+      return sessionListCache.promise;
+    }
+    // Only apply TTL to already-resolved cached entries.
+    if (now - sessionListCache.timestamp < OPENCODE_SESSION_LIST_CACHE_TTL_MS) {
+      return sessionListCache.entries;
+    }
+  }
+
+  const promise = execFileAsync("opencode", ["session", "list", "--format", "json"], {
+    timeout: OPENCODE_SESSION_LIST_TIMEOUT_MS,
+  })
+    .then(({ stdout }) => {
+      const entries = parseSessionList(stdout);
+      if (sessionListCache?.promise === promise) {
+        sessionListCache = { entries, timestamp: Date.now() };
+      }
+      return entries;
+    })
+    .catch((error) => {
+      warnSessionListFailure(error);
+      if (sessionListCache?.promise === promise) {
+        sessionListCache = null;
+      }
+      throw error;
+    });
+
+  sessionListCache = { entries: [], timestamp: now, promise };
+  return promise;
 }
 
 /**
@@ -157,36 +248,31 @@ process.stdin.on('data', c => input += c).on('end', () => {
  * Query OpenCode's session list and find the matching session for this AO session.
  * Tries metadata `opencodeSessionId` first, then falls back to title matching.
  */
-async function findOpenCodeSession(
-  session: Session,
-): Promise<OpenCodeSessionListEntry | null> {
+async function findOpenCodeSession(session: Session): Promise<OpenCodeSessionLookupResult> {
   try {
-    const { stdout } = await execFileAsync(
-      "opencode",
-      ["session", "list", "--format", "json"],
-      { timeout: 30_000 },
-    );
-
-    const sessions = parseSessionList(stdout);
+    const sessions = await getCachedSessionList();
 
     // Prefer exact ID match from metadata
     if (session.metadata?.opencodeSessionId) {
       const match = sessions.find((s) => s.id === session.metadata.opencodeSessionId);
-      if (match) return match;
+      if (match) return { status: "found", entry: match };
     }
 
     // Fallback: title match — pick the most recently updated session
     // to avoid binding to a stale session when titles collide.
     const titleMatches = sessions.filter((s) => s.title === `AO:${session.id}`);
-    if (titleMatches.length === 0) return null;
-    if (titleMatches.length === 1) return titleMatches[0]!;
-    return titleMatches.reduce((best, s) => {
-      const bestTs = parseUpdatedTimestamp(best.updated)?.getTime() ?? 0;
-      const sTs = parseUpdatedTimestamp(s.updated)?.getTime() ?? 0;
-      return sTs > bestTs ? s : best;
-    });
+    if (titleMatches.length === 0) return { status: "not_found" };
+    if (titleMatches.length === 1) return { status: "found", entry: titleMatches[0]! };
+    return {
+      status: "found",
+      entry: titleMatches.reduce((best, s) => {
+        const bestTs = parseUpdatedTimestamp(best.updated)?.getTime() ?? 0;
+        const sTs = parseUpdatedTimestamp(s.updated)?.getTime() ?? 0;
+        return sTs > bestTs ? s : best;
+      }),
+    };
   } catch {
-    return null;
+    return { status: "unavailable" };
   }
 }
 
@@ -324,10 +410,11 @@ function createOpenCodeAgent(): Agent {
         if (activityState) return activityState;
       }
 
-      // 2. Fallback: query OpenCode's session list API for timestamp-based detection
+      // 2. Fallback: query OpenCode's session list API for timestamp-based detection.
+      //    `not_found` and `unavailable` both intentionally continue to JSONL fallback.
       const targetSession = await findOpenCodeSession(session);
-      if (targetSession) {
-        const lastActivity = parseUpdatedTimestamp(targetSession.updated);
+      if (targetSession.status === "found") {
+        const lastActivity = parseUpdatedTimestamp(targetSession.entry.updated);
 
         if (lastActivity) {
           const ageMs = Math.max(0, Date.now() - lastActivity.getTime());
@@ -408,22 +495,23 @@ function createOpenCodeAgent(): Agent {
 
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
       const targetSession = await findOpenCodeSession(session);
-      if (!targetSession) return null;
+      if (targetSession.status !== "found") return null;
 
       return {
-        summary: targetSession.title ?? null,
+        summary: targetSession.entry.title ?? null,
         summaryIsFallback: true,
-        agentSessionId: targetSession.id,
+        agentSessionId: targetSession.entry.id,
         // OpenCode doesn't expose token/cost data in session list
       };
     },
 
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
       // Try metadata first, then query OpenCode's session list
-      const sessionId =
-        asValidOpenCodeSessionId(session.metadata?.opencodeSessionId) ??
-        (await findOpenCodeSession(session))?.id ??
-        null;
+      const metadataSessionId = asValidOpenCodeSessionId(session.metadata?.opencodeSessionId);
+      const discoveredSession = metadataSessionId ? null : await findOpenCodeSession(session);
+      const discoveredSessionId =
+        discoveredSession?.status === "found" ? discoveredSession.entry.id : null;
+      const sessionId = metadataSessionId ?? discoveredSessionId;
 
       if (!sessionId) return null;
 
