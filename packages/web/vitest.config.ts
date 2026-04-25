@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+
+const require = createRequire(import.meta.url);
+const xtermDir = dirname(require.resolve("@xterm/xterm/package.json"));
 
 export default defineConfig({
   plugins: [
@@ -68,6 +72,7 @@ export default defineConfig({
         find: "@aoagents/ao-plugin-tracker-linear",
         replacement: resolve(__dirname, "../plugins/tracker-linear/src/index.ts"),
       },
+      { find: "@xterm/xterm", replacement: xtermDir },
       { find: "server-only", replacement: resolve(__dirname, "./src/__tests__/server-only-mock.ts") },
       { find: "@", replacement: resolve(__dirname, "./src") },
     ],

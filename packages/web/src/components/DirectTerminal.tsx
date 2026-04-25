@@ -70,6 +70,19 @@ function getStoredFontSize(): number {
   return FONT_SIZE_DEFAULT;
 }
 
+/**
+ * Call fit.fit() and return true on success, false if the terminal's render
+ * service hasn't initialised its dimensions yet (xterm race condition).
+ */
+export function safeFit(fit: FitAddonType): boolean {
+  try {
+    fit.fit();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface DirectTerminalProps {
   sessionId: string;
   /** Actual tmux session name. When provided, the terminal server uses it directly instead of resolving from sessionId. */
@@ -345,7 +358,7 @@ export function DirectTerminal({
         }
 
         // Fit terminal to container
-        fit.fit();
+        safeFit(fit);
 
         // Deferred fit to handle cases where container wasn't sized yet
         const deferredFitTimeout = setTimeout(() => {
@@ -520,7 +533,7 @@ export function DirectTerminal({
         // Handle window resize
         const handleResize = () => {
           if (fit) {
-            fit.fit();
+            if (!safeFit(fit)) return; // dimensions not ready — skip sending stale size
             resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
           }
         };
@@ -587,7 +600,7 @@ export function DirectTerminal({
     const fit = fitAddon.current;
     const terminal = terminalInstance.current;
     if (!fit || !terminal) return;
-    fit.fit();
+    if (!safeFit(fit)) return; // dimensions not ready — skip sending stale size
     resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
   }, [muxStatus, sessionId, resizeTerminalMux]);
 
@@ -615,7 +628,7 @@ export function DirectTerminal({
     // Without the mux resize, the shell keeps wrapping at the old dimensions
     // and the rendered output stops matching the visible grid until the
     // next resize event (window resize, tab switch, etc.).
-    fit.fit();
+    if (!safeFit(fit)) return; // dimensions not ready — skip sending stale size
     resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
   }, [fontSize, sessionId, resizeTerminalMux]);
 
@@ -652,7 +665,7 @@ export function DirectTerminal({
 
       // Container is at target size, now resize terminal
       terminal.refresh(0, terminal.rows - 1);
-      fit.fit();
+      if (!safeFit(fit)) return; // dimensions not ready — skip sending stale size
       terminal.refresh(0, terminal.rows - 1);
 
       // Send new size to server via mux
