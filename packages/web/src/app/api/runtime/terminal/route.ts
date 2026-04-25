@@ -1,14 +1,7 @@
 import { NextResponse } from "next/server";
+import { normalizePort } from "@/lib/terminal-config";
 
 export const dynamic = "force-dynamic";
-
-function normalizePort(input: string | undefined, fallback: number): string {
-  const parsed = Number.parseInt(input ?? "", 10);
-  if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) {
-    return String(parsed);
-  }
-  return String(fallback);
-}
 
 function normalizeProxyPath(input: string | undefined): string | null {
   if (!input) return null;

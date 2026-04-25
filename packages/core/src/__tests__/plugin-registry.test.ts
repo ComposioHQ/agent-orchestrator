@@ -453,11 +453,10 @@ describe("loadBuiltins", () => {
   });
 });
 
-describe("extractPluginConfig (via register with config)", () => {
-  // extractPluginConfig is tested indirectly: we verify that register()
-  // correctly passes config through, and that loadBuiltins() would call
-  // extractPluginConfig for known slot:name pairs. The actual config
-  // forwarding logic is validated in workspace plugin unit tests.
+describe("register() config forwarding", () => {
+  // Built-in / config-loaded plugins use register() without orchestrator config at create()
+  // time for non-notifier slots. Explicit config is only passed via register() when callers
+  // supply it; workspace plugin behavior is covered in workspace plugin unit tests.
 
   it("register passes config to plugin create()", () => {
     const registry = createPluginRegistry();
@@ -820,7 +819,7 @@ describe("External plugin manifest validation", () => {
 
     await registry.loadFromConfig(config, importFn);
 
-    // Config should be updated BEFORE extractPluginConfig is called
+    // Config should be updated before the notifier plugin is instantiated
     expect(config.notifiers?.myteams?.plugin).toBe("ms-teams");
 
     // Plugin should receive its config (webhookUrl, channel) despite name mismatch

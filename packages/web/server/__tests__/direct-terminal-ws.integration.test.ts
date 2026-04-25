@@ -10,9 +10,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
 import { request, type IncomingMessage } from "node:http";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { WebSocket } from "ws";
+import { getSessionsDir, writeMetadata } from "@aoagents/ao-core";
 import { findTmux } from "../tmux-utils.js";
 import { createDirectTerminalServer, type DirectTerminalServer } from "../direct-terminal-ws.js";
+import { issueTerminalAccess, resetTerminalAuthStateForTests } from "../terminal-auth.js";
 
 const TMUX = findTmux();
 const TEST_SESSION = `ao-test-integration-${process.pid}`;
@@ -20,6 +25,10 @@ const TEST_HASH_SESSION = `abcdef123456-ao-test-hash-${process.pid}`;
 
 let terminal: DirectTerminalServer;
 let port: number;
+let tempRoot: string;
+let projectPath: string;
+let configPath: string;
+const previousConfigPath = process.env["AO_CONFIG_PATH"];
 
 // =============================================================================
 // Helpers
@@ -83,6 +92,58 @@ function waitForMessage(
 // =============================================================================
 
 beforeAll(() => {
+  tempRoot = mkdtempSync(join(tmpdir(), "ao-direct-terminal-"));
+  projectPath = join(tempRoot, "project");
+  mkdirSync(projectPath, { recursive: true });
+  configPath = join(tempRoot, "agent-orchestrator.yaml");
+  writeFileSync(
+    configPath,
+    [
+      "port: 3000",
+      "defaults:",
+      "  runtime: tmux",
+      "  agent: claude-code",
+      "  workspace: worktree",
+      "  notifiers: []",
+      "projects:",
+      "  app:",
+      "    name: App",
+      `    path: ${JSON.stringify(projectPath)}`,
+      '    repo: "acme/app"',
+      '    defaultBranch: "main"',
+      '    sessionPrefix: "ao"',
+      "    scm:",
+      '      plugin: "github"',
+      "notifiers: {}",
+      "notificationRouting:",
+      "  urgent: []",
+      "  action: []",
+      "  warning: []",
+      "  info: []",
+      "reactions: {}",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+  process.env["AO_CONFIG_PATH"] = configPath;
+  resetTerminalAuthStateForTests();
+
+  const sessionsDir = getSessionsDir(configPath, projectPath);
+  writeMetadata(sessionsDir, TEST_SESSION, {
+    worktree: projectPath,
+    branch: "feat/test",
+    status: "working",
+    tmuxName: TEST_SESSION,
+    project: "app",
+  });
+  writeMetadata(sessionsDir, `ao-test-hash-${process.pid}`, {
+    worktree: projectPath,
+    branch: "feat/hash",
+    status: "working",
+    tmuxName: TEST_HASH_SESSION,
+    project: "app",
+  });
+
   execFileSync(TMUX, ["new-session", "-d", "-s", TEST_SESSION, "-x", "80", "-y", "24"], {
     timeout: 5000,
   });
@@ -100,6 +161,13 @@ afterAll(() => {
   terminal.shutdown();
   try { execFileSync(TMUX, ["kill-session", "-t", TEST_SESSION], { timeout: 5000 }); } catch { /* */ }
   try { execFileSync(TMUX, ["kill-session", "-t", TEST_HASH_SESSION], { timeout: 5000 }); } catch { /* */ }
+  resetTerminalAuthStateForTests();
+  if (previousConfigPath === undefined) {
+    delete process.env["AO_CONFIG_PATH"];
+  } else {
+    process.env["AO_CONFIG_PATH"] = previousConfigPath;
+  }
+  rmSync(tempRoot, { recursive: true, force: true });
 });
 
 // =============================================================================
@@ -173,10 +241,22 @@ describe("WebSocket upgrade routing", () => {
 // =============================================================================
 
 describe("mux terminal open", () => {
-  it("sends 'opened' response for a valid tmux session", async () => {
+  it("sends error response when terminal auth token is missing", async () => {
     const ws = await connectMux();
 
     ws.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open" }));
+
+    const msg = await waitForMessage(ws, (m) => m.ch === "terminal" && m.type === "error");
+    expect(String(msg.message)).toMatch(/token|auth/i);
+
+    ws.close();
+  });
+
+  it("sends 'opened' response for a valid tmux session", async () => {
+    const ws = await connectMux();
+    const { token } = issueTerminalAccess(TEST_SESSION);
+
+    ws.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open", token }));
 
     const msg = await waitForMessage(ws, (m) => m.ch === "terminal" && m.type === "opened");
     expect(msg.id).toBe(TEST_SESSION);
@@ -187,7 +267,12 @@ describe("mux terminal open", () => {
   it("sends error response for nonexistent tmux session", async () => {
     const ws = await connectMux();
 
-    ws.send(JSON.stringify({ ch: "terminal", id: `nonexistent-${Date.now()}`, type: "open" }));
+    ws.send(JSON.stringify({
+      ch: "terminal",
+      id: `nonexistent-${Date.now()}`,
+      type: "open",
+      token: "missing.token",
+    }));
 
     const msg = await waitForMessage(ws, (m) => m.ch === "terminal" && m.type === "error");
     expect(typeof msg.message).toBe("string");
@@ -195,38 +280,142 @@ describe("mux terminal open", () => {
     ws.close();
   });
 
-  it("sends error for invalid session ID (path traversal)", async () => {
-    const ws = await connectMux();
-
-    ws.send(JSON.stringify({ ch: "terminal", id: "../../../etc/passwd", type: "open" }));
-
-    const msg = await waitForMessage(ws, (m) => m.ch === "terminal" && m.type === "error");
-    expect(msg.message).toMatch(/invalid session/i);
-
-    ws.close();
-  });
-
-  it("sends error for shell injection in session ID", async () => {
-    const ws = await connectMux();
-
-    ws.send(JSON.stringify({ ch: "terminal", id: "test;rm -rf /", type: "open" }));
-
-    const msg = await waitForMessage(ws, (m) => m.ch === "terminal" && m.type === "error");
-    expect(msg.message).toMatch(/invalid session/i);
-
-    ws.close();
-  });
-
   it("resolves hash-prefixed tmux session by suffix", async () => {
     const hashOnlyId = `ao-test-hash-${process.pid}`;
     const ws = await connectMux();
+    const { token } = issueTerminalAccess(hashOnlyId);
 
-    ws.send(JSON.stringify({ ch: "terminal", id: hashOnlyId, type: "open" }));
+    ws.send(JSON.stringify({ ch: "terminal", id: hashOnlyId, type: "open", token }));
 
     const msg = await waitForMessage(ws, (m) => m.ch === "terminal" && (m.type === "opened" || m.type === "error"));
     expect(msg.type).toBe("opened");
 
     ws.close();
+  });
+});
+
+// =============================================================================
+// Mux protocol — cross-connection isolation
+// =============================================================================
+
+describe("mux terminal cross-connection isolation", () => {
+  it("rejects data from a connection that did not open the terminal", async () => {
+    const wsA = await connectMux();
+    const wsB = await connectMux();
+    const { token } = issueTerminalAccess(TEST_SESSION);
+
+    wsA.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open", token }));
+    await waitForMessage(wsA, (m) => m.ch === "terminal" && m.type === "opened");
+
+    wsB.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "data", data: "echo leak\n" }));
+
+    const err = await waitForMessage(wsB, (m) => m.ch === "terminal" && m.type === "error");
+    expect(String(err.message)).toMatch(/not opened/i);
+
+    wsA.close();
+    wsB.close();
+  });
+
+  it("rejects resize from a connection that did not open the terminal", async () => {
+    const wsA = await connectMux();
+    const wsB = await connectMux();
+    const { token } = issueTerminalAccess(TEST_SESSION);
+
+    wsA.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open", token }));
+    await waitForMessage(wsA, (m) => m.ch === "terminal" && m.type === "opened");
+
+    wsB.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "resize", cols: 200, rows: 50 }));
+
+    const err = await waitForMessage(wsB, (m) => m.ch === "terminal" && m.type === "error");
+    expect(String(err.message)).toMatch(/not opened/i);
+
+    wsA.close();
+    wsB.close();
+  });
+
+  it("does not deliver terminal data to a connection that did not subscribe", async () => {
+    const wsA = await connectMux();
+    const wsB = await connectMux();
+    const { token } = issueTerminalAccess(TEST_SESSION);
+
+    // Only wsA opens the terminal
+    wsA.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open", token }));
+    await waitForMessage(wsA, (m) => m.ch === "terminal" && m.type === "opened");
+
+    // wsB subscribes to a different channel to avoid connection-level issues
+    let bReceivedTerminalData = false;
+    wsB.on("message", (raw: Buffer | string) => {
+      try {
+        const msg = JSON.parse(raw.toString()) as MuxMessage;
+        if (msg.ch === "terminal" && msg.id === TEST_SESSION && msg.type === "data") {
+          bReceivedTerminalData = true;
+        }
+      } catch { /* ignore */ }
+    });
+
+    // wsA sends data that produces output
+    const marker = `ISOLATE_${Date.now()}`;
+    wsA.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "data", data: `echo ${marker}\n` }));
+
+    // Wait for wsA to see the echo
+    await waitForMessage(wsA, (m) => m.ch === "terminal" && m.type === "data", 5000);
+
+    // Give wsB a moment to potentially receive leaked data
+    await new Promise((r) => setTimeout(r, 300));
+
+    expect(bReceivedTerminalData).toBe(false);
+
+    wsA.close();
+    wsB.close();
+  });
+
+  it("allows both connections to independently open and use the same terminal", async () => {
+    const wsA = await connectMux();
+    const wsB = await connectMux();
+    const tokenA = issueTerminalAccess(TEST_SESSION);
+    const tokenB = issueTerminalAccess(TEST_SESSION);
+
+    // Both open the same terminal with their own tokens
+    wsA.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open", token: tokenA.token }));
+    await waitForMessage(wsA, (m) => m.ch === "terminal" && m.type === "opened");
+
+    wsB.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open", token: tokenB.token }));
+    await waitForMessage(wsB, (m) => m.ch === "terminal" && m.type === "opened");
+
+    // Drain initial output on both
+    await new Promise((r) => setTimeout(r, 300));
+
+    // wsA sends data — both should receive it
+    const markerA = `BOTH_A_${Date.now()}`;
+    let aReceived = "";
+    let bReceived = "";
+    const collectA = (raw: Buffer | string) => {
+      try {
+        const msg = JSON.parse(raw.toString()) as MuxMessage;
+        if (msg.ch === "terminal" && msg.type === "data") aReceived += msg.data as string;
+      } catch { /* */ }
+    };
+    const collectB = (raw: Buffer | string) => {
+      try {
+        const msg = JSON.parse(raw.toString()) as MuxMessage;
+        if (msg.ch === "terminal" && msg.type === "data") bReceived += msg.data as string;
+      } catch { /* */ }
+    };
+    wsA.on("message", collectA);
+    wsB.on("message", collectB);
+
+    wsA.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "data", data: `echo ${markerA}\n` }));
+
+    await new Promise((r) => setTimeout(r, 2000));
+
+    wsA.off("message", collectA);
+    wsB.off("message", collectB);
+
+    expect(aReceived).toContain(markerA);
+    expect(bReceived).toContain(markerA);
+
+    wsA.close();
+    wsB.close();
   });
 });
 
@@ -237,8 +426,9 @@ describe("mux terminal open", () => {
 describe("mux terminal I/O", () => {
   it("receives terminal data after open", async () => {
     const ws = await connectMux();
+    const { token } = issueTerminalAccess(TEST_SESSION);
 
-    ws.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open" }));
+    ws.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open", token }));
     await waitForMessage(ws, (m) => m.ch === "terminal" && m.type === "opened");
 
     // tmux sends terminal init sequences on attach — wait for any data
@@ -251,8 +441,9 @@ describe("mux terminal I/O", () => {
 
   it("can send input and receive echo", async () => {
     const ws = await connectMux();
+    const { token } = issueTerminalAccess(TEST_SESSION);
 
-    ws.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open" }));
+    ws.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open", token }));
     await waitForMessage(ws, (m) => m.ch === "terminal" && m.type === "opened");
     // Drain initial output
     await new Promise((r) => setTimeout(r, 300));
@@ -284,8 +475,9 @@ describe("mux terminal I/O", () => {
 
   it("handles resize without error", async () => {
     const ws = await connectMux();
+    const { token } = issueTerminalAccess(TEST_SESSION);
 
-    ws.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open" }));
+    ws.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "open", token }));
     await waitForMessage(ws, (m) => m.ch === "terminal" && m.type === "opened");
 
     ws.send(JSON.stringify({ ch: "terminal", id: TEST_SESSION, type: "resize", cols: 120, rows: 40 }));

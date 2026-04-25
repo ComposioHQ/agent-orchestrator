@@ -11,6 +11,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { homedir, userInfo } from "node:os";
 import { spawn } from "node:child_process";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { verifyTerminalAccess } from "./terminal-auth.js";
 
 // These types mirror src/lib/mux-protocol.ts exactly.
 // tsconfig.server.json constrains rootDir to "server/", so we cannot import
@@ -20,7 +21,7 @@ import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js
 type ClientMessage =
   | { ch: "terminal"; id: string; type: "data"; data: string }
   | { ch: "terminal"; id: string; type: "resize"; cols: number; rows: number }
-  | { ch: "terminal"; id: string; type: "open" }
+  | { ch: "terminal"; id: string; type: "open"; token: string }
   | { ch: "terminal"; id: string; type: "close" }
   | { ch: "system"; type: "ping" }
   | { ch: "subscribe"; topics: ("sessions")[] };
@@ -440,6 +441,15 @@ class TerminalManager {
  * Create a mux WebSocket server (noServer mode).
  * Returns the WebSocketServer instance for manual upgrade routing.
  */
+const DEFAULT_MUX_MAX_CONNECTIONS = 200;
+
+function getMuxMaxConnections(): number {
+  const raw = process.env["AO_MUX_MAX_CONNECTIONS"];
+  if (raw === undefined || raw === "") return DEFAULT_MUX_MAX_CONNECTIONS;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MUX_MAX_CONNECTIONS;
+}
+
 export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
   if (!ptySpawn) {
     console.warn("[MuxServer] node-pty not available — mux WebSocket will be disabled");
@@ -451,8 +461,16 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
   const broadcaster = new SessionBroadcaster(nextPort);
 
   const wss = new WebSocketServer({ noServer: true });
+  const maxMuxConnections = getMuxMaxConnections();
 
   wss.on("connection", (ws) => {
+    // New socket is already counted in wss.clients; close excess connections.
+    if (wss.clients.size > maxMuxConnections) {
+      console.warn("[MuxServer] Rejecting mux connection: max clients reached");
+      ws.close(1013, "Too many connections");
+      return;
+    }
+
     console.log("[MuxServer] New mux connection");
 
     const subscriptions = new Map<string, () => void>();
@@ -498,6 +516,8 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
 
           try {
             if (type === "open") {
+              verifyTerminalAccess(id, msg.token);
+
               // Validate session exists
               terminalManager.open(id);
 
@@ -543,8 +563,14 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
                 subscriptions.set(id, unsub);
               }
             } else if (type === "data" && "data" in msg) {
+              if (!subscriptions.has(id)) {
+                throw new Error("Terminal not opened on this connection");
+              }
               terminalManager.write(id, msg.data);
             } else if (type === "resize" && "cols" in msg && "rows" in msg) {
+              if (!subscriptions.has(id)) {
+                throw new Error("Terminal not opened on this connection");
+              }
               terminalManager.resize(id, msg.cols, msg.rows);
             } else if (type === "close") {
               // Unsubscribe this client only — TerminalManager is shared across

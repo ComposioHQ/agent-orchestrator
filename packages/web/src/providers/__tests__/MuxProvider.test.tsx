@@ -76,6 +76,40 @@ function wrapper({ children }: { children: React.ReactNode }) {
   return <MuxProvider>{children}</MuxProvider>;
 }
 
+function makeFetchMock() {
+  return vi.fn(async (input: string) => {
+    if (input === "/api/runtime/terminal") {
+      return {
+        ok: true,
+        json: async () => ({ proxyWsPath: "/ao-terminal-ws" }),
+      };
+    }
+
+    if (input.startsWith("/api/sessions/") && input.endsWith("/terminal")) {
+      const sessionId = decodeURIComponent(input.split("/")[3] ?? "");
+      return {
+        ok: true,
+        json: async () => ({
+          token: `token-for-${sessionId}`,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+      };
+    }
+
+    throw new Error(`Unexpected fetch: ${input}`);
+  });
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 /**
  * Flush the MuxProvider's async init (fetch → connect).
  * Two promise ticks: one for `await fetch(...)`, one for `await res.json()`.
@@ -95,13 +129,7 @@ async function flushInit() {
 beforeEach(() => {
   MockWebSocket.instances = [];
   vi.stubGlobal("WebSocket", MockWebSocket);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ proxyWsPath: "/ao-terminal-ws" }),
-    })),
-  );
+  vi.stubGlobal("fetch", makeFetchMock());
 });
 
 afterEach(() => {
@@ -270,6 +298,7 @@ describe("MuxProvider connection lifecycle", () => {
       expect(result.current.status).toBe("connected");
 
       act(() => result.current.openTerminal("session-abc"));
+      await flushInit();
       // Confirm open message sent on ws1
       expect(ws1.sentMessages.some((m) => {
         const p = JSON.parse(m) as Record<string, unknown>;
@@ -284,6 +313,7 @@ describe("MuxProvider connection lifecycle", () => {
       expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(2);
       const ws2 = MockWebSocket.instances[MockWebSocket.instances.length - 1];
       act(() => ws2.simulateOpen());
+      await flushInit();
 
       // session-abc should be re-opened on ws2
       expect(ws2.sentMessages.some((m) => {
@@ -338,11 +368,13 @@ describe("MuxProvider message handling", () => {
   it("tracks opened terminals on 'opened' message", async () => {
     vi.useFakeTimers();
     try {
-      renderHook(() => useMux(), { wrapper });
+      const { result } = renderHook(() => useMux(), { wrapper });
       await flushInit();
 
       const ws1 = MockWebSocket.instances[0];
       act(() => ws1.simulateOpen());
+      act(() => result.current.openTerminal("s1"));
+      await flushInit();
 
       act(() => ws1.simulateMessage({ ch: "terminal", id: "s1", type: "opened" }));
 
@@ -353,6 +385,7 @@ describe("MuxProvider message handling", () => {
 
       const ws2 = MockWebSocket.instances[MockWebSocket.instances.length - 1];
       act(() => ws2.simulateOpen());
+      await flushInit();
 
       expect(ws2.sentMessages.some((m) => {
         const p = JSON.parse(m) as Record<string, unknown>;
@@ -361,6 +394,21 @@ describe("MuxProvider message handling", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("sends close for stale opened acknowledgements", async () => {
+    const { result, ws } = await setupConnected();
+
+    act(() => result.current.openTerminal("stale-open"));
+    act(() => result.current.closeTerminal("stale-open"));
+    await flushInit();
+
+    act(() => ws.simulateMessage({ ch: "terminal", id: "stale-open", type: "opened" }));
+
+    expect(ws.sentMessages.some((m) => {
+      const payload = JSON.parse(m) as Record<string, unknown>;
+      return payload.ch === "terminal" && payload.type === "close" && payload.id === "stale-open";
+    })).toBe(true);
   });
 
   it("dispatches exit notice to subscribers on 'exited' message", async () => {
@@ -475,10 +523,189 @@ describe("MuxProvider terminal operations", () => {
   it("openTerminal sends open message when connected", async () => {
     const { result, ws } = await setupConnected();
     act(() => result.current.openTerminal("session-abc"));
+    await flushInit();
     expect(ws.sentMessages.some((m) => {
       const p = JSON.parse(m) as Record<string, unknown>;
-      return p.ch === "terminal" && p.type === "open" && p.id === "session-abc";
+      return (
+        p.ch === "terminal" &&
+        p.type === "open" &&
+        p.id === "session-abc" &&
+        p.token === "token-for-session-abc"
+      );
     })).toBe(true);
+  });
+
+  it("reuses inflight terminal grant requests", async () => {
+    const deferred = createDeferred<{ ok: true; json: () => Promise<{ token: string; expiresAt: string }> }>();
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/runtime/terminal") {
+        return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
+      }
+      if (input === "/api/sessions/session-shared/terminal") {
+        return deferred.promise;
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result, ws } = await setupConnected();
+    act(() => {
+      result.current.openTerminal("session-shared");
+      result.current.openTerminal("session-shared");
+    });
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/sessions/session-shared/terminal")).toHaveLength(1);
+
+    deferred.resolve({
+      ok: true,
+      json: async () => ({
+        token: "shared-token",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    });
+    await flushInit();
+
+    const openMessages = ws.sentMessages
+      .map((m) => JSON.parse(m) as Record<string, unknown>)
+      .filter((m) => m.ch === "terminal" && m.type === "open" && m.id === "session-shared");
+    expect(openMessages).toHaveLength(2);
+    expect(openMessages[0]?.["token"]).toBe("shared-token");
+  });
+
+  it("logs terminal grant fetch failures", async () => {
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/runtime/terminal") {
+        return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
+      }
+      if (input === "/api/sessions/session-fail/terminal") {
+        return { ok: false, status: 403 };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const { result, ws } = await setupConnected();
+      act(() => result.current.openTerminal("session-fail"));
+      await flushInit();
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[MuxProvider] Failed to authorize terminal session-fail:",
+        "Failed to authorize terminal: HTTP 403",
+      );
+      expect(ws.sentMessages.some((m) => m.includes("\"session-fail\""))).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("logs invalid terminal grant responses", async () => {
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/runtime/terminal") {
+        return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
+      }
+      if (input === "/api/sessions/session-invalid/terminal") {
+        return { ok: true, json: async () => ({ token: 123, expiresAt: null }) };
+      }
+      if (input === "/api/sessions/session-bad-expiry/terminal") {
+        return { ok: true, json: async () => ({ token: "ok", expiresAt: "not-a-date" }) };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const { result } = await setupConnected();
+      act(() => {
+        result.current.openTerminal("session-invalid");
+        result.current.openTerminal("session-bad-expiry");
+      });
+      await flushInit();
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[MuxProvider] Failed to authorize terminal session-invalid:",
+        "Terminal authorization response was invalid",
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[MuxProvider] Failed to authorize terminal session-bad-expiry:",
+        "Terminal authorization expiry was invalid",
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("does not send terminal open when the socket closes before auth resolves", async () => {
+    const deferred = createDeferred<{ ok: true; json: () => Promise<{ token: string; expiresAt: string }> }>();
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/runtime/terminal") {
+        return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
+      }
+      if (input === "/api/sessions/session-late/terminal") {
+        return deferred.promise;
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result, ws } = await setupConnected();
+    act(() => result.current.openTerminal("session-late"));
+    act(() => ws.simulateClose());
+
+    deferred.resolve({
+      ok: true,
+      json: async () => ({
+        token: "late-token",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    });
+    await flushInit();
+
+    expect(ws.sentMessages.some((m) => m.includes("late-token"))).toBe(false);
+  });
+
+  it("does not send terminal open when the terminal closes before auth resolves", async () => {
+    const deferred = createDeferred<{ ok: true; json: () => Promise<{ token: string; expiresAt: string }> }>();
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/runtime/terminal") {
+        return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
+      }
+      if (input === "/api/sessions/session-close-race/terminal") {
+        return deferred.promise;
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result, ws } = await setupConnected();
+    act(() => result.current.openTerminal("session-close-race"));
+    act(() => result.current.closeTerminal("session-close-race"));
+
+    deferred.resolve({
+      ok: true,
+      json: async () => ({
+        token: "close-race-token",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    });
+    await flushInit();
+
+    expect(ws.sentMessages.some((m) => m.includes("close-race-token"))).toBe(false);
+    expect(ws.sentMessages.some((m) => {
+      const payload = JSON.parse(m) as Record<string, unknown>;
+      return payload.ch === "terminal" && payload.type === "close" && payload.id === "session-close-race";
+    })).toBe(true);
+  });
+
+  it("does not send terminal open if the websocket is not open", async () => {
+    const { result, ws } = await setupConnected();
+    ws.readyState = MockWebSocket.CONNECTING;
+
+    act(() => result.current.openTerminal("session-not-open"));
+    await flushInit();
+
+    expect(ws.sentMessages.some((m) => m.includes("session-not-open"))).toBe(false);
   });
 
   it("closeTerminal sends close message", async () => {
@@ -503,9 +730,15 @@ describe("MuxProvider terminal operations", () => {
   it("subscribeTerminal sends open for untracked terminal", async () => {
     const { result, ws } = await setupConnected();
     act(() => { result.current.subscribeTerminal("session-new", () => {}); });
+    await flushInit();
     expect(ws.sentMessages.some((m) => {
       const p = JSON.parse(m) as Record<string, unknown>;
-      return p.ch === "terminal" && p.type === "open" && p.id === "session-new";
+      return (
+        p.ch === "terminal" &&
+        p.type === "open" &&
+        p.id === "session-new" &&
+        p.token === "token-for-session-new"
+      );
     })).toBe(true);
   });
 
@@ -532,7 +765,22 @@ describe("buildMuxWsUrl", () => {
   it("uses directTerminalPort from runtime config when on a custom port", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({ ok: true, json: async () => ({ directTerminalPort: 14802 }) })),
+      vi.fn(async (input: string) => {
+        if (input === "/api/runtime/terminal") {
+          return { ok: true, json: async () => ({ directTerminalPort: 14802 }) };
+        }
+        if (input.startsWith("/api/sessions/") && input.endsWith("/terminal")) {
+          const sessionId = decodeURIComponent(input.split("/")[3] ?? "");
+          return {
+            ok: true,
+            json: async () => ({
+              token: `token-for-${sessionId}`,
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            }),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${input}`);
+      }),
     );
     Object.defineProperty(window, "location", {
       writable: true,
@@ -548,7 +796,25 @@ describe("buildMuxWsUrl", () => {
   });
 
   it("uses path-based URL when port is empty (reverse proxy)", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (input === "/api/runtime/terminal") {
+          return { ok: false };
+        }
+        if (input.startsWith("/api/sessions/") && input.endsWith("/terminal")) {
+          const sessionId = decodeURIComponent(input.split("/")[3] ?? "");
+          return {
+            ok: true,
+            json: async () => ({
+              token: `token-for-${sessionId}`,
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            }),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${input}`);
+      }),
+    );
     Object.defineProperty(window, "location", {
       writable: true,
       value: { protocol: "http:", host: "localhost", hostname: "localhost", port: "" },
@@ -556,5 +822,55 @@ describe("buildMuxWsUrl", () => {
     renderHook(() => useMux(), { wrapper });
     await flushInit();
     expect(MockWebSocket.instances[0].url).toMatch(/\/ao-terminal-mux$/);
+  });
+
+  it("refreshes terminal grants after they expire", async () => {
+    vi.useFakeTimers();
+    let terminalGrantFetchCount = 0;
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === "/api/runtime/terminal") {
+        return { ok: true, json: async () => ({ proxyWsPath: "/ao-terminal-ws" }) };
+      }
+      if (input.startsWith("/api/sessions/") && input.endsWith("/terminal")) {
+        terminalGrantFetchCount += 1;
+        const sessionId = decodeURIComponent(input.split("/")[3] ?? "");
+        return {
+          ok: true,
+          json: async () => ({
+            token: `token-${sessionId}-${terminalGrantFetchCount}`,
+            expiresAt: new Date(Date.now() + 1_000).toISOString(),
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const { result } = renderHook(() => useMux(), { wrapper });
+      await flushInit();
+      const ws1 = MockWebSocket.instances[0];
+      act(() => ws1.simulateOpen());
+      act(() => result.current.openTerminal("session-expiring"));
+      await flushInit();
+
+      act(() => vi.advanceTimersByTime(2_000));
+      act(() => ws1.simulateClose());
+      act(() => vi.advanceTimersByTime(1_100));
+      await flushInit();
+
+      const ws2 = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+      act(() => ws2.simulateOpen());
+      await flushInit();
+
+      const openMessages = ws2.sentMessages
+        .map((m) => JSON.parse(m) as Record<string, unknown>)
+        .filter((m) => m.ch === "terminal" && m.type === "open" && m.id === "session-expiring");
+
+      expect(openMessages).toHaveLength(1);
+      expect(openMessages[0]?.["token"]).toBe("token-session-expiring-2");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

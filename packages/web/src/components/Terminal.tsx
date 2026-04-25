@@ -18,17 +18,19 @@ export function Terminal({ sessionId }: TerminalProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const port = process.env.NEXT_PUBLIC_TERMINAL_PORT ?? "14800";
-    // Use current hostname instead of hardcoded localhost
-    const protocol = window.location.protocol;
-    const hostname = window.location.hostname;
-    // URL-encode sessionId to prevent special characters from breaking the URL
-    fetch(`${protocol}//${hostname}:${port}/terminal?session=${encodeURIComponent(sessionId)}`)
+    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/terminal`, { cache: "no-store" })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<{ url: string }>;
+        return res.json() as Promise<{ url: string; token: string }>;
       })
       .then((data) => {
+        // SECURITY NOTE: The token is intentionally NOT embedded in the URL query
+        // string here.  The route handler returns the base ttyd URL (with only the
+        // session param) and the token separately in the JSON body.  The mux
+        // WebSocket path (MuxProvider) sends the token via WS message body, which
+        // is the recommended production path.  This legacy Terminal component is
+        // retained only for the /dev/terminal-test comparison page and should not
+        // be used in production.
         setTerminalUrl(data.url);
       })
       .catch((err) => {
@@ -80,6 +82,7 @@ export function Terminal({ sessionId }: TerminalProps) {
             className="h-full w-full border-0"
             title={`Terminal: ${sessionId}`}
             allow="clipboard-read; clipboard-write"
+            referrerPolicy="no-referrer"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
           />
         ) : (
