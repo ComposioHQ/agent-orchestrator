@@ -108,10 +108,22 @@ update_metadata_key() {
   local value="$2"
   local temp_file="\${metadata_file}.tmp"
 
-  if is_json_metadata && command -v jq &>/dev/null; then
-    # JSON format: use jq to update
-    jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$metadata_file" > "$temp_file"
-    mv "$temp_file" "$metadata_file"
+  if is_json_metadata; then
+    # JSON format
+    if command -v jq &>/dev/null; then
+      jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$metadata_file" > "$temp_file"
+      mv "$temp_file" "$metadata_file"
+    else
+      # jq unavailable — use sed-based JSON update (no key=value fallback to avoid corruption)
+      local escaped_json_value=$(printf '%s' "$value" | sed 's/[\\\\"/]/\\\\&/g')
+      if grep -q "\\"$key\\"" "$metadata_file" 2>/dev/null; then
+        sed "s|\\"$key\\"[[:space:]]*:[[:space:]]*\\"[^\\"]\\{0,\\}\\"|\\"$key\\": \\"$escaped_json_value\\"|" "$metadata_file" > "$temp_file"
+      else
+        # Insert new key before the closing brace
+        sed "s|}|, \\"$key\\": \\"$escaped_json_value\\" }|" "$metadata_file" > "$temp_file"
+      fi
+      mv "$temp_file" "$metadata_file"
+    fi
   else
     # Key=value format (legacy)
     local escaped_value=$(echo "$value" | sed 's/[&|\\/]/\\\\&/g')

@@ -17,8 +17,8 @@ vi.mock("@/lib/services", () => ({
   getServices,
 }));
 
-function makeRequest(method: string, body?: Record<string, unknown>): NextRequest {
-  return new NextRequest("http://localhost:3000/api/projects/demo", {
+function makeRequest(method: string, body?: Record<string, unknown>, projectId = "demo"): NextRequest {
+  return new NextRequest(`http://localhost:3000/api/projects/${projectId}`, {
     method,
     body: body ? JSON.stringify(body) : undefined,
     headers: body ? { "Content-Type": "application/json" } : undefined,
@@ -65,11 +65,11 @@ describe("/api/projects/[id]", () => {
   it("PATCH writes behavior fields to the local YAML", async () => {
     const repoDir = path.join(tempRoot, "demo");
     mkdirSync(repoDir, { recursive: true });
-    registerProjectInGlobalConfig("demo", "Demo", repoDir);
+    const effectiveId = registerProjectInGlobalConfig("demo", "Demo", repoDir);
 
     const { PATCH } = await import("@/app/api/projects/[id]/route");
-    const response = await PATCH(makeRequest("PATCH", { agent: "codex", runtime: "tmux" }), {
-      params: Promise.resolve({ id: "demo" }),
+    const response = await PATCH(makeRequest("PATCH", { agent: "codex", runtime: "tmux" }, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
     });
 
     expect(response.status).toBe(200);
@@ -96,11 +96,11 @@ describe("/api/projects/[id]", () => {
         "",
       ].join("\n"),
     );
-    registerProjectInGlobalConfig("demo", "Demo", repoDir);
+    const effectiveId = registerProjectInGlobalConfig("demo", "Demo", repoDir);
 
     const { PATCH } = await import("@/app/api/projects/[id]/route");
-    const response = await PATCH(makeRequest("PATCH", { agent: "codex" }), {
-      params: Promise.resolve({ id: "demo" }),
+    const response = await PATCH(makeRequest("PATCH", { agent: "codex" }, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
     });
 
     expect(response.status).toBe(200);
@@ -123,11 +123,11 @@ describe("/api/projects/[id]", () => {
         "",
       ].join("\n"),
     );
-    registerProjectInGlobalConfig("demo", "Demo", repoDir);
+    const effectiveId = registerProjectInGlobalConfig("demo", "Demo", repoDir);
 
     const { PATCH } = await import("@/app/api/projects/[id]/route");
-    const response = await PATCH(makeRequest("PATCH", { runtime: "docker" }), {
-      params: Promise.resolve({ id: "demo" }),
+    const response = await PATCH(makeRequest("PATCH", { runtime: "docker" }, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
     });
 
     expect(response.status).toBe(200);
@@ -176,11 +176,11 @@ describe("/api/projects/[id]", () => {
   it("PATCH rejects identity field updates with 400", async () => {
     const repoDir = path.join(tempRoot, "demo");
     mkdirSync(repoDir, { recursive: true });
-    registerProjectInGlobalConfig("demo", "Demo", repoDir);
+    const effectiveId = registerProjectInGlobalConfig("demo", "Demo", repoDir);
 
     const { PATCH } = await import("@/app/api/projects/[id]/route");
-    const response = await PATCH(makeRequest("PATCH", { path: "/x" }), {
-      params: Promise.resolve({ id: "demo" }),
+    const response = await PATCH(makeRequest("PATCH", { path: "/x" }, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
     });
 
     expect(response.status).toBe(400);
@@ -193,21 +193,21 @@ describe("/api/projects/[id]", () => {
     const repoDir = path.join(tempRoot, "broken");
     mkdirSync(repoDir, { recursive: true });
     writeFileSync(path.join(repoDir, "agent-orchestrator.yaml"), "agent: [broken\n");
-    registerProjectInGlobalConfig("broken", "Broken", repoDir);
+    const effectiveId = registerProjectInGlobalConfig("broken", "Broken", repoDir);
 
     const { GET } = await import("@/app/api/projects/[id]/route");
-    const response = await GET(makeRequest("GET"), {
-      params: Promise.resolve({ id: "broken" }),
+    const response = await GET(makeRequest("GET", undefined, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
     });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       error: expect.any(String),
-      projectId: "broken",
+      projectId: effectiveId,
       degraded: true,
       project: {
-        id: "broken",
-        name: "broken",
+        id: effectiveId,
+        name: expect.any(String),
         path: expect.stringContaining(path.sep + "broken"),
         resolveError: expect.any(String),
       },
@@ -218,41 +218,41 @@ describe("/api/projects/[id]", () => {
     const repoDir = path.join(tempRoot, "broken");
     mkdirSync(repoDir, { recursive: true });
     writeFileSync(path.join(repoDir, "agent-orchestrator.yaml"), "agent: [broken\n");
-    registerProjectInGlobalConfig("broken", "Broken", repoDir);
+    const effectiveId = registerProjectInGlobalConfig("broken", "Broken", repoDir);
 
     const { PATCH, PUT } = await import("@/app/api/projects/[id]/route");
 
-    const patchResponse = await PATCH(makeRequest("PATCH", { agent: "codex" }), {
-      params: Promise.resolve({ id: "broken" }),
+    const patchResponse = await PATCH(makeRequest("PATCH", { agent: "codex" }, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
     });
-    const putResponse = await PUT(makeRequest("PUT", { runtime: "tmux" }), {
-      params: Promise.resolve({ id: "broken" }),
+    const putResponse = await PUT(makeRequest("PUT", { runtime: "tmux" }, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
     });
 
     expect(patchResponse.status).toBe(409);
     expect(putResponse.status).toBe(409);
     await expect(patchResponse.json()).resolves.toEqual({
       error: expect.any(String),
-      projectId: "broken",
+      projectId: effectiveId,
       degraded: true,
-      project: expect.objectContaining({ id: "broken" }),
+      project: expect.objectContaining({ id: effectiveId }),
     });
     await expect(putResponse.json()).resolves.toEqual({
       error: expect.any(String),
-      projectId: "broken",
+      projectId: effectiveId,
       degraded: true,
-      project: expect.objectContaining({ id: "broken" }),
+      project: expect.objectContaining({ id: effectiveId }),
     });
   });
 
   it("DELETE removes the registry entry and AO storage but preserves the repository path", async () => {
     const repoDir = path.join(tempRoot, "demo");
     mkdirSync(repoDir, { recursive: true });
-    registerProjectInGlobalConfig("demo", "Demo", repoDir);
+    const effectiveId = registerProjectInGlobalConfig("demo", "Demo", repoDir);
 
      const destroy = vi.fn().mockResolvedValue(undefined);
      const list = vi.fn().mockResolvedValue([
-       { path: path.join(tempRoot, "managed-worktrees", "demo", "demo-orchestrator-1") },
+       { path: path.join(tempRoot, "managed-worktrees", effectiveId, `${effectiveId}-orchestrator-1`) },
      ]);
      getServices.mockResolvedValue({
        registry: {
@@ -260,26 +260,26 @@ describe("/api/projects/[id]", () => {
        },
      });
 
-    const projectDir = getProjectDir("demo");
+    const projectDir = getProjectDir(effectiveId);
     mkdirSync(projectDir, { recursive: true });
 
     const { DELETE } = await import("@/app/api/projects/[id]/route");
-    const response = await DELETE(makeRequest("DELETE"), {
-      params: Promise.resolve({ id: "demo" }),
+    const response = await DELETE(makeRequest("DELETE", undefined, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
     });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       ok: true,
-      projectId: "demo",
+      projectId: effectiveId,
       removedStorageDir: true,
     });
-    expect(loadGlobalConfig(configPath)?.projects.demo).toBeUndefined();
+    expect(loadGlobalConfig(configPath)?.projects[effectiveId]).toBeUndefined();
     expect(existsSync(projectDir)).toBe(false);
     expect(existsSync(repoDir)).toBe(true);
-    expect(list).toHaveBeenCalledWith("demo");
+    expect(list).toHaveBeenCalledWith(effectiveId);
     expect(destroy).toHaveBeenCalledWith(
-      path.join(tempRoot, "managed-worktrees", "demo", "demo-orchestrator-1"),
+      path.join(tempRoot, "managed-worktrees", effectiveId, `${effectiveId}-orchestrator-1`),
     );
   });
 
@@ -297,18 +297,18 @@ describe("/api/projects/[id]", () => {
         "",
       ].join("\n"),
     );
-    registerProjectInGlobalConfig("broken", "Broken", repoDir);
+    const effectiveId = registerProjectInGlobalConfig("broken", "Broken", repoDir);
 
     const { POST } = await import("@/app/api/projects/[id]/route");
-    const response = await POST(makeRequest("POST"), {
-      params: Promise.resolve({ id: "broken" }),
+    const response = await POST(makeRequest("POST", undefined, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
     });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       ok: true,
       repaired: true,
-      projectId: "broken",
+      projectId: effectiveId,
     });
     expect(readFileSync(path.join(repoDir, "agent-orchestrator.yaml"), "utf-8")).toContain("agent: codex");
   });
@@ -327,18 +327,18 @@ describe("/api/projects/[id]", () => {
         "",
       ].join("\n"),
     );
-    registerProjectInGlobalConfig("broken", "Broken", repoDir);
+    const effectiveId = registerProjectInGlobalConfig("broken", "Broken", repoDir);
 
     const { POST } = await import("@/app/api/projects/[id]/route");
-    const response = await POST(makeRequest("POST"), {
-      params: Promise.resolve({ id: "broken" }),
+    const response = await POST(makeRequest("POST", undefined, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
     });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       ok: true,
       repaired: true,
-      projectId: "broken",
+      projectId: effectiveId,
     });
     expect(readFileSync(path.join(repoDir, "agent-orchestrator.yml"), "utf-8")).toContain("agent: codex");
     expect(existsSync(path.join(repoDir, "agent-orchestrator.yaml"))).toBe(false);

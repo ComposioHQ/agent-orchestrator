@@ -120,8 +120,8 @@ export function registerProject_cmd(program: Command): void {
         projectId = basename(resolvedPath) || "project";
       }
 
-      registerProject(resolvedPath, projectId, basename(resolvedPath) || projectId);
-      console.log(chalk.green(`Registered project "${projectId}" at ${resolvedPath}`));
+      const effectiveId = registerProject(resolvedPath, projectId, basename(resolvedPath) || projectId);
+      console.log(chalk.green(`Registered project "${effectiveId}" at ${resolvedPath}`));
     });
 
   // ao project rm <id>

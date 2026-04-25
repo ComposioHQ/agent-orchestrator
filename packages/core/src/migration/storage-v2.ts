@@ -122,13 +122,14 @@ export function inventoryHashDirs(aoBaseDir: string, globalConfigPath?: string):
 
     if (hashNameMatch) {
       hash = hashNameMatch[1];
-      projectId = hashNameMatch[2];
+      projectId = sanitizeLegacyProjectId(hashNameMatch[2]);
       // Skip non-project directories (e.g. {hash}-observability)
-      if (NON_PROJECT_SUFFIXES.has(projectId)) continue;
+      if (NON_PROJECT_SUFFIXES.has(hashNameMatch[2])) continue;
     } else if (bareHashMatch) {
       hash = bareHashMatch[1];
       // Derive projectId: config lookup → session metadata → fallback to hash
-      projectId = storageKeyToProject.get(hash) ?? deriveProjectIdFromDir(join(aoBaseDir, name)) ?? hash;
+      const rawId = storageKeyToProject.get(hash) ?? deriveProjectIdFromDir(join(aoBaseDir, name)) ?? hash;
+      projectId = sanitizeLegacyProjectId(rawId);
     } else {
       continue;
     }
@@ -443,6 +444,37 @@ function readAndConvertMetadata(filePath: string): Record<string, unknown> | nul
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Legacy project ID sanitization
+// ---------------------------------------------------------------------------
+
+/** Pattern for safe project IDs — must match SAFE_PROJECT_ID_PATTERN in paths.ts. */
+const SAFE_PROJECT_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
+/**
+ * Sanitize a legacy project ID so it is safe for use as a V2 directory name.
+ * Replaces spaces and other disallowed characters with hyphens, collapses
+ * consecutive hyphens, trims leading/trailing hyphens, and ensures the ID
+ * starts with an alphanumeric character.
+ */
+function sanitizeLegacyProjectId(projectId: string): string {
+  if (SAFE_PROJECT_ID_PATTERN.test(projectId) && projectId.length <= 128) {
+    return projectId;
+  }
+  let sanitized = projectId
+    .replace(/[^a-zA-Z0-9._-]/g, "-")  // replace unsafe chars with hyphens
+    .replace(/-{2,}/g, "-")              // collapse consecutive hyphens
+    .replace(/^[-._]+/, "")              // strip leading non-alphanumeric
+    .replace(/[-._]+$/, "");             // strip trailing non-alphanumeric
+  if (!sanitized || !/^[a-zA-Z0-9]/.test(sanitized)) {
+    sanitized = `project-${sanitized || "unknown"}`;
+  }
+  if (sanitized.length > 128) {
+    sanitized = sanitized.slice(0, 128);
+  }
+  return sanitized;
 }
 
 // ---------------------------------------------------------------------------
@@ -788,6 +820,17 @@ function tryMoveWorktree(
         if (!dryRun) {
           mkdirSync(join(projectsDir, projectId, "worktrees"), { recursive: true });
           crossDeviceMove(srcPath, destPath, log);
+          // Patch session JSON to point at the new worktree location
+          try {
+            const raw = readFileSync(sessionFile, "utf-8");
+            const meta = JSON.parse(raw) as Record<string, unknown>;
+            if (typeof meta["worktree"] === "string") {
+              meta["worktree"] = destPath;
+              writeFileSync(sessionFile, JSON.stringify(meta, null, 2) + "\n");
+            }
+          } catch {
+            log(`  Warning: could not patch worktree path in ${sessionId}.json`);
+          }
         }
         return true;
       }
@@ -1007,9 +1050,15 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     await repairGitWorktrees(aoBaseDir, effectiveConfigPath, log);
   }
 
-  // Strip storageKey from config
-  log("\nUpdating config...");
-  stripStorageKeysFromConfig(effectiveConfigPath, dryRun, log);
+  // Only strip storageKey and remove marker when ALL projects succeeded.
+  // Partial failure leaves the marker and config intact so the migration
+  // can be retried after fixing the failing project(s).
+  if (projectErrors.length === 0) {
+    log("\nUpdating config...");
+    stripStorageKeysFromConfig(effectiveConfigPath, dryRun, log);
+  } else {
+    log("\nSkipping config update — some projects failed migration.");
+  }
 
   // Summary
   log("\n--- Migration Summary ---");
@@ -1028,11 +1077,13 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     for (const { projectId, error } of projectErrors) {
       log(`  - ${projectId}: ${error}`);
     }
+    log("Migration marker preserved — re-run after fixing the above errors.");
+  } else {
+    log("Old directories renamed to *.migrated — verify and rm -rf when ready.");
   }
-  log("Old directories renamed to *.migrated — verify and rm -rf when ready.");
 
-  // Remove crash-safety marker on success
-  if (!dryRun && existsSync(markerPath)) {
+  // Remove crash-safety marker only on full success
+  if (!dryRun && existsSync(markerPath) && projectErrors.length === 0) {
     try { unlinkSync(markerPath); } catch { /* best-effort */ }
   }
 

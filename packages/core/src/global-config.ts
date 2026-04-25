@@ -422,7 +422,15 @@ export function repairWrappedLocalProjectConfig(projectId: string, projectPath: 
   }
 
   const projects = (parsed["projects"] ?? {}) as Record<string, Record<string, unknown>>;
-  const project = projects[projectId];
+  // Try the effective registered ID first, then fall back to any entry in the
+  // wrapped config (the old-format config may use a different key than the hashed ID).
+  let project: Record<string, unknown> | undefined = projects[projectId];
+  if (!project || typeof project !== "object") {
+    const entries = Object.values(projects).filter(
+      (v): v is Record<string, unknown> => v != null && typeof v === "object",
+    );
+    project = entries.length === 1 ? entries[0] : undefined;
+  }
   if (!project || typeof project !== "object") {
     throw new Error(
       `Wrapped local config at ${configPath} does not contain project "${projectId}".`,
@@ -681,7 +689,9 @@ export function registerProjectInGlobalConfig(
       }
     }
 
-    const repoIdentity = existing?.repo ?? normalizeRepoIdentity(originUrl);
+    const repoIdentity = existing?.repo
+      ?? normalizeRepoIdentity(originUrl)
+      ?? (localConfig?.repo ? normalizeLegacyRepoValue(localConfig.repo) : undefined);
     const defaultBranch = existing?.defaultBranch ?? localConfig?.defaultBranch ?? "main";
     const requestedSessionPrefix =
       existing?.sessionPrefix ??
