@@ -39,6 +39,24 @@ interface OpenCodeSessionListCache {
   promise?: Promise<OpenCodeSessionListEntry[]>;
 }
 
+interface OpenCodeSessionLookupFound {
+  status: "found";
+  entry: OpenCodeSessionListEntry;
+}
+
+interface OpenCodeSessionLookupNotFound {
+  status: "not_found";
+}
+
+interface OpenCodeSessionLookupUnavailable {
+  status: "unavailable";
+}
+
+type OpenCodeSessionLookupResult =
+  | OpenCodeSessionLookupFound
+  | OpenCodeSessionLookupNotFound
+  | OpenCodeSessionLookupUnavailable;
+
 export const OPENCODE_SESSION_LIST_CACHE_TTL_MS = 250;
 const OPENCODE_SESSION_LIST_TIMEOUT_MS = 30_000;
 
@@ -73,12 +91,7 @@ function parseUpdatedTimestamp(updated: string | number | undefined): Date | nul
 }
 
 function parseSessionList(raw: string): OpenCodeSessionListEntry[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
+  const parsed: unknown = JSON.parse(raw);
   if (!Array.isArray(parsed)) return [];
   return parsed.filter((item): item is OpenCodeSessionListEntry => {
     if (!item || typeof item !== "object") return false;
@@ -110,11 +123,12 @@ async function getCachedSessionList(): Promise<OpenCodeSessionListEntry[]> {
       }
       return entries;
     })
-    .catch(() => {
+    .catch((error) => {
+      console.warn("[agent-opencode] Failed to list OpenCode sessions", error);
       if (sessionListCache?.promise === promise) {
         sessionListCache = null;
       }
-      return [];
+      throw error;
     });
 
   sessionListCache = { entries: [], timestamp: now, promise };
@@ -206,28 +220,31 @@ process.stdin.on('data', c => input += c).on('end', () => {
  * Query OpenCode's session list and find the matching session for this AO session.
  * Tries metadata `opencodeSessionId` first, then falls back to title matching.
  */
-async function findOpenCodeSession(session: Session): Promise<OpenCodeSessionListEntry | null> {
+async function findOpenCodeSession(session: Session): Promise<OpenCodeSessionLookupResult> {
   try {
     const sessions = await getCachedSessionList();
 
     // Prefer exact ID match from metadata
     if (session.metadata?.opencodeSessionId) {
       const match = sessions.find((s) => s.id === session.metadata.opencodeSessionId);
-      if (match) return match;
+      if (match) return { status: "found", entry: match };
     }
 
     // Fallback: title match — pick the most recently updated session
     // to avoid binding to a stale session when titles collide.
     const titleMatches = sessions.filter((s) => s.title === `AO:${session.id}`);
-    if (titleMatches.length === 0) return null;
-    if (titleMatches.length === 1) return titleMatches[0]!;
-    return titleMatches.reduce((best, s) => {
-      const bestTs = parseUpdatedTimestamp(best.updated)?.getTime() ?? 0;
-      const sTs = parseUpdatedTimestamp(s.updated)?.getTime() ?? 0;
-      return sTs > bestTs ? s : best;
-    });
+    if (titleMatches.length === 0) return { status: "not_found" };
+    if (titleMatches.length === 1) return { status: "found", entry: titleMatches[0]! };
+    return {
+      status: "found",
+      entry: titleMatches.reduce((best, s) => {
+        const bestTs = parseUpdatedTimestamp(best.updated)?.getTime() ?? 0;
+        const sTs = parseUpdatedTimestamp(s.updated)?.getTime() ?? 0;
+        return sTs > bestTs ? s : best;
+      }),
+    };
   } catch {
-    return null;
+    return { status: "unavailable" };
   }
 }
 
@@ -378,8 +395,8 @@ function createOpenCodeAgent(): Agent {
 
       // 2. Fallback: query OpenCode's session list API for timestamp-based detection
       const targetSession = await findOpenCodeSession(session);
-      if (targetSession) {
-        const lastActivity = parseUpdatedTimestamp(targetSession.updated);
+      if (targetSession.status === "found") {
+        const lastActivity = parseUpdatedTimestamp(targetSession.entry.updated);
 
         if (lastActivity) {
           const ageMs = Math.max(0, Date.now() - lastActivity.getTime());
@@ -460,22 +477,23 @@ function createOpenCodeAgent(): Agent {
 
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
       const targetSession = await findOpenCodeSession(session);
-      if (!targetSession) return null;
+      if (targetSession.status !== "found") return null;
 
       return {
-        summary: targetSession.title ?? null,
+        summary: targetSession.entry.title ?? null,
         summaryIsFallback: true,
-        agentSessionId: targetSession.id,
+        agentSessionId: targetSession.entry.id,
         // OpenCode doesn't expose token/cost data in session list
       };
     },
 
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
       // Try metadata first, then query OpenCode's session list
-      const sessionId =
-        asValidOpenCodeSessionId(session.metadata?.opencodeSessionId) ??
-        (await findOpenCodeSession(session))?.id ??
-        null;
+      const metadataSessionId = asValidOpenCodeSessionId(session.metadata?.opencodeSessionId);
+      const discoveredSession = metadataSessionId ? null : await findOpenCodeSession(session);
+      const discoveredSessionId =
+        discoveredSession?.status === "found" ? discoveredSession.entry.id : null;
+      const sessionId = metadataSessionId ?? discoveredSessionId;
 
       if (!sessionId) return null;
 
