@@ -2,6 +2,7 @@ import {
   shellEscape,
   readLastJsonlEntry,
   normalizeAgentPermissionMode,
+  isWindows,
   DEFAULT_READY_THRESHOLD_MS,
   DEFAULT_ACTIVE_WINDOW_MS,
   type Agent,
@@ -18,7 +19,7 @@ import {
 } from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
@@ -190,6 +191,173 @@ exit 0
 `;
 
 // =============================================================================
+// Metadata Updater Hook Script — Node.js (Windows)
+// =============================================================================
+
+/**
+ * Node.js equivalent of METADATA_UPDATER_SCRIPT for Windows.
+ * Reads JSON from stdin, parses it with Node built-ins, and updates the
+ * key=value metadata file.  No bash, jq, grep, sed, or chmod needed.
+ * Exported for testing.
+ */
+export const METADATA_UPDATER_SCRIPT_NODE = `#!/usr/bin/env node
+// Metadata Updater Hook for Agent Orchestrator (Node.js — Windows)
+//
+// This PostToolUse hook automatically updates session metadata when:
+// - gh pr create: extracts PR URL and writes to metadata
+// - git checkout -b / git switch -c: extracts branch name and writes to metadata
+// - gh pr merge: updates status to "merged"
+
+const { readFileSync, writeFileSync, renameSync, existsSync, realpathSync } = require("node:fs");
+const { join, sep, resolve: resolvePath } = require("node:path");
+const os = require("node:os");
+
+const AO_DATA_DIR = process.env.AO_DATA_DIR || join(process.env.HOME || process.env.USERPROFILE || "", ".ao-sessions");
+const AO_SESSION = process.env.AO_SESSION || "";
+
+// Read hook input from stdin (fd 0 is cross-platform, no /dev/stdin needed)
+let inputRaw = "";
+try {
+  inputRaw = readFileSync(0, "utf-8");
+} catch {
+  inputRaw = "";
+}
+
+let input;
+try {
+  input = JSON.parse(inputRaw || "{}");
+} catch {
+  process.stdout.write("{}\\n");
+  process.exit(0);
+}
+
+const toolName = input.tool_name || "";
+const command = (input.tool_input && input.tool_input.command) || "";
+const output = input.tool_response || "";
+const exitCode = typeof input.exit_code === "number" ? input.exit_code : 0;
+
+// Only process successful commands
+if (exitCode !== 0) {
+  process.stdout.write("{}\\n");
+  process.exit(0);
+}
+
+// Only process Bash tool calls
+if (toolName !== "Bash") {
+  process.stdout.write("{}\\n");
+  process.exit(0);
+}
+
+// Validate AO_SESSION is set
+if (!AO_SESSION) {
+  process.stdout.write(JSON.stringify({ systemMessage: "AO_SESSION environment variable not set, skipping metadata update" }) + "\\n");
+  process.exit(0);
+}
+
+// Validate AO_SESSION contains no path traversal components
+if (AO_SESSION.includes("/") || AO_SESSION.includes("\\\\") || AO_SESSION.includes("..")) {
+  process.stdout.write(JSON.stringify({ systemMessage: "AO_SESSION contains invalid path characters, skipping metadata update" }) + "\\n");
+  process.exit(0);
+}
+
+// Validate AO_DATA_DIR is within an allowed base directory (mirrors ao-metadata-helper.sh)
+const home = os.homedir();
+let resolvedAoDir;
+try { resolvedAoDir = realpathSync(AO_DATA_DIR); } catch { resolvedAoDir = resolvePath(AO_DATA_DIR); }
+const allowedBases = [join(home, ".ao"), join(home, ".agent-orchestrator"), os.tmpdir()];
+if (!allowedBases.some((a) => resolvedAoDir === a || resolvedAoDir.startsWith(a + sep))) {
+  process.stdout.write(JSON.stringify({ systemMessage: "AO_DATA_DIR is outside allowed directories, skipping metadata update" }) + "\\n");
+  process.exit(0);
+}
+
+const metadataFile = join(AO_DATA_DIR, AO_SESSION);
+
+if (!existsSync(metadataFile)) {
+  process.stdout.write(JSON.stringify({ systemMessage: "Metadata file not found: " + metadataFile }) + "\\n");
+  process.exit(0);
+}
+
+/**
+ * Update or append a key=value line in the metadata file (atomic via temp file).
+ */
+function updateMetadataKey(key, value) {
+  const lines = readFileSync(metadataFile, "utf-8").split("\\n");
+  let found = false;
+  const updated = lines.map((line) => {
+    if (line.startsWith(key + "=")) {
+      found = true;
+      return key + "=" + value;
+    }
+    return line;
+  });
+  if (!found) {
+    // Insert before the trailing empty line (if any) so the file ends cleanly
+    updated.push(key + "=" + value);
+  }
+  const tmpFile = metadataFile + ".tmp." + process.pid;
+  writeFileSync(tmpFile, updated.join("\\n"), "utf-8");
+  renameSync(tmpFile, metadataFile);
+}
+
+// Strip leading cd ... && / cd ... ; prefixes (agents frequently cd into a
+// worktree before running the real command)
+let cleanCommand = command;
+const cdPrefixRe = /^\\s*cd\\s+\\S.*?\\s+(?:&&|;)\\s+(.*)/;
+let m;
+while ((m = cdPrefixRe.exec(cleanCommand)) !== null && /^\\s*cd\\s/.test(cleanCommand)) {
+  cleanCommand = m[1];
+}
+
+// Detect: gh pr create
+if (/^gh\\s+pr\\s+create/.test(cleanCommand)) {
+  const prMatch = output.match(/https:\\/\\/github[.]com\\/[^/]+\\/[^/]+\\/pull\\/\\d+/);
+  if (prMatch) {
+    const prUrl = prMatch[0];
+    updateMetadataKey("pr", prUrl);
+    updateMetadataKey("status", "pr_open");
+    process.stdout.write(JSON.stringify({ systemMessage: "Updated metadata: PR created at " + prUrl }) + "\\n");
+    process.exit(0);
+  }
+}
+
+// Detect: git checkout -b <branch> or git switch -c <branch>
+const checkoutNewBranch = cleanCommand.match(/^git\\s+checkout\\s+-b\\s+(\\S+)/) ||
+  cleanCommand.match(/^git\\s+switch\\s+-c\\s+(\\S+)/);
+if (checkoutNewBranch) {
+  const branch = checkoutNewBranch[1];
+  if (branch) {
+    updateMetadataKey("branch", branch);
+    process.stdout.write(JSON.stringify({ systemMessage: "Updated metadata: branch = " + branch }) + "\\n");
+    process.exit(0);
+  }
+}
+
+// Detect: git checkout <branch> or git switch <branch> (without -b/-c)
+// Only update if branch looks like a feature branch (contains / or -)
+const checkoutBranch = cleanCommand.match(/^git\\s+checkout\\s+([^\\s-]+[/-][^\\s]+)/) ||
+  cleanCommand.match(/^git\\s+switch\\s+([^\\s-]+[/-][^\\s]+)/);
+if (checkoutBranch) {
+  const branch = checkoutBranch[1];
+  if (branch && branch !== "HEAD") {
+    updateMetadataKey("branch", branch);
+    process.stdout.write(JSON.stringify({ systemMessage: "Updated metadata: branch = " + branch }) + "\\n");
+    process.exit(0);
+  }
+}
+
+// Detect: gh pr merge
+if (/^gh\\s+pr\\s+merge/.test(cleanCommand)) {
+  updateMetadataKey("status", "merged");
+  process.stdout.write(JSON.stringify({ systemMessage: "Updated metadata: status = merged" }) + "\\n");
+  process.exit(0);
+}
+
+// No matching command
+process.stdout.write("{}\\n");
+process.exit(0);
+`;
+
+// =============================================================================
 // Plugin Manifest
 // =============================================================================
 
@@ -220,10 +388,12 @@ export const manifest = {
  * Exported for testing purposes.
  */
 export function toClaudeProjectPath(workspacePath: string): string {
-  // Handle Windows drive letters (C:\Users\... → C-Users-...)
+  // Claude Code encodes project paths by replacing special chars with dashes.
+  // On Windows: C:\Users\foo → C--Users-foo (colon becomes dash, backslash becomes dash)
+  // On Unix: /home/foo → -home-foo (leading slash becomes leading dash)
+  // Verified against actual ~/.claude/projects/ directory names on both platforms.
   const normalized = workspacePath.replace(/\\/g, "/");
-  // Claude Code replaces / and . with - (keeping the leading slash as a leading -)
-  return normalized.replace(/:/g, "").replace(/[/.]/g, "-");
+  return normalized.replace(/[/:.]/g, "-");
 }
 
 /** Find the most recently modified .jsonl session file in a directory */
@@ -434,6 +604,10 @@ export function resetPsCache(): void {
 }
 
 async function getCachedProcessList(): Promise<string> {
+  // ps -eo is a Unix-only command; on Windows the tmux branch is never taken
+  // in normal operation, but guard here to avoid a spurious spawn error if
+  // a stale tmux handle is encountered.
+  if (isWindows()) return "";
   const now = Date.now();
   if (psCache && now - psCache.timestamp < PS_CACHE_TTL_MS) {
     // Cache hit — return resolved output or wait for in-flight request
@@ -573,10 +747,9 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
  * @param workspacePath - Path to the workspace directory
  * @param hookCommand - Command string for the hook (can use variables like $CLAUDE_PROJECT_DIR)
  */
-async function setupHookInWorkspace(workspacePath: string, hookCommand: string): Promise<void> {
+async function setupHookInWorkspace(workspacePath: string): Promise<void> {
   const claudeDir = join(workspacePath, ".claude");
   const settingsPath = join(claudeDir, "settings.json");
-  const hookScriptPath = join(claudeDir, "metadata-updater.sh");
 
   // Create .claude directory if it doesn't exist
   try {
@@ -585,9 +758,22 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
     // Directory might already exist
   }
 
-  // Write the metadata updater script
-  await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
-  await chmod(hookScriptPath, 0o755); // Make executable
+  // On Windows: write a Node.js hook script, skip chmod (not needed).
+  // On Unix: write the bash hook script and make it executable.
+  let hookCommand: string;
+  if (isWindows()) {
+    const hookScriptPath = join(claudeDir, "metadata-updater.cjs");
+    await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT_NODE, "utf-8");
+    // No chmod — Windows uses file extension for executability
+    // Use `node` to invoke the script (Windows won't run .js via shebang)
+    // Use .cjs extension to force CJS mode regardless of workspace package.json "type" field
+    hookCommand = "node .claude/metadata-updater.cjs";
+  } else {
+    const hookScriptPath = join(claudeDir, "metadata-updater.sh");
+    await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
+    await chmod(hookScriptPath, 0o755); // Make executable
+    hookCommand = ".claude/metadata-updater.sh";
+  }
 
   // Read existing settings if present
   let existingSettings: Record<string, unknown> = {};
@@ -617,7 +803,12 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
       const hDef = hooksList[j];
       if (typeof hDef !== "object" || hDef === null || Array.isArray(hDef)) continue;
       const def = hDef as Record<string, unknown>;
-      if (typeof def["command"] === "string" && def["command"].includes("metadata-updater.sh")) {
+      if (
+        typeof def["command"] === "string" &&
+        (def["command"].includes("metadata-updater.sh") ||
+          def["command"].includes("metadata-updater.js") ||
+          def["command"].includes("metadata-updater.cjs"))
+      ) {
         hookIndex = i;
         hookDefIndex = j;
         break;
@@ -678,10 +869,17 @@ function createClaudeCodeAgent(): Agent {
       }
 
       if (config.systemPromptFile) {
-        // Use shell command substitution to read from file at launch time.
-        // This avoids tmux truncation when inlining 2000+ char prompts.
-        // The double quotes allow $() expansion; inner path is single-quoted for safety.
-        parts.push("--append-system-prompt", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
+        if (isWindows()) {
+          // Windows: $(cat ...) is bash syntax, not understood by PowerShell/cmd.exe.
+          // Read the file synchronously and inline the content instead.
+          const content = readFileSync(config.systemPromptFile, "utf-8");
+          parts.push("--append-system-prompt", shellEscape(content));
+        } else {
+          // Unix: use shell command substitution to read from file at launch time.
+          // This avoids tmux truncation when inlining 2000+ char prompts.
+          // The double quotes allow $() expansion; inner path is single-quoted for safety.
+          parts.push("--append-system-prompt", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
+        }
       } else if (config.systemPrompt) {
         parts.push("--append-system-prompt", shellEscape(config.systemPrompt));
       }
@@ -756,6 +954,12 @@ function createClaudeCodeAgent(): Agent {
       if (!entry) {
         // Empty file or read error — cannot determine activity
         return null;
+      }
+
+      // If the JSONL entry predates this session, it's from a previous session
+      // in the same worktree. Treat as no data (agent hasn't written yet).
+      if (session.createdAt && entry.modifiedAt < session.createdAt) {
+        return { state: "idle", timestamp: session.createdAt };
       }
 
       const ageMs = Date.now() - entry.modifiedAt.getTime();
@@ -851,13 +1055,13 @@ function createClaudeCodeAgent(): Agent {
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
       // Relative path so that symlinked .claude/ dirs across worktrees
       // all produce the same settings.json (last writer doesn't clobber).
-      await setupHookInWorkspace(workspacePath, ".claude/metadata-updater.sh");
+      await setupHookInWorkspace(workspacePath);
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
       if (!session.workspacePath) return;
 
-      await setupHookInWorkspace(session.workspacePath, ".claude/metadata-updater.sh");
+      await setupHookInWorkspace(session.workspacePath);
     },
   };
 }

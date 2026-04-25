@@ -283,7 +283,11 @@ export function createTestEnvironment(): TestEnvironment {
   const tmpDir = join(tmpdir(), `ao-test-lifecycle-${randomUUID()}`);
   mkdirSync(tmpDir, { recursive: true });
   const previousHome = process.env["HOME"];
+  const previousUserProfile = process.env["USERPROFILE"];
   process.env["HOME"] = tmpDir;
+  // os.homedir() on Windows reads USERPROFILE, not HOME — must override both
+  // or parallel vitest workers share the real home dir and race on storage.
+  process.env["USERPROFILE"] = tmpDir;
 
   const configPath = join(tmpDir, "agent-orchestrator.yaml");
   writeFileSync(configPath, "projects: {}\n");
@@ -330,11 +334,16 @@ export function createTestEnvironment(): TestEnvironment {
     } else {
       process.env["HOME"] = previousHome;
     }
+    if (previousUserProfile === undefined) {
+      delete process.env["USERPROFILE"];
+    } else {
+      process.env["USERPROFILE"] = previousUserProfile;
+    }
     const projectBaseDir = getProjectBaseDir(storageKey);
     if (existsSync(projectBaseDir)) {
-      rmSync(projectBaseDir, { recursive: true, force: true });
+      rmSync(projectBaseDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
-    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   };
 
   return { tmpDir, configPath, sessionsDir, config, cleanup };
@@ -356,14 +365,18 @@ export interface TestContext {
   config: OrchestratorConfig;
   originalPath: string | undefined;
   originalHome: string | undefined;
+  originalUserProfile: string | undefined;
 }
 
 export function setupTestContext(): TestContext {
   const originalPath = process.env.PATH;
   const originalHome = process.env["HOME"];
+  const originalUserProfile = process.env["USERPROFILE"];
   const tmpDir = join(tmpdir(), `ao-test-session-mgr-${randomUUID()}`);
   mkdirSync(tmpDir, { recursive: true });
   process.env["HOME"] = tmpDir;
+  // os.homedir() reads USERPROFILE on Windows, not HOME
+  process.env["USERPROFILE"] = tmpDir;
 
   const configPath = join(tmpDir, "agent-orchestrator.yaml");
   writeFileSync(configPath, "projects: {}\n");
@@ -420,6 +433,7 @@ export function setupTestContext(): TestContext {
     config,
     originalPath,
     originalHome,
+    originalUserProfile,
   };
 }
 
@@ -430,11 +444,16 @@ export function teardownTestContext(ctx: TestContext): void {
   } else {
     process.env["HOME"] = ctx.originalHome;
   }
+  if (ctx.originalUserProfile === undefined) {
+    delete process.env["USERPROFILE"];
+  } else {
+    process.env["USERPROFILE"] = ctx.originalUserProfile;
+  }
   const projectBaseDir = getProjectBaseDir(ctx.config.projects["my-app"]!.storageKey);
   if (existsSync(projectBaseDir)) {
-    rmSync(projectBaseDir, { recursive: true, force: true });
+    rmSync(projectBaseDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
-  rmSync(ctx.tmpDir, { recursive: true, force: true });
+  rmSync(ctx.tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 }
 
 // ---------------------------------------------------------------------------

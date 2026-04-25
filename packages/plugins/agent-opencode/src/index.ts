@@ -7,6 +7,7 @@ import {
   getActivityFallbackState,
   recordTerminalActivity,
   asValidOpenCodeSessionId,
+  isWindows,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -353,6 +354,8 @@ function createOpenCodeAgent(): Agent {
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
+          // tmux and ps are Unix-only; guard before any tmux calls on Windows.
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],

@@ -32,6 +32,10 @@ import {
   isOrchestratorSession,
   isTerminalSession,
   ConfigNotFoundError,
+  getDefaultRuntime,
+  isWindows,
+  findPidByPort,
+  killProcessTree,
   loadLocalProjectConfigDetailed,
   registerProjectInGlobalConfig,
   type OrchestratorConfig,
@@ -41,7 +45,7 @@ import {
   writeLocalProjectConfig,
 } from "@aoagents/ao-core";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import { exec, execSilent, git } from "../lib/shell.js";
+import { exec, execSilent, forwardSignalsToChild, git } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker, stopAllLifecycleWorkers } from "../lib/lifecycle-service.js";
 import {
@@ -637,7 +641,7 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
   const config: Record<string, unknown> = {
     port: port ?? DEFAULT_PORT,
     defaults: {
-      runtime: "tmux",
+      runtime: getDefaultRuntime(),
       agent,
       workspace: "worktree",
       notifiers: [],
@@ -670,7 +674,7 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
     console.log(chalk.dim("  Add a 'repo' field (owner/repo) to the config to enable them.\n"));
   }
 
-  if (!env.hasTmux) {
+  if (!env.hasTmux && getDefaultRuntime() === "tmux") {
     console.log(chalk.yellow("⚠ tmux not found — will prompt to install at startup"));
   }
   if (!env.hasGh) {
@@ -884,7 +888,7 @@ async function startDashboard(
     child = spawn("pnpm", ["run", "dev"], {
       cwd: webDir,
       stdio: "inherit",
-      detached: false,
+      detached: !isWindows(),
       env,
     });
   } else {
@@ -897,7 +901,7 @@ async function startDashboard(
     child = spawn("node", [startScript], {
       cwd: webDir,
       stdio: "inherit",
-      detached: false,
+      detached: !isWindows(),
       env,
     });
   }
@@ -1025,7 +1029,7 @@ async function runStartup(
 ): Promise<number> {
   // Ensure tmux is available before doing anything — covers all entry paths
   // (normal start, URL start, retry with existing config)
-  const runtime = config.defaults?.runtime ?? "tmux";
+  const runtime = config.defaults?.runtime ?? getDefaultRuntime();
   if (runtime === "tmux") {
     await ensureTmux();
   }
@@ -1192,12 +1196,21 @@ async function runStartup(
 
   // Keep dashboard process alive if it was started
   if (dashboardProcess) {
-    // Kill the dashboard child when the parent exits for any reason
-    // (Ctrl+C, SIGTERM from `ao stop`, normal exit, etc.).
-    // We use the `exit` event instead of SIGINT/SIGTERM to avoid
-    // conflicting with the shutdown handler in registerStart that
-    // flushes lifecycle state and calls process.exit() with the
-    // correct exit code (130 for SIGINT, 0 for SIGTERM).
+    const pid = dashboardProcess.pid;
+
+    // On Unix the dashboard is spawned with detached:true (own process group)
+    // so Ctrl+C only reaches AO's process group, not the dashboard's. Forward
+    // SIGINT/SIGTERM so the dashboard group is also cleaned up on exit.
+    // On Windows, detached:false keeps child in the same console —
+    // Ctrl+C reaches both processes. No signal forwarding needed.
+    if (!isWindows() && pid) {
+      forwardSignalsToChild(pid, dashboardProcess);
+    }
+
+    // Also kill the dashboard child when the parent exits for any reason
+    // (normal exit path after lifecycle flush). The `exit` event is
+    // synchronous and fires regardless of platform, so it covers the cases
+    // where forwardSignalsToChild doesn't (Windows, or non-signal exits).
     /* c8 ignore start -- exit handler only fires on process termination */
     const killDashboardChild = (): void => {
       try {
@@ -1224,7 +1237,7 @@ async function runStartup(
 
 /**
  * Stop dashboard server.
- * Uses lsof to find the process listening on the port, then kills it.
+ * Uses platform adapter to find the process listening on the port, then kills it.
  * Best effort — if it fails, just warn the user.
  */
 /** Pattern matching AO dashboard processes (production and dev mode). */
@@ -1237,28 +1250,22 @@ const DASHBOARD_CMD_PATTERN = /next-server|start-all\.js|next dev|ao-web/;
  */
 async function killDashboardOnPort(port: number): Promise<boolean> {
   try {
-    const { stdout } = await exec("lsof", ["-ti", `:${port}`]);
-    const pids = stdout
-      .trim()
-      .split("\n")
-      .filter((p) => p.length > 0);
-    if (pids.length === 0) return false;
+    const pid = await findPidByPort(port);
+    if (!pid) return false;
 
-    // Filter to only dashboard PIDs
-    const dashboardPids: string[] = [];
-    for (const pid of pids) {
+    // On Unix, verify the process is actually a dashboard before killing so
+    // unrelated co-listeners (sidecars, SO_REUSEPORT) are left untouched.
+    // findPidByPort on Windows uses netstat; we trust the port match there.
+    if (!isWindows()) {
       try {
-        const { stdout: cmdline } = await exec("ps", ["-p", pid, "-o", "args="]);
-        if (DASHBOARD_CMD_PATTERN.test(cmdline)) {
-          dashboardPids.push(pid);
-        }
+        const { stdout: cmdline } = await exec("ps", ["-p", String(pid), "-o", "args="]);
+        if (!DASHBOARD_CMD_PATTERN.test(cmdline)) return false;
       } catch {
-        // process vanished — skip
+        return false;
       }
     }
-    if (dashboardPids.length === 0) return false;
 
-    await exec("kill", dashboardPids);
+    await killProcessTree(Number(pid));
     return true;
   } catch {
     return false;
@@ -1564,7 +1571,13 @@ export function registerStart(program: Command): void {
  * Paths contain / or ~ or . at the start.
  */
 function isLocalPath(arg: string): boolean {
-  return arg.startsWith("/") || arg.startsWith("~") || arg.startsWith("./") || arg.startsWith("..");
+  if (arg.startsWith("/") || arg.startsWith("~") || arg.startsWith("./") || arg.startsWith("..")) {
+    return true;
+  }
+  // Windows paths: drive-letter (C:\, D:/), UNC (\\server\share), or relative backslash paths.
+  if (/^[A-Za-z]:[\\/]/.test(arg)) return true;
+  if (arg.startsWith("\\\\") || arg.startsWith(".\\") || arg.startsWith("..\\")) return true;
+  return false;
 }
 
 export function registerStop(program: Command): void {
@@ -1585,11 +1598,7 @@ export function registerStop(program: Command): void {
           if (opts.all) {
             // --all: kill via running.json if available, then fallback to config
             if (running) {
-              try {
-                process.kill(running.pid, "SIGTERM");
-              } catch {
-                // Already dead
-              }
+              await killProcessTree(running.pid, "SIGTERM");
               await unregister();
               console.log(
                 chalk.green(`\n✓ Stopped AO on port ${running.port}`),
@@ -1645,13 +1654,8 @@ export function registerStop(program: Command): void {
             const purgeOpenCode = opts?.purgeSession === true;
             await sm.kill(orchestratorToKill.id, { purgeOpenCode });
             spinner.succeed(`Orchestrator session stopped (${orchestratorToKill.id})`);
-            // Also log to console.log so the killed id is visible in non-TTY callers
-            // (CI, scripts) and in test capture, since spinner output is suppressed.
             console.log(chalk.green(`  Stopped orchestrator session: ${orchestratorToKill.id}`));
           } else if (!lookupFailed) {
-            // Suppress the "no orchestrator found" message when sm.list threw —
-            // the catch above already explained the real reason and adding a
-            // second message would falsely imply the lookup succeeded.
             console.log(
               chalk.yellow(`No running orchestrator session found for "${project.name}"`),
             );
@@ -1666,11 +1670,7 @@ export function registerStop(program: Command): void {
           // Stop dashboard — kill parent PID from running.json, then also stop
           // any dashboard child process via lsof (parent SIGTERM may not propagate)
           if (running) {
-            try {
-              process.kill(running.pid, "SIGTERM");
-            } catch {
-              // Already dead
-            }
+            await killProcessTree(running.pid, "SIGTERM");
             await unregister();
           }
           await stopDashboard(running?.port ?? port);

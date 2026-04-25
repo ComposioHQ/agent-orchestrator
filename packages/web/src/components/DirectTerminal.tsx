@@ -417,6 +417,31 @@ export function DirectTerminal({
           resizeObserver.observe(terminalRef.current);
         }
 
+        // Re-fit on devicePixelRatio changes (Windows display scaling, dragging
+        // window between monitors with different DPI). ResizeObserver doesn't
+        // fire for DPR-only changes, so we listen via matchMedia. Without this,
+        // moving the window to a 125%/150%-scaled monitor leaves a stripe of
+        // unrendered background to the right of the last column.
+        let dprMedia: MediaQueryList | null = null;
+        const handleDprChange = () => {
+          if (!mounted || !fitAddon.current || !terminalInstance.current) return;
+          try {
+            terminalInstance.current.clearTextureAtlas?.();
+            fitAddon.current.fit();
+            resizeTerminalMux(
+              sessionId,
+              terminalInstance.current.cols,
+              terminalInstance.current.rows,
+            );
+          } catch {
+            // Ignore fit errors
+          }
+        };
+        if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+          dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+          dprMedia.addEventListener?.("change", handleDprChange);
+        }
+
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
         // buffer incoming data while a selection is active so the
@@ -539,6 +564,7 @@ export function DirectTerminal({
         cleanup = () => {
           clearTimeout(deferredFitTimeout);
           resizeObserver?.disconnect();
+          dprMedia?.removeEventListener?.("change", handleDprChange);
           cleanupTouchScroll();
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);

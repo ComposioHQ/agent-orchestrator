@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -16,6 +16,29 @@ import {
 import type { OrchestratorConfig, PluginRegistry, Runtime, Workspace } from "../types.js";
 
 const STORAGE_KEY = "111111111111";
+
+// Isolate tests from the real user home so parallel workers don't race on
+// ~/.agent-orchestrator/111111111111/sessions/.
+let fakeHome: string;
+let originalHome: string | undefined;
+let originalUserProfile: string | undefined;
+beforeAll(() => {
+  fakeHome = join(tmpdir(), `ao-recovery-home-${randomUUID()}`);
+  mkdirSync(fakeHome, { recursive: true });
+  originalHome = process.env["HOME"];
+  originalUserProfile = process.env["USERPROFILE"];
+  process.env["HOME"] = fakeHome;
+  process.env["USERPROFILE"] = fakeHome;
+});
+afterAll(() => {
+  if (originalHome === undefined) delete process.env["HOME"];
+  else process.env["HOME"] = originalHome;
+  if (originalUserProfile === undefined) delete process.env["USERPROFILE"];
+  else process.env["USERPROFILE"] = originalUserProfile;
+  if (fakeHome && existsSync(fakeHome)) {
+    rmSync(fakeHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
 
 function makeConfig(rootDir: string): OrchestratorConfig {
   return {

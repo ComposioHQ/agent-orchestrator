@@ -24,6 +24,8 @@ const {
   mockWaitForPortAndOpen,
   mockSpawn,
   mockEnsureLifecycleWorker,
+  mockFindPidByPort,
+  mockKillProcessTree,
 } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockExecSilent: vi.fn(),
@@ -43,6 +45,8 @@ const {
   mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
   mockSpawn: vi.fn(),
   mockEnsureLifecycleWorker: vi.fn(),
+  mockFindPidByPort: vi.fn(),
+  mockKillProcessTree: vi.fn(),
 }));
 
 const { mockDetectOpenClawInstallation } = vi.hoisted(() => ({
@@ -109,6 +113,8 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
       if (path) return actual.loadConfig(path);
       return mockConfigRef.current;
     },
+    findPidByPort: mockFindPidByPort,
+    killProcessTree: mockKillProcessTree,
   };
 });
 
@@ -131,7 +137,6 @@ vi.mock("../../src/lib/web-dir.js", () => ({
 }));
 
 vi.mock("../../src/lib/dashboard-rebuild.js", () => ({
-  findRunningDashboardPid: vi.fn().mockResolvedValue(null),
   rebuildDashboardProductionArtifacts: vi.fn().mockResolvedValue(undefined),
   waitForPortFree: vi.fn(),
 }));
@@ -300,6 +305,10 @@ beforeEach(async () => {
     running: true,
     started: true,
   });
+  mockFindPidByPort.mockReset();
+  mockFindPidByPort.mockResolvedValue(null);
+  mockKillProcessTree.mockReset();
+  mockKillProcessTree.mockResolvedValue(undefined);
   mockDetectOpenClawInstallation.mockReset();
   mockDetectOpenClawInstallation.mockResolvedValue({
     state: "missing",
@@ -1569,85 +1578,111 @@ describe("stop command", () => {
     });
   });
 
-  it("finds orphaned dashboard on a reassigned port via port scan", async () => {
+  it("calls killProcessTree with numeric PID when findPidByPort returns a PID", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
-    mockSessionManager.kill.mockResolvedValue(undefined);
-    // Port 3000 has nothing, but port 3001 has the orphaned dashboard
-    mockDashboardOnPort(3001, "99999");
-
-    await program.parseAsync(["node", "test", "stop"]);
-
-    const output = vi
-      .mocked(console.log)
-      .mock.calls.map((c) => c.join(" "))
-      .join("\n");
-    expect(output).toContain("was on port 3001");
-  });
-
-  it("skips non-dashboard processes during port scan", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
-    mockSessionManager.kill.mockResolvedValue(undefined);
-    // Port 3000 has nothing, port 3001 has an unrelated process,
-    // port 3002 has the actual dashboard
-    mockExec.mockImplementation(async (cmd: string, args: string[] = []) => {
-      if (cmd === "kill") return { stdout: "", stderr: "" };
-      if (cmd === "ps") {
-        const pid = args[1];
-        if (pid === "11111") return { stdout: "python -m http.server 3001", stderr: "" };
-        if (pid === "22222") return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
-        return { stdout: "", stderr: "" };
-      }
-      if (cmd === "lsof") {
-        const portArg = args.find((a) => a.startsWith(":"));
-        if (portArg === ":3001") return { stdout: "11111", stderr: "" };
-        if (portArg === ":3002") return { stdout: "22222", stderr: "" };
-      }
+    mockSessionManager.list.mockResolvedValue([]);
+    mockFindPidByPort.mockResolvedValue("1234");
+    // killDashboardOnPort verifies the PID is an AO dashboard via `ps` on Unix
+    // before killing. Stub it to return a matching cmdline so we reach the kill.
+    mockExec.mockImplementation(async (cmd: string) => {
+      if (cmd === "ps") return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
       throw new Error("no process");
     });
 
     await program.parseAsync(["node", "test", "stop"]);
 
-    const output = vi
-      .mocked(console.log)
-      .mock.calls.map((c) => c.join(" "))
-      .join("\n");
-    // Should skip port 3001 (python) and find the dashboard on 3002
-    expect(output).toContain("was on port 3002");
+    expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
+    expect(mockKillProcessTree).toHaveBeenCalledWith(1234);
   });
 
-  it("only kills dashboard PIDs when port has mixed processes", async () => {
+  it("does not call killProcessTree when findPidByPort returns null", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
-    mockSessionManager.kill.mockResolvedValue(undefined);
-    // Port 3000 has two processes: a dashboard and an unrelated sidecar
-    mockExec.mockImplementation(async (cmd: string, args: string[] = []) => {
-      if (cmd === "kill") {
-        // Only the dashboard PID should be killed, not the sidecar
-        expect(args).toEqual(["11111"]);
-        return { stdout: "", stderr: "" };
-      }
-      if (cmd === "ps") {
-        const pid = args[1];
-        if (pid === "11111") return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
-        if (pid === "22222") return { stdout: "nginx: worker process", stderr: "" };
-        return { stdout: "", stderr: "" };
-      }
-      if (cmd === "lsof") {
-        const portArg = args.find((a) => a.startsWith(":"));
-        if (portArg === ":3000") return { stdout: "11111\n22222", stderr: "" };
-      }
-      throw new Error("no process");
-    });
+    mockSessionManager.list.mockResolvedValue([]);
+    mockFindPidByPort.mockResolvedValue(null);
 
     await program.parseAsync(["node", "test", "stop"]);
 
-    const output = vi
-      .mocked(console.log)
-      .mock.calls.map((c) => c.join(" "))
-      .join("\n");
-    expect(output).toContain("Dashboard stopped");
+    expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
+    expect(mockKillProcessTree).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runtime fallback — platform-aware default (B01/B02/B21)
+// ---------------------------------------------------------------------------
+
+describe("start command — platform-aware runtime fallback", () => {
+  it("does not call ensureTmux when config has no runtime and platform is win32", async () => {
+    // Config with no defaults.runtime — the fallback kicks in.
+    const configWithoutRuntime: Record<string, unknown> = {
+      configPath: join(tmpDir, "agent-orchestrator.yaml"),
+      port: 3000,
+      defaults: {
+        // runtime intentionally absent
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: [],
+      },
+      projects: { "my-app": makeProject() },
+      notifiers: {},
+      notificationRouting: {},
+      reactions: {},
+    };
+    mockConfigRef.current = configWithoutRuntime;
+
+    // Simulate Windows — getDefaultRuntime() will return "process".
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+
+    try {
+      await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
+
+    // ensureTmux() calls execSilent("tmux", ["-V"]) — it must NOT have been called.
+    const tmuxChecks = mockExecSilent.mock.calls.filter(
+      (call) => String(call[0]) === "tmux" && Array.isArray(call[1]) && (call[1] as string[])[0] === "-V",
+    );
+    expect(tmuxChecks).toHaveLength(0);
+  });
+
+  it("calls ensureTmux when config has no runtime and platform is linux", async () => {
+    // Same config without runtime, but on a non-Windows platform.
+    const configWithoutRuntime: Record<string, unknown> = {
+      configPath: join(tmpDir, "agent-orchestrator.yaml"),
+      port: 3000,
+      defaults: {
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: [],
+      },
+      projects: { "my-app": makeProject() },
+      notifiers: {},
+      notificationRouting: {},
+      reactions: {},
+    };
+    mockConfigRef.current = configWithoutRuntime;
+
+    // Simulate Linux — getDefaultRuntime() returns "tmux", ensureTmux() must fire.
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+
+    try {
+      await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
+
+    // ensureTmux() must have checked for tmux availability.
+    const tmuxChecks = mockExecSilent.mock.calls.filter(
+      (call) => String(call[0]) === "tmux" && Array.isArray(call[1]) && (call[1] as string[])[0] === "-V",
+    );
+    expect(tmuxChecks.length).toBeGreaterThan(0);
   });
 });
 

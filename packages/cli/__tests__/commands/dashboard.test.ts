@@ -3,15 +3,23 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const { mockExec, mockExecSilent } = vi.hoisted(() => ({
+const { mockExec, mockFindPidByPort } = vi.hoisted(() => ({
   mockExec: vi.fn(),
-  mockExecSilent: vi.fn(),
+  mockFindPidByPort: vi.fn(),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
   exec: mockExec,
-  execSilent: mockExecSilent,
 }));
+
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import("@aoagents/ao-core")>();
+  return {
+    ...actual,
+    findPidByPort: mockFindPidByPort,
+  };
+});
 
 vi.mock("ora", () => ({
   default: () => ({
@@ -28,7 +36,7 @@ let tmpDir: string;
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-dashboard-test-"));
   mockExec.mockReset();
-  mockExecSilent.mockReset();
+  mockFindPidByPort.mockReset();
   mockExec.mockResolvedValue({ stdout: "", stderr: "" });
 });
 
@@ -65,27 +73,6 @@ describe("cleanNextCache", () => {
     await cleanNextCache(webDir);
 
     expect(existsSync(join(webDir, ".next"))).toBe(false);
-  });
-});
-
-describe("findRunningDashboardPid", () => {
-  it("returns PID when a process is listening", async () => {
-    mockExecSilent.mockResolvedValue("12345");
-
-    const { findRunningDashboardPid } = await import("../../src/lib/dashboard-rebuild.js");
-
-    const pid = await findRunningDashboardPid(3000);
-    expect(pid).toBe("12345");
-    expect(mockExecSilent).toHaveBeenCalledWith("lsof", ["-ti", ":3000", "-sTCP:LISTEN"]);
-  });
-
-  it("returns null when no process is listening", async () => {
-    mockExecSilent.mockResolvedValue(null);
-
-    const { findRunningDashboardPid } = await import("../../src/lib/dashboard-rebuild.js");
-
-    const pid = await findRunningDashboardPid(3000);
-    expect(pid).toBeNull();
   });
 });
 

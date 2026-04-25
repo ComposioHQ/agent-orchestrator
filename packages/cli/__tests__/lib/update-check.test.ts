@@ -165,7 +165,7 @@ describe("update-check", () => {
 
     it("returns 'git' when repo root has scripts/ao-update.sh and .git", () => {
       mockExistsSync.mockImplementation((path: string) => {
-        if (path.endsWith("scripts/ao-update.sh")) return true;
+        if (path.replace(/\\/g, "/").endsWith("scripts/ao-update.sh")) return true;
         if (path.endsWith(".git")) return true;
         return false;
       });
@@ -188,7 +188,7 @@ describe("update-check", () => {
 
     it("returns 'unknown' when scripts/ao-update.sh exists but .git does not", () => {
       mockExistsSync.mockImplementation((path: string) => {
-        if (path.endsWith("scripts/ao-update.sh")) return true;
+        if (path.replace(/\\/g, "/").endsWith("scripts/ao-update.sh")) return true;
         return false;
       });
 
@@ -212,7 +212,7 @@ describe("update-check", () => {
   describe("detectInstallMethod", () => {
     it("returns a valid InstallMethod", () => {
       mockExistsSync.mockImplementation((path: string) => {
-        if (path.endsWith("scripts/ao-update.sh")) return true;
+        if (path.replace(/\\/g, "/").endsWith("scripts/ao-update.sh")) return true;
         if (path.endsWith(".git")) return true;
         return false;
       });
@@ -265,7 +265,8 @@ describe("update-check", () => {
       process.env["XDG_CACHE_HOME"] = "/custom/cache";
 
       const dir = getCacheDir();
-      expect(dir).toBe("/custom/cache/ao");
+      // path.join on Windows produces backslashes; normalize for cross-platform assertion.
+      expect(dir.replace(/\\/g, "/")).toBe("/custom/cache/ao");
 
       if (origXdg !== undefined) process.env["XDG_CACHE_HOME"] = origXdg;
       else delete process.env["XDG_CACHE_HOME"];
@@ -277,7 +278,7 @@ describe("update-check", () => {
 
       const dir = getCacheDir();
       expect(dir).toContain(".cache");
-      expect(dir).toMatch(/\/ao$/);
+      expect(dir).toMatch(/[\\/]ao$/);
 
       if (origXdg !== undefined) process.env["XDG_CACHE_HOME"] = origXdg;
     });

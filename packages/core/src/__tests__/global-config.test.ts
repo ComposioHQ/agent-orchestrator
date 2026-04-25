@@ -34,18 +34,22 @@ describe("global-config storage identity", () => {
   let tempRoot: string;
   let configPath: string;
   let originalHome: string | undefined;
+  let originalUserProfile: string | undefined;
 
   beforeEach(() => {
     tempRoot = join(tmpdir(), `ao-global-config-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     mkdirSync(tempRoot, { recursive: true });
     configPath = join(tempRoot, "config.yaml");
     originalHome = process.env["HOME"];
+    originalUserProfile = process.env["USERPROFILE"];
     process.env["HOME"] = tempRoot;
+    process.env["USERPROFILE"] = tempRoot;
   });
 
   afterEach(() => {
     process.env["HOME"] = originalHome;
-    rmSync(tempRoot, { recursive: true, force: true });
+    process.env["USERPROFILE"] = originalUserProfile;
+    rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   function createRepo(repoName: string, originUrl?: string): string {

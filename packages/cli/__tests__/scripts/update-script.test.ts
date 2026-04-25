@@ -76,7 +76,7 @@ esac\nexit 0`,
     expect(commands).toContain("npm link");
   });
 
-  it("runs the built-in smoke commands in smoke-only mode", () => {
+  it.skipIf(process.platform === "win32")("runs the built-in smoke commands in smoke-only mode", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-smoke-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "agent-orchestrator", "bin"), { recursive: true });

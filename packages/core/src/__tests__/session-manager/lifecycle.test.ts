@@ -23,7 +23,7 @@ import type {
   SCM,
 } from "../../types.js";
 import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
-import { installMockOpencode, installMockOpencodeWithNotFoundDelete } from "./opencode-helpers.js";
+import { installMockOpencode, installMockOpencodeWithNotFoundDelete, PATH_SEP } from "./opencode-helpers.js";
 
 let ctx: TestContext;
 let tmpDir: string;
@@ -168,7 +168,7 @@ describe("kill", () => {
   it("does not purge mapped OpenCode session on default kill", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-kill-default.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp/ws",
@@ -189,7 +189,7 @@ describe("kill", () => {
   it("purges mapped OpenCode session when requested", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-kill-purge.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp/ws",
@@ -211,7 +211,7 @@ describe("kill", () => {
   it("skips purge when mapped OpenCode session id is invalid", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-kill-invalid.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp/ws",
@@ -276,7 +276,7 @@ describe("cleanup", () => {
   it("deletes mapped OpenCode session during cleanup for closed PRs", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     const mockSCM: SCM = {
       name: "mock-scm",
@@ -324,7 +324,7 @@ describe("cleanup", () => {
 
   it("treats missing mapped OpenCode session as already cleaned for closed PRs", async () => {
     const mockBin = installMockOpencodeWithNotFoundDelete(tmpDir, "[]");
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     const mockSCM: SCM = {
       name: "mock-scm",
@@ -372,7 +372,7 @@ describe("cleanup", () => {
   it("deletes mapped OpenCode session from archived killed sessions", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-6", {
       worktree: "/tmp",
@@ -396,7 +396,7 @@ describe("cleanup", () => {
   it("does not skip archived cleanup for matching session IDs in other projects", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived-cross-project.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     const project2Path = join(tmpDir, "my-app-2");
     const configWithSecondProject: OrchestratorConfig = {
@@ -449,7 +449,7 @@ describe("cleanup", () => {
   it("skips invalid archived OpenCode session ids during cleanup", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived-invalid.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-8", {
       worktree: "/tmp",
@@ -474,7 +474,7 @@ describe("cleanup", () => {
   it("does not delete archived OpenCode sessions in cleanup dry-run", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived-dry-run.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-7", {
       worktree: "/tmp",
@@ -576,7 +576,7 @@ describe("cleanup", () => {
   it("never cleans the canonical orchestrator session even with stale worker-like metadata", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-orchestrator.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     const deadRuntime: Runtime = {
       ...mockRuntime,
@@ -645,7 +645,7 @@ describe("cleanup", () => {
   it("never cleans archived orchestrator mappings even when metadata looks stale", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived-orchestrator.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-orchestrator", {
       worktree: "/tmp",

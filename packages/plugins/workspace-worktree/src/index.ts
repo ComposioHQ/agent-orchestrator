@@ -1,14 +1,26 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync } from "node:fs";
-import { join, resolve, basename, dirname } from "node:path";
+import * as fs from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  statSync,
+  symlinkSync,
+  linkSync,
+  rmSync,
+  mkdirSync,
+  readdirSync,
+} from "node:fs";
+import { join, resolve, basename, dirname, sep } from "node:path";
 import { homedir } from "node:os";
-import type {
-  PluginModule,
-  Workspace,
-  WorkspaceCreateConfig,
-  WorkspaceInfo,
-  ProjectConfig,
+import {
+  getShell,
+  isWindows,
+  type PluginModule,
+  type Workspace,
+  type WorkspaceCreateConfig,
+  type WorkspaceInfo,
+  type ProjectConfig,
 } from "@aoagents/ao-core";
 
 /** Timeout for git commands (30 seconds) */
@@ -25,8 +37,19 @@ export const manifest = {
 
 /** Run a git command in a given directory */
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", args, { cwd });
+  const { stdout } = await execFileAsync("git", args, { cwd, windowsHide: true });
   return stdout.trimEnd();
+}
+
+/**
+ * Normalize a path for cross-platform comparison. `git worktree list --porcelain`
+ * emits forward-slash paths on Windows even when callers constructed the
+ * directory with backslashes via `path.join`. Lowercase the drive letter so
+ * `C:` and `c:` match.
+ */
+function toComparablePath(p: string): string {
+  const slash = p.replace(/\\/g, "/");
+  return slash.replace(/^([a-zA-Z]):/, (_, d: string) => d.toLowerCase() + ":");
 }
 
 async function hasOriginRemote(cwd: string): Promise<boolean> {
@@ -73,9 +96,14 @@ async function resolveBaseRef(
 async function isRegisteredWorktree(repoPath: string, worktreePath: string): Promise<boolean> {
   try {
     const output = await git(repoPath, "worktree", "list", "--porcelain");
+    const target = toComparablePath(worktreePath);
     return output
       .split("\n")
-      .some((line) => line.startsWith("worktree ") && line.slice("worktree ".length) === worktreePath);
+      .some(
+        (line) =>
+          line.startsWith("worktree ") &&
+          toComparablePath(line.slice("worktree ".length)) === target,
+      );
   } catch {
     return false;
   }
@@ -239,6 +267,7 @@ export function create(config?: Record<string, unknown>): Workspace {
       // Parse porcelain output — only include worktrees within our project directory
       const infos: WorkspaceInfo[] = [];
       const blocks = worktreeListOutput.split("\n\n");
+      const projectDirCmp = toComparablePath(projectWorktreeDir);
 
       for (const block of blocks) {
         const lines = block.trim().split("\n");
@@ -254,7 +283,8 @@ export function create(config?: Record<string, unknown>): Workspace {
           }
         }
 
-        if (path && (path === projectWorktreeDir || path.startsWith(projectWorktreeDir + "/"))) {
+        const pathCmp = path ? toComparablePath(path) : "";
+        if (path && (pathCmp === projectDirCmp || pathCmp.startsWith(projectDirCmp + "/"))) {
           const sessionId = basename(path);
           infos.push({
             path,
@@ -274,6 +304,7 @@ export function create(config?: Record<string, unknown>): Workspace {
         await execFileAsync("git", ["rev-parse", "--is-inside-work-tree"], {
           cwd: workspacePath,
           timeout: GIT_TIMEOUT,
+          windowsHide: true,
         });
         return true;
       } catch {
@@ -346,8 +377,14 @@ export function create(config?: Record<string, unknown>): Workspace {
       // Symlink shared resources
       if (project.symlinks) {
         for (const symlinkPath of project.symlinks) {
-          // Guard against absolute paths and directory traversal
-          if (symlinkPath.startsWith("/") || symlinkPath.includes("..")) {
+          // Guard against absolute paths (Unix: leading "/", Windows: drive letter "C:\"
+          // or UNC "\\server\share") and directory traversal
+          if (
+            symlinkPath.startsWith("/") ||
+            symlinkPath.includes("..") ||
+            /^[a-zA-Z]:[\\/]/.test(symlinkPath) ||
+            symlinkPath.startsWith("\\\\")
+          ) {
             throw new Error(
               `Invalid symlink path "${symlinkPath}": must be a relative path without ".." segments`,
             );
@@ -355,9 +392,10 @@ export function create(config?: Record<string, unknown>): Workspace {
 
           const sourcePath = join(repoPath, symlinkPath);
           const targetPath = resolve(info.path, symlinkPath);
+          const normalizedBase = resolve(info.path);
 
           // Verify resolved target is still within the workspace
-          if (!targetPath.startsWith(info.path + "/") && targetPath !== info.path) {
+          if (!targetPath.startsWith(normalizedBase + sep) && targetPath !== normalizedBase) {
             throw new Error(
               `Symlink target "${symlinkPath}" resolves outside workspace: ${targetPath}`,
             );
@@ -377,15 +415,46 @@ export function create(config?: Record<string, unknown>): Workspace {
 
           // Ensure parent directory exists for nested symlink targets
           mkdirSync(dirname(targetPath), { recursive: true });
-          symlinkSync(sourcePath, targetPath);
+          try {
+            symlinkSync(sourcePath, targetPath);
+          } catch (err) {
+            if (isWindows()) {
+              // Symlinks need admin/Developer Mode on Windows. Try unprivileged
+              // alternatives first — junctions for dirs, hardlinks for files —
+              // before falling back to a recursive copy (slow + bloats every
+              // worktree, especially for node_modules).
+              const isDir = (() => {
+                try {
+                  return statSync(sourcePath).isDirectory();
+                } catch {
+                  return false;
+                }
+              })();
+              try {
+                if (isDir) {
+                  symlinkSync(sourcePath, targetPath, "junction");
+                } else {
+                  linkSync(sourcePath, targetPath);
+                }
+              } catch {
+                fs.cpSync(sourcePath, targetPath, { recursive: true });
+              }
+            } else {
+              throw err;
+            }
+          }
         }
       }
 
       // Run postCreate hooks
       // NOTE: commands run with full shell privileges — they come from trusted YAML config
       if (project.postCreate) {
+        const shell = getShell();
         for (const command of project.postCreate) {
-          await execFileAsync("sh", ["-c", command], { cwd: info.path });
+          await execFileAsync(shell.cmd, shell.args(command), {
+            cwd: info.path,
+            windowsHide: true,
+          });
         }
       }
     },

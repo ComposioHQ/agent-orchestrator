@@ -6,7 +6,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readdirSync, existsSync } from "node:fs";
+import { readdirSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -99,7 +99,8 @@ export function validateSessionId(sessionId: string): boolean {
  */
 export function findTmux(
   execFn: typeof execFileSync = execFileSync,
-): string {
+): string | null {
+  if (process.platform === "win32") return null;
   const candidates = [
     "/opt/homebrew/bin/tmux", // macOS ARM (Homebrew)
     "/usr/local/bin/tmux", // macOS Intel (Homebrew)
@@ -143,10 +144,11 @@ export function findTmux(
  */
 export function resolveTmuxSession(
   sessionId: string,
-  tmuxPath: string,
+  tmuxPath: string | null,
   execFn: typeof execFileSync = execFileSync,
   fs: FsAdapter = defaultFs,
 ): string | null {
+  if (!tmuxPath) return null;
   // Try exact match first using = prefix for exact matching (e.g., "ao-orchestrator")
   // Without =, tmux uses prefix matching: "ao-1" would match "ao-15"
   try {
@@ -190,6 +192,60 @@ export function resolveTmuxSession(
     }
   } catch {
     // tmux not running or no sessions
+  }
+
+  return null;
+}
+
+/**
+ * Resolve a user-facing session ID to its Windows named pipe path.
+ *
+ * Reads `runtimeHandle.data.pipePath` from the on-disk session metadata at
+ * `~/.agent-orchestrator/{storageKey}/sessions/{sessionId}`. The metadata is
+ * the single source of truth — recomputing the hash here is fragile because
+ * the storageKey can be either a bare 12-hex hash or the wrapped
+ * `{hash}-{projectName}` form, and on Windows the path-based hash function
+ * produces a different value than `deriveStorageKey` once paths contain
+ * drive letters and backslashes.
+ *
+ * If multiple storageKeys own the sessionId (rare — same id across
+ * projects), we walk candidates and return the first one whose metadata
+ * carries a parseable pipePath.
+ *
+ * @returns Full pipe path (e.g., "\\\\.\\pipe\\ao-pty-bac26c5725e3-tr-1"), or null
+ */
+export function resolvePipePath(
+  sessionId: string,
+  fs: Pick<FsAdapter, "readdir" | "exists" | "homedir"> & {
+    readFile?: (path: string) => string;
+  } = defaultFs,
+): string | null {
+  if (process.platform !== "win32") return null;
+
+  const readFile = fs.readFile ?? ((p: string) => readFileSync(p, "utf8"));
+
+  for (const storageKey of findStorageKeysForSession(sessionId, {
+    readdir: fs.readdir,
+    exists: fs.exists,
+    homedir: fs.homedir,
+  })) {
+    const sessionFile = join(fs.homedir(), ".agent-orchestrator", storageKey, "sessions", sessionId);
+    let content: string;
+    try {
+      content = readFile(sessionFile);
+    } catch {
+      continue;
+    }
+    // Metadata is line-delimited key=value. The runtimeHandle value is a JSON blob.
+    const match = content.match(/^runtimeHandle=(.+)$/m);
+    if (!match) continue;
+    try {
+      const handle = JSON.parse(match[1]) as { data?: { pipePath?: string } };
+      const pipePath = handle.data?.pipePath;
+      if (pipePath && pipePath.length > 0) return pipePath;
+    } catch {
+      continue;
+    }
   }
 
   return null;

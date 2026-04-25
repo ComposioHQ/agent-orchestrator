@@ -18,6 +18,7 @@ import {
   resolveCloneTarget,
   sanitizeProjectId,
 } from "../config-generator.js";
+import { getDefaultRuntime } from "../platform.js";
 
 // =============================================================================
 // isRepoUrl
@@ -252,7 +253,7 @@ describe("generateConfigFromUrl", () => {
     // Check top-level structure
     expect(config.port).toBe(3000);
     expect(config.defaults).toEqual({
-      runtime: "tmux",
+      runtime: getDefaultRuntime(),
       agent: "claude-code",
       workspace: "worktree",
       notifiers: [],

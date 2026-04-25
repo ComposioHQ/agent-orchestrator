@@ -8,9 +8,10 @@
  */
 
 import { WebSocketServer, WebSocket } from "ws";
-import { homedir, userInfo } from "node:os";
 import { spawn } from "node:child_process";
-import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { type Socket, connect as netConnect } from "node:net";
+import { findTmux, resolveTmuxSession, resolvePipePath, validateSessionId } from "./tmux-utils.js";
+import { getEnvDefaults } from "@aoagents/ao-core";
 
 // These types mirror src/lib/mux-protocol.ts exactly.
 // tsconfig.server.json constrains rootDir to "server/", so we cannot import
@@ -23,7 +24,7 @@ type ClientMessage =
   | { ch: "terminal"; id: string; type: "open"; tmuxName?: string }
   | { ch: "terminal"; id: string; type: "close" }
   | { ch: "system"; type: "ping" }
-  | { ch: "subscribe"; topics: ("sessions")[] };
+  | { ch: "subscribe"; topics: "sessions"[] };
 
 // ── Server → Client ──
 type ServerMessage =
@@ -36,14 +37,7 @@ type ServerMessage =
   | { ch: "system"; type: "error"; message: string };
 
 // Mirrors AttentionLevel in src/lib/types.ts — keep in sync.
-type AttentionLevel =
-  | "merge"
-  | "action"
-  | "respond"
-  | "review"
-  | "pending"
-  | "working"
-  | "done";
+type AttentionLevel = "merge" | "action" | "respond" | "review" | "pending" | "working" | "done";
 
 interface SessionPatch {
   id: string;
@@ -239,7 +233,11 @@ class TerminalManager {
   private TMUX: string;
 
   constructor(tmuxPath?: string) {
-    this.TMUX = tmuxPath ?? findTmux();
+    const resolved = tmuxPath ?? findTmux();
+    if (!resolved) {
+      throw new Error("tmux not available on this platform");
+    }
+    this.TMUX = resolved;
   }
 
   /**
@@ -293,16 +291,16 @@ class TerminalManager {
     });
 
     // Build environment
-    const homeDir = process.env.HOME || homedir();
-    const currentUser = process.env.USER || userInfo().username;
+    const platformDefaults = getEnvDefaults();
+    const homeDir = platformDefaults.HOME;
     const env = {
-      HOME: homeDir,
-      SHELL: process.env.SHELL || "/bin/bash",
-      USER: currentUser,
-      PATH: process.env.PATH || "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+      HOME: platformDefaults.HOME,
+      SHELL: platformDefaults.SHELL,
+      USER: platformDefaults.USER,
+      PATH: process.env.PATH || platformDefaults.PATH,
       TERM: "xterm-256color",
       LANG: process.env.LANG || "en_US.UTF-8",
-      TMPDIR: process.env.TMPDIR || "/tmp",
+      TMPDIR: platformDefaults.TMPDIR,
     };
 
     if (!ptySpawn) {
@@ -353,7 +351,9 @@ class TerminalManager {
       // after every attach (e.g. resource exhaustion or a broken tmux session).
       if (terminal.subscribers.size > 0 && terminal.reattachAttempts < MAX_REATTACH_ATTEMPTS) {
         terminal.reattachAttempts += 1;
-        console.log(`[MuxServer] Re-attaching to ${id} (attempt ${terminal.reattachAttempts}/${MAX_REATTACH_ATTEMPTS})`);
+        console.log(
+          `[MuxServer] Re-attaching to ${id} (attempt ${terminal.reattachAttempts}/${MAX_REATTACH_ATTEMPTS})`,
+        );
         try {
           this.open(id);
           terminal.reattachAttempts = 0; // reset on successful attach
@@ -400,7 +400,11 @@ class TerminalManager {
    * Automatically opens the terminal if needed.
    * @param onExit - called when the PTY exits and cannot be re-attached
    */
-  subscribe(id: string, callback: (data: string) => void, onExit?: (exitCode: number) => void): () => void {
+  subscribe(
+    id: string,
+    callback: (data: string) => void,
+    onExit?: (exitCode: number) => void,
+  ): () => void {
     // Ensure terminal is open
     this.open(id);
     const terminal = this.terminals.get(id);
@@ -435,20 +439,157 @@ class TerminalManager {
     if (!terminal) return "";
     return terminal.buffer.join("");
   }
+}
 
+// ── Windows Pipe Relay (extracted for testability) ──
+
+/** Minimal WebSocket-like interface for the pipe relay handler */
+export interface WsSink {
+  send(data: string): void;
+  readonly readyState: number;
+}
+
+/** Dependencies injected into the pipe relay handler */
+export interface PipeRelayDeps {
+  connect: (path: string) => Socket;
+  resolvePipePath: (id: string) => string | null;
+}
+
+/**
+ * Handle a Windows terminal message by relaying through named pipes.
+ * Extracted from the WebSocket connection handler for testability.
+ */
+export function handleWindowsPipeMessage(
+  msg: { id: string; type: string; data?: string; cols?: number; rows?: number },
+  ws: WsSink,
+  winPipes: Map<string, Socket>,
+  winPipeBuffers: Map<string, Buffer>,
+  deps: PipeRelayDeps,
+): void {
+  const WS_OPEN = 1; // WebSocket.OPEN
+  const { id, type } = msg;
+
+  if (type === "open") {
+    if (winPipes.has(id)) {
+      ws.send(JSON.stringify({ ch: "terminal", id, type: "opened" }));
+    } else {
+      const pipePath = deps.resolvePipePath(id);
+      if (!pipePath) {
+        throw new Error(`No PTY host pipe found for session ${id}`);
+      }
+      const pipeSocket = deps.connect(pipePath);
+      winPipes.set(id, pipeSocket);
+      winPipeBuffers.set(id, Buffer.alloc(0));
+
+      pipeSocket.on("error", (err) => {
+        winPipes.delete(id);
+        winPipeBuffers.delete(id);
+        if (ws.readyState === WS_OPEN) {
+          ws.send(
+            JSON.stringify({
+              ch: "terminal",
+              id,
+              type: "error",
+              message: `PTY host not available: ${err.message}`,
+            }),
+          );
+        }
+      });
+
+      pipeSocket.on("connect", () => {
+        if (ws.readyState === WS_OPEN) {
+          ws.send(JSON.stringify({ ch: "terminal", id, type: "opened" }));
+        }
+
+        pipeSocket.on("data", (chunk: Buffer) => {
+          const existing = winPipeBuffers.get(id) ?? Buffer.alloc(0);
+          let buf = Buffer.concat([existing, chunk]);
+          winPipeBuffers.set(id, buf);
+
+          while (buf.length >= 5) {
+            const msgType = buf.readUInt8(0);
+            const length = buf.readUInt32BE(1);
+            if (buf.length < 5 + length) break;
+            const payload = buf.subarray(5, 5 + length);
+            buf = buf.subarray(5 + length);
+            winPipeBuffers.set(id, buf);
+
+            if (msgType === 0x01 && ws.readyState === WS_OPEN) {
+              ws.send(
+                JSON.stringify({
+                  ch: "terminal",
+                  id,
+                  type: "data",
+                  data: payload.toString("utf-8"),
+                }),
+              );
+            }
+            if (msgType === 0x07) {
+              try {
+                const status = JSON.parse(payload.toString("utf-8")) as { alive: boolean };
+                if (!status.alive && ws.readyState === WS_OPEN) {
+                  ws.send(JSON.stringify({ ch: "terminal", id, type: "exited", code: 0 }));
+                }
+              } catch {
+                /* ignore parse errors */
+              }
+            }
+          }
+        });
+
+        pipeSocket.on("close", () => {
+          winPipes.delete(id);
+          winPipeBuffers.delete(id);
+          if (ws.readyState === WS_OPEN) {
+            ws.send(JSON.stringify({ ch: "terminal", id, type: "exited", code: 0 }));
+          }
+        });
+      });
+    }
+  } else if (type === "data" && msg.data !== undefined) {
+    const pipeSocket = winPipes.get(id);
+    if (pipeSocket) {
+      const inputBuf = Buffer.from(msg.data, "utf-8");
+      const header = Buffer.alloc(5);
+      header.writeUInt8(0x02, 0);
+      header.writeUInt32BE(inputBuf.length, 1);
+      pipeSocket.write(Buffer.concat([header, inputBuf]));
+    }
+  } else if (type === "resize" && msg.cols !== undefined && msg.rows !== undefined) {
+    const pipeSocket = winPipes.get(id);
+    if (pipeSocket) {
+      const resizePayload = Buffer.from(JSON.stringify({ cols: msg.cols, rows: msg.rows }));
+      const header = Buffer.alloc(5);
+      header.writeUInt8(0x03, 0);
+      header.writeUInt32BE(resizePayload.length, 1);
+      pipeSocket.write(Buffer.concat([header, resizePayload]));
+    }
+  } else if (type === "close") {
+    const pipeSocket = winPipes.get(id);
+    if (pipeSocket) {
+      pipeSocket.end();
+      winPipes.delete(id);
+      winPipeBuffers.delete(id);
+    }
+  }
 }
 
 /**
  * Create a mux WebSocket server (noServer mode).
  * Returns the WebSocketServer instance for manual upgrade routing.
  */
-export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
-  if (!ptySpawn) {
+export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | null {
+  // On Windows, we use named pipe relay instead of node-pty/tmux.
+  // Allow the server to be created without ptySpawn on Windows.
+  if (!ptySpawn && process.platform !== "win32") {
     console.warn("[MuxServer] node-pty not available — mux WebSocket will be disabled");
     return null;
   }
 
-  const terminalManager = new TerminalManager(tmuxPath);
+  // On Windows, terminal I/O goes through named pipe relay — no TerminalManager needed.
+  const terminalManager =
+    ptySpawn && process.platform !== "win32" ? new TerminalManager(tmuxPath ?? undefined) : null;
+
   const nextPort = process.env.PORT || "3000";
   const broadcaster = new SessionBroadcaster(nextPort);
 
@@ -458,6 +599,10 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
     console.log("[MuxServer] New mux connection");
 
     const subscriptions = new Map<string, () => void>();
+    // Windows: named pipe sockets keyed by session ID
+    const winPipes = new Map<string, ReturnType<typeof netConnect>>();
+    // Windows: framing buffers keyed by session ID
+    const winPipeBuffers = new Map<string, Buffer>();
     let sessionUnsubscribe: (() => void) | null = null;
     let missedPongs = 0;
     const MAX_MISSED_PONGS = 3;
@@ -486,7 +631,6 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
      * Handle incoming messages
      */
     ws.on("message", (data) => {
-
       try {
         const msg = JSON.parse(data.toString("utf8")) as ClientMessage;
 
@@ -500,61 +644,108 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
 
           try {
             if (type === "open") {
-              // Validate session exists
-              terminalManager.open(id, "tmuxName" in msg ? msg.tmuxName : undefined);
+              if (process.platform === "win32") {
+                handleWindowsPipeMessage(
+                  msg as { id: string; type: string },
+                  ws,
+                  winPipes,
+                  winPipeBuffers,
+                  { connect: netConnect, resolvePipePath },
+                );
+              } else {
+                // --- Unix: existing tmux path (unchanged) ---
+                // Validate session exists
+                if (!terminalManager) throw new Error("Terminal manager not available");
+                terminalManager.open(id, "tmuxName" in msg ? msg.tmuxName : undefined);
 
-              // Send opened confirmation (idempotent — safe to send on re-open)
-              const openedMsg: ServerMessage = { ch: "terminal", id, type: "opened" };
-              ws.send(JSON.stringify(openedMsg));
+                // Send opened confirmation (idempotent — safe to send on re-open)
+                const openedMsg: ServerMessage = { ch: "terminal", id, type: "opened" };
+                ws.send(JSON.stringify(openedMsg));
 
-              // Subscribe and send history buffer only for new subscribers.
-              // Skipping the buffer on re-open prevents duplicate output when
-              // MuxProvider re-sends open for all terminals on reconnect.
-              if (!subscriptions.has(id)) {
-                // Send buffered history to catch up the new subscriber
-                const buffer = terminalManager.getBuffer(id);
-                if (buffer) {
-                  const bufferMsg: ServerMessage = {
-                    ch: "terminal",
-                    id,
-                    type: "data",
-                    data: buffer,
-                  };
-                  ws.send(JSON.stringify(bufferMsg));
-                }
-                const unsub = terminalManager.subscribe(
-                  id,
-                  (data) => {
-                    const dataMsg: ServerMessage = {
+                // Subscribe and send history buffer only for new subscribers.
+                // Skipping the buffer on re-open prevents duplicate output when
+                // MuxProvider re-sends open for all terminals on reconnect.
+                if (!subscriptions.has(id)) {
+                  // Send buffered history to catch up the new subscriber
+                  const buffer = terminalManager.getBuffer(id);
+                  if (buffer) {
+                    const bufferMsg: ServerMessage = {
                       ch: "terminal",
                       id,
                       type: "data",
-                      data,
+                      data: buffer,
                     };
-                    if (ws.readyState === WebSocket.OPEN) {
-                      ws.send(JSON.stringify(dataMsg));
-                    }
-                  },
-                  (exitCode) => {
-                    const exitedMsg: ServerMessage = { ch: "terminal", id, type: "exited", code: exitCode };
-                    if (ws.readyState === WebSocket.OPEN) {
-                      ws.send(JSON.stringify(exitedMsg));
-                    }
-                  },
-                );
-                subscriptions.set(id, unsub);
+                    ws.send(JSON.stringify(bufferMsg));
+                  }
+                  const unsub = terminalManager.subscribe(
+                    id,
+                    (data) => {
+                      const dataMsg: ServerMessage = {
+                        ch: "terminal",
+                        id,
+                        type: "data",
+                        data,
+                      };
+                      if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify(dataMsg));
+                      }
+                    },
+                    (exitCode) => {
+                      const exitedMsg: ServerMessage = {
+                        ch: "terminal",
+                        id,
+                        type: "exited",
+                        code: exitCode,
+                      };
+                      if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify(exitedMsg));
+                      }
+                    },
+                  );
+                  subscriptions.set(id, unsub);
+                }
               }
             } else if (type === "data" && "data" in msg) {
-              terminalManager.write(id, msg.data);
+              if (process.platform === "win32") {
+                handleWindowsPipeMessage(
+                  msg as { id: string; type: string; data: string },
+                  ws,
+                  winPipes,
+                  winPipeBuffers,
+                  { connect: netConnect, resolvePipePath },
+                );
+              } else {
+                terminalManager?.write(id, msg.data);
+              }
             } else if (type === "resize" && "cols" in msg && "rows" in msg) {
-              terminalManager.resize(id, msg.cols, msg.rows);
+              if (process.platform === "win32") {
+                handleWindowsPipeMessage(
+                  msg as { id: string; type: string; cols: number; rows: number },
+                  ws,
+                  winPipes,
+                  winPipeBuffers,
+                  { connect: netConnect, resolvePipePath },
+                );
+              } else {
+                terminalManager?.resize(id, msg.cols, msg.rows);
+              }
             } else if (type === "close") {
-              // Unsubscribe this client only — TerminalManager is shared across
-              // all mux connections so we must not kill the PTY here.
-              const unsub = subscriptions.get(id);
-              if (unsub) {
-                unsub();
-                subscriptions.delete(id);
+              if (process.platform === "win32") {
+                handleWindowsPipeMessage(
+                  msg as { id: string; type: string },
+                  ws,
+                  winPipes,
+                  winPipeBuffers,
+                  { connect: netConnect, resolvePipePath },
+                );
+              } else {
+                // Unsubscribe this client only — TerminalManager is shared across
+                // all mux connections so we must not kill the PTY here.
+                const unsub = subscriptions.get(id);
+                if (unsub) {
+                  unsub();
+                  subscriptions.delete(id);
+                }
               }
             }
           } catch (err) {
@@ -603,6 +794,12 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
         unsub();
       }
       subscriptions.clear();
+      // Windows: close all open pipe sockets
+      for (const pipeSocket of winPipes.values()) {
+        pipeSocket.end();
+      }
+      winPipes.clear();
+      winPipeBuffers.clear();
     });
 
     // In the ws library, "error" is always followed by "close", so the close

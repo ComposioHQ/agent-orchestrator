@@ -7,6 +7,7 @@ import {
   recordTerminalActivity,
   DEFAULT_READY_THRESHOLD_MS,
   DEFAULT_ACTIVE_WINDOW_MS,
+  isWindows,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -21,7 +22,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { stat, access, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { constants } from "node:fs";
+import { constants, readFileSync } from "node:fs";
 
 const execFileAsync = promisify(execFile);
 
@@ -122,7 +123,12 @@ function createAiderAgent(): Agent {
       }
 
       if (config.systemPromptFile) {
-        parts.push("--system-prompt", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
+        if (isWindows()) {
+          const content = readFileSync(config.systemPromptFile, "utf-8");
+          parts.push("--system-prompt", shellEscape(content));
+        } else {
+          parts.push("--system-prompt", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
+        }
       } else if (config.systemPrompt) {
         parts.push("--system-prompt", shellEscape(config.systemPrompt));
       }
@@ -222,6 +228,8 @@ function createAiderAgent(): Agent {
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
+          // ps -eo is Unix-only; guard against stale tmux handles on Windows
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],

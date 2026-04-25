@@ -78,7 +78,7 @@ function createHealthyPath(binDir: string): void {
   createFakeBinary(binDir, "ao", 'printf "/fake/ao\\n" >/dev/null\nexit 0');
 }
 
-describe("scripts/ao-doctor.sh", () => {
+describe.skipIf(process.platform === "win32")("scripts/ao-doctor.sh", () => {
   it("reports a healthy install as PASS", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-script-"));
     const fakeRepo = createHealthyRepo(tempRoot);

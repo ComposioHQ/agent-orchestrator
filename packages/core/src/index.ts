@@ -246,6 +246,16 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+// Platform adapter — centralized cross-platform branching
+export {
+  isWindows,
+  getDefaultRuntime,
+  getShell,
+  killProcessTree,
+  findPidByPort,
+  getEnvDefaults,
+} from "./platform.js";
+
 export {
   normalizeOriginUrl,
   relativeSubdir,

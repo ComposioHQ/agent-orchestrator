@@ -27,7 +27,7 @@ import {
   makeHandle,
   type TestContext,
 } from "../test-utils.js";
-import { installMockOpencode, installMockGit } from "./opencode-helpers.js";
+import { installMockOpencode, installMockGit, PATH_SEP } from "./opencode-helpers.js";
 
 let ctx: TestContext;
 let tmpDir: string;
@@ -340,7 +340,7 @@ describe("spawn", () => {
 
   it("skips remote session branches when allocating a fresh session id", async () => {
     const mockGitBin = installMockGit(tmpDir, ["session/app-22"]);
-    process.env.PATH = `${mockGitBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockGitBin}${PATH_SEP}${originalPath ?? ""}`;
     mkdirSync(config.projects["my-app"]!.path, { recursive: true });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -535,7 +535,7 @@ describe("spawn", () => {
   it("deletes old issue mappings and starts fresh when opencodeIssueSessionStrategy is delete", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-issue.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     const opencodeAgent: Agent = {
       ...mockAgent,
@@ -1088,12 +1088,16 @@ describe("spawn", () => {
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
     const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
-    // Advance only 2s — not enough, message should not have been sent yet
+    // Advance only 2s — not enough, message should not have been sent yet.
+    // On Windows: stabilization polls at 1.5s intervals (stableCount not reached yet).
+    // On non-Windows: exponential backoff waits 3s before first attempt.
     await vi.advanceTimersByTimeAsync(2_000);
     expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
 
-    // Advance the remaining 1s — now the first attempt should fire (3s total = 3000 * 1)
-    await vi.advanceTimersByTimeAsync(1_000);
+    // Advance to 5s total — enough for prompt delivery on all platforms.
+    // On Windows: 3 polls × 1.5s = 4.5s for stabilization, then sends immediately.
+    // On non-Windows: 3s backoff fires and sends.
+    await vi.advanceTimersByTimeAsync(3_000);
     await spawnPromise;
     expect(mockRuntime.sendMessage).toHaveBeenCalled();
     vi.useRealTimers();
@@ -1458,7 +1462,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,
@@ -1521,7 +1525,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,
@@ -1570,7 +1574,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,
@@ -1622,7 +1626,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,
@@ -1672,7 +1676,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,

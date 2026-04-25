@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { generateSessionPrefix } from "./paths.js";
+import { getDefaultRuntime } from "./platform.js";
 
 // =============================================================================
 // URL PARSING
@@ -261,7 +262,7 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
   return {
     port,
     defaults: {
-      runtime: "tmux",
+      runtime: getDefaultRuntime(),
       agent: "claude-code",
       workspace: "worktree",
       notifiers: [],

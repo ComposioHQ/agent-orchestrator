@@ -11,7 +11,15 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
+import {
+  statSync,
+  existsSync,
+  readdirSync,
+  writeFileSync,
+  mkdirSync,
+  utimesSync,
+  unlinkSync,
+} from "node:fs";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -73,10 +81,9 @@ import {
   requireStorageKey,
   validateAndStoreOrigin,
 } from "./paths.js";
+import { isWindows } from "./platform.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
-import {
-  writeWorkspaceOpenCodeAgentsMd,
-} from "./opencode-agents-md.js";
+import { writeWorkspaceOpenCodeAgentsMd } from "./opencode-agents-md.js";
 import {
   getOrchestratorSessionId,
   normalizeOrchestratorSessionStrategy,
@@ -94,6 +101,10 @@ import {
 const execFileAsync = promisify(execFile);
 const OPENCODE_DISCOVERY_TIMEOUT_MS = 10_000;
 const OPENCODE_INTERACTIVE_DISCOVERY_TIMEOUT_MS = 10_000;
+// On Windows, execFile cannot resolve .cmd shim extensions without invoking the shell.
+// windowsHide:true suppresses the conhost popup that the shell would otherwise flash.
+const EXEC_SHELL_OPTION =
+  process.platform === "win32" ? ({ shell: true, windowsHide: true } as const) : ({} as const);
 
 function errorIncludesSessionNotFound(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -114,6 +125,7 @@ async function deleteOpenCodeSession(sessionId: string): Promise<void> {
     try {
       await execFileAsync("opencode", ["session", "delete", validatedSessionId], {
         timeout: 30_000,
+        ...EXEC_SHELL_OPTION,
       });
       return;
     } catch (err) {
@@ -138,6 +150,7 @@ async function fetchOpenCodeSessionList(
   try {
     const { stdout } = await execFileAsync("opencode", ["session", "list", "--format", "json"], {
       timeout: timeoutMs,
+      ...EXEC_SHELL_OPTION,
     });
     const parsed = safeJsonParse<unknown>(stdout);
     if (!Array.isArray(parsed)) return [];
@@ -251,10 +264,7 @@ const DISPLAY_NAME_MAX_LENGTH = 80;
  * Returns `undefined` when no usable context exists so callers can skip
  * writing the field entirely.
  */
-function deriveDisplayName(input: {
-  issueTitle?: string;
-  prompt?: string;
-}): string | undefined {
+function deriveDisplayName(input: { issueTitle?: string; prompt?: string }): string | undefined {
   const pickLine = (text: string): string => {
     const line = text
       .split(/\r?\n/)
@@ -270,7 +280,10 @@ function deriveDisplayName(input: {
     const codePoints = Array.from(collapsed);
     if (codePoints.length <= DISPLAY_NAME_MAX_LENGTH) return collapsed;
     // Leave room for the ellipsis character.
-    return `${codePoints.slice(0, DISPLAY_NAME_MAX_LENGTH - 1).join("").trimEnd()}…`;
+    return `${codePoints
+      .slice(0, DISPLAY_NAME_MAX_LENGTH - 1)
+      .join("")
+      .trimEnd()}…`;
   };
 
   if (input.issueTitle && input.issueTitle.trim()) {
@@ -308,7 +321,7 @@ async function getTmuxForegroundCommand(sessionName: string): Promise<string | n
     const { stdout } = await execFileAsync(
       "tmux",
       ["display-message", "-p", "-t", sessionName, "#{pane_current_command}"],
-      { timeout: 5_000 },
+      { timeout: 5_000, windowsHide: true },
     );
     const command = stdout.trim();
     return command.length > 0 ? command : null;
@@ -371,13 +384,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   function normalizePath(path: string): string {
-    return resolve(path).replace(/\/$/, "");
+    return resolve(path).replace(/[/\\]$/, "");
   }
 
   function isPathInside(path: string, parentPath: string): boolean {
     const normalizedPath = normalizePath(path);
     const normalizedParent = normalizePath(parentPath);
-    return normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}/`);
+    const sep = process.platform === "win32" ? "\\" : "/";
+    return (
+      normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}${sep}`)
+    );
   }
 
   function getManagedWorkspaceRoots(project: ProjectConfig, projectId?: string): string[] {
@@ -515,12 +531,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   const SESSION_CACHE_TTL_MS = 35_000;
-  let sessionCache:
-    | {
-        sessions: Session[];
-        expiresAt: number;
-      }
-    | null = null;
+  let sessionCache: {
+    sessions: Session[];
+    expiresAt: number;
+  } | null = null;
   const ensureOrchestratorPromises = new Map<string, Promise<Session>>();
 
   function invalidateCache(): void {
@@ -798,6 +812,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         {
           cwd: project.path,
           timeout: 5_000,
+          ...EXEC_SHELL_OPTION,
         },
       );
 
@@ -892,8 +907,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
     // After config validation, plugin is always set if tracker/scm exists
     // (either from user config or auto-generated from package/path)
-    const tracker =
-      project.tracker?.plugin ? registry.get<Tracker>("tracker", project.tracker.plugin) : null;
+    const tracker = project.tracker?.plugin
+      ? registry.get<Tracker>("tracker", project.tracker.plugin)
+      : null;
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     return { runtime, agent, workspace, tracker, scm };
@@ -1032,7 +1048,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // Fabricated handles (constructed as fallback for external sessions) should
     // NOT override status to "killed" — we don't know if the session ever had
     // a tmux session, and we'd clobber meaningful statuses like "pr_open".
-    if (handleFromMetadata && session.runtimeHandle && plugins.runtime && session.status !== "spawning") {
+    if (
+      handleFromMetadata &&
+      session.runtimeHandle &&
+      plugins.runtime &&
+      session.status !== "spawning"
+    ) {
       try {
         const alive = await plugins.runtime.isAlive(session.runtimeHandle);
         if (!alive) {
@@ -1427,14 +1448,41 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     let promptDelivered = false;
     if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
       const maxRetries = 3;
-      const baseDelayMs = 3_000;
       let lastError: Error | undefined;
 
+      // On Windows (ConPTY), pty.write() delivers immediately — if the agent
+      // hasn't drawn its input prompt yet, the text is consumed by the startup
+      // screen and lost. Poll terminal output until it stabilizes before sending.
+      // On Linux/Mac, tmux buffers keystrokes so this is not needed.
+      if (isWindows()) {
+        const readyDeadline = Date.now() + 30_000;
+        let lastOutput = "";
+        let stableCount = 0;
+        while (Date.now() < readyDeadline) {
+          await new Promise((resolve) => setTimeout(resolve, 1_500));
+          try {
+            const output = await plugins.runtime.getOutput(handle, 5);
+            if (output.trim().length > 0 && output === lastOutput) {
+              stableCount++;
+              if (stableCount >= 2) break; // Output settled — agent is ready
+            } else {
+              stableCount = 0;
+            }
+            lastOutput = output;
+          } catch {
+            // getOutput may fail early in startup — keep polling
+          }
+        }
+      }
+
+      // On non-Windows, use exponential backoff (3s, 6s, 9s) to wait for agent startup.
+      // On Windows the stabilization loop above already waited — no additional delay needed.
+      const baseDelayMs = isWindows() ? 0 : 3_000;
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          // Wait for agent to start and be ready for input
-          // Use exponential backoff: 3s, 6s, 9s between attempts
-          await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
+          if (baseDelayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
+          }
           await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
           promptDelivered = true;
           break;
@@ -1664,7 +1712,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_CALLER_TYPE: "orchestrator",
           AO_PROJECT_ID: orchestratorConfig.projectId,
           AO_CONFIG_PATH: config.configPath,
-          ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+          ...(config.port !== undefined &&
+            config.port !== null && { AO_PORT: String(config.port) }),
         },
       });
     } catch (err) {
@@ -1930,9 +1979,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       expiresAt: Date.now() + SESSION_CACHE_TTL_MS,
     };
 
-    return projectId
-      ? sessions.filter((session) => session.projectId === projectId)
-      : sessions;
+    return projectId ? sessions.filter((session) => session.projectId === projectId) : sessions;
   }
 
   async function get(sessionId: SessionId): Promise<Session | null> {
@@ -2525,8 +2572,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     try {
       await sendWithConfirmation(prepared);
     } catch (err) {
-      const shouldRetryWithRestore =
-        prepared.restoredAt === undefined && isRestorable(prepared);
+      const shouldRetryWithRestore = prepared.restoredAt === undefined && isRestorable(prepared);
 
       if (!shouldRetryWithRestore) {
         if (err instanceof Error) {
@@ -2583,7 +2629,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
 
     for (const { sessionName, raw: otherRaw } of activeRecords) {
-      if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix)) continue;
+      if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix))
+        continue;
 
       const samePr = otherRaw["pr"] === pr.url;
       const sameBranch =
@@ -2637,9 +2684,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       updateMetadata(sessionsDir, previousSessionId, {
         pr: "",
         prAutoDetect: "off",
-        ...(PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "")
-          ? { status: "working" }
-          : {}),
+        ...(PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "") ? { status: "working" } : {}),
         ...lifecycleMetadataUpdates(previousRaw, previousLifecycle),
       });
       invalidateCache();
@@ -2914,11 +2959,23 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       },
     });
 
-    // 9. Update metadata — merge updates, preserving existing fields
+    // 9. Update metadata — merge updates, preserving existing fields.
+    //
+    // We must update both the top-level `runtimeHandle` AND the nested
+    // `runtime.handle` inside `statePayload`. The lifecycle parser prefers
+    // the statePayload over top-level keys, so writing only the top-level
+    // key gets silently clobbered by the next lifecycle tick (which reads
+    // statePayload and rewrites the top-level field from it). Rebuilding
+    // the canonical lifecycle with the fresh handle keeps both in sync.
     const now = new Date().toISOString();
+    const updatedLifecycle = buildUpdatedLifecycle(sessionId, raw, (lifecycle) => {
+      lifecycle.runtime.handle = handle;
+      lifecycle.runtime.tmuxName = tmuxName ?? lifecycle.runtime.tmuxName;
+      lifecycle.runtime.lastObservedAt = now;
+    });
     updateMetadata(sessionsDir, sessionId, {
+      ...lifecycleMetadataUpdates(raw, updatedLifecycle),
       status: "spawning",
-      runtimeHandle: JSON.stringify(handle),
       restoredAt: now,
     });
     invalidateCache();

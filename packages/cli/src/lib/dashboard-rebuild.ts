@@ -6,7 +6,8 @@
 import { resolve } from "node:path";
 import { existsSync, rmSync } from "node:fs";
 import ora from "ora";
-import { exec, execSilent } from "./shell.js";
+import { findPidByPort } from "@aoagents/ao-core";
+import { exec } from "./shell.js";
 
 /**
  * Check if the web directory is inside a node_modules tree (npm/yarn global install).
@@ -30,26 +31,13 @@ export function assertDashboardRebuildSupported(webDir: string): void {
 }
 
 /**
- * Find the PID of a process listening on the given port.
- * Returns null if no process is found.
- */
-export async function findRunningDashboardPid(port: number): Promise<string | null> {
-  const lsofOutput = await execSilent("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
-  if (!lsofOutput) return null;
-
-  const pid = lsofOutput.split("\n")[0]?.trim();
-  if (!pid || !/^\d+$/.test(pid)) return null;
-  return pid;
-}
-
-/**
  * Wait for a port to be free (no process listening).
  * Throws if the port is still busy after the timeout.
  */
 export async function waitForPortFree(port: number, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const pid = await findRunningDashboardPid(port);
+    const pid = await findPidByPort(port);
     if (!pid) return;
     await new Promise((r) => setTimeout(r, 200));
   }

@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
 import processPlugin from "@aoagents/ao-plugin-runtime-process";
 import type { RuntimeHandle } from "@aoagents/ao-core";
 import { sleep } from "./helpers/polling.js";
@@ -7,6 +8,14 @@ describe("runtime-process (integration)", () => {
   const runtime = processPlugin.create();
   const sessionId = `proc-inttest-${Date.now()}`;
   let handle: RuntimeHandle;
+
+  // Platform-native stdin→stdout echo. We can't use `node -e ...` here:
+  // on Windows the launch command goes through `pwsh -Command "..."`, which
+  // treats a quoted path as a string literal rather than invoking it, so
+  // node never actually runs. `findstr "x*"` matches every line and prints it
+  // verbatim — Windows' closest builtin to `cat`.
+  const echoCommand = process.platform === "win32" ? `findstr "x*"` : "cat";
+  const workspacePath = tmpdir();
 
   afterAll(async () => {
     try {
@@ -19,8 +28,8 @@ describe("runtime-process (integration)", () => {
   it("creates a child process", async () => {
     handle = await runtime.create({
       sessionId,
-      workspacePath: "/tmp",
-      launchCommand: "cat", // cat echoes stdin to stdout
+      workspacePath,
+      launchCommand: echoCommand,
       environment: { AO_TEST: "1" },
     });
 
@@ -35,7 +44,10 @@ describe("runtime-process (integration)", () => {
 
   it("sendMessage writes to stdin and output is captured", async () => {
     await runtime.sendMessage(handle, "hello from test");
-    await sleep(200); // give time for stdout to be captured
+    // Windows ConPTY round-trip (named pipe → PTY host → child stdin → child stdout
+    // → ring buffer → named pipe → reader) needs more headroom than the Unix
+    // direct-stdin path. 200ms was unreliable on slow Windows runners.
+    await sleep(process.platform === "win32" ? 1500 : 200);
     const output = await runtime.getOutput(handle);
     expect(output).toContain("hello from test");
   });
@@ -55,8 +67,8 @@ describe("runtime-process (integration)", () => {
     await expect(
       runtime.create({
         sessionId,
-        workspacePath: "/tmp",
-        launchCommand: "cat",
+        workspacePath,
+        launchCommand: echoCommand,
         environment: {},
       }),
     ).rejects.toThrow("already exists");
