@@ -65,6 +65,7 @@ import {
 } from "./lifecycle-state.js";
 import { buildPrompt } from "./prompt-builder.js";
 import { classifyActivitySignal, createActivitySignal } from "./activity-signal.js";
+import { createCorrelationId, createProjectObserver } from "./observability.js";
 import {
   getSessionsDir,
   getWorktreesDir,
@@ -349,6 +350,7 @@ export interface SessionManagerDeps {
 /** Create a SessionManager instance. */
 export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionManager {
   const { config, registry } = deps;
+  const observer = createProjectObserver(config, "session-manager");
 
   interface LocatedSession {
     raw: Record<string, string>;
@@ -1051,7 +1053,26 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           // Process is confirmed dead — set activity to exited.
           // Only update status to "killed" if not already in a terminal state.
           if (!TERMINAL_SESSION_STATUSES.has(session.status)) {
+            const previousStatus = session.status;
+            const killReason = `${session.lifecycle.session.reason}; ${session.lifecycle.runtime.reason}`;
             session.status = "killed";
+            observer.recordOperation({
+              metric: "kill",
+              operation: "session.killed",
+              outcome: "success",
+              correlationId: createCorrelationId("session-killed"),
+              projectId: session.projectId,
+              sessionId: session.id,
+              reason: killReason,
+              data: {
+                previousStatus,
+                runtimeState: session.lifecycle.runtime.state,
+                runtimeReason: session.lifecycle.runtime.reason,
+                sessionState: session.lifecycle.session.state,
+                sessionReason: session.lifecycle.session.reason,
+              },
+              level: "warn",
+            });
           }
           session.activity = "exited";
           session.activitySignal = createActivitySignal("valid", {

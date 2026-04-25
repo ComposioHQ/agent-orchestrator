@@ -224,6 +224,46 @@ describe("list", () => {
     expect(sessions[0].activity).toBe("exited");
   });
 
+  it("emits observer log with kill reason when marking dead runtime as killed", async () => {
+    const { readObservabilitySummary } = await import("../../observability.js");
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const registryWithDead: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithDead });
+    await sm.list();
+
+    const summary = readObservabilitySummary(config);
+    const trace = summary.projects["my-app"]?.recentTraces.find(
+      (entry) => entry.operation === "session.killed" && entry.sessionId === "app-1",
+    );
+
+    expect(trace).toBeDefined();
+    expect(trace?.reason).toContain("runtime_lost");
+    expect(trace?.data).toMatchObject({
+      previousStatus: "working",
+      runtimeState: "missing",
+      sessionState: "detecting",
+    });
+  });
+
   it("detects activity using agent-native mechanism", async () => {
     const agentWithState: Agent = {
       ...mockAgent,
