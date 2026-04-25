@@ -1726,13 +1726,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
     }
 
-    // If transition already sent a ci-failed reaction with the static message,
-    // skip this cycle but do NOT record dispatch hash — the next poll will send
-    // the detailed CI failure info with check names and URLs.
+    // If the transition reaction already sent a ci-failed reaction (now enriched
+    // with detailed check info from the batch cache), record the dispatch hash so
+    // subsequent polls don't re-send the same failure details.
     if (
       transitionReaction?.key === ciReactionKey &&
       transitionReaction.result?.success
     ) {
+      updateSessionMetadata(session, {
+        lastCIFailureDispatchHash: ciFingerprint,
+        lastCIFailureDispatchAt: new Date().toISOString(),
+      });
       return;
     }
 
@@ -2228,6 +2232,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     await Promise.allSettled([
       maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchMergeConflicts(session, newStatus),
+      maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
     ]);
 
     // Report watcher: audit agent reports for issues (#140)
