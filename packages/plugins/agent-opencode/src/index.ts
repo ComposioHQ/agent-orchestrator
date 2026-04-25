@@ -420,7 +420,8 @@ function createOpenCodeAgent(): Agent {
         if (activityState) return activityState;
       }
 
-      // 2. Fallback: query OpenCode's session list API for timestamp-based detection
+      // 2. Fallback: query OpenCode's session list API for timestamp-based detection.
+      //    `not_found` and `unavailable` both intentionally continue to JSONL fallback.
       const targetSession = await findOpenCodeSession(session);
       if (targetSession.status === "found") {
         const lastActivity = parseUpdatedTimestamp(targetSession.entry.updated);
