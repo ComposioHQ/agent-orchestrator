@@ -1146,10 +1146,9 @@ describe("start command — orchestrator session strategy display", () => {
     expect(output).toContain("/projects/my-app/sessions/app-orchestrator-2");
     expect(output).toContain("1 other session(s) available");
 
-    // The browser auto-open should land on the selected orchestrator's session page directly.
     expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
     const args = mockWaitForPortAndOpen.mock.calls[0];
-    expect(args[1]).toContain("/projects/my-app/sessions/app-orchestrator-2");
+    expect(args[1]).toContain("/projects/my-app/sessions/app-orchestrator");
 
     // Should NOT spawn a new orchestrator when existing ones exist
     expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();

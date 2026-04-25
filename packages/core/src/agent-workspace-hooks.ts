@@ -32,7 +32,7 @@ function getAoBinDir(): string {
 }
 
 /** Current version of wrapper scripts — bump when scripts change */
-const WRAPPER_VERSION = "0.4.0";
+const WRAPPER_VERSION = "0.6.0";
 
 // =============================================================================
 // PATH Builder
