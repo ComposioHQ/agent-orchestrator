@@ -57,13 +57,40 @@ type OpenCodeSessionLookupResult =
   | OpenCodeSessionLookupNotFound
   | OpenCodeSessionLookupUnavailable;
 
-export const OPENCODE_SESSION_LIST_CACHE_TTL_MS = 250;
+const OPENCODE_SESSION_LIST_CACHE_TTL_MS = 250;
 const OPENCODE_SESSION_LIST_TIMEOUT_MS = 30_000;
 
 let sessionListCache: OpenCodeSessionListCache | null = null;
+let sessionListWarningCache: { signature: string; timestamp: number } | null = null;
 
+/**
+ * Reset the OpenCode session list cache. Exported for testing only.
+ * @internal
+ */
 export function resetOpenCodeSessionListCache(): void {
   sessionListCache = null;
+  sessionListWarningCache = null;
+}
+
+function getSessionListErrorSignature(error: unknown): string {
+  if (error instanceof Error) {
+    const withCode = error as Error & { code?: unknown };
+    const code = typeof withCode.code === "string" ? withCode.code : "";
+    return `${error.name}:${error.message}:${code}`;
+  }
+  return String(error);
+}
+
+function warnSessionListFailure(error: unknown): void {
+  const now = Date.now();
+  const signature = getSessionListErrorSignature(error);
+  const shouldWarn =
+    !sessionListWarningCache ||
+    sessionListWarningCache.signature !== signature ||
+    now - sessionListWarningCache.timestamp >= OPENCODE_SESSION_LIST_CACHE_TTL_MS;
+  if (!shouldWarn) return;
+  sessionListWarningCache = { signature, timestamp: now };
+  console.warn("[agent-opencode] Failed to list OpenCode sessions", error);
 }
 
 function parseUpdatedTimestamp(updated: string | number | undefined): Date | null {
@@ -124,7 +151,7 @@ async function getCachedSessionList(): Promise<OpenCodeSessionListEntry[]> {
       return entries;
     })
     .catch((error) => {
-      console.warn("[agent-opencode] Failed to list OpenCode sessions", error);
+      warnSessionListFailure(error);
       if (sessionListCache?.promise === promise) {
         sessionListCache = null;
       }

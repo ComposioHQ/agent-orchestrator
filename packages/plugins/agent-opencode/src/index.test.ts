@@ -38,9 +38,10 @@ import {
   create,
   manifest,
   default as defaultExport,
-  OPENCODE_SESSION_LIST_CACHE_TTL_MS,
   resetOpenCodeSessionListCache,
 } from "./index.js";
+
+const OPENCODE_SESSION_LIST_CACHE_TTL_MS = 250;
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
