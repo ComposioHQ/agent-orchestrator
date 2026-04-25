@@ -11,6 +11,12 @@ useDefault = true
 [allowlist]
 description = "Allowlisted patterns"
 
+# Historical false positive/already-remediated secret in legacy commit.
+# Keep scoped to the specific commit so new leaks still fail CI.
+commits = [
+  "0393ab70a83e090883895d2168aa39a76f997ec8",
+]
+
 paths = [
   "node_modules/",
   "dist/",
