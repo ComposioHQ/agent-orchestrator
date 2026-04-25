@@ -424,6 +424,10 @@ export function deleteMetadata(dataDir: string, sessionId: SessionId, archive = 
   } catch {
     // File may already be deleted by a concurrent process — not an error
   }
+
+  // NOTE: .ghcache/<sessionId>/ is intentionally NOT deleted here.
+  // Cache files are small and useful for post-mortem analysis of wrapper
+  // cache hit/miss behavior. listMetadata() already ignores hidden dirs.
 }
 
 /**
