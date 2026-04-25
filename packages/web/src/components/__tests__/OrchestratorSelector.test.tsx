@@ -9,22 +9,13 @@ vi.mock("next/navigation", () => ({
 
 const mockOrchestrators = [
   {
-    id: "app-orchestrator-1",
+    id: "app-orchestrator",
     projectId: "my-project",
     projectName: "My Project",
     status: "working",
     activity: "active",
     createdAt: new Date(Date.now() - 3600000).toISOString(), // 1 hour ago
     lastActivityAt: new Date(Date.now() - 300000).toISOString(), // 5 min ago
-  },
-  {
-    id: "app-orchestrator-2",
-    projectId: "my-project",
-    projectName: "My Project",
-    status: "spawning",
-    activity: null,
-    createdAt: new Date(Date.now() - 7200000).toISOString(), // 2 hours ago
-    lastActivityAt: null,
   },
 ];
 
@@ -45,43 +36,37 @@ describe("OrchestratorSelector", () => {
   it("renders orchestrator list", () => {
     render(<OrchestratorSelector {...defaultProps} />);
 
-    expect(screen.getByText("app-orchestrator-1")).toBeInTheDocument();
-    expect(screen.getByText("app-orchestrator-2")).toBeInTheDocument();
+    expect(screen.getByText("app-orchestrator")).toBeInTheDocument();
   });
 
   it("displays project name in header", () => {
     render(<OrchestratorSelector {...defaultProps} />);
 
     expect(screen.getByText("My Project")).toBeInTheDocument();
-    expect(screen.getByText("Select an orchestrator")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/projects/my-project");
+    expect(screen.getByText("Project orchestrator")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute(
+      "href",
+      "/projects/my-project",
+    );
   });
 
-  it("shows count of existing sessions", () => {
+  it("explains that orchestrator opening reuses the canonical session", () => {
     render(<OrchestratorSelector {...defaultProps} />);
 
-    expect(screen.getByText(/existing orchestrator sessions/)).toBeInTheDocument();
-    // The count "2" appears in multiple places, so we check the full info banner text
-    expect(screen.getByText(/Found/)).toBeInTheDocument();
+    expect(screen.getByText(/one main orchestrator per project/i)).toBeInTheDocument();
   });
 
   it("shows error state", () => {
-    render(
-      <OrchestratorSelector
-        {...defaultProps}
-        orchestrators={[]}
-        error="Project not found"
-      />,
-    );
+    render(<OrchestratorSelector {...defaultProps} orchestrators={[]} error="Project not found" />);
 
     expect(screen.getByText("Error")).toBeInTheDocument();
     expect(screen.getByText("Project not found")).toBeInTheDocument();
   });
 
-  it("shows start new orchestrator button", () => {
+  it("shows open orchestrator button", () => {
     render(<OrchestratorSelector {...defaultProps} />);
 
-    expect(screen.getByRole("button", { name: /start new orchestrator/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /open orchestrator/i })).toBeInTheDocument();
   });
 
   it("spawns new orchestrator on button click and navigates", async () => {
@@ -89,14 +74,14 @@ describe("OrchestratorSelector", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          orchestrator: { id: "app-orchestrator-3" },
+          orchestrator: { id: "app-orchestrator" },
         }),
     });
     global.fetch = mockFetch;
 
     render(<OrchestratorSelector {...defaultProps} />);
 
-    const button = screen.getByRole("button", { name: /start new orchestrator/i });
+    const button = screen.getByRole("button", { name: /open orchestrator/i });
     fireEvent.click(button);
 
     await waitFor(() => {
@@ -104,7 +89,7 @@ describe("OrchestratorSelector", () => {
     });
 
     await waitFor(() => {
-      expect(mockPush).toHaveBeenCalledWith("/projects/my-project/sessions/app-orchestrator-3");
+      expect(mockPush).toHaveBeenCalledWith("/projects/my-project/sessions/app-orchestrator");
     });
   });
 
@@ -116,11 +101,11 @@ describe("OrchestratorSelector", () => {
 
     render(<OrchestratorSelector {...defaultProps} />);
 
-    const button = screen.getByRole("button", { name: /start new orchestrator/i });
+    const button = screen.getByRole("button", { name: /open orchestrator/i });
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(screen.getByText(/creating new orchestrator/i)).toBeInTheDocument();
+      expect(screen.getByText(/opening orchestrator/i)).toBeInTheDocument();
     });
   });
 
@@ -133,7 +118,7 @@ describe("OrchestratorSelector", () => {
 
     render(<OrchestratorSelector {...defaultProps} />);
 
-    const button = screen.getByRole("button", { name: /start new orchestrator/i });
+    const button = screen.getByRole("button", { name: /open orchestrator/i });
     fireEvent.click(button);
 
     await waitFor(() => {
@@ -144,8 +129,8 @@ describe("OrchestratorSelector", () => {
   it("links to orchestrator session page", () => {
     render(<OrchestratorSelector {...defaultProps} />);
 
-    const link = screen.getByRole("link", { name: /app-orchestrator-1/i });
-    expect(link).toHaveAttribute("href", "/projects/my-project/sessions/app-orchestrator-1");
+    const link = screen.getByRole("link", { name: /app-orchestrator/i });
+    expect(link).toHaveAttribute("href", "/projects/my-project/sessions/app-orchestrator");
   });
 
   it("displays status and activity for each orchestrator", () => {
@@ -153,7 +138,6 @@ describe("OrchestratorSelector", () => {
 
     expect(screen.getByText("working")).toBeInTheDocument();
     expect(screen.getByText("Active")).toBeInTheDocument();
-    expect(screen.getByText("spawning")).toBeInTheDocument();
   });
 
   it("covers relative time for days and status colors/labels", () => {
@@ -196,12 +180,7 @@ describe("OrchestratorSelector", () => {
       },
     ];
 
-    render(
-      <OrchestratorSelector
-        {...defaultProps}
-        orchestrators={wideOrchestrators}
-      />,
-    );
+    render(<OrchestratorSelector {...defaultProps} orchestrators={wideOrchestrators} />);
 
     expect(screen.getByText(/2d ago/)).toBeInTheDocument();
     expect(screen.getAllByText(/Just now/i).length).toBeGreaterThan(0);
@@ -222,10 +201,7 @@ describe("OrchestratorSelector", () => {
         },
       ];
       render(
-        <OrchestratorSelector
-          {...defaultProps}
-          orchestrators={orchestratorsWithInvalidDate}
-        />,
+        <OrchestratorSelector {...defaultProps} orchestrators={orchestratorsWithInvalidDate} />,
       );
 
       // The "Created Unknown" text should appear for invalid dates
@@ -242,10 +218,7 @@ describe("OrchestratorSelector", () => {
         },
       ];
       render(
-        <OrchestratorSelector
-          {...defaultProps}
-          orchestrators={orchestratorsWithFutureDate}
-        />,
+        <OrchestratorSelector {...defaultProps} orchestrators={orchestratorsWithFutureDate} />,
       );
 
       // Future timestamps should show "Just now" instead of negative values
@@ -260,12 +233,7 @@ describe("OrchestratorSelector", () => {
           lastActivityAt: null,
         },
       ];
-      render(
-        <OrchestratorSelector
-          {...defaultProps}
-          orchestrators={orchestratorsWithNullDate}
-        />,
-      );
+      render(<OrchestratorSelector {...defaultProps} orchestrators={orchestratorsWithNullDate} />);
 
       expect(screen.getByText(/Created Unknown/)).toBeInTheDocument();
     });

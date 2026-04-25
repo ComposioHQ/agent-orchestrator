@@ -120,10 +120,9 @@ describe("SessionDetail desktop layout", () => {
     expect(screen.getByRole("button", { name: "Toggle sidebar" })).toBeInTheDocument();
     expect(screen.getAllByText("My App").length).toBeGreaterThanOrEqual(1);
     // Scope to topbar since MobileBottomNav also has an Orchestrator link
-    expect(within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" })).toHaveAttribute(
-      "href",
-      "/projects/my-app/sessions/my-app-orchestrator",
-    );
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" }),
+    ).toHaveAttribute("href", "/projects/my-app/sessions/my-app-orchestrator");
     // Branch pill is rendered as link when session has a PR
     expect(screen.getByRole("link", { name: "feat/desktop-detail" })).toHaveAttribute(
       "href",
@@ -191,7 +190,7 @@ describe("SessionDetail desktop layout", () => {
     expect(screen.getByRole("button", { name: "Ask Agent to Fix" })).toBeInTheDocument();
   });
 
-  it("shows terminal-ended placeholder for exited desktop sessions", () => {
+  it("shows an actionable summary for exited desktop sessions", () => {
     render(
       <SessionDetail
         session={makeSession({
@@ -199,12 +198,30 @@ describe("SessionDetail desktop layout", () => {
           projectId: "my-app",
           status: "terminated",
           activity: "exited",
+          summary: "Investigated the dashboard loading issue",
+          branch: "fix/session-loading",
           pr: null,
         })}
       />,
     );
 
-    expect(screen.getByText(/Terminal session has ended/i)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Session ended summary" })).toBeInTheDocument();
+    expect(screen.getByText("Terminal ended")).toBeInTheDocument();
+    expect(screen.getByText("Investigated the dashboard loading issue")).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("Session facts")).getByText("worker-ended"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Restore terminal" })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("banner")).getByRole("button", { name: "Restore" }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("banner")).queryByRole("link", { name: "Orchestrator" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to dashboard" })).toHaveAttribute(
+      "href",
+      "/projects/my-app",
+    );
     expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
   });
 
@@ -233,11 +250,39 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    expect(within(screen.getByRole("banner")).getByRole("button", { name: "Restore" })).toBeInTheDocument();
-    expect(within(screen.getByRole("banner")).queryByRole("button", { name: "Kill" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("banner")).getByRole("button", { name: "Restore" })).toHaveClass(
+      "dashboard-app-btn--restore",
+    );
+    expect(
+      within(screen.getByRole("banner")).queryByRole("button", { name: "Kill" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("hides the desktop orchestrator button on orchestrator session pages", () => {
+  it("restores without using router refresh on the client-only session page", async () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-restore",
+          projectId: "my-app",
+          status: "terminated",
+          activity: "exited",
+          pr: null,
+        })}
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+
+    await act(async () => {});
+
+    expect(global.fetch).toHaveBeenCalledWith("/api/sessions/worker-restore/restore", {
+      method: "POST",
+    });
+    expect(routerRefreshMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the desktop orchestrator button on orchestrator session pages", () => {
     render(
       <SessionDetail
         session={makeSession({
@@ -258,10 +303,61 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    // Topbar should NOT show an Orchestrator link when already on orchestrator.
-    // Scope to banner since MobileBottomNav keeps its own tab link for active highlighting.
-    expect(within(screen.getByRole("banner")).queryByRole("link", { name: "Orchestrator" })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" }),
+    ).toHaveAttribute("href", "/projects/my-app/sessions/my-app-orchestrator");
     expect(screen.getByText("orchestrator")).toBeInTheDocument();
+  });
+
+  it("shows the main orchestrator button when an orchestrator target exists", () => {
+    const { rerender } = render(
+      <SessionDetail
+        session={makeSession({ id: "worker-with-orchestrator", projectId: "my-app" })}
+        projectOrchestratorId="my-app-orchestrator"
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" }),
+    ).toHaveAttribute("href", "/projects/my-app/sessions/my-app-orchestrator");
+
+    rerender(
+      <SessionDetail
+        session={makeSession({ id: "worker-without-orchestrator", projectId: "my-app" })}
+        projectOrchestratorId={null}
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    expect(
+      within(screen.getByRole("banner")).queryByRole("link", { name: "Orchestrator" }),
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <SessionDetail
+        session={makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          summary: "Project orchestrator",
+        })}
+        isOrchestrator
+        orchestratorZones={{
+          merge: 1,
+          respond: 0,
+          review: 0,
+          pending: 0,
+          working: 2,
+          done: 3,
+        }}
+        projectOrchestratorId="my-app-orchestrator"
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" }),
+    ).toHaveAttribute("href", "/projects/my-app/sessions/my-app-orchestrator");
   });
 
   it("routes to the project orchestrator after killing a worker session", async () => {
@@ -283,7 +379,11 @@ describe("SessionDetail desktop layout", () => {
   it("routes to the project dashboard after killing a worker with no orchestrator", async () => {
     render(
       <SessionDetail
-        session={makeSession({ id: "worker-kill-dashboard", projectId: "my-app", status: "running" })}
+        session={makeSession({
+          id: "worker-kill-dashboard",
+          projectId: "my-app",
+          status: "running",
+        })}
         projectOrchestratorId={null}
       />,
     );

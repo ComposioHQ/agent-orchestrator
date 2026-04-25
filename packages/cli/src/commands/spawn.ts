@@ -193,10 +193,10 @@ export function registerSpawn(program: Command): void {
     .command("spawn")
     .description("Spawn a single agent session")
     .argument(
-      "[first]",
+      "[issue]",
       "Issue identifier. Accepts bare ids (42, INT-100) or prefixed forms (x402-identity/42, xid/42) to target a specific project by id or sessionPrefix.",
     )
-    .argument("[second]", "" /* hidden second arg to catch old two-arg usage */)
+    .allowExcessArguments()
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
@@ -204,8 +204,7 @@ export function registerSpawn(program: Command): void {
     .option("--prompt <text>", "Initial prompt/instructions for the agent (use instead of an issue)")
     .action(
       async (
-        first: string | undefined,
-        second: string | undefined,
+        issue: string | undefined,
         opts: {
           open?: boolean;
           agent?: string;
@@ -213,15 +212,14 @@ export function registerSpawn(program: Command): void {
           assignOnGithub?: boolean;
           prompt?: string;
         },
+        command: Command,
       ) => {
-        // Catch old two-arg usage: ao spawn <project> <issue>
-        if (first && second) {
-          console.warn(
-            chalk.yellow(
-              `⚠ 'ao spawn <project> <issue>' is no longer supported.\n` +
-                `  The project is now auto-detected. Use:\n\n` +
-                `    ao spawn ${second}    # spawn with issue ${second}\n` +
-                `    ao spawn              # spawn without an issue\n`,
+        if (command.args.length > 1) {
+          console.error(
+            chalk.red(
+              `✗ \`ao spawn\` accepts at most 1 argument, but ${command.args.length} were provided.\n\n` +
+                `Use:\n` +
+                `  ao spawn [issue]`,
             ),
           );
           process.exit(1);
@@ -231,13 +229,13 @@ export function registerSpawn(program: Command): void {
         let projectId: string;
         let issueId: string | undefined;
 
-        if (first) {
-          const prefixed = resolveSpawnTarget(config.projects, first);
+        if (issue) {
+          const prefixed = resolveSpawnTarget(config.projects, issue);
           if (prefixed) {
             projectId = prefixed.projectId;
             issueId = prefixed.issueId;
           } else {
-            issueId = first;
+            issueId = issue;
             try {
               projectId = autoDetectProject(config);
             } catch (err) {

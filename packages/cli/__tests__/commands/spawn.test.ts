@@ -490,17 +490,27 @@ describe("spawn command", () => {
     });
   });
 
-  it("warns and exits when two positional args given (old syntax)", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("shows a single optional issue positional in help", () => {
+    const spawnCommand = program.commands.find((command) => command.name() === "spawn");
+    const help = spawnCommand?.helpInformation() ?? "";
+
+    expect(help).toContain("Usage:  spawn [options] [issue]");
+    expect(help).not.toContain("[first]");
+    expect(help).not.toContain("[second]");
+  });
+
+  it("rejects more than one positional arg with replacement usage", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await expect(
       program.parseAsync(["node", "test", "spawn", "my-app", "INT-100"]),
     ).rejects.toThrow("process.exit(1)");
 
-    const warnings = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(warnings).toContain("no longer supported");
-    expect(warnings).toContain("ao spawn INT-100");
-    warnSpy.mockRestore();
+    const errors = errorSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(errors).toContain("accepts at most 1 argument, but 2 were provided");
+    expect(errors).toContain("Use:");
+    expect(errors).toContain("ao spawn [issue]");
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
   });
 
   it("reports error when spawn fails", async () => {

@@ -204,18 +204,71 @@ describe("SessionCard", () => {
     expect(screen.getByText("feat/cool-thing")).toBeInTheDocument();
   });
 
+  it("does not render lifecycle guidance as a pill on kanban cards", () => {
+    const session = makeSession({
+      lifecycle: {
+        sessionState: "detecting",
+        sessionReason: "runtime_lost",
+        prState: "none",
+        prReason: "not_created",
+        runtimeState: "missing",
+        runtimeReason: "tmux_missing",
+        session: {
+          state: "detecting",
+          reason: "runtime_lost",
+          label: "detecting",
+          reasonLabel: "runtime lost",
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          terminatedAt: null,
+          lastTransitionAt: new Date().toISOString(),
+        },
+        pr: {
+          state: "none",
+          reason: "not_created",
+          label: "not created",
+          reasonLabel: "not created",
+          number: null,
+          url: null,
+          lastObservedAt: null,
+        },
+        runtime: {
+          state: "missing",
+          reason: "tmux_missing",
+          label: "missing",
+          reasonLabel: "tmux missing",
+          lastObservedAt: new Date().toISOString(),
+        },
+        legacyStatus: "detecting",
+        evidence: null,
+        detectingAttempts: 1,
+        detectingEscalatedAt: null,
+        summary: "Detecting runtime truth (runtime lost)",
+        guidance: "Checking runtime and process evidence now.",
+      },
+    });
+
+    render(<SessionCard session={session} />);
+    expect(
+      screen.queryByText("Checking runtime and process evidence now."),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders terminal link", () => {
     const session = makeSession({ id: "backend-5" });
     render(<SessionCard session={session} />);
     const link = screen.getByText("terminal");
-    expect(link).toHaveAttribute("href", "/projects/my-app/sessions/backend-5#session-terminal-section");
+    expect(link).toHaveAttribute(
+      "href",
+      "/projects/my-app/sessions/backend-5#session-terminal-section",
+    );
   });
 
   it("shows restore button when agent has exited", () => {
     const session = makeSession({ activity: "exited" });
     render(<SessionCard session={session} />);
     // Header shows compact "restore"; expanded panel shows "restore session"
-    expect(screen.getByText("restore")).toBeInTheDocument();
+    expect(screen.getByText("restore")).toHaveClass("session-card__restore-control");
   });
 
   it("does not show restore button when agent is active", () => {
@@ -274,7 +327,11 @@ describe("SessionCard", () => {
       state: "open",
       ciStatus: "passing",
       ciChecks: [
-        { name: "lint-and-type-checks", status: "passed", url: "https://github.com/owner/repo/runs/111" },
+        {
+          name: "lint-and-type-checks",
+          status: "passed",
+          url: "https://github.com/owner/repo/runs/111",
+        },
         { name: "tests", status: "passed", url: "https://github.com/owner/repo/runs/222" },
         { name: "no-url-check", status: "passed" },
       ],
@@ -524,6 +581,29 @@ describe("SessionCard", () => {
     });
   });
 
+  it("hides quick reply presets for terminal sessions", () => {
+    const session = makeSession({
+      id: "respond-ended",
+      status: "terminated",
+      activity: "exited",
+      summary: "Need approval to proceed",
+    });
+
+    render(<SessionCard session={session} />);
+
+    expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Abort" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: /type a reply to the agent/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /view current context/i })).toHaveAttribute(
+      "href",
+      "/projects/my-app/sessions/respond-ended",
+    );
+    expect(screen.getByText("restore")).toBeInTheDocument();
+  });
+
   it("prevents duplicate enter submits and only clears the textarea after send settles", async () => {
     let resolveSend: (() => void) | null = null;
     const onSend = vi.fn(
@@ -587,7 +667,9 @@ describe("SessionCard", () => {
       expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).toHaveValue(
         "please continue",
       );
-      expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).not.toBeDisabled();
+      expect(
+        screen.getByRole("textbox", { name: /type a reply to the agent/i }),
+      ).not.toBeDisabled();
     });
   });
 

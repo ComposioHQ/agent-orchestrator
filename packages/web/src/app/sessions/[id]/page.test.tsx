@@ -1,26 +1,23 @@
-import React, { type ReactNode } from "react";
 import { act, render, screen, cleanup } from "@testing-library/react";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardSession } from "@/lib/types";
 import type { SessionPatch } from "@/lib/mux-protocol";
 
 const sessionDetailSpy = vi.fn();
-const notFoundError = new Error("NEXT_NOT_FOUND");
-const notFoundSpy = vi.fn(() => {
-  throw notFoundError;
-});
 const replaceSpy = vi.fn();
 let mockPathname = "/projects/my-app/sessions/worker-1";
 let mockParams: Record<string, string> = { id: "worker-1" };
 const mockMuxState: {
-  current?: { sessions: SessionPatch[]; status?: "connecting" | "connected" | "reconnecting" | "disconnected" };
+  current?: {
+    sessions: SessionPatch[];
+    status?: "connecting" | "connected" | "reconnecting" | "disconnected";
+  };
 } = {};
 
 vi.mock("next/navigation", () => ({
   useParams: () => mockParams,
   usePathname: () => mockPathname,
   useRouter: () => ({ replace: replaceSpy }),
-  notFound: notFoundSpy,
 }));
 
 vi.mock("@/providers/MuxProvider", () => ({
@@ -60,27 +57,6 @@ async function flushAsyncWork(): Promise<void> {
   });
 }
 
-class TestErrorBoundary extends React.Component<
-  { children: ReactNode },
-  { error: Error | null }
-> {
-  constructor(props: { children: ReactNode }) {
-    super(props);
-    this.state = { error: null };
-  }
-
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-
-  render() {
-    if (this.state.error) {
-      return <div data-testid="route-error">{this.state.error.message}</div>;
-    }
-    return this.props.children;
-  }
-}
-
 describe("SessionPage project polling", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -108,7 +84,6 @@ describe("SessionPage project polling", () => {
     cleanup();
     vi.useRealTimers();
     vi.restoreAllMocks();
-    notFoundSpy.mockReset();
   });
 
   it("resolves orchestrator nav once for non-orchestrator pages and skips repeated project polling", async () => {
@@ -168,16 +143,30 @@ describe("SessionPage project polling", () => {
     render(<SessionPage />);
     await flushAsyncWork();
 
-    expect(fetch).toHaveBeenCalledWith("/api/projects");
-    expect(fetch).toHaveBeenCalledWith("/api/sessions/worker-1");
-    expect(fetch).toHaveBeenCalledWith("/api/sessions?fresh=true");
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/projects",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/worker-1",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions?fresh=true",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
 
-    expect(fetch).toHaveBeenCalledWith("/api/sessions?project=my-app&orchestratorOnly=true&fresh=true");
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
 
     expect(
-      vi.mocked(fetch).mock.calls.filter(
-        ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true",
-      ),
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(
+          ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true",
+        ),
     ).toHaveLength(1);
 
     await act(async () => {
@@ -186,9 +175,11 @@ describe("SessionPage project polling", () => {
     await flushAsyncWork();
 
     expect(
-      vi.mocked(fetch).mock.calls.filter(
-        ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true",
-      ),
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(
+          ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true",
+        ),
     ).toHaveLength(1);
 
     expect(
@@ -261,10 +252,13 @@ describe("SessionPage project polling", () => {
     });
     await flushAsyncWork();
 
-    expect(fetch).toHaveBeenCalledWith("/api/sessions?project=my-app&fresh=true");
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions?project=my-app&fresh=true",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
-  it("routes 404 responses through notFound()", async () => {
+  it("renders an inline missing-session state instead of blanking the shell", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/projects") {
@@ -291,11 +285,12 @@ describe("SessionPage project polling", () => {
     render(<SessionPage />);
     await flushAsyncWork();
 
-    expect(notFoundSpy).toHaveBeenCalled();
+    expect(screen.getByText("Session not found")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Toggle sidebar" })).toBeInTheDocument();
     expect(screen.queryByTestId("session-detail")).not.toBeInTheDocument();
   });
 
-  it("throws non-404 session fetch failures to the route error boundary", async () => {
+  it("renders an inline error state instead of throwing the route away", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/projects") {
@@ -319,15 +314,96 @@ describe("SessionPage project polling", () => {
 
     const { default: SessionPage } = await import("./page");
 
-    render(
-      <TestErrorBoundary>
-        <SessionPage />
-      </TestErrorBoundary>,
-    );
-
+    render(<SessionPage />);
     await flushAsyncWork();
 
-    expect(screen.getByTestId("route-error")).toHaveTextContent("HTTP 500");
+    expect(screen.getByText("Failed to load session")).toBeInTheDocument();
+    expect(screen.getByText(/internal error/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Toggle sidebar" })).toBeInTheDocument();
+  });
+
+  it("times out a stuck session fetch and replaces the infinite loader with an error state", async () => {
+    global.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ projects: [] }),
+        } as Response);
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+        });
+      }
+
+      if (url === "/api/sessions?fresh=true") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [] }),
+        } as Response);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+
+    render(<SessionPage />);
+
+    expect(screen.getByText("Loading session…")).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8_000);
+    });
+    await flushAsyncWork();
+
+    expect(screen.getByText("Failed to load session")).toBeInTheDocument();
+    expect(screen.getByText(/taking too long/i)).toBeInTheDocument();
+    expect(screen.queryByText("Loading session…")).not.toBeInTheDocument();
+  });
+
+  it("shows a recoverable unavailable state when the first session request aborts", async () => {
+    global.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            projects: [{ id: "my-app", name: "My App", sessionPrefix: "my-app" }],
+          }),
+        } as Response);
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        return Promise.reject(new DOMException("Aborted", "AbortError"));
+      }
+
+      if (url === "/api/sessions?fresh=true") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ sessions: [] }),
+        } as Response);
+      }
+
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+
+    render(<SessionPage />);
+    await flushAsyncWork();
+
+    expect(screen.getByText("Session unavailable")).toBeInTheDocument();
+    expect(screen.getByText(/backend has not returned this session yet/i)).toBeInTheDocument();
+    expect(screen.queryByText("Loading session…")).not.toBeInTheDocument();
   });
 
   it("marks sidebar data as loading until the sessions list resolves", async () => {
@@ -453,12 +529,69 @@ describe("SessionPage project polling", () => {
     render(<SessionPage />);
     await flushAsyncWork();
 
-    expect(
-      fetchMock.mock.calls.filter(([url]) => url === "/api/projects"),
-    ).toHaveLength(2);
-    expect(
-      fetchMock.mock.calls.filter(([url]) => url === "/api/sessions?fresh=true"),
-    ).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/projects")).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/sessions?fresh=true")).toHaveLength(
+      2,
+    );
+  });
+
+  it("silences aborted sidebar refreshes during unmount", async () => {
+    const workerSession = makeWorkerSession();
+    const consoleErrorSpy = vi.spyOn(console, "error");
+
+    global.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            projects: [{ id: "my-app", name: "My App", sessionPrefix: "my-app" }],
+          }),
+        } as Response);
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => workerSession,
+        } as Response);
+      }
+
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ orchestratorId: "my-app-orchestrator" }),
+        } as Response);
+      }
+
+      if (url === "/api/sessions?fresh=true") {
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("The operation was aborted.", "AbortError")),
+            { once: true },
+          );
+        });
+      }
+
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+
+    const rendered = render(<SessionPage />);
+    await flushAsyncWork();
+
+    rendered.unmount();
+    await flushAsyncWork();
+
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+      "Failed to fetch sidebar sessions:",
+      expect.anything(),
+    );
   });
 
   it("surfaces sidebar fetch failures instead of leaving the loading skeleton active", async () => {
