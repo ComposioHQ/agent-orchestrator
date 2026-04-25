@@ -3355,11 +3355,14 @@ describe("event enrichment", () => {
       expect.objectContaining({
         type: "pr.closed",
         data: expect.objectContaining({
-          pr: expect.objectContaining({
-            url: "https://github.com/org/repo/pull/42",
-            number: 42,
+          context: expect.objectContaining({
+            pr: expect.objectContaining({
+              url: "https://github.com/org/repo/pull/42",
+              number: 42,
+            }),
+            branch: "feat/test-123",
           }),
-          branch: "feat/test-123",
+          schemaVersion: 2,
         }),
       }),
     );
@@ -3399,8 +3402,11 @@ describe("event enrichment", () => {
       expect.objectContaining({
         type: "pr.closed",
         data: expect.objectContaining({
-          issueId: "INT-123",
-          issueTitle: "Fix login bug",
+          context: expect.objectContaining({
+            issueId: "INT-123",
+            issueTitle: "Fix login bug",
+          }),
+          schemaVersion: 2,
         }),
       }),
     );
@@ -3444,8 +3450,11 @@ describe("event enrichment", () => {
       expect.objectContaining({
         type: "session.needs_input",
         data: expect.objectContaining({
-          pr: null,
-          issueId: "INT-456",
+          context: expect.objectContaining({
+            pr: null,
+            issueId: "INT-456",
+          }),
+          schemaVersion: 2,
         }),
       }),
     );
