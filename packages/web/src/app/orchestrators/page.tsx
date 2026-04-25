@@ -20,7 +20,7 @@ export async function generateMetadata(props: {
       projectName = project.name;
     }
   }
-  return { title: { absolute: `ao | ${projectName} - Select Orchestrator` } };
+  return { title: { absolute: `ao | ${projectName} - Orchestrator` } };
 }
 
 export default async function OrchestratorsRoute(props: {
@@ -61,7 +61,12 @@ export default async function OrchestratorsRoute(props: {
       const allSessionPrefixes = Object.entries(config.projects).map(
         ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
       );
-      orchestrators = mapSessionsToOrchestrators(allSessions, sessionPrefix, project.name, allSessionPrefixes);
+      orchestrators = mapSessionsToOrchestrators(
+        allSessions,
+        sessionPrefix,
+        project.name,
+        allSessionPrefixes,
+      );
     }
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to load orchestrators";

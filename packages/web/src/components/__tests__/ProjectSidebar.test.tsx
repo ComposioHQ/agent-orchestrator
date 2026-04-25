@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
-import { makeSession } from "@/__tests__/helpers";
+import { makePR, makeSession } from "@/__tests__/helpers";
 
 const mockPush = vi.fn();
 const mockRefresh = vi.fn();
@@ -202,7 +202,10 @@ describe("ProjectSidebar", () => {
       json: async () => ({ ok: true }),
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("confirm", vi.fn(() => true));
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
 
     render(
       <ProjectSidebar
@@ -252,6 +255,94 @@ describe("ProjectSidebar", () => {
     // Session rows are now anchors (support ctrl/cmd-click to open in new tab)
     expect(screen.getByRole("link", { name: "Open Review API changes" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open feat/test" })).not.toBeInTheDocument();
+  });
+
+  it("keeps killed sessions visible when they still need attention", () => {
+    const lastActivityAt = new Date().toISOString();
+
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={[
+          makeSession({
+            id: "worker-ended",
+            projectId: "project-1",
+            summary: "Runtime missing but needs review",
+            branch: null,
+            status: "killed",
+            activity: "exited",
+            lastActivityAt,
+            pr: makePR({
+              title: "Runtime missing but needs review",
+              ciStatus: "failing",
+              mergeability: {
+                mergeable: false,
+                ciPassing: false,
+                approved: true,
+                noConflicts: true,
+                blockers: ["CI failing"],
+              },
+            }),
+            lifecycle: {
+              sessionState: "detecting",
+              sessionReason: "probe_failure",
+              prState: "open",
+              prReason: "ci_failing",
+              runtimeState: "missing",
+              runtimeReason: "process_missing",
+              session: {
+                state: "detecting",
+                reason: "probe_failure",
+                label: "Detecting",
+                reasonLabel: "Probe failure",
+                startedAt: lastActivityAt,
+                completedAt: null,
+                terminatedAt: null,
+                lastTransitionAt: lastActivityAt,
+              },
+              pr: {
+                state: "open",
+                reason: "ci_failing",
+                label: "Open",
+                reasonLabel: "CI failing",
+                number: 100,
+                url: "https://github.com/acme/app/pull/100",
+                lastObservedAt: lastActivityAt,
+              },
+              runtime: {
+                state: "missing",
+                reason: "process_missing",
+                label: "Missing",
+                reasonLabel: "Process missing",
+                lastObservedAt: lastActivityAt,
+              },
+              legacyStatus: "killed",
+              evidence: null,
+              detectingAttempts: 1,
+              detectingEscalatedAt: null,
+              summary: "Session detecting, PR open, runtime missing",
+              guidance: null,
+            },
+          }),
+          makeSession({
+            id: "worker-done",
+            projectId: "project-1",
+            summary: "Actually finished",
+            status: "merged",
+            activity: "exited",
+            pr: makePR({ state: "merged" }),
+          }),
+        ]}
+        activeProjectId="project-1"
+        activeSessionId="worker-ended"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /^Project One 1$/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open Runtime missing but needs review" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open Actually finished" })).not.toBeInTheDocument();
   });
 
   it("navigates session rows to the selected session detail route", () => {
@@ -341,6 +432,6 @@ describe("ProjectSidebar", () => {
     );
 
     expect(screen.getByLabelText("Loading sessions")).toBeInTheDocument();
-    expect(screen.queryByText("No active sessions")).not.toBeInTheDocument();
+    expect(screen.queryByText("No sessions shown")).not.toBeInTheDocument();
   });
 });

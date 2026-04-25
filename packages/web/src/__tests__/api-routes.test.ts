@@ -211,6 +211,7 @@ vi.mock("@/lib/services", () => ({
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
+import { GET as sessionDetailGET } from "@/app/api/sessions/[id]/route";
 import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
@@ -681,6 +682,32 @@ describe("API Routes", () => {
       metadataSpy.mockRestore();
       enrichSpy.mockRestore();
     });
+  });
+
+  describe("GET /api/sessions/[id]", () => {
+    it("returns partial session data when metadata and PR enrichment stall", async () => {
+      const metadataSpy = vi
+        .spyOn(serialize, "enrichSessionsMetadata")
+        .mockImplementation(() => new Promise<void>(() => {}));
+      const prSpy = vi
+        .spyOn(serialize, "enrichSessionPR")
+        .mockImplementation(() => new Promise<boolean>(() => {}));
+
+      const responsePromise = sessionDetailGET(
+        makeRequest("http://localhost:3000/api/sessions/backend-7"),
+        { params: Promise.resolve({ id: "backend-7" }) },
+      );
+
+      const res = await responsePromise;
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.id).toBe("backend-7");
+      expect(data.projectId).toBe("my-app");
+
+      metadataSpy.mockRestore();
+      prSpy.mockRestore();
+    }, 10_000);
   });
 
   describe("GET /api/runtime/terminal", () => {

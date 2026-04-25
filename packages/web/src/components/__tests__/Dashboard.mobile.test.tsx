@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "../Dashboard";
 import { makePR, makeSession } from "../../__tests__/helpers";
 
+const refreshMock = vi.fn();
+
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: refreshMock }),
   usePathname: () => "/",
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -27,6 +29,7 @@ function mockMobileViewport() {
 
 describe("Dashboard unified layout (mobile viewport)", () => {
   beforeEach(() => {
+    refreshMock.mockReset();
     mockMobileViewport();
     Element.prototype.scrollIntoView = vi.fn();
     const eventSourceMock = {
@@ -70,10 +73,7 @@ describe("Dashboard unified layout (mobile viewport)", () => {
 
   it("shows hamburger toggle button in topbar on mobile", () => {
     render(
-      <Dashboard
-        initialSessions={[makeSession()]}
-        projects={[{ id: "my-app", name: "My App" }]}
-      />,
+      <Dashboard initialSessions={[makeSession()]} projects={[{ id: "my-app", name: "My App" }]} />,
     );
 
     expect(screen.getByLabelText("Toggle sidebar")).toBeInTheDocument();
@@ -96,7 +96,9 @@ describe("Dashboard unified layout (mobile viewport)", () => {
   it("shows PRs link in header pointing to PR page", () => {
     render(
       <Dashboard
-        initialSessions={[makeSession({ id: "merge-2", status: "approved", pr: makePR({ number: 91 }) })]}
+        initialSessions={[
+          makeSession({ id: "merge-2", status: "approved", pr: makePR({ number: 91 }) }),
+        ]}
         projectId="my-app"
       />,
     );
@@ -216,6 +218,7 @@ describe("Dashboard unified layout (mobile viewport)", () => {
     expect(global.fetch).toHaveBeenCalledWith("/api/sessions/done-1/restore", {
       method: "POST",
     });
+    expect(refreshMock).toHaveBeenCalledTimes(1);
   });
 
   it("kill button requires a two-click confirmation before firing", async () => {
@@ -243,10 +246,7 @@ describe("Dashboard unified layout (mobile viewport)", () => {
 
     // First click → enters confirming state; does not fire the kill request
     fireEvent.click(killButtons[0]);
-    expect(fetchSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining("/kill"),
-      expect.anything(),
-    );
+    expect(fetchSpy).not.toHaveBeenCalledWith(expect.stringContaining("/kill"), expect.anything());
 
     // Button now advertises the confirm affordance
     const confirm = screen.getByRole("button", { name: "Confirm terminate session" });

@@ -12,6 +12,7 @@ ao stop                                # Stop everything (dashboard, orchestrato
 ao status                              # Overview of all sessions
 ao status --watch                      # Live-updating terminal status view
 ao dashboard                           # Open web dashboard in browser
+ao completion zsh                      # Print the zsh completion script
 ```
 
 ## Commands the orchestrator agent uses
@@ -44,6 +45,24 @@ ao doctor --fix                        # Apply safe fixes automatically
 ao update                              # Update local AO install (source installs only)
 ao config-help                         # Show full config schema reference
 ```
+
+## Zsh completion
+
+```bash
+mkdir -p ~/.zsh/completions
+ao completion zsh > ~/.zsh/completions/_ao
+```
+
+Add the directory to `fpath` before running `compinit`:
+
+```zsh
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit
+compinit
+```
+
+With Oh My Zsh, write the generated file to `${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/ao/_ao`
+and add `ao` to the `plugins=(...)` list in `~/.zshrc`.
 
 `ao doctor` checks PATH and launcher resolution, required binaries, configured plugin resolution, tmux and GitHub CLI health, config support directories, stale AO temp files, and core build/runtime sanity.
 
