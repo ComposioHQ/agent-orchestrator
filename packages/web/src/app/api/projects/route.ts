@@ -4,6 +4,7 @@ import { basename, join, resolve } from "node:path";
 import { NextResponse, type NextRequest } from "next/server";
 import {
   detectDefaultBranchFromDir,
+  generateExternalId,
   getGlobalConfigPath,
   loadConfig,
   migrateToGlobalConfig,
@@ -109,9 +110,45 @@ export async function POST(request: NextRequest) {
     revalidatePortfolioPaths(registeredProjectId);
     return NextResponse.json({ ok: true, projectId: registeredProjectId }, { status: 201 });
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to add project" },
-      { status: 400 },
+    const message = err instanceof Error ? err.message : "Failed to add project";
+
+    // Detect project collision errors and return a structured 409 so the
+    // AddProjectModal can display the collision UI (open existing / use suggested ID).
+    const pathAlreadyRegistered = message.match(
+      /^Project "([^"]+)" is already registered at/,
     );
+    const idAlreadyRegistered = message.match(
+      /^Project id "([^"]+)" is already registered for/,
+    );
+
+    if (pathAlreadyRegistered) {
+      const existingProjectId = pathAlreadyRegistered[1];
+      const suggestedProjectId = generateExternalId(resolvedPath);
+      return NextResponse.json(
+        {
+          error: message,
+          existingProjectId,
+          suggestedProjectId,
+          suggestion: "choose-project-id" as const,
+        },
+        { status: 409 },
+      );
+    }
+
+    if (idAlreadyRegistered) {
+      const existingProjectId = idAlreadyRegistered[1];
+      const suggestedProjectId = generateExternalId(resolvedPath);
+      return NextResponse.json(
+        {
+          error: message,
+          existingProjectId,
+          suggestedProjectId,
+          suggestion: "choose-project-id" as const,
+        },
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

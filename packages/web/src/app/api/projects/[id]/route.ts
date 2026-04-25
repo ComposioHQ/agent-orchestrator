@@ -259,7 +259,12 @@ export async function DELETE(
     const workspacePluginName = state.project?.workspace ?? state.config.defaults.workspace ?? "worktree";
     await cleanupManagedWorkspaces(id, workspacePluginName);
 
-    const projectDir = getProjectDir(id);
+    let projectDir: string;
+    try {
+      projectDir = getProjectDir(id);
+    } catch {
+      return NextResponse.json({ error: `Invalid project ID: ${id}` }, { status: 400 });
+    }
     const hadStorageDir = existsSync(projectDir);
     if (hadStorageDir) {
       rmSync(projectDir, { recursive: true, force: true });

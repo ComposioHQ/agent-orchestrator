@@ -142,12 +142,12 @@ describe("parseTmuxNameV2", () => {
     expect(parseTmuxNameV2("my_app-1")).toEqual({ prefix: "my_app", num: 1 });
     expect(parseTmuxNameV2("my-app-1")).toEqual({ prefix: "my-app", num: 1 });
     expect(parseTmuxNameV2("my-app-orchestrator-5")).toEqual({ prefix: "my-app-orchestrator", num: 5 });
+    expect(parseTmuxNameV2("123-5")).toEqual({ prefix: "123", num: 5 });
   });
 
   it("returns null for invalid formats", () => {
     expect(parseTmuxNameV2("")).toBeNull();
     expect(parseTmuxNameV2("ao")).toBeNull();
-    expect(parseTmuxNameV2("123-5")).toBeNull();
     expect(parseTmuxNameV2("-5")).toBeNull();
   });
 });
