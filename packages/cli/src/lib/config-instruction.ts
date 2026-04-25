@@ -21,7 +21,7 @@ readyThresholdMs: 300000      # Ms before "ready" becomes "idle" (default: 5 min
 
 defaults:
   runtime: tmux               # tmux | process
-  agent: claude-code          # claude-code | aider | codex | cursor | opencode
+  agent: claude-code          # claude-code | aider | codex | cursor | opencode | kimi-2-6-code
   workspace: worktree         # worktree | clone
   notifiers:
     - desktop                 # desktop | discord | slack | webhook | composio | openclaw
@@ -134,7 +134,7 @@ notificationRouting:
 
 # ── Available plugins ───────────────────────────────────────────────
 #
-# Agent:     claude-code, aider, codex, cursor, opencode
+# Agent:     claude-code, aider, codex, cursor, opencode, kimi-2-6-code
 # Runtime:   tmux, process
 # Workspace: worktree, clone
 # SCM:       github, gitlab
