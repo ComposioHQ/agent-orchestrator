@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { access, appendFile, mkdir } from "node:fs/promises";
 import { constants } from "node:fs";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
 import type { SessionId } from "./types.js";
@@ -15,12 +15,15 @@ const execFileAsync = promisify(execFile);
  * Strips ~/.ao/bin from PATH and resolves gh from the clean PATH.
  * Cached after first resolution.
  */
-let resolvedGhPromise: Promise<string> | null = null;
+let resolvedGhPath: string | null = null;
 async function getGhBinaryPath(): Promise<string> {
-  if (!resolvedGhPromise) {
-    resolvedGhPromise = resolveGhBinary();
-  }
-  return resolvedGhPromise;
+  if (resolvedGhPath) return resolvedGhPath;
+  const resolved = await resolveGhBinary();
+  // Cache only successful resolutions (non-wrapper paths).
+  // If resolution fails, retry on next call so transient PATH
+  // issues don't permanently route through the wrapper.
+  resolvedGhPath = resolved;
+  return resolved;
 }
 
 async function resolveGhBinary(): Promise<string> {
@@ -29,7 +32,7 @@ async function resolveGhBinary(): Promise<string> {
   // avoids blocking the event loop and shell injection concerns.
   const aoBinDir = join(homedir(), ".ao", "bin");
   const dirs = (process.env["PATH"] ?? "")
-    .split(":")
+    .split(delimiter)
     .filter((entry) => entry && entry !== aoBinDir);
 
   for (const dir of dirs) {
@@ -42,8 +45,9 @@ async function resolveGhBinary(): Promise<string> {
     }
   }
 
-  // Last resort — bare "gh" (may hit wrapper, but better than failing)
-  return "gh";
+  throw new Error(
+    "gh CLI not found outside ~/.ao/bin. Install gh or set GH_PATH to the real binary.",
+  );
 }
 
 const GH_TRACE_FILE_ENV = "AO_GH_TRACE_FILE";
@@ -177,12 +181,19 @@ function parseIncludedHttpResponse(stdout: string): {
   const headers: HeaderMap = {};
   const normalized = stdout.replace(/\r/g, "");
   const lines = normalized.split("\n");
-  const statusLine = lines.find((line) => line.startsWith("HTTP/"));
-  if (!statusLine) {
+  // Take the LAST HTTP/ status line — on redirects (3xx → 200), the final
+  // status line corresponds to the actual resource, not the redirect.
+  let startIndex = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i]?.startsWith("HTTP/")) {
+      startIndex = i;
+      break;
+    }
+  }
+  if (startIndex === -1) {
     return { headers };
   }
-
-  const startIndex = lines.indexOf(statusLine);
+  const statusLine = lines[startIndex];
   for (let i = startIndex + 1; i < lines.length; i++) {
     const line = lines[i];
     if (!line) break;
@@ -209,26 +220,62 @@ function extractSignal(err: unknown): string | undefined {
 }
 
 const ensuredDirs = new Set<string>();
+const warnedTargets = new Set<string>();
 
-function writeTrace(entry: GhTraceEntry): void {
+async function writeTrace(entry: GhTraceEntry): Promise<void> {
   const target = process.env[GH_TRACE_FILE_ENV];
   if (!target) return;
 
   const dir = dirname(target);
   const line = `${JSON.stringify(entry)}\n`;
 
-  // Fire-and-forget async write — best-effort tracing should not block callers.
-  // Skip mkdir once the directory has been successfully created.
-  if (ensuredDirs.has(dir)) {
-    appendFile(target, line, "utf-8").catch(() => {});
-  } else {
-    mkdir(dir, { recursive: true })
-      .then(() => {
-        ensuredDirs.add(dir);
-        return appendFile(target, line, "utf-8");
-      })
-      .catch(() => {});
+  try {
+    if (!ensuredDirs.has(dir)) {
+      await mkdir(dir, { recursive: true });
+      ensuredDirs.add(dir);
+    }
+    await appendFile(target, line, "utf-8");
+  } catch (err) {
+    // Warn once per target to surface disk-full / permission errors
+    if (!warnedTargets.has(target)) {
+      warnedTargets.add(target);
+      const msg = err instanceof Error ? err.message : String(err);
+      // eslint-disable-next-line no-console -- surface trace write failures once
+      console.warn(`[gh-trace] Failed to write trace to ${target}: ${msg}`);
+    }
   }
+}
+
+/** Redact sensitive values from gh CLI args before persisting to trace JSONL. */
+function redactArgs(args: string[]): string[] {
+  const sensitiveFlags = new Set(["-H", "--header"]);
+  const sensitiveFieldPrefixes = ["token=", "password=", "secret=", "authorization="];
+  return args.map((arg, i) => {
+    // Redact the value after -H / --header if it contains Authorization
+    const prev = i > 0 ? args[i - 1] : undefined;
+    if (prev && sensitiveFlags.has(prev) && /^authorization:/i.test(arg)) {
+      return "Authorization: [REDACTED]";
+    }
+    // Redact inline -H"Authorization: ..." style
+    if (/^-H/i.test(arg) && /authorization:/i.test(arg)) {
+      return "-HAuthorization: [REDACTED]";
+    }
+    // Redact -f/-F field values like token=..., password=...
+    for (const prefix of sensitiveFieldPrefixes) {
+      if (arg.toLowerCase().startsWith(prefix)) {
+        return `${arg.slice(0, prefix.length)}[REDACTED]`;
+      }
+    }
+    // Redact the value following -f/-F if the next positional matches
+    if (prev && (prev === "-f" || prev === "--raw-field" || prev === "-F" || prev === "--field")) {
+      for (const prefix of sensitiveFieldPrefixes) {
+        if (arg.toLowerCase().startsWith(prefix)) {
+          return `${arg.slice(0, prefix.length)}[REDACTED]`;
+        }
+      }
+    }
+    return arg;
+  });
 }
 
 function buildTraceEntry(
@@ -249,7 +296,7 @@ function buildTraceEntry(
     projectId: ctx.projectId,
     sessionId: ctx.sessionId,
     cwd: ctx.cwd,
-    args,
+    args: redactArgs(args),
     endpoint: extractEndpoint(args),
     method: extractMethod(args),
     ok: result.ok,
@@ -276,6 +323,8 @@ function parseGraphQLRateLimit(
 ): Pick<GhTraceEntry, "graphqlCost" | "graphqlRemaining" | "graphqlResetAt"> {
   // Only attempt for GraphQL calls
   if (!args.includes("graphql")) return {};
+  // Quick check — avoid parsing multi-MB response bodies when rateLimit isn't present
+  if (!stdout.includes('"rateLimit"')) return {};
   // Strip HTTP headers if present (-i flag)
   const bodyMatch = stdout.match(/\r?\n\r?\n([\s\S]*)$/);
   const body = bodyMatch ? bodyMatch[1] : stdout;
@@ -315,7 +364,7 @@ export async function execGhObserved(
       { ok: true, stdout, stderr },
       Date.now() - startedAt,
     );
-    writeTrace(entry);
+    await writeTrace(entry);
     return stdout.trim();
   } catch (err) {
     const stdout = typeof (err as { stdout?: unknown }).stdout === "string"
@@ -336,7 +385,7 @@ export async function execGhObserved(
       },
       Date.now() - startedAt,
     );
-    writeTrace(entry);
+    await writeTrace(entry);
     throw err;
   }
 }
@@ -344,3 +393,11 @@ export async function execGhObserved(
 export function getGhTraceFilePath(): string | undefined {
   return process.env[GH_TRACE_FILE_ENV];
 }
+
+// Re-export internal utilities for testing — not part of public API.
+// These are the functions the reviewer flagged as needing test coverage.
+export const _testUtils = {
+  extractOperation,
+  redactArgs,
+  parseIncludedHttpResponse,
+};

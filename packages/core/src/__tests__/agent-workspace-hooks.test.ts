@@ -136,7 +136,7 @@ describe("AO_METADATA_HELPER", () => {
 describe("GH_WRAPPER", () => {
   it("contains PR discovery cache intercept", () => {
     expect(GH_WRAPPER).toContain('$1" == "pr" && "$2" == "list"');
-    expect(GH_WRAPPER).toContain("pr-discovery-");
+    expect(GH_WRAPPER).toContain("pr-disc-");
     expect(GH_WRAPPER).toContain("ao_cache_fresh");
     expect(GH_WRAPPER).toContain("ao_cache_read");
   });
@@ -170,7 +170,7 @@ describe("GH_WRAPPER", () => {
 
   it("contains issue context cache intercept with 300s TTL", () => {
     expect(GH_WRAPPER).toContain('$1" == "issue" && "$2" == "view"');
-    expect(GH_WRAPPER).toContain("issue-ctx-");
+    expect(GH_WRAPPER).toContain("issue-");
     expect(GH_WRAPPER).toContain("ao_cache_fresh");
     expect(GH_WRAPPER).toContain("300");
   });
@@ -185,12 +185,12 @@ describe("GH_WRAPPER", () => {
     expect(GH_WRAPPER).toContain('_ao_json=""');
     expect(GH_WRAPPER).toContain('--json)     _ao_json=');
     expect(GH_WRAPPER).toContain('--json=*)   _ao_json=');
-    // key includes -j- separator when --json is present
-    expect(GH_WRAPPER).toContain('-j-${_ao_safe_json}');
+    // json fields are included in the raw key fed to sha256
+    expect(GH_WRAPPER).toContain('-j-${_ao_json}');
   });
 
   it("includes --json fields in issue context cache key", () => {
-    // Both PR discovery and issue view include --json in cache key
+    // Both PR discovery and issue view include --json in cache key via sha256 hash
     const issueSection = GH_WRAPPER.split('issue" && "$2" == "view"')[1];
     expect(issueSection).toContain("_ao_json");
     expect(issueSection).toContain("-j-");

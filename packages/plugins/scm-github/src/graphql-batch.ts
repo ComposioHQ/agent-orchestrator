@@ -26,6 +26,10 @@ let execGhAsync = async (args: string[], timeout: number, operation: string): Pr
 /**
  * Set execFileAsync for testing.
  * Allows mocking the underlying execFile in unit tests.
+ *
+ * NOTE: This bypasses the gh tracer (execGhObserved). Tests that need to
+ * verify tracer behavior should mock execGhObserved directly or use
+ * setExecGhAsync instead.
  */
 export function setExecFileAsync(fn: typeof execFileAsync): void {
   execFileAsync = fn;
@@ -36,6 +40,16 @@ export function setExecFileAsync(fn: typeof execFileAsync): void {
     });
     return stdout.trim();
   };
+}
+
+/**
+ * Set execGhAsync for testing — preserves tracer in the call chain.
+ * Use this when testing code that should exercise the traced execution path.
+ */
+export function setExecGhAsync(
+  fn: (args: string[], timeout: number, operation: string) => Promise<string>,
+): void {
+  execGhAsync = fn;
 }
 
 /**
@@ -98,6 +112,7 @@ export interface BatchEnrichmentResult {
 export function clearETagCache(): void {
   etagCache.prList.clear();
   etagCache.commitStatus.clear();
+  etagCache.reviewComments.clear();
 }
 
 /**
@@ -376,6 +391,16 @@ function extractErrorOutput(err: unknown): string | null {
 }
 
 /**
+ * Extract ETag from HTTP response output.
+ * Used on both 200 and 304 paths — RFC 7232 allows servers to rotate
+ * the validator on a 304, so we must re-read the ETag even when unchanged.
+ */
+function extractETag(output: string): string | undefined {
+  const match = output.match(/etag:\s*(.+)/i);
+  return match ? match[1].trim() : undefined;
+}
+
+/**
  * Guard 1: PR List ETag Check (per repo)
  *
  * Detects if PR metadata has changed in a repository using REST ETag.
@@ -407,13 +432,15 @@ async function checkPRListETag(
 
     // Check for HTTP 304 Not Modified response
     if (is304(output)) {
+      // Re-read ETag on 304 — RFC 7232 allows rotated validators
+      const rotatedETag = extractETag(output);
+      if (rotatedETag) setPRListETag(owner, repo, rotatedETag);
       return false;
     }
 
     // Extract new ETag from response headers
-    const etagMatch = output.match(/etag:\s*(.+)/i);
-    if (etagMatch) {
-      const newETag = etagMatch[1].trim();
+    const newETag = extractETag(output);
+    if (newETag) {
       setPRListETag(owner, repo, newETag);
     }
 
@@ -423,6 +450,8 @@ async function checkPRListETag(
     // gh exits code 1 on 304 Not Modified — check stdout/stderr for the status line
     const output = extractErrorOutput(err);
     if (output && is304(output)) {
+      const rotatedETag = extractETag(output);
+      if (rotatedETag) setPRListETag(owner, repo, rotatedETag);
       return false;
     }
 
@@ -434,13 +463,15 @@ async function checkPRListETag(
 }
 
 /**
- * Guard 2: Commit Status ETag Check (per PR with pending CI)
+ * Guard 2: Check-Runs ETag Check (per PR with cached head SHA)
  *
  * Detects if CI status has changed for a specific commit using REST ETag.
  *
- * - Endpoint: GET /repos/{owner}/{repo}/commits/{head_sha}/status
+ * - Endpoint: GET /repos/{owner}/{repo}/commits/{head_sha}/check-runs
+ *   Uses the check-runs endpoint (not legacy /status) because the batch
+ *   query reads `statusCheckRollup` which aggregates check-runs. Pure-Actions
+ *   repos only update check-runs, not the legacy combined-status endpoint.
  * - Detects: CI check starts, passes, fails, or external status updates
- * - Only checked for PRs with ciStatus === "pending" to minimize calls
  *
  * @returns true if CI status has changed (200 OK), false if unchanged (304 Not Modified)
  */
@@ -452,8 +483,9 @@ async function checkCommitStatusETag(
   const commitKey = `${owner}/${repo}#${sha}`;
   const cachedETag = etagCache.commitStatus.get(commitKey);
 
-  // Build gh CLI args for REST API call
-  const url = `repos/${owner}/${repo}/commits/${sha}/status`;
+  // Use check-runs endpoint (not legacy /status) to match statusCheckRollup
+  // data source. per_page=1 keeps the response small — we only need the ETag.
+  const url = `repos/${owner}/${repo}/commits/${sha}/check-runs?per_page=1`;
   const args = ["api", "--method", "GET", url, "-i"]; // -i includes headers
 
   // Add If-None-Match header if we have a cached ETag
@@ -466,13 +498,14 @@ async function checkCommitStatusETag(
 
     // Check for HTTP 304 Not Modified response
     if (is304(output)) {
+      const rotatedETag = extractETag(output);
+      if (rotatedETag) setCommitStatusETag(owner, repo, sha, rotatedETag);
       return false;
     }
 
     // Extract new ETag from response headers
-    const etagMatch = output.match(/etag:\s*(.+)/i);
-    if (etagMatch) {
-      const newETag = etagMatch[1].trim();
+    const newETag = extractETag(output);
+    if (newETag) {
       setCommitStatusETag(owner, repo, sha, newETag);
     }
 
@@ -482,6 +515,8 @@ async function checkCommitStatusETag(
     // gh exits code 1 on 304 Not Modified — check stdout/stderr for the status line
     const output = extractErrorOutput(err);
     if (output && is304(output)) {
+      const rotatedETag = extractETag(output);
+      if (rotatedETag) setCommitStatusETag(owner, repo, sha, rotatedETag);
       return false;
     }
 
@@ -501,7 +536,11 @@ async function checkCommitStatusETag(
  * Used to gate the getReviewThreads GraphQL call — if no new comments
  * exist (304), the cached result is reused without a GraphQL call.
  *
- * - Endpoint: GET /repos/{owner}/{repo}/pulls/{number}/comments?per_page=1
+ * - Endpoint: GET /repos/{owner}/{repo}/pulls/{number}/comments
+ *   No per_page limit — the ETag covers the full resource. With per_page=1,
+ *   the ETag only covers the first page, so new comments on page 2+ would
+ *   never bust the validator. Typical PR comment counts are small (<100)
+ *   so the unbounded list is fine.
  * - Detects: New review comments, edited comments, deleted comments
  * - Cost: 0 REST points on 304, 1 REST point on 200
  */
@@ -513,7 +552,7 @@ export async function checkReviewCommentsETag(
   const cacheKey = `${owner}/${repo}#${prNumber}`;
   const cachedETag = etagCache.reviewComments.get(cacheKey);
 
-  const url = `repos/${owner}/${repo}/pulls/${prNumber}/comments?per_page=1`;
+  const url = `repos/${owner}/${repo}/pulls/${prNumber}/comments`;
   const args = ["api", "--method", "GET", url, "-i"];
 
   if (cachedETag) {
@@ -524,18 +563,22 @@ export async function checkReviewCommentsETag(
     const output = await execGhAsync(args, 10_000, "gh.api.guard-review-comments");
 
     if (is304(output)) {
+      const rotatedETag = extractETag(output);
+      if (rotatedETag) etagCache.reviewComments.set(cacheKey, rotatedETag);
       return false;
     }
 
-    const etagMatch = output.match(/etag:\s*(.+)/i);
-    if (etagMatch) {
-      etagCache.reviewComments.set(cacheKey, etagMatch[1].trim());
+    const newETag = extractETag(output);
+    if (newETag) {
+      etagCache.reviewComments.set(cacheKey, newETag);
     }
 
     return true;
   } catch (err) {
     const output = extractErrorOutput(err);
     if (output && is304(output)) {
+      const rotatedETag = extractETag(output);
+      if (rotatedETag) etagCache.reviewComments.set(cacheKey, rotatedETag);
       return false;
     }
 

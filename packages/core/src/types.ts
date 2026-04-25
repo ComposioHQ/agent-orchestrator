@@ -788,6 +788,12 @@ export interface SCM {
    * Get all review threads (human + bot) with isBot flag.
    * Single GraphQL call for all review threads (human + bot) with review summaries.
    * Returns unresolved threads only.
+   *
+   * Optional — plugins that do not implement this method will fall back to
+   * `getPendingComments()` (which lacks `isBot` classification and review
+   * summaries). New SCM plugins should prefer implementing this method.
+   *
+   * @since 0.6.0 — replaces the removed `getAutomatedComments` method.
    */
   getReviewThreads?(pr: PRInfo): Promise<ReviewThreadsResult>;
 

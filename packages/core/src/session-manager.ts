@@ -1591,13 +1591,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     };
 
-    // Setup agent hooks for automatic metadata updates
-    // Also install shared ~/.ao/bin wrappers (gh/git intercept + cache) for all agents
+    // Setup agent hooks for automatic metadata updates.
+    // Claude Code uses native PostToolUse hooks for metadata writes — skip
+    // PATH wrappers to avoid two concurrent writers (wrapper + hook) hitting
+    // the same metadata file with no locking.
     try {
       if (plugins.agent.setupWorkspaceHooks) {
         await plugins.agent.setupWorkspaceHooks(workspacePath, { dataDir: sessionsDir });
       }
-      await setupPathWrapperWorkspace(workspacePath);
+      if (plugins.agent.name !== "claude-code") {
+        await setupPathWrapperWorkspace(workspacePath);
+      }
     } catch (err) {
       await cleanupWorktreeAndMetadata();
       throw err;

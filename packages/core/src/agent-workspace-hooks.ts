@@ -180,6 +180,7 @@ ao_cache_dir() {
 
 ao_cache_fresh() {
   local cache_key="\$1" max_age="\$2"
+  [[ "\$cache_key" =~ ^[a-zA-Z0-9_.-]+$ ]] || return 1
   local cache_dir
   cache_dir="\$(ao_cache_dir)" || return 1
   local ts_file="\$cache_dir/\${cache_key}.ts"
@@ -197,6 +198,7 @@ ao_cache_fresh() {
 
 ao_cache_read() {
   local cache_key="\$1"
+  [[ "\$cache_key" =~ ^[a-zA-Z0-9_.-]+$ ]] || return 1
   local cache_dir
   cache_dir="\$(ao_cache_dir)" || return 1
   cat "\$cache_dir/\${cache_key}.stdout"
@@ -204,6 +206,7 @@ ao_cache_read() {
 
 ao_cache_write() {
   local cache_key="\$1"
+  [[ "\$cache_key" =~ ^[a-zA-Z0-9_.-]+$ ]] || return 1
   local cache_dir
   cache_dir="\$(ao_cache_dir)" || return 1
   local tmp="\$cache_dir/\${cache_key}.stdout.tmp.\$\$"
@@ -250,6 +253,30 @@ fi
 # Source the metadata helper (provides update/read_ao_metadata, ao_cache_*)
 source "\$ao_bin_dir/ao-metadata-helper.sh" 2>/dev/null || true
 
+# Redact sensitive values from args before tracing.
+# Handles: -H "Authorization: ...", token=..., password=..., secret=...
+_ao_redact_args() {
+  local prev=""
+  local out=()
+  for arg in "\$@"; do
+    if [[ "\$prev" == "-H" || "\$prev" == "--header" ]] && [[ "\$arg" =~ ^[Aa]uthorization: ]]; then
+      out+=("Authorization: [REDACTED]")
+    elif [[ "\$arg" =~ ^-H[Aa]uthorization: ]]; then
+      out+=("-HAuthorization: [REDACTED]")
+    elif [[ "\$arg" =~ ^[Tt]oken= ]]; then
+      out+=("token=[REDACTED]")
+    elif [[ "\$arg" =~ ^[Pp]assword= ]]; then
+      out+=("password=[REDACTED]")
+    elif [[ "\$arg" =~ ^[Ss]ecret= ]]; then
+      out+=("secret=[REDACTED]")
+    else
+      out+=("\$arg")
+    fi
+    prev="\$arg"
+  done
+  printf '%s\n' "\${out[@]}"
+}
+
 # Best-effort JSONL tracing for agent-side gh invocations.
 log_gh_invocation() {
   local trace_file="\${AO_AGENT_GH_TRACE:-}"
@@ -259,7 +286,7 @@ log_gh_invocation() {
   mkdir -p "\$(dirname "\$trace_file")" 2>/dev/null || return 0
 
   local args_json
-  args_json="\$(printf '%s\n' "\$@" | jq -Rsc 'split("\n")[:-1]')" || return 0
+  args_json="\$(_ao_redact_args "\$@" | jq -Rsc 'split("\n")[:-1]')" || return 0
 
   # Compute operation: gh.{arg1}.{arg2} (mirrors AO-side extractOperation)
   local _ao_op="gh"
@@ -312,7 +339,7 @@ log_ao_cache() {
 # =============================================================================
 
 # ── 1. PR discovery: gh pr list --head <B> --limit 1 ────────────────────────
-# Infinite TTL for positive results (non-empty array). Never caches [].
+# 120s TTL for positive results (non-empty array). Never caches [].
 if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
   _ao_head="" _ao_limit="" _ao_json="" _ao_repo="" _ao_cacheable=true
   _ao_saved_args=("\$@")
@@ -338,15 +365,16 @@ if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
   set -- "\${_ao_saved_args[@]}"
 
   if [[ "\$_ao_cacheable" == true && "\$_ao_limit" == "1" && -n "\$_ao_head" ]]; then
-    _ao_safe_branch=\$(printf '%s' "\$_ao_head" | tr -c 'a-zA-Z0-9._-' '-')
-    _ao_safe_repo=\$(printf '%s' "\$_ao_repo" | tr -c 'a-zA-Z0-9._-' '-')
-    _ao_cache_key="pr-discovery-\${_ao_safe_repo}-\${_ao_safe_branch}"
+    # Use sha256 hash suffix to avoid collisions from tr-based sanitization
+    # (e.g. feat/foo, feat-foo, feat_foo would otherwise map to the same key)
+    _ao_raw_key="pr-discovery-\${_ao_repo}-\${_ao_head}"
     if [[ -n "\$_ao_json" ]]; then
-      _ao_safe_json=\$(printf '%s' "\$_ao_json" | tr -c 'a-zA-Z0-9._,-' '-')
-      _ao_cache_key="\${_ao_cache_key}-j-\${_ao_safe_json}"
+      _ao_raw_key="\${_ao_raw_key}-j-\${_ao_json}"
     fi
+    _ao_cache_key=\$(printf '%s' "\$_ao_raw_key" | shasum -a 256 | cut -c1-16)
+    _ao_cache_key="pr-disc-\${_ao_cache_key}"
 
-    if ao_cache_fresh "\$_ao_cache_key" 0 2>/dev/null; then
+    if ao_cache_fresh "\$_ao_cache_key" 120 2>/dev/null; then
       log_ao_cache "hit" "\$_ao_cache_key" 0 0 true
       ao_cache_read "\$_ao_cache_key"
       exit 0
@@ -408,12 +436,12 @@ if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
   set -- "\${_ao_saved_args[@]}"
 
   if [[ "\$_ao_cacheable" == true && -n "\$_ao_issue_id" ]]; then
-    _ao_safe_repo=\$(printf '%s' "\$_ao_repo" | tr -c 'a-zA-Z0-9._-' '-')
-    _ao_cache_key="issue-ctx-\${_ao_safe_repo}-\${_ao_issue_id}"
+    _ao_raw_key="issue-ctx-\${_ao_repo}-\${_ao_issue_id}"
     if [[ -n "\$_ao_json" ]]; then
-      _ao_safe_json=\$(printf '%s' "\$_ao_json" | tr -c 'a-zA-Z0-9._,-' '-')
-      _ao_cache_key="\${_ao_cache_key}-j-\${_ao_safe_json}"
+      _ao_raw_key="\${_ao_raw_key}-j-\${_ao_json}"
     fi
+    _ao_cache_key=\$(printf '%s' "\$_ao_raw_key" | shasum -a 256 | cut -c1-16)
+    _ao_cache_key="issue-\${_ao_cache_key}"
 
     if ao_cache_fresh "\$_ao_cache_key" 300 2>/dev/null; then
       log_ao_cache "hit" "\$_ao_cache_key" 0 0 true
