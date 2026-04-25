@@ -1098,7 +1098,7 @@ describe("start command — orchestrator session strategy display", () => {
     expect(output).not.toContain("tmux attach");
   });
 
-  it("opens orchestrator selection page when multiple existing orchestrators found with dashboard enabled and reuse is explicit", async () => {
+  it("opens the most recent orchestrator session page when multiple existing orchestrators found with dashboard enabled and reuse is explicit", async () => {
     mockConfigRef.current = makeConfig({
       "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
     });
@@ -1146,11 +1146,10 @@ describe("start command — orchestrator session strategy display", () => {
     expect(output).toContain("/projects/my-app/sessions/app-orchestrator-2");
     expect(output).toContain("1 other session(s) available");
 
-    // The browser auto-open should land on the dashboard's orchestrator-selection page
-    // (not a direct session URL) so the user can pick a different one if desired.
+    // The browser auto-open should land on the selected orchestrator's session page directly.
     expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
     const args = mockWaitForPortAndOpen.mock.calls[0];
-    expect(args[1]).toContain("/orchestrators?project=my-app");
+    expect(args[1]).toContain("/projects/my-app/sessions/app-orchestrator-2");
 
     // Should NOT spawn a new orchestrator when existing ones exist
     expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();

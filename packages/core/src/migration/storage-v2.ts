@@ -940,6 +940,7 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
   };
 
   // Migrate each project
+  const projectErrors: Array<{ projectId: string; error: string }> = [];
   for (const [projectId, dirs] of projectGroups) {
     const nonEmpty = dirs.filter((d) => !d.empty);
     if (nonEmpty.length === 0) {
@@ -955,12 +956,20 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     }
 
     log(`\nMigrating project: ${projectId} (${dirs.length} hash dir${dirs.length > 1 ? "s" : ""})`);
-    const projectResult = migrateProject(projectId, dirs, aoBaseDir, dryRun, log);
 
-    totals.projects++;
-    totals.sessions += projectResult.sessions;
-    totals.archives += projectResult.archives;
-    totals.worktrees += projectResult.worktrees;
+    try {
+      const projectResult = migrateProject(projectId, dirs, aoBaseDir, dryRun, log);
+
+      totals.projects++;
+      totals.sessions += projectResult.sessions;
+      totals.archives += projectResult.archives;
+      totals.worktrees += projectResult.worktrees;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`  ERROR migrating project ${projectId}: ${msg}`);
+      projectErrors.push({ projectId, error: msg });
+      continue;
+    }
 
     // Rename old directories to .migrated
     for (const dir of dirs) {
@@ -974,7 +983,17 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
         const migratedPath = `${dir.path}.migrated`;
         log(`  Renaming: ${basename(dir.path)} → ${basename(dir.path)}.migrated`);
         if (!dryRun) {
-          renameSync(dir.path, migratedPath);
+          try {
+            renameSync(dir.path, migratedPath);
+          } catch (err) {
+            // .migrated target may already exist from a previous interrupted run
+            if ((err as NodeJS.ErrnoException).code === "ENOTEMPTY" && existsSync(migratedPath)) {
+              log(`  WARNING: ${basename(migratedPath)} already exists — removing source directory`);
+              rmSync(dir.path, { recursive: true, force: true });
+            } else {
+              log(`  WARNING: Failed to rename ${basename(dir.path)}: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
         }
       }
     }
@@ -1003,6 +1022,12 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
   }
   if (totals.emptyDirsDeleted > 0) {
     log(`Deleted ${totals.emptyDirsDeleted} empty director${totals.emptyDirsDeleted !== 1 ? "ies" : "y"}.`);
+  }
+  if (projectErrors.length > 0) {
+    log(`\nFailed to migrate ${projectErrors.length} project${projectErrors.length !== 1 ? "s" : ""}:`);
+    for (const { projectId, error } of projectErrors) {
+      log(`  - ${projectId}: ${error}`);
+    }
   }
   log("Old directories renamed to *.migrated — verify and rm -rf when ready.");
 

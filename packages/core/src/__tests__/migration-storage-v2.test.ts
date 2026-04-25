@@ -721,6 +721,71 @@ describe("migrateStorage", () => {
     expect(existsSync(`${hashDir}.migrated.migrated`)).toBe(false);
     expect(existsSync(`${hashDir}.migrated`)).toBe(true);
   });
+
+  it("handles ENOTEMPTY when .migrated target already exists from interrupted run", async () => {
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\nstatus=working\ncreatedAt=2026-04-21T12:00:00.000Z",
+    );
+
+    // Simulate interrupted previous run: .migrated already exists with leftover content
+    const migratedDir = `${hashDir}.migrated`;
+    mkdirSync(join(migratedDir, "sessions"), { recursive: true });
+    writeFileSync(join(migratedDir, "sessions", "ao-1"), "leftover");
+
+    const logs: string[] = [];
+    const result = await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: (msg) => logs.push(msg),
+    });
+
+    expect(result.projects).toBe(1);
+    // Source dir should be removed, .migrated should remain
+    expect(existsSync(hashDir)).toBe(false);
+    expect(existsSync(migratedDir)).toBe(true);
+    expect(logs.some((l) => l.includes("already exists"))).toBe(true);
+  });
+
+  it("continues migrating other projects when one project fails", async () => {
+    // Project A — will succeed
+    const hashDirA = join(aoBaseDir, "aaaaaa000000-project-a");
+    mkdirSync(join(hashDirA, "sessions"), { recursive: true });
+    writeFileSync(
+      join(hashDirA, "sessions", "ao-1"),
+      "project=project-a\nstatus=working\ncreatedAt=2026-04-21T12:00:00.000Z",
+    );
+
+    // Project B — will fail (create a file where migrateProject expects a directory)
+    const hashDirB = join(aoBaseDir, "bbbbbb000000-project-b");
+    mkdirSync(join(hashDirB, "sessions"), { recursive: true });
+    writeFileSync(
+      join(hashDirB, "sessions", "ao-2"),
+      "project=project-b\nstatus=working\ncreatedAt=2026-04-21T12:00:00.000Z",
+    );
+    // Pre-create a FILE at the projects/project-b path to cause an error
+    mkdirSync(join(aoBaseDir, "projects"), { recursive: true });
+    writeFileSync(join(aoBaseDir, "projects", "project-b"), "conflict");
+
+    const logs: string[] = [];
+    const result = await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: (msg) => logs.push(msg),
+    });
+
+    // Project A should succeed
+    expect(result.projects).toBeGreaterThanOrEqual(1);
+    expect(existsSync(join(aoBaseDir, "projects", "project-a", "sessions", "ao-1.json"))).toBe(true);
+    // Should report the failure
+    expect(logs.some((l) => l.includes("ERROR") && l.includes("project-b"))).toBe(true);
+    // Summary should mention failed projects
+    expect(logs.some((l) => l.includes("Failed to migrate"))).toBe(true);
+  });
 });
 
 describe("rollbackStorage", () => {

@@ -1218,9 +1218,8 @@ async function runStartup(
   }
 
   // Create orchestrator session (unless --no-orchestrator or existing orchestrators found)
-  let hasMultipleReusable = false;
-  let selectedOrchestratorId: string | null = null;
   let otherCandidateCount = 0;
+  let selectedOrchestratorId: string | null = null;
 
   if (opts?.orchestrator !== false) {
     const sm = await getSessionManager(config);
@@ -1278,13 +1277,8 @@ async function runStartup(
 
     if (candidates.length > 0 && orchestratorSessionStrategy === "reuse") {
       const chosen = candidates[0];
-      // Multiple candidates → CLI auto-picks the most recent, but the dashboard
-      // surfaces all of them via the orchestrator-selection page. Only meaningful
-      // when the dashboard is running.
+      // Multiple candidates → CLI auto-picks the most recent.
       otherCandidateCount = candidates.length - 1;
-      if (opts?.dashboard !== false && candidates.length > 1) {
-        hasMultipleReusable = true;
-      }
 
       const otherSuffix =
         otherCandidateCount > 0 ? ` (${otherCandidateCount} other session(s) available)` : "";
@@ -1403,11 +1397,9 @@ async function runStartup(
   let openAbort: AbortController | undefined;
   if (opts?.dashboard !== false) {
     openAbort = new AbortController();
-    const orchestratorUrl = hasMultipleReusable
-      ? `http://localhost:${port}/orchestrators?project=${projectId}`
-      : selectedOrchestratorId
-        ? projectSessionUrl(port, projectId, selectedOrchestratorId)
-        : `http://localhost:${port}`;
+    const orchestratorUrl = selectedOrchestratorId
+      ? projectSessionUrl(port, projectId, selectedOrchestratorId)
+      : `http://localhost:${port}`;
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
   }
 
