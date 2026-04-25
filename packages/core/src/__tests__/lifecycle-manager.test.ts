@@ -2483,6 +2483,7 @@ describe("reactions", () => {
     const mockSCM = createMockSCM({
       getPRState: vi.fn().mockResolvedValue("closed"),
       getMergeability,
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "closed" }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
