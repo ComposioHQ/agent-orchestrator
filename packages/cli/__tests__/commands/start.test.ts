@@ -1569,6 +1569,12 @@ describe("stop command", () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
     mockSessionManager.list.mockResolvedValue([]);
     mockFindPidByPort.mockResolvedValue("1234");
+    // killDashboardOnPort verifies the PID is an AO dashboard via `ps` on Unix
+    // before killing. Stub it to return a matching cmdline so we reach the kill.
+    mockExec.mockImplementation(async (cmd: string) => {
+      if (cmd === "ps") return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
+      throw new Error("no process");
+    });
 
     await program.parseAsync(["node", "test", "stop"]);
 
