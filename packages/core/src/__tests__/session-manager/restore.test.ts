@@ -683,8 +683,7 @@ describe("restore", () => {
     const wsPath = join(tmpDir, "ws-app-worker-opencode-agentsmd");
     mkdirSync(wsPath, { recursive: true });
 
-    const projectPath = join(tmpDir, "my-app");
-    const baseDir = getProjectBaseDir(ctx.configPath, projectPath);
+    const baseDir = getProjectBaseDir(ctx.config.projects["my-app"]!.storageKey);
     mkdirSync(baseDir, { recursive: true });
     const promptFile = join(baseDir, "worker-prompt-app-1.md");
     const promptContent = "Work on issue: TEST-1\nFix the failing tests.";
