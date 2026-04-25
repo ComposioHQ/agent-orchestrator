@@ -1,13 +1,10 @@
 import {
   shellEscape,
   normalizeAgentPermissionMode,
-  buildAgentPath,
-  setupPathWrapperWorkspace,
   readLastActivityEntry,
   checkActivityLogState,
   getActivityFallbackState,
   recordTerminalActivity,
-  PREFERRED_GH_PATH,
   DEFAULT_READY_THRESHOLD_MS,
   DEFAULT_ACTIVE_WINDOW_MS,
   type Agent,
@@ -229,9 +226,7 @@ function createCursorAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
-      // Prepend ~/.ao/bin to PATH so our gh/git wrappers intercept commands.
-      env["PATH"] = buildAgentPath(process.env["PATH"]);
-      env["GH_PATH"] = PREFERRED_GH_PATH;
+      // PATH and GH_PATH are injected by session-manager for all agents.
 
       return env;
     },
@@ -394,13 +389,12 @@ function createCursorAgent(): Agent {
       return null;
     },
 
-    async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      await setupPathWrapperWorkspace(workspacePath);
+    async setupWorkspaceHooks(_workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+      // PATH wrappers are installed by session-manager for all agents.
     },
 
-    async postLaunchSetup(session: Session): Promise<void> {
-      if (!session.workspacePath) return;
-      await setupPathWrapperWorkspace(session.workspacePath);
+    async postLaunchSetup(_session: Session): Promise<void> {
+      // PATH wrappers are re-ensured by session-manager.
     },
   };
 }

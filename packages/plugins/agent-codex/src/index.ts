@@ -4,13 +4,10 @@ import {
   shellEscape,
   readLastJsonlEntry,
   normalizeAgentPermissionMode,
-  buildAgentPath,
-  setupPathWrapperWorkspace,
   readLastActivityEntry,
   checkActivityLogState,
   getActivityFallbackState,
   recordTerminalActivity,
-  PREFERRED_GH_PATH,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -487,11 +484,7 @@ function createCodexAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
-      // Prepend ~/.ao/bin to PATH so our gh/git wrappers intercept commands.
-      // The wrappers strip this directory from PATH before calling the real
-      // binary, so there's no infinite recursion.
-      env["PATH"] = buildAgentPath(process.env["PATH"]);
-      env["GH_PATH"] = PREFERRED_GH_PATH;
+      // PATH and GH_PATH are injected by session-manager for all agents.
       // Disable Codex's version check/update prompt for non-interactive AO sessions.
       env["CODEX_DISABLE_UPDATE_CHECK"] = "1";
 
@@ -743,11 +736,11 @@ function createCodexAgent(): Agent {
       return parts.join(" ");
     },
 
-    async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      await setupPathWrapperWorkspace(workspacePath);
+    async setupWorkspaceHooks(_workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+      // PATH wrappers are installed by session-manager for all agents.
     },
 
-    async postLaunchSetup(session: Session): Promise<void> {
+    async postLaunchSetup(_session: Session): Promise<void> {
       // Resolve binary path on first launch (cached for subsequent calls).
       // Uses a promise guard to prevent concurrent calls from racing.
       if (!resolvedBinary) {
@@ -760,8 +753,7 @@ function createCodexAgent(): Agent {
           resolvingBinary = null;
         }
       }
-      if (!session.workspacePath) return;
-      await setupPathWrapperWorkspace(session.workspacePath);
+      // PATH wrappers are re-ensured by session-manager.
     },
   };
 }

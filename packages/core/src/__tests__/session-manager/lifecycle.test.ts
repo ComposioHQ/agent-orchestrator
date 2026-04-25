@@ -245,7 +245,6 @@ describe("cleanup", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
 
@@ -292,7 +291,6 @@ describe("cleanup", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
 
@@ -341,7 +339,6 @@ describe("cleanup", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
 
@@ -597,7 +594,6 @@ describe("cleanup", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
     const mockTracker: Tracker = {

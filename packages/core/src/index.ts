@@ -155,7 +155,10 @@ export {
   getWorkspaceAgentsMdPath,
   writeWorkspaceOpenCodeAgentsMd,
 } from "./opencode-agents-md.js";
-export { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
+export {
+  getOrchestratorSessionId,
+  normalizeOrchestratorSessionStrategy,
+} from "./orchestrator-session-strategy.js";
 export { resolveSpawnTarget } from "./spawn-target.js";
 export type { SpawnTarget } from "./spawn-target.js";
 
@@ -193,6 +196,7 @@ export {
   createProjectObserver,
   readObservabilitySummary,
 } from "./observability.js";
+export { execGhObserved, getGhTraceFilePath } from "./gh-trace.js";
 export { resolveNotifierTarget } from "./notifier-resolution.js";
 export type {
   ObservabilityLevel,
@@ -201,6 +205,7 @@ export type {
   ObservabilitySummary,
   ProjectObserver,
 } from "./observability.js";
+export type { GhTraceContext, GhTraceEntry } from "./gh-trace.js";
 
 // Feedback tools — contracts, validation, and report storage
 export {
@@ -247,6 +252,7 @@ export {
   getOriginFilePath,
   generateSessionName,
   generateTmuxName,
+  requireStorageKey,
   parseTmuxName,
   expandHome,
   validateAndStoreOrigin,

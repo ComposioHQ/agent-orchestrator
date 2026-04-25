@@ -169,18 +169,119 @@ describe("tracker-github plugin", () => {
 
   describe("isCompleted", () => {
     it("returns true for CLOSED issues", async () => {
-      mockGh({ state: "CLOSED" });
+      mockGh({ ...sampleIssue, state: "CLOSED", stateReason: "COMPLETED" });
       expect(await tracker.isCompleted("123", project)).toBe(true);
     });
 
     it("returns false for OPEN issues", async () => {
-      mockGh({ state: "OPEN" });
+      mockGh({ ...sampleIssue, state: "OPEN" });
       expect(await tracker.isCompleted("123", project)).toBe(false);
     });
 
-    it("handles lowercase state", async () => {
-      mockGh({ state: "closed" });
+    it("returns true for cancelled (CLOSED + NOT_PLANNED) issues", async () => {
+      mockGh({ ...sampleIssue, state: "CLOSED", stateReason: "NOT_PLANNED" });
       expect(await tracker.isCompleted("123", project)).toBe(true);
+    });
+  });
+
+  // ---- issue cache -------------------------------------------------------
+
+  describe("issue cache", () => {
+    it("second getIssue for same (repo, id) hits cache — no gh call", async () => {
+      mockGh(sampleIssue);
+      const first = await tracker.getIssue("123", project);
+      const second = await tracker.getIssue("123", project);
+      expect(first).toEqual(second);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("isCompleted shares the same cache as getIssue", async () => {
+      mockGh(sampleIssue);
+      await tracker.getIssue("123", project);
+      const done = await tracker.isCompleted("123", project);
+      expect(done).toBe(false);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("different identifiers cache independently", async () => {
+      mockGh(sampleIssue);
+      mockGh({ ...sampleIssue, number: 456 });
+      await tracker.getIssue("123", project);
+      await tracker.getIssue("456", project);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+      // Both now cached — no new gh calls
+      await tracker.getIssue("123", project);
+      await tracker.getIssue("456", project);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("different repos cache independently", async () => {
+      const otherProject: ProjectConfig = { ...project, repo: "acme/other" };
+      mockGh(sampleIssue);
+      mockGh(sampleIssue);
+      await tracker.getIssue("123", project);
+      await tracker.getIssue("123", otherProject);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("strips '#' prefix — '#123' and '123' share a cache entry", async () => {
+      mockGh(sampleIssue);
+      await tracker.getIssue("#123", project);
+      await tracker.getIssue("123", project);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("updateIssue invalidates the cache entry", async () => {
+      mockGh(sampleIssue);
+      await tracker.getIssue("123", project);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // gh issue close
+      await tracker.updateIssue!("123", { state: "closed" }, project);
+
+      // Next getIssue must re-fetch from gh
+      mockGh({ ...sampleIssue, state: "CLOSED", stateReason: "COMPLETED" });
+      const fresh = await tracker.getIssue("123", project);
+      expect(fresh.state).toBe("closed");
+      expect(ghMock).toHaveBeenCalledTimes(3); // view + close + view again
+    });
+
+    it("entries expire after TTL", async () => {
+      vi.useFakeTimers();
+      try {
+        mockGh(sampleIssue);
+        await tracker.getIssue("123", project);
+        expect(ghMock).toHaveBeenCalledTimes(1);
+
+        // Advance time past TTL (5 min)
+        vi.advanceTimersByTime(5 * 60_000 + 1);
+
+        mockGh(sampleIssue);
+        await tracker.getIssue("123", project);
+        expect(ghMock).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("each create() returns a tracker with an isolated cache", async () => {
+      const trackerA = create();
+      const trackerB = create();
+      mockGh(sampleIssue);
+      await trackerA.getIssue("123", project);
+      mockGh(sampleIssue);
+      await trackerB.getIssue("123", project);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("failures are not cached", async () => {
+      mockGhError("issue not found");
+      await expect(tracker.getIssue("999", project)).rejects.toThrow();
+      // Next call must re-try, not serve a stale error
+      mockGh({ ...sampleIssue, number: 999 });
+      const issue = await tracker.getIssue("999", project);
+      expect(issue.id).toBe("999");
+      expect(ghMock).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -259,7 +360,7 @@ describe("tracker-github plugin", () => {
       mockGh([]);
       await tracker.listIssues!({ state: "closed" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         expect.arrayContaining(["--state", "closed"]),
         expect.any(Object),
       );
@@ -269,7 +370,7 @@ describe("tracker-github plugin", () => {
       mockGh([]);
       await tracker.listIssues!({ state: "all" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         expect.arrayContaining(["--state", "all"]),
         expect.any(Object),
       );
@@ -279,7 +380,7 @@ describe("tracker-github plugin", () => {
       mockGh([]);
       await tracker.listIssues!({}, project);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         expect.arrayContaining(["--state", "open"]),
         expect.any(Object),
       );
@@ -289,7 +390,7 @@ describe("tracker-github plugin", () => {
       mockGh([]);
       await tracker.listIssues!({ labels: ["bug", "urgent"] }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         expect.arrayContaining(["--label", "bug,urgent"]),
         expect.any(Object),
       );
@@ -299,7 +400,7 @@ describe("tracker-github plugin", () => {
       mockGh([]);
       await tracker.listIssues!({ assignee: "alice" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         expect.arrayContaining(["--assignee", "alice"]),
         expect.any(Object),
       );
@@ -309,7 +410,7 @@ describe("tracker-github plugin", () => {
       mockGh([]);
       await tracker.listIssues!({ limit: 5 }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         expect.arrayContaining(["--limit", "5"]),
         expect.any(Object),
       );
@@ -350,7 +451,7 @@ describe("tracker-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await tracker.updateIssue!("123", { state: "closed" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         ["issue", "close", "123", "--repo", "acme/repo"],
         expect.any(Object),
       );
@@ -360,7 +461,7 @@ describe("tracker-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await tracker.updateIssue!("123", { state: "open" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         ["issue", "reopen", "123", "--repo", "acme/repo"],
         expect.any(Object),
       );
@@ -370,7 +471,7 @@ describe("tracker-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await tracker.updateIssue!("123", { labels: ["bug", "urgent"] }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         ["issue", "edit", "123", "--repo", "acme/repo", "--add-label", "bug,urgent"],
         expect.any(Object),
       );
@@ -380,7 +481,7 @@ describe("tracker-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await tracker.updateIssue!("123", { assignee: "bob" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         ["issue", "edit", "123", "--repo", "acme/repo", "--add-assignee", "bob"],
         expect.any(Object),
       );
@@ -390,7 +491,7 @@ describe("tracker-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await tracker.updateIssue!("123", { comment: "Working on this" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         ["issue", "comment", "123", "--repo", "acme/repo", "--body", "Working on this"],
         expect.any(Object),
       );
@@ -451,7 +552,7 @@ describe("tracker-github plugin", () => {
         project,
       );
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         expect.arrayContaining(["issue", "create", "--label", "bug", "--assignee", "alice"]),
         expect.any(Object),
       );

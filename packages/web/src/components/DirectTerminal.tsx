@@ -72,6 +72,8 @@ function getStoredFontSize(): number {
 
 interface DirectTerminalProps {
   sessionId: string;
+  /** Actual tmux session name. When provided, the terminal server uses it directly instead of resolving from sessionId. */
+  tmuxName?: string;
   startFullscreen?: boolean;
   /** Visual variant. Orchestrator keeps the same design-system blue accent as the rest of the app. */
   variant?: "agent" | "orchestrator";
@@ -164,6 +166,7 @@ export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; l
  */
 export function DirectTerminal({
   sessionId,
+  tmuxName,
   startFullscreen = false,
   variant = "agent",
   appearance = "theme",
@@ -474,7 +477,7 @@ export function DirectTerminal({
         });
 
         // Open terminal via mux
-        openTerminal(sessionId);
+        openTerminal(sessionId, tmuxName);
 
         // Subscribe to terminal data via mux
         unsubscribe = subscribeTerminal(sessionId, (data) => {

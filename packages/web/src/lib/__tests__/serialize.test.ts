@@ -2,12 +2,11 @@
  * Tests for session serialization and PR enrichment
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   createInitialCanonicalLifecycle,
   type Session,
   type PRInfo,
-  type SCM,
   type Agent,
   type Tracker,
   type ProjectConfig,
@@ -18,7 +17,7 @@ import {
   sessionToDashboard,
   resolveProject,
   enrichSessionPR,
-  enrichSessionIssue,
+  readPREnrichmentFromMetadata,
   enrichSessionAgentSummary,
   enrichSessionIssueTitle,
   enrichSessionsMetadata,
@@ -26,7 +25,6 @@ import {
   computeStats,
   listDashboardOrchestrators,
 } from "../serialize";
-import { prCache, prCacheKey } from "../cache";
 import type { DashboardSession } from "../types";
 
 // Helper to create a minimal Session for testing
@@ -77,56 +75,32 @@ function createPRInfo(overrides?: Partial<PRInfo>): PRInfo {
   };
 }
 
-// Mock SCM that succeeds
-function createMockSCM(): SCM {
-  return {
-    name: "mock",
-    detectPR: vi.fn(),
-    getPRState: vi.fn().mockResolvedValue("open"),
-    getPRSummary: vi.fn().mockResolvedValue({
-      state: "open",
-      title: "Test PR",
-      additions: 100,
-      deletions: 50,
-    }),
-    getCIChecks: vi
-      .fn()
-      .mockResolvedValue([{ name: "test", status: "passed", url: "https://example.com" }]),
-    getCISummary: vi.fn().mockResolvedValue("passing"),
-    getReviewDecision: vi.fn().mockResolvedValue("approved"),
-    getMergeability: vi.fn().mockResolvedValue({
-      mergeable: true,
-      ciPassing: true,
-      approved: true,
-      noConflicts: true,
-      blockers: [],
-    }),
-    getPendingComments: vi.fn().mockResolvedValue([]),
-    getReviews: vi.fn(),
-    getAutomatedComments: vi.fn(),
-    mergePR: vi.fn(),
-    closePR: vi.fn(),
-  };
+// Helper to create prEnrichment metadata JSON
+function createEnrichmentMetadata(overrides?: Record<string, unknown>): string {
+  return JSON.stringify({
+    state: "open",
+    title: "Test PR",
+    additions: 100,
+    deletions: 50,
+    ciStatus: "passing",
+    reviewDecision: "approved",
+    mergeable: true,
+    isDraft: false,
+    hasConflicts: false,
+    ciChecks: [{ name: "test", status: "passed", url: "https://example.com" }],
+    enrichedAt: new Date().toISOString(),
+    ...overrides,
+  });
 }
 
-// Mock SCM that fails all requests
-function createFailingSCM(): SCM {
-  const error = new Error("API rate limited");
-  return {
-    name: "mock-failing",
-    detectPR: vi.fn(),
-    getPRState: vi.fn().mockRejectedValue(error),
-    getPRSummary: vi.fn().mockRejectedValue(error),
-    getCIChecks: vi.fn().mockRejectedValue(error),
-    getCISummary: vi.fn().mockRejectedValue(error),
-    getReviewDecision: vi.fn().mockRejectedValue(error),
-    getMergeability: vi.fn().mockRejectedValue(error),
-    getPendingComments: vi.fn().mockRejectedValue(error),
-    getReviews: vi.fn(),
-    getAutomatedComments: vi.fn(),
-    mergePR: vi.fn(),
-    closePR: vi.fn(),
-  };
+// Helper to create prReviewComments metadata JSON
+function createReviewCommentsMetadata(overrides?: Record<string, unknown>): string {
+  return JSON.stringify({
+    unresolvedThreads: 0,
+    unresolvedComments: [],
+    commentsUpdatedAt: new Date().toISOString(),
+    ...overrides,
+  });
 }
 
 describe("sessionToDashboard", () => {
@@ -400,18 +374,20 @@ describe("resolveProject", () => {
 });
 
 describe("enrichSessionPR", () => {
-  beforeEach(() => {
-    prCache.clear();
-  });
-
-  it("should enrich PR with live SCM data", async () => {
+  it("should enrich PR from metadata", () => {
     const pr = createPRInfo();
-    const coreSession = createCoreSession({ pr });
+    const coreSession = createCoreSession({
+      pr,
+      metadata: {
+        prEnrichment: createEnrichmentMetadata(),
+        prReviewComments: createReviewCommentsMetadata(),
+      },
+    });
     const dashboard = sessionToDashboard(coreSession);
-    const scm = createMockSCM();
 
-    await enrichSessionPR(dashboard, scm, pr);
+    const result = enrichSessionPR(dashboard);
 
+    expect(result).toBe(true);
     expect(dashboard.pr?.state).toBe("open");
     expect(dashboard.pr?.additions).toBe(100);
     expect(dashboard.pr?.deletions).toBe(50);
@@ -420,106 +396,75 @@ describe("enrichSessionPR", () => {
     expect(dashboard.pr?.mergeability.mergeable).toBe(true);
     expect(dashboard.pr?.ciChecks).toHaveLength(1);
     expect(dashboard.pr?.ciChecks[0]?.name).toBe("test");
+    expect(dashboard.pr?.enriched).toBe(true);
   });
 
-  it("should cache successful enrichment results", async () => {
+  it("should return false when prEnrichment metadata is missing", () => {
     const pr = createPRInfo();
-    const coreSession = createCoreSession({ pr });
-    const dashboard = sessionToDashboard(coreSession);
-    const scm = createMockSCM();
-
-    await enrichSessionPR(dashboard, scm, pr);
-
-    const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
-    const cached = prCache.get(cacheKey);
-    expect(cached).not.toBeNull();
-    expect(cached?.additions).toBe(100);
-    expect(cached?.deletions).toBe(50);
-  });
-
-  it("should use cached data on subsequent calls", async () => {
-    const pr = createPRInfo();
-    const coreSession = createCoreSession({ pr });
-    const dashboard1 = sessionToDashboard(coreSession);
-    const dashboard2 = sessionToDashboard(coreSession);
-    const scm = createMockSCM();
-
-    // First call: fetch from SCM
-    await enrichSessionPR(dashboard1, scm, pr);
-    expect(scm.getPRSummary).toHaveBeenCalledTimes(1);
-
-    // Second call: use cache
-    await enrichSessionPR(dashboard2, scm, pr);
-    expect(scm.getPRSummary).toHaveBeenCalledTimes(1); // Still 1, not 2
-    expect(dashboard2.pr?.additions).toBe(100);
-  });
-
-  it("should handle rate limit errors gracefully", async () => {
-    const pr = createPRInfo();
-    const coreSession = createCoreSession({ pr });
-    const dashboard = sessionToDashboard(coreSession);
-    const scm = createFailingSCM();
-
-    // Spy on console.warn (enrichSessionPR uses warn for rate-limit, not error)
-    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    await enrichSessionPR(dashboard, scm, pr);
-
-    // Should keep default values but update blocker message
-    expect(dashboard.pr?.additions).toBe(0);
-    expect(dashboard.pr?.deletions).toBe(0);
-    expect(dashboard.pr?.mergeability.blockers).toContain("API rate limited or unavailable");
-
-    // Should log warning
-    expect(consoleWarnSpy).toHaveBeenCalled();
-
-    consoleWarnSpy.mockRestore();
-  });
-
-  it("should cache even when most requests fail (to reduce API pressure)", async () => {
-    const pr = createPRInfo();
-    const coreSession = createCoreSession({ pr });
-    const dashboard = sessionToDashboard(coreSession);
-    const scm = createFailingSCM();
-
-    await enrichSessionPR(dashboard, scm, pr);
-
-    // Even with all failures, we cache the default/partial data to prevent repeated API hits
-    const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
-    const cached = prCache.get(cacheKey);
-    expect(cached).not.toBeNull();
-    expect(cached?.mergeability.blockers).toContain("API rate limited or unavailable");
-  });
-
-  it("should handle partial failures gracefully", async () => {
-    const pr = createPRInfo();
-    const coreSession = createCoreSession({ pr });
+    const coreSession = createCoreSession({ pr, metadata: {} });
     const dashboard = sessionToDashboard(coreSession);
 
-    // Mock SCM with partial failures
-    const scm: SCM = {
-      ...createMockSCM(),
-      getCISummary: vi.fn().mockRejectedValue(new Error("CI API failed")),
-      getMergeability: vi.fn().mockRejectedValue(new Error("Merge API failed")),
-    };
+    const result = enrichSessionPR(dashboard);
 
-    await enrichSessionPR(dashboard, scm, pr);
-
-    // Successful fields should be populated
-    expect(dashboard.pr?.additions).toBe(100);
-    expect(dashboard.pr?.deletions).toBe(50);
-    expect(dashboard.pr?.reviewDecision).toBe("approved");
-
-    // Failed fields should have graceful defaults
-    expect(dashboard.pr?.mergeability.blockers).toContain("Merge status unavailable");
-
-    // Should still cache partial results
-    const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
-    const cached = prCache.get(cacheKey);
-    expect(cached).not.toBeNull();
+    expect(result).toBe(false);
+    expect(dashboard.pr?.enriched).toBe(false);
   });
 
-  it("should do nothing if dashboard.pr is null", async () => {
+  it("should enrich review comments from metadata", () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({
+      pr,
+      metadata: {
+        prEnrichment: createEnrichmentMetadata(),
+        prReviewComments: createReviewCommentsMetadata({
+          unresolvedThreads: 2,
+          unresolvedComments: [
+            { url: "https://example.com", path: "src/app.ts", author: "reviewer", body: "Fix this" },
+          ],
+        }),
+      },
+    });
+    const dashboard = sessionToDashboard(coreSession);
+
+    enrichSessionPR(dashboard);
+
+    expect(dashboard.pr?.unresolvedThreads).toBe(2);
+    expect(dashboard.pr?.unresolvedComments).toHaveLength(1);
+    expect(dashboard.pr?.unresolvedComments[0]?.author).toBe("reviewer");
+  });
+
+  it("should handle missing review comments metadata gracefully", () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({
+      pr,
+      metadata: {
+        prEnrichment: createEnrichmentMetadata(),
+        // No prReviewComments
+      },
+    });
+    const dashboard = sessionToDashboard(coreSession);
+
+    enrichSessionPR(dashboard);
+
+    expect(dashboard.pr?.unresolvedThreads).toBe(0);
+    expect(dashboard.pr?.unresolvedComments).toEqual([]);
+  });
+
+  it("should handle malformed prEnrichment JSON gracefully", () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({
+      pr,
+      metadata: { prEnrichment: "not valid json{" },
+    });
+    const dashboard = sessionToDashboard(coreSession);
+
+    const result = enrichSessionPR(dashboard);
+
+    expect(result).toBe(false);
+    expect(dashboard.pr?.enriched).toBe(false);
+  });
+
+  it("should do nothing if dashboard.pr is null", () => {
     const dashboard: DashboardSession = {
       id: "test-1",
       projectId: "test",
@@ -541,32 +486,87 @@ describe("enrichSessionPR", () => {
       createdAt: new Date().toISOString(),
       lastActivityAt: new Date().toISOString(),
       pr: null,
-      metadata: {},
+      metadata: { prEnrichment: createEnrichmentMetadata() },
     };
-    const pr = createPRInfo();
-    const scm = createMockSCM();
 
-    await enrichSessionPR(dashboard, scm, pr);
+    const result = enrichSessionPR(dashboard);
 
-    expect(scm.getPRSummary).not.toHaveBeenCalled();
+    expect(result).toBe(false);
   });
 
-  it("should handle missing optional SCM methods", async () => {
+  it("should derive mergeability fields from enrichment data", () => {
     const pr = createPRInfo();
-    const coreSession = createCoreSession({ pr });
+    const coreSession = createCoreSession({
+      pr,
+      metadata: {
+        prEnrichment: createEnrichmentMetadata({
+          ciStatus: "failing",
+          reviewDecision: "changes_requested",
+          mergeable: false,
+          hasConflicts: true,
+        }),
+      },
+    });
     const dashboard = sessionToDashboard(coreSession);
 
-    // SCM without getPRSummary
-    const scm: SCM = {
-      ...createMockSCM(),
-      getPRSummary: undefined,
-    };
+    enrichSessionPR(dashboard);
 
-    await enrichSessionPR(dashboard, scm, pr);
+    expect(dashboard.pr?.mergeability.mergeable).toBe(false);
+    expect(dashboard.pr?.mergeability.ciPassing).toBe(false);
+    expect(dashboard.pr?.mergeability.approved).toBe(false);
+    expect(dashboard.pr?.mergeability.noConflicts).toBe(false);
+  });
 
-    // Should fall back to getPRState
-    expect(scm.getPRState).toHaveBeenCalled();
-    expect(dashboard.pr?.state).toBe("open");
+  it("should set enriched flag on successful enrichment", () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({
+      pr,
+      metadata: { prEnrichment: createEnrichmentMetadata() },
+    });
+    const dashboard = sessionToDashboard(coreSession);
+    expect(dashboard.pr?.enriched).toBe(false);
+
+    enrichSessionPR(dashboard);
+
+    expect(dashboard.pr?.enriched).toBe(true);
+  });
+});
+
+describe("readPREnrichmentFromMetadata", () => {
+  it("should parse valid enrichment metadata", () => {
+    const data = readPREnrichmentFromMetadata({
+      prEnrichment: createEnrichmentMetadata(),
+    });
+
+    expect(data).not.toBeNull();
+    expect(data?.state).toBe("open");
+    expect(data?.additions).toBe(100);
+    expect(data?.deletions).toBe(50);
+  });
+
+  it("should return null when prEnrichment is missing", () => {
+    const data = readPREnrichmentFromMetadata({});
+    expect(data).toBeNull();
+  });
+
+  it("should return null for invalid JSON", () => {
+    const data = readPREnrichmentFromMetadata({ prEnrichment: "bad json{" });
+    expect(data).toBeNull();
+  });
+
+  it("should include review comments when present", () => {
+    const data = readPREnrichmentFromMetadata({
+      prEnrichment: createEnrichmentMetadata(),
+      prReviewComments: createReviewCommentsMetadata({
+        unresolvedThreads: 3,
+        unresolvedComments: [
+          { url: "https://example.com", path: "src/app.ts", author: "alice", body: "Please fix" },
+        ],
+      }),
+    });
+
+    expect(data?.unresolvedThreads).toBe(3);
+    expect(data?.unresolvedComments).toHaveLength(1);
   });
 });
 

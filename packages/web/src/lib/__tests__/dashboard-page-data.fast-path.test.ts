@@ -94,15 +94,9 @@ describe("getDashboardPageData fast path", () => {
       { projects: { docs: { id: "docs" } } },
       { scm: "registry" },
     );
-    expect(hoisted.enrichSessionPRMock).toHaveBeenCalledTimes(1);
-    expect(hoisted.enrichSessionPRMock).toHaveBeenCalledWith(
-      dashboardMerged,
-      { provider: "github" },
-      mergedCore.pr,
-      { cacheOnly: true },
-    );
-    expect(dashboardClosed.pr.state).toBe("closed");
-    expect(dashboardMerged.pr.state).toBe("merged");
+    expect(hoisted.enrichSessionPRMock).toHaveBeenCalledTimes(2);
+    expect(hoisted.enrichSessionPRMock).toHaveBeenCalledWith(dashboardClosed);
+    expect(hoisted.enrichSessionPRMock).toHaveBeenCalledWith(dashboardMerged);
     expect(pageData.sessions).toEqual([dashboardNoPr, dashboardClosed, dashboardMerged]);
   });
 

@@ -61,7 +61,6 @@ describe("claimPR", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
       ...overrides,
     };

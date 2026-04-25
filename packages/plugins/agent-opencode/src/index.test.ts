@@ -818,14 +818,14 @@ describe("postLaunchSetup", () => {
 describe("getEnvironment PATH", () => {
   const agent = create();
 
-  it("prepends ~/.ao/bin to PATH", () => {
+  it("does not set PATH (injected by session-manager)", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["PATH"]).toMatch(/\.ao\/bin/);
+    expect(env["PATH"]).toBeUndefined();
   });
 
-  it("sets GH_PATH", () => {
+  it("does not set GH_PATH (injected by session-manager)", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["GH_PATH"]).toBe("/usr/local/bin/gh");
+    expect(env["GH_PATH"]).toBeUndefined();
   });
 });
 

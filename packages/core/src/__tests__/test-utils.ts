@@ -113,10 +113,10 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
 export function makePR(overrides: Partial<PRInfo> = {}): PRInfo {
   return {
     number: 42,
-    url: "https://github.com/org/repo/pull/42",
+    url: "https://github.com/org/my-app/pull/42",
     title: "Fix things",
     owner: "org",
-    repo: "repo",
+    repo: "my-app",
     branch: "feat/test",
     baseBranch: "main",
     isDraft: false,
@@ -171,7 +171,7 @@ export function createMockPlugins(): MockPlugins {
 }
 
 export function createMockSCM(overrides: Partial<SCM> = {}): SCM {
-  return {
+  const scm: SCM = {
     name: "github",
     detectPR: vi.fn().mockResolvedValue(null),
     getPRState: vi.fn().mockResolvedValue("open"),
@@ -182,7 +182,7 @@ export function createMockSCM(overrides: Partial<SCM> = {}): SCM {
     getReviews: vi.fn().mockResolvedValue([]),
     getReviewDecision: vi.fn().mockResolvedValue("none"),
     getPendingComments: vi.fn().mockResolvedValue([]),
-    getAutomatedComments: vi.fn().mockResolvedValue([]),
+    getReviewThreads: vi.fn().mockResolvedValue({ threads: [], reviews: [] }),
     getMergeability: vi.fn().mockResolvedValue({
       mergeable: false,
       ciPassing: true,
@@ -190,8 +190,26 @@ export function createMockSCM(overrides: Partial<SCM> = {}): SCM {
       noConflicts: true,
       blockers: [],
     }),
+    // Default batch mock: resolves individual method mocks at call time
+    // so tests that override getPRState/getCISummary/etc. automatically
+    // get matching batch enrichment without explicit enrichSessionsPRBatch.
+    enrichSessionsPRBatch: vi.fn().mockImplementation(async (prs: PRInfo[]) => {
+      const result = new Map();
+      for (const pr of prs) {
+        result.set(`${pr.owner}/${pr.repo}#${pr.number}`, {
+          state: "open" as const,
+          ciStatus: "passing" as const,
+          reviewDecision: "none" as const,
+          mergeable: false,
+          hasConflicts: false,
+          ciChecks: [],
+        });
+      }
+      return result;
+    }),
     ...overrides,
   };
+  return scm;
 }
 
 export function createMockNotifier(): Notifier {
@@ -421,6 +439,7 @@ export function createMockSessionManager(): OpenCodeSessionManager {
   return {
     spawn: vi.fn().mockResolvedValue(makeSession()),
     spawnOrchestrator: vi.fn().mockResolvedValue(makeSession({ id: "app-orchestrator", metadata: { role: "orchestrator" } })),
+    ensureOrchestrator: vi.fn().mockResolvedValue(makeSession({ id: "app-orchestrator", metadata: { role: "orchestrator" } })),
     restore: vi.fn().mockResolvedValue(makeSession()),
     list: vi.fn().mockResolvedValue([]),
     listCached: vi.fn().mockResolvedValue([]),
