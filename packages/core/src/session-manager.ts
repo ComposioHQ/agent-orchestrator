@@ -1309,7 +1309,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     let opencodeConfigFile: string | undefined;
 
     try {
-      const baseDir = getProjectBaseDir(config.configPath, project.path);
+      const baseDir = getProjectBaseDir(project.storageKey);
       mkdirSync(baseDir, { recursive: true });
       systemPromptFile = join(baseDir, `worker-prompt-${sessionId}.md`);
       writeFileSync(systemPromptFile, systemPrompt, "utf-8");
@@ -2820,7 +2820,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     let opencodeConfigPath: string | undefined;
     if (plugins.agent.name === "opencode" && selection.role !== "orchestrator") {
-      const baseDir = getProjectBaseDir(config.configPath, project.path);
+      const baseDir = getProjectBaseDir(project.storageKey);
       const systemPromptFile = join(baseDir, `worker-prompt-${sessionId}.md`);
       if (existsSync(systemPromptFile)) {
         opencodeConfigPath = writeOpenCodeConfig(baseDir, sessionId, [systemPromptFile]);
