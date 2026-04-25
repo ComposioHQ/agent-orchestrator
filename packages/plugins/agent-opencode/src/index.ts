@@ -59,6 +59,7 @@ type OpenCodeSessionLookupResult =
 
 const OPENCODE_SESSION_LIST_CACHE_TTL_MS = 250;
 const OPENCODE_SESSION_LIST_TIMEOUT_MS = 30_000;
+const OPENCODE_SESSION_LIST_WARNING_INTERVAL_MS = 10_000;
 
 let sessionListCache: OpenCodeSessionListCache | null = null;
 let sessionListWarningCache: { signature: string; timestamp: number } | null = null;
@@ -87,7 +88,7 @@ function warnSessionListFailure(error: unknown): void {
   const shouldWarn =
     !sessionListWarningCache ||
     sessionListWarningCache.signature !== signature ||
-    now - sessionListWarningCache.timestamp >= OPENCODE_SESSION_LIST_CACHE_TTL_MS;
+    now - sessionListWarningCache.timestamp >= OPENCODE_SESSION_LIST_WARNING_INTERVAL_MS;
   if (!shouldWarn) return;
   sessionListWarningCache = { signature, timestamp: now };
   console.warn("[agent-opencode] Failed to list OpenCode sessions", error);
