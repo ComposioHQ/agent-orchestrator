@@ -427,7 +427,7 @@ export function repairWrappedLocalProjectConfig(projectId: string, projectPath: 
   let project: Record<string, unknown> | undefined = projects[projectId];
   if (!project || typeof project !== "object") {
     const entries = Object.values(projects).filter(
-      (v): v is Record<string, unknown> => v != null && typeof v === "object",
+      (v): v is Record<string, unknown> => v !== null && v !== undefined && typeof v === "object",
     );
     project = entries.length === 1 ? entries[0] : undefined;
   }
