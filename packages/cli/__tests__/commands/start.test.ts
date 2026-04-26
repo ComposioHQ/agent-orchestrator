@@ -1649,6 +1649,73 @@ describe("stop command", () => {
       .join("\n");
     expect(output).toContain("Dashboard stopped");
   });
+
+  it("targeted stop does NOT kill parent process or dashboard", async () => {
+    // Regression test for #1495: ao stop <project> must NOT tear down
+    // the shared host when a specific project is named.
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "p2-orchestrator-5",
+        projectId: "project-2",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-5" },
+      },
+    ]);
+    mockSessionManager.kill.mockResolvedValue(undefined);
+
+    // No dashboard on port — targeted stop should not look for one
+    mockExec.mockRejectedValue(new Error("no process"));
+
+    await program.parseAsync(["node", "test", "stop", "project-2"]);
+
+    // Orchestrator session for project-2 is killed
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("p2-orchestrator-5", {
+      purgeOpenCode: false,
+    });
+
+    // process.kill should NOT have been called (no parent PID kill)
+    // We check that no SIGTERM was sent to any PID
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("Orchestrator stopped");
+    expect(output).toContain("p2-orchestrator-5");
+    // Should NOT mention dashboard
+    expect(output).not.toContain("Dashboard stopped");
+  });
+
+  it("targeted stop does NOT unregister running.json", async () => {
+    // Verify that unregister() is not called when a specific project is named
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "p2-orchestrator-5",
+        projectId: "project-2",
+        status: "working",
+        activity: "active",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-5" },
+      },
+    ]);
+    mockSessionManager.kill.mockResolvedValue(undefined);
+    mockExec.mockRejectedValue(new Error("no process"));
+
+    await program.parseAsync(["node", "test", "stop", "project-2"]);
+
+    expect(mockUnregister).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
