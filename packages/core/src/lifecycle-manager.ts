@@ -11,6 +11,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import {
   ACTIVITY_STATE,
   SESSION_STATUS,
@@ -38,7 +40,11 @@ import {
   type ReviewComment,
   type ReviewSummary,
 } from "./types.js";
-import { buildLifecycleMetadataPatch, cloneLifecycle, deriveLegacyStatus } from "./lifecycle-state.js";
+import {
+  buildLifecycleMetadataPatch,
+  cloneLifecycle,
+  deriveLegacyStatus,
+} from "./lifecycle-state.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { applyDecisionToLifecycle as commitLifecycleDecisionInPlace } from "./lifecycle-transition.js";
@@ -49,11 +55,7 @@ import {
   hasPositiveIdleEvidence,
   isWeakActivityEvidence,
 } from "./activity-signal.js";
-import {
-  isAgentReportFresh,
-  mapAgentReportToLifecycle,
-  readAgentReport,
-} from "./agent-report.js";
+import { isAgentReportFresh, mapAgentReportToLifecycle, readAgentReport } from "./agent-report.js";
 import {
   auditAgentReports,
   getReactionKeyForTrigger,
@@ -87,6 +89,84 @@ function parseDuration(str: string): number {
       return value * 3_600_000;
     default:
       return 0;
+  }
+}
+
+type WorkspaceBranchProbe =
+  | { kind: "branch"; branch: string }
+  | { kind: "detached" }
+  | { kind: "unavailable" };
+
+const TRANSIENT_DETACHED_GIT_MARKERS = [
+  "rebase-merge",
+  "rebase-apply",
+  "CHERRY_PICK_HEAD",
+  "BISECT_LOG",
+] as const;
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function hasTransientDetachedGitState(gitDir: string): Promise<boolean> {
+  const checks = await Promise.all(
+    TRANSIENT_DETACHED_GIT_MARKERS.map((marker) => pathExists(join(gitDir, marker))),
+  );
+  return checks.some(Boolean);
+}
+
+async function resolveGitDir(workspacePath: string): Promise<string> {
+  const dotGitPath = join(workspacePath, ".git");
+  const dotGitStats = await stat(dotGitPath);
+  if (dotGitStats.isDirectory()) return dotGitPath;
+
+  const dotGitContent = (await readFile(dotGitPath, "utf8")).trim();
+  const gitDirMatch = dotGitContent.match(/^gitdir:\s*(.+)$/i);
+  if (!gitDirMatch) {
+    throw new Error(`Invalid .git pointer in workspace: ${workspacePath}`);
+  }
+
+  return resolve(dirname(dotGitPath), gitDirMatch[1].trim());
+}
+
+async function readWorkspaceBranch(workspacePath: string): Promise<WorkspaceBranchProbe> {
+  let gitDir: string;
+  try {
+    gitDir = await resolveGitDir(workspacePath);
+  } catch {
+    return { kind: "unavailable" };
+  }
+
+  try {
+    const head = (await readFile(join(gitDir, "HEAD"), "utf8")).trim();
+    const prefix = "ref: refs/heads/";
+    if (!head.startsWith(prefix)) {
+      return (await hasTransientDetachedGitState(gitDir))
+        ? { kind: "unavailable" }
+        : { kind: "detached" };
+    }
+
+    const branch = head.slice(prefix.length).trim();
+    if (branch.length > 0) {
+      return { kind: "branch", branch };
+    }
+    return (await hasTransientDetachedGitState(gitDir))
+      ? { kind: "unavailable" }
+      : { kind: "detached" };
+  } catch {
+    return { kind: "unavailable" };
   }
 }
 
@@ -317,6 +397,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
+  const branchAdoptionReservations = new Map<string, SessionId>();
 
   /**
    * Cache for PR enrichment data within a single poll cycle.
@@ -469,10 +550,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // Only run detectPR when Guard 1 returned 200 (repo's PR list changed).
     // When Guard 1 returned 304, the repo is in prListUnchangedRepos — no new PRs exist.
     for (const session of sessions) {
-      if (session.pr) continue;
       if (!session.branch) continue;
       if (session.metadata["prAutoDetect"] === "off") continue;
-      if (session.metadata["role"] === "orchestrator" || session.id.endsWith("-orchestrator")) continue;
+      if (session.metadata["role"] === "orchestrator" || session.id.endsWith("-orchestrator"))
+        continue;
+      if (
+        session.pr &&
+        !(session.lifecycle.pr.state === "closed" && session.pr.branch !== session.branch)
+      ) {
+        continue;
+      }
 
       const project = config.projects[session.projectId];
       if (!project?.repo || !project.scm?.plugin) continue;
@@ -558,6 +645,103 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return idleMs > stuckThresholdMs;
   }
 
+  function isBranchOwnedByAnotherActiveWorker(
+    session: Session,
+    branch: string,
+    siblingSessions: Session[],
+    allSessionPrefixes: string[],
+  ): boolean {
+    return siblingSessions.some((other) => {
+      if (other.id === session.id) return false;
+      if (other.projectId !== session.projectId) return false;
+      if (TERMINAL_STATUSES.has(other.status)) return false;
+
+      const otherProject = config.projects[other.projectId];
+      if (!otherProject) return false;
+
+      const otherRole = resolveSessionRole(
+        other.id,
+        other.metadata,
+        otherProject.sessionPrefix,
+        allSessionPrefixes,
+      );
+      return otherRole === "worker" && other.branch === branch;
+    });
+  }
+
+  function acquireBranchAdoptionReservation(session: Session, branch: string): string | null {
+    const reservationKey = `${session.projectId}:${branch}`;
+    const existingOwner = branchAdoptionReservations.get(reservationKey);
+    if (existingOwner && existingOwner !== session.id) {
+      return null;
+    }
+    branchAdoptionReservations.set(reservationKey, session.id);
+    return reservationKey;
+  }
+
+  function releaseBranchAdoptionReservation(reservationKey: string, sessionId: SessionId): void {
+    if (branchAdoptionReservations.get(reservationKey) === sessionId) {
+      branchAdoptionReservations.delete(reservationKey);
+    }
+  }
+
+  async function refreshTrackedBranch(
+    session: Session,
+    siblingSessions?: Session[],
+  ): Promise<void> {
+    const project = config.projects[session.projectId];
+    if (!project) return;
+
+    const allSessionPrefixes = Object.values(config.projects).map((p) => p.sessionPrefix);
+    const sessionRole = resolveSessionRole(
+      session.id,
+      session.metadata,
+      project.sessionPrefix,
+      allSessionPrefixes,
+    );
+    const workspacePath = session.workspacePath;
+    const canRefreshTrackedBranch =
+      sessionRole === "worker" &&
+      workspacePath !== null &&
+      (!session.pr || session.lifecycle.pr.state === "closed");
+
+    if (!canRefreshTrackedBranch) return;
+
+    const branchProbe = await readWorkspaceBranch(workspacePath);
+    if (branchProbe.kind === "detached") {
+      if (session.branch !== null) {
+        session.branch = null;
+        updateSessionMetadata(session, { branch: "" });
+      }
+      return;
+    }
+
+    if (branchProbe.kind !== "branch" || branchProbe.branch === session.branch) {
+      return;
+    }
+
+    const reservationKey = acquireBranchAdoptionReservation(session, branchProbe.branch);
+    if (!reservationKey) return;
+
+    try {
+      const sessionsForConflictCheck =
+        siblingSessions ?? (await sessionManager.list(session.projectId));
+      if (
+        !isBranchOwnedByAnotherActiveWorker(
+          session,
+          branchProbe.branch,
+          sessionsForConflictCheck,
+          allSessionPrefixes,
+        )
+      ) {
+        session.branch = branchProbe.branch;
+        updateSessionMetadata(session, { branch: branchProbe.branch });
+      }
+    } finally {
+      releaseBranchAdoptionReservation(reservationKey, session.id);
+    }
+  }
+
   /** Determine current status for a session by polling plugins. */
   async function determineStatus(session: Session): Promise<DeterminedStatus> {
     const project = config.projects[session.projectId];
@@ -571,20 +755,21 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     const lifecycle = cloneLifecycle(session.lifecycle);
     const nowIso = new Date().toISOString();
+    const allSessionPrefixes = Object.values(config.projects).map((p) => p.sessionPrefix);
+    const sessionRole = resolveSessionRole(
+      session.id,
+      session.metadata,
+      project.sessionPrefix,
+      allSessionPrefixes,
+    );
     const agentName = resolveAgentSelection({
-      role: resolveSessionRole(
-        session.id,
-        session.metadata,
-        project.sessionPrefix,
-        Object.values(config.projects).map((p) => p.sessionPrefix),
-      ),
+      role: sessionRole,
       project,
       defaults: config.defaults,
       persistedAgent: session.metadata["agent"],
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
-
     let detectedIdleTimestamp: Date | null = null;
     let idleWasBlocked = false;
     const canProbeRuntimeIdentity = session.status !== SESSION_STATUS.SPAWNING;
@@ -650,8 +835,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           canProbeRuntimeIdentity
         ) {
           try {
-            const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
-            const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
+            const runtime = registry.get<Runtime>(
+              "runtime",
+              project.runtime ?? config.defaults.runtime,
+            );
+            const terminalOutput = runtime
+              ? await runtime.getOutput(session.runtimeHandle, 10)
+              : "";
             if (terminalOutput) {
               await agent.recordActivity(session, terminalOutput);
             }
@@ -700,7 +890,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         } else if (session.runtimeHandle && canProbeRuntimeIdentity) {
           activitySignal = createActivitySignal("null", { source: "native" });
           activityEvidence = formatActivitySignalEvidence(activitySignal);
-          const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
+          const runtime = registry.get<Runtime>(
+            "runtime",
+            project.runtime ?? config.defaults.runtime,
+          );
           const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
           if (terminalOutput) {
             const activity = agent.detectActivity(terminalOutput);
@@ -1100,10 +1293,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return reactionConfig ? (reactionConfig as ReactionConfig) : null;
   }
 
-  function updateSessionMetadata(
-    session: Session,
-    updates: Partial<Record<string, string>>,
-  ): void {
+  function updateSessionMetadata(session: Session, updates: Partial<Record<string, string>>): void {
     const project = config.projects[session.projectId];
     if (!project) return;
 
@@ -1225,12 +1415,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    const pendingComments = allThreads
-      ? allThreads.filter((c) => !c.isBot)
-      : null;
-    const automatedComments = allThreads
-      ? allThreads.filter((c) => c.isBot)
-      : null;
+    const pendingComments = allThreads ? allThreads.filter((c) => !c.isBot) : null;
+    const automatedComments = allThreads ? allThreads.filter((c) => c.isBot) : null;
 
     // --- Pending (human) review comments ---
     // null = SCM fetch failed; skip processing to preserve existing metadata.
@@ -1300,12 +1486,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // --- Automated (bot) review comments ---
     if (automatedComments !== null) {
-      const automatedFingerprint = makeFingerprint(
-        automatedComments.map((comment) => comment.id),
-      );
+      const automatedFingerprint = makeFingerprint(automatedComments.map((comment) => comment.id));
       const lastAutomatedFingerprint = session.metadata["lastAutomatedReviewFingerprint"] ?? "";
-      const lastAutomatedDispatchHash =
-        session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
+      const lastAutomatedDispatchHash = session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
 
       if (automatedFingerprint !== lastAutomatedFingerprint) {
         clearReactionTracker(session.id, automatedReactionKey);
@@ -1382,7 +1565,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (c.url) lines.push(`   ${c.url}`);
       if (c.threadId) lines.push(`   Thread ID: ${c.threadId}`);
     }
-    lines.push("", "Address each comment, push fixes. Use the thread ID to resolve each thread directly after pushing. You should not need to re-fetch review data unless you need additional context beyond what is provided here.");
+    lines.push(
+      "",
+      "Address each comment, push fixes. Use the thread ID to resolve each thread directly after pushing. You should not need to re-fetch review data unless you need additional context beyond what is provided here.",
+    );
     return lines.join("\n");
   }
 
@@ -1391,19 +1577,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
    * Includes check names, statuses, and links for debugging.
    */
   function formatCIFailureMessage(failedChecks: CICheck[]): string {
-    const lines = [
-      "CI checks are failing on your PR. Here are the failed checks:",
-      "",
-    ];
+    const lines = ["CI checks are failing on your PR. Here are the failed checks:", ""];
     for (const check of failedChecks) {
       const status = check.conclusion ?? check.status;
       const link = check.url ? ` — ${check.url}` : "";
       lines.push(`- **${check.name}**: ${status}${link}`);
     }
-    lines.push(
-      "",
-      "Investigate the failures, fix the issues, and push again.",
-    );
+    lines.push("", "Investigate the failures, fix the issues, and push again.");
     return lines.join("\n");
   }
 
@@ -1642,7 +1822,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       (assessment.detectingAttempts > DETECTING_MAX_ATTEMPTS ||
         isDetectingTimedOut(nextDetectingStartedAt));
     const nextDetectingEscalatedAt = isDetectingEscalated
-      ? (session.metadata["detectingEscalatedAt"] || new Date().toISOString())
+      ? session.metadata["detectingEscalatedAt"] || new Date().toISOString()
       : "";
 
     const metadataUpdates: Record<string, string> = {};
@@ -1720,7 +1900,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             if (cachedData?.ciChecks) {
               const failedChecks = cachedData.ciChecks.filter((c) => c.status === "failed");
               if (failedChecks.length > 0) {
-                reactionConfig = { ...reactionConfig, message: formatCIFailureMessage(failedChecks) };
+                reactionConfig = {
+                  ...reactionConfig,
+                  message: formatCIFailureMessage(failedChecks),
+                };
               }
             }
           }
@@ -1955,6 +2138,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         return tracked !== undefined && tracked !== s.status;
       });
 
+      await Promise.allSettled(
+        sessionsToCheck.map((session) => refreshTrackedBranch(session, sessions)),
+      );
+
       // Prime the per-poll PR enrichment cache before session checks so
       // downstream status/reaction logic can reuse batch GraphQL data.
       await populatePREnrichmentCache(sessionsToCheck);
@@ -2072,6 +2259,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     async check(sessionId: SessionId): Promise<void> {
       const session = await sessionManager.get(sessionId);
       if (!session) throw new Error(`Session ${sessionId} not found`);
+      await refreshTrackedBranch(session);
       // Populate batch enrichment cache for this session's PR so
       // checkSession can read from cache (no individual REST fallback).
       await populatePREnrichmentCache([session]);
