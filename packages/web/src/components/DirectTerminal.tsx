@@ -454,8 +454,11 @@ export function DirectTerminal({
         });
 
         // Intercept Cmd+C (Mac) and Ctrl+Shift+C (Linux/Win) for copy.
-        // Paste (Cmd+V / Ctrl+Shift+V) is handled natively by xterm.js
-        // via its internal textarea — no custom handler needed.
+        // Intercept paste events to bypass agent CLIs (e.g. Codex) that break
+        // on text-only clipboards by trying image-paste first. We read the text
+        // from the browser clipboard API, wrap it in bracketed-paste escape
+        // sequences, and send it directly through the mux — the agent process
+        // receives clean text without triggering its image-paste codepath.
         terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
           if (e.type !== "keydown") return true;
 
@@ -472,6 +475,32 @@ export function DirectTerminal({
 
           return true;
         });
+
+        // Intercept paste on xterm's internal textarea to prevent agent CLIs
+        // (Codex via arboard crate) from triggering broken image-paste on
+        // Linux/WSL. We read text from the browser clipboard and inject it as
+        // bracketed paste directly into the mux stream. Bracketed-paste wrapping
+        // (\x1b[200~ / \x1b[201~) is always safe — tmux enables it, and if the
+        // inner program doesn't support it the sequences are just ignored.
+        const textarea = terminal.textarea;
+        const termElement = terminal.element;
+        let pasteCleanup: (() => void) | null = null;
+        if (textarea) {
+          const handlePaste = (e: ClipboardEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const text = e.clipboardData?.getData("text/plain");
+            if (!text) return;
+            const prepared = text.replace(/\r?\n/g, "\r\n");
+            writeTerminal(sessionId, "\x1b[200~" + prepared + "\x1b[201~");
+          };
+          textarea.addEventListener("paste", handlePaste);
+          termElement?.addEventListener("paste", handlePaste);
+          pasteCleanup = () => {
+            textarea.removeEventListener("paste", handlePaste);
+            termElement?.removeEventListener("paste", handlePaste);
+          };
+        }
 
         // Open terminal via mux
         openTerminal(sessionId);
@@ -535,6 +564,7 @@ export function DirectTerminal({
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
           clearTimeout(deferredFitTimeout);
+          pasteCleanup?.();
           resizeObserver?.disconnect();
           cleanupTouchScroll();
           selectionDisposable.dispose();
