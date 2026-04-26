@@ -1722,7 +1722,7 @@ describe("start command — autoCreateConfig", () => {
 
     const content = readFileSync(configPath, "utf-8");
     const parsed = parseYaml(content) as {
-      "$schema"?: string;
+      $schema?: string;
       defaults?: { notifiers?: unknown[] };
     };
     expect(parsed["$schema"]).toBe(
@@ -1786,6 +1786,34 @@ describe("start command — already-running detection", () => {
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
     expect(output).toContain("AO is already running");
+  });
+
+  it("offers to add cwd when AO is running and cwd is an unregistered git repo", async () => {
+    mockIsAlreadyRunning.mockResolvedValue({
+      pid: 9999,
+      configPath: "/fake/config.yaml",
+      port: 3000,
+      startedAt: "2026-01-01T00:00:00Z",
+      projects: ["my-app"],
+    });
+
+    createFakeRepo(tmpDir, "https://github.com/org/unregistered.git");
+    mockProcessCwd.mockReturnValue(tmpDir);
+    mockPromptSelect.mockResolvedValue("quit");
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ path: join(tmpDir, "main-repo") }),
+    });
+
+    await expect(
+      program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const options = mockPromptSelect.mock.calls[0]?.[1] as
+      | Array<{ value: string; label: string }>
+      | undefined;
+    expect(options?.some((option) => option.value === "add" && option.label.includes("Add"))).toBe(
+      true,
+    );
   });
 
   it("exits when human caller selects 'open'", async () => {

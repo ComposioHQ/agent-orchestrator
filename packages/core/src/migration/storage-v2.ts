@@ -1024,7 +1024,12 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
               log(`  WARNING: ${basename(migratedPath)} already exists — removing source directory`);
               rmSync(dir.path, { recursive: true, force: true });
             } else {
-              log(`  WARNING: Failed to rename ${basename(dir.path)}: ${err instanceof Error ? err.message : String(err)}`);
+              const msg = err instanceof Error ? err.message : String(err);
+              log(`  ERROR: Failed to rename ${basename(dir.path)}: ${msg}`);
+              projectErrors.push({
+                projectId,
+                error: `Failed to rename ${basename(dir.path)} to ${basename(migratedPath)}: ${msg}`,
+              });
             }
           }
         }
@@ -1104,6 +1109,16 @@ function countPostMigrationSessions(
       if (file === "archive" || file.startsWith(".")) continue;
       const sessionId = file.endsWith(".json") ? file.slice(0, -5) : file;
       migratedSessionIds.add(sessionId);
+    }
+
+    const oldArchiveDir = join(oldSessionsDir, "archive");
+    if (!existsSync(oldArchiveDir)) continue;
+    for (const file of readdirSync(oldArchiveDir)) {
+      if (file.startsWith(".")) continue;
+      const match = file.match(/^([a-zA-Z0-9_-]+?)_\d/);
+      if (match?.[1]) {
+        migratedSessionIds.add(match[1]);
+      }
     }
   }
 

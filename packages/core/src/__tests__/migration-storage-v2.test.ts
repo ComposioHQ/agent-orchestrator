@@ -1,11 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import {
-  mkdirSync,
-  writeFileSync,
-  rmSync,
-  existsSync,
-  readFileSync,
-} from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import {
@@ -18,7 +12,10 @@ import {
 import { readMetadata } from "../metadata.js";
 
 function createTempDir(): string {
-  const dir = join(tmpdir(), `ao-migration-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = join(
+    tmpdir(),
+    `ao-migration-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -99,13 +96,16 @@ describe("inventoryHashDirs", () => {
 
     // Write a config that maps storageKey → projectId
     const configPath = join(testDir, "config.yaml");
-    writeFileSync(configPath, [
-      "projects:",
-      "  my-app:",
-      "    path: /home/user/my-app",
-      "    storageKey: aaaaaa000000",
-      "",
-    ].join("\n"));
+    writeFileSync(
+      configPath,
+      [
+        "projects:",
+        "  my-app:",
+        "    path: /home/user/my-app",
+        "    storageKey: aaaaaa000000",
+        "",
+      ].join("\n"),
+    );
 
     const dirs = inventoryHashDirs(testDir, configPath);
     expect(dirs).toHaveLength(1);
@@ -135,7 +135,10 @@ describe("inventoryHashDirs", () => {
   it("skips .migrated directories (prevents .migrated.migrated on re-run)", () => {
     // Simulate post-migration state: original renamed to .migrated
     mkdirSync(join(testDir, "aaaaaa000000-myproject.migrated", "sessions"), { recursive: true });
-    writeFileSync(join(testDir, "aaaaaa000000-myproject.migrated", "sessions", "ao-1"), "status=working\n");
+    writeFileSync(
+      join(testDir, "aaaaaa000000-myproject.migrated", "sessions", "ao-1"),
+      "status=working\n",
+    );
 
     const dirs = inventoryHashDirs(testDir);
     expect(dirs).toHaveLength(0);
@@ -384,7 +387,13 @@ describe("migrateStorage", () => {
     expect(result.sessions).toBe(2);
 
     // Orchestrator should be in sessions/ (not orchestrator.json)
-    const orchSessionPath = join(aoBaseDir, "projects", "myproject", "sessions", "ao-orchestrator-1.json");
+    const orchSessionPath = join(
+      aoBaseDir,
+      "projects",
+      "myproject",
+      "sessions",
+      "ao-orchestrator-1.json",
+    );
     expect(existsSync(orchSessionPath)).toBe(true);
     const orch = JSON.parse(readFileSync(orchSessionPath, "utf-8"));
     expect(orch.role).toBe("orchestrator");
@@ -417,8 +426,12 @@ describe("migrateStorage", () => {
     expect(result.sessions).toBe(2);
 
     // Both sessions should be in the new location
-    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"))).toBe(true);
-    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-2.json"))).toBe(true);
+    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"))).toBe(
+      true,
+    );
+    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-2.json"))).toBe(
+      true,
+    );
   });
 
   it("handles duplicate session IDs across hash dirs — older is skipped", async () => {
@@ -597,8 +610,21 @@ describe("migrateStorage", () => {
 
     const lifecycle = JSON.stringify({
       version: 2,
-      session: { kind: "worker", state: "working", reason: "task_in_progress", startedAt: "2026-04-21T12:00:00.000Z", completedAt: null, terminatedAt: null, lastTransitionAt: "2026-04-21T12:00:00.000Z" },
-      pr: { state: "open", reason: "review_pending", url: "https://github.com/test/repo/pull/1", lastObservedAt: "2026-04-21T12:30:00.000Z" },
+      session: {
+        kind: "worker",
+        state: "working",
+        reason: "task_in_progress",
+        startedAt: "2026-04-21T12:00:00.000Z",
+        completedAt: null,
+        terminatedAt: null,
+        lastTransitionAt: "2026-04-21T12:00:00.000Z",
+      },
+      pr: {
+        state: "open",
+        reason: "review_pending",
+        url: "https://github.com/test/repo/pull/1",
+        lastObservedAt: "2026-04-21T12:30:00.000Z",
+      },
       runtime: { handle: null, tmuxName: null },
     });
 
@@ -646,13 +672,16 @@ describe("migrateStorage", () => {
     );
 
     // Config with storageKey for lookup
-    writeFileSync(configPath, [
-      "projects:",
-      "  myproject:",
-      "    path: /home/user/myproject",
-      "    storageKey: aaaaaa000000",
-      "",
-    ].join("\n"));
+    writeFileSync(
+      configPath,
+      [
+        "projects:",
+        "  myproject:",
+        "    path: /home/user/myproject",
+        "    storageKey: aaaaaa000000",
+        "",
+      ].join("\n"),
+    );
 
     const result = await migrateStorage({
       aoBaseDir,
@@ -764,6 +793,40 @@ describe("migrateStorage", () => {
     expect(logs.some((l) => l.includes("already exists"))).toBe(true);
   });
 
+  it("preserves config and migration marker when retiring a legacy dir fails", async () => {
+    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+    mkdirSync(join(hashDir, "sessions"), { recursive: true });
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\nstatus=working\ncreatedAt=2026-04-21T12:00:00.000Z",
+    );
+    writeFileSync(`${hashDir}.migrated`, "not a directory");
+    writeFileSync(
+      configPath,
+      [
+        "projects:",
+        "  myproject:",
+        "    path: /home/user/myproject",
+        "    storageKey: aaaaaa000000",
+        "",
+      ].join("\n"),
+    );
+
+    const logs: string[] = [];
+    await migrateStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      force: true,
+      log: (msg) => logs.push(msg),
+    });
+
+    expect(existsSync(hashDir)).toBe(true);
+    expect(existsSync(join(aoBaseDir, ".migration-in-progress"))).toBe(true);
+    expect(readFileSync(configPath, "utf-8")).toContain("storageKey");
+    expect(logs.some((l) => l.includes("Failed to rename"))).toBe(true);
+    expect(logs.some((l) => l.includes("Skipping config update"))).toBe(true);
+  });
+
   it("continues migrating other projects when one project fails", async () => {
     // Project A — will succeed
     const hashDirA = join(aoBaseDir, "aaaaaa000000-project-a");
@@ -794,7 +857,9 @@ describe("migrateStorage", () => {
 
     // Project A should succeed
     expect(result.projects).toBeGreaterThanOrEqual(1);
-    expect(existsSync(join(aoBaseDir, "projects", "project-a", "sessions", "ao-1.json"))).toBe(true);
+    expect(existsSync(join(aoBaseDir, "projects", "project-a", "sessions", "ao-1.json"))).toBe(
+      true,
+    );
     // Should report the failure
     expect(logs.some((l) => l.includes("ERROR") && l.includes("project-b"))).toBe(true);
     // Summary should mention failed projects
@@ -862,16 +927,51 @@ describe("rollbackStorage", () => {
     expect(configContent).toContain("aaaaaa000000-myproject");
   });
 
+  it("does not treat flattened archive records as post-migration sessions", async () => {
+    mkdirSync(join(aoBaseDir, "aaaaaa000000-myproject.migrated", "sessions", "archive"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(
+        aoBaseDir,
+        "aaaaaa000000-myproject.migrated",
+        "sessions",
+        "archive",
+        "ao-83_2026-04-20T14:30:52.000Z",
+      ),
+      "project=myproject",
+    );
+    mkdirSync(join(aoBaseDir, "projects", "myproject", "sessions"), { recursive: true });
+    writeFileSync(
+      join(aoBaseDir, "projects", "myproject", "sessions", "ao-83.json"),
+      '{"project":"myproject","status":"terminated","reason":"migrated_from_archive"}',
+    );
+
+    writeFileSync(
+      configPath,
+      ["projects:", "  myproject:", "    path: /home/user/myproject", ""].join("\n"),
+    );
+
+    const logs: string[] = [];
+    await rollbackStorage({
+      aoBaseDir,
+      globalConfigPath: configPath,
+      log: (msg) => logs.push(msg),
+    });
+
+    expect(existsSync(join(aoBaseDir, "aaaaaa000000-myproject"))).toBe(true);
+    expect(existsSync(join(aoBaseDir, "projects", "myproject"))).toBe(false);
+    expect(logs.some((l) => l.includes("created after migration"))).toBe(false);
+  });
+
   it("writes storageKey in original directory name format", async () => {
     mkdirSync(join(aoBaseDir, "a3b4c5d6e7f8-myapp.migrated"), { recursive: true });
     mkdirSync(join(aoBaseDir, "projects", "myapp"), { recursive: true });
 
-    writeFileSync(configPath, [
-      "projects:",
-      "  myapp:",
-      "    path: /home/user/myapp",
-      "",
-    ].join("\n"));
+    writeFileSync(
+      configPath,
+      ["projects:", "  myapp:", "    path: /home/user/myapp", ""].join("\n"),
+    );
 
     await rollbackStorage({
       aoBaseDir,
@@ -896,12 +996,10 @@ describe("rollbackStorage", () => {
       '{"project":"myproject"}',
     );
 
-    writeFileSync(configPath, [
-      "projects:",
-      "  myproject:",
-      "    path: /home/user/myproject",
-      "",
-    ].join("\n"));
+    writeFileSync(
+      configPath,
+      ["projects:", "  myproject:", "    path: /home/user/myproject", ""].join("\n"),
+    );
 
     await rollbackStorage({
       aoBaseDir,
@@ -943,14 +1041,17 @@ describe("rollbackStorage", () => {
       '{"project":"new-project","status":"working"}',
     );
 
-    writeFileSync(configPath, [
-      "projects:",
-      "  myproject:",
-      "    path: /home/user/myproject",
-      "  new-project:",
-      "    path: /home/user/new-project",
-      "",
-    ].join("\n"));
+    writeFileSync(
+      configPath,
+      [
+        "projects:",
+        "  myproject:",
+        "    path: /home/user/myproject",
+        "  new-project:",
+        "    path: /home/user/new-project",
+        "",
+      ].join("\n"),
+    );
 
     const logs: string[] = [];
     await rollbackStorage({
@@ -961,11 +1062,15 @@ describe("rollbackStorage", () => {
 
     // myproject has ao-50 which was created post-migration — dir should be PRESERVED
     expect(existsSync(join(aoBaseDir, "projects", "myproject"))).toBe(true);
-    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-50.json"))).toBe(true);
+    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-50.json"))).toBe(
+      true,
+    );
     expect(logs.some((l) => l.includes("1 session(s) created after migration"))).toBe(true);
 
     // Non-migrated project dir must be preserved
-    expect(existsSync(join(aoBaseDir, "projects", "new-project", "sessions", "ao-99.json"))).toBe(true);
+    expect(existsSync(join(aoBaseDir, "projects", "new-project", "sessions", "ao-99.json"))).toBe(
+      true,
+    );
 
     // projects/ dir should still exist (has remaining content)
     expect(existsSync(join(aoBaseDir, "projects"))).toBe(true);
@@ -986,12 +1091,10 @@ describe("rollbackStorage", () => {
       '{"project":"myproject"}',
     );
 
-    writeFileSync(configPath, [
-      "projects:",
-      "  myproject:",
-      "    path: /home/user/myproject",
-      "",
-    ].join("\n"));
+    writeFileSync(
+      configPath,
+      ["projects:", "  myproject:", "    path: /home/user/myproject", ""].join("\n"),
+    );
 
     await rollbackStorage({
       aoBaseDir,
@@ -1024,12 +1127,10 @@ describe("rollbackStorage", () => {
       "# test",
     );
 
-    writeFileSync(configPath, [
-      "projects:",
-      "  myproject:",
-      "    path: /home/user/myproject",
-      "",
-    ].join("\n"));
+    writeFileSync(
+      configPath,
+      ["projects:", "  myproject:", "    path: /home/user/myproject", ""].join("\n"),
+    );
 
     await rollbackStorage({
       aoBaseDir,
@@ -1039,7 +1140,12 @@ describe("rollbackStorage", () => {
 
     // Worktree should be moved back to restored hash dir
     expect(existsSync(join(aoBaseDir, "aaaaaa000000-myproject", "worktrees", "ao-1"))).toBe(true);
-    expect(readFileSync(join(aoBaseDir, "aaaaaa000000-myproject", "worktrees", "ao-1", "README.md"), "utf-8")).toBe("# test");
+    expect(
+      readFileSync(
+        join(aoBaseDir, "aaaaaa000000-myproject", "worktrees", "ao-1", "README.md"),
+        "utf-8",
+      ),
+    ).toBe("# test");
 
     // Project dir should be deleted
     expect(existsSync(join(aoBaseDir, "projects", "myproject"))).toBe(false);
@@ -1058,12 +1164,10 @@ describe("rollbackStorage", () => {
       '{"project":"myproject"}',
     );
 
-    writeFileSync(configPath, [
-      "projects:",
-      "  myproject:",
-      "    path: /home/user/myproject",
-      "",
-    ].join("\n"));
+    writeFileSync(
+      configPath,
+      ["projects:", "  myproject:", "    path: /home/user/myproject", ""].join("\n"),
+    );
 
     const logs: string[] = [];
     await rollbackStorage({
@@ -1137,7 +1241,10 @@ describe("migration edge cases", () => {
   it("blocks migration when active sessions detected (or proceeds when none)", async () => {
     const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });
-    writeFileSync(join(hashDir, "sessions", "ao-1"), "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1");
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+    );
 
     try {
       const result = await migrateStorage({
@@ -1164,13 +1271,16 @@ describe("migration edge cases", () => {
       "project=backend-service\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
     );
 
-    writeFileSync(configPath, [
-      "projects:",
-      "  backend-service:",
-      "    path: /home/user/backend-service",
-      "    sessionPrefix: be",
-      "",
-    ].join("\n"));
+    writeFileSync(
+      configPath,
+      [
+        "projects:",
+        "  backend-service:",
+        "    path: /home/user/backend-service",
+        "    sessionPrefix: be",
+        "",
+      ].join("\n"),
+    );
 
     vi.resetModules();
     vi.doMock("node:child_process", () => ({
@@ -1368,7 +1478,9 @@ describe("migration edge cases", () => {
     // Marker should be removed after successful migration
     expect(existsSync(markerPath)).toBe(false);
     // Migration should have completed
-    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"))).toBe(true);
+    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"))).toBe(
+      true,
+    );
   });
 
   it("detects interrupted migration on re-run", async () => {
@@ -1394,7 +1506,9 @@ describe("migration edge cases", () => {
     expect(logs.some((m) => m.includes("interrupted"))).toBe(true);
     // Should still complete successfully
     expect(existsSync(markerPath)).toBe(false);
-    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"))).toBe(true);
+    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"))).toBe(
+      true,
+    );
   });
 
   it("does not write marker file in dry-run mode", async () => {
@@ -1438,7 +1552,9 @@ describe("migration edge cases", () => {
     });
 
     // Good session should be migrated
-    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"))).toBe(true);
+    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"))).toBe(
+      true,
+    );
     // Migration should not crash
     expect(result.projects).toBe(1);
   });

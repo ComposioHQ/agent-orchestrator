@@ -1525,6 +1525,7 @@ export function registerStart(program: Command): void {
                     label: "Start new orchestrator",
                     hint: "Add a new session for this project",
                   },
+                  ..._addCwdOption,
                   {
                     value: "restart",
                     label: "Restart everything",
