@@ -286,10 +286,10 @@ class TerminalManager {
       console.error(`[MuxServer] Failed to set mouse mode for ${tmuxSessionId}:`, err.message);
     });
 
-    // Enable the status bar for session context visibility
-    const statusProc = spawn(this.TMUX, ["set-option", "-t", tmuxSessionId, "status", "on"]);
+    // Hide the status bar
+    const statusProc = spawn(this.TMUX, ["set-option", "-t", tmuxSessionId, "status", "off"]);
     statusProc.on("error", (err) => {
-      console.error(`[MuxServer] Failed to enable status bar for ${tmuxSessionId}:`, err.message);
+      console.error(`[MuxServer] Failed to hide status bar for ${tmuxSessionId}:`, err.message);
     });
 
     // Build environment
