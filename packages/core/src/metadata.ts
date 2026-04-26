@@ -418,7 +418,7 @@ export function listMetadata(dataDir: string): SessionId[] {
     // Must be a .json file
     if (!name.endsWith(JSON_EXTENSION)) return false;
     const baseName = name.slice(0, -JSON_EXTENSION.length);
-    if (!baseName || baseName === "archive" || baseName.startsWith(".")) return false;
+    if (!baseName || baseName.startsWith(".")) return false;
     if (!SESSION_ID_COMPONENT_PATTERN.test(baseName)) return false;
     try {
       return statSync(join(dir, name)).isFile();
