@@ -96,7 +96,7 @@ Loads plugins and provides access to them:
 **Built-in plugins** (loaded by default):
 
 - runtime-tmux, runtime-process
-- agent-claude-code, agent-codex, agent-aider, agent-opencode
+- agent-claude-code, agent-codex, agent-aider, agent-cursor, agent-kimicode, agent-opencode
 - workspace-worktree, workspace-clone
 - tracker-github, tracker-linear, tracker-gitlab
 - scm-github, scm-gitlab

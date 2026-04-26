@@ -403,6 +403,12 @@ const AGENT_INSTALL_OPTIONS: AgentInstallOption[] = [
     cmd: "npm",
     args: ["install", "-g", "opencode-ai"],
   },
+  {
+    id: "kimicode",
+    label: "Kimi Code",
+    cmd: "uv",
+    args: ["tool", "install", "kimi-cli"],
+  },
 ];
 
 async function promptInstallAgentRuntime(available: DetectedAgent[]): Promise<DetectedAgent[]> {

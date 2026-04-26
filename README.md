@@ -191,7 +191,7 @@ Seven plugin slots. Lifecycle stays in core.
 | Slot      | Default     | Alternatives             |
 | --------- | ----------- | ------------------------ |
 | Runtime   | tmux        | process                  |
-| Agent     | claude-code | codex, aider, cursor, opencode   |
+| Agent     | claude-code | codex, aider, cursor, opencode, kimicode |
 | Workspace | worktree    | clone                    |
 | Tracker   | github      | linear, gitlab           |
 | SCM       | github      | gitlab                   |
