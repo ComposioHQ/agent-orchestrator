@@ -276,7 +276,7 @@ The wrappers intercept:
 
 All other commands pass through transparently via `exec "$real_gh" "$@"` or `exec "$real_git" "$@"`.
 
-For storage details, see [Storage — PATH Wrappers](/docs/configuration/storage#path-wrappers).
+For the user-facing storage summary, see [Configuration — Where data lives](/docs/configuration#where-data-lives).
 
 ---
 
@@ -336,5 +336,5 @@ agent-orchestrator.yaml ──► Config Loader (Zod) ──► Plugin Registry
   <Card title="Project Configuration" href="/docs/configuration/projects" description="Configure projects, agents, trackers, and reactions in agent-orchestrator.yaml." />
   <Card title="Authoring Plugins" href="/docs/plugins/authoring" description="Build custom runtime, agent, tracker, SCM, notifier, or terminal plugins." />
   <Card title="Reactions" href="/docs/configuration/reactions" description="Set up automated reactions to CI failures, review comments, and merge events." />
-  <Card title="Storage" href="/docs/configuration/storage" description="Understand where AO stores session metadata, worktrees, archives, and PATH wrappers." />
+  <Card title="Configuration" href="/docs/configuration" description="Understand the global registry, local project config, and where AO stores runtime data." />
 </Cards>

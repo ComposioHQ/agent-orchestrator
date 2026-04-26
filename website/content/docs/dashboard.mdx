@@ -1,182 +1,169 @@
 ---
 title: Dashboard
-description: Features of the AO web dashboard — Kanban, PR view, terminal, mobile layout, and keyboard shortcuts.
+description: Use the AO dashboard to monitor agents, respond to sessions, review PRs, manage projects, and open live terminals.
 ---
 
-The AO web dashboard is a Next.js application served at `http://localhost:3000` by default. It keeps session data current by receiving Server-Sent Events (SSE) from the orchestrator API and refreshing the full session list when the membership changes. Updates arrive every few seconds, so new sessions, status transitions, and PR state changes appear automatically without a manual reload.
+The AO dashboard is the control room for running agents. It shows what each session is doing, which PRs need review, where agents are blocked, and which projects are active.
 
-## Kanban board
+Start it with:
 
-The main view at `/` organises every agent session into five attention-level columns:
+```bash
+ao start
+```
 
-| Column | Meaning |
-|--------|---------|
-| **Working** | Agent is actively making changes |
-| **Pending** | Session is queued or waiting for the agent to pick up work |
-| **Review** | A PR has been opened and is awaiting code review |
-| **Respond** | The agent needs your input — permission prompt, review comment, or error |
-| **Merge** | CI is passing, review is approved, and the PR is ready to merge |
+By default it opens at:
 
-Sessions that have ended appear in a collapsible **Done / Terminated** bar at the bottom of the board. Each card in the Done bar shows the session title, a merged/terminated badge, the linked PR number, the relative timestamp, and a **Restore** button.
+```text
+http://localhost:3000
+```
 
-Each active card shows the session ID, issue title (or AI-generated summary), the linked PR number, and the time since the last activity. Clicking a card in the desktop view opens the session detail page. Cards are colour-coded by attention level with an accent strip on the left edge.
+## Read The Board
 
-On the desktop the sidebar can be collapsed with the panel-toggle button in the header. When multiple projects are configured, an **All projects** overview grid replaces the Kanban board, displaying per-project session counts and per-column metrics for every project at a glance.
+The main dashboard groups sessions by what you need to do next.
 
-A dismissable banner appears when GitHub API rate limits are hit, explaining that PR data may be stale and will refresh automatically.
+| Column | What it means | What you usually do |
+|--------|---------------|---------------------|
+| **Working** | Agent is actively coding or running commands | Let it run |
+| **Pending** | Session exists but has not started useful work yet | Check if it stays here too long |
+| **Review** | PR is open and waiting for review | Review the PR or wait for CI |
+| **Respond** | Agent needs input or hit a blocker | Open the session and reply |
+| **Merge** | PR is approved and checks are green | Merge or let your merge workflow continue |
 
-## Session detail view
+Completed and terminated sessions appear in the **Done / Terminated** area. Restore a session from there when you need to inspect or continue it.
 
-Navigate to a session detail page by clicking a card on the Kanban board or going directly to `/sessions/{id}`. The page is structured as follows:
+When multiple projects are registered, the dashboard opens with a project overview. Pick a project to see its board, or use the project filter to scope dashboard, PR, and session views.
 
-**Top strip** — breadcrumb back to the dashboard, session ID, an activity-state pill (Active / Ready / Idle / Waiting for input / Blocked / Exited), the branch name, and a PR pill that links to GitHub. A diff size pill (`+N -N`) appears when the PR has changes. A **Kill** button is shown for live sessions; a **Restore** button appears for sessions that ended cleanly.
+## Handle A Session
 
-**PR card** — shown when the session has an open pull request. Displays the PR title, diff stats (additions, deletions, changed file count), whether it is a draft, and the overall state (open / merged). A green "Ready to merge" banner is shown when CI is passing and the PR is approved. Blocker chips appear for CI failures, changes requested, merge conflicts, and draft status, each with an optional "notified" indicator when AO has already dispatched a notification. Individual CI check results are listed as chips with pass/fail/pending/queued indicators, linked to the check run URL.
+Click a session card to open its detail page.
 
-Unresolved review comments are listed in a collapsible section. Each comment shows the file path, author, and body. An **Ask Agent to Fix** button sends the comment directly to the agent.
+Use the detail page to:
 
-**Live terminal** — an xterm.js terminal attached to the agent's running process. See the [Terminal section](#terminal) below for details.
+- Read the current status, branch, linked issue, and linked PR.
+- See whether the agent is active, idle, blocked, waiting for input, or exited.
+- Inspect PR size, CI checks, review state, and unresolved comments.
+- Send a message to the agent.
+- Kill or restore the session.
+- Open the live terminal.
 
-The orchestrator detail view extends the top strip with per-zone agent counts (merge-ready, responding, review, working, pending, done), uptime, and total agent count.
+For review comments, use **Ask Agent to Fix** when the right next step is obvious. Use a manual message when you need to add context or constrain the fix:
 
-## PR list (`/prs`)
+```text
+Keep this change limited to the API route. Do not refactor the shared client.
+```
 
-The `/prs` route shows every pull request created by agents. Filter tabs at the top let you narrow the list:
+## Review PRs
 
-| Tab | Contents |
-|-----|----------|
-| **All** | Every PR, grouped into Open / Merged / Closed sections |
-| **Open** | Only open PRs |
-| **Merged** | Only merged PRs |
-| **Closed** | Only closed PRs |
+Open `/prs` to see every PR created by AO-managed sessions.
 
-Each tab shows a count badge. On desktop the PRs are displayed in a table with columns: PR number, Title, Size (diff stats), CI status, Review decision, and Unresolved thread count. On mobile they are displayed as cards.
+The PR page lets you filter by:
 
-The ThemeToggle button is available in the PR list header.
+| Tab | Shows |
+|-----|-------|
+| **All** | Open, merged, and closed PRs |
+| **Open** | PRs still in progress |
+| **Merged** | Completed PRs |
+| **Closed** | Closed but unmerged PRs |
 
-## Orchestrator selector
+Each PR shows its size, CI state, review decision, and unresolved threads. Use this page when you want a repository-level review queue instead of a session-by-session view.
 
-When you visit an orchestrator route and multiple orchestrator sessions exist for the same project, the `OrchestratorSelector` page (`/orchestrators`) appears. It lists all existing orchestrator sessions with their status, activity state, creation time, and last-active time. Select one to resume it, or click **Start New Orchestrator** to spawn a fresh session for that project. An error banner is shown if the orchestrator list could not be fetched.
+## Manage Projects
 
-From the Kanban board header an **Orchestrator** link is shown when a running orchestrator session exists for the current project, linking directly to that session's detail page.
+The sidebar shows registered projects. Use it to move between projects, add another repository, or open a project's settings.
 
-## Terminal
+Project settings let you edit behavior fields without changing the repository identity. That means you can change things like agent, runtime, tracker, SCM, and reactions, but AO keeps the registered path, storage key, and repository identity stable.
 
-Each session detail page embeds a live xterm.js terminal connected to the agent's process via WebSocket.
+If a project is degraded because its local config is invalid or still in an older wrapped format, the dashboard shows a repair state instead of hiding the project.
 
-### Backends
+## Use The Terminal
 
-Two WebSocket backends can serve the terminal:
+Each session detail page includes a live terminal attached to the agent process.
 
-**Tmux mux** — when the session runs under the tmux runtime, the web dashboard connects to the multiplexer WebSocket server (port 14800 by default, configurable via `terminalPort` or `TERMINAL_PORT`). The mux attaches to the tmux PTY and streams output bidirectionally. The terminal registers an Extended Device Attributes (XDA) handler and an OSC 52 handler so tmux recognises the browser as an XTerm-compatible terminal and clipboard copy (`Cmd+C` / `Ctrl+Shift+C`) works correctly.
+Use the terminal to inspect what the agent is doing, recover from stuck prompts, or run a quick command in the session context. For normal guidance, prefer the message box; it is easier for the agent to treat as instruction.
 
-**Direct PTY** — when the session runs under the process runtime, the dashboard connects to the direct PTY WebSocket server (port 14801 by default, configurable via `directTerminalPort` or `DIRECT_TERMINAL_PORT`).
+AO has two terminal backends:
 
-The terminal is reconnected automatically when the WebSocket drops. A status dot in the terminal chrome changes colour: green when connected, amber and pulsing while reconnecting, red when disconnected or on error.
+| Backend | Used when | Default port |
+|---------|-----------|--------------|
+| tmux WebSocket mux | `runtime: tmux` | `14800` |
+| direct PTY WebSocket | `runtime: process` | `14801` |
 
-### Props and features
+The terminal reconnects automatically when the WebSocket drops. If terminal output works but input feels awkward on mobile, send messages from the session controls instead.
 
-| Feature | Detail |
-|---------|--------|
-| `variant: "agent"` | Blue accent colour (default) |
-| `variant: "orchestrator"` | Same blue accent, reserved for orchestrator sessions |
-| `chromeless` | Strips the header bar; used on mobile where the terminal fills the viewport. Fullscreen and restart controls float as an overlay in the top-right corner |
-| `reloadCommand` | For OpenCode sessions: when the terminal detects the session has exited, a **restart** button appears in the chrome. Clicking it sends `/exit\nopencode --session {id}\n` to resume the mapped OpenCode session |
-| Fullscreen | A button in the terminal chrome toggles fullscreen mode. The URL is updated with `?fullscreen=true` so the state survives a reload |
-| Copy | Selection is buffered while highlighted so `Cmd+C` / `Ctrl+Shift+C` can copy without the selection being cleared by incoming output |
-| Scrollback | 10,000 lines |
-| Font | JetBrains Mono, 13 px |
+## Use AO On Mobile
 
-### Light and dark themes
+On smaller screens, the dashboard switches to a mobile layout:
 
-The terminal ships with hand-tuned ANSI colour palettes for both themes. The light theme raises the minimum contrast ratio to 7 (versus 1 for dark) so that dim/faint ANSI sequences remain legible on the near-white background. The theme updates live without recreating the terminal instance when you toggle between dark and light.
+- A bottom tab bar links to Dashboard, PRs, and Orchestrator.
+- Sessions are ordered by urgency: Respond, Merge, Review, Pending, Working.
+- Tapping a card opens a bottom sheet with quick actions.
+- The terminal opens in a compact full-screen style.
 
-## Theme toggle
+Mobile is useful for checking status and sending short replies. Long terminal work is still better on desktop.
 
-Click the sun/moon button (visible in the PR list header and other pages) to switch between dark and light mode. The preference is stored in `localStorage` via `next-themes` and applied on every page load. Dark mode is the default.
+## Orchestrator Sessions
 
-## Mobile layout
+When a project has an orchestrator session, the dashboard links to it from the project header or mobile tab bar.
 
-On viewports narrower than the mobile breakpoint the dashboard switches to a touch-optimised layout.
+If multiple orchestrator sessions exist for the same project, `/orchestrators?project={projectId}` lets you choose one or start a new orchestrator session.
 
-### Bottom tab bar
+Use the orchestrator view when you care about the whole agent fleet instead of one worker session.
 
-A fixed bottom navigation bar (`MobileBottomNav`) provides three tabs:
+## Freshness And Updates
 
-| Tab | Destination |
-|-----|-------------|
-| **Dashboard** | `/` — the Kanban view |
-| **PRs** | `/prs` — the pull request list |
-| **Orchestrator** | `/sessions/{orchestratorId}` — shown when a running orchestrator exists for the project; disabled otherwise |
+The dashboard receives live session updates over `/api/events`. AO sends snapshots every five seconds. When sessions are added or removed, the dashboard refreshes the full session list from `/api/sessions`.
 
-### Mobile Kanban order
+If GitHub or GitLab rate limits are hit, PR details can become stale for a short time. The dashboard shows a warning banner and refreshes automatically when data is available again.
 
-The mobile feed renders sessions in urgency-first order, opposite to the desktop column order:
+The favicon and document title also change when sessions need attention, so you can keep the dashboard open in a background tab.
 
-`Respond → Merge → Review → Pending → Working`
+## Routes
 
-This ensures the sessions that need your attention appear at the top of the feed.
-
-### Mobile filter chips
-
-A row of filter chips above the feed lets you narrow to a single column. The options are: **All**, **Respond**, **Ready** (merge), **Review**, **Pending**, and **Working**.
-
-A **Needs attention** strip above the filters shows pill counts for Respond, Merge, and Review. Tapping a pill scrolls to the corresponding section.
-
-### BottomSheet
-
-On mobile, tapping a session card opens a `BottomSheet` drawer instead of navigating to a new page. The sheet shows the session title, attention level, status, activity, branch, PR number, and diff stats. It has two modes:
-
-- **Preview** — shows session metadata with an **Open session** link, and either a **Merge** button (if the PR is ready) or a **Terminate** button.
-- **Confirm-kill** — a confirmation step before terminating. Triggered by tapping Terminate in preview mode.
-
-Swipe down more than 80 px to dismiss the sheet. Pressing `Escape` also dismisses it. Focus is trapped inside the sheet while it is open.
-
-### Terminal on mobile
-
-The session detail page on mobile renders the terminal in `chromeless` mode, filling the full viewport height. Fullscreen and restart controls appear as a floating overlay. Reading terminal output works well; typing long commands is easier from a desktop.
-
-## Dynamic favicon
-
-The browser tab favicon updates in real time based on session health. The favicon is an SVG square with the first letter of the project name and a background colour:
-
-| Colour | Meaning |
-|--------|---------|
-| Green | All sessions are working, pending, or done — nothing needs attention |
-| Yellow | Some sessions are in review or ready to merge |
-| Red | At least one session is in the **Respond** state (needs immediate input) |
-
-The document title also updates to show the count of sessions needing attention, for example `my-project (3 need attention)`.
-
-## Update frequency
-
-The dashboard subscribes to SSE on the `/api/events` endpoint. The server pushes a snapshot every **5 seconds** containing the current status, activity state, last-activity timestamp, and attention level for every session. This interval is hardcoded (constraint C-14) and is not configurable. As a result, changes that occur on the server — new sessions, status transitions, PR merges — may take up to 5 seconds to appear in the browser.
-
-When a full-page membership change is detected (a session was added or removed), the dashboard immediately fetches the full session list from `/api/sessions` to pick up all fields that SSE snapshots omit (PR details, branch, metadata, etc.).
-
-## Routes reference
-
-| Route | Purpose |
+| Route | Use for |
 |-------|---------|
-| `/` | Kanban dashboard |
-| `/prs` | Pull request list |
-| `/sessions/{id}` | Session detail with live terminal |
-| `/orchestrators` | Orchestrator selector (when multiple orchestrator sessions exist) |
-| `/docs` | This documentation |
-| `/api/events` | SSE stream — not user-facing; consumed by the dashboard |
-| `/api/webhooks` | Incoming SCM webhooks (GitHub push, PR events) — not user-facing |
-| `/api/observability` | JSON observability snapshot — mostly for debugging |
+| `/` | Project overview or current project board |
+| `/projects/{projectId}` | One project's board |
+| `/projects/{projectId}/settings` | Project behavior settings |
+| `/prs` | PR review queue |
+| `/sessions/{id}` | Session detail and terminal |
+| `/projects/{projectId}/sessions/{id}` | Project-scoped session detail |
+| `/orchestrators?project={projectId}` | Pick or start an orchestrator session |
 
-Routes support a `?project={projectId}` query parameter to scope the view to a single project when multiple projects are configured.
+Internal API routes such as `/api/events`, `/api/sessions`, `/api/projects`, and `/api/spawn` are used by the dashboard. They are not a stable public API yet.
 
 ## Ports
 
-Three servers must be reachable for the full dashboard experience:
+The full dashboard experience uses three ports:
 
-| Service | Default port | Config key | Env var |
-|---------|-------------|------------|---------|
-| Dashboard (Next.js) | 3000 | `port` | `PORT` |
-| WebSocket mux (tmux PTY) | 14800 | `terminalPort` | `TERMINAL_PORT` |
-| Direct PTY WebSocket | 14801 | `directTerminalPort` | `DIRECT_TERMINAL_PORT` |
+| Service | Default | Config |
+|---------|---------|--------|
+| Dashboard HTTP | `3000` | `port` or `PORT` |
+| tmux terminal WebSocket | auto from `14800` | `terminalPort` or `TERMINAL_PORT` |
+| direct PTY WebSocket | auto from `14801` | `directTerminalPort` or `DIRECT_TERMINAL_PORT` |
 
-See [Remote access](/docs/configuration/remote-access) for how to expose these ports when running AO on a remote machine.
+For remote access, prefer Tailscale and keep AO off the public internet. See [Remote access](/docs/configuration/remote-access).
+
+## Troubleshooting
+
+**The board is empty**  
+Check that the project is registered and that you are viewing the right project filter.
+
+**A session looks stale**  
+Wait one poll cycle, then refresh. If PR data is stale, check for a rate-limit banner.
+
+**Terminal does not connect**  
+Make sure the terminal WebSocket port is reachable. If you use a reverse proxy, it must forward WebSocket upgrade headers.
+
+**A project cannot be edited**  
+Fix the local config first. The dashboard only writes behavior fields when the project config loads cleanly.
+
+**A session needs input**  
+Open the session detail page and send a short, direct instruction. The agent receives it in the running session.
+
+## Next Steps
+
+<Cards>
+  <Card title="Quickstart" href="/docs/quickstart" description="Start AO, spawn a session, and handle the first PR." />
+  <Card title="Configuration" href="/docs/configuration" description="Understand global registry and local project settings." />
+  <Card title="Remote access" href="/docs/configuration/remote-access" description="Open the dashboard from another device safely." />
+</Cards>

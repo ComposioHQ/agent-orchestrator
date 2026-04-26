@@ -6,7 +6,7 @@ description: Pick the agent that writes the code. AO supports five today, and th
 The agent is the piece that actually writes code. Everything else in AO — worktrees, runtimes, notifiers — is plumbing around it.
 
 <Callout type="info">
-**PR metadata is captured automatically.** Non-Claude-Code agents (Codex, Cursor, Aider, OpenCode) use `~/.ao/bin/gh` and `~/.ao/bin/git` [PATH wrappers](/docs/configuration/storage#path-wrappers) that intercept commands like `gh pr create` and record the resulting PR number and branch so the dashboard stays in sync. Claude Code uses PostToolUse hooks in `.claude/settings.json` instead — the same metadata is written through Claude Code's native hook system. Both approaches are set up transparently by AO; you don't need to configure anything.
+**PR metadata is captured automatically.** Non-Claude-Code agents (Codex, Cursor, Aider, OpenCode) use `~/.ao/bin/gh` and `~/.ao/bin/git` PATH wrappers that intercept commands like `gh pr create` and record the resulting PR number and branch so the dashboard stays in sync. Claude Code uses PostToolUse hooks in `.claude/settings.json` instead — the same metadata is written through Claude Code's native hook system. Both approaches are set up transparently by AO; you don't need to configure anything.
 </Callout>
 
 ## Supported agents

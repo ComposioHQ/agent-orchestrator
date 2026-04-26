@@ -265,7 +265,7 @@ Mitigations:
 
 **Webhook endpoint:** If you expose the dashboard publicly and have GitHub (or another tracker) configured, the `/api/webhooks` endpoint receives push events from GitHub. This endpoint is protected by a webhook secret configured in your tracker settings — verify the secret is set before exposing the port publicly.
 
-For more on where AO stores session data and secrets, see [Storage](/docs/configuration/storage).
+For more on project identity, local config, and runtime data, see [Configuration](/docs/configuration).
 
 ## Port reference
 
@@ -288,6 +288,6 @@ Note: When `terminalPort` and `directTerminalPort` are not set in the config or 
 
 ## See also
 
-- [Storage](/docs/configuration/storage) — data directory layout and session files
-- [Projects](/docs/configuration/projects) — per-project config options
+- [Configuration](/docs/configuration) — global registry and local project config
+- [Projects](/docs/configuration/projects) — per-project behavior options
 - [Troubleshooting](/docs/troubleshooting) — connection and port issues
