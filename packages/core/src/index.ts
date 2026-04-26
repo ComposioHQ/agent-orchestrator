@@ -198,6 +198,23 @@ export {
   readObservabilitySummary,
 } from "./observability.js";
 export { execGhObserved, getGhTraceFilePath } from "./gh-trace.js";
+export {
+  appendEvent,
+  readEventLog,
+  followEventLog,
+  createEventCorrelationId,
+  getEventLogPath,
+  getRotatedEventLogPath,
+} from "./event-log.js";
+export type {
+  EventLogEntry,
+  EventLogKind,
+  EventLogLevel,
+  EventLogProbeDetail,
+  AppendEventInput,
+  ReadEventLogOptions,
+  FollowEventLogHandle,
+} from "./event-log.js";
 export { resolveNotifierTarget } from "./notifier-resolution.js";
 export type {
   ObservabilityLevel,

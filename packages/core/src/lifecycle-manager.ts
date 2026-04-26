@@ -62,6 +62,7 @@ import {
   REPORT_WATCHER_METADATA_KEYS,
 } from "./report-watcher.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
+import { appendEvent, type EventLogProbeDetail } from "./event-log.js";
 import { resolveNotifierTarget } from "./notifier-resolution.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 import {
@@ -334,6 +335,19 @@ function primaryLifecycleReason(lifecycle: CanonicalSessionLifecycle): string {
     return lifecycle.runtime.reason;
   }
   return lifecycle.session.reason;
+}
+
+function extractProbeDetail(
+  state: string | null | undefined,
+  reason: string | null | undefined,
+  failed?: boolean,
+): EventLogProbeDetail | undefined {
+  if (!state && !reason) return undefined;
+  const detail: EventLogProbeDetail = {};
+  if (state) detail.state = state;
+  if (reason) detail.reason = reason;
+  if (typeof failed === "boolean") detail.failed = failed;
+  return detail;
 }
 
 function buildTransitionObservabilityData(
@@ -1156,6 +1170,34 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     reactionKey: string,
     reactionConfig: ReactionConfig,
   ): Promise<ReactionResult> {
+    const reactionCorrelationId = createCorrelationId("reaction");
+    const result = await executeReactionInner(sessionId, projectId, reactionKey, reactionConfig);
+    appendEvent(config, {
+      correlationId: reactionCorrelationId,
+      kind: "reaction",
+      component: "lifecycle-manager",
+      operation: `reaction.${result.action}`,
+      level: result.success ? "info" : "warn",
+      projectId,
+      sessionId,
+      reason: reactionKey,
+      data: {
+        reactionKey,
+        action: result.action,
+        success: result.success,
+        escalated: result.escalated,
+        message: reactionConfig.message ? "[configured]" : undefined,
+      },
+    });
+    return result;
+  }
+
+  async function executeReactionInner(
+    sessionId: SessionId,
+    projectId: string,
+    reactionKey: string,
+    reactionConfig: ReactionConfig,
+  ): Promise<ReactionResult> {
     const trackerKey = `${sessionId}:${reactionKey}`;
     let tracker = reactionTrackers.get(trackerKey);
 
@@ -1850,6 +1892,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // State transition detected
       states.set(session.id, newStatus);
       updateSessionMetadata(session, { status: newStatus });
+      const transitionData = buildTransitionObservabilityData(
+        previousLifecycle,
+        session.lifecycle,
+        oldStatus,
+        newStatus,
+        assessment.evidence,
+        assessment.detectingAttempts,
+        true,
+      );
       observer.recordOperation({
         metric: "lifecycle_poll",
         operation: "lifecycle.transition",
@@ -1858,16 +1909,29 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         projectId: session.projectId,
         sessionId: session.id,
         reason: primaryLifecycleReason(session.lifecycle),
-        data: buildTransitionObservabilityData(
-          previousLifecycle,
-          session.lifecycle,
-          oldStatus,
-          newStatus,
-          assessment.evidence,
-          assessment.detectingAttempts,
-          true,
-        ),
+        data: transitionData,
         level: transitionLogLevel(newStatus),
+      });
+      appendEvent(config, {
+        correlationId,
+        kind: "transition",
+        component: "lifecycle-manager",
+        operation: "lifecycle.transition",
+        level: transitionLogLevel(newStatus),
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: primaryLifecycleReason(session.lifecycle),
+        fromStatus: oldStatus,
+        toStatus: newStatus,
+        runtimeProbe: extractProbeDetail(
+          session.lifecycle.runtime.state,
+          session.lifecycle.runtime.reason,
+        ),
+        activityProbe: extractProbeDetail(
+          session.activity,
+          assessment.evidence,
+        ),
+        data: transitionData,
       });
 
       // Reset allCompleteEmitted when any session becomes active again
@@ -1966,24 +2030,44 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       states.set(session.id, newStatus);
       if (lifecycleChanged) {
         updateSessionMetadata(session, { status: newStatus });
+        const syncCorrelationId = createCorrelationId("lifecycle-sync");
+        const syncData = buildTransitionObservabilityData(
+          previousLifecycle,
+          session.lifecycle,
+          oldStatus,
+          newStatus,
+          assessment.evidence,
+          assessment.detectingAttempts,
+          false,
+        );
         observer.recordOperation({
           metric: "lifecycle_poll",
           operation: "lifecycle.sync",
           outcome: "success",
-          correlationId: createCorrelationId("lifecycle-sync"),
+          correlationId: syncCorrelationId,
           projectId: session.projectId,
           sessionId: session.id,
           reason: primaryLifecycleReason(session.lifecycle),
-          data: buildTransitionObservabilityData(
-            previousLifecycle,
-            session.lifecycle,
-            oldStatus,
-            newStatus,
-            assessment.evidence,
-            assessment.detectingAttempts,
-            false,
-          ),
+          data: syncData,
           level: transitionLogLevel(newStatus),
+        });
+        appendEvent(config, {
+          correlationId: syncCorrelationId,
+          kind: "probe",
+          component: "lifecycle-manager",
+          operation: "lifecycle.sync",
+          level: "info",
+          projectId: session.projectId,
+          sessionId: session.id,
+          reason: primaryLifecycleReason(session.lifecycle),
+          fromStatus: oldStatus,
+          toStatus: newStatus,
+          runtimeProbe: extractProbeDetail(
+            session.lifecycle.runtime.state,
+            session.lifecycle.runtime.reason,
+          ),
+          activityProbe: extractProbeDetail(session.activity, assessment.evidence),
+          data: syncData,
         });
       }
     }
@@ -2212,6 +2296,19 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           },
         });
       }
+      appendEvent(config, {
+        correlationId,
+        kind: "lifecycle",
+        component: "lifecycle-manager",
+        operation: "lifecycle.poll",
+        level: "info",
+        projectId: scopedProjectId,
+        durationMs: Date.now() - startedAt,
+        data: {
+          sessionCount: sessions.length,
+          activeSessionCount: activeSessions.length,
+        },
+      });
     } catch (err) {
       const errorReason = err instanceof Error ? err.message : String(err);
       observer.recordOperation({
@@ -2231,6 +2328,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         correlationId,
         reason: errorReason,
         details: scopedProjectId ? { projectId: scopedProjectId } : { projectScope: "all" },
+      });
+      appendEvent(config, {
+        correlationId,
+        kind: "lifecycle",
+        component: "lifecycle-manager",
+        operation: "lifecycle.poll",
+        level: "error",
+        projectId: scopedProjectId,
+        durationMs: Date.now() - startedAt,
+        reason: errorReason,
       });
     } finally {
       polling = false;

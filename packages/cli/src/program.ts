@@ -15,6 +15,7 @@ import { registerUpdate } from "./commands/update.js";
 import { registerSetup } from "./commands/setup.js";
 import { registerPlugin } from "./commands/plugin.js";
 import { registerCompletion } from "./commands/completion.js";
+import { registerLogs } from "./commands/logs.js";
 import { getConfigInstruction } from "./lib/config-instruction.js";
 import { getCliVersion } from "./options/version.js";
 
@@ -45,6 +46,7 @@ export function createProgram(): Command {
   registerSetup(program);
   registerPlugin(program);
   registerCompletion(program);
+  registerLogs(program);
 
   program
     .command("config-help")

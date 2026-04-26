@@ -11,7 +11,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { resolve, basename } from "node:path";
+import { join, resolve, basename } from "node:path";
 import { cwd } from "node:process";
 import chalk from "chalk";
 import ora from "ora";
@@ -39,7 +39,9 @@ import {
   type ProjectConfig,
   type ParsedRepoUrl,
   writeLocalProjectConfig,
+  getObservabilityBaseDir,
 } from "@aoagents/ao-core";
+import { teeChildOutput } from "../lib/tee-log.js";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { exec, execSilent, git } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -883,13 +885,23 @@ async function startDashboard(
   // Default is optimized production server for faster loading.
   const useDevServer = isMonorepo && devMode === true;
 
+  // Route the child's stdout/stderr through a tee so it is mirrored to the
+  // parent terminal AND persisted to `<observability>/dashboard.log`. This
+  // closes the "daemon logs are piped but not stored" gap in #1457.
+  const dashboardLogPath = configPath
+    ? join(getObservabilityBaseDir(configPath), "dashboard.log")
+    : null;
+  const childStdio: ("pipe" | "ignore" | "inherit")[] = dashboardLogPath
+    ? ["ignore", "pipe", "pipe"]
+    : ["inherit", "inherit", "inherit"];
+
   let child: ChildProcess;
   if (useDevServer) {
     // Monorepo with --dev: use pnpm run dev (tsx watch, HMR, etc.)
     console.log(chalk.dim("  Mode: development (HMR enabled)"));
     child = spawn("pnpm", ["run", "dev"], {
       cwd: webDir,
-      stdio: "inherit",
+      stdio: childStdio,
       detached: false,
       env,
     });
@@ -902,10 +914,15 @@ async function startDashboard(
     const startScript = resolve(webDir, "dist-server", "start-all.js");
     child = spawn("node", [startScript], {
       cwd: webDir,
-      stdio: "inherit",
+      stdio: childStdio,
       detached: false,
       env,
     });
+  }
+
+  if (dashboardLogPath) {
+    teeChildOutput(child, dashboardLogPath);
+    console.log(chalk.dim(`  Logs: ${dashboardLogPath}`));
   }
 
   child.on("error", (err) => {
