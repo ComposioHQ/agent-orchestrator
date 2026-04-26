@@ -20,7 +20,7 @@ import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js
 type ClientMessage =
   | { ch: "terminal"; id: string; type: "data"; data: string }
   | { ch: "terminal"; id: string; type: "resize"; cols: number; rows: number }
-  | { ch: "terminal"; id: string; type: "open" }
+  | { ch: "terminal"; id: string; type: "open"; tmuxName?: string }
   | { ch: "terminal"; id: string; type: "close" }
   | { ch: "system"; type: "ping" }
   | { ch: "subscribe"; topics: ("sessions")[] };
@@ -246,13 +246,15 @@ class TerminalManager {
    * Open/attach to a terminal. If already open, just return.
    * If has subscribers but PTY crashed, re-attach.
    */
-  open(id: string): string {
+  open(id: string, tmuxName?: string): string {
     // Validate and resolve
     if (!validateSessionId(id)) {
       throw new Error(`Invalid session ID: ${id}`);
     }
 
-    const tmuxSessionId = resolveTmuxSession(id, this.TMUX);
+    // Use provided tmuxName, or reuse from existing terminal entry, or resolve
+    const existing = this.terminals.get(id);
+    const tmuxSessionId = tmuxName ?? existing?.tmuxSessionId ?? resolveTmuxSession(id, this.TMUX);
     if (!tmuxSessionId) {
       throw new Error(`Session not found: ${id}`);
     }
@@ -499,7 +501,7 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
           try {
             if (type === "open") {
               // Validate session exists
-              terminalManager.open(id);
+              terminalManager.open(id, "tmuxName" in msg ? msg.tmuxName : undefined);
 
               // Send opened confirmation (idempotent — safe to send on re-open)
               const openedMsg: ServerMessage = { ch: "terminal", id, type: "opened" };

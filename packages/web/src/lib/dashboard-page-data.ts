@@ -6,10 +6,9 @@ import {
   type DashboardOrchestratorLink,
   type DashboardAttentionZoneMode,
 } from "@/lib/types";
-import { getServices, getSCM } from "@/lib/services";
+import { getServices } from "@/lib/services";
 import {
   sessionToDashboard,
-  resolveProject,
   enrichSessionPR,
   enrichSessionsMetadataFast,
   listDashboardOrchestrators,
@@ -126,23 +125,10 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
     console.warn("[dashboard-page-data] metadata fast enrichment failed:", err);
   }
 
-  // PR cache hits only (in-memory lookup, no SCM API calls).
+  // PR enrichment from session metadata (no API calls).
   for (let i = 0; i < coreSessions.length; i++) {
-    const core = coreSessions[i];
-    if (!core.pr) continue;
-    try {
-      const projectConfig = resolveProject(core, config.projects);
-      const scm = getSCM(registry, projectConfig);
-      if (scm) {
-        try {
-          await enrichSessionPR(pageData.sessions[i], scm, core.pr, { cacheOnly: true });
-        } catch {
-          // Preserve the base session payload if PR enrichment fails.
-        }
-      }
-    } catch (err) {
-      console.warn(`[dashboard-page-data] PR enrichment failed for session ${core.id}:`, err);
-    }
+    if (!coreSessions[i].pr) continue;
+    enrichSessionPR(pageData.sessions[i]);
   }
 
   return pageData;

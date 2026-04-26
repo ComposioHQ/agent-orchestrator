@@ -86,6 +86,39 @@ describe("restore", () => {
     expect(meta!["createdAt"]).toBe("2025-01-01T00:00:00.000Z");
   });
 
+  it("forwards AO_AGENT_GH_TRACE into restored agent runtime env when configured", async () => {
+    const wsPath = join(tmpDir, "ws-app-1-trace");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    const previousTrace = process.env["AO_AGENT_GH_TRACE"];
+    process.env["AO_AGENT_GH_TRACE"] = "/tmp/restored-agent-gh-trace-test.jsonl";
+
+    try {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      await sm.restore("app-1");
+
+      expect(mockRuntime.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          environment: expect.objectContaining({
+            AO_AGENT_GH_TRACE: "/tmp/restored-agent-gh-trace-test.jsonl",
+            AO_CALLER_TYPE: "agent",
+          }),
+        }),
+      );
+    } finally {
+      if (previousTrace === undefined) delete process.env["AO_AGENT_GH_TRACE"];
+      else process.env["AO_AGENT_GH_TRACE"] = previousTrace;
+    }
+  });
+
   it("continues restore even if old runtime destroy fails", async () => {
     const wsPath = join(tmpDir, "ws-app-1");
     mkdirSync(wsPath, { recursive: true });

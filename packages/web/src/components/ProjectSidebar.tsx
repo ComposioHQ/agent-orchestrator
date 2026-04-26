@@ -9,6 +9,7 @@ import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@
 import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { getSessionTitle, humanizeBranch } from "@/lib/format";
 import { usePopoverClamp } from "@/hooks/usePopoverClamp";
+import { getOrchestratorSessionId } from "@/lib/orchestrator-utils";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 import { ThemeToggle } from "./ThemeToggle";
 import { AddProjectModal } from "./AddProjectModal";
@@ -389,10 +390,12 @@ function ProjectSidebarInner({
           const visibleSessions = workerSessions;
           const hasActiveSessions = visibleSessions.length > 0;
 
+          const projectPrefix = prefixByProject.get(project.id);
+          const canonicalOrchestratorId = projectPrefix
+            ? getOrchestratorSessionId({ sessionPrefix: projectPrefix })
+            : null;
           const orchestratorSession = sessions?.find(
-            (s) =>
-              isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes) &&
-              s.projectId === project.id,
+            (s) => s.projectId === project.id && s.id === canonicalOrchestratorId,
           );
 
           return (

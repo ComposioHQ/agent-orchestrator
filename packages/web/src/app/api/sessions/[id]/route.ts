@@ -1,6 +1,6 @@
 import { type NextRequest } from "next/server";
 import { getSessionsDir, readAgentReportAuditTrailAsync } from "@aoagents/ao-core";
-import { getServices, getSCM } from "@/lib/services";
+import { getServices } from "@/lib/services";
 import {
   sessionToDashboard,
   resolveProject,
@@ -12,8 +12,6 @@ import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/l
 
 const AGENT_REPORT_AUDIT_TIMEOUT_MS = 1000;
 const METADATA_ENRICH_TIMEOUT_MS = 3000;
-const PR_CACHE_ENRICH_TIMEOUT_MS = 1000;
-const PR_LIVE_ENRICH_TIMEOUT_MS = 2000;
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const correlationId = getCorrelationId(_request);
@@ -43,27 +41,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       METADATA_ENRICH_TIMEOUT_MS,
     );
 
-    // Enrich PR — serve cache immediately, refresh in background if stale
+    // Enrich PR from session metadata (written by CLI lifecycle)
     if (coreSession.pr) {
-      const scm = getSCM(registry, project);
-      if (scm) {
-        let cached = false;
-        const cachedSettled = await settlesWithin(
-          enrichSessionPR(dashboardSession, scm, coreSession.pr, {
-            cacheOnly: true,
-          }).then((result) => {
-            cached = result;
-          }),
-          PR_CACHE_ENRICH_TIMEOUT_MS,
-        );
-        if (!cached) {
-          // Nothing cached yet — block once to populate, then future calls use cache
-          await settlesWithin(
-            enrichSessionPR(dashboardSession, scm, coreSession.pr),
-            cachedSettled ? PR_LIVE_ENRICH_TIMEOUT_MS : PR_CACHE_ENRICH_TIMEOUT_MS + PR_LIVE_ENRICH_TIMEOUT_MS,
-          );
-        }
-      }
+      enrichSessionPR(dashboardSession);
     }
 
     recordApiObservation({

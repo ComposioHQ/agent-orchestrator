@@ -4,19 +4,16 @@
  * Uses the `gh` CLI for all GitHub API interactions.
  */
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import type {
-  PluginModule,
-  Tracker,
-  Issue,
-  IssueFilters,
-  IssueUpdate,
-  CreateIssueInput,
-  ProjectConfig,
+import {
+  execGhObserved,
+  type PluginModule,
+  type Tracker,
+  type Issue,
+  type IssueFilters,
+  type IssueUpdate,
+  type CreateIssueInput,
+  type ProjectConfig,
 } from "@aoagents/ao-core";
-
-const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -24,11 +21,7 @@ const execFileAsync = promisify(execFile);
 
 async function gh(args: string[]): Promise<string> {
   try {
-    const { stdout } = await execFileAsync("gh", args, {
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 30_000,
-    });
-    return stdout.trim();
+    return await execGhObserved(args, { component: "tracker-github" }, 30_000);
   } catch (err) {
     throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
       cause: err,
@@ -121,47 +114,106 @@ function requireRepo(project: ProjectConfig): string {
   return project.repo;
 }
 
+// Issue cache: 5 min TTL, bounded to 500 entries. Issue metadata (title, body,
+// labels, state) rarely changes during a session, and the lifecycle worker
+// polls `getIssue` / `isCompleted` repeatedly — same (repo, id) seen 64+ times
+// per 5-session tier-5 run in our traces.
+const ISSUE_CACHE_TTL_MS = 5 * 60_000;
+const ISSUE_CACHE_MAX = 500;
+
+interface CachedIssue {
+  issue: Issue;
+  expiresAt: number;
+}
+
+function issueCacheKey(repo: string, identifier: string): string {
+  return `${repo}#${identifier.replace(/^#/, "")}`;
+}
+
 function createGitHubTracker(): Tracker {
-  return {
+  const issueCache = new Map<string, CachedIssue>();
+  const inflight = new Map<string, Promise<Issue>>();
+
+  function readCachedIssue(repo: string, identifier: string): Issue | null {
+    const key = issueCacheKey(repo, identifier);
+    const entry = issueCache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      issueCache.delete(key);
+      return null;
+    }
+    return entry.issue;
+  }
+
+  function writeCachedIssue(repo: string, identifier: string, issue: Issue): void {
+    if (issueCache.size >= ISSUE_CACHE_MAX) {
+      const oldest = issueCache.keys().next().value;
+      if (oldest !== undefined) issueCache.delete(oldest);
+    }
+    issueCache.set(issueCacheKey(repo, identifier), {
+      issue,
+      expiresAt: Date.now() + ISSUE_CACHE_TTL_MS,
+    });
+  }
+
+  function invalidateCachedIssue(repo: string, identifier: string): void {
+    issueCache.delete(issueCacheKey(repo, identifier));
+  }
+
+  const tracker: Tracker = {
     name: "github",
 
     async getIssue(identifier: string, project: ProjectConfig): Promise<Issue> {
-      const raw = await ghIssueViewJson(identifier, project);
+      const repo = requireRepo(project);
+      const cached = readCachedIssue(repo, identifier);
+      if (cached) return cached;
 
-      const data: {
-        number: number;
-        title: string;
-        body: string;
-        url: string;
-        state: string;
-        stateReason?: string | null;
-        labels: Array<{ name: string }>;
-        assignees: Array<{ login: string }>;
-      } = JSON.parse(raw);
+      // Deduplicate concurrent requests for the same issue
+      const key = issueCacheKey(repo, identifier);
+      const pending = inflight.get(key);
+      if (pending) return pending;
 
-      return {
-        id: String(data.number),
-        title: data.title,
-        description: data.body ?? "",
-        url: data.url,
-        state: mapState(data.state, data.stateReason),
-        labels: data.labels.map((l) => l.name),
-        assignee: data.assignees[0]?.login,
-      };
+      const promise = (async () => {
+        const raw = await ghIssueViewJson(identifier, project);
+
+        const data: {
+          number: number;
+          title: string;
+          body: string;
+          url: string;
+          state: string;
+          stateReason?: string | null;
+          labels: Array<{ name: string }>;
+          assignees: Array<{ login: string }>;
+        } = JSON.parse(raw);
+
+        const issue: Issue = {
+          id: String(data.number),
+          title: data.title,
+          description: data.body ?? "",
+          url: data.url,
+          state: mapState(data.state, data.stateReason),
+          labels: data.labels.map((l) => l.name),
+          assignee: data.assignees[0]?.login,
+        };
+
+        writeCachedIssue(repo, identifier, issue);
+        return issue;
+      })();
+
+      inflight.set(key, promise);
+      try {
+        return await promise;
+      } finally {
+        inflight.delete(key);
+      }
     },
 
     async isCompleted(identifier: string, project: ProjectConfig): Promise<boolean> {
-      const raw = await gh([
-        "issue",
-        "view",
-        identifier,
-        "--repo",
-        requireRepo(project),
-        "--json",
-        "state",
-      ]);
-      const data: { state: string } = JSON.parse(raw);
-      return data.state.toUpperCase() === "CLOSED";
+      // Route through getIssue so the cache covers the hot isCompleted poll path too.
+      // "closed" and "cancelled" (CLOSED + NOT_PLANNED stateReason) both count as completed.
+      const issue = await tracker.getIssue(identifier, project);
+      return issue.state === "closed" || issue.state === "cancelled";
     },
 
     issueUrl(identifier: string, project: ProjectConfig): string {
@@ -204,6 +256,8 @@ function createGitHubTracker(): Tracker {
       }
 
       lines.push(
+        "",
+        "The issue context above is complete and current. You should not need to call gh issue view unless you need additional context beyond what is provided here.",
         "",
         "Please implement the changes described in this issue. When done, commit and push your changes.",
       );
@@ -266,6 +320,8 @@ function createGitHubTracker(): Tracker {
       project: ProjectConfig,
     ): Promise<void> {
       const repo = requireRepo(project);
+      // Any mutation invalidates the cached Issue for this (repo, identifier).
+      invalidateCachedIssue(repo, identifier);
       // Handle state change — GitHub Issues only supports open/closed.
       // "in_progress" is not a GitHub state, so it is intentionally a no-op.
       if (update.state === "closed") {
@@ -357,9 +413,11 @@ function createGitHubTracker(): Tracker {
       }
       const number = match[1];
 
-      return this.getIssue(number, project);
+      return tracker.getIssue(number, project);
     },
   };
+
+  return tracker;
 }
 
 // ---------------------------------------------------------------------------

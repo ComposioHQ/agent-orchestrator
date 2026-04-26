@@ -275,6 +275,10 @@ export function deleteMetadata(dataDir: string, sessionId: SessionId, archive = 
   }
 
   unlinkSync(path);
+
+  // NOTE: .ghcache/<sessionId>/ is intentionally NOT deleted here.
+  // Cache files are small and useful for post-mortem analysis of wrapper
+  // cache hit/miss behavior. listMetadata() already ignores hidden dirs.
 }
 
 /**

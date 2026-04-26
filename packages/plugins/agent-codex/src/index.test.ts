@@ -412,27 +412,9 @@ describe("getEnvironment", () => {
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
   });
 
-  it("prepends ~/.ao/bin to PATH for shell wrappers", () => {
+  it("does not set PATH (injected by session-manager)", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["PATH"]).toMatch(/^.*\/\.ao\/bin:/);
-  });
-
-  it("PATH starts with the ao bin dir specifically", () => {
-    const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["PATH"]?.startsWith("/mock/home/.ao/bin:")).toBe(true);
-  });
-
-  it("puts /usr/local/bin before linuxbrew paths", () => {
-    const originalPath = process.env["PATH"];
-    process.env["PATH"] = "/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin";
-    try {
-      const env = agent.getEnvironment(makeLaunchConfig());
-      expect(env["PATH"]).toBe(
-        "/mock/home/.ao/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin",
-      );
-    } finally {
-      process.env["PATH"] = originalPath;
-    }
+    expect(env["PATH"]).toBeUndefined();
   });
 
   it("sets CODEX_DISABLE_UPDATE_CHECK=1 to suppress interactive update prompts", () => {
@@ -440,31 +422,9 @@ describe("getEnvironment", () => {
     expect(env["CODEX_DISABLE_UPDATE_CHECK"]).toBe("1");
   });
 
-  it("sets GH_PATH to preferred wrapper target", () => {
+  it("does not set GH_PATH (injected by session-manager)", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["GH_PATH"]).toBe("/usr/local/bin/gh");
-  });
-
-  it("deduplicates ao and /usr/local/bin entries", () => {
-    const originalPath = process.env["PATH"];
-    process.env["PATH"] = "/mock/home/.ao/bin:/usr/local/bin:/usr/bin:/usr/local/bin";
-    try {
-      const env = agent.getEnvironment(makeLaunchConfig());
-      expect(env["PATH"]).toBe("/mock/home/.ao/bin:/usr/local/bin:/usr/bin");
-    } finally {
-      process.env["PATH"] = originalPath;
-    }
-  });
-
-  it("falls back to /usr/bin:/bin when process.env.PATH is undefined", () => {
-    const originalPath = process.env["PATH"];
-    delete process.env["PATH"];
-    try {
-      const env = agent.getEnvironment(makeLaunchConfig());
-      expect(env["PATH"]).toBe("/mock/home/.ao/bin:/usr/local/bin:/usr/bin:/bin");
-    } finally {
-      process.env["PATH"] = originalPath;
-    }
+    expect(env["GH_PATH"]).toBeUndefined();
   });
 });
 
@@ -1718,8 +1678,10 @@ describe("postLaunchSetup", () => {
     mockExecFileAsync.mockRejectedValue(new Error("not found"));
     mockStat.mockRejectedValue(new Error("ENOENT"));
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
-    await agent.postLaunchSetup!(makeSession({ workspacePath: "/workspace/test" }));
-    expect(mockMkdir).toHaveBeenCalled();
+    // Should not throw — binary resolution runs even if it falls back to "codex"
+    await expect(
+      agent.postLaunchSetup!(makeSession({ workspacePath: "/workspace/test" })),
+    ).resolves.toBeUndefined();
   });
 
   it("returns early when session has no workspacePath", async () => {
@@ -1760,213 +1722,17 @@ describe("setupWorkspaceHooks", () => {
     expect(typeof agent.setupWorkspaceHooks).toBe("function");
   });
 
-  it("creates ~/.ao/bin directory", async () => {
-    // Version marker doesn't exist — triggers full install
+  it("is a no-op (PATH wrappers are installed by session-manager)", async () => {
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
-
     await agent.setupWorkspaceHooks!("/workspace/test", {
       dataDir: "/data",
       sessionId: "sess-1",
     });
-
-    expect(mockMkdir).toHaveBeenCalledWith("/mock/home/.ao/bin", { recursive: true });
-  });
-
-  it("writes ao-metadata-helper.sh with executable permissions via atomic write", async () => {
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    // Atomic write: writes to .tmp file first, then renames
-    const helperWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("ao-metadata-helper.sh.tmp."),
-    );
-    expect(helperWriteCall).toBeDefined();
-    expect(helperWriteCall![1]).toContain("update_ao_metadata()");
-    expect(helperWriteCall![2]).toEqual({ encoding: "utf-8", mode: 0o755 });
-
-    // Then renamed to final path
-    const helperRenameCall = mockRename.mock.calls.find(
-      (call: string[]) => typeof call[1] === "string" && call[1].endsWith("ao-metadata-helper.sh"),
-    );
-    expect(helperRenameCall).toBeDefined();
-  });
-
-  it("writes gh and git wrappers atomically when version marker is missing", async () => {
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    // gh wrapper: written to temp, then renamed
-    const ghWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("/gh.tmp."),
-    );
-    expect(ghWriteCall).toBeDefined();
-    expect(ghWriteCall![1]).toContain("ao gh wrapper");
-
-    const ghRenameCall = mockRename.mock.calls.find(
-      (call: string[]) => typeof call[1] === "string" && call[1].endsWith("/gh"),
-    );
-    expect(ghRenameCall).toBeDefined();
-
-    // git wrapper: written to temp, then renamed
-    const gitWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("/git.tmp."),
-    );
-    expect(gitWriteCall).toBeDefined();
-    expect(gitWriteCall![1]).toContain("ao git wrapper");
-
-    const gitRenameCall = mockRename.mock.calls.find(
-      (call: string[]) => typeof call[1] === "string" && call[1].endsWith("/git"),
-    );
-    expect(gitRenameCall).toBeDefined();
-  });
-
-  it("sets executable permissions on gh and git wrappers via writeFile mode", async () => {
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    const ghWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("/gh.tmp."),
-    );
-    expect(ghWriteCall![2]).toEqual({ encoding: "utf-8", mode: 0o755 });
-
-    const gitWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("/git.tmp."),
-    );
-    expect(gitWriteCall![2]).toEqual({ encoding: "utf-8", mode: 0o755 });
-  });
-
-  it("skips wrapper writes when version marker matches", async () => {
-    // First call for version marker — matches current version
-    // Second call for AGENTS.md — file doesn't exist
-    mockReadFile.mockImplementation((path: string) => {
-      if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.3.0");
-      }
-      // AGENTS.md read attempt
-      return Promise.reject(new Error("ENOENT"));
-    });
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    // Should NOT write any wrappers when version matches (helper, gh, git all skipped)
-    const wrapperWrites = mockWriteFile.mock.calls.filter(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" &&
-        (call[0].includes("ao-metadata-helper.sh.tmp.") ||
-          call[0].includes("/gh.tmp.") ||
-          call[0].includes("/git.tmp.")),
-    );
-    expect(wrapperWrites).toHaveLength(0);
-  });
-
-  it("writes version marker after installing wrappers", async () => {
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    // Version marker is also atomically written
-    const versionWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes(".ao-version.tmp."),
-    );
-    expect(versionWriteCall).toBeDefined();
-    expect(versionWriteCall![1]).toBe("0.3.0");
-
-    const versionRenameCall = mockRename.mock.calls.find(
-      (call: string[]) => typeof call[1] === "string" && call[1].endsWith(".ao-version"),
-    );
-    expect(versionRenameCall).toBeDefined();
-  });
-
-  it("writes ao session context to .ao/AGENTS.md", async () => {
-    // Version marker matches (skip wrapper install)
-    mockReadFile.mockImplementation((path: string) => {
-      if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.3.0");
-      }
-      return Promise.reject(new Error("ENOENT"));
-    });
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    const agentsMdCall = mockWriteFile.mock.calls.find(
-      (call: string[]) => typeof call[0] === "string" && call[0].includes(".ao/AGENTS.md"),
-    );
-    expect(agentsMdCall).toBeDefined();
-    expect(agentsMdCall![1]).toContain("Agent Orchestrator (ao) Session");
-  });
-
-  it("uses atomic write (temp + rename) to prevent partial reads from concurrent sessions", async () => {
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    // Every wrapper file should be written to a .tmp file first, then renamed
-    // This ensures concurrent readers never see a partially written file
-    const tmpWrites = mockWriteFile.mock.calls.filter(
-      (call: [string, string, object]) => typeof call[0] === "string" && call[0].includes(".tmp."),
-    );
-    const renames = mockRename.mock.calls;
-
-    // We expect atomic writes for: helper, gh, git, version marker = 4
-    expect(tmpWrites.length).toBe(4);
-    expect(renames.length).toBe(4);
-
-    // Each rename should move a .tmp file to the final path
-    for (const [src, dst] of renames) {
-      expect(src).toContain(".tmp.");
-      expect(dst).not.toContain(".tmp.");
-    }
-  });
-
-  it("writes .ao/AGENTS.md without modifying repo-tracked AGENTS.md", async () => {
-    mockReadFile.mockImplementation((path: string) => {
-      if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.3.0");
-      }
-      return Promise.reject(new Error("ENOENT"));
-    });
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    // Should write to .ao/AGENTS.md, NOT to workspace root AGENTS.md
-    const allWrites = mockWriteFile.mock.calls.filter(
-      (call: string[]) => typeof call[0] === "string" && call[0].endsWith("AGENTS.md"),
-    );
-    expect(allWrites).toHaveLength(1);
-    expect(allWrites[0]![0]).toContain(".ao/AGENTS.md");
+    // Plugin no longer writes wrappers — session-manager handles it.
+    // mkdir/writeFile/rename should not be called by the plugin.
+    expect(mockMkdir).not.toHaveBeenCalled();
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(mockRename).not.toHaveBeenCalled();
   });
 });
 
@@ -1974,22 +1740,20 @@ describe("setupWorkspaceHooks", () => {
 // Shell wrapper content verification
 // =========================================================================
 describe("shell wrapper content", () => {
-  const agent = create();
-
   beforeEach(() => {
     // Force wrapper installation by making version marker miss
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
   });
 
   async function getWrapperContent(name: string): Promise<string> {
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
+    // Wrappers are now installed by session-manager via setupPathWrapperWorkspace.
+    // Import and call it directly to test wrapper content.
+    const { setupPathWrapperWorkspace } = await import("@aoagents/ao-core");
+    await setupPathWrapperWorkspace("/workspace/test");
 
     // With atomic writes, content is written to a .tmp. file
     const call = mockWriteFile.mock.calls.find(
-      (c: [string, string, object]) => typeof c[0] === "string" && c[0].includes(`/${name}.tmp.`),
+      (c: unknown[]) => typeof c[0] === "string" && (c[0] as string).includes(`/${name}.tmp.`),
     );
     return call ? (call[1] as string) : "";
   }
@@ -2055,9 +1819,9 @@ describe("shell wrapper content", () => {
       expect(content).toContain("pr/create)");
     });
 
-    it("uses exec for non-PR commands (transparent passthrough)", async () => {
+    it("passes through non-PR commands to real gh", async () => {
       const content = await getWrapperContent("gh");
-      expect(content).toContain('exec "$real_gh"');
+      expect(content).toContain('"$real_gh" "$@"');
     });
 
     it("prefers GH_PATH when provided and executable", async () => {

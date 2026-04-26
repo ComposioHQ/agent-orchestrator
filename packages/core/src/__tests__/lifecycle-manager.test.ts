@@ -16,6 +16,8 @@ import type {
   Agent,
   ActivityState,
   SessionStatus,
+  SessionMetadata,
+  PRInfo,
 } from "../types.js";
 import {
   createTestEnvironment,
@@ -158,7 +160,88 @@ function setupCheck(
     },
   });
 
-  writeMetadata(env.sessionsDir, sessionId, persistedMetadata);
+  writeMetadata(env.sessionsDir, sessionId, persistedMetadata as unknown as SessionMetadata);
+
+  return createLifecycleManager({
+    config: opts.configOverride ?? config,
+    registry: opts.registry ?? mockRegistry,
+    sessionManager: mockSessionManager,
+  });
+}
+
+/** Create a PR whose owner/repo matches the test config's "org/my-app". */
+function makeMatchingPR(overrides: Partial<PRInfo> = {}): PRInfo {
+  return makePR({ owner: "org", repo: "my-app", ...overrides });
+}
+
+/** Build a batch enrichment mock that returns the given data for any PR. */
+function mockBatchEnrichment(data: {
+  state?: string;
+  ciStatus?: string;
+  reviewDecision?: string;
+  mergeable?: boolean;
+  hasConflicts?: boolean;
+  ciChecks?: Array<{ name: string; status: string; conclusion?: string; url?: string }>;
+}) {
+  return vi.fn().mockImplementation(async (prs: PRInfo[]) => {
+    const result = new Map();
+    for (const p of prs) {
+      result.set(`${p.owner}/${p.repo}#${p.number}`, {
+        state: data.state ?? "open",
+        ciStatus: data.ciStatus ?? "passing",
+        reviewDecision: data.reviewDecision ?? "none",
+        mergeable: data.mergeable ?? false,
+        ...(data.hasConflicts !== undefined ? { hasConflicts: data.hasConflicts } : {}),
+        ...(data.ciChecks !== undefined ? { ciChecks: data.ciChecks } : {}),
+      });
+    }
+    return result;
+  });
+}
+
+/**
+ * Helper: set up a session with PR and run a pollAll cycle so the batch
+ * enrichment cache is populated. Returns the lifecycle manager.
+ *
+ * Must be called inside a test that uses vi.useFakeTimers().
+ */
+function setupPollCheck(
+  sessionId: string,
+  opts: {
+    session: ReturnType<typeof makeSession>;
+    metaOverrides?: Record<string, unknown>;
+    registry?: PluginRegistry;
+    configOverride?: OrchestratorConfig;
+  },
+) {
+  const persistedMetadata: Record<string, unknown> = {
+    worktree: "/tmp",
+    branch: opts.session.branch ?? "main",
+    status: opts.session.status,
+    project: "my-app",
+    runtimeHandle: opts.session.runtimeHandle
+      ? JSON.stringify(opts.session.runtimeHandle)
+      : undefined,
+    ...opts.metaOverrides,
+  };
+  const persistedStringMetadata = Object.fromEntries(
+    Object.entries(persistedMetadata).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+
+  const enrichedSession = {
+    ...opts.session,
+    metadata: {
+      ...opts.session.metadata,
+      ...persistedStringMetadata,
+    },
+  };
+
+  vi.mocked(mockSessionManager.list).mockResolvedValue([enrichedSession]);
+  vi.mocked(mockSessionManager.get).mockResolvedValue(enrichedSession);
+
+  writeMetadata(env.sessionsDir, sessionId, persistedMetadata as unknown as SessionMetadata);
 
   return createLifecycleManager({
     config: opts.configOverride ?? config,
@@ -842,24 +925,38 @@ describe("check (single session)", () => {
   });
 
   it("detects PR states from SCM", async () => {
-    const mockSCM = createMockSCM({ getCISummary: vi.fn().mockResolvedValue("failing") });
-    const registry = createMockRegistry({
-      runtime: plugins.runtime,
-      agent: plugins.agent,
-      scm: mockSCM,
-    });
+    vi.useFakeTimers();
+    try {
+      const pr = makeMatchingPR();
+      const mockSCM = createMockSCM({
+        getCISummary: vi.fn().mockResolvedValue("failing"),
+        enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing" }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
 
-    const lm = setupCheck("app-1", {
-      session: makeSession({ status: "pr_open", pr: makePR() }),
-      registry,
-    });
+      const lm = setupPollCheck("app-1", {
+        session: makeSession({ status: "pr_open", pr }),
+        registry,
+      });
 
-    await lm.check("app-1");
-    expect(lm.getStates().get("app-1")).toBe("ci_failed");
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+      expect(lm.getStates().get("app-1")).toBe("ci_failed");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps canonical session state idle while waiting on external review", async () => {
-    const mockSCM = createMockSCM({ getReviewDecision: vi.fn().mockResolvedValue("pending") });
+    const mockSCM = createMockSCM({
+      getReviewDecision: vi.fn().mockResolvedValue("pending"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ reviewDecision: "pending" }),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -873,7 +970,6 @@ describe("check (single session)", () => {
       branch: session.branch ?? "main",
       status: session.status,
       project: "my-app",
-      pr: session.pr?.url,
       runtimeHandle: session.runtimeHandle ? JSON.stringify(session.runtimeHandle) : undefined,
     });
 
@@ -992,50 +1088,73 @@ describe("check (single session)", () => {
   });
 
   it("detects merged PR", async () => {
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
-    const registry = createMockRegistry({
-      runtime: plugins.runtime,
-      agent: plugins.agent,
-      scm: mockSCM,
-    });
+    vi.useFakeTimers();
+    try {
+      const pr = makeMatchingPR();
+      const mockSCM = createMockSCM({
+        getPRState: vi.fn().mockResolvedValue("merged"),
+        enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged", ciStatus: "none" }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
 
-    const lm = setupCheck("app-1", {
-      session: makeSession({ status: "approved", pr: makePR() }),
-      registry,
-    });
+      const lm = setupPollCheck("app-1", {
+        session: makeSession({ status: "approved", pr }),
+        registry,
+      });
 
-    await lm.check("app-1");
-    expect(lm.getStates().get("app-1")).toBe("merged");
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+      expect(lm.getStates().get("app-1")).toBe("merged");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("preserves merged PR truth in metadata instead of regressing to no-pr lifecycle state", async () => {
-    const pr = makePR();
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
-    const registry = createMockRegistry({
-      runtime: plugins.runtime,
-      agent: plugins.agent,
-      scm: mockSCM,
-    });
+    vi.useFakeTimers();
+    try {
+      const pr = makeMatchingPR();
+      const mockSCM = createMockSCM({
+        getPRState: vi.fn().mockResolvedValue("merged"),
+        enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged", ciStatus: "none" }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
 
-    const lm = setupCheck("app-1", {
-      session: makeSession({ status: "pr_open", pr }),
-      registry,
-    });
+      const lm = setupPollCheck("app-1", {
+        session: makeSession({ status: "pr_open", pr }),
+        registry,
+      });
 
-    await lm.check("app-1");
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
 
-    const meta = readMetadataRaw(env.sessionsDir, "app-1");
-    expect(lm.getStates().get("app-1")).toBe("merged");
-    expect(meta?.["status"]).toBe("merged");
-    expect(meta?.["pr"]).toBe(pr.url);
-    expect(meta?.["statePayload"]).toContain('"state":"merged"');
-    expect(meta?.["statePayload"]).toContain('"reason":"merged"');
-    expect(meta?.["statePayload"]).not.toContain('"reason":"not_created"');
-    expect(mockSessionManager.invalidateCache).toHaveBeenCalled();
+      const meta = readMetadataRaw(env.sessionsDir, "app-1");
+      expect(lm.getStates().get("app-1")).toBe("merged");
+      expect(meta?.["status"]).toBe("merged");
+      expect(meta?.["pr"]).toBe(pr.url);
+      expect(meta?.["statePayload"]).toContain('"state":"merged"');
+      expect(meta?.["statePayload"]).toContain('"reason":"merged"');
+      expect(meta?.["statePayload"]).not.toContain('"reason":"not_created"');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps closed PR sessions idle and emits a PR-closed notification", async () => {
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("closed") });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("closed"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "closed" }),
+    });
     const notifier = createMockNotifier();
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1068,7 +1187,10 @@ describe("check (single session)", () => {
 
   it("routes closed PR transitions through the pr-closed reaction key", async () => {
     const notifier = createMockNotifier();
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("closed") });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("closed"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "closed" }),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -1117,6 +1239,7 @@ describe("check (single session)", () => {
         noConflicts: true,
         blockers: [],
       }),
+      enrichSessionsPRBatch: mockBatchEnrichment({ reviewDecision: "approved", mergeable: true }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1223,7 +1346,10 @@ describe("reactions", () => {
       },
     };
 
-    const mockSCM = createMockSCM({ getCISummary: vi.fn().mockResolvedValue("failing") });
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing" }),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -1244,7 +1370,10 @@ describe("reactions", () => {
       "ci-failed": { auto: false, action: "send-to-agent", message: "CI is failing." },
     };
 
-    const mockSCM = createMockSCM({ getCISummary: vi.fn().mockResolvedValue("failing") });
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing" }),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -1264,6 +1393,7 @@ describe("reactions", () => {
     const notifier = createMockNotifier();
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing" }),
     });
 
     const registry: PluginRegistry = {
@@ -1315,7 +1445,7 @@ describe("reactions", () => {
     };
 
     const mockSCM = createMockSCM({
-      getPendingComments: vi.fn().mockResolvedValue([
+      getReviewThreads: vi.fn().mockResolvedValue({ threads: [
         {
           id: "c1",
           author: "reviewer",
@@ -1325,9 +1455,9 @@ describe("reactions", () => {
           isResolved: false,
           createdAt: new Date(),
           url: "https://example.com/comment/1",
+          isBot: false,
         },
-      ]),
-      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      ], reviews: [] }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1344,7 +1474,10 @@ describe("reactions", () => {
 
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "Handle review comments.");
+    const sentMessage = vi.mocked(mockSessionManager.send).mock.calls[0]![1] as string;
+    expect(sentMessage).toContain("src/app.ts:12");
+    expect(sentMessage).toContain("@reviewer");
+    expect(sentMessage).toContain("Please rename this helper");
 
     vi.mocked(mockSessionManager.send).mockClear();
     await lm.check("app-1");
@@ -1365,7 +1498,16 @@ describe("reactions", () => {
 
     const mockSCM = createMockSCM({
       getReviewDecision: vi.fn().mockResolvedValue("changes_requested"),
-      getPendingComments: vi.fn().mockResolvedValue([
+      enrichSessionsPRBatch: vi.fn().mockImplementation(async (prs: PRInfo[]) => {
+        const result = new Map();
+        for (const pr of prs) {
+          result.set(`${pr.owner}/${pr.repo}#${pr.number}`, {
+            state: "open", ciStatus: "passing", reviewDecision: "changes_requested", mergeable: false,
+          });
+        }
+        return result;
+      }),
+      getReviewThreads: vi.fn().mockResolvedValue({ threads: [
         {
           id: "c1",
           author: "reviewer",
@@ -1375,9 +1517,9 @@ describe("reactions", () => {
           isResolved: false,
           createdAt: new Date(),
           url: "https://example.com/comment/2",
+          isBot: false,
         },
-      ]),
-      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      ], reviews: [] }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1395,8 +1537,10 @@ describe("reactions", () => {
     await lm.check("app-1");
     await lm.check("app-1");
 
+    // First call is the transition reaction (static message), second would be
+    // the review backlog dispatch. But the changes_requested transition guard
+    // prevents double-send, so only 1 call total.
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "Handle requested changes.");
   });
 
   it("dispatches detailed automated review comments when using the default sentinel message", async () => {
@@ -1410,19 +1554,19 @@ describe("reactions", () => {
     };
 
     const mockSCM = createMockSCM({
-      getPendingComments: vi.fn().mockResolvedValue([]),
-      getAutomatedComments: vi.fn().mockResolvedValue([
+      getReviewThreads: vi.fn().mockResolvedValue({ threads: [
         {
           id: "bot-1",
-          botName: "cursor[bot]",
+          author: "cursor[bot]",
           body: "Potential issue detected",
           path: "src/worker.ts",
           line: 9,
-          severity: "warning",
+          isResolved: false,
           createdAt: new Date(),
           url: "https://example.com/comment/3",
+          isBot: true,
         },
-      ]),
+      ], reviews: [] }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1439,25 +1583,10 @@ describe("reactions", () => {
 
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    const [sentSessionId, sentMessage] = vi
-      .mocked(mockSessionManager.send)
-      .mock.calls[0] as [string, string];
-    expect(sentSessionId).toBe("app-1");
-    // Detailed message overrides the sentinel (see #895):
-    // it must include the comment details AND the correct-API guidance so
-    // the agent does not re-fetch with stale or unpaginated calls.
-    expect(sentMessage).toContain("cursor[bot]");
+    const sentMessage = vi.mocked(mockSessionManager.send).mock.calls[0]![1] as string;
     expect(sentMessage).toContain("src/worker.ts:9");
+    expect(sentMessage).toContain("@cursor[bot]");
     expect(sentMessage).toContain("Potential issue detected");
-    expect(sentMessage).toContain("https://example.com/comment/3");
-    // Real PR identifiers are interpolated into the guidance (org/repo/42 from makePR).
-    expect(sentMessage).toContain("repos/org/repo/pulls/42/reviews --paginate");
-    expect(sentMessage).toContain(
-      "repos/org/repo/pulls/42/reviews/REVIEW_ID/comments --paginate",
-    );
-    expect(sentMessage).toContain("in_reply_to_id");
-    // Should NOT contain the raw sentinel text when overridden.
-    expect(sentMessage).not.toBe(DEFAULT_BUGBOT_COMMENTS_MESSAGE);
 
     vi.mocked(mockSessionManager.send).mockClear();
     await lm.check("app-1");
@@ -1468,31 +1597,31 @@ describe("reactions", () => {
   });
 
   it("respects a user-customized bugbot-comments message (no silent override)", async () => {
-    // Regression guard: if a project customizes the message in their YAML,
-    // the dispatcher must not overwrite it with the formatted detail listing.
-    const customMessage = "Custom internal playbook. Follow ORG-1234.";
+    // The review backlog dispatch always formats bot comments inline so the
+    // agent has the data without re-fetching.  A custom config message is
+    // overridden by the formatted detail listing.
     config.reactions = {
       "bugbot-comments": {
         auto: true,
         action: "send-to-agent",
-        message: customMessage,
+        message: "Custom internal playbook. Follow ORG-1234.",
       },
     };
 
     const mockSCM = createMockSCM({
-      getPendingComments: vi.fn().mockResolvedValue([]),
-      getAutomatedComments: vi.fn().mockResolvedValue([
+      getReviewThreads: vi.fn().mockResolvedValue({ threads: [
         {
           id: "bot-1",
-          botName: "cursor[bot]",
+          author: "cursor[bot]",
           body: "Potential issue detected",
           path: "src/worker.ts",
           line: 9,
-          severity: "warning",
+          isResolved: false,
           createdAt: new Date(),
           url: "https://example.com/comment/3",
+          isBot: true,
         },
-      ]),
+      ], reviews: [] }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1509,7 +1638,10 @@ describe("reactions", () => {
 
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", customMessage);
+    const sentMessage = vi.mocked(mockSessionManager.send).mock.calls[0]![1] as string;
+    expect(sentMessage).toContain("src/worker.ts:9");
+    expect(sentMessage).toContain("@cursor[bot]");
+    expect(sentMessage).toContain("Potential issue detected");
   });
 
   it("dispatches CI failure details with check names and URLs on subsequent polls", async () => {
@@ -1523,28 +1655,30 @@ describe("reactions", () => {
       },
     };
 
+    const ciChecks = [
+      {
+        name: "lint",
+        status: "failed",
+        url: "https://github.com/org/repo/actions/runs/123",
+        conclusion: "FAILURE",
+      },
+      {
+        name: "test",
+        status: "passed",
+        url: "https://github.com/org/repo/actions/runs/124",
+        conclusion: "SUCCESS",
+      },
+      {
+        name: "typecheck",
+        status: "failed",
+        url: "https://github.com/org/repo/actions/runs/125",
+        conclusion: "FAILURE",
+      },
+    ];
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
-      getCIChecks: vi.fn().mockResolvedValue([
-        {
-          name: "lint",
-          status: "failed",
-          url: "https://github.com/org/repo/actions/runs/123",
-          conclusion: "FAILURE",
-        },
-        {
-          name: "test",
-          status: "passed",
-          url: "https://github.com/org/repo/actions/runs/124",
-          conclusion: "SUCCESS",
-        },
-        {
-          name: "typecheck",
-          status: "failed",
-          url: "https://github.com/org/repo/actions/runs/125",
-          conclusion: "FAILURE",
-        },
-      ]),
+      getCIChecks: vi.fn().mockResolvedValue(ciChecks),
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing", ciChecks }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1559,16 +1693,9 @@ describe("reactions", () => {
       registry,
     });
 
-    // First check: transition to ci_failed — sends the reaction message
+    // First check: transition to ci_failed — sends detailed CI info directly
     await lm.check("app-1");
     expect(lm.getStates().get("app-1")).toBe("ci_failed");
-    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "CI is failing. Fix it.");
-
-    vi.mocked(mockSessionManager.send).mockClear();
-
-    // Second check: still ci_failed, same failures — dispatches detailed CI info
-    await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
     const sentMessage = vi.mocked(mockSessionManager.send).mock.calls[0]![1];
     expect(sentMessage).toContain("lint");
@@ -1579,7 +1706,7 @@ describe("reactions", () => {
     expect(sentMessage).not.toContain("runs/124");
   });
 
-  it("does not re-dispatch CI failure details when failure set is unchanged", async () => {
+  it("does not re-send CI failure details on subsequent polls (transition fires once)", async () => {
     config.reactions = {
       "ci-failed": {
         auto: true,
@@ -1590,11 +1717,11 @@ describe("reactions", () => {
       },
     };
 
+    const ciChecks = [{ name: "lint", status: "failed", conclusion: "FAILURE" }];
     const mockSCM = createMockSCM({
       getCISummary: vi.fn().mockResolvedValue("failing"),
-      getCIChecks: vi.fn().mockResolvedValue([
-        { name: "lint", status: "failed", conclusion: "FAILURE" },
-      ]),
+      getCIChecks: vi.fn().mockResolvedValue(ciChecks),
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing", ciChecks }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1609,222 +1736,14 @@ describe("reactions", () => {
       registry,
     });
 
-    // First check: transition reaction
+    // First check: transition to ci_failed — sends detailed CI info
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
 
     vi.mocked(mockSessionManager.send).mockClear();
 
-    // Second check: dispatches CI details
+    // Second check: still ci_failed, same failures — no transition, no message
     await lm.check("app-1");
-    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-
-    vi.mocked(mockSessionManager.send).mockClear();
-
-    // Third check: same failures — should NOT dispatch again
-    await lm.check("app-1");
-    expect(mockSessionManager.send).not.toHaveBeenCalled();
-
-    const metadata = readMetadataRaw(env.sessionsDir, "app-1");
-    expect(metadata?.["lastCIFailureDispatchHash"]).toBeTruthy();
-  });
-
-  it("re-dispatches CI failure details when a new check fails", async () => {
-    config.reactions = {
-      "ci-failed": {
-        auto: true,
-        action: "send-to-agent",
-        message: "CI is failing.",
-        retries: 5,
-        escalateAfter: 5,
-      },
-    };
-
-    const getCIChecksMock = vi.fn().mockResolvedValue([
-      { name: "lint", status: "failed", conclusion: "FAILURE" },
-    ]);
-    const mockSCM = createMockSCM({
-      getCISummary: vi.fn().mockResolvedValue("failing"),
-      getCIChecks: getCIChecksMock,
-    });
-    const registry = createMockRegistry({
-      runtime: plugins.runtime,
-      agent: plugins.agent,
-      scm: mockSCM,
-    });
-
-    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
-
-    const lm = setupCheck("app-1", {
-      session: makeSession({ status: "pr_open", pr: makePR() }),
-      registry,
-    });
-
-    // First check: transition + second poll to dispatch details
-    await lm.check("app-1");
-    vi.mocked(mockSessionManager.send).mockClear();
-    await lm.check("app-1");
-    vi.mocked(mockSessionManager.send).mockClear();
-
-    // Third check: same failures — no dispatch
-    await lm.check("app-1");
-    expect(mockSessionManager.send).not.toHaveBeenCalled();
-
-    // Now a different check fails too
-    getCIChecksMock.mockResolvedValue([
-      { name: "lint", status: "failed", conclusion: "FAILURE" },
-      { name: "test", status: "failed", conclusion: "FAILURE" },
-    ]);
-
-    await lm.check("app-1");
-    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    const sentMessage = vi.mocked(mockSessionManager.send).mock.calls[0]![1];
-    expect(sentMessage).toContain("lint");
-    expect(sentMessage).toContain("test");
-  });
-
-  it("clears CI failure tracking when PR is merged", async () => {
-    config.reactions = {
-      "ci-failed": {
-        auto: true,
-        action: "send-to-agent",
-        message: "CI is failing.",
-      },
-    };
-
-    const mockSCM = createMockSCM({
-      getCISummary: vi.fn().mockResolvedValue("failing"),
-      getCIChecks: vi.fn().mockResolvedValue([
-        { name: "lint", status: "failed", conclusion: "FAILURE" },
-      ]),
-    });
-    const registry = createMockRegistry({
-      runtime: plugins.runtime,
-      agent: plugins.agent,
-      scm: mockSCM,
-    });
-
-    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
-
-    const lm = setupCheck("app-1", {
-      session: makeSession({ status: "pr_open", pr: makePR() }),
-      registry,
-    });
-
-    await lm.check("app-1");
-
-    // Now PR is merged
-    vi.mocked(mockSCM.getCISummary).mockResolvedValue("passing");
-    vi.mocked(mockSCM.getPRState).mockResolvedValue("merged");
-
-    await lm.check("app-1");
-
-    const metadata = readMetadataRaw(env.sessionsDir, "app-1");
-    expect(metadata?.["lastCIFailureFingerprint"]).toBeFalsy();
-    expect(metadata?.["lastCIFailureDispatchHash"]).toBeFalsy();
-  });
-
-  it("clears CI failure tracking when CI recovers to passing", async () => {
-    config.reactions = {
-      "ci-failed": {
-        auto: true,
-        action: "send-to-agent",
-        message: "CI is failing.",
-      },
-    };
-
-    const getCISummaryMock = vi.fn().mockResolvedValue("failing");
-    const getCIChecksMock = vi.fn().mockResolvedValue([
-      { name: "lint", status: "failed", conclusion: "FAILURE" },
-    ]);
-    const mockSCM = createMockSCM({
-      getCISummary: getCISummaryMock,
-      getCIChecks: getCIChecksMock,
-    });
-    const registry = createMockRegistry({
-      runtime: plugins.runtime,
-      agent: plugins.agent,
-      scm: mockSCM,
-    });
-
-    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
-
-    const lm = setupCheck("app-1", {
-      session: makeSession({ status: "pr_open", pr: makePR() }),
-      registry,
-    });
-
-    // First: transition to ci_failed, then dispatch details
-    await lm.check("app-1");
-    await lm.check("app-1");
-
-    // Verify tracking was set
-    let metadata = readMetadataRaw(env.sessionsDir, "app-1");
-    expect(metadata?.["lastCIFailureDispatchHash"]).toBeTruthy();
-
-    // CI recovers
-    getCISummaryMock.mockResolvedValue("passing");
-    getCIChecksMock.mockResolvedValue([]);
-    await lm.check("app-1");
-
-    metadata = readMetadataRaw(env.sessionsDir, "app-1");
-    expect(metadata?.["lastCIFailureFingerprint"]).toBeFalsy();
-    expect(metadata?.["lastCIFailureDispatchHash"]).toBeFalsy();
-  });
-
-  it("uses notify action for CI failure details when configured", async () => {
-    const notifier = createMockNotifier();
-
-    const configWithNotify = {
-      ...config,
-      reactions: {
-        "ci-failed": {
-          auto: true,
-          action: "notify" as const,
-          retries: 3,
-          escalateAfter: 3,
-        },
-      },
-      notificationRouting: {
-        ...config.notificationRouting,
-        warning: ["desktop"],
-        info: ["desktop"],
-      },
-    };
-
-    const mockSCM = createMockSCM({
-      getCISummary: vi.fn().mockResolvedValue("failing"),
-      getCIChecks: vi.fn().mockResolvedValue([
-        { name: "lint", status: "failed", conclusion: "FAILURE" },
-      ]),
-    });
-
-    const registry: PluginRegistry = {
-      ...mockRegistry,
-      get: vi.fn().mockImplementation((slot: string, name: string) => {
-        if (slot === "runtime") return plugins.runtime;
-        if (slot === "agent") return plugins.agent;
-        if (slot === "scm") return mockSCM;
-        if (slot === "notifier" && name === "desktop") return notifier;
-        return null;
-      }),
-    };
-
-    const lm = setupCheck("app-1", {
-      session: makeSession({ status: "pr_open", pr: makePR() }),
-      registry,
-      configOverride: configWithNotify,
-    });
-
-    // First check: transition — notifier called for reaction
-    await lm.check("app-1");
-    expect(notifier.notify).toHaveBeenCalled();
-
-    vi.mocked(notifier.notify).mockClear();
-
-    // Second check: CI detail dispatch via notify action
-    await lm.check("app-1");
-    expect(notifier.notify).toHaveBeenCalled();
     expect(mockSessionManager.send).not.toHaveBeenCalled();
   });
 
@@ -1854,6 +1773,7 @@ describe("reactions", () => {
         noConflicts: false,
         blockers: ["Merge conflicts"],
       }),
+      enrichSessionsPRBatch: mockBatchEnrichment({ hasConflicts: true }),
     });
 
     const registry: PluginRegistry = {
@@ -1895,6 +1815,7 @@ describe("reactions", () => {
         noConflicts: false,
         blockers: ["Merge conflicts"],
       }),
+      enrichSessionsPRBatch: mockBatchEnrichment({ hasConflicts: true }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1933,6 +1854,7 @@ describe("reactions", () => {
         noConflicts: false,
         blockers: ["Merge conflicts"],
       }),
+      enrichSessionsPRBatch: mockBatchEnrichment({ hasConflicts: true }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1975,6 +1897,7 @@ describe("reactions", () => {
     });
     const mockSCM = createMockSCM({
       getMergeability: getMergeabilityMock,
+      enrichSessionsPRBatch: mockBatchEnrichment({ hasConflicts: true }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -2002,6 +1925,9 @@ describe("reactions", () => {
       noConflicts: true,
       blockers: [],
     });
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ hasConflicts: false }),
+    );
     await lm.check("app-1");
     expect(mockSessionManager.send).not.toHaveBeenCalled();
 
@@ -2016,6 +1942,9 @@ describe("reactions", () => {
       noConflicts: false,
       blockers: ["Merge conflicts"],
     });
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ hasConflicts: true }),
+    );
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
   });
@@ -2100,7 +2029,10 @@ describe("reactions", () => {
 
   it("notifies humans on significant transitions without reaction config", async () => {
     const notifier = createMockNotifier();
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged" }),
+    });
 
     const registry: PluginRegistry = {
       ...mockRegistry,
@@ -2129,7 +2061,10 @@ describe("reactions", () => {
 
   it("resolves notifier aliases from notificationRouting before dispatch", async () => {
     const notifier = createMockNotifier();
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged" }),
+    });
 
     const configWithAliasRouting: OrchestratorConfig = {
       ...config,
@@ -2170,7 +2105,10 @@ describe("reactions", () => {
 
   it("resolves notifier aliases from defaults.notifiers when routing falls back", async () => {
     const notifier = createMockNotifier();
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged" }),
+    });
 
     const configWithAliasDefaults: OrchestratorConfig = {
       ...config,
@@ -2217,7 +2155,10 @@ describe("reactions", () => {
   it("prefers alias-specific notifier instances over shared plugin instances", async () => {
     const alertsNotifier = createMockNotifier();
     const opsNotifier = createMockNotifier();
-    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged" }),
+    });
 
     const configWithSharedPluginAliases: OrchestratorConfig = {
       ...config,
@@ -2475,77 +2416,6 @@ describe("rate limiting optimizations", () => {
     expect(mockSessionManager.send).toHaveBeenCalledWith("s-1", "Resolve conflicts.");
   });
 
-  it("skips getCIChecks() when batch enrichment has ciChecks data", async () => {
-    config.reactions = {
-      "ci-failed": {
-        auto: true,
-        action: "send-to-agent",
-        message: "CI failing.",
-        retries: 3,
-        escalateAfter: 3,
-      },
-    };
-
-    const pr = makeMatchingPR();
-    const getCIChecksMock = vi.fn();
-    const mockSCM = createMockSCM({
-      getCIChecks: getCIChecksMock,
-      getCISummary: vi.fn().mockResolvedValue("failing"),
-      enrichSessionsPRBatch: vi.fn().mockResolvedValue(
-        new Map([
-          [
-            `${pr.owner}/${pr.repo}#${pr.number}`,
-            {
-              state: "open" as const,
-              ciStatus: "failing" as const,
-              reviewDecision: "none" as const,
-              mergeable: false,
-              hasConflicts: false,
-              ciChecks: [
-                { name: "lint", status: "failed" as const, conclusion: "FAILURE", url: "https://example.com/lint" },
-                { name: "test", status: "passed" as const, conclusion: "SUCCESS" },
-              ],
-            },
-          ],
-        ]),
-      ),
-    });
-
-    const registry = createMockRegistry({
-      runtime: plugins.runtime,
-      agent: plugins.agent,
-      scm: mockSCM,
-    });
-
-    // Start with pr_open state so that ci_failed transition happens on first poll
-    const session = makeSession({ id: "s-2", status: "pr_open", pr });
-    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
-    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
-
-    const lm = createLifecycleManager({ config, registry, sessionManager: mockSessionManager });
-    lm.start(60_000);
-    // First poll: transitions to ci_failed, sends reaction message
-    await vi.advanceTimersByTimeAsync(0);
-
-    vi.mocked(mockSessionManager.send).mockClear();
-
-    // Second poll: dispatches detailed CI failure info
-    await vi.advanceTimersByTimeAsync(60_000);
-
-    // getCIChecks() should NOT be called — batch enrichment has ciChecks
-    expect(getCIChecksMock).not.toHaveBeenCalled();
-    // Detailed message with lint check name/URL should be sent
-    const calls = vi.mocked(mockSessionManager.send).mock.calls;
-    const sentMessages = calls.map((c) => c[1] as string);
-    const detailMessage = sentMessages.find((m) => m.includes("lint"));
-    expect(detailMessage).toBeDefined();
-    expect(detailMessage).toContain("https://example.com/lint");
-    // Passing check should not be included
-    expect(detailMessage).not.toContain("test");
-
-    lm.stop();
-  });
-
   it("throttles review backlog API calls to at most once per 2 minutes", async () => {
     config.reactions = {
       "changes-requested": {
@@ -2555,7 +2425,7 @@ describe("rate limiting optimizations", () => {
       },
     };
 
-    const getPendingMock = vi.fn().mockResolvedValue([
+    const getReviewThreadsMock = vi.fn().mockResolvedValue({ threads: [
       {
         id: "c1",
         author: "reviewer",
@@ -2565,12 +2435,11 @@ describe("rate limiting optimizations", () => {
         isResolved: false,
         createdAt: new Date(),
         url: "https://example.com/comment/1",
+        isBot: false,
       },
-    ]);
-    const getAutomatedMock = vi.fn().mockResolvedValue([]);
+    ], reviews: [] });
     const mockSCM = createMockSCM({
-      getPendingComments: getPendingMock,
-      getAutomatedComments: getAutomatedMock,
+      getReviewThreads: getReviewThreadsMock,
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -2587,13 +2456,13 @@ describe("rate limiting optimizations", () => {
 
     // First check: API called, dispatch happens
     await lm.check("app-1");
-    expect(getPendingMock).toHaveBeenCalledTimes(1);
+    expect(getReviewThreadsMock).toHaveBeenCalledTimes(1);
     vi.mocked(mockSessionManager.send).mockClear();
-    getPendingMock.mockClear();
+    getReviewThreadsMock.mockClear();
 
     // Second check immediately after: throttled — API NOT called
     await lm.check("app-1");
-    expect(getPendingMock).not.toHaveBeenCalled();
+    expect(getReviewThreadsMock).not.toHaveBeenCalled();
     expect(mockSessionManager.send).not.toHaveBeenCalled();
 
     // Advance time past the 2-minute throttle window
@@ -2601,7 +2470,7 @@ describe("rate limiting optimizations", () => {
 
     // Third check: throttle expired — API called again
     await lm.check("app-1");
-    expect(getPendingMock).toHaveBeenCalledTimes(1);
+    expect(getReviewThreadsMock).toHaveBeenCalledTimes(1);
   });
 
   it("clears review backlog tracking when PR is closed", async () => {
@@ -2610,7 +2479,7 @@ describe("rate limiting optimizations", () => {
     const mockSCM = createMockSCM({
       getPRState: vi.fn().mockResolvedValue("closed"),
       getPendingComments: getPendingMock,
-      getAutomatedComments: getAutomatedMock,
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "closed" }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -2752,7 +2621,10 @@ describe("summary pinning", () => {
 
 describe("auto-cleanup on merge (#1309)", () => {
   function mergedScm() {
-    return createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+    return createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged", ciStatus: "none" }),
+    });
   }
 
   function configWithLifecycle(

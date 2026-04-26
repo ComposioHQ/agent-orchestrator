@@ -3,8 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { CI_STATUS } from "@aoagents/ao-core/types";
 import { cn } from "@/lib/cn";
-import { isPRMergeReady, type DashboardPR } from "@/lib/types";
-import { cleanBugbotComment } from "./session-detail-utils";
+import {
+  isPRMergeReady,
+  isPRRateLimited,
+  isPRUnenriched,
+  type DashboardPR,
+} from "@/lib/types";
+import { buildGitHubCompareUrl } from "@/lib/github-links";
+import { PRCommentThread } from "./PRCommentThread";
 
 interface SessionDetailPRCardProps {
   pr: DashboardPR;
@@ -17,14 +23,19 @@ interface SessionDetailPRCardProps {
   ) => Promise<void>;
 }
 
-interface BlockerChip {
+export interface BlockerChip {
   icon: string;
   text: string;
   variant: "fail" | "warn" | "muted";
   notified?: boolean;
 }
 
-function buildBlockerChips(
+export function hasMergeConflicts(pr: DashboardPR): boolean {
+  const mergeabilityReliable = !isPRUnenriched(pr) && !isPRRateLimited(pr);
+  return mergeabilityReliable && pr.state !== "merged" && !pr.mergeability.noConflicts;
+}
+
+export function buildBlockerChips(
   pr: DashboardPR,
   metadata: Record<string, string>,
   lifecyclePrReason?: string,
@@ -44,34 +55,34 @@ function buildBlockerChips(
     pr.reviewDecision === "changes_requested" ||
     lifecyclePrReason === "changes_requested" ||
     lifecycleStatus === "changes_requested";
-  const hasConflicts = pr.state !== "merged" && !pr.mergeability.noConflicts;
+  const hasConflicts = hasMergeConflicts(pr);
 
   if (ciIsFailing) {
     const failCount = pr.ciChecks.filter((check) => check.status === "failed").length;
     chips.push({
-      icon: "\u2717",
+      icon: "✗",
       variant: "fail",
       text: failCount > 0 ? `${failCount} check${failCount !== 1 ? "s" : ""} failing` : "CI failing",
       notified: ciNotified,
     });
   } else if (pr.ciStatus === CI_STATUS.PENDING) {
-    chips.push({ icon: "\u25CF", variant: "warn", text: "CI pending" });
+    chips.push({ icon: "●", variant: "warn", text: "CI pending" });
   }
 
   if (hasChangesRequested) {
     chips.push({
-      icon: "\u2717",
+      icon: "✗",
       variant: "fail",
       text: "Changes requested",
       notified: reviewNotified,
     });
   } else if (!pr.mergeability.approved) {
-    chips.push({ icon: "\u25CB", variant: "muted", text: "Awaiting reviewer" });
+    chips.push({ icon: "○", variant: "muted", text: "Awaiting reviewer" });
   }
 
   if (hasConflicts) {
     chips.push({
-      icon: "\u2717",
+      icon: "✗",
       variant: "fail",
       text: "Merge conflicts",
       notified: conflictNotified,
@@ -79,7 +90,7 @@ function buildBlockerChips(
   }
 
   if (pr.isDraft) {
-    chips.push({ icon: "\u25CB", variant: "muted", text: "Draft" });
+    chips.push({ icon: "○", variant: "muted", text: "Draft" });
   }
 
   return chips;
@@ -94,6 +105,7 @@ export function SessionDetailPRCard({
   const [sendingComments, setSendingComments] = useState<Set<string>>(new Set());
   const [sentComments, setSentComments] = useState<Set<string>>(new Set());
   const [errorComments, setErrorComments] = useState<Set<string>>(new Set());
+  const [branchCopied, setBranchCopied] = useState(false);
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
@@ -103,7 +115,11 @@ export function SessionDetailPRCard({
     };
   }, []);
 
-  const handleAskAgentToFix = async (comment: { url: string; path: string; body: string }) => {
+  const handleAskAgentToFix = async (comment: {
+    url: string;
+    path: string;
+    body: string;
+  }) => {
     setSentComments((prev) => {
       const next = new Set(prev);
       next.delete(comment.url);
@@ -162,6 +178,29 @@ export function SessionDetailPRCard({
   const allGreen = isPRMergeReady(pr);
   const blockerIssues = buildBlockerChips(pr, metadata, lifecyclePrReason);
   const fileCount = pr.changedFiles ?? 0;
+  const showConflictActions = hasMergeConflicts(pr) && pr.state === "open";
+  const compareUrl = showConflictActions ? buildGitHubCompareUrl(pr) : "";
+
+  const handleCopyBranch = () => {
+    const clipboardWrite = navigator.clipboard?.writeText(pr.branch);
+    if (!clipboardWrite) return;
+
+    void clipboardWrite
+      .then(() => {
+        setBranchCopied(true);
+        const timerKey = "__copy-branch";
+        const existing = timersRef.current.get(timerKey);
+        if (existing) clearTimeout(existing);
+        const timer = setTimeout(() => {
+          setBranchCopied(false);
+          timersRef.current.delete(timerKey);
+        }, 2000);
+        timersRef.current.set(timerKey, timer);
+      })
+      .catch(() => {
+        /* clipboard unavailable */
+      });
+  };
 
   return (
     <div className={cn("session-detail-pr-card", allGreen && "session-detail-pr-card--green")}>
@@ -188,6 +227,31 @@ export function SessionDetailPRCard({
           <span className="session-detail-pr-card__diff-label">Merged</span>
         ) : null}
       </div>
+
+      {showConflictActions ? (
+        <div
+          className="session-detail-pr-card__merge-actions"
+          role="group"
+          aria-label="Resolve merge conflicts"
+        >
+          <a
+            href={compareUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="session-detail-pr-merge-action"
+          >
+            Compare with base branch
+          </a>
+          <button
+            type="button"
+            onClick={handleCopyBranch}
+            aria-label={branchCopied ? "Head branch name copied" : "Copy head branch name"}
+            className="session-detail-pr-merge-action session-detail-pr-merge-action--btn"
+          >
+            {branchCopied ? "Copied branch name" : "Copy head branch name"}
+          </button>
+        </div>
+      ) : null}
 
       <div className="session-detail-pr-card__details">
         {allGreen ? (
@@ -242,12 +306,12 @@ export function SessionDetailPRCard({
                   )}
                 >
                   {check.status === "passed"
-                    ? "\u2713"
+                    ? "✓"
                     : check.status === "failed"
-                      ? "\u2717"
+                      ? "✗"
                       : check.status === "pending"
-                        ? "\u25CF"
-                        : "\u25CB"}{" "}
+                        ? "●"
+                        : "○"}{" "}
                   {check.name}
                 </span>
               );
@@ -270,80 +334,14 @@ export function SessionDetailPRCard({
         ) : null}
       </div>
 
-      {pr.unresolvedComments.length > 0 ? (
-        <details className="session-detail-comments-strip">
-          <summary>
-            <div className="session-detail-comments-strip__toggle">
-              <svg
-                className="session-detail-comments-strip__chevron"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                viewBox="0 0 24 24"
-              >
-                <path d="M9 5l7 7-7 7" />
-              </svg>
-              <span className="session-detail-comments-strip__label">Unresolved Comments</span>
-              <span className="session-detail-comments-strip__count">{pr.unresolvedThreads}</span>
-              <span className="session-detail-comments-strip__hint">click to expand</span>
-            </div>
-          </summary>
-          <div className="session-detail-comments-strip__body">
-            {pr.unresolvedComments.map((comment, index) => {
-              const { title, description } = cleanBugbotComment(comment.body);
-              return (
-                <details key={comment.url} className="session-detail-comment" open={index === 0}>
-                  <summary>
-                    <div className="session-detail-comment__row">
-                      <svg
-                        className="session-detail-comment__chevron"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        viewBox="0 0 24 24"
-                      >
-                        <path d="M9 5l7 7-7 7" />
-                      </svg>
-                      <span className="session-detail-comment__title">{title}</span>
-                      <span className="session-detail-comment__author">· {comment.author}</span>
-                      <a
-                        href={comment.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(event) => event.stopPropagation()}
-                        className="session-detail-comment__view"
-                      >
-                        view &rarr;
-                      </a>
-                    </div>
-                  </summary>
-                  <div className="session-detail-comment__body">
-                    <div className="session-detail-comment__file">{comment.path}</div>
-                    <p className="session-detail-comment__text">{description}</p>
-                    <button
-                      onClick={() => handleAskAgentToFix(comment)}
-                      disabled={sendingComments.has(comment.url)}
-                      className={cn(
-                        "session-detail-comment__fix-btn",
-                        sentComments.has(comment.url) && "session-detail-comment__fix-btn--sent",
-                        errorComments.has(comment.url) && "session-detail-comment__fix-btn--error",
-                      )}
-                    >
-                      {sendingComments.has(comment.url)
-                        ? "Sending\u2026"
-                        : sentComments.has(comment.url)
-                          ? "Sent \u2713"
-                          : errorComments.has(comment.url)
-                            ? "Failed"
-                            : "Ask Agent to Fix"}
-                    </button>
-                  </div>
-                </details>
-              );
-            })}
-          </div>
-        </details>
-      ) : null}
+      <PRCommentThread
+        comments={pr.unresolvedComments}
+        unresolvedThreads={pr.unresolvedThreads}
+        sendingUrls={sendingComments}
+        sentUrls={sentComments}
+        errorUrls={errorComments}
+        onAskAgentToFix={handleAskAgentToFix}
+      />
     </div>
   );
 }

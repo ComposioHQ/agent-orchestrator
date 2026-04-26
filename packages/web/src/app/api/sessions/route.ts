@@ -1,8 +1,7 @@
 import { ACTIVITY_STATE, isOrchestratorSession, isTerminalSession } from "@aoagents/ao-core";
-import { getServices, getSCM } from "@/lib/services";
+import { getServices } from "@/lib/services";
 import {
   sessionToDashboard,
-  resolveProject,
   enrichSessionPR,
   enrichSessionsMetadata,
   computeStats,
@@ -14,13 +13,6 @@ import { settlesWithin } from "@/lib/async-utils";
 import type { DashboardOrchestratorLink } from "@/lib/types";
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
-const PR_ENRICH_TIMEOUT_MS = 4_000;
-const PER_PR_ENRICH_TIMEOUT_MS = 1_500;
-
-function hasTerminalPRState(session: Parameters<typeof isTerminalSession>[0]): boolean {
-  const prState = session.lifecycle?.pr.state;
-  return prState === "merged" || prState === "closed";
-}
 
 function compareOrchestratorRecency(a: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string }, b: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string }): number {
   return (
@@ -152,34 +144,11 @@ export async function GET(request: Request) {
     );
 
     if (metadataSettled) {
-      const prEnrichPromises: Promise<boolean>[] = [];
-
+      // PR enrichment: read from session metadata (written by CLI lifecycle).
+      // No GitHub API calls — synchronous metadata read.
       for (let i = 0; i < workerSessions.length; i++) {
-        const core = workerSessions[i];
-        const pr = core?.pr;
-        if (!pr) continue;
-
-        const project = resolveProject(core, config.projects);
-        const scm = getSCM(registry, project);
-        if (!scm) continue;
-
-        prEnrichPromises.push(
-          settlesWithin(
-            hasTerminalPRState(core)
-              ? enrichSessionPR(dashboardSessions[i], scm, pr, { cacheOnly: true }).then(
-                  (cached) =>
-                    cached
-                      ? true
-                      : enrichSessionPR(dashboardSessions[i], scm, pr),
-                )
-              : enrichSessionPR(dashboardSessions[i], scm, pr),
-            PER_PR_ENRICH_TIMEOUT_MS,
-          ),
-        );
-      }
-
-      if (prEnrichPromises.length > 0) {
-        await settlesWithin(Promise.allSettled(prEnrichPromises), PR_ENRICH_TIMEOUT_MS);
+        if (!workerSessions[i]?.pr) continue;
+        enrichSessionPR(dashboardSessions[i]);
       }
     }
 

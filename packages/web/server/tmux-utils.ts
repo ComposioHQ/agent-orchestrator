@@ -161,14 +161,6 @@ export function resolveTmuxSession(
   // even when the storageKey is wrapped (`{hash}-{projectName}`). Walk
   // every candidate so a stale metadata dir in one project can't shadow
   // the live session of another project with the same sessionId.
-  //
-  // Pre-existing limitation (not introduced by this fix): when two
-  // different projects have both (a) the same user-facing sessionId and
-  // (b) live tmux sessions, we return the first live match. The terminal
-  // open protocol carries only the session ID — no project context — so
-  // there's nothing to disambiguate with here. The previous bare-hash
-  // code had the same behavior via `Array.find(...)`. A proper fix would
-  // thread projectId through the mux protocol from the browser URL.
   for (const storageKey of findStorageKeysForSession(sessionId, fs)) {
     const tmuxName = `${storageKey}-${sessionId}`;
     try {

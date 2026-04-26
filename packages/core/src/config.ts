@@ -678,7 +678,7 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       auto: true,
       action: "send-to-agent",
       message:
-        "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push.",
+        "CI is failing on your PR. Investigate the failures, fix the issues, and push again.",
       retries: 2,
       escalateAfter: 2,
     },
@@ -686,17 +686,13 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       auto: true,
       action: "send-to-agent",
       message:
-        "There are review comments on your PR. Check with `gh pr view --comments` and `gh api` for inline comments. Address each one, push fixes, and reply.",
+        "There are review comments on your PR. Details will follow shortly.",
       escalateAfter: "30m",
     },
     "bugbot-comments": {
       auto: true,
       action: "send-to-agent",
-      // When this exact sentinel is present, the lifecycle dispatcher replaces
-      // it with a detailed listing of the actual comments + correct-API guidance
-      // (see formatAutomatedCommentsMessage, #895). If a project customizes
-      // this message in their YAML, the dispatcher respects it verbatim.
-      message: DEFAULT_BUGBOT_COMMENTS_MESSAGE,
+      message: "Automated review comments found on your PR. Details will follow shortly.",
       escalateAfter: "30m",
     },
     "merge-conflicts": {

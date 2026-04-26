@@ -228,7 +228,7 @@ export function validateAndStoreOrigin(configPath: string, storageKey: string): 
   }
 }
 
-function requireStorageKey(storageKey: string | undefined): string {
+export function requireStorageKey(storageKey: string | undefined): string {
   if (!storageKey) {
     throw new Error("storageKey is required");
   }
