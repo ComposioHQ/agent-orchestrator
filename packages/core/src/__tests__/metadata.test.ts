@@ -321,7 +321,7 @@ describe("readCanonicalLifecycle", () => {
 
 describe("deleteMetadata", () => {
   it("deletes metadata file permanently", () => {
-    writeMetadata(dataDir, "del-1", { status: "working" });
+    writeMetadata(dataDir, "del-1", { status: "working", worktree: "/tmp/w", branch: "main" });
     deleteMetadata(dataDir, "del-1");
     expect(readMetadataRaw(dataDir, "del-1")).toBeNull();
     // No archive directory created

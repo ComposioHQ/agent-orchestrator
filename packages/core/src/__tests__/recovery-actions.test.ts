@@ -303,7 +303,7 @@ describe("cleanupSession", () => {
     }
   });
 
-  it("continues cleanup and calls deleteMetadata even when workspace.destroy throws", async () => {
+  it("continues cleanup and marks session terminated even when workspace.destroy throws", async () => {
     const config = makeConfig(rootDir);
     const workspacePath = join(rootDir, "worktree");
     const mockWorkspace: Workspace = {
@@ -341,10 +341,13 @@ describe("cleanupSession", () => {
 
     expect(mockWorkspace.destroy).toHaveBeenCalled();
     expect(result.success).toBe(true);
-    expect(existsSync(join(sessionsDir, "app-1.json"))).toBe(false);
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta).not.toBeNull();
+    expect(meta!["status"]).toBe("terminated");
+    expect(meta!["terminationReason"]).toBe("cleanup");
   });
 
-  it("continues cleanup and calls workspace.destroy and deleteMetadata even when runtime.destroy throws", async () => {
+  it("continues cleanup and marks session terminated even when runtime.destroy throws", async () => {
     const config = makeConfig(rootDir);
     const workspacePath = join(rootDir, "worktree");
     const mockRuntime: Runtime = {
@@ -392,7 +395,10 @@ describe("cleanupSession", () => {
     expect(mockRuntime.destroy).toHaveBeenCalled();
     expect(mockWorkspace.destroy).toHaveBeenCalled();
     expect(result.success).toBe(true);
-    expect(existsSync(join(sessionsDir, "app-1.json"))).toBe(false);
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta).not.toBeNull();
+    expect(meta!["status"]).toBe("terminated");
+    expect(meta!["terminationReason"]).toBe("cleanup");
   });
 });
 
