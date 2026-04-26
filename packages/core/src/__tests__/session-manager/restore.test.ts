@@ -1,19 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import {
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  existsSync,
-} from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
 import { getWorkspaceAgentsMdPath } from "../../opencode-agents-md.js";
 import { getProjectBaseDir } from "../../paths.js";
-import {
-  writeMetadata,
-  readMetadataRaw,
-  deleteMetadata,
-} from "../../metadata.js";
+import { writeMetadata, readMetadataRaw, deleteMetadata } from "../../metadata.js";
 import {
   SessionNotRestorableError,
   WorkspaceMissingError,
@@ -23,7 +14,12 @@ import {
   type Agent,
   type Workspace,
 } from "../../types.js";
-import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
+import {
+  setupTestContext,
+  teardownTestContext,
+  makeHandle,
+  type TestContext,
+} from "../test-utils.js";
 import { installMockOpencode } from "./opencode-helpers.js";
 
 let ctx: TestContext;
@@ -38,7 +34,16 @@ let originalPath: string | undefined;
 
 beforeEach(() => {
   ctx = setupTestContext();
-  ({ tmpDir, sessionsDir, mockRuntime, mockAgent, mockWorkspace, mockRegistry, config, originalPath } = ctx);
+  ({
+    tmpDir,
+    sessionsDir,
+    mockRuntime,
+    mockAgent,
+    mockWorkspace,
+    mockRegistry,
+    config,
+    originalPath,
+  } = ctx);
 });
 
 afterEach(() => {
@@ -327,9 +332,7 @@ describe("restore", () => {
 
     const meta = readMetadataRaw(sessionsDir, "app-1");
     expect(meta).not.toBeNull();
-    expect(meta!["displayName"]).toBe(
-      "Refactor session manager to use flat metadata files",
-    );
+    expect(meta!["displayName"]).toBe("Refactor session manager to use flat metadata files");
   });
 
   it("restores from archive with multiple archived versions (picks latest)", async () => {
@@ -551,6 +554,65 @@ describe("restore", () => {
     // Verify runtime.create was called with the restore command
     const createCall = (mockRuntime.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(createCall.launchCommand).toBe("claude --resume abc123");
+  });
+
+  it("passes resolved AgentLaunchConfig (not raw project) to getRestoreCommand (#1475)", async () => {
+    const wsPath = join(tmpDir, "ws-app-restore-config");
+    mkdirSync(wsPath, { recursive: true });
+
+    const mockAgentWithRestore: Agent = {
+      ...mockAgent,
+      getRestoreCommand: vi.fn().mockResolvedValue("agent --resume foo"),
+    };
+
+    const registry: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgentWithRestore;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    // Project default permissions = "suggest", but the orchestrator role
+    // forces "permissionless" in the resolved AgentLaunchConfig — which is
+    // what the plugin needs to see to emit the correct approval flag.
+    const configWithSuggest: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agentConfig: { permissions: "suggest" },
+        },
+      },
+    };
+
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: wsPath,
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+      role: "orchestrator",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    const sm = createSessionManager({ config: configWithSuggest, registry });
+    await sm.restore("app-orchestrator");
+
+    expect(mockAgentWithRestore.getRestoreCommand).toHaveBeenCalledTimes(1);
+    const [, restoreConfigArg] = (
+      mockAgentWithRestore.getRestoreCommand as ReturnType<typeof vi.fn>
+    ).mock.calls[0];
+    // Must be the resolved AgentLaunchConfig (carries sessionId + per-session
+    // permissions), not the bare ProjectConfig — pre-fix the plugin received
+    // the project directly and could only see project-default permissions.
+    expect(restoreConfigArg).toMatchObject({
+      sessionId: "app-orchestrator",
+      permissions: "permissionless",
+      projectConfig: expect.objectContaining({ sessionPrefix: "app" }),
+    });
   });
 
   it("falls back to getLaunchCommand when getRestoreCommand returns null", async () => {

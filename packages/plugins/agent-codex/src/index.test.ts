@@ -1266,31 +1266,46 @@ describe("getRestoreCommand", () => {
     return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
   }
 
-  function makeProjectConfig(overrides: Record<string, unknown> = {}) {
-    return {
-      name: "test-project",
-      repo: "owner/repo",
-      path: "/workspace/repo",
-      defaultBranch: "main",
-      sessionPrefix: "test",
-      ...overrides,
-    };
+  // Builds an AgentLaunchConfig with optional project-level overrides (agentConfig)
+  // and per-session overrides (permissions, model, subagent). The plugin must
+  // prefer per-session values when both are set — see #1475.
+  function makeRestoreConfig(
+    opts: {
+      projectOverrides?: Record<string, unknown>;
+      permissions?: AgentLaunchConfig["permissions"];
+      model?: string;
+      subagent?: string;
+    } = {},
+  ): AgentLaunchConfig {
+    return makeLaunchConfig({
+      projectConfig: {
+        name: "test-project",
+        repo: "owner/repo",
+        path: "/workspace/repo",
+        defaultBranch: "main",
+        sessionPrefix: "test",
+        ...(opts.projectOverrides ?? {}),
+      } as AgentLaunchConfig["projectConfig"],
+      ...(opts.permissions ? { permissions: opts.permissions } : {}),
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.subagent ? { subagent: opts.subagent } : {}),
+    });
   }
 
   it("returns null when workspacePath is null", async () => {
     const session = makeSession({ workspacePath: null });
-    expect(await agent.getRestoreCommand!(session, makeProjectConfig())).toBeNull();
+    expect(await agent.getRestoreCommand!(session, makeRestoreConfig())).toBeNull();
   });
 
   it("returns null when workspacePath is undefined", async () => {
     const session = makeSession({ workspacePath: undefined });
-    expect(await agent.getRestoreCommand!(session, makeProjectConfig())).toBeNull();
+    expect(await agent.getRestoreCommand!(session, makeRestoreConfig())).toBeNull();
   });
 
   it("returns null when no matching session file found", async () => {
     mockReaddir.mockRejectedValue(new Error("ENOENT"));
     const session = makeSession({ workspacePath: "/workspace/test" });
-    expect(await agent.getRestoreCommand!(session, makeProjectConfig())).toBeNull();
+    expect(await agent.getRestoreCommand!(session, makeRestoreConfig())).toBeNull();
   });
 
   it("returns null when session has no threadId", async () => {
@@ -1305,7 +1320,7 @@ describe("getRestoreCommand", () => {
 
     const session = makeSession({ workspacePath: "/workspace/test" });
     // Native resume requires a threadId
-    expect(await agent.getRestoreCommand!(session, makeProjectConfig())).toBeNull();
+    expect(await agent.getRestoreCommand!(session, makeRestoreConfig())).toBeNull();
   });
 
   it("builds native resume command with codex resume <threadId>", async () => {
@@ -1320,7 +1335,7 @@ describe("getRestoreCommand", () => {
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
-    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
+    const cmd = await agent.getRestoreCommand!(session, makeRestoreConfig());
 
     expect(cmd).not.toBeNull();
     expect(cmd).toContain("'codex' resume");
@@ -1351,7 +1366,7 @@ describe("getRestoreCommand", () => {
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
-    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
+    const cmd = await agent.getRestoreCommand!(session, makeRestoreConfig());
 
     expect(cmd).not.toBeNull();
     expect(cmd).toContain("'codex' resume");
@@ -1373,7 +1388,7 @@ describe("getRestoreCommand", () => {
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
-    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
+    const cmd = await agent.getRestoreCommand!(session, makeRestoreConfig());
 
     expect(cmd).not.toBeNull();
     expect(cmd).not.toContain("--model 'openai'");
@@ -1396,8 +1411,8 @@ describe("getRestoreCommand", () => {
     });
     const cmd = await agent.getRestoreCommand!(
       session,
-      makeProjectConfig({
-        agentConfig: { permissions: "permissionless" },
+      makeRestoreConfig({
+        projectOverrides: { agentConfig: { permissions: "permissionless" } },
       }),
     );
 
@@ -1422,8 +1437,10 @@ describe("getRestoreCommand", () => {
     });
     const cmd = await agent.getRestoreCommand!(
       session,
-      makeProjectConfig({
-        agentConfig: { permissions: "skip" as unknown as AgentSpecificConfig["permissions"] },
+      makeRestoreConfig({
+        projectOverrides: {
+          agentConfig: { permissions: "skip" as unknown as AgentSpecificConfig["permissions"] },
+        },
       }),
     );
 
@@ -1444,8 +1461,8 @@ describe("getRestoreCommand", () => {
     const session = makeSession({ workspacePath: "/workspace/test", metadata: { role: "worker" } });
     const cmd = await agent.getRestoreCommand!(
       session,
-      makeProjectConfig({
-        agentConfig: { permissions: "permissionless" },
+      makeRestoreConfig({
+        projectOverrides: { agentConfig: { permissions: "permissionless" } },
       }),
     );
 
@@ -1467,8 +1484,8 @@ describe("getRestoreCommand", () => {
     const session = makeSession({ workspacePath: "/workspace/test" });
     const cmd = await agent.getRestoreCommand!(
       session,
-      makeProjectConfig({
-        agentConfig: { permissions: "auto-edit" },
+      makeRestoreConfig({
+        projectOverrides: { agentConfig: { permissions: "auto-edit" } },
       }),
     );
 
@@ -1490,8 +1507,8 @@ describe("getRestoreCommand", () => {
     const session = makeSession({ workspacePath: "/workspace/test" });
     const cmd = await agent.getRestoreCommand!(
       session,
-      makeProjectConfig({
-        agentConfig: { permissions: "suggest" },
+      makeRestoreConfig({
+        projectOverrides: { agentConfig: { permissions: "suggest" } },
       }),
     );
 
@@ -1512,8 +1529,8 @@ describe("getRestoreCommand", () => {
     const session = makeSession({ workspacePath: "/workspace/test" });
     const cmd = await agent.getRestoreCommand!(
       session,
-      makeProjectConfig({
-        agentConfig: { permissions: "auto-edit", model: "o3-mini" },
+      makeRestoreConfig({
+        projectOverrides: { agentConfig: { permissions: "auto-edit", model: "o3-mini" } },
       }),
     );
 
@@ -1540,8 +1557,8 @@ describe("getRestoreCommand", () => {
     const session = makeSession({ workspacePath: "/workspace/test" });
     const cmd = await agent.getRestoreCommand!(
       session,
-      makeProjectConfig({
-        agentConfig: { model: "o3-mini" },
+      makeRestoreConfig({
+        projectOverrides: { agentConfig: { model: "o3-mini" } },
       }),
     );
 
@@ -1561,7 +1578,7 @@ describe("getRestoreCommand", () => {
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
-    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
+    const cmd = await agent.getRestoreCommand!(session, makeRestoreConfig());
 
     expect(cmd).toContain("--model 'o4-mini'");
     expect(cmd).toContain("-c model_reasoning_effort=high");
@@ -1579,7 +1596,88 @@ describe("getRestoreCommand", () => {
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
-    expect(await agent.getRestoreCommand!(session, makeProjectConfig())).toBeNull();
+    expect(await agent.getRestoreCommand!(session, makeRestoreConfig())).toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
+  // Per-session override regressions for #1475
+  //
+  // A session spawned with `--permissions permissionless` (or `--model X`)
+  // must keep that override on restore — the plugin must read from the
+  // resolved AgentLaunchConfig, not the project-level default.
+  // -----------------------------------------------------------------------
+  it("per-session permissions override wins over project default on restore", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { threadId: "thread-1" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(
+      session,
+      makeRestoreConfig({
+        // Project default is the strict "suggest" mode, but the session was
+        // spawned with `--permissions permissionless` — restore must honour
+        // the per-session value.
+        projectOverrides: { agentConfig: { permissions: "suggest" } },
+        permissions: "permissionless",
+      }),
+    );
+
+    expect(cmd).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(cmd).not.toContain("--ask-for-approval untrusted");
+  });
+
+  it("per-session model override wins over project default on restore", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { threadId: "thread-1" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(
+      session,
+      makeRestoreConfig({
+        projectOverrides: { agentConfig: { model: "o3-mini" } },
+        model: "gpt-5.3-codex",
+      }),
+    );
+
+    expect(cmd).toContain("--model 'gpt-5.3-codex'");
+    expect(cmd).not.toContain("--model 'o3-mini'");
+  });
+
+  it("falls back to project default permissions when no per-session override", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { threadId: "thread-1" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(
+      session,
+      makeRestoreConfig({
+        projectOverrides: { agentConfig: { permissions: "auto-edit" } },
+        // permissions/model unset → must use project default
+      }),
+    );
+
+    expect(cmd).toContain("--ask-for-approval never");
   });
 });
 
@@ -1838,9 +1936,7 @@ describe("shell wrapper content", () => {
 
     it("extracts PR URL from gh pr create output", async () => {
       const content = await getWrapperContent("gh");
-      expect(content).toContain(
-        "grep -Eo 'https?://[^/]+/[^/]+/[^/]+/pull/[0-9]+'",
-      );
+      expect(content).toContain("grep -Eo 'https?://[^/]+/[^/]+/[^/]+/pull/[0-9]+'");
       expect(content).toContain("update_ao_metadata pr");
     });
 

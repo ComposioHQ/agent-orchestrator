@@ -15,7 +15,6 @@ import {
   type ActivityDetection,
   type CostEstimate,
   type PluginModule,
-  type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
@@ -707,7 +706,7 @@ function createCodexAgent(): Agent {
       };
     },
 
-    async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
+    async getRestoreCommand(session: Session, config: AgentLaunchConfig): Promise<string | null> {
       if (!session.workspacePath) return null;
 
       // Find the Codex session file for this workspace
@@ -726,8 +725,17 @@ function createCodexAgent(): Agent {
       const parts: string[] = [shellEscape(binary), "resume"];
       appendNoUpdateCheckFlag(parts);
 
-      appendApprovalFlags(parts, project.agentConfig?.permissions);
-      const effectiveModel = (project.agentConfig?.model ?? data.model) as string | undefined;
+      // Prefer the per-session resolved values (config.permissions / config.model)
+      // over project defaults so a session spawned with --permissions or --model
+      // overrides keeps them on restore (#1475). Codex's own threadId still
+      // contributes its `data.model` fallback when neither override nor project
+      // default is set.
+      const project = config.projectConfig;
+      const effectivePermissions = config.permissions ?? project.agentConfig?.permissions;
+      appendApprovalFlags(parts, effectivePermissions);
+      const effectiveModel = (config.model ?? project.agentConfig?.model ?? data.model) as
+        | string
+        | undefined;
       appendModelFlags(parts, effectiveModel ?? undefined);
 
       // Positional threadId goes last, after all flags
@@ -736,7 +744,10 @@ function createCodexAgent(): Agent {
       return parts.join(" ");
     },
 
-    async setupWorkspaceHooks(_workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+    async setupWorkspaceHooks(
+      _workspacePath: string,
+      _config: WorkspaceHooksConfig,
+    ): Promise<void> {
       // PATH wrappers are installed by session-manager for all agents.
     },
 

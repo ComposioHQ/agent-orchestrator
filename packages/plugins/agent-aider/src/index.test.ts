@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createActivitySignal, type Session, type RuntimeHandle, type AgentLaunchConfig } from "@aoagents/ao-core";
+import {
+  createActivitySignal,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+} from "@aoagents/ao-core";
 
 // Mock fs/promises for getSessionInfo tests (readFile for .aider.chat.history.md)
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -308,7 +313,9 @@ describe("detectActivity", () => {
   });
 
   it("returns waiting_input for Y/N confirmation", () => {
-    expect(agent.detectActivity("Allow creation of new file foo.ts\n(Y)es/(N)o")).toBe("waiting_input");
+    expect(agent.detectActivity("Allow creation of new file foo.ts\n(Y)es/(N)o")).toBe(
+      "waiting_input",
+    );
   });
 
   it("returns waiting_input for add-to-chat prompt", () => {
@@ -370,10 +377,7 @@ describe("getRestoreCommand", () => {
   const agent = create();
 
   it("returns null (aider does not support session resume)", async () => {
-    const result = await agent.getRestoreCommand!(
-      makeSession(),
-      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
-    );
+    const result = await agent.getRestoreCommand!(makeSession(), makeLaunchConfig());
     expect(result).toBeNull();
   });
 });
@@ -462,9 +466,7 @@ describe("getActivityState with activity JSONL", () => {
       modifiedAt: new Date(),
     });
 
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("waiting_input");
   });
 
@@ -475,9 +477,7 @@ describe("getActivityState with activity JSONL", () => {
       modifiedAt: new Date(),
     });
 
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("blocked");
   });
 
@@ -492,9 +492,7 @@ describe("getActivityState with activity JSONL", () => {
     // falls through to git/chat fallbacks. With no git commits or chat history,
     // falls through to JSONL mtime fallback (step 4) which returns "active"
     // since modifiedAt is recent.
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("active");
   });
 });

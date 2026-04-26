@@ -13,7 +13,6 @@ import {
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
-  type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
@@ -154,15 +153,11 @@ process.stdin.on('data', c => input += c).on('end', () => {
  * Query OpenCode's session list and find the matching session for this AO session.
  * Tries metadata `opencodeSessionId` first, then falls back to title matching.
  */
-async function findOpenCodeSession(
-  session: Session,
-): Promise<OpenCodeSessionListEntry | null> {
+async function findOpenCodeSession(session: Session): Promise<OpenCodeSessionListEntry | null> {
   try {
-    const { stdout } = await execFileAsync(
-      "opencode",
-      ["session", "list", "--format", "json"],
-      { timeout: 30_000 },
-    );
+    const { stdout } = await execFileAsync("opencode", ["session", "list", "--format", "json"], {
+      timeout: 30_000,
+    });
 
     const sessions = parseSessionList(stdout);
 
@@ -213,9 +208,7 @@ function createOpenCodeAgent(): Agent {
       const sharedOptions: string[] = [];
       const agentConfig = config.projectConfig.agentConfig;
 
-      const existingSessionId = asValidOpenCodeSessionId(
-        agentConfig?.opencodeSessionId,
-      );
+      const existingSessionId = asValidOpenCodeSessionId(agentConfig?.opencodeSessionId);
 
       if (existingSessionId) {
         options.push("--session", shellEscape(existingSessionId));
@@ -413,7 +406,7 @@ function createOpenCodeAgent(): Agent {
       };
     },
 
-    async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
+    async getRestoreCommand(session: Session, config: AgentLaunchConfig): Promise<string | null> {
       // Try metadata first, then query OpenCode's session list
       const sessionId =
         asValidOpenCodeSessionId(session.metadata?.opencodeSessionId) ??
@@ -424,15 +417,21 @@ function createOpenCodeAgent(): Agent {
 
       const parts: string[] = ["opencode", "--session", shellEscape(sessionId)];
 
-      const agentConfig = project.agentConfig as OpenCodeAgentConfig | undefined;
-      if (agentConfig?.model) {
-        parts.push("--model", shellEscape(agentConfig.model as string));
+      // Prefer per-session resolved values over project defaults so sessions spawned
+      // with --model overrides keep them on restore (#1475).
+      const agentConfig = config.projectConfig.agentConfig as OpenCodeAgentConfig | undefined;
+      const effectiveModel = config.model ?? (agentConfig?.model as string | undefined);
+      if (effectiveModel) {
+        parts.push("--model", shellEscape(effectiveModel));
       }
 
       return parts.join(" ");
     },
 
-    async setupWorkspaceHooks(_workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+    async setupWorkspaceHooks(
+      _workspacePath: string,
+      _config: WorkspaceHooksConfig,
+    ): Promise<void> {
       // PATH wrappers are installed by session-manager for all agents.
     },
 
