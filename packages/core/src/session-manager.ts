@@ -1811,11 +1811,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         // claim the same name for the replacement. kill() intentionally keeps
         // terminated sessions in the active dir for kanban visibility, but the
         // delete/ignore strategies need the slot to be free immediately.
-        try {
-          deleteMetadata(getProjectSessionsDir(orchestratorConfig.projectId), sessionId, true);
-        } catch {
-          // Already archived (e.g. by the idempotency path on a concurrent call).
-        }
+        // deleteMetadata() is a no-op when the file is absent, so no try/catch
+        // needed — real IO errors should propagate rather than be swallowed.
+        deleteMetadata(getProjectSessionsDir(orchestratorConfig.projectId), sessionId, true);
         return spawnOrchestrator(orchestratorConfig);
       }
       if (existing.lifecycle.session.state === "done") {
