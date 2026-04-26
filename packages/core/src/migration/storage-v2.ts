@@ -19,7 +19,6 @@ import {
   rmSync,
   statSync,
   writeFileSync,
-  copyFileSync,
   cpSync,
   unlinkSync,
 } from "node:fs";
@@ -27,7 +26,7 @@ import { basename, join } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { parseKeyValueContent } from "../key-value.js";
-import { compactTimestamp, generateSessionPrefix } from "../paths.js";
+import { generateSessionPrefix } from "../paths.js";
 import { atomicWriteFileSync } from "../atomic-write.js";
 import { withFileLockSync } from "../file-lock.js";
 
@@ -84,7 +83,6 @@ export interface RollbackOptions {
 export interface MigrationResult {
   projects: number;
   sessions: number;
-  archives: number;
   worktrees: number;
   emptyDirsDeleted: number;
   strayWorktreesMoved: number;
@@ -150,14 +148,11 @@ export function inventoryHashDirs(aoBaseDir: string, globalConfigPath?: string):
       (f) => !f.startsWith(".") && f !== "archive",
     );
     const hasWorktrees = existsSync(worktreesDir) && readdirSync(worktreesDir).length > 0;
-    const hasArchive = existsSync(join(sessionsDir, "archive")) &&
-      readdirSync(join(sessionsDir, "archive")).length > 0;
-
     entries.push({
       path: dirPath,
       hash,
       projectId,
-      empty: !hasSessions && !hasWorktrees && !hasArchive,
+      empty: !hasSessions && !hasWorktrees,
     });
   }
 
@@ -485,47 +480,7 @@ function sanitizeLegacyProjectId(projectId: string): string {
 
 interface ProjectMigrationResult {
   sessions: number;
-  archives: number;
   worktrees: number;
-}
-
-/**
- * Fix archive filenames: replace colons and dots in timestamps with compact format.
- * Old: ao-83_2026-04-20T14:30:52.000Z → New: ao-83_20260420T143052Z
- * Also handles: dash-sanitized (T14-30-52-000Z), already-compact (20260420T143052Z),
- * and .json-suffixed timestamps.
- */
-function fixArchiveFilename(filename: string): string {
-  // Strip .json suffix if present (re-added at the end)
-  const baseName = filename.endsWith(".json") ? filename.slice(0, -5) : filename;
-
-  // Match: {sessionId}_{timestamp-part}
-  const match = baseName.match(/^(.+?)_(\d{4,}.+)$/);
-  if (!match) return filename;
-
-  const sessionPart = match[1];
-  const timestampPart = match[2];
-
-  // Already in compact format (e.g. 20260420T143052Z)
-  if (/^\d{8}T\d{6}Z$/.test(timestampPart)) {
-    return `${sessionPart}_${timestampPart}.json`;
-  }
-
-  try {
-    let iso = timestampPart;
-    // Legacy timestamps may have colons/dots replaced with dashes on some filesystems
-    // e.g. "2026-04-20T14-30-52-000Z" → "2026-04-20T14:30:52.000Z"
-    const sanitizedTime = iso.match(/T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/);
-    if (sanitizedTime) {
-      const datePart = iso.slice(0, iso.indexOf("T"));
-      iso = `${datePart}T${sanitizedTime[1]}:${sanitizedTime[2]}:${sanitizedTime[3]}.${sanitizedTime[4]}Z`;
-    }
-    const date = new Date(iso);
-    if (Number.isNaN(date.getTime())) return filename; // unparseable — leave unchanged
-    return `${sessionPart}_${compactTimestamp(date)}.json`;
-  } catch {
-    return filename;
-  }
 }
 
 /** Get file mtime as epoch ms, returning 0 on error. */
@@ -564,24 +519,20 @@ function migrateProject(
 ): ProjectMigrationResult {
   const projectDir = join(aoBaseDir, "projects", projectId);
   const sessionsDir = join(projectDir, "sessions");
-  const archiveDir = join(sessionsDir, "archive");
   const worktreesDir = join(projectDir, "worktrees");
 
   if (!dryRun) {
     mkdirSync(sessionsDir, { recursive: true });
-    mkdirSync(archiveDir, { recursive: true });
     mkdirSync(worktreesDir, { recursive: true });
   }
 
   const result: ProjectMigrationResult = {
     sessions: 0,
-    archives: 0,
     worktrees: 0,
   };
 
   // Collect all sessions across hash dirs
   const allSessions = new Map<string, { metadata: Record<string, unknown>; sourcePath: string }>();
-  let archiveCounter = 0;
 
   for (const hashDir of hashDirs) {
     const oldSessionsDir = join(hashDir.path, "sessions");
@@ -615,54 +566,70 @@ function migrateProject(
           || (newCreated === existingCreated && fileMtime(filePath) > fileMtime(existing.sourcePath))
           || (newCreated === existingCreated && fileMtime(filePath) === fileMtime(existing.sourcePath) && filePath > existing.sourcePath);
         if (newIsNewer) {
-          // Archive the older one
-          if (!dryRun) {
-            const ts = compactTimestamp(new Date());
-            const archivePath = join(archiveDir, `${sessionId}_${ts}-${archiveCounter++}.json`);
-            atomicWriteFileSync(archivePath, JSON.stringify(existing.metadata, null, 2) + "\n");
-          }
-          result.archives++;
+          log?.(`  [skip] duplicate session ${sessionId}: already migrated from another hash dir`);
           allSessions.set(sessionId, { metadata, sourcePath: filePath });
         } else {
-          // Archive the newer one (keep existing)
-          if (!dryRun) {
-            const ts = compactTimestamp(new Date());
-            const archivePath = join(archiveDir, `${sessionId}_${ts}-${archiveCounter++}.json`);
-            atomicWriteFileSync(archivePath, JSON.stringify(metadata, null, 2) + "\n");
-          }
-          result.archives++;
+          log?.(`  [skip] duplicate session ${sessionId}: already migrated from another hash dir`);
         }
       } else {
         allSessions.set(sessionId, { metadata, sourcePath: filePath });
       }
     }
 
-    // Migrate archives
+    // Flatten archives into sessions/ as terminated records
     const oldArchiveDir = join(oldSessionsDir, "archive");
     if (existsSync(oldArchiveDir)) {
-      for (const file of readdirSync(oldArchiveDir)) {
-        if (file.startsWith(".")) continue;
-        const filePath = join(oldArchiveDir, file);
-        try {
-          if (!statSync(filePath).isFile()) continue;
-        } catch {
+      for (const archiveFile of readdirSync(oldArchiveDir)) {
+        // Extract sessionId from archive filename: {sessionId}_{timestamp}...
+        const match = archiveFile.match(/^([a-zA-Z0-9_-]+?)_\d/);
+        if (!match?.[1]) continue;
+        const archivedSessionId = match[1];
+
+        // Skip if an active session with this ID already exists
+        const targetPath = join(sessionsDir, `${archivedSessionId}.json`);
+        if (existsSync(targetPath)) {
+          log?.(`  [skip] archive ${archivedSessionId}: active session already exists`);
           continue;
         }
 
-        const metadata = readAndConvertMetadata(filePath);
-        const fixedName = fixArchiveFilename(file);
-        const destName = fixedName.endsWith(".json") ? fixedName : `${fixedName}.json`;
-        const destPath = join(archiveDir, destName);
-
-        if (!dryRun) {
-          if (metadata) {
-            atomicWriteFileSync(destPath, JSON.stringify(metadata, null, 2) + "\n");
-          } else {
-            // Can't parse — copy raw
-            copyFileSync(filePath, destPath);
-          }
+        if (dryRun) {
+          result.sessions++;
+          continue;
         }
-        result.archives++;
+
+        try {
+          const content = readFileSync(join(oldArchiveDir, archiveFile), "utf-8").trim();
+          if (!content) continue;
+
+          let metadata: Record<string, unknown>;
+          try {
+            metadata = JSON.parse(content);
+          } catch {
+            // Legacy key=value format
+            metadata = convertKeyValueToJson(content);
+          }
+
+          // Ensure terminated lifecycle state
+          if (typeof metadata["lifecycle"] === "object" && metadata["lifecycle"] !== null) {
+            const lifecycle = metadata["lifecycle"] as Record<string, unknown>;
+            if (typeof lifecycle["session"] === "object" && lifecycle["session"] !== null) {
+              const session = lifecycle["session"] as Record<string, string>;
+              if (session["state"] !== "terminated" && session["state"] !== "done") {
+                session["state"] = "terminated";
+                session["reason"] = session["reason"] ?? "migrated_from_archive";
+                session["terminatedAt"] = session["terminatedAt"] ?? new Date().toISOString();
+              }
+            }
+          } else {
+            // Flat metadata — set status directly
+            metadata["status"] = metadata["status"] ?? "terminated";
+          }
+
+          atomicWriteFileSync(targetPath, JSON.stringify(metadata, null, 2) + "\n");
+          result.sessions++;
+        } catch (err) {
+          log?.(`  [warn] failed to flatten archive ${archiveFile}: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     }
 
@@ -962,7 +929,7 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     if (!dryRun && existsSync(markerPath)) {
       try { unlinkSync(markerPath); } catch { /* best-effort */ }
     }
-    return { projects: 0, sessions: 0, archives: 0, worktrees: 0, emptyDirsDeleted: 0, strayWorktreesMoved: 0 };
+    return { projects: 0, sessions: 0, worktrees: 0, emptyDirsDeleted: 0, strayWorktreesMoved: 0 };
   }
 
   log(`Found ${hashDirs.length} legacy director${hashDirs.length === 1 ? "y" : "ies"}.`);
@@ -1001,7 +968,6 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
   const totals: MigrationResult = {
     projects: 0,
     sessions: 0,
-    archives: 0,
     worktrees: 0,
     emptyDirsDeleted: 0,
     strayWorktreesMoved: 0,
@@ -1030,7 +996,6 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
 
       totals.projects++;
       totals.sessions += projectResult.sessions;
-      totals.archives += projectResult.archives;
       totals.worktrees += projectResult.worktrees;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1090,7 +1055,6 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
   log("\n--- Migration Summary ---");
   log(`Migrated ${totals.projects} project${totals.projects !== 1 ? "s" : ""}, ` +
     `${totals.sessions} session${totals.sessions !== 1 ? "s" : ""}, ` +
-    `${totals.archives} archive${totals.archives !== 1 ? "s" : ""}, ` +
     `${totals.worktrees} worktree${totals.worktrees !== 1 ? "s" : ""}.`);
   if (totals.strayWorktreesMoved > 0) {
     log(`Moved ${totals.strayWorktreesMoved} stray worktree${totals.strayWorktreesMoved !== 1 ? "s" : ""} from ~/.worktrees/.`);
@@ -1150,19 +1114,6 @@ function countPostMigrationSessions(
     const sessionId = file.endsWith(".json") ? file.slice(0, -5) : file;
     if (!migratedSessionIds.has(sessionId)) {
       count++;
-    }
-  }
-
-  // Also count archived sessions that don't exist in .migrated dirs
-  const archiveDir = join(sessionsDir, "archive");
-  if (existsSync(archiveDir)) {
-    for (const file of readdirSync(archiveDir)) {
-      if (!file.endsWith(".json") || file.startsWith(".")) continue;
-      // Extract session ID from archive filename: {sessionId}_{timestamp}.json
-      const sessionId = file.split("_")[0];
-      if (sessionId && !migratedSessionIds.has(sessionId)) {
-        count++;
-      }
     }
   }
 

@@ -422,7 +422,7 @@ describe("migrateStorage", () => {
     expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-2.json"))).toBe(true);
   });
 
-  it("handles duplicate session IDs across hash dirs", async () => {
+  it("handles duplicate session IDs across hash dirs — older is skipped", async () => {
     const hash1 = join(aoBaseDir, "aaaaaaaaaaaa-myproject");
     const hash2 = join(aoBaseDir, "bbbbbbbbbbbb-myproject");
     mkdirSync(join(hash1, "sessions"), { recursive: true });
@@ -438,21 +438,24 @@ describe("migrateStorage", () => {
       "project=myproject\ncreatedAt=2026-04-21T14:00:00.000Z\nbranch=b2\nworktree=/tmp/w2",
     );
 
+    const logs: string[] = [];
     const result = await migrateStorage({
       aoBaseDir,
       globalConfigPath: configPath,
       force: true,
-      log: () => {},
+      log: (msg) => logs.push(msg),
     });
 
     expect(result.sessions).toBe(1);
-    expect(result.archives).toBeGreaterThanOrEqual(1);
 
     // The newer session should be kept
     const session = JSON.parse(
       readFileSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"), "utf-8"),
     );
     expect(session.createdAt).toBe("2026-04-21T14:00:00.000Z");
+
+    // Older duplicate should be skipped with a log message
+    expect(logs.some((l) => l.includes("[skip] duplicate session ao-1"))).toBe(true);
   });
 
   it("deletes empty hash directories", async () => {
@@ -502,9 +505,15 @@ describe("migrateStorage", () => {
     expect(result.sessions).toBe(0);
   });
 
-  it("migrates archives with fixed filenames", async () => {
+  it("flattens archives into sessions/ as terminated records", async () => {
     const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions", "archive"), { recursive: true });
+
+    // Regular session so the hash dir is not considered empty
+    writeFileSync(
+      join(hashDir, "sessions", "ao-1"),
+      "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+    );
 
     // Old archive with colon-containing timestamp
     writeFileSync(
@@ -519,13 +528,19 @@ describe("migrateStorage", () => {
       log: () => {},
     });
 
-    expect(result.archives).toBe(1);
+    // 2 sessions: ao-1 (regular) + ao-83 (flattened from archive)
+    expect(result.sessions).toBe(2);
 
-    // Archive should exist in the new location with fixed filename
-    const archiveDir = join(aoBaseDir, "projects", "myproject", "sessions", "archive");
-    const archiveFiles = readdirSync(archiveDir);
-    expect(archiveFiles.length).toBe(1);
-    expect(archiveFiles[0]).toBe("ao-83_20260420T143052Z.json");
+    // Archive should be flattened into sessions/ as a JSON file (not into sessions/archive/)
+    const sessionPath = join(aoBaseDir, "projects", "myproject", "sessions", "ao-83.json");
+    expect(existsSync(sessionPath)).toBe(true);
+    const session = JSON.parse(readFileSync(sessionPath, "utf-8"));
+    expect(session.project).toBe("myproject");
+    // Flat metadata — should have terminated status
+    expect(session.status).toBe("terminated");
+
+    // No archive directory should exist in new location
+    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "archive"))).toBe(false);
   });
 
   it("converts key=value format to JSON during migration", async () => {
@@ -1231,7 +1246,7 @@ describe("migration edge cases", () => {
     expect(meta!.status).toBe("working");
   });
 
-  it("archive filenames are unique even for same-millisecond duplicates", async () => {
+  it("duplicate sessions across hash dirs are skipped, not archived", async () => {
     const hash1 = join(aoBaseDir, "aaaaaaaaaaaa-myproject");
     const hash2 = join(aoBaseDir, "bbbbbbbbbbbb-myproject");
     mkdirSync(join(hash1, "sessions"), { recursive: true });
@@ -1247,20 +1262,28 @@ describe("migration edge cases", () => {
       "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
     );
 
-    await migrateStorage({
+    const logs: string[] = [];
+    const result = await migrateStorage({
       aoBaseDir,
       globalConfigPath: configPath,
       force: true,
-      log: () => {},
+      log: (msg) => logs.push(msg),
     });
 
-    // One session in sessions/, one archived
-    const archiveDir = join(aoBaseDir, "projects", "myproject", "sessions", "archive");
-    expect(existsSync(archiveDir)).toBe(true);
-    const archives = readdirSync(archiveDir).filter((f) => f.startsWith("ao-1_"));
-    expect(archives).toHaveLength(1);
-    // Archive filename should include counter suffix
-    expect(archives[0]).toMatch(/-\d+\.json$/);
+    // Only one session should be written (the newer one)
+    expect(result.sessions).toBe(1);
+
+    // No archive directory should exist
+    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "archive"))).toBe(false);
+
+    // Duplicate should be logged as skipped
+    expect(logs.some((l) => l.includes("[skip] duplicate session ao-1"))).toBe(true);
+
+    // The newer session should be kept
+    const session = JSON.parse(
+      readFileSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"), "utf-8"),
+    );
+    expect(session.createdAt).toBe("2026-04-21T12:00:00.000Z");
   });
 
   it("moves stray worktrees from nested ~/.worktrees/{projectId}/{sessionId}/ layout", async () => {
