@@ -200,6 +200,10 @@ export function buildPrompt(
 
   return {
     systemPrompt: systemSections.join("\n\n"),
-    taskPrompt: config.userPrompt ? config.userPrompt : undefined,
+    taskPrompt: config.userPrompt
+      ? config.userPrompt
+      : config.issueId
+        ? `Work on issue: ${config.issueId}`
+        : undefined,
   };
 }

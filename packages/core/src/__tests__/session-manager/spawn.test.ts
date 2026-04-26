@@ -1113,7 +1113,7 @@ describe("spawn", () => {
     vi.useRealTimers();
   });
 
-  it("keeps issue-only spawn instructions in the system prompt without sending a post-launch task", async () => {
+  it("sends a minimal post-launch task for issue-only spawns", async () => {
     vi.useFakeTimers();
     const postLaunchAgent = {
       ...mockAgent,
@@ -1134,11 +1134,14 @@ describe("spawn", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     const session = await spawnPromise;
 
-    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
-    expect(session.metadata.promptDelivered).toBeUndefined();
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      "Work on issue: INT-1343",
+    );
+    expect(session.metadata.promptDelivered).toBe("true");
 
     const callArgs = vi.mocked(postLaunchAgent.getLaunchCommand).mock.calls[0][0];
-    expect(callArgs.prompt).toBeUndefined();
+    expect(callArgs.prompt).toBe("Work on issue: INT-1343");
     expect(callArgs.systemPromptFile).toContain("worker-prompt-app-1.md");
 
     const systemPrompt = readFileSync(callArgs.systemPromptFile!, "utf-8");
