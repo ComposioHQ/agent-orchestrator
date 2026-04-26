@@ -4,41 +4,35 @@ import { join } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import {
-  type Agent,
   type OpenCodeSessionManager,
   type Session,
   loadConfig,
 } from "@aoagents/ao-core";
 import { exec, tmux } from "../lib/shell.js";
-import { getAgentByName, getAgentByNameFromRegistry } from "../lib/plugins.js";
-import { getPluginRegistry, getSessionManager } from "../lib/create-session-manager.js";
+import { getSessionManager } from "../lib/create-session-manager.js";
 
 /**
- * Resolve session context: tmux target name and Agent plugin.
+ * Resolve session context: tmux target name and session data.
  * Loads config and looks up the session once, avoiding duplicate work.
  */
 async function resolveSessionContext(sessionName: string): Promise<{
   tmuxTarget: string;
   runtimeName?: string;
-  agent: Agent;
   session: Session | null;
   sessionManager: OpenCodeSessionManager | null;
 }> {
   try {
     const config = loadConfig();
-    const registry = await getPluginRegistry(config);
     const sm = await getSessionManager(config);
     const session = await sm.get(sessionName);
     if (session) {
       const tmuxTarget = session.runtimeHandle?.id ?? sessionName;
       const project = config.projects[session.projectId];
-      const agentName = session.metadata["agent"] ?? project?.agent ?? config.defaults.agent;
       const runtimeName =
         session.runtimeHandle?.runtimeName ?? project?.runtime ?? config.defaults.runtime;
       return {
         tmuxTarget,
         runtimeName,
-        agent: getAgentByNameFromRegistry(registry, agentName),
         session,
         sessionManager: sm,
       };
@@ -49,14 +43,9 @@ async function resolveSessionContext(sessionName: string): Promise<{
   return {
     tmuxTarget: sessionName,
     runtimeName: "tmux",
-    agent: getAgentByName("claude-code"),
     session: null,
     sessionManager: null,
   };
-}
-
-function isActive(agent: Agent, terminalOutput: string): boolean {
-  return agent.detectActivity(terminalOutput) === "active";
 }
 
 function hasQueuedMessage(terminalOutput: string): boolean {
@@ -118,27 +107,17 @@ export function registerSend(program: Command): void {
     .argument("<session>", "Session name")
     .argument("[message...]", "Message to send")
     .option("-f, --file <path>", "Send contents of a file instead")
-    .option("--no-wait", "Don't wait for session to become idle before sending")
-    .option("--timeout <seconds>", "Max seconds to wait for idle", "600")
     .action(
-      async (
-        session: string,
-        messageParts: string[],
-        opts: { file?: string; wait?: boolean; timeout?: string },
-      ) => {
-        // Resolve session context once: tmux target, agent plugin, session data
+      async (session: string, messageParts: string[], opts: { file?: string }) => {
+        // Resolve session context once: tmux target, session data
         const {
           tmuxTarget,
           runtimeName,
-          agent,
           session: existingSession,
           sessionManager,
         } = await resolveSessionContext(session);
 
         const message = await readMessageInput(opts, messageParts);
-
-        const parsedTimeout = parseInt(opts.timeout || "600", 10);
-        const timeoutMs = (isNaN(parsedTimeout) || parsedTimeout <= 0 ? 600 : parsedTimeout) * 1000;
 
         const canUseTmux = runtimeName === "tmux";
 
@@ -158,21 +137,6 @@ export function registerSend(program: Command): void {
         }
 
         const delegatesToSessionManager = Boolean(existingSession && sessionManager);
-        if (opts.wait !== false && canUseTmux && !delegatesToSessionManager) {
-          const start = Date.now();
-          let warned = false;
-          while (isActive(agent, await captureOutput(5))) {
-            if (!warned) {
-              console.log(chalk.dim(`Waiting for ${session} to become idle...`));
-              warned = true;
-            }
-            if (Date.now() - start > timeoutMs) {
-              console.log(chalk.yellow("Timeout waiting for idle. Sending anyway."));
-              break;
-            }
-            await sleep(5000);
-          }
-        }
 
         if (!canUseTmux && !delegatesToSessionManager) {
           console.error(
@@ -194,18 +158,19 @@ export function registerSend(program: Command): void {
           return;
         }
 
+        const baselineOutput = await captureOutput(10);
         await sendViaTmux(tmuxTarget, message);
 
-        // Verify delivery with retries
+        // Verify delivery with retries — look for output change or queued marker.
         for (let attempt = 1; attempt <= 3; attempt++) {
           await sleep(2000);
           const output = await captureOutput(10);
-          if (isActive(agent, output)) {
-            console.log(chalk.green("Message sent and processing"));
-            return;
-          }
           if (hasQueuedMessage(output)) {
             console.log(chalk.green("Message queued (session finishing previous task)"));
+            return;
+          }
+          if (output.length > 0 && output !== baselineOutput) {
+            console.log(chalk.green("Message sent and processing"));
             return;
           }
           if (attempt < 3) {

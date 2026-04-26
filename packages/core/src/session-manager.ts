@@ -2303,15 +2303,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     };
 
-    const detectActivityFromOutput = (output: string) => {
-      if (!output) return null;
-      try {
-        return agentPlugin.detectActivity(output);
-      } catch {
-        return null;
-      }
-    };
-
     const hasQueuedMessage = (output: string): boolean => {
       return output.includes("Press up to edit queued messages");
     };
@@ -2485,7 +2476,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
 
       const baselineOutput = await captureOutput(handle);
-      const baselineActivity = detectActivityFromOutput(baselineOutput) ?? session.activity;
       const baselineUpdatedAt = await getOpenCodeSessionUpdatedAt();
 
       await runtimePlugin.sendMessage(handle, message);
@@ -2496,16 +2486,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         await sleep(SEND_CONFIRMATION_POLL_MS);
 
         const output = await captureOutput(handle);
-        const activity = detectActivityFromOutput(output) ?? session.activity;
         const updatedAt = await getOpenCodeSessionUpdatedAt();
         const delivered =
           (baselineUpdatedAt !== undefined &&
             updatedAt !== undefined &&
             updatedAt > baselineUpdatedAt) ||
           hasQueuedMessage(output) ||
-          (output.length > 0 && output !== baselineOutput) ||
-          (baselineActivity !== "active" && activity === "active") ||
-          (baselineActivity !== "waiting_input" && activity === "waiting_input");
+          (output.length > 0 && output !== baselineOutput);
 
         if (delivered) {
           return;

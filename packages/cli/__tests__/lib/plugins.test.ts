@@ -109,7 +109,6 @@ describe("registry-backed resolution", () => {
           launch: async () => {
             throw new Error("not implemented");
           },
-          detectActivity: () => "idle",
           getSessionInfo: async () => null,
         } as unknown as Agent,
       },
