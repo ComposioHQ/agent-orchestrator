@@ -1,5 +1,5 @@
 import type { OrchestratorConfig, PluginRegistry, Runtime, Workspace } from "../types.js";
-import { updateMetadata, deleteMetadata } from "../metadata.js";
+import { updateMetadata } from "../metadata.js";
 import { getProjectSessionsDir } from "../paths.js";
 import { validateStatus } from "../utils/validation.js";
 import { sessionFromMetadata } from "../utils/session-from-metadata.js";
@@ -161,7 +161,6 @@ export async function cleanupSession(
       terminationReason: "cleanup",
     });
 
-    deleteMetadata(sessionsDir, sessionId, true);
     context.invalidateCache?.();
 
     return {
