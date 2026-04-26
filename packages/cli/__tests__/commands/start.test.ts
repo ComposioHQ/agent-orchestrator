@@ -215,7 +215,7 @@ vi.mock("node:process", async (importOriginal) => {
 // ---------------------------------------------------------------------------
 
 import { Command } from "commander";
-import { registerStart, registerStop, createConfigOnly } from "../../src/commands/start.js";
+import { registerStart, registerStop, autoCreateConfig } from "../../src/commands/start.js";
 
 let tmpDir: string;
 let program: Command;
@@ -1689,7 +1689,7 @@ describe("start command — autoCreateConfig", () => {
     const callerContext = await import("../../src/lib/caller-context.js");
     vi.spyOn(callerContext, "isHumanCaller").mockReturnValue(false);
 
-    await createConfigOnly();
+    await autoCreateConfig(tmpDir);
 
     const configPath = join(tmpDir, "agent-orchestrator.yaml");
     expect(existsSync(configPath)).toBe(true);
