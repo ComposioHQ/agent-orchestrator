@@ -1856,6 +1856,11 @@ export function registerStop(program: Command): void {
             for (const w of warnings) {
               console.log(chalk.yellow(w));
             }
+            // Also log to console.log so killed ids are visible in non-TTY callers
+            // (CI, scripts) and in test capture, since spinner output is suppressed.
+            if (killedSessionIds.length > 0) {
+              console.log(chalk.green(`  Stopped sessions: ${killedSessionIds.join(", ")}`));
+            }
           } else {
             console.log(chalk.yellow(`No active sessions found for "${project.name}"`));
           }
