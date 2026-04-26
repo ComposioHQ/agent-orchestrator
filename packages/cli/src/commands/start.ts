@@ -58,6 +58,7 @@ import { preflight } from "../lib/preflight.js";
 import {
   register,
   unregister,
+  removeProjectFromRunning,
   isAlreadyRunning,
   getRunning,
   waitForExit,
@@ -1329,7 +1330,14 @@ export function registerStart(program: Command): void {
           // ── Already-running detection (before any config mutation) ──
           const running = await isAlreadyRunning();
           let startNewOrchestrator = false;
-          if (running) {
+          // If the parent is alive but the requested project is not in its
+          // running.json projects list, it was stopped via `ao stop <project>`.
+          // Skip the "already running" menu and go straight to orchestrator
+          // creation — the dashboard and lifecycle worker are still up.
+          const projectNeedsRestart =
+            running && projectArg && !running.projects.includes(projectArg);
+
+          if (running && !projectNeedsRestart) {
             if (isHumanCaller()) {
               console.log(chalk.cyan(`\nℹ AO is already running.`));
               console.log(`  Dashboard: ${chalk.cyan(`http://localhost:${running.port}`)}`);
@@ -1675,6 +1683,11 @@ export function registerStop(program: Command): void {
               await unregister();
             }
             await stopDashboard(running?.port ?? port);
+          } else if (running) {
+            // Targeted stop: remove this project from running.json so
+            // ao start <project> can re-create the orchestrator without
+            // hitting the "already running" gate.
+            await removeProjectFromRunning(_projectId);
           }
 
           console.log(chalk.bold.green("\n✓ Orchestrator stopped\n"));
