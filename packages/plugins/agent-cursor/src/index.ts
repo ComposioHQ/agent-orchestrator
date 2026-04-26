@@ -13,7 +13,6 @@ import {
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
-  type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
@@ -385,11 +384,14 @@ function createCursorAgent(): Agent {
     },
 
     // Cursor doesn't support session resume — return null so caller falls back to getLaunchCommand
-    async getRestoreCommand(_session: Session, _project: ProjectConfig): Promise<string | null> {
+    async getRestoreCommand(_session: Session, _config: AgentLaunchConfig): Promise<string | null> {
       return null;
     },
 
-    async setupWorkspaceHooks(_workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+    async setupWorkspaceHooks(
+      _workspacePath: string,
+      _config: WorkspaceHooksConfig,
+    ): Promise<void> {
       // PATH wrappers are installed by session-manager for all agents.
     },
 

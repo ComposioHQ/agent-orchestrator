@@ -11,7 +11,6 @@ import {
   type ActivityState,
   type CostEstimate,
   type PluginModule,
-  type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
@@ -814,7 +813,7 @@ function createClaudeCodeAgent(): Agent {
       };
     },
 
-    async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
+    async getRestoreCommand(session: Session, config: AgentLaunchConfig): Promise<string | null> {
       if (!session.workspacePath) return null;
 
       // Find Claude's project directory for this workspace
@@ -832,7 +831,12 @@ function createClaudeCodeAgent(): Agent {
       // Build resume command
       const parts: string[] = ["claude", "--resume", shellEscape(sessionUuid)];
 
-      const permissionMode = normalizeAgentPermissionMode(project.agentConfig?.permissions);
+      // Prefer the per-session resolved values (config.permissions / config.model)
+      // over project defaults. Without this, sessions spawned with --permissions or
+      // --model overrides silently revert to project defaults on restore (#1475).
+      const project = config.projectConfig;
+      const effectivePermissions = config.permissions ?? project.agentConfig?.permissions;
+      const permissionMode = normalizeAgentPermissionMode(effectivePermissions);
       const isOrchestrator = session.metadata?.["role"] === "orchestrator";
       if (
         isOrchestrator &&
@@ -841,8 +845,9 @@ function createClaudeCodeAgent(): Agent {
         parts.push("--dangerously-skip-permissions");
       }
 
-      if (project.agentConfig?.model) {
-        parts.push("--model", shellEscape(project.agentConfig.model as string));
+      const effectiveModel = config.model ?? (project.agentConfig?.model as string | undefined);
+      if (effectiveModel) {
+        parts.push("--model", shellEscape(effectiveModel));
       }
 
       return parts.join(" ");

@@ -885,3 +885,147 @@ describe("hook setup — relative path (symlink-safe)", () => {
     expect(mockWriteFile).not.toHaveBeenCalled();
   });
 });
+
+// =========================================================================
+// getRestoreCommand
+//
+// Verifies the resolved per-session permissions / model from AgentLaunchConfig
+// are honoured on restore (#1475). Without the fix, restore silently falls
+// back to project-default permissions and any per-session override is lost.
+// =========================================================================
+describe("getRestoreCommand", () => {
+  const agent = create();
+
+  function setupRestoreFixture() {
+    mockReaddir.mockResolvedValue(["session-abc123.jsonl"]);
+    mockStat.mockResolvedValue({ mtimeMs: 1700000000000, mtime: new Date(1700000000000) });
+  }
+
+  it("returns null when workspacePath is null", async () => {
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({ workspacePath: null }),
+      makeLaunchConfig(),
+    );
+    expect(cmd).toBeNull();
+  });
+
+  it("returns null when no session jsonl is found", async () => {
+    mockReaddir.mockResolvedValue([]);
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({ workspacePath: "/workspace/test" }),
+      makeLaunchConfig(),
+    );
+    expect(cmd).toBeNull();
+  });
+
+  it("emits claude --resume <uuid> using the latest session file", async () => {
+    setupRestoreFixture();
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({ workspacePath: "/workspace/test" }),
+      makeLaunchConfig(),
+    );
+    expect(cmd).toContain("claude --resume 'session-abc123'");
+  });
+
+  it("appends --dangerously-skip-permissions for orchestrator + permissionless project", async () => {
+    setupRestoreFixture();
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({
+        workspacePath: "/workspace/test",
+        metadata: { role: "orchestrator" },
+      }),
+      makeLaunchConfig({
+        projectConfig: {
+          name: "p",
+          repo: "o/r",
+          path: "/p",
+          defaultBranch: "main",
+          sessionPrefix: "p",
+          agentConfig: { permissions: "permissionless" },
+        } as AgentLaunchConfig["projectConfig"],
+      }),
+    );
+    expect(cmd).toContain("--dangerously-skip-permissions");
+  });
+
+  it("does NOT append bypass flag when role is worker", async () => {
+    setupRestoreFixture();
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({ workspacePath: "/workspace/test", metadata: { role: "worker" } }),
+      makeLaunchConfig({
+        projectConfig: {
+          name: "p",
+          repo: "o/r",
+          path: "/p",
+          defaultBranch: "main",
+          sessionPrefix: "p",
+          agentConfig: { permissions: "permissionless" },
+        } as AgentLaunchConfig["projectConfig"],
+      }),
+    );
+    expect(cmd).not.toContain("--dangerously-skip-permissions");
+  });
+
+  it("per-session permissions override wins over project default on restore (#1475)", async () => {
+    setupRestoreFixture();
+    // Project default is the strict "suggest" mode, but the session was
+    // spawned with `--permissions permissionless` — restore must honour
+    // the per-session value.
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({
+        workspacePath: "/workspace/test",
+        metadata: { role: "orchestrator" },
+      }),
+      makeLaunchConfig({
+        projectConfig: {
+          name: "p",
+          repo: "o/r",
+          path: "/p",
+          defaultBranch: "main",
+          sessionPrefix: "p",
+          agentConfig: { permissions: "suggest" },
+        } as AgentLaunchConfig["projectConfig"],
+        permissions: "permissionless",
+      }),
+    );
+    expect(cmd).toContain("--dangerously-skip-permissions");
+  });
+
+  it("per-session model override wins over project default on restore (#1475)", async () => {
+    setupRestoreFixture();
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({ workspacePath: "/workspace/test" }),
+      makeLaunchConfig({
+        projectConfig: {
+          name: "p",
+          repo: "o/r",
+          path: "/p",
+          defaultBranch: "main",
+          sessionPrefix: "p",
+          agentConfig: { model: "claude-sonnet-4-5-20250929" },
+        } as AgentLaunchConfig["projectConfig"],
+        model: "claude-opus-4-5-20251015",
+      }),
+    );
+    expect(cmd).toContain("--model 'claude-opus-4-5-20251015'");
+    expect(cmd).not.toContain("claude-sonnet-4-5");
+  });
+
+  it("falls back to project model when no per-session override", async () => {
+    setupRestoreFixture();
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({ workspacePath: "/workspace/test" }),
+      makeLaunchConfig({
+        projectConfig: {
+          name: "p",
+          repo: "o/r",
+          path: "/p",
+          defaultBranch: "main",
+          sessionPrefix: "p",
+          agentConfig: { model: "claude-sonnet-4-5-20250929" },
+        } as AgentLaunchConfig["projectConfig"],
+      }),
+    );
+    expect(cmd).toContain("--model 'claude-sonnet-4-5-20250929'");
+  });
+});

@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createActivitySignal, type Session, type RuntimeHandle, type AgentLaunchConfig } from "@aoagents/ao-core";
+import {
+  createActivitySignal,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+} from "@aoagents/ao-core";
 
 const { mockAppendActivityEntry, mockReadLastActivityEntry, mockRecordTerminalActivity } =
   vi.hoisted(() => ({
@@ -176,9 +181,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ subagent: "sisyphus", prompt: "fix bug" }),
     );
-    expect(cmd).toContain(
-      "opencode run --format json --title 'AO:sess-1' --agent 'sisyphus'",
-    );
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1' --agent 'sisyphus'");
     expect(cmd).toContain(
       "exec opencode --session \"$SES_ID\" --prompt 'fix bug' --agent 'sisyphus'",
     );
@@ -323,9 +326,7 @@ describe("getLaunchCommand", () => {
         prompt: "fix the bug",
       }),
     );
-    expect(cmd).toContain(
-      "opencode run --format json --title 'AO:sess-1' --agent 'sisyphus'",
-    );
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1' --agent 'sisyphus'");
     expect(cmd).toContain(
       `exec opencode --session "$SES_ID" --prompt 'fix the bug' --agent 'sisyphus'`,
     );
@@ -352,9 +353,7 @@ describe("getLaunchCommand", () => {
         prompt: "fix the bug",
       }),
     );
-    expect(cmd).toContain(
-      "opencode run --format json --title 'AO:sess-1' --agent 'sisyphus'",
-    );
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1' --agent 'sisyphus'");
     expect(cmd).toContain(
       `exec opencode --session "$SES_ID" --prompt 'fix the bug' --agent 'sisyphus'`,
     );
@@ -737,10 +736,30 @@ describe("getSessionInfo", () => {
 describe("getRestoreCommand", () => {
   const agent = create();
 
+  function makeRestoreConfig(
+    opts: {
+      projectAgentConfig?: Record<string, unknown>;
+      model?: string;
+    } = {},
+  ): AgentLaunchConfig {
+    return {
+      sessionId: "test-1",
+      projectConfig: {
+        name: "proj",
+        repo: "o/r",
+        path: "/p",
+        defaultBranch: "main",
+        sessionPrefix: "p",
+        ...(opts.projectAgentConfig ? { agentConfig: opts.projectAgentConfig } : {}),
+      } as AgentLaunchConfig["projectConfig"],
+      ...(opts.model ? { model: opts.model } : {}),
+    };
+  }
+
   it("returns restore command from metadata session ID", async () => {
     const cmd = await agent.getRestoreCommand!(
       makeSession({ metadata: { opencodeSessionId: "ses_abc123" } }),
-      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
+      makeRestoreConfig(),
     );
     expect(cmd).toBe("opencode --session 'ses_abc123'");
   });
@@ -748,24 +767,14 @@ describe("getRestoreCommand", () => {
   it("includes model flag from project config", async () => {
     const cmd = await agent.getRestoreCommand!(
       makeSession({ metadata: { opencodeSessionId: "ses_abc123" } }),
-      {
-        name: "proj",
-        repo: "o/r",
-        path: "/p",
-        defaultBranch: "main",
-        sessionPrefix: "p",
-        agentConfig: { model: "claude-sonnet-4-5-20250929" },
-      },
+      makeRestoreConfig({ projectAgentConfig: { model: "claude-sonnet-4-5-20250929" } }),
     );
     expect(cmd).toContain("--model 'claude-sonnet-4-5-20250929'");
   });
 
   it("returns null when no session ID found", async () => {
     mockExecFileAsync.mockRejectedValue(new Error("opencode not found"));
-    const cmd = await agent.getRestoreCommand!(
-      makeSession({ metadata: {} }),
-      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
-    );
+    const cmd = await agent.getRestoreCommand!(makeSession({ metadata: {} }), makeRestoreConfig());
     expect(cmd).toBeNull();
   });
 
@@ -780,11 +789,29 @@ describe("getRestoreCommand", () => {
       return Promise.reject(new Error("unexpected"));
     });
 
-    const cmd = await agent.getRestoreCommand!(
-      makeSession({ metadata: {} }),
-      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
-    );
+    const cmd = await agent.getRestoreCommand!(makeSession({ metadata: {} }), makeRestoreConfig());
     expect(cmd).toBe("opencode --session 'ses_found'");
+  });
+
+  // Per-session override regressions for #1475
+  it("per-session model override wins over project default on restore", async () => {
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({ metadata: { opencodeSessionId: "ses_abc123" } }),
+      makeRestoreConfig({
+        projectAgentConfig: { model: "claude-sonnet-4-5-20250929" },
+        model: "claude-opus-4-5-20251015",
+      }),
+    );
+    expect(cmd).toContain("--model 'claude-opus-4-5-20251015'");
+    expect(cmd).not.toContain("claude-sonnet-4-5");
+  });
+
+  it("falls back to project model when no per-session override", async () => {
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({ metadata: { opencodeSessionId: "ses_abc123" } }),
+      makeRestoreConfig({ projectAgentConfig: { model: "claude-sonnet-4-5-20250929" } }),
+    );
+    expect(cmd).toContain("--model 'claude-sonnet-4-5-20250929'");
   });
 });
 
@@ -975,9 +1002,7 @@ describe("getActivityState with activity JSONL", () => {
       modifiedAt: new Date(),
     });
 
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("waiting_input");
   });
 
@@ -988,9 +1013,7 @@ describe("getActivityState with activity JSONL", () => {
       modifiedAt: new Date(),
     });
 
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("blocked");
   });
 
@@ -1008,7 +1031,11 @@ describe("getActivityState with activity JSONL", () => {
       if (cmd === "opencode") {
         return Promise.resolve({
           stdout: JSON.stringify([
-            { id: "ses_abc123", title: "AO:test-1", updated: new Date(Date.now() - 5_000).toISOString() },
+            {
+              id: "ses_abc123",
+              title: "AO:test-1",
+              updated: new Date(Date.now() - 5_000).toISOString(),
+            },
           ]),
           stderr: "",
         });
@@ -1017,7 +1044,10 @@ describe("getActivityState with activity JSONL", () => {
     });
 
     const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle(), metadata: { opencodeSessionId: "ses_abc123" } }),
+      makeSession({
+        runtimeHandle: makeTmuxHandle(),
+        metadata: { opencodeSessionId: "ses_abc123" },
+      }),
       60_000,
     );
     expect(result?.state).toBe("active");
@@ -1051,7 +1081,11 @@ describe("getActivityState with activity JSONL", () => {
   it("falls back to JSONL entry with age decay — old entry becomes idle", async () => {
     mockTmuxWithProcess("opencode");
     mockReadLastActivityEntry.mockResolvedValueOnce({
-      entry: { ts: new Date(Date.now() - 120_000).toISOString(), state: "active", source: "terminal" },
+      entry: {
+        ts: new Date(Date.now() - 120_000).toISOString(),
+        state: "active",
+        source: "terminal",
+      },
       modifiedAt: new Date(Date.now() - 120_000),
     });
     mockExecFileAsync.mockImplementation((cmd: string) => {
