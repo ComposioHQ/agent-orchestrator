@@ -11,6 +11,29 @@ studying the existing claude-code plugin as the reference implementation.
 
 ---
 
+## Verified by Running the CLIs
+
+All claims in this document were tested on this machine unless marked otherwise.
+Key tests performed:
+
+| Test | Result |
+|------|--------|
+| `gemini -r <uuid>` resume by UUID | Works (confirmed) |
+| `gemini -i` stays interactive | **Fails** — errors with "cannot be used when input is piped from stdin" (needs real TTY) |
+| `gemini` process in `ps` | Shows as `node ... /opt/homebrew/bin/gemini` (NOT as `gemini`) |
+| `copilot -i` stays interactive | Works (confirmed via tmux with TTY) |
+| `copilot --resume=<uuid>` | Works (confirmed) |
+| `copilot --name` + `--resume=<name>` | Works (name stored in workspace.yaml) |
+| `copilot` process in `ps` | Shows as `copilot ...` (native binary, confirmed) |
+| `copilot events.jsonl` real-time | **Delayed ~15-18s**, then batch-updated |
+| `copilot events.jsonl` waiting_input event | **Does NOT exist** — permission denials are `tool.execution_complete` with `success: false` |
+| Copilot permission prompts in tmux | TUI dialog boxes: "Do you want to allow this?", "Do you trust the files?" |
+| `copilot -o json` (headless JSONL) | Works — returns JSONL events including shutdown metrics |
+| `gemini -o json` (headless) | Works — returns single JSON object with stats |
+| `gemini -o stream-json` | Works — returns init, message, result events as JSONL |
+
+---
+
 ## Table of Contents
 
 1. [Gemini CLI](#1-gemini-cli)
@@ -68,11 +91,17 @@ gemini -p "task" -o json
 
 **Plugin decision: `promptDelivery`**
 
-Gemini CLI exits after `-p` (just like `claude -p`). Two options:
-- **Option A (recommended):** Use `-i` flag with `promptDelivery: "inline"`. This keeps Gemini in interactive mode after executing the initial prompt. The prompt is part of the launch command.
-- **Option B:** Launch bare `gemini` with `promptDelivery: "post-launch"` and send the prompt via `runtime.sendMessage()` after launch, like claude-code does.
+Gemini CLI exits after `-p` (just like `claude -p`).
 
-Option A is cleaner because Gemini explicitly supports `-i` for this use case.
+**Tested:** `gemini -i` **fails** when stdin is piped — it errors with
+"The --prompt-interactive flag cannot be used when input is piped from stdin."
+However, it should work in a tmux PTY (real TTY). Needs further testing in tmux.
+
+Options:
+- **Option A:** Use `-i` flag with `promptDelivery: "inline"` — IF it works in tmux PTY. Needs testing.
+- **Option B (safer):** Launch bare `gemini` with `promptDelivery: "post-launch"` and send the prompt via `runtime.sendMessage()` after launch, like claude-code does.
+
+Option B is safer until `-i` is confirmed working in tmux.
 
 ### 1.3 Permission / Approval Modes
 
@@ -229,11 +258,18 @@ need Gemini-specific pricing per model. Token counts are available from session 
 |----------|-------|
 | Process name | `gemini` (symlink to Node.js) |
 | Actual process | `node /opt/homebrew/lib/node_modules/@google/gemini-cli/dist/index.js` |
-| Process regex | `/(?:^|\/)gemini(?:\s\|$)/` or look for `gemini-cli` in args |
+| Process regex | `/\/opt\/homebrew\/bin\/gemini/` or `/gemini-cli\/dist\/index\.js/` |
 
-**Important:** Since gemini is a Node.js script, `ps` will show it as a `node` process.
-Need to match against the full command args, not just process name.
-Pattern: `/gemini-cli\/dist\/index\.js/` or `/(?:^|\/)gemini(?:\s|$)/`
+**Verified via `ps -eo pid,args`:** Gemini appears as two `node` processes:
+```
+58126 node --no-warnings=DEP0040 /opt/homebrew/bin/gemini -p ...
+58497 /usr/local/bin/node --no-warnings=DEP0040 /opt/homebrew/bin/gemini -p ...
+```
+
+**Important:** The simple regex `/(?:^|\/)gemini(?:\s|$)/` will NOT work because the
+process name is `node`, not `gemini`. Must match against the full command args.
+Best pattern: `/\/gemini(?:\s|$)/` — matches the `/opt/homebrew/bin/gemini` path
+in the args column.
 
 ### 1.9 Hooks / Workspace Integration
 
@@ -448,37 +484,80 @@ Session IDs are UUIDs stored in `~/.copilot/session-state/{uuid}/`.
 
 ### 2.6 Activity Detection Strategy
 
-**Copilot has native JSONL!** The `events.jsonl` file is a streaming log of all
-session events, updated in real-time. This is very similar to Claude Code's JSONL.
+**Copilot has native JSONL** (`events.jsonl`) but with important caveats verified
+by testing:
 
-**Recommended approach: Native JSONL reading** (like Claude Code):
+**Caveat 1: Delayed flush (~15-18s).** events.jsonl is NOT real-time. It first
+appears ~15-18 seconds after session start, then updates in batches. Tested:
+```
+t=2s:  no events.jsonl
+t=8s:  5 events (startup batch: session.start → assistant.turn_start)
+t=18s: 12 events (tool execution batch)
+t=final: 15 events (includes session.shutdown)
+```
 
-Map Copilot event types to activity states:
+**Caveat 2: No `waiting_input` event type.** When Copilot is denied a tool in
+non-interactive (`-p`) mode, it gets `tool.execution_complete` with `"success": false`
+and `"error": {"message": "Permission denied..."}`. It does NOT emit a permission
+request event — it just moves on.
 
-| Copilot Event Type | AO Activity State |
-|--------------------|-------------------|
-| `user.message` | `active` (fresh) |
-| `assistant.turn_start` | `active` |
-| `assistant.message` (with `toolRequests`) | `active` |
-| `assistant.message` (final answer) | `ready` |
-| `assistant.turn_end` | `ready` |
-| `session.shutdown` | `exited` |
-| `assistant.tool_call` | `active` |
-| `assistant.tool_result` | `active` |
-| `session.user_approval_request` | `waiting_input` |
-| `assistant.error` | `blocked` |
+**Caveat 3: Permission prompts only in interactive/tmux mode.** When running in a
+TTY (how AO uses it via tmux), Copilot shows TUI dialog boxes for approval:
+```
+╭──────────────────────────────╮
+│ Allow directory access       │
+│ ...                          │
+│ Do you want to allow this?   │
+│   1. Yes                     │
+│ ❯ 2. Yes, and add these...  │
+│   3. No (Esc)                │
+╰──────────────────────────────╯
+```
+
+**Recommended approach: Hybrid** (native JSONL + AO Activity JSONL):
+- **Primary:** Read `events.jsonl` for active/ready/idle states (like Claude Code)
+- **waiting_input/blocked:** Use AO Activity JSONL via `recordActivity()` + terminal
+  pattern matching (like Aider). The native JSONL won't capture these states.
+
+**Verified event types and their mapping:**
+
+| Copilot Event Type | AO Activity State | Notes |
+|--------------------|-------------------|-------|
+| `session.start` | `active` (startup) | |
+| `session.model_change` | `active` | |
+| `user.message` | `active` | |
+| `assistant.turn_start` | `active` | |
+| `assistant.message` (non-final) | `active` | Has `toolRequests` |
+| `assistant.message` (phase=`final_answer`) | `ready` | `outputTokens` present |
+| `tool.execution_start` | `active` | `toolName` field present |
+| `tool.execution_complete` (success=true) | `active` | |
+| `tool.execution_complete` (success=false) | `blocked` | Permission denied or error |
+| `assistant.turn_end` | `ready` | |
+| `session.shutdown` | `exited` | |
 
 **For `getActivityState()` cascade:**
-1. Process check (is copilot running?)
-2. Read last entry from `~/.copilot/session-state/{id}/events.jsonl`
-3. Map event type to activity state with age-based decay
-4. Fallback to AO activity JSONL if events.jsonl is unavailable
+1. Process check → `exited` if dead
+2. Check AO activity JSONL (`checkActivityLogState()`) → `waiting_input`/`blocked`
+3. Read last entry from `events.jsonl` → map to active/ready/idle with age decay
+4. Fallback to AO activity JSONL age decay (`getActivityFallbackState()`)
 
 **Finding the right session directory:**
 Need to match the workspace path to a session. Strategy:
 - Read `workspace.yaml` in each session directory under `~/.copilot/session-state/`
 - Match by `cwd` or `git_root` field
 - Use the most recently modified match
+- Cache the mapping to avoid scanning every poll cycle
+
+**Terminal output patterns for `detectActivity()`** (verified in tmux):
+
+| Pattern | State | Notes |
+|---------|-------|-------|
+| `Do you want to allow this?` | `waiting_input` | Directory/path access prompt |
+| `Do you trust the files in this folder?` | `waiting_input` | Folder trust prompt |
+| `↑↓ to navigate` | `waiting_input` | TUI selection menu active |
+| `> ` at end of output | `idle` | Interactive prompt |
+| Empty output | `idle` | |
+| Everything else | `active` | |
 
 ### 2.7 Cost & Usage Tracking
 
@@ -522,8 +601,12 @@ applicable. We can still report token usage and premium request counts.
 | Process regex | `/(?:^|\/)copilot(?:\s\|$)/` |
 | PID detection | Direct — native binary shows up as `copilot` in `ps` |
 
-**Unlike Gemini, Copilot is a native binary** — it appears directly as `copilot` in
-process listings. No need to match against Node.js args.
+**Verified via `ps -eo pid,args`:** Copilot appears cleanly as:
+```
+64070 copilot -p count to 10 slowly --allow-all -s
+```
+Unlike Gemini (which is a Node.js script), Copilot is a native binary —
+`/opt/homebrew/bin/copilot` (Mach-O arm64). The simple regex works.
 
 ### 2.9 Hooks / Workspace Integration
 
@@ -737,7 +820,7 @@ This is the most complex method. Cascade:
 | `getLaunchCommand` | `claude [flags]` | `gemini -i <prompt> [flags]` | `copilot -i <prompt> [flags]` |
 | `getEnvironment` | `CLAUDECODE=""` | `AO_SESSION_ID` | `AO_SESSION_ID`, `COPILOT_AUTO_UPDATE=false` |
 | `detectActivity` | Terminal patterns | Terminal patterns | Terminal patterns |
-| `getActivityState` | Native JSONL | AO activity JSONL + session mtime | Native JSONL (`events.jsonl`) |
+| `getActivityState` | Native JSONL | AO activity JSONL + session mtime | Hybrid: native JSONL + AO activity JSONL |
 | `isProcessRunning` | ps cache + regex | ps cache + node args match | ps cache + regex (native binary) |
 | `getSessionInfo` | JSONL tail parse | Session JSON parse | events.jsonl parse |
 | `getRestoreCommand` | `claude --resume <uuid>` | `gemini -r <uuid>` | `copilot --resume=<id>` |
@@ -885,18 +968,22 @@ Copilot supports custom instructions via:
 Option 3 is already handled by the PATH wrapper setup — Copilot will auto-discover
 the `AGENTS.md` file in `.ao/`.
 
-**`getActivityState`:** Native JSONL reading (like Claude Code).
+**`getActivityState`:** Hybrid approach (native JSONL + AO Activity JSONL).
+
+**Verified behavior:** events.jsonl has a ~15-18s flush delay and does NOT contain
+`waiting_input` events. Permission prompts only appear in terminal output (TUI dialogs).
+
 ```
 1. Process check → exited
-2. Find session directory by matching workspace path in workspace.yaml
-3. Read last entry from events.jsonl using readLastJsonlEntry()
+2. Check AO activity JSONL (checkActivityLogState) → waiting_input/blocked
+3. Find session dir, read last events.jsonl entry using readLastJsonlEntry()
 4. Map event types:
-   - user.message, assistant.tool_call → active (if fresh)
-   - assistant.message, assistant.turn_end → ready (by age)
-   - session.user_approval_request → waiting_input
-   - assistant.error → blocked
+   - user.message, assistant.turn_start, tool.execution_start → active (if fresh)
+   - assistant.message (final_answer), assistant.turn_end → ready (by age)
+   - tool.execution_complete (success=false) → blocked
    - session.shutdown → exited
 5. Age-based decay: active → ready → idle
+6. Fallback: getActivityFallbackState() from AO activity JSONL
 ```
 
 **Session directory discovery:**
@@ -905,8 +992,12 @@ async function findCopilotSessionDir(workspacePath: string): Promise<string | nu
   const sessionsDir = join(homedir(), ".copilot", "session-state");
   // Read each session's workspace.yaml, match by cwd or git_root
   // Return most recently modified match
+  // IMPORTANT: Cache this mapping — scanning all dirs every poll is expensive
 }
 ```
+
+**`recordActivity`:** Required (unlike Claude Code). Delegates to `recordTerminalActivity()`
+to capture terminal permission prompts that events.jsonl doesn't log.
 
 **`getSessionInfo`:**
 - Read `workspace.yaml` for summary and session ID
@@ -934,12 +1025,13 @@ const processRe = /(?:^|\/)copilot(?:\s|$)/;
 // Permission: "Allow?", "(y/n)", etc.
 ```
 
-#### Key challenges
-1. **Session directory discovery** — Must scan `~/.copilot/session-state/` and match by workspace path in `workspace.yaml`.
-2. **Event type mapping** — Copilot has different event types than Claude; need complete mapping.
-3. **Cost model** — Copilot is subscription-based; report token counts, not USD.
-4. **events.jsonl can be large** — Same tail-reading optimization as Claude needed.
-5. **Tool request events** — Copilot uses `toolRequests` array in `assistant.message`, not separate events.
+#### Key challenges (verified by testing)
+1. **events.jsonl flush delay (~15-18s)** — File appears late and updates in batches, not per-event. The plugin must handle the window where events.jsonl doesn't exist yet.
+2. **No waiting_input in JSONL** — Permission prompts are TUI-only (terminal output). Must implement `recordActivity()` + `detectActivity()` for waiting_input/blocked, making this a **hybrid** approach (not pure native JSONL like Claude Code).
+3. **Session directory discovery** — Must scan `~/.copilot/session-state/` and match by workspace path in `workspace.yaml`. Needs caching.
+4. **Cost model** — Copilot is subscription-based; report token counts and premium request counts, not USD.
+5. **events.jsonl can be large** — Same tail-reading optimization as Claude needed.
+6. **Folder trust prompt** — Copilot prompts for folder trust on first use. The plugin should either pre-trust the folder (add to `~/.copilot/config.json` `trustedFolders`) or use `--allow-all-paths`.
 
 ### 5.3 Priority & Dependencies
 
