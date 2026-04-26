@@ -492,6 +492,166 @@ describe("list", () => {
     // lastActivityAt should NOT be downgraded to the older detection timestamp
     expect(sessions[0].lastActivityAt.getTime()).toBeGreaterThan(olderTimestamp.getTime());
   });
+
+  // Regression tests for issue #1120: terminal opencode sessions must not
+  // trigger `opencode session list` subprocess spawns on every refresh.
+  describe("opencode session list spawning (issue #1120)", () => {
+    function makeOpenCodeListLogPath(): string {
+      return join(tmpDir, `opencode-list-${Math.random().toString(36).slice(2)}.log`);
+    }
+
+    function readListInvocations(listLogPath: string): string[] {
+      try {
+        return readFileSync(listLogPath, "utf-8").trim().split("\n").filter(Boolean);
+      } catch {
+        return [];
+      }
+    }
+
+    it("does not spawn opencode session list when all opencode sessions are killed", async () => {
+      const listLogPath = makeOpenCodeListLogPath();
+      const deleteLogPath = join(tmpDir, "opencode-delete-killed.log");
+      const mockBin = installMockOpencode(
+        tmpDir,
+        JSON.stringify([{ id: "ses_orphan", title: "AO:app-1" }]),
+        deleteLogPath,
+        0,
+        listLogPath,
+      );
+      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp",
+        branch: "a",
+        status: "killed",
+        project: "my-app",
+        agent: "opencode",
+        runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      });
+      writeMetadata(sessionsDir, "app-2", {
+        worktree: "/tmp",
+        branch: "b",
+        status: "merged",
+        project: "my-app",
+        agent: "opencode",
+        runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+      });
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const sessions = await sm.list();
+
+      expect(sessions).toHaveLength(2);
+      expect(readListInvocations(listLogPath)).toHaveLength(0);
+    });
+
+    it("does not spawn opencode session list when there are zero opencode sessions", async () => {
+      const listLogPath = makeOpenCodeListLogPath();
+      const deleteLogPath = join(tmpDir, "opencode-delete-none.log");
+      const mockBin = installMockOpencode(
+        tmpDir,
+        JSON.stringify([]),
+        deleteLogPath,
+        0,
+        listLogPath,
+      );
+      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp",
+        branch: "a",
+        status: "working",
+        project: "my-app",
+        agent: "claude-code",
+        runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      });
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const sessions = await sm.list();
+
+      expect(sessions).toHaveLength(1);
+      expect(readListInvocations(listLogPath)).toHaveLength(0);
+    });
+
+    it(
+      "spawns opencode session list exactly once when at least one opencode session is non-terminal, " +
+        "regardless of how many terminal opencode sessions exist",
+      async () => {
+        const listLogPath = makeOpenCodeListLogPath();
+        const deleteLogPath = join(tmpDir, "opencode-delete-mixed.log");
+        const mockBin = installMockOpencode(
+          tmpDir,
+          JSON.stringify([{ id: "ses_live", title: "AO:app-live" }]),
+          deleteLogPath,
+          0,
+          listLogPath,
+        );
+        process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+
+        // Two killed opencode sessions...
+        writeMetadata(sessionsDir, "app-killed-1", {
+          worktree: "/tmp",
+          branch: "a",
+          status: "killed",
+          project: "my-app",
+          agent: "opencode",
+          runtimeHandle: JSON.stringify(makeHandle("rt-killed-1")),
+        });
+        writeMetadata(sessionsDir, "app-killed-2", {
+          worktree: "/tmp",
+          branch: "b",
+          status: "merged",
+          project: "my-app",
+          agent: "opencode",
+          runtimeHandle: JSON.stringify(makeHandle("rt-killed-2")),
+        });
+        // ...plus one live opencode session that needs mapping discovery.
+        writeMetadata(sessionsDir, "app-live", {
+          worktree: "/tmp",
+          branch: "c",
+          status: "working",
+          project: "my-app",
+          agent: "opencode",
+          runtimeHandle: JSON.stringify(makeHandle("rt-live")),
+        });
+
+        const sm = createSessionManager({ config, registry: mockRegistry });
+        const sessions = await sm.list();
+
+        expect(sessions).toHaveLength(3);
+        expect(readListInvocations(listLogPath)).toHaveLength(1);
+        expect(readMetadataRaw(sessionsDir, "app-live")?.["opencodeSessionId"]).toBe("ses_live");
+      },
+    );
+
+    it("does not spawn opencode session list when the only opencode session is already mapped", async () => {
+      const listLogPath = makeOpenCodeListLogPath();
+      const deleteLogPath = join(tmpDir, "opencode-delete-mapped.log");
+      const mockBin = installMockOpencode(
+        tmpDir,
+        JSON.stringify([{ id: "ses_existing", title: "AO:app-1" }]),
+        deleteLogPath,
+        0,
+        listLogPath,
+      );
+      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp",
+        branch: "a",
+        status: "working",
+        project: "my-app",
+        agent: "opencode",
+        opencodeSessionId: "ses_existing",
+        runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      });
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const sessions = await sm.list();
+
+      expect(sessions).toHaveLength(1);
+      expect(readListInvocations(listLogPath)).toHaveLength(0);
+    });
+  });
 });
 
 describe("get", () => {

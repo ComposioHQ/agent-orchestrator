@@ -219,6 +219,14 @@ function getSessionNumber(sessionId: string, prefix: string): number | undefined
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
+const TERMINAL_SESSION_STATUSES: ReadonlySet<string> = new Set([
+  "killed",
+  "done",
+  "merged",
+  "terminated",
+  "cleanup",
+]);
+
 const PR_TRACKING_STATUSES: ReadonlySet<string> = new Set([
   "pr_open",
   "ci_failed",
@@ -923,11 +931,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionName: string,
     sessionsDir: string,
     effectiveAgentName: string,
-    sessionListPromise?: Promise<OpenCodeSessionListEntry[]>,
+    sessionListGetter?: () => Promise<OpenCodeSessionListEntry[]>,
   ): Promise<void> {
     if (effectiveAgentName !== "opencode") return;
+    // Skip subprocess work for sessions already known to be terminal — there is
+    // nothing to discover and the agent's opencode session is irrelevant.
+    if (TERMINAL_SESSION_STATUSES.has(session.status)) return;
     if (asValidOpenCodeSessionId(session.metadata["opencodeSessionId"])) return;
 
+    // Only materialize the (memoized) session list promise after the early
+    // returns above — otherwise we spawn `opencode session list` for terminal
+    // and already-mapped sessions on every refresh. See issue #1120.
+    const sessionListPromise = sessionListGetter?.();
     const discovered = await discoverOpenCodeSessionIdByTitle(
       sessionName,
       OPENCODE_DISCOVERY_TIMEOUT_MS,
@@ -983,14 +998,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     project: ProjectConfig,
     effectiveAgentName: string,
     plugins: ReturnType<typeof resolvePlugins>,
-    sessionListPromise?: Promise<OpenCodeSessionListEntry[]>,
+    sessionListGetter?: () => Promise<OpenCodeSessionListEntry[]>,
   ): Promise<void> {
     await ensureOpenCodeSessionMapping(
       session,
       sessionName,
       sessionsDir,
       effectiveAgentName,
-      sessionListPromise,
+      sessionListGetter,
     );
 
     const tmuxNameFromMetadata = session.metadata["tmuxName"]?.trim();
@@ -1017,8 +1032,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
    * Enrich session with live runtime state (alive/exited) and activity detection.
    * Mutates the session object in place.
    */
-  const TERMINAL_SESSION_STATUSES = new Set(["killed", "done", "merged", "terminated", "cleanup"]);
-
   async function enrichSessionWithRuntimeState(
     session: Session,
     plugins: ReturnType<typeof resolvePlugins>,
@@ -1888,7 +1901,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         raw: record.raw,
       }));
     });
+    // Lazily fetch the OpenCode session list at most once per list() call, and
+    // only when we actually need it. The thunk is passed all the way down to
+    // ensureOpenCodeSessionMapping, which only invokes it after its early
+    // returns (wrong agent / terminal status / already-mapped). This prevents
+    // spawning `opencode session list` for refreshes that have nothing live to
+    // resolve. See issue #1120.
     let openCodeSessionListPromise: Promise<OpenCodeSessionListEntry[]> | undefined;
+    const getOpenCodeSessionList = (): Promise<OpenCodeSessionListEntry[]> =>
+      (openCodeSessionListPromise ??= fetchOpenCodeSessionList());
 
     const tasks = allSessions.map(async ({ sessionName, projectId: sessionProjectId, raw }) => {
       const project = config.projects[sessionProjectId];
@@ -1918,10 +1939,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const selection = resolveSelectionForSession(project, sessionName, raw);
       const effectiveAgentName = selection.agentName;
       const plugins = resolvePlugins(project, effectiveAgentName);
-      const sessionListPromise =
-        effectiveAgentName === "opencode"
-          ? (openCodeSessionListPromise ??= fetchOpenCodeSessionList())
-          : undefined;
+      const sessionListGetter =
+        effectiveAgentName === "opencode" ? getOpenCodeSessionList : undefined;
 
       let enrichTimeoutId: ReturnType<typeof setTimeout> | null = null;
       const enrichTimeout = new Promise<void>((resolve) => {
@@ -1934,7 +1953,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         project,
         effectiveAgentName,
         plugins,
-        sessionListPromise,
+        sessionListGetter,
       ).catch(() => {});
       try {
         await Promise.race([enrichPromise, enrichTimeout]);
