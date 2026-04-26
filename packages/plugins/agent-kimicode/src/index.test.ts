@@ -249,8 +249,10 @@ describe("manifest & exports", () => {
 describe("getLaunchCommand", () => {
   const agent = create();
 
-  it("generates base command", () => {
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("kimi");
+  it("generates base command with --work-dir", () => {
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe(
+      "kimi --work-dir '/workspace/repo'",
+    );
   });
 
   it("adds --yolo when permissions=permissionless", () => {
@@ -304,7 +306,7 @@ describe("getLaunchCommand", () => {
       }),
     );
     expect(cmd).toBe(
-      "kimi --yolo --model 'kimi-k2' --agent 'default' --agent-file '/tmp/sp.md' --prompt 'Go'",
+      "kimi --work-dir '/workspace/repo' --yolo --model 'kimi-k2' --agent 'default' --agent-file '/tmp/sp.md' --prompt 'Go'",
     );
   });
 });
@@ -694,6 +696,101 @@ describe("getActivityState", () => {
     expect(second?.state).toBe("active");
   }, 10_000);
 
+  it("baseline file: pre-existing UUIDs are partitioned out (manual kimi run in same dir)", async () => {
+    mockTmuxWithProcess("kimi");
+
+    // Use a real on-disk workspace so the plugin can read the baseline file.
+    const realWorkspace = join(fakeHome, "workspace-baseline-1");
+    mkdirSync(join(realWorkspace, ".ao"), { recursive: true });
+
+    writeKimiSession(realWorkspace, "manual-run-uuid"); // pre-AO
+    writeKimiSession(realWorkspace, "ao-launched-uuid"); // post-AO
+
+    writeFileSync(
+      join(realWorkspace, ".ao", "kimi-baseline.json"),
+      JSON.stringify({
+        preExistingUuids: ["manual-run-uuid"],
+        capturedAt: new Date().toISOString(),
+      }),
+    );
+
+    const info = await agent.getSessionInfo(
+      makeSession({ workspacePath: realWorkspace }),
+    );
+    expect(info?.agentSessionId).toBe("ao-launched-uuid");
+  });
+
+  it("baseline file: returns null if every UUID was pre-existing", async () => {
+    mockTmuxWithProcess("kimi");
+
+    const realWorkspace = join(fakeHome, "workspace-baseline-2");
+    mkdirSync(join(realWorkspace, ".ao"), { recursive: true });
+
+    writeKimiSession(realWorkspace, "old-1");
+    writeKimiSession(realWorkspace, "old-2");
+
+    writeFileSync(
+      join(realWorkspace, ".ao", "kimi-baseline.json"),
+      JSON.stringify({
+        preExistingUuids: ["old-1", "old-2"],
+        capturedAt: new Date().toISOString(),
+      }),
+    );
+
+    const result = await agent.getActivityState(
+      makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: realWorkspace }),
+    );
+    expect(result).toBeNull();
+  });
+
+  it("postLaunchSetup writes a baseline that excludes pre-existing UUIDs from later discovery", async () => {
+    const realWorkspace = join(fakeHome, "workspace-baseline-3");
+    mkdirSync(realWorkspace, { recursive: true });
+
+    // Pre-existing UUID before AO ever ran.
+    writeKimiSession(realWorkspace, "pre-existing");
+
+    // postLaunchSetup snapshots the bucket — captures "pre-existing" in baseline.
+    await agent.postLaunchSetup!(makeSession({ workspacePath: realWorkspace }));
+
+    // Later, AO's kimi spawn creates a new UUID dir.
+    writeKimiSession(realWorkspace, "ao-spawned");
+
+    mockTmuxWithProcess("kimi");
+    const info = await agent.getSessionInfo(
+      makeSession({ workspacePath: realWorkspace }),
+    );
+    expect(info?.agentSessionId).toBe("ao-spawned");
+  });
+
+  it("postLaunchSetup is write-once — restore preserves the original baseline", async () => {
+    const realWorkspace = join(fakeHome, "workspace-baseline-4");
+    mkdirSync(join(realWorkspace, ".ao"), { recursive: true });
+
+    const originalBaseline = {
+      preExistingUuids: ["original-pre-existing"],
+      capturedAt: "2026-04-01T00:00:00.000Z",
+    };
+    writeFileSync(
+      join(realWorkspace, ".ao", "kimi-baseline.json"),
+      JSON.stringify(originalBaseline),
+    );
+
+    // Add a UUID that would be in the bucket on restore (the one AO created
+    // during the original launch). If postLaunchSetup overwrote the baseline
+    // here, this UUID would be partitioned out as "pre-existing" — wrong.
+    writeKimiSession(realWorkspace, "ao-created-on-first-launch");
+
+    await agent.postLaunchSetup!(makeSession({ workspacePath: realWorkspace }));
+
+    const { readFileSync } = await import("node:fs");
+    const baselineNow = JSON.parse(
+      readFileSync(join(realWorkspace, ".ao", "kimi-baseline.json"), "utf-8"),
+    );
+    expect(baselineNow.preExistingUuids).toEqual(["original-pre-existing"]);
+    expect(baselineNow.capturedAt).toBe("2026-04-01T00:00:00.000Z");
+  });
+
   it("pinned UUID that no longer exists returns null (no fallback to recency)", async () => {
     mockTmuxWithProcess("kimi");
     writeKimiSession(workspace, "some-other-uuid"); // exists but not pinned
@@ -871,6 +968,68 @@ describe("getSessionInfo", () => {
     const info = await agent.getSessionInfo(makeSession({ workspacePath: workspace }));
     expect(info!.summary).toBeNull();
     expect(info!.agentSessionId).toBe("sess-abc");
+  });
+
+  it("prefers kimi.json last_session_id over recency when populated", async () => {
+    const realWorkspace = join(fakeHome, "workspace-kimijson-1");
+    mkdirSync(realWorkspace, { recursive: true });
+
+    // Two sessions: "newer-uuid" is more recent, but kimi.json says
+    // "older-uuid" is the last_session_id for this workspace.
+    writeKimiSession(realWorkspace, "newer-uuid");
+    writeKimiSession(realWorkspace, "older-uuid", {
+      contextAgeMs: 2 * 60 * 1000,
+      wireAgeMs: 2 * 60 * 1000,
+    });
+
+    // Write kimi.json pointing at the older session.
+    writeFileSync(
+      join(fakeHome, ".kimi", "kimi.json"),
+      JSON.stringify({
+        work_dirs: [
+          { path: realWorkspace, kaos: "local", last_session_id: "older-uuid" },
+        ],
+      }),
+    );
+
+    const info = await agent.getSessionInfo(
+      makeSession({
+        workspacePath: realWorkspace,
+        createdAt: new Date(Date.now() - 10 * 60 * 1000),
+      }),
+    );
+    expect(info?.agentSessionId).toBe("older-uuid");
+  });
+
+  it("falls back to recency when kimi.json last_session_id is null", async () => {
+    const realWorkspace = join(fakeHome, "workspace-kimijson-2");
+    mkdirSync(realWorkspace, { recursive: true });
+
+    writeKimiSession(realWorkspace, "only-uuid");
+
+    writeFileSync(
+      join(fakeHome, ".kimi", "kimi.json"),
+      JSON.stringify({
+        work_dirs: [
+          { path: realWorkspace, kaos: "local", last_session_id: null },
+        ],
+      }),
+    );
+
+    const info = await agent.getSessionInfo(
+      makeSession({ workspacePath: realWorkspace }),
+    );
+    expect(info?.agentSessionId).toBe("only-uuid");
+  });
+
+  it("falls back to recency when kimi.json is missing", async () => {
+    // No kimi.json exists — hash-based discovery should still work.
+    writeKimiSession(workspace, "hash-found-uuid");
+
+    const info = await agent.getSessionInfo(
+      makeSession({ workspacePath: workspace }),
+    );
+    expect(info?.agentSessionId).toBe("hash-found-uuid");
   });
 
   it("skips malformed wire.jsonl lines without crashing", async () => {

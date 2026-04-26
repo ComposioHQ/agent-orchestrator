@@ -24,7 +24,7 @@ import {
 } from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { readdir, realpath, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
@@ -42,6 +42,57 @@ function kimiShareDir(): string {
   const override = process.env["KIMI_SHARE_DIR"];
   if (override && override.trim().length > 0) return override;
   return join(homedir(), ".kimi");
+}
+
+// =============================================================================
+// kimi.json — workspace-to-session mapping
+// =============================================================================
+
+interface KimiWorkDir {
+  path: string;
+  kaos?: string;
+  last_session_id?: string | null;
+}
+
+interface KimiJson {
+  work_dirs?: KimiWorkDir[];
+}
+
+/**
+ * Read ~/.kimi/kimi.json — the authoritative workspace-to-session mapping
+ * maintained by kimi-cli. Returns null on any I/O or parse error so callers
+ * can fall back to the hash-based scan.
+ */
+async function readKimiJson(): Promise<KimiJson | null> {
+  try {
+    const raw = await readFile(join(kimiShareDir(), "kimi.json"), "utf-8");
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as KimiJson;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find the kimi.json work_dirs entry for a workspace. Matches against the
+ * resolved (realpath) workspace path so symlinked worktrees are handled.
+ * Returns the entry (including last_session_id when populated) or null.
+ */
+async function findKimiWorkDirEntry(
+  workspacePath: string,
+): Promise<KimiWorkDir | null> {
+  const kimiJson = await readKimiJson();
+  if (!kimiJson?.work_dirs || !Array.isArray(kimiJson.work_dirs)) return null;
+
+  const resolved = await resolveWorkspacePath(workspacePath);
+
+  for (const entry of kimiJson.work_dirs) {
+    if (!entry || typeof entry.path !== "string") continue;
+    const entryResolved = await resolveWorkspacePath(entry.path);
+    if (entryResolved === resolved) return entry;
+  }
+  return null;
 }
 
 interface KimiSessionMatch {
@@ -92,6 +143,75 @@ const SESSION_MATCH_CACHE_MAX_ENTRIES = 256;
 
 /** Per-workspace cache of the resolved session directory. */
 const sessionMatchCache = new Map<string, { match: KimiSessionMatch | null; expiry: number }>();
+
+/**
+ * Workspace-local file holding the UUIDs that existed in this workspace's
+ * Kimi bucket BEFORE the AO session started. UUIDs in this set were created
+ * by some other context (a manual `kimi` run in the same dir, a previous
+ * AO session, kimi-cli's own test fixture, etc.) and must not be attached
+ * to this AO session — even if they happen to be the most recently
+ * modified entry in the bucket.
+ *
+ * Captured once by postLaunchSetup; never overwritten on restore so the
+ * "ours vs theirs" partition stays stable across the session lifetime.
+ */
+const KIMI_BASELINE_FILE = ".ao/kimi-baseline.json";
+
+interface KimiBaseline {
+  /** Pre-existing UUIDs in ~/.kimi/sessions/<md5(workspace)>/ at AO launch. */
+  preExistingUuids: string[];
+  /** ISO timestamp the baseline was captured. */
+  capturedAt: string;
+}
+
+async function readKimiBaseline(workspacePath: string): Promise<Set<string> | null> {
+  try {
+    const raw = await readFile(join(workspacePath, KIMI_BASELINE_FILE), "utf-8");
+    const parsed = JSON.parse(raw) as KimiBaseline;
+    if (!Array.isArray(parsed.preExistingUuids)) return null;
+    return new Set(parsed.preExistingUuids);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Snapshot existing UUIDs in this workspace's Kimi bucket. Called once by
+ * postLaunchSetup; if the baseline file already exists (e.g. on session
+ * restore) we leave it alone so the original "what was here before AO
+ * started" partition is preserved.
+ */
+async function captureKimiBaseline(workspacePath: string): Promise<void> {
+  const baselineFile = join(workspacePath, KIMI_BASELINE_FILE);
+  try {
+    await stat(baselineFile);
+    return; // Already captured — don't overwrite on restore.
+  } catch {
+    // ENOENT — fall through and capture.
+  }
+
+  const resolved = await resolveWorkspacePath(workspacePath);
+  const bucket = join(kimiShareDir(), "sessions", kimiWorkspaceHash(resolved));
+  let entries: string[] = [];
+  try {
+    entries = await readdir(bucket);
+  } catch {
+    // Bucket doesn't exist yet — first kimi launch in this workspace.
+    // Empty baseline is correct.
+  }
+
+  const baseline: KimiBaseline = {
+    preExistingUuids: entries,
+    capturedAt: new Date().toISOString(),
+  };
+  try {
+    await mkdir(join(workspacePath, ".ao"), { recursive: true });
+    await writeFile(baselineFile, JSON.stringify(baseline), "utf-8");
+  } catch {
+    // Workspace not writable — best-effort. Discovery falls back to the
+    // createdAt floor + pinned UUID checks, which already narrow the field.
+  }
+}
 
 /**
  * Sandbox check — fail closed if a candidate path escapes ~/.kimi/sessions/.
@@ -173,10 +293,35 @@ async function findKimiSessionMatchUncached(
     return null;
   }
 
+  // Pinned UUID takes highest priority — set at launch and stable across
+  // the session lifetime.
   const pinnedId =
     typeof session.metadata?.["kimiSessionId"] === "string"
       ? (session.metadata["kimiSessionId"] as string)
       : null;
+
+  // Fast path: kimi.json stores the most-recent session UUID for each
+  // workspace in `work_dirs[].last_session_id`. When populated, this is
+  // more authoritative than a directory-mtime heuristic — kimi itself
+  // wrote it. We use it as a "soft pin": if the UUID exists on disk and
+  // passes the live-signal check, prefer it over recency scanning.
+  let kimiJsonSessionId: string | null = null;
+  if (!pinnedId) {
+    const workDirEntry = await findKimiWorkDirEntry(session.workspacePath);
+    if (
+      workDirEntry &&
+      typeof workDirEntry.last_session_id === "string" &&
+      workDirEntry.last_session_id.length > 0
+    ) {
+      kimiJsonSessionId = workDirEntry.last_session_id;
+    }
+  }
+
+  // UUIDs that existed BEFORE this AO session started are partitioned out —
+  // they belong to a manual `kimi` run, a sibling AO session, or some other
+  // context. Without this, the "freshest in bucket" heuristic would attach
+  // to whichever one happened to scroll recently.
+  const baseline = await readKimiBaseline(session.workspacePath);
 
   // Any UUID older than (session.createdAt - grace) is from a prior life.
   const minAgeMs = session.createdAt.getTime() - 60_000;
@@ -194,6 +339,16 @@ async function findKimiSessionMatchUncached(
       if (entry !== pinnedId) continue;
       return { dir, sessionId: entry, mtime: liveMtime };
     }
+
+    // kimi.json soft-pin: if kimi.json names this UUID as last_session_id
+    // for our workspace, prefer it immediately (same logic as pinnedId but
+    // sourced from kimi's own bookkeeping rather than AO metadata).
+    if (kimiJsonSessionId && entry === kimiJsonSessionId) {
+      return { dir, sessionId: entry, mtime: liveMtime };
+    }
+
+    // Baseline filter — UUIDs present at launch never count as "ours".
+    if (baseline?.has(entry)) continue;
 
     if (liveMtime.getTime() < minAgeMs) continue;
 
@@ -344,13 +499,12 @@ function createKimicodeAgent(): Agent {
     getLaunchCommand(config: AgentLaunchConfig): string {
       const parts: string[] = ["kimi"];
 
-      // NOTE: We'd like to pass --work-dir <session.workspacePath> to kill the
-      // silent failure mode where shell-rc / tmux-hook cwd drift makes our
-      // md5(cwd) hash diverge from kimi's. But AgentLaunchConfig only exposes
-      // projectConfig.path (the project root), not the per-session worktree,
-      // and passing the project root would actively break discovery. The
-      // runtime's cwd handling is load-bearing here; see README follow-up
-      // about exposing session.workspacePath on AgentLaunchConfig.
+      // Explicit --work-dir prevents shell-rc / tmux-hook cwd drift from
+      // making our md5(cwd) hash diverge from kimi's. projectConfig.path
+      // is the project root — the canonical workspace directory.
+      if (config.projectConfig.path) {
+        parts.push("--work-dir", shellEscape(config.projectConfig.path));
+      }
 
       appendApprovalFlags(parts, config.permissions);
 
@@ -593,6 +747,10 @@ function createKimicodeAgent(): Agent {
     async postLaunchSetup(session: Session): Promise<void> {
       if (!session.workspacePath) return;
       await setupPathWrapperWorkspace(session.workspacePath);
+      // Snapshot pre-existing UUIDs so a manual `kimi` run in the same dir
+      // (or a sibling AO session sharing the workspace) can't be mistaken
+      // for this AO session. No-op on restore — baseline is write-once.
+      await captureKimiBaseline(session.workspacePath);
     },
   };
 }
