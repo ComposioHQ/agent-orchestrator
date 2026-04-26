@@ -11,6 +11,11 @@ Run:
 ao status --reports full --json --include-terminated
 \`\`\`
 
+If \`--reports\` is not recognized (older AO version), fall back to:
+\`\`\`bash
+ao status --json --include-terminated
+\`\`\`
+
 Save the raw JSON. Parse it to understand:
 - All sessions (active, stuck, terminated, killed) and their current state
 - What each session worked on (issue, branch, PR, summary)
@@ -21,7 +26,7 @@ Save the raw JSON. Parse it to understand:
 
 ## Step 2: Gather GitHub Data
 
-Run these commands to get the full picture of open work. Use the repo for this project (check the \`AO_PROJECT_ID\` env var or the project context in your system prompt for the repo name).
+Run these commands to get the full picture of open work. Use the repo for this project. If the composed AO prompt includes a \`Repository: owner/repo\` line, use that. Otherwise, determine it from the current checkout with \`git remote get-url origin\` or \`gh repo view --json nameWithOwner\`.
 
 \`\`\`bash
 # Issues assigned to you
@@ -58,12 +63,12 @@ Cross-reference GitHub data with AO session data:
 
 ## Step 4: Save Markdown Report
 
-Create the directory if needed, then save the report:
+Create the directory if needed, then save the report. Use \`$AO_DATA_DIR\` (set by AO for every session) as the base path:
 \`\`\`bash
-mkdir -p ~/.agent-orchestrator/$AO_PROJECT_ID/backlog
+mkdir -p "$AO_DATA_DIR/backlog"
 \`\`\`
 
-Save to: \`~/.agent-orchestrator/$AO_PROJECT_ID/backlog/report_$(date +%Y%m%d_%H%M%S).md\`
+Save to: \`$AO_DATA_DIR/backlog/report_$(date +%Y%m%d_%H%M%S).md\`
 
 The report should include these sections:
 
@@ -105,7 +110,7 @@ IMPORTANT: The message to \`ao send\` must be a single string. Keep it clear and
 ## Step 6: Generate HTML Dashboard
 
 Create a self-contained HTML dashboard at:
-\`~/.agent-orchestrator/$AO_PROJECT_ID/backlog/dashboard_$(date +%Y%m%d_%H%M%S).html\`
+\`$AO_DATA_DIR/backlog/dashboard_$(date +%Y%m%d_%H%M%S).html\`
 
 Requirements:
 - Single file, all CSS inline (no external dependencies)
@@ -116,12 +121,12 @@ Requirements:
 - Responsive layout
 - Show timestamps in human-readable format
 
-Open it in the browser when done:
-\`\`\`bash
-open ~/.agent-orchestrator/$AO_PROJECT_ID/backlog/dashboard_*.html
-\`\`\`
+Open it in the browser when done. Use the platform-appropriate command:
+- macOS: \`open <html-path>\`
+- Linux: \`xdg-open <html-path>\`
+- Windows: \`start <html-path>\`
 
-(Use the actual filename you saved, not a glob.)
+Use the actual filename you saved, not a glob.
 
 ## Step 7: Report Completion
 
