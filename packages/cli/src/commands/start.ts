@@ -1849,9 +1849,11 @@ export function registerStop(program: Command): void {
 
         const sm = await getSessionManager(config);
         try {
-          // List ALL sessions across all projects — ao stop kills the parent
-          // process which affects all projects, not just the targeted one.
-          const allSessions = await sm.list();
+          // When no explicit project is given, list ALL sessions — ao stop
+          // kills the parent process which affects all projects. When a
+          // specific project is targeted, scope to that project only.
+          const stopAll = !projectArg;
+          const allSessions = await sm.list(stopAll ? undefined : _projectId);
           const activeSessions = allSessions.filter((s) => !isTerminalSession(s));
           const killedSessionIds: string[] = [];
 
