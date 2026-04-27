@@ -57,11 +57,38 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
  * node_modules by checking for `lib/node_modules` (global) vs a bare
  * `node_modules` that sits inside a project directory (local/npx).
  */
-export function classifyInstallPath(resolvedPath: string): InstallMethod {
-  const hasNodeModules =
-    resolvedPath.includes("/node_modules/") || resolvedPath.includes("\\node_modules\\");
+export function hasNodeModulesAncestor(resolvedPath: string): boolean {
+  return resolvedPath.includes("/node_modules/") || resolvedPath.includes("\\node_modules\\");
+}
 
-  if (hasNodeModules) {
+function readPackageName(packageJsonPath: string): string | null {
+  try {
+    const raw = readFileSync(packageJsonPath, "utf-8");
+    const parsed = JSON.parse(raw) as { name?: unknown };
+    return typeof parsed.name === "string" ? parsed.name : null;
+  } catch {
+    return null;
+  }
+}
+
+export function isAgentOrchestratorRepoRoot(root: string): boolean {
+  if (!existsSync(resolve(root, ".git"))) {
+    return false;
+  }
+
+  return readPackageName(resolve(root, "packages", "ao", "package.json")) === "@aoagents/ao";
+}
+
+export function isAoCliPackageRoot(root: string): boolean {
+  if (!existsSync(resolve(root, "dist", "index.js"))) {
+    return false;
+  }
+
+  return readPackageName(resolve(root, "package.json")) === "@aoagents/ao-cli";
+}
+
+export function classifyInstallPath(resolvedPath: string): InstallMethod {
+  if (hasNodeModulesAncestor(resolvedPath)) {
     // Global installs live under .../lib/node_modules/... (npm/nvm/fnm/volta)
     // or pnpm's global store (.../pnpm/global/.../node_modules/...).
     // Local project installs have node_modules directly inside a project dir.
@@ -90,10 +117,7 @@ export function classifyInstallPath(resolvedPath: string): InstallMethod {
   // Running from a source checkout → git install
   // Walk up from packages/cli/dist/lib/ (or src/lib/) to repo root
   const repoRoot = resolve(dirname(resolvedPath), "../../../../");
-  if (
-    existsSync(resolve(repoRoot, "scripts/ao-update.sh")) &&
-    existsSync(resolve(repoRoot, ".git"))
-  ) {
+  if (isAgentOrchestratorRepoRoot(repoRoot)) {
     return "git";
   }
 

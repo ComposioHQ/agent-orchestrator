@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import type { Command } from "commander";
 import chalk from "chalk";
-import { executeScriptCommand } from "../lib/script-runner.js";
+import { runRepoScript } from "../lib/script-runner.js";
 import {
   checkForUpdate,
   detectInstallMethod,
@@ -76,8 +76,31 @@ async function handleGitUpdate(opts: {
   const args: string[] = [];
   if (opts.skipSmoke) args.push("--skip-smoke");
   if (opts.smokeOnly) args.push("--smoke-only");
-  await executeScriptCommand("ao-update.sh", args);
-  invalidateCache();
+
+  try {
+    const exitCode = await runRepoScript("ao-update.sh", args);
+    if (exitCode !== 0) {
+      process.exit(exitCode);
+    }
+    invalidateCache();
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("Script not found: ao-update.sh")
+    ) {
+      console.error(
+        chalk.red(
+          "ao-update.sh is missing from the bundled assets. " +
+            "If you're running from a source checkout, rebuild with `pnpm --filter @aoagents/ao-cli build`. " +
+            "If you're on a package install, reinstall the package.",
+        ),
+      );
+      process.exit(1);
+    }
+
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 }
 
 // ---------------------------------------------------------------------------

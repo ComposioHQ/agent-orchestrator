@@ -66,6 +66,32 @@ cd agent-orchestrator && bash scripts/setup.sh
 ```
 </details>
 
+### Zsh Completion
+
+Generate the completion file from the installed CLI:
+
+```bash
+mkdir -p ~/.zsh/completions
+ao completion zsh > ~/.zsh/completions/_ao
+```
+
+Then make sure the directory is on your `fpath` before `compinit` runs:
+
+```zsh
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit
+compinit
+```
+
+For Oh My Zsh, install the same generated file into a custom plugin directory and add `ao` to your plugin list:
+
+```bash
+mkdir -p "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/ao"
+ao completion zsh > "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/ao/_ao"
+```
+
+If you are contributing from a source checkout, you can also symlink the repo copy at [`completions/_ao`](completions/_ao).
+
 ### Start
 
 Point it at any repo — it clones, configures, and launches the dashboard in one command:
@@ -104,6 +130,7 @@ The orchestrator agent uses the [AO CLI](docs/CLI.md) internally to manage sessi
 
 ```yaml
 # agent-orchestrator.yaml
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 # Runtime data is auto-derived under ~/.agent-orchestrator/{hash}-{projectId}/
 port: 3000
 
@@ -136,6 +163,8 @@ reactions:
 
 CI fails → agent gets the logs and fixes it. Reviewer requests changes → agent addresses them. PR approved with green CI → you get a notification to merge.
 
+Keep the `$schema` line so editors can autocomplete and validate against [`schema/config.schema.json`](schema/config.schema.json).
+
 See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference, or run `ao config-help` for the complete schema.
 
 ## Remote Access
@@ -146,6 +175,7 @@ AO keeps your Mac awake while running, so you can access the dashboard remotely 
 
 ```yaml
 # agent-orchestrator.yaml
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 power:
   preventIdleSleep: true  # Default on macOS, no-op on Linux
 ```

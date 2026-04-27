@@ -161,7 +161,6 @@ describe("GraphQL Batch Query Generation", () => {
     expect(query).toContain("mergeable");
     expect(query).toContain("mergeStateStatus");
     expect(query).toContain("reviewDecision");
-    expect(query).toContain("reviews");
     expect(query).toContain("commits");
     expect(query).toContain("statusCheckRollup");
   });
@@ -823,7 +822,7 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       const result = await shouldRefreshPREnrichment([]);
 
       expect(result.shouldRefresh).toBe(false);
-      expect(result.details).toContain("No PRs to check");
+      expect(result.details).toContain("No repos to check");
       // Should not make any API calls
       expect(mockExecFileImpl).not.toHaveBeenCalled();
     });

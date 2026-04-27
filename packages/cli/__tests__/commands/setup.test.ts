@@ -26,7 +26,11 @@ const { mockProbeGateway, mockValidateToken, mockDetectOpenClawInstallation } = 
 }));
 
 vi.mock("@aoagents/ao-core", () => ({
+  CONFIG_SCHEMA_URL:
+    "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
   findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
+  isCanonicalGlobalConfigPath: (configPath: string | undefined) =>
+    configPath === join(homedir(), ".agent-orchestrator", "config.yaml"),
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -233,6 +237,27 @@ describe("setup openclaw command", () => {
       const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
       expect(writtenYaml).toContain("openclaw");
       expect(writtenYaml).not.toContain("desktop");
+    });
+
+    it("does not stamp wrapped config schema onto the canonical global config", async () => {
+      mockFindConfigFile.mockReturnValue(join(homedir(), ".agent-orchestrator", "config.yaml"));
+      const program = createProgram();
+
+      await program.parseAsync([
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "tok",
+        "--non-interactive",
+      ]);
+
+      const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
+      expect(writtenYaml).not.toContain("$schema:");
+      expect(writtenYaml).toContain("openclaw");
     });
 
     it("does not add desktop to defaults.notifiers when initializing notifiers", async () => {

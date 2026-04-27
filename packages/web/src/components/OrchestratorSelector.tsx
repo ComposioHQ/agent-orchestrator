@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
+import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 
 export interface Orchestrator {
   id: string;
@@ -118,7 +119,7 @@ export function OrchestratorSelector({
       }
 
       const data = await response.json();
-      router.push(`/sessions/${data.orchestrator.id}`);
+      router.push(projectSessionPath(projectId, data.orchestrator.id));
     } catch (err) {
       setSpawnError(err instanceof Error ? err.message : "Failed to spawn orchestrator");
     } finally {
@@ -153,10 +154,10 @@ export function OrchestratorSelector({
             <h1 className="text-lg font-semibold text-[var(--color-text-primary)]">
               {projectName}
             </h1>
-            <p className="text-sm text-[var(--color-text-secondary)]">Select an orchestrator</p>
+            <p className="text-sm text-[var(--color-text-secondary)]">Project orchestrator</p>
           </div>
           <Link
-            href={`/?project=${projectId}`}
+            href={projectDashboardPath(projectId)}
             className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
           >
             Dashboard
@@ -170,25 +171,21 @@ export function OrchestratorSelector({
           {/* Info banner */}
           <div className="mb-6 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] p-4">
             <p className="text-sm text-[var(--color-text-secondary)]">
-              Found{" "}
-              <span className="font-medium text-[var(--color-text-primary)]">
-                {orchestrators.length}
-              </span>{" "}
-              existing orchestrator session{orchestrators.length !== 1 ? "s" : ""}. You can resume
-              an existing session or start a new one.
+              AO keeps one main orchestrator per project. Opening or spawning here reuses that
+              canonical session instead of creating another duplicate.
             </p>
           </div>
 
           {/* Existing orchestrators */}
           <div className="mb-6">
             <h2 className="mb-3 text-sm font-medium text-[var(--color-text-secondary)]">
-              Existing Sessions
+              Main Session
             </h2>
             <div className="space-y-2">
               {orchestrators.map((orch) => (
                 <Link
                   key={orch.id}
-                  href={`/sessions/${orch.id}`}
+                  href={projectSessionPath(orch.projectId, orch.id)}
                   className={cn(
                     "flex items-center justify-between rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] p-4",
                     "transition-all hover:border-[var(--color-border-default)] hover:shadow-sm",
@@ -226,7 +223,7 @@ export function OrchestratorSelector({
           {/* Start new section */}
           <div className="border-t border-[var(--color-border-subtle)] pt-6">
             <h2 className="mb-3 text-sm font-medium text-[var(--color-text-secondary)]">
-              Or Start Fresh
+              Open Orchestrator
             </h2>
             <button
               type="button"
@@ -259,10 +256,10 @@ export function OrchestratorSelector({
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     />
                   </svg>
-                  Creating new orchestrator...
+                  Opening orchestrator...
                 </span>
               ) : (
-                "Start New Orchestrator"
+                "Open Orchestrator"
               )}
             </button>
             {spawnError && (

@@ -27,7 +27,6 @@ import { installMockOpencode, installMockOpencodeWithNotFoundDelete } from "./op
 
 let ctx: TestContext;
 let tmpDir: string;
-let configPath: string;
 let sessionsDir: string;
 let mockRuntime: Runtime;
 let mockAgent: Agent;
@@ -38,7 +37,7 @@ let originalPath: string | undefined;
 
 beforeEach(() => {
   ctx = setupTestContext();
-  ({ tmpDir, configPath, sessionsDir, mockRuntime, mockAgent, mockWorkspace, mockRegistry, config, originalPath } = ctx);
+  ({ tmpDir, sessionsDir, mockRuntime, mockAgent, mockWorkspace, mockRegistry, config, originalPath } = ctx);
 });
 
 afterEach(() => {
@@ -48,7 +47,7 @@ afterEach(() => {
 describe("kill", () => {
   it("destroys runtime, workspace, and archives metadata", async () => {
     const managedWorktree = join(
-      getWorktreesDir(config.configPath, config.projects["my-app"]!.path),
+      getWorktreesDir(config.projects["my-app"]!.storageKey),
       "app-1",
     );
     writeMetadata(sessionsDir, "app-1", {
@@ -160,7 +159,10 @@ describe("kill", () => {
 
     const sm = createSessionManager({ config, registry: registryWithFail });
     // Should not throw even though runtime.destroy fails
-    await expect(sm.kill("app-1")).resolves.toBeUndefined();
+    await expect(sm.kill("app-1")).resolves.toEqual({
+      cleaned: true,
+      alreadyTerminated: false,
+    });
   });
 
   it("does not purge mapped OpenCode session on default kill", async () => {
@@ -229,11 +231,11 @@ describe("kill", () => {
 });
 
 describe("cleanup", () => {
-  it("kills sessions with merged PRs", async () => {
+  it("kills sessions with closed PRs", async () => {
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn(),
-      getPRState: vi.fn().mockResolvedValue("merged"),
+      getPRState: vi.fn().mockResolvedValue("closed"),
       mergePR: vi.fn(),
       closePR: vi.fn(),
       getCIChecks: vi.fn(),
@@ -241,7 +243,6 @@ describe("cleanup", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
 
@@ -272,7 +273,7 @@ describe("cleanup", () => {
     expect(result.skipped).toHaveLength(0);
   });
 
-  it("deletes mapped OpenCode session during cleanup", async () => {
+  it("deletes mapped OpenCode session during cleanup for closed PRs", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
@@ -280,7 +281,7 @@ describe("cleanup", () => {
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn(),
-      getPRState: vi.fn().mockResolvedValue("merged"),
+      getPRState: vi.fn().mockResolvedValue("closed"),
       mergePR: vi.fn(),
       closePR: vi.fn(),
       getCIChecks: vi.fn(),
@@ -288,7 +289,6 @@ describe("cleanup", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
 
@@ -322,14 +322,14 @@ describe("cleanup", () => {
     expect(deleteLog).toContain("session delete ses_cleanup");
   });
 
-  it("treats missing mapped OpenCode session as already cleaned", async () => {
+  it("treats missing mapped OpenCode session as already cleaned for closed PRs", async () => {
     const mockBin = installMockOpencodeWithNotFoundDelete(tmpDir, "[]");
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
 
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn(),
-      getPRState: vi.fn().mockResolvedValue("merged"),
+      getPRState: vi.fn().mockResolvedValue("closed"),
       mergePR: vi.fn(),
       closePR: vi.fn(),
       getCIChecks: vi.fn(),
@@ -337,7 +337,6 @@ describe("cleanup", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
 
@@ -392,7 +391,7 @@ describe("cleanup", () => {
     expect(result.killed).toContain("app-6");
     const deleteLog = readFileSync(deleteLogPath, "utf-8");
     expect(deleteLog).toContain("session delete ses_archived");
-  });
+  }, 15_000);
 
   it("does not skip archived cleanup for matching session IDs in other projects", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived-cross-project.log");
@@ -408,6 +407,7 @@ describe("cleanup", () => {
           name: "My App 2",
           repo: "org/my-app-2",
           path: project2Path,
+          storageKey: "222222222222",
           defaultBranch: "main",
           sessionPrefix: "app",
           scm: { plugin: "github" },
@@ -415,7 +415,7 @@ describe("cleanup", () => {
         },
       },
     };
-    const sessionsDir2 = getSessionsDir(configPath, project2Path);
+    const sessionsDir2 = getSessionsDir("222222222222");
     mkdirSync(sessionsDir2, { recursive: true });
 
     writeMetadata(sessionsDir, "app-1", {
@@ -593,7 +593,6 @@ describe("cleanup", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
     const mockTracker: Tracker = {

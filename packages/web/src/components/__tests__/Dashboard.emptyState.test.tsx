@@ -1,6 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "../Dashboard";
+
+const eventSourceConstructorMock = vi.hoisted(() => vi.fn());
+let lastEventSourceMock: {
+  onmessage: ((event: MessageEvent) => void) | null;
+  onerror: ((event?: Event) => void) | null;
+  close: ReturnType<typeof vi.fn>;
+};
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
@@ -14,8 +21,10 @@ beforeEach(() => {
     onerror: null,
     close: vi.fn(),
   };
-  const eventSourceConstructor = vi.fn(() => eventSourceMock as unknown as EventSource);
-  global.EventSource = Object.assign(eventSourceConstructor, {
+  lastEventSourceMock = eventSourceMock;
+  eventSourceConstructorMock.mockReset();
+  eventSourceConstructorMock.mockImplementation(() => eventSourceMock as unknown as EventSource);
+  global.EventSource = Object.assign(eventSourceConstructorMock, {
     CONNECTING: 0,
     OPEN: 1,
     CLOSED: 2,
@@ -30,6 +39,41 @@ describe("Dashboard empty state", () => {
     expect(
       screen.getByText(/Open the main orchestrator to start a session and fan out parallel agents across your codebase/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows spawn orchestrator actions for a fresh project with no orchestrator", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        orchestrator: {
+          id: "hello-orchestrator",
+          projectId: "hello-world",
+          projectName: "Hello World",
+        },
+      }),
+    } as Response);
+
+    render(
+      <Dashboard
+        initialSessions={[]}
+        projectId="hello-world"
+        projectName="Hello World"
+        projects={[{ id: "hello-world", name: "Hello World" }]}
+        orchestrators={[]}
+      />,
+    );
+
+    expect(screen.getAllByRole("button", { name: "Spawn Orchestrator" })).toHaveLength(2);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Spawn Orchestrator" })[0]);
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith("/api/orchestrators", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: "hello-world" }),
+      });
+    });
   });
 
   it("does not show empty state when sessions exist", () => {
@@ -57,6 +101,48 @@ describe("Dashboard empty state", () => {
       />,
     );
     expect(queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
+  });
+
+  it("shows load error banner instead of empty state when SSR services failed", () => {
+    render(
+      <Dashboard
+        initialSessions={[]}
+        dashboardLoadError="No agent-orchestrator.yaml found"
+      />,
+    );
+    expect(screen.queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Orchestrator failed to load");
+    expect(screen.getByRole("alert")).toHaveTextContent("No agent-orchestrator.yaml found");
+    expect(eventSourceConstructorMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a live load error banner when the SSE stream reports a backend failure", async () => {
+    render(<Dashboard initialSessions={[]} />);
+
+    await waitFor(() => {
+      lastEventSourceMock.onmessage?.({
+        data: JSON.stringify({ type: "error", error: "session list timed out" }),
+      } as MessageEvent);
+      expect(screen.getByRole("alert")).toHaveTextContent("session list timed out");
+    });
+  });
+
+  it("clears a live load error banner after a healthy snapshot with unchanged sessions", async () => {
+    render(<Dashboard initialSessions={[]} />);
+
+    await waitFor(() => {
+      lastEventSourceMock.onmessage?.({
+        data: JSON.stringify({ type: "error", error: "session list timed out" }),
+      } as MessageEvent);
+      expect(screen.getByRole("alert")).toHaveTextContent("session list timed out");
+    });
+
+    await waitFor(() => {
+      lastEventSourceMock.onmessage?.({
+        data: JSON.stringify({ type: "snapshot", sessions: [] }),
+      } as MessageEvent);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
   });
 
   it("shows empty state when only done sessions exist", () => {

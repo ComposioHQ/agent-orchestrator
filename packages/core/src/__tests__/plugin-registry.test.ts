@@ -139,9 +139,11 @@ describe("list", () => {
 describe("loadBuiltins", () => {
   it("silently skips unavailable packages", async () => {
     const registry = createPluginRegistry();
-    // loadBuiltins tries to import all built-in packages.
-    // In the test environment, most are not resolvable — should not throw.
-    await expect(registry.loadBuiltins()).resolves.toBeUndefined();
+    const importUnavailable = async (pkg: string): Promise<unknown> => {
+      throw new Error(`Not found: ${pkg}`);
+    };
+
+    await expect(registry.loadBuiltins(undefined, importUnavailable)).resolves.toBeUndefined();
   });
 
   it("registers multiple agent plugins from importFn", async () => {
@@ -263,7 +265,9 @@ describe("loadBuiltins", () => {
     });
 
     expect(fakeSlackNotifier.create).toHaveBeenCalledTimes(2);
-    expect(registry.get<{ _config: Record<string, unknown> }>("notifier", "alerts")?._config).toEqual({
+    expect(
+      registry.get<{ _config: Record<string, unknown> }>("notifier", "alerts")?._config,
+    ).toEqual({
       webhookUrl: "https://hooks.slack.com/services/alerts",
       channel: "#alerts",
       configPath: "/test/config.yaml",
@@ -304,12 +308,16 @@ describe("loadBuiltins", () => {
       throw new Error(`Not found: ${pkg}`);
     });
 
-    expect(registry.get<{ _config: Record<string, unknown> }>("notifier", "slack")?._config).toEqual({
+    expect(
+      registry.get<{ _config: Record<string, unknown> }>("notifier", "slack")?._config,
+    ).toEqual({
       webhookUrl: "https://hooks.slack.com/services/default",
       channel: "#general",
       configPath: "/test/config.yaml",
     });
-    expect(registry.get<{ _config: Record<string, unknown> }>("notifier", "alerts")?._config).toEqual({
+    expect(
+      registry.get<{ _config: Record<string, unknown> }>("notifier", "alerts")?._config,
+    ).toEqual({
       webhookUrl: "https://hooks.slack.com/services/alerts",
       channel: "#alerts",
       configPath: "/test/config.yaml",
@@ -390,7 +398,9 @@ describe("loadBuiltins", () => {
       return null;
     });
 
-    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('"path" field conflicts with reserved'));
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"path" field conflicts with reserved'),
+    );
     stderrSpy.mockRestore();
 
     // Plugin should not be registered due to config error
@@ -482,10 +492,11 @@ describe("loadFromConfig", () => {
   it("does not throw when no plugins are importable", async () => {
     const registry = createPluginRegistry();
     const config = makeOrchestratorConfig({});
+    const importUnavailable = async (pkg: string): Promise<unknown> => {
+      throw new Error(`Not found: ${pkg}`);
+    };
 
-    // loadFromConfig calls loadBuiltins internally, which may fail to
-    // import packages in the test env — should still succeed gracefully
-    await expect(registry.loadFromConfig(config)).resolves.toBeUndefined();
+    await expect(registry.loadFromConfig(config, importUnavailable)).resolves.toBeUndefined();
   });
 
   it("should pass importFn through loadFromConfig to loadBuiltins", async () => {
@@ -596,7 +607,12 @@ describe("External plugin manifest validation", () => {
     const registry = createPluginRegistry();
 
     const mockPlugin = {
-      manifest: { name: "jira", slot: "tracker" as const, version: "1.0.0", description: "Jira tracker" },
+      manifest: {
+        name: "jira",
+        slot: "tracker" as const,
+        version: "1.0.0",
+        description: "Jira tracker",
+      },
       create: vi.fn(() => ({})),
     };
 
@@ -637,7 +653,12 @@ describe("External plugin manifest validation", () => {
     const registry = createPluginRegistry();
 
     const mockPlugin = {
-      manifest: { name: "jira-enterprise", slot: "tracker" as const, version: "1.0.0", description: "Jira Enterprise" },
+      manifest: {
+        name: "jira-enterprise",
+        slot: "tracker" as const,
+        version: "1.0.0",
+        description: "Jira Enterprise",
+      },
       create: vi.fn(() => ({})),
     };
 
@@ -687,7 +708,12 @@ describe("External plugin manifest validation", () => {
     const registry = createPluginRegistry();
 
     const mockPlugin = {
-      manifest: { name: "jira", slot: "tracker" as const, version: "1.0.0", description: "Jira tracker" },
+      manifest: {
+        name: "jira",
+        slot: "tracker" as const,
+        version: "1.0.0",
+        description: "Jira tracker",
+      },
       create: vi.fn(() => ({})),
     };
 
@@ -732,7 +758,12 @@ describe("External plugin manifest validation", () => {
     const registry = createPluginRegistry();
 
     const mockPlugin = {
-      manifest: { name: "ms-teams", slot: "notifier" as const, version: "1.0.0", description: "Teams notifier" },
+      manifest: {
+        name: "ms-teams",
+        slot: "notifier" as const,
+        version: "1.0.0",
+        description: "Teams notifier",
+      },
       create: vi.fn(() => ({})),
     };
 
@@ -778,7 +809,12 @@ describe("External plugin manifest validation", () => {
     const registry = createPluginRegistry();
 
     const mockPlugin = {
-      manifest: { name: "ms-teams", slot: "notifier" as const, version: "1.0.0", description: "Teams notifier" },
+      manifest: {
+        name: "ms-teams",
+        slot: "notifier" as const,
+        version: "1.0.0",
+        description: "Teams notifier",
+      },
       create: vi.fn(() => ({})),
     };
 
@@ -838,7 +874,12 @@ describe("External plugin manifest validation", () => {
     const registry = createPluginRegistry();
 
     const mockPlugin = {
-      manifest: { name: "ms-teams", slot: "notifier" as const, version: "1.0.0", description: "Teams notifier" },
+      manifest: {
+        name: "ms-teams",
+        slot: "notifier" as const,
+        version: "1.0.0",
+        description: "Teams notifier",
+      },
       create: vi.fn((pluginConfig?: Record<string, unknown>) => ({
         name: "ms-teams",
         _config: pluginConfig,
@@ -885,7 +926,9 @@ describe("External plugin manifest validation", () => {
 
     expect(config.notifiers?.alerts?.plugin).toBe("ms-teams");
     expect(config.notifiers?.ops?.plugin).toBe("ms-teams");
-    expect(registry.get<{ _config: Record<string, unknown> }>("notifier", "alerts")?._config).toEqual({
+    expect(
+      registry.get<{ _config: Record<string, unknown> }>("notifier", "alerts")?._config,
+    ).toEqual({
       webhookUrl: "https://teams.example/alerts",
       configPath: "/test/config.yaml",
     });
@@ -900,7 +943,12 @@ describe("External plugin manifest validation", () => {
     const registry = createPluginRegistry();
 
     const mockPlugin = {
-      manifest: { name: "jira", slot: "notifier" as const, version: "1.0.0", description: "Wrong slot!" },
+      manifest: {
+        name: "jira",
+        slot: "notifier" as const,
+        version: "1.0.0",
+        description: "Wrong slot!",
+      },
       create: vi.fn(() => ({})),
     };
 
@@ -935,7 +983,7 @@ describe("External plugin manifest validation", () => {
     await registry.loadFromConfig(config, importFn);
 
     expect(stderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining("has slot \"notifier\" but was configured as \"tracker\""),
+      expect.stringContaining('has slot "notifier" but was configured as "tracker"'),
     );
     stderrSpy.mockRestore();
   });
@@ -944,7 +992,12 @@ describe("External plugin manifest validation", () => {
     const registry = createPluginRegistry();
 
     const mockPlugin = {
-      manifest: { name: "jira-cloud", slot: "tracker" as const, version: "1.0.0", description: "Jira Cloud" },
+      manifest: {
+        name: "jira-cloud",
+        slot: "tracker" as const,
+        version: "1.0.0",
+        description: "Jira Cloud",
+      },
       create: vi.fn(() => ({})),
     };
 
@@ -1005,7 +1058,12 @@ describe("External plugin manifest validation", () => {
     const registry = createPluginRegistry();
 
     const mockPlugin = {
-      manifest: { name: "jira-cloud", slot: "tracker" as const, version: "1.0.0", description: "Jira Cloud" },
+      manifest: {
+        name: "jira-cloud",
+        slot: "tracker" as const,
+        version: "1.0.0",
+        description: "Jira Cloud",
+      },
       create: vi.fn(() => ({})),
     };
 

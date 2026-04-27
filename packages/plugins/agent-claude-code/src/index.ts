@@ -135,8 +135,13 @@ done
 
 # Detect: gh pr create
 if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
+  sanitized_output=$(printf '%s' "$output" | sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g')
   # Extract PR URL from output
-  pr_url=$(echo "$output" | grep -Eo 'https://github[.]com/[^/]+/[^/]+/pull/[0-9]+' | head -1)
+  pr_url=""
+  # GitHub PR URLs are whitespace-delimited in gh output after ANSI stripping.
+  if [[ "$sanitized_output" =~ (https://github[.]com/[^[:space:]]+/[^[:space:]]+/pull/[0-9]+) ]]; then
+    pr_url="\${BASH_REMATCH[1]}"
+  fi
 
   if [[ -n "$pr_url" ]]; then
     update_metadata_key "pr" "$pr_url"
@@ -307,8 +312,7 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
   // Skip potentially truncated first line only when we started mid-file.
   // If offset === 0 we read from the start so the first line is complete.
   const firstNewline = content.indexOf("\n");
-  const safeContent =
-    offset > 0 && firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
+  const safeContent = offset > 0 && firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
   const lines: JsonlLine[] = [];
   for (const line of safeContent.split("\n")) {
     const trimmed = line.trim();
@@ -326,9 +330,7 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
 }
 
 /** Extract auto-generated summary from JSONL (last "summary" type entry) */
-function extractSummary(
-  lines: JsonlLine[],
-): { summary: string; isFallback: boolean } | null {
+function extractSummary(lines: JsonlLine[]): { summary: string; isFallback: boolean } | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (line?.type === "summary" && line.summary) {
@@ -358,6 +360,8 @@ function extractSummary(
 function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
   let inputTokens = 0;
   let outputTokens = 0;
+  let cachedReadTokens = 0;
+  let cacheCreationTokens = 0;
   let totalCost = 0;
 
   for (const line of lines) {
@@ -373,8 +377,8 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
     // double-counting if a line contains both.
     if (line.usage) {
       inputTokens += line.usage.input_tokens ?? 0;
-      inputTokens += line.usage.cache_read_input_tokens ?? 0;
-      inputTokens += line.usage.cache_creation_input_tokens ?? 0;
+      cachedReadTokens += line.usage.cache_read_input_tokens ?? 0;
+      cacheCreationTokens += line.usage.cache_creation_input_tokens ?? 0;
       outputTokens += line.usage.output_tokens ?? 0;
     } else {
       if (typeof line.inputTokens === "number") {
@@ -386,19 +390,29 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
     }
   }
 
-  if (inputTokens === 0 && outputTokens === 0 && totalCost === 0) {
+  if (
+    inputTokens === 0 &&
+    outputTokens === 0 &&
+    totalCost === 0 &&
+    cachedReadTokens === 0 &&
+    cacheCreationTokens === 0
+  ) {
     return undefined;
   }
 
-  // Rough estimate when no direct cost data — uses Sonnet 4.5 pricing as a
-  // baseline. Will be inaccurate for other models (Opus, Haiku) but provides
-  // a useful order-of-magnitude signal. TODO: make pricing configurable or
-  // infer from model field in JSONL.
-  if (totalCost === 0 && (inputTokens > 0 || outputTokens > 0)) {
-    totalCost = (inputTokens / 1_000_000) * 3.0 + (outputTokens / 1_000_000) * 15.0;
+  if (totalCost === 0) {
+    totalCost =
+      (inputTokens / 1_000_000) * 3.0 +
+      (outputTokens / 1_000_000) * 15.0 +
+      (cachedReadTokens / 1_000_000) * 0.3 +
+      (cacheCreationTokens / 1_000_000) * 3.75;
   }
 
-  return { inputTokens, outputTokens, estimatedCostUsd: totalCost };
+  return {
+    inputTokens: inputTokens + cachedReadTokens + cacheCreationTokens,
+    outputTokens,
+    estimatedCostUsd: totalCost,
+  };
 }
 
 // =============================================================================
@@ -819,7 +833,11 @@ function createClaudeCodeAgent(): Agent {
       const parts: string[] = ["claude", "--resume", shellEscape(sessionUuid)];
 
       const permissionMode = normalizeAgentPermissionMode(project.agentConfig?.permissions);
-      if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
+      const isOrchestrator = session.metadata?.["role"] === "orchestrator";
+      if (
+        isOrchestrator &&
+        (permissionMode === "permissionless" || permissionMode === "auto-edit")
+      ) {
         parts.push("--dangerously-skip-permissions");
       }
 

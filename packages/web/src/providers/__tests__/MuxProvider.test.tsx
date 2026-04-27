@@ -419,7 +419,7 @@ describe("MuxProvider message handling", () => {
     act(() => ws.simulateMessage({
       ch: "sessions",
       type: "snapshot",
-      sessions: [{ id: "s1", status: "working", activity: null, attentionLevel: "none", lastActivityAt: "" }],
+      sessions: [{ id: "s1", status: "working", activity: null, attentionLevel: "working", lastActivityAt: "" }],
     }));
 
     expect(result.current.sessions.length).toBe(1);

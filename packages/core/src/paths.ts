@@ -1,24 +1,30 @@
 /**
- * Path utilities for hash-based directory structure.
- *
- * Architecture:
- * - Config location determines hash: sha256(dirname(configPath)).slice(0, 12)
- * - Each project gets directory: ~/.agent-orchestrator/{hash}-{projectId}/
- * - Sessions inside: sessions/{sessionName} (no hash prefix, already namespaced)
- * - Tmux names include hash for global uniqueness: {hash}-{prefix}-{num}
+ * Path utilities for storage-key-based directory structure.
  */
 
 import { createHash } from "node:crypto";
-import { dirname, basename, join } from "node:path";
+import { dirname, basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { realpathSync, existsSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 
 /**
  * Generate a 12-character hash from a config directory path.
- * Always resolves symlinks before hashing to ensure consistency.
+ *
+ * The hash is derived from dirname(configPath), which equals the project root
+ * directory when configPath is <project>/agent-orchestrator.yaml.
+ *
+ * Handles non-existent paths gracefully (e.g. synthesized paths in remote/
+ * Docker mode where no local config file exists) by falling back to
+ * resolve() when realpathSync fails.
  */
 export function generateConfigHash(configPath: string): string {
-  const resolved = realpathSync(configPath);
+  let resolved: string;
+  try {
+    resolved = realpathSync(configPath);
+  } catch {
+    // File may not exist (remote mode, Docker, pre-creation) — use resolved path
+    resolved = resolve(configPath);
+  }
   const configDir = dirname(resolved);
   const hash = createHash("sha256").update(configDir).digest("hex");
   return hash.slice(0, 12);
@@ -30,17 +36,6 @@ export function generateConfigHash(configPath: string): string {
  */
 export function generateProjectId(projectPath: string): string {
   return basename(projectPath);
-}
-
-/**
- * Generate instance ID combining hash and project ID.
- * Format: {hash}-{projectId}
- * Example: "a3b4c5d6e7f8-integrator"
- */
-export function generateInstanceId(configPath: string, projectPath: string): string {
-  const hash = generateConfigHash(configPath);
-  const projectId = generateProjectId(projectPath);
-  return `${hash}-${projectId}`;
 }
 
 /**
@@ -78,12 +73,11 @@ export function generateSessionPrefix(projectId: string): string {
 }
 
 /**
- * Get the project base directory for a given config and project.
- * Format: ~/.agent-orchestrator/{hash}-{projectId}
+ * Get the project base directory for a storage key.
+ * Format: ~/.agent-orchestrator/{storageKey}
  */
-export function getProjectBaseDir(configPath: string, projectPath: string): string {
-  const instanceId = generateInstanceId(configPath, projectPath);
-  return join(expandHome("~/.agent-orchestrator"), instanceId);
+export function getProjectBaseDir(storageKey: string | undefined): string {
+  return join(expandHome("~/.agent-orchestrator"), requireStorageKey(storageKey));
 }
 
 /**
@@ -97,42 +91,42 @@ export function getObservabilityBaseDir(configPath: string): string {
 
 /**
  * Get the sessions directory for a project.
- * Format: ~/.agent-orchestrator/{hash}-{projectId}/sessions
+ * Format: ~/.agent-orchestrator/{storageKey}/sessions
  */
-export function getSessionsDir(configPath: string, projectPath: string): string {
-  return join(getProjectBaseDir(configPath, projectPath), "sessions");
+export function getSessionsDir(storageKey: string | undefined): string {
+  return join(getProjectBaseDir(storageKey), "sessions");
 }
 
 /**
  * Get the worktrees directory for a project.
- * Format: ~/.agent-orchestrator/{hash}-{projectId}/worktrees
+ * Format: ~/.agent-orchestrator/{storageKey}/worktrees
  */
-export function getWorktreesDir(configPath: string, projectPath: string): string {
-  return join(getProjectBaseDir(configPath, projectPath), "worktrees");
+export function getWorktreesDir(storageKey: string | undefined): string {
+  return join(getProjectBaseDir(storageKey), "worktrees");
 }
 
 /**
  * Get the feedback reports directory for a project.
- * Format: ~/.agent-orchestrator/{hash}-{projectId}/feedback-reports
+ * Format: ~/.agent-orchestrator/{storageKey}/feedback-reports
  */
-export function getFeedbackReportsDir(configPath: string, projectPath: string): string {
-  return join(getProjectBaseDir(configPath, projectPath), "feedback-reports");
+export function getFeedbackReportsDir(storageKey: string | undefined): string {
+  return join(getProjectBaseDir(storageKey), "feedback-reports");
 }
 
 /**
  * Get the archive directory for a project.
- * Format: ~/.agent-orchestrator/{hash}-{projectId}/archive
+ * Format: ~/.agent-orchestrator/{storageKey}/sessions/archive
  */
-export function getArchiveDir(configPath: string, projectPath: string): string {
-  return join(getSessionsDir(configPath, projectPath), "archive");
+export function getArchiveDir(storageKey: string | undefined): string {
+  return join(getSessionsDir(storageKey), "archive");
 }
 
 /**
  * Get the .origin file path for a project.
  * This file stores the config path for collision detection.
  */
-export function getOriginFilePath(configPath: string, projectPath: string): string {
-  return join(getProjectBaseDir(configPath, projectPath), ".origin");
+export function getOriginFilePath(storageKey: string | undefined): string {
+  return join(getProjectBaseDir(storageKey), ".origin");
 }
 
 /**
@@ -146,12 +140,11 @@ export function generateSessionName(prefix: string, num: number): string {
 
 /**
  * Generate tmux session name (globally unique).
- * Format: {hash}-{prefix}-{num}
+ * Format: {storageKey}-{prefix}-{num}
  * Example: "a3b4c5d6e7f8-int-1"
  */
-export function generateTmuxName(configPath: string, prefix: string, num: number): string {
-  const hash = generateConfigHash(configPath);
-  return `${hash}-${prefix}-${num}`;
+export function generateTmuxName(storageKey: string | undefined, prefix: string, num: number): string {
+  return `${requireStorageKey(storageKey)}-${prefix}-${num}`;
 }
 
 /**
@@ -183,29 +176,61 @@ export function expandHome(filepath: string): string {
   return filepath;
 }
 
+/** Get the base AO directory (~/.agent-orchestrator/) */
+export function getAoBaseDir(): string {
+  return expandHome("~/.agent-orchestrator");
+}
+
+/** Get the portfolio directory (~/.agent-orchestrator/portfolio/) */
+export function getPortfolioDir(): string {
+  return join(getAoBaseDir(), "portfolio");
+}
+
+/** Get the portfolio preferences file path */
+export function getPreferencesPath(): string {
+  return join(getPortfolioDir(), "preferences.json");
+}
+
+/** Get the portfolio registered projects file path */
+export function getRegisteredPath(): string {
+  return join(getPortfolioDir(), "registered.json");
+}
+
 /**
  * Validate and store the .origin file for a project.
- * Throws if a hash collision is detected (different config, same hash).
+ *
+ * When the stored config path differs from the current one (e.g. after
+ * migrating from a local config to the global hybrid config), the .origin
+ * file is updated to the new path.  A true SHA-256 hash collision on 12 hex
+ * chars (1 in 2^48) is astronomically unlikely and not worth blocking a
+ * legitimate config migration.
  */
-export function validateAndStoreOrigin(configPath: string, projectPath: string): void {
-  const originPath = getOriginFilePath(configPath, projectPath);
-  const resolvedConfigPath = realpathSync(configPath);
+export function validateAndStoreOrigin(configPath: string, storageKey: string): void {
+  const originPath = getOriginFilePath(storageKey);
+  let resolvedConfigPath: string;
+  try {
+    resolvedConfigPath = realpathSync(configPath);
+  } catch {
+    resolvedConfigPath = resolve(configPath);
+  }
 
   if (existsSync(originPath)) {
     const stored = readFileSync(originPath, "utf-8").trim();
     if (stored !== resolvedConfigPath) {
-      throw new Error(
-        `Hash collision detected!\n` +
-          `Directory: ${getProjectBaseDir(configPath, projectPath)}\n` +
-          `Expected config: ${resolvedConfigPath}\n` +
-          `Actual config: ${stored}\n` +
-          `This is a rare hash collision. Please move one of the configs to a different directory.`,
-      );
+      // Config path changed (local → global migration). Update .origin.
+      writeFileSync(originPath, resolvedConfigPath, "utf-8");
     }
   } else {
     // Create project base directory and .origin file
-    const baseDir = getProjectBaseDir(configPath, projectPath);
+    const baseDir = getProjectBaseDir(storageKey);
     mkdirSync(baseDir, { recursive: true });
     writeFileSync(originPath, resolvedConfigPath, "utf-8");
   }
+}
+
+export function requireStorageKey(storageKey: string | undefined): string {
+  if (!storageKey) {
+    throw new Error("storageKey is required");
+  }
+  return storageKey;
 }

@@ -4,6 +4,7 @@ import { registerStatus } from "./commands/status.js";
 import { registerSpawn, registerBatchSpawn } from "./commands/spawn.js";
 import { registerSession } from "./commands/session.js";
 import { registerSend } from "./commands/send.js";
+import { registerAcknowledge, registerReport } from "./commands/report.js";
 import { registerReviewCheck } from "./commands/review-check.js";
 import { registerDashboard } from "./commands/dashboard.js";
 import { registerOpen } from "./commands/open.js";
@@ -13,6 +14,7 @@ import { registerDoctor } from "./commands/doctor.js";
 import { registerUpdate } from "./commands/update.js";
 import { registerSetup } from "./commands/setup.js";
 import { registerPlugin } from "./commands/plugin.js";
+import { registerCompletion } from "./commands/completion.js";
 import { getConfigInstruction } from "./lib/config-instruction.js";
 import { getCliVersion } from "./options/version.js";
 
@@ -32,6 +34,8 @@ export function createProgram(): Command {
   registerBatchSpawn(program);
   registerSession(program);
   registerSend(program);
+  registerAcknowledge(program);
+  registerReport(program);
   registerReviewCheck(program);
   registerDashboard(program);
   registerOpen(program);
@@ -40,6 +44,7 @@ export function createProgram(): Command {
   registerUpdate(program);
   registerSetup(program);
   registerPlugin(program);
+  registerCompletion(program);
 
   program
     .command("config-help")

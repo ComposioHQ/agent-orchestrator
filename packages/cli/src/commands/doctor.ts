@@ -414,7 +414,7 @@ export function registerDoctor(program: Command): void {
     .action(async (opts: { fix?: boolean; testNotify?: boolean }) => {
       const { fail, count: failCount } = makeFailCounter();
 
-      // 1. Run the existing shell-based checks
+      // 1. Run shell checks
       const scriptArgs: string[] = [];
       if (opts.fix) {
         scriptArgs.push("--fix");

@@ -4,9 +4,11 @@ import { useEffect, useReducer, useRef, useCallback } from "react";
 import {
   getAttentionLevel,
   type AttentionLevel,
+  type DashboardAttentionZoneMode,
   type DashboardSession,
   type SSESnapshotEvent,
 } from "@/lib/types";
+import { fetchJsonWithTimeout } from "@/lib/client-fetch";
 
 /** Debounce before fetching full session list after membership change. */
 const MEMBERSHIP_REFRESH_DELAY_MS = 120;
@@ -14,24 +16,46 @@ const MEMBERSHIP_REFRESH_DELAY_MS = 120;
 const STALE_REFRESH_INTERVAL_MS = 15000;
 /** Grace period before declaring "disconnected" (allows for transient reconnects). */
 const DISCONNECTED_GRACE_PERIOD_MS = 4000;
+const LIVE_REFRESH_TIMEOUT_MS = 6000;
+
+function isAbortLikeError(error: unknown): boolean {
+  if (error instanceof DOMException) {
+    return error.name === "AbortError";
+  }
+
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    return message.includes("aborted") || message.includes("aborterror");
+  }
+
+  return false;
+}
 
 type ConnectionStatus = "connected" | "reconnecting" | "disconnected";
 
 /** Server-computed attention levels from the latest SSE snapshot. */
 export type SSEAttentionMap = Readonly<Record<string, AttentionLevel>>;
 
-
 interface State {
   sessions: DashboardSession[];
   connectionStatus: ConnectionStatus;
+  loadError?: string;
   /** Attention levels from the latest SSE snapshot (server-computed, includes PR state). */
   sseAttentionLevels: SSEAttentionMap;
+  /**
+   * True after a real success signal from the live path: HTTP 200 `/api/sessions` refresh,
+   * an SSE snapshot, or a mux snapshot — not inferred from session count (which can mislead
+   * when SSR failed or responses are stale).
+   */
+  liveSessionsResolved: boolean;
 }
 
 type Action =
   | { type: "reset"; sessions: DashboardSession[]; sseAttentionLevels?: SSEAttentionMap }
   | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] }
-  | { type: "setConnection"; status: ConnectionStatus };
+  | { type: "setLoadError"; message?: string }
+  | { type: "setConnection"; status: ConnectionStatus }
+  | { type: "markLiveSessionsResolved" };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -39,10 +63,17 @@ function reducer(state: State, action: Action): State {
       return {
         ...state,
         sessions: action.sessions,
+        loadError: undefined,
         ...(action.sseAttentionLevels !== undefined
           ? { sseAttentionLevels: action.sseAttentionLevels }
           : {}),
       };
+    case "setLoadError":
+      if (state.loadError === action.message) return state;
+      return { ...state, loadError: action.message };
+    case "markLiveSessionsResolved":
+      if (state.liveSessionsResolved) return state;
+      return { ...state, liveSessionsResolved: true };
     case "setConnection":
       return { ...state, connectionStatus: action.status };
     case "snapshot": {
@@ -59,7 +90,12 @@ function reducer(state: State, action: Action): State {
           return s;
         }
         changed = true;
-        return { ...s, status: patch.status, activity: patch.activity, lastActivityAt: patch.lastActivityAt };
+        return {
+          ...s,
+          status: patch.status,
+          activity: patch.activity,
+          lastActivityAt: patch.lastActivityAt,
+        };
       });
 
       // Build attention level map from server-computed values
@@ -73,11 +109,18 @@ function reducer(state: State, action: Action): State {
         Object.keys(levels).length !== Object.keys(state.sseAttentionLevels).length ||
         action.patches.some((p) => state.sseAttentionLevels[p.id] !== p.attentionLevel);
 
-      if (!sessionsChanged && !levelsChanged) return state;
+      if (!sessionsChanged && !levelsChanged) {
+        if (state.loadError === undefined) return state;
+        return {
+          ...state,
+          loadError: undefined,
+        };
+      }
 
       return {
         ...state,
         sessions: sessionsChanged ? next : state.sessions,
+        loadError: undefined,
         sseAttentionLevels: levelsChanged ? levels : state.sseAttentionLevels,
       };
     }
@@ -93,27 +136,58 @@ function createMembershipKey(
     .join("\u0000");
 }
 
-export function useSessionEvents(
-  initialSessions: DashboardSession[],
-  project?: string,
-  muxSessions?: Array<{ id: string; status: string; activity: string | null; attentionLevel: string; lastActivityAt: string }>,
-  initialAttentionLevels?: SSEAttentionMap,
-  disabled = false,
-): State {
+export interface UseSessionEventsOptions {
+  initialSessions: DashboardSession[];
+  project?: string;
+  muxSessions?: Array<{
+    id: string;
+    status: string;
+    activity: string | null;
+    attentionLevel: AttentionLevel;
+    lastActivityAt: string;
+  }>;
+  initialAttentionLevels?: SSEAttentionMap;
+  disabled?: boolean;
+  /**
+   * REQUIRED. Callers must explicitly pass the mode that the server SSE
+   * route is using (read from `config.dashboard?.attentionZones` upstream).
+   *
+   * A default here would be a footgun: any default value disagrees with
+   * the server whenever the config is set to the opposite mode, causing
+   * `sseAttentionLevels` to oscillate between modes as server snapshots
+   * and client refreshes interleave. Forcing every caller to pass this
+   * explicitly prevents the next page from silently re-introducing the
+   * bug we already fixed once for `PullRequestsPage`.
+   */
+  attentionZones: DashboardAttentionZoneMode;
+}
+
+export function useSessionEvents(options: UseSessionEventsOptions): State {
+  const {
+    initialSessions,
+    project,
+    muxSessions,
+    initialAttentionLevels,
+    disabled = false,
+    attentionZones,
+  } = options;
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
     connectionStatus: "connected" as ConnectionStatus,
+    loadError: undefined,
     sseAttentionLevels: initialAttentionLevels ?? ({} as SSEAttentionMap),
+    liveSessionsResolved: false,
   });
   const sessionsRef = useRef(state.sessions);
   const initialAttentionLevelsRef = useRef(initialAttentionLevels);
   initialAttentionLevelsRef.current = initialAttentionLevels;
-  const refreshingRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMembershipKeyRef = useRef<string | null>(null);
   const lastRefreshAtRef = useRef(0);
+  const lastFetchStartedAtRef = useRef(0);
   const disconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRefreshControllerRef = useRef<AbortController | null>(null);
+  const pageUnloadingRef = useRef(false);
 
   // Reset state when server-rendered props change (e.g. full page refresh)
   useEffect(() => {
@@ -133,46 +207,79 @@ export function useSessionEvents(
   // SSE setup/teardown runs only on that transition, not every mux update.
   const muxActive = muxSessions !== undefined;
 
+  useEffect(() => {
+    pageUnloadingRef.current = false;
+
+    const markPageUnloading = () => {
+      pageUnloadingRef.current = true;
+    };
+
+    window.addEventListener("pagehide", markPageUnloading);
+    window.addEventListener("beforeunload", markPageUnloading);
+
+    return () => {
+      window.removeEventListener("pagehide", markPageUnloading);
+      window.removeEventListener("beforeunload", markPageUnloading);
+    };
+  }, []);
+
   // Define scheduleRefresh with useCallback so both effects can use it
   const scheduleRefresh = useCallback(() => {
-    if (refreshingRef.current || refreshTimerRef.current) return;
+    // Skip scheduling if a timer is already pending
+    if (refreshTimerRef.current) return;
+    // Skip if a fetch was already started recently (< 500ms ago)
+    if (Date.now() - lastFetchStartedAtRef.current < 500) return;
+    // Skip if a fetch is currently in flight (use controller as authoritative signal)
+    if (activeRefreshControllerRef.current !== null) return;
+
     refreshTimerRef.current = setTimeout(() => {
       refreshTimerRef.current = null;
-      refreshingRef.current = true;
+      // Re-check in-flight state after the 120ms debounce window
+      if (activeRefreshControllerRef.current !== null) return;
       const requestedMembershipKey = pendingMembershipKeyRef.current;
       const refreshController = new AbortController();
       activeRefreshControllerRef.current = refreshController;
+
+      lastFetchStartedAtRef.current = Date.now();
 
       const sessionsUrl = project
         ? `/api/sessions?project=${encodeURIComponent(project)}`
         : "/api/sessions";
 
-      void fetch(sessionsUrl, { signal: refreshController.signal })
-        .then((res) => (res.ok ? res.json() : null))
-        .then(
-          (updated: { sessions?: DashboardSession[] } | null) => {
-            if (refreshController.signal.aborted || !updated?.sessions) {
-              // Update timestamp even for non-OK responses to prevent retry storms
-              if (!refreshController.signal.aborted) {
-                lastRefreshAtRef.current = Date.now();
-              }
-              return;
+      void fetchJsonWithTimeout<{ sessions?: DashboardSession[] } | null>(sessionsUrl, {
+        signal: refreshController.signal,
+        cache: "no-store",
+        timeoutMs: LIVE_REFRESH_TIMEOUT_MS,
+        timeoutMessage: `Dashboard refresh timed out after ${LIVE_REFRESH_TIMEOUT_MS}ms`,
+      })
+        .then((updated) => {
+          if (refreshController.signal.aborted || !updated?.sessions) {
+            // Update timestamp even for non-OK responses to prevent retry storms
+            if (!refreshController.signal.aborted) {
+              lastRefreshAtRef.current = Date.now();
             }
+            return;
+          }
 
-            lastRefreshAtRef.current = Date.now();
-            const sseAttentionLevels = Object.fromEntries(
-              updated.sessions.map((s) => [s.id, getAttentionLevel(s)]),
-            ) as SSEAttentionMap;
-            dispatch({
-              type: "reset",
-              sessions: updated.sessions,
-              sseAttentionLevels,
-            });
-          },
-        )
+          lastRefreshAtRef.current = Date.now();
+          dispatch({ type: "markLiveSessionsResolved" });
+          const sseAttentionLevels = Object.fromEntries(
+            updated.sessions.map((s) => [s.id, getAttentionLevel(s, attentionZones)]),
+          ) as SSEAttentionMap;
+          dispatch({
+            type: "reset",
+            sessions: updated.sessions,
+            sseAttentionLevels,
+          });
+        })
         .catch((err: unknown) => {
-          if (err instanceof DOMException && err.name === "AbortError") return;
+          if (pageUnloadingRef.current || refreshController.signal.aborted || isAbortLikeError(err))
+            return;
           console.warn("[useSessionEvents] refresh failed:", err);
+          dispatch({
+            type: "setLoadError",
+            message: err instanceof Error ? err.message : "Dashboard refresh failed",
+          });
           // Update timestamp on failure to prevent retry loops on every SSE snapshot
           lastRefreshAtRef.current = Date.now();
         })
@@ -181,15 +288,12 @@ export function useSessionEvents(
             activeRefreshControllerRef.current = null;
           }
           if (refreshController.signal.aborted) {
-            refreshingRef.current = false;
             // If there's still a pending membership change, reschedule so it isn't lost
             if (pendingMembershipKeyRef.current !== null) {
               scheduleRefresh();
             }
             return;
           }
-
-          refreshingRef.current = false;
 
           if (
             pendingMembershipKeyRef.current !== null &&
@@ -202,7 +306,7 @@ export function useSessionEvents(
           pendingMembershipKeyRef.current = null;
         });
     }, MEMBERSHIP_REFRESH_DELAY_MS);
-  }, [project]);
+  }, [project, attentionZones]);
 
   // Mux-based session updates (replaces SSE when available)
   useEffect(() => {
@@ -220,6 +324,7 @@ export function useSessionEvents(
     // knows. So if we see ANY id we don't have, trigger a refresh to find out.
     const hasUnknownIds = muxSessions.some((s) => !currentIds.has(s.id));
 
+    dispatch({ type: "markLiveSessionsResolved" });
     dispatch({ type: "snapshot", patches: scopedMuxSessions as SSESnapshotEvent["sessions"] });
 
     const currentMembershipKey = createMembershipKey(sessionsRef.current);
@@ -255,7 +360,6 @@ export function useSessionEvents(
           refreshTimerRef.current = null;
         }
         pendingMembershipKeyRef.current = null;
-        refreshingRef.current = false;
         activeRefreshControllerRef.current?.abort();
         activeRefreshControllerRef.current = null;
       };
@@ -284,9 +388,17 @@ export function useSessionEvents(
 
     es.onmessage = (event: MessageEvent) => {
       try {
-        const data = JSON.parse(event.data as string) as { type: string };
+        const data = JSON.parse(event.data as string) as { type: string; error?: string };
+        if (data.type === "error") {
+          dispatch({
+            type: "setLoadError",
+            message: data.error ?? "Live dashboard updates failed",
+          });
+          return;
+        }
         if (data.type === "snapshot") {
           const snapshot = data as SSESnapshotEvent;
+          dispatch({ type: "markLiveSessionsResolved" });
           dispatch({ type: "snapshot", patches: snapshot.sessions });
 
           const currentMembershipKey = createMembershipKey(sessionsRef.current);
@@ -337,7 +449,6 @@ export function useSessionEvents(
       disposed = true;
       activeRefreshControllerRef.current?.abort();
       activeRefreshControllerRef.current = null;
-      refreshingRef.current = false;
       pendingMembershipKeyRef.current = null;
       clearRefreshTimer();
       clearDisconnectedTimer();

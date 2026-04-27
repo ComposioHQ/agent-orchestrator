@@ -65,12 +65,23 @@ Activity states (orthogonal to lifecycle): `active`, `ready`, `idle`, `waiting_i
 | ---------------------------------------- | ----------------------------------------------- |
 | `packages/core/src/session-manager.ts`   | Session CRUD: spawn, list, kill, send, restore  |
 | `packages/core/src/lifecycle-manager.ts` | State machine, polling loop, reactions engine   |
-| `packages/core/src/prompt-builder.ts`    | 3-layer prompt assembly (base + config + rules) |
+| `packages/core/src/prompt-builder.ts`    | Layered worker prompt assembly (system + task)  |
 | `packages/core/src/config.ts`            | Config loading and Zod validation               |
 | `packages/core/src/plugin-registry.ts`   | Plugin discovery, loading, resolution           |
 | `packages/core/src/agent-selection.ts`   | Resolves worker vs orchestrator agent roles     |
 | `packages/core/src/observability.ts`     | Correlation IDs, structured logging, metrics    |
 | `packages/core/src/paths.ts`             | Hash-based path and session name generation     |
+
+### Working Principles
+
+These apply to both human contributors and AI agents:
+
+1. **Think before coding.** If a task is ambiguous, ask for clarification. If multiple approaches exist, present the tradeoff.
+2. **Minimum code.** No speculative features. No abstractions for code used once. Plugin slots exist for extensibility - use them instead of config proliferation.
+3. **Surgical diffs.** Don't touch files outside your change scope. Don't reformat adjacent code. Match existing patterns even if you prefer differently. Every changed line should trace to a specific requirement.
+4. **Verifiable goals.** Before implementing, state what "done" looks like and how to verify it. For bug fixes: write a test that reproduces the bug first.
+
+For AI agent-specific guidance (including high-risk files like `types.ts`, `lifecycle-manager.ts`, `globals.css`), see CLAUDE.md -> Working Principles.
 
 ---
 
@@ -288,8 +299,10 @@ spawn(config)
   ├─ Determine branch name
   ├─ Create workspace (Workspace.create)
   ├─ Generate issue prompt (Tracker.generatePrompt)
+  ├─ Assemble layered prompt (prompt-builder.ts) → {systemPrompt, taskPrompt}
+  ├─ Persist worker system prompt file
+  ├─ For OpenCode workers: write OPENCODE_CONFIG pointing at that file
   ├─ Build agent launch command (Agent.getLaunchCommand)
-  ├─ Assemble full prompt (prompt-builder.ts)
   ├─ Create runtime session (Runtime.create)
   ├─ Post-launch setup (Agent.postLaunchSetup, optional)
   └─ Write metadata file → return Session
@@ -301,11 +314,13 @@ If issue validation fails, nothing is created — fail before allocating resourc
 
 ## Prompt Assembly
 
-Prompts are built in three layers (`packages/core/src/prompt-builder.ts`):
+Worker prompts are built in three persistent layers (`packages/core/src/prompt-builder.ts`):
 
 1. **Base agent guidance** — standard instructions for all sessions (git workflow, PR conventions, lifecycle hooks)
-2. **Config context** — project-specific info (repo, branch, issue details, agent rules from `agentRules` / `agentRulesFile`)
-3. **User rules** — inlined last, highest priority
+2. **Config context** — project-specific info (repo, branch, tracker, issue details, automated reactions)
+3. **Project rules** — content from `agentRules` / `agentRulesFile`
+
+The explicit user request is returned separately as `taskPrompt`. This lets session manager persist stable system instructions to disk while still sending only task-specific text to agents that need post-launch prompt delivery.
 
 Orchestrator sessions use a separate prompt from `packages/core/src/orchestrator-prompt.ts`.
 

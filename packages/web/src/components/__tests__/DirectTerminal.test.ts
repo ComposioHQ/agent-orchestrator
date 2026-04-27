@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { buildTerminalThemes } from "@/components/DirectTerminal";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
+import { buildTerminalThemes, resolveMonoFontFamily } from "@/components/DirectTerminal";
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const ANSI_KEYS = [
@@ -84,5 +84,39 @@ describe("buildTerminalThemes", () => {
   it("selection colors differ between dark and light themes", () => {
     const { dark, light } = buildTerminalThemes("agent");
     expect(dark.selectionBackground).not.toBe(light.selectionBackground);
+  });
+});
+
+describe("resolveMonoFontFamily", () => {
+  const FALLBACK =
+    '"JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace';
+
+  beforeEach(() => {
+    document.documentElement.style.removeProperty("--font-jetbrains-mono");
+  });
+
+  afterEach(() => {
+    document.documentElement.style.removeProperty("--font-jetbrains-mono");
+  });
+
+  it("prepends the resolved CSS variable to the fallback stack", () => {
+    document.documentElement.style.setProperty(
+      "--font-jetbrains-mono",
+      "__JetBrains_Mono_abc123",
+    );
+    const result = resolveMonoFontFamily();
+    expect(result).toBe(`__JetBrains_Mono_abc123, ${FALLBACK}`);
+  });
+
+  it("returns the fallback stack when the CSS variable is not set", () => {
+    expect(resolveMonoFontFamily()).toBe(FALLBACK);
+  });
+
+  it("never emits `var(...)` (would reintroduce the canvas-parse bug)", () => {
+    document.documentElement.style.setProperty(
+      "--font-jetbrains-mono",
+      "__JetBrains_Mono_abc123",
+    );
+    expect(resolveMonoFontFamily()).not.toMatch(/var\(/);
   });
 });

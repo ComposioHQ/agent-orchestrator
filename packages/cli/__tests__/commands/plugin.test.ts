@@ -29,14 +29,15 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
   return {
     ...actual,
     findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
+    isCanonicalGlobalConfigPath: (configPath: string | undefined) =>
+      configPath?.endsWith("global-config.yaml") ?? false,
   };
 });
 
 vi.mock("../../src/lib/plugin-store.js", () => ({
   getLatestPublishedPackageVersion: (...args: unknown[]) =>
     mockGetLatestPublishedPackageVersion(...args),
-  importPluginModuleFromSource: (...args: unknown[]) =>
-    mockImportPluginModuleFromSource(...args),
+  importPluginModuleFromSource: (...args: unknown[]) => mockImportPluginModuleFromSource(...args),
   installPackageIntoStore: (...args: unknown[]) => mockInstallPackageIntoStore(...args),
   readInstalledPackageVersion: (...args: unknown[]) => mockReadInstalledPackageVersion(...args),
   uninstallPackageFromStore: (...args: unknown[]) => mockUninstallPackageFromStore(...args),
@@ -118,11 +119,13 @@ describe("plugin command", () => {
       return storeVersions.get(packageName) ?? null;
     });
 
-    mockInstallPackageIntoStore.mockImplementation(async (packageName: string, version?: string) => {
-      const resolved = version ?? "0.0.1";
-      storeVersions.set(packageName, resolved);
-      return resolved;
-    });
+    mockInstallPackageIntoStore.mockImplementation(
+      async (packageName: string, version?: string) => {
+        const resolved = version ?? "0.0.1";
+        storeVersions.set(packageName, resolved);
+        return resolved;
+      },
+    );
 
     mockUninstallPackageFromStore.mockImplementation(async (packageName: string) => {
       return storeVersions.delete(packageName);
@@ -249,6 +252,28 @@ describe("plugin command", () => {
     expect(mockRunSetupAction).toHaveBeenCalled();
   });
 
+  it("does not stamp wrapped config schema onto the canonical global config", async () => {
+    configPath = join(tempDir, "global-config.yaml");
+    writeConfig(configPath);
+    mockFindConfigFile.mockReturnValue(configPath);
+
+    const program = createProgram();
+
+    await program.parseAsync(["node", "test", "plugin", "install", "notifier-openclaw"]);
+
+    const writtenYaml = readFileSync(configPath, "utf-8");
+    expect(writtenYaml).not.toContain("$schema:");
+    expect(parseYaml(writtenYaml)).toMatchObject({
+      plugins: [
+        {
+          name: "openclaw",
+          source: "registry",
+          package: OPENCLAW_PACKAGE,
+        },
+      ],
+    });
+  });
+
   it("updates an npm plugin and persists the resolved store version", async () => {
     writeConfig(configPath, [
       "plugins:",
@@ -291,9 +316,9 @@ describe("plugin command", () => {
 
     const program = createProgram();
 
-    await expect(
-      program.parseAsync(["node", "test", "plugin", "update", "goose"]),
-    ).rejects.toThrow("Failed to update plugin");
+    await expect(program.parseAsync(["node", "test", "plugin", "update", "goose"])).rejects.toThrow(
+      "Failed to update plugin",
+    );
 
     const parsed = parseYaml(readFileSync(configPath, "utf-8")) as {
       plugins?: Array<Record<string, string>>;

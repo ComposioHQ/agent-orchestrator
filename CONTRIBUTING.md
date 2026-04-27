@@ -205,6 +205,18 @@ Your plugin package must satisfy the contract in [`docs/PLUGIN_SPEC.md`](docs/PL
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full reference. The short version:
 
+### Behavioral Guidelines
+
+Beyond syntax and style, follow these principles:
+
+- **State assumptions explicitly** - if a task is ambiguous, present interpretations rather than guessing.
+- **Minimum viable change** - no speculative features, no unused abstractions, no formatting changes outside your diff.
+- **Every changed line traces to the task** - if you can't explain why a line changed, revert it.
+- **Write a failing test first** - for bug fixes, reproduce the bug in a test before implementing the fix.
+- **Don't refactor unrelated code** - mention dead code you spot, don't delete it.
+
+These match the "Working Principles" section in CLAUDE.md. AI agents working on this repo are instructed to follow these same rules.
+
 **TypeScript**
 
 - ESM modules, `.js` extensions on local imports

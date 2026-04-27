@@ -6,14 +6,26 @@ import {
   getAttentionLevel,
   isPRRateLimited,
   isPRUnenriched,
-  TERMINAL_STATUSES,
-  TERMINAL_ACTIVITIES,
   CI_STATUS,
+  getSessionTruthLabel,
+  getPRTruthLabel,
+  getRuntimeTruthLabel,
+  isDashboardSessionDone,
+  isDashboardSessionTerminal,
+  isDashboardSessionRestorable,
 } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { getSessionTitle } from "@/lib/format";
 import { CICheckList } from "./CIBadge";
 import { getSizeLabel } from "./PRStatus";
+import { projectSessionHashPath, projectSessionPath } from "@/lib/routes";
+
+/**
+ * Tracks which session IDs have already played their entrance animation.
+ * Prevents the kanban-card-enter animation from replaying when React
+ * unmounts and remounts a card due to attention-level column changes.
+ */
+const enteredSessionIds = new Set<string>();
 
 interface SessionCardProps {
   session: DashboardSession;
@@ -33,7 +45,7 @@ function getDoneStatusInfo(session: DashboardSession): {
 } {
   const activity = session.activity;
   const status = session.status;
-  const prState = session.pr?.state;
+  const prState = session.lifecycle?.prState ?? session.pr?.state;
 
   if (prState === "merged" || status === "merged") {
     return {
@@ -53,9 +65,32 @@ function getDoneStatusInfo(session: DashboardSession): {
     };
   }
 
-  if (status === "killed" || status === "terminated") {
+  if (prState === "closed") {
     return {
-      label: status,
+      label: "closed",
+      pillClass: "done-status-pill--exited",
+      icon: (
+        <svg
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          viewBox="0 0 24 24"
+          className="h-3 w-3"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M9 12h6" />
+        </svg>
+      ),
+    };
+  }
+
+  if (
+    session.lifecycle?.sessionState === "terminated" ||
+    status === "killed" ||
+    status === "terminated"
+  ) {
+    return {
+      label: getSessionTruthLabel(session),
       pillClass: "done-status-pill--killed",
       icon: (
         <svg
@@ -72,7 +107,7 @@ function getDoneStatusInfo(session: DashboardSession): {
   }
 
   // Default: exited / done / cleanup / closed PR
-  const label = activity === "exited" ? "exited" : status;
+  const label = activity === "exited" ? "exited" : getSessionTruthLabel(session);
   return {
     label,
     pillClass: "done-status-pill--exited",
@@ -101,6 +136,23 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   const [replyText, setReplyText] = useState("");
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickReplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Only play the entrance animation on the very first mount of this session.
+  // Subsequent remounts (e.g. attention-level column change) skip the animation
+  // to prevent the card from blinking (opacity 0→1 flash every SSE cycle).
+  const [hasEntered] = useState(() => enteredSessionIds.has(session.id));
+  useEffect(() => {
+    if (hasEntered) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      enteredSessionIds.add(session.id);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [hasEntered, session.id]);
+
   const level = getAttentionLevel(session);
   const pr = session.pr;
 
@@ -160,17 +212,23 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   const prUnenriched = pr ? isPRUnenriched(pr) : false;
   const alerts = getAlerts(session);
   const isReadyToMerge = !rateLimited && pr?.mergeability.mergeable && pr.state === "open";
-  const isTerminal =
-    TERMINAL_STATUSES.has(session.status) ||
-    (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity));
-  const isRestorable = isTerminal && session.status !== "merged";
+  const isTerminal = isDashboardSessionTerminal(session);
+  const isRestorable = isDashboardSessionRestorable(session);
 
   const title = getSessionTitle(session);
   const footerStatus = getFooterStatusLabel(session, level, Boolean(isReadyToMerge));
-  const visiblePassingChecks = !rateLimited && pr && !prUnenriched
-    ? pr.ciChecks.filter((check) => check.status === "passed").slice(0, 3)
-    : [];
-  const isDone = level === "done";
+  const visiblePassingChecks =
+    !rateLimited && pr && !prUnenriched
+      ? pr.ciChecks.filter((check) => check.status === "passed").slice(0, 3)
+      : [];
+  const isDone = isDashboardSessionDone(session) || level === "done";
+  const truthLine = session.lifecycle
+    ? [
+        `Session ${getSessionTruthLabel(session)}`,
+        `PR ${getPRTruthLabel(session)}`,
+        `Runtime ${getRuntimeTruthLabel(session)}`,
+      ].join(" · ")
+    : null;
   const secondaryText = session.issueLabel
     ? `${session.issueLabel}${session.issueTitle ? ` · ${session.issueTitle}` : ""}`
     : (session.issueTitle ??
@@ -295,6 +353,13 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                 </span>
               </span>
             ))}
+          <a
+            href={projectSessionPath(session.projectId, session.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="done-meta-chip font-[var(--font-mono)] font-semibold text-[var(--color-accent)] no-underline hover:underline"
+          >
+            View current context
+          </a>
         </div>
 
         {/* Expandable detail panel */}
@@ -425,7 +490,8 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   return (
     <div
       className={cn(
-        "session-card kanban-card-enter border",
+        "session-card border",
+        !hasEntered && "kanban-card-enter",
         cardFrameClass,
         accentClass,
         isReadyToMerge && "card-merge-ready",
@@ -442,9 +508,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
             cardDotTone === "exited" && "card__adot--exited",
           )}
         />
-        <span className="card__id">
-          {session.id}
-        </span>
+        <span className="card__id">{session.id}</span>
         <div className="flex-1" />
         {isRestorable && (
           <button
@@ -452,24 +516,30 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               e.stopPropagation();
               onRestore?.(session.id);
             }}
-            className="inline-flex items-center gap-1 border border-[color-mix(in_srgb,var(--color-accent)_35%,transparent)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[var(--color-tint-blue)]"
+            className="session-card__control session-card__restore-control"
           >
             <svg
+              className="session-card__control-icon"
               fill="none"
               stroke="currentColor"
               strokeWidth="2"
               viewBox="0 0 24 24"
-              className="h-3 w-3"
             >
-              <polyline points="1 4 1 10 7 10" />
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+              <path d="M20 11a8 8 0 0 0-14.9-3.98" />
+              <path d="M4 5v4h4" />
+              <path d="M4 13a8 8 0 0 0 14.9 3.98" />
+              <path d="M20 19v-4h-4" />
             </svg>
             restore
           </button>
         )}
         {!isTerminal && (
           <a
-            href={`/sessions/${encodeURIComponent(session.id)}#session-terminal-section`}
+            href={projectSessionHashPath(
+              session.projectId,
+              session.id,
+              "#session-terminal-section",
+            )}
             onClick={(e) => e.stopPropagation()}
             className="session-card__control session-card__terminal-link"
           >
@@ -491,17 +561,11 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
 
       <div className="session-card__body flex min-h-0 flex-1 flex-col">
         <div className="card__title-wrap">
-          <p className="card__title">
-            {title}
-          </p>
+          <p className="card__title">{title}</p>
         </div>
 
         <div className="card__meta">
-          {session.branch && (
-            <span className="card__branch">
-              {session.branch}
-            </span>
-          )}
+          {session.branch && <span className="card__branch">{session.branch}</span>}
           {session.branch && pr ? (
             <span className="card__meta-sep" aria-hidden="true">
               ·
@@ -538,16 +602,30 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           <div className="px-[10px] pb-[5px]">
             {level === "merge" || isReadyToMerge ? (
               <p className="session-card__secondary session-card__secondary--merge">
-                <svg width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                <svg
+                  width="9"
+                  height="9"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
                   <path d="M20 6 9 17l-5-5" />
                 </svg>
                 <span>{secondaryText}</span>
               </p>
             ) : (
-              <p className="session-card__secondary">
-                {secondaryText}
-              </p>
+              <p className="session-card__secondary">{secondaryText}</p>
             )}
+          </div>
+        )}
+
+        {truthLine && (
+          <div className="px-[10px] pb-[5px]">
+            <p className="text-[10px] leading-relaxed text-[var(--color-text-tertiary)]">
+              {truthLine}
+            </p>
           </div>
         )}
 
@@ -574,7 +652,15 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
             {visiblePassingChecks.map((check) => {
               const chipContent = (
                 <>
-                  <svg width="8" height="8" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden="true">
+                  <svg
+                    width="8"
+                    height="8"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
                     <path d="M20 6 9 17l-5-5" />
                   </svg>
                   {check.name}
@@ -603,10 +689,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         {!rateLimited && alerts.length > 0 && (
           <div className="card__alerts flex flex-col">
             {alerts.slice(0, 3).map((alert) => (
-              <div
-                key={alert.key}
-                className={cn("alert-row", `alert-row--${alert.type}`)}
-              >
+              <div key={alert.key} className={cn("alert-row", `alert-row--${alert.type}`)}>
                 <span className="alert-row__icon">{alert.icon}</span>
                 <span className="alert-row__text">
                   <a
@@ -624,7 +707,8 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                   </a>
                   {alert.notified && (
                     <span className="alert-row__notified" title="Agent has been notified">
-                      {" "}&middot; notified
+                      {" "}
+                      &middot; notified
                     </span>
                   )}
                 </span>
@@ -653,68 +737,83 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           <div className="quick-reply" onClick={(e) => e.stopPropagation()}>
             {session.summary && !session.summaryIsFallback && (
               <div className="card__agent-msg">
-                <svg className="card__agent-msg-icon" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                <svg
+                  className="card__agent-msg-icon"
+                  width="10"
+                  height="10"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                 </svg>
                 <span>{session.summary}</span>
               </div>
             )}
             <a
-              href={`/sessions/${encodeURIComponent(session.id)}`}
+              href={projectSessionPath(session.projectId, session.id)}
               onClick={(e) => e.stopPropagation()}
               className="card__view-context"
             >
               View current context →
             </a>
-            <div className="card__presets">
-              <button
-                className="card__preset"
-                onClick={() => void handleQuickReply("continue")}
-                disabled={sendingQuickReply !== null}
-              >
-                {sendingQuickReply === "continue"
-                  ? "Sending..."
-                  : sentQuickReply === "continue"
-                    ? "Sent"
-                    : "Continue"}
-              </button>
-              <button
-                className="card__preset"
-                onClick={() => void handleQuickReply("abort")}
-                disabled={sendingQuickReply !== null}
-              >
-                {sendingQuickReply === "abort"
-                  ? "Sending..."
-                  : sentQuickReply === "abort"
-                    ? "Sent"
-                    : "Abort"}
-              </button>
-              <button
-                className="card__preset"
-                onClick={() => void handleQuickReply("skip")}
-                disabled={sendingQuickReply !== null}
-              >
-                {sendingQuickReply === "skip"
-                  ? "Sending..."
-                  : sentQuickReply === "skip"
-                    ? "Sent"
-                    : "Skip"}
-              </button>
-            </div>
-            <div className="card__reply-wrap">
-              <textarea
-                className="card__reply"
-                placeholder={sendingQuickReply !== null ? "Sending..." : "Type a reply... (Enter to send)"}
-                aria-label="Type a reply to the agent"
-                value={replyText}
-                onChange={(e) => setReplyText(e.target.value)}
-                onKeyDown={(e) => {
-                  void handleReplyKeyDown(e);
-                }}
-                rows={1}
-                disabled={sendingQuickReply !== null}
-              />
-            </div>
+            {!isTerminal && (
+              <>
+                <div className="card__presets">
+                  <button
+                    className="card__preset"
+                    onClick={() => void handleQuickReply("continue")}
+                    disabled={sendingQuickReply !== null}
+                  >
+                    {sendingQuickReply === "continue"
+                      ? "Sending..."
+                      : sentQuickReply === "continue"
+                        ? "Sent"
+                        : "Continue"}
+                  </button>
+                  <button
+                    className="card__preset"
+                    onClick={() => void handleQuickReply("abort")}
+                    disabled={sendingQuickReply !== null}
+                  >
+                    {sendingQuickReply === "abort"
+                      ? "Sending..."
+                      : sentQuickReply === "abort"
+                        ? "Sent"
+                        : "Abort"}
+                  </button>
+                  <button
+                    className="card__preset"
+                    onClick={() => void handleQuickReply("skip")}
+                    disabled={sendingQuickReply !== null}
+                  >
+                    {sendingQuickReply === "skip"
+                      ? "Sending..."
+                      : sentQuickReply === "skip"
+                        ? "Sent"
+                        : "Skip"}
+                  </button>
+                </div>
+                <div className="card__reply-wrap">
+                  <textarea
+                    className="card__reply"
+                    placeholder={
+                      sendingQuickReply !== null ? "Sending..." : "Type a reply... (Enter to send)"
+                    }
+                    aria-label="Type a reply to the agent"
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    onKeyDown={(e) => {
+                      void handleReplyKeyDown(e);
+                    }}
+                    rows={1}
+                    disabled={sendingQuickReply !== null}
+                  />
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -762,7 +861,9 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                 )}
               >
                 {killConfirming ? (
-                  <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">kill?</span>
+                  <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">
+                    kill?
+                  </span>
                 ) : (
                   <svg
                     className="session-card__control-icon"
@@ -803,11 +904,13 @@ function getFooterStatusLabel(
   isReadyToMerge: boolean,
 ): string {
   if (isReadyToMerge || level === "merge") return "mergeable";
-  if (level === "respond") return "waiting_input";
-  if (session.status === "ci_failed") return "ci_failed";
-  if (level === "review") return "review_pending";
-  if (level === "working") return "working";
-  return session.status;
+  if (session.lifecycle?.sessionState === "detecting") return "detecting";
+  if (level === "respond") return getSessionTruthLabel(session);
+  if (session.lifecycle?.prReason === "ci_failing" || session.status === "ci_failed")
+    return "ci failing";
+  if (level === "review") return getPRTruthLabel(session);
+  if (level === "working") return getSessionTruthLabel(session);
+  return getSessionTruthLabel(session);
 }
 
 interface Alert {
@@ -834,11 +937,17 @@ function getAlerts(session: DashboardSession): Alert[] {
   // The lifecycle manager's status is the most up-to-date source of truth.
   // PR enrichment data can be stale (5-min cache) or unavailable (rate limit/timeout).
   // Use lifecycle status as fallback when PR data hasn't caught up yet.
+  const lifecyclePrReason = session.lifecycle?.prReason ?? null;
   const lifecycleStatus = meta["status"];
 
-  const ciIsFailing = pr.ciStatus === CI_STATUS.FAILING || lifecycleStatus === "ci_failed";
+  const ciIsFailing =
+    pr.ciStatus === CI_STATUS.FAILING ||
+    lifecyclePrReason === "ci_failing" ||
+    lifecycleStatus === "ci_failed";
   const hasChangesRequested =
-    pr.reviewDecision === "changes_requested" || lifecycleStatus === "changes_requested";
+    pr.reviewDecision === "changes_requested" ||
+    lifecyclePrReason === "changes_requested" ||
+    lifecycleStatus === "changes_requested";
   const hasConflicts = !pr.mergeability.noConflicts;
 
   if (ciIsFailing) {
@@ -895,7 +1004,15 @@ function getAlerts(session: DashboardSession): Alert[] {
       key: "review",
       type: "review",
       icon: (
-        <svg width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+        <svg
+          width="9"
+          height="9"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
           <circle cx="9" cy="7" r="4" />
           <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />

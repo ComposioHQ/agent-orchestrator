@@ -6,7 +6,9 @@ import { randomUUID } from "node:crypto";
 import {
   readMetadata,
   readMetadataRaw,
+  readCanonicalLifecycle,
   readArchivedMetadataRaw,
+  mutateMetadata,
   writeMetadata,
   updateMetadata,
   deleteMetadata,
@@ -51,6 +53,9 @@ describe("writeMetadata + readMetadata", () => {
       project: "my-app",
       createdAt: "2025-01-01T00:00:00.000Z",
       runtimeHandle: '{"id":"tmux-1","runtimeName":"tmux"}',
+      stateVersion: "2",
+      statePayload:
+        '{"version":2,"session":{"kind":"worker","state":"working","reason":"task_in_progress","startedAt":"2025-01-01T00:00:00.000Z","completedAt":null,"terminatedAt":null,"lastTransitionAt":"2025-01-01T00:00:00.000Z"},"pr":{"state":"none","reason":"not_created","number":null,"url":null,"lastObservedAt":null},"runtime":{"state":"alive","reason":"process_running","lastObservedAt":"2025-01-01T00:00:00.000Z","handle":{"id":"tmux-1","runtimeName":"tmux","data":{}},"tmuxName":null}}',
     });
 
     const meta = readMetadata(dataDir, "app-2");
@@ -62,6 +67,8 @@ describe("writeMetadata + readMetadata", () => {
     expect(meta!.project).toBe("my-app");
     expect(meta!.createdAt).toBe("2025-01-01T00:00:00.000Z");
     expect(meta!.runtimeHandle).toBe('{"id":"tmux-1","runtimeName":"tmux"}');
+    expect(meta!.stateVersion).toBe("2");
+    expect(meta!.statePayload).toContain('"version":2');
   });
 
   it("returns null for nonexistent session", () => {
@@ -107,6 +114,21 @@ describe("writeMetadata + readMetadata", () => {
 
     const content = readFileSync(join(dataDir, "app-5"), "utf-8");
     expect(content).toContain("pinnedSummary=First quality summary\n");
+  });
+
+  it("serializes and reads back displayName", () => {
+    writeMetadata(dataDir, "app-6", {
+      worktree: "/tmp/w",
+      branch: "feat/test",
+      status: "working",
+      displayName: "Refactor session manager",
+    });
+
+    const content = readFileSync(join(dataDir, "app-6"), "utf-8");
+    expect(content).toContain("displayName=Refactor session manager\n");
+
+    const parsed = readMetadata(dataDir, "app-6");
+    expect(parsed?.displayName).toBe("Refactor session manager");
   });
 });
 
@@ -205,6 +227,61 @@ describe("updateMetadata", () => {
     const meta = readMetadata(dataDir, "upd-4");
     expect(meta!.status).toBe("pr_open");
     expect(meta!.summary).toBeUndefined();
+  });
+
+  it("returns the normalized record that is actually persisted", () => {
+    writeMetadata(dataDir, "upd-5", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+      summary: "doing stuff",
+    });
+
+    const next = mutateMetadata(dataDir, "upd-5", (existing) => ({
+      ...existing,
+      summary: "",
+      pr: "https://github.com/org/repo/pull/5",
+    }));
+
+    expect(next).toEqual({
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+      pr: "https://github.com/org/repo/pull/5",
+    });
+    expect(readMetadataRaw(dataDir, "upd-5")).toEqual(next);
+  });
+});
+
+describe("readCanonicalLifecycle", () => {
+  it("reads canonical lifecycle from statePayload", () => {
+    writeMetadata(dataDir, "lifecycle-1", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+      stateVersion: "2",
+      statePayload:
+        '{"version":2,"session":{"kind":"worker","state":"working","reason":"task_in_progress","startedAt":"2025-01-01T00:00:00.000Z","completedAt":null,"terminatedAt":null,"lastTransitionAt":"2025-01-01T00:00:00.000Z"},"pr":{"state":"open","reason":"in_progress","number":42,"url":"https://github.com/org/repo/pull/42","lastObservedAt":"2025-01-01T00:00:00.000Z"},"runtime":{"state":"alive","reason":"process_running","lastObservedAt":"2025-01-01T00:00:00.000Z","handle":{"id":"tmux-1","runtimeName":"tmux","data":{}},"tmuxName":"tmux-1"}}',
+    });
+
+    const lifecycle = readCanonicalLifecycle(dataDir, "lifecycle-1");
+    expect(lifecycle).not.toBeNull();
+    expect(lifecycle!.session.state).toBe("working");
+    expect(lifecycle!.pr.state).toBe("open");
+    expect(lifecycle!.runtime.state).toBe("alive");
+  });
+
+  it("validates legacy status before synthesizing canonical lifecycle", () => {
+    writeMetadata(dataDir, "lifecycle-legacy-invalid", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "unknown",
+    });
+
+    const lifecycle = readCanonicalLifecycle(dataDir, "lifecycle-legacy-invalid");
+    expect(lifecycle).not.toBeNull();
+    expect(lifecycle!.session.state).toBe("not_started");
+    expect(lifecycle!.session.reason).toBe("spawn_requested");
   });
 });
 

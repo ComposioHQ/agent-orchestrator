@@ -24,10 +24,101 @@ import type { ObservabilityLevel } from "./observability.js";
 /** Unique session identifier, e.g. "my-app-1", "backend-12" */
 export type SessionId = string;
 
+export type SessionKind = "worker" | "orchestrator";
+
+export type CanonicalSessionState =
+  | "not_started"
+  | "working"
+  | "idle"
+  | "needs_input"
+  | "stuck"
+  | "detecting"
+  | "done"
+  | "terminated";
+
+export type CanonicalSessionReason =
+  | "spawn_requested"
+  | "agent_acknowledged"
+  | "task_in_progress"
+  | "pr_created"
+  | "pr_closed_waiting_decision"
+  | "fixing_ci"
+  | "resolving_review_comments"
+  | "awaiting_user_input"
+  | "awaiting_external_review"
+  | "research_complete"
+  | "merged_waiting_decision"
+  | "manually_killed"
+  | "pr_merged"
+  | "auto_cleanup"
+  | "runtime_lost"
+  | "agent_process_exited"
+  | "probe_failure"
+  | "error_in_process";
+
+export type CanonicalPRState = "none" | "open" | "merged" | "closed";
+
+export type CanonicalPRReason =
+  | "not_created"
+  | "in_progress"
+  | "ci_failing"
+  | "review_pending"
+  | "changes_requested"
+  | "approved"
+  | "merge_ready"
+  | "merged"
+  | "closed_unmerged";
+
+export type CanonicalRuntimeState = "unknown" | "alive" | "exited" | "missing" | "probe_failed";
+
+export type CanonicalRuntimeReason =
+  | "spawn_incomplete"
+  | "process_running"
+  | "process_missing"
+  | "tmux_missing"
+  | "manual_kill_requested"
+  | "pr_merged_cleanup"
+  | "auto_cleanup"
+  | "probe_error";
+
+export interface SessionStateRecord {
+  kind: SessionKind;
+  state: CanonicalSessionState;
+  reason: CanonicalSessionReason;
+  startedAt: string | null;
+  completedAt: string | null;
+  terminatedAt: string | null;
+  lastTransitionAt: string;
+}
+
+export interface PRStateRecord {
+  state: CanonicalPRState;
+  reason: CanonicalPRReason;
+  number: number | null;
+  url: string | null;
+  lastObservedAt: string | null;
+}
+
+export interface RuntimeStateRecord {
+  state: CanonicalRuntimeState;
+  reason: CanonicalRuntimeReason;
+  lastObservedAt: string | null;
+  handle: RuntimeHandle | null;
+  tmuxName: string | null;
+}
+
+export interface CanonicalSessionLifecycle {
+  version: 2;
+  session: SessionStateRecord;
+  pr: PRStateRecord;
+  runtime: RuntimeStateRecord;
+}
+
 /** Session lifecycle states */
 export type SessionStatus =
   | "spawning"
   | "working"
+  | "detecting"
   | "pr_open"
   | "ci_failed"
   | "review_pending"
@@ -63,6 +154,23 @@ export const ACTIVITY_STATE = {
   EXITED: "exited" as const,
 } satisfies Record<string, ActivityState>;
 
+export type ActivitySignalState = "valid" | "stale" | "null" | "unavailable" | "probe_failure";
+
+export type ActivitySignalSource = "native" | "terminal" | "runtime" | "none";
+
+export interface ActivitySignal {
+  /** Confidence bucket for the activity probe result. */
+  state: ActivitySignalState;
+  /** The observed activity value, if one was surfaced. */
+  activity: ActivityState | null;
+  /** Timestamp that makes timing-based inferences safe, when available. */
+  timestamp?: Date;
+  /** Where the activity signal came from. */
+  source: ActivitySignalSource;
+  /** Optional extra detail for stale / failed probes. */
+  detail?: string;
+}
+
 /** Result of activity detection, carrying both the state and an optional timestamp. */
 export interface ActivityDetection {
   state: ActivityState;
@@ -92,6 +200,7 @@ export const DEFAULT_ACTIVE_WINDOW_MS = 30_000; // 30 seconds
 export const SESSION_STATUS = {
   SPAWNING: "spawning" as const,
   WORKING: "working" as const,
+  DETECTING: "detecting" as const,
   PR_OPEN: "pr_open" as const,
   CI_FAILED: "ci_failed" as const,
   REVIEW_PENDING: "review_pending" as const,
@@ -125,11 +234,32 @@ export const TERMINAL_ACTIVITIES: ReadonlySet<ActivityState> = new Set(["exited"
 /** Statuses that must never be restored (e.g. already merged). */
 export const NON_RESTORABLE_STATUSES: ReadonlySet<SessionStatus> = new Set(["merged"]);
 
+/** Check whether lifecycle metadata indicates the session's PR is already merged. */
+function hasMergedLifecyclePR(lifecycle: CanonicalSessionLifecycle): boolean {
+  return (
+    (
+      lifecycle as CanonicalSessionLifecycle & {
+        pr?: { state?: string | null } | null;
+      }
+    ).pr?.state === "merged"
+  );
+}
+
 /** Check if a session is in a terminal (dead) state. */
 export function isTerminalSession(session: {
   status: SessionStatus;
   activity: ActivityState | null;
+  lifecycle?: CanonicalSessionLifecycle;
 }): boolean {
+  if (session.lifecycle) {
+    return (
+      session.lifecycle.session.state === "done" ||
+      session.lifecycle.session.state === "terminated" ||
+      session.lifecycle.pr.state === "merged" ||
+      session.lifecycle.runtime.state === "missing" ||
+      session.lifecycle.runtime.state === "exited"
+    );
+  }
   return (
     TERMINAL_STATUSES.has(session.status) ||
     (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity))
@@ -140,7 +270,15 @@ export function isTerminalSession(session: {
 export function isRestorable(session: {
   status: SessionStatus;
   activity: ActivityState | null;
+  lifecycle?: CanonicalSessionLifecycle;
 }): boolean {
+  if (session.lifecycle) {
+    return (
+      isTerminalSession(session) &&
+      !NON_RESTORABLE_STATUSES.has(session.status) &&
+      !hasMergedLifecyclePR(session.lifecycle)
+    );
+  }
   return isTerminalSession(session) && !NON_RESTORABLE_STATUSES.has(session.status);
 }
 
@@ -157,6 +295,12 @@ export interface Session {
 
   /** Activity state from agent plugin (null = not yet determined) */
   activity: ActivityState | null;
+
+  /** Explicit confidence/availability contract for the current activity signal. */
+  activitySignal: ActivitySignal;
+
+  /** Canonical lifecycle truth persisted in metadata. */
+  lifecycle: CanonicalSessionLifecycle;
 
   /** Git branch name */
   branch: string | null;
@@ -194,13 +338,16 @@ export function isOrchestratorSession(
   sessionPrefix?: string,
   allSessionPrefixes?: string[],
 ): boolean {
-  if (session.metadata?.["role"] === "orchestrator" || session.id.endsWith("-orchestrator")) {
+  if (session.metadata?.["role"] === "orchestrator") {
     return true;
   }
   if (!sessionPrefix) {
     return false;
   }
   const escaped = sessionPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (session.id === `${sessionPrefix}-orchestrator`) {
+    return true;
+  }
   if (!new RegExp(`^${escaped}-orchestrator-\\d+$`).test(session.id)) {
     return false;
   }
@@ -238,6 +385,8 @@ export interface SessionSpawnConfig {
 export interface OrchestratorSpawnConfig {
   projectId: string;
   systemPrompt?: string;
+  /** Override the agent plugin for this orchestrator (e.g. "codex", "claude-code", "opencode") */
+  agent?: string;
 }
 
 // =============================================================================
@@ -638,8 +787,18 @@ export interface SCM {
   /** Get pending (unresolved) review comments */
   getPendingComments(pr: PRInfo): Promise<ReviewComment[]>;
 
-  /** Get automated review comments (bots, linters, security scanners) */
-  getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]>;
+  /**
+   * Get all review threads (human + bot) with isBot flag.
+   * Single GraphQL call for all review threads (human + bot) with review summaries.
+   * Returns unresolved threads only.
+   *
+   * Optional — plugins that do not implement this method will fall back to
+   * `getPendingComments()` (which lacks `isBot` classification and review
+   * summaries). New SCM plugins should prefer implementing this method.
+   *
+   * @since 0.6.0 — replaces the removed `getAutomatedComments` method.
+   */
+  getReviewThreads?(pr: PRInfo): Promise<ReviewThreadsResult>;
 
   // --- Merge Readiness ---
 
@@ -659,7 +818,62 @@ export interface SCM {
    * @param observer - Optional observer for batch operation metrics
    * @returns Map keyed by "${owner}/${repo}#${number}" containing enrichment data
    */
-  enrichSessionsPRBatch?(prs: PRInfo[], observer?: BatchObserver): Promise<Map<string, PREnrichmentData>>;
+  enrichSessionsPRBatch?(prs: PRInfo[], observer?: BatchObserver, repos?: string[]): Promise<Map<string, PREnrichmentData>>;
+}
+
+/**
+ * Batch enrichment data returned by SCM plugins.
+ * Contains all the information the orchestrator needs for status detection.
+ */
+export interface PREnrichmentData {
+  /** Current PR state */
+  state: PRState;
+  /** Overall CI status */
+  ciStatus: CIStatus;
+  /** Review decision */
+  reviewDecision: ReviewDecision;
+  /** Whether the PR is mergeable based on CI, reviews, and merge state */
+  mergeable: boolean;
+  /** PR title */
+  title?: string;
+  /** Number of additions */
+  additions?: number;
+  /** Number of deletions */
+  deletions?: number;
+  /** Whether PR is a draft */
+  isDraft?: boolean;
+  /** Whether PR has merge conflicts */
+  hasConflicts?: boolean;
+  /** Whether PR is behind base branch */
+  isBehind?: boolean;
+  /** List of blockers preventing merge */
+  blockers?: string[];
+}
+
+/**
+ * Observer for GraphQL batch PR enrichment operations.
+ * Used by SCM plugins to report batch success/failure to the observability system.
+ */
+export interface BatchObserver {
+  /** Record a successful batch enrichment */
+  recordSuccess(data: {
+    batchIndex: number;
+    totalBatches: number;
+    prCount: number;
+    durationMs: number;
+  }): void;
+  /** Record a failed batch enrichment */
+  recordFailure(data: {
+    batchIndex: number;
+    totalBatches: number;
+    prCount: number;
+    error: string;
+    durationMs: number;
+  }): void;
+  /** Log a message at a specific level */
+  log(level: ObservabilityLevel, message: string): void;
+  /** Called after ETag guards with repos where Guard 1 returned 304 (no PR list changes). */
+  reportPRListUnchangedRepos?(repos: Set<string>): void;
 }
 
 // --- PR Types ---
@@ -756,6 +970,8 @@ export type ReviewDecision = "approved" | "changes_requested" | "pending" | "non
 
 export interface ReviewComment {
   id: string;
+  /** GraphQL node ID of the review thread (for resolveReviewThread mutation). */
+  threadId?: string;
   author: string;
   body: string;
   path?: string;
@@ -763,6 +979,20 @@ export interface ReviewComment {
   isResolved: boolean;
   createdAt: Date;
   url: string;
+  /** Whether the comment was authored by a known bot */
+  isBot?: boolean;
+}
+
+export interface ReviewSummary {
+  author: string;
+  state: string;
+  body: string;
+  submittedAt: Date;
+}
+
+export interface ReviewThreadsResult {
+  threads: ReviewComment[];
+  reviews: ReviewSummary[];
 }
 
 export interface AutomatedComment {
@@ -840,7 +1070,6 @@ export interface BatchObserver {
   /** Log a message at a specific level */
   log(level: ObservabilityLevel, message: string): void;
 }
-
 // =============================================================================
 // NOTIFIER — Plugin Slot 6 (PRIMARY INTERFACE)
 // =============================================================================
@@ -1013,8 +1242,27 @@ export interface PowerConfig {
   preventIdleSleep: boolean;
 }
 
+/** Lifecycle-level orchestration configuration. */
+export interface LifecycleConfig {
+  /**
+   * When a session's PR is detected as merged, automatically tear down the
+   * tmux runtime, remove the worktree, and archive the session metadata.
+   * Defaults to true so `ao status` does not retain stale merged entries.
+   */
+  autoCleanupOnMerge: boolean;
+  /**
+   * Maximum time (ms) to wait after a session enters `merged` before forcing
+   * cleanup regardless of agent activity. If the agent becomes idle sooner,
+   * cleanup happens then. Defaults to 5 minutes.
+   */
+  mergeCleanupIdleGraceMs: number;
+}
+
 /** Top-level orchestrator configuration (from agent-orchestrator.yaml) */
 export interface OrchestratorConfig {
+  /** Optional JSON Schema hint for editor autocomplete/validation. */
+  "$schema"?: string;
+
   /**
    * Path to the config file (set automatically during load).
    * Used for hash-based directory structure.
@@ -1037,6 +1285,14 @@ export interface OrchestratorConfig {
   /** Power management settings (idle sleep prevention, etc.). Populated with defaults post-validation. */
   power?: PowerConfig;
 
+  /**
+   * Lifecycle-level orchestration settings. Populated with defaults by Zod
+   * when loaded from YAML, but typed as optional so hand-constructed test
+   * configs remain valid. Consumers should destructure with defaults rather
+   * than dereferencing directly. Mirrors the `power?` pattern above.
+   */
+  lifecycle?: LifecycleConfig;
+
   /** Default plugin selections */
   defaults: DefaultPlugins;
 
@@ -1045,6 +1301,9 @@ export interface OrchestratorConfig {
 
   /** Project configurations */
   projects: Record<string, ProjectConfig>;
+
+  /** Dashboard UI configuration */
+  dashboard?: DashboardConfig;
 
   /** Notification channel configs */
   notifiers: Record<string, NotifierConfig>;
@@ -1060,6 +1319,17 @@ export interface OrchestratorConfig {
    * Used by plugin-registry for manifest validation. Set automatically during config validation.
    */
   _externalPluginEntries?: ExternalPluginEntryRef[];
+}
+
+export interface DegradedProjectEntry {
+  projectId: string;
+  path: string;
+  storageKey: string;
+  resolveError: string;
+}
+
+export interface LoadedConfig extends OrchestratorConfig {
+  degradedProjects: Record<string, DegradedProjectEntry>;
 }
 
 /**
@@ -1091,6 +1361,22 @@ export interface ExternalPluginEntryRef {
    * When undefined, any manifest.name is accepted and config is updated with it.
    */
   expectedPluginName?: string;
+}
+
+/**
+ * Dashboard attention zone display mode.
+ *
+ * - "simple" (default): collapses the 5 detailed zones into 4 by merging
+ *   REVIEW + RESPOND into a single ACTION column. The card-level badges
+ *   still expose the underlying state (ci_failed, needs_input, changes_requested).
+ * - "detailed": preserves the original 5-zone Kanban layout for power users
+ *   who want REVIEW and RESPOND as distinct columns.
+ */
+export type DashboardAttentionZoneMode = "simple" | "detailed";
+
+export interface DashboardConfig {
+  /** Attention zone layout (defaults to "simple") */
+  attentionZones?: DashboardAttentionZoneMode;
 }
 
 export interface DefaultPlugins {
@@ -1137,17 +1423,28 @@ export interface ProjectConfig {
   /** Display name */
   name: string;
 
-  /** GitHub repo in "owner/repo" format */
-  repo: string;
+  /** Repository path for the configured SCM provider, e.g. "owner/repo" or "group/subgroup/repo" (optional — omitted when no remote detected) */
+  repo?: string;
 
   /** Local path to the repo */
   path: string;
+
+  /** Persisted storage hash — stable across directory moves */
+  storageKey?: string;
+
+  /** Canonical git origin URL associated with the storage identity */
+  originUrl?: string;
+
+  resolveError?: string;
 
   /** Default branch (main, master, next, develop, etc.) */
   defaultBranch: string;
 
   /** Session name prefix (e.g. "app" → "app-1", "app-2") */
   sessionPrefix: string;
+
+  /** Whether this project is active in portfolio and dashboard surfaces */
+  enabled?: boolean;
 
   /** Override default runtime */
   runtime?: string;
@@ -1374,6 +1671,8 @@ export interface SessionMetadata {
   worktree: string;
   branch: string;
   status: string;
+  stateVersion?: string;
+  statePayload?: string;
   tmuxName?: string; // Globally unique tmux session name (includes hash)
   issue?: string;
   pr?: string;
@@ -1391,20 +1690,50 @@ export interface SessionMetadata {
   opencodeSessionId?: string;
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
+  /**
+   * Stable human-readable display name derived from task context at spawn time.
+   * Populated from issue title, user prompt, or orchestrator system prompt —
+   * whichever was available when the session was created. Used by the dashboard
+   * as a fallback above humanized branch names so sessions are identifiable
+   * even when PR/issue enrichment is unavailable.
+   */
+  displayName?: string;
 }
 
 // =============================================================================
 // SERVICE INTERFACES (core, not pluggable)
 // =============================================================================
 
+/**
+ * Why a session was killed. Recorded as the lifecycle reason so observability
+ * can distinguish human action from automated teardown (e.g. PR merge cleanup).
+ */
+export type LifecycleKillReason = "manually_killed" | "pr_merged" | "auto_cleanup";
+
+/**
+ * Outcome of a kill() call. `cleaned` means resources were torn down this
+ * invocation; `alreadyTerminated` means the session was already archived and
+ * kill() was a no-op. Callers can use this to avoid double-notifying.
+ */
+export interface KillResult {
+  cleaned: boolean;
+  alreadyTerminated: boolean;
+}
+
+export interface KillOptions {
+  purgeOpenCode?: boolean;
+  reason?: LifecycleKillReason;
+}
+
 /** Session manager — CRUD for sessions */
 export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
   spawnOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
+  ensureOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
-  kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void>;
+  kill(sessionId: SessionId, options?: KillOptions): Promise<KillResult>;
   cleanup(
     projectId?: string,
     options?: { dryRun?: boolean; purgeOpenCode?: boolean },
@@ -1417,6 +1746,8 @@ export interface SessionManager {
 export interface OpenCodeSessionManager extends SessionManager {
   /** Remap session to OpenCode session ID, returns the mapped OpenCode session ID */
   remap(sessionId: SessionId, force?: boolean): Promise<string>;
+  listCached(projectId?: string): Promise<Session[]>;
+  invalidateCache(): void;
 }
 
 export interface ClaimPROptions {
@@ -1550,4 +1881,66 @@ export class ConfigNotFoundError extends Error {
     super(message ?? "No agent-orchestrator.yaml found. Run `ao start` to create one.");
     this.name = "ConfigNotFoundError";
   }
+}
+
+/** Thrown when a project cannot be resolved into an effective runtime config. */
+export class ProjectResolveError extends Error {
+  constructor(
+    public readonly projectId: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ProjectResolveError";
+  }
+}
+
+// =============================================================================
+// PORTFOLIO — Cross-project aggregation
+// =============================================================================
+
+/** A project entry in the portfolio index (merged from discovery + registration + preferences) */
+export interface PortfolioProject {
+  id: string;                          // Stable portfolio identity (configProjectKey, with collision suffix if needed)
+  name: string;                        // Human-readable display name
+  configPath: string;                  // Absolute path to agent-orchestrator.yaml
+  configProjectKey: string;            // Key in config.projects map
+  repoPath: string;                    // Absolute local filesystem path
+  storageKey?: string;                 // Persisted storage hash — stable across directory moves
+  originUrl?: string;                  // Canonical git origin URL associated with the storage identity
+  repo?: string;                       // "owner/repo" for SCM
+  defaultBranch?: string;
+  sessionPrefix: string;
+  source: "discovered" | "registered" | "config"; // How this entry was found
+  enabled: boolean;                    // User can disable without removing
+  pinned: boolean;                     // User preference for ordering
+  lastSeenAt: string;                  // ISO timestamp
+  resolveError?: string;               // Present only when the project is degraded
+}
+
+/** User preferences overlay (canonical, small file) */
+export interface PortfolioPreferences {
+  version: 1;
+  defaultProjectId?: string;
+  projectOrder?: string[];             // Ordered project IDs for display
+  projects?: Record<string, {          // Per-project preferences
+    pinned?: boolean;
+    enabled?: boolean;
+    displayName?: string;
+  }>;
+}
+
+/** Registered projects (explicit `ao project add`) */
+export interface PortfolioRegistered {
+  version: 1;
+  projects: Array<{
+    path: string;                      // Repo path
+    configProjectKey?: string;         // Key in config if multi-project YAML
+    addedAt: string;                   // ISO timestamp
+  }>;
+}
+
+/** Aggregated portfolio session with project context */
+export interface PortfolioSession {
+  session: Session;
+  project: PortfolioProject;
 }

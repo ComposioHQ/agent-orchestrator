@@ -43,6 +43,7 @@ describe("Orchestrators Page (OrchestratorsRoute)", () => {
           projectId: "my-app",
           status: "working",
           activity: "active",
+          metadata: { role: "orchestrator" },
           createdAt: new Date(),
           lastActivityAt: new Date(),
         },

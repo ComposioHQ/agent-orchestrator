@@ -8,6 +8,7 @@ coverage/
 *.patch
 *-context.md
 packages/web/screenshots/
+.playwright-cli/
 
 # Environment files (secrets)
 .env
@@ -54,7 +55,6 @@ id_ed25519
 
 # Development symlinks (created per-worktree, not committed)
 .claude
-.sisyphus
 packages/web/agent-orchestrator.yaml
 
 # Local agent orchestrator config (may contain secrets)
@@ -68,4 +68,3 @@ agent-orchestrator.yaml
 # OS-specific files
 .DS_Store
 Thumbs.db
-.gstack/

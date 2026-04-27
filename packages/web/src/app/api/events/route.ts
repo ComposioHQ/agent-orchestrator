@@ -10,6 +10,8 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const SESSION_EVENTS_POLL_INTERVAL_MS = 5000;
+
 /**
  * GET /api/events — SSE stream for real-time lifecycle events
  *
@@ -26,6 +28,7 @@ export async function GET(request: Request): Promise<Response> {
   let updates: ReturnType<typeof setInterval> | undefined;
   let observerProjectId: string | undefined;
   let observer: ProjectObserver | null = null;
+  let streamClosed = false;
 
   const ensureObserver = (config: ServicesConfig): ProjectObserver | null => {
     if (!observerProjectId) {
@@ -42,8 +45,28 @@ export async function GET(request: Request): Promise<Response> {
     return observer;
   };
 
+  const stopStream = () => {
+    if (streamClosed) return;
+    streamClosed = true;
+    if (heartbeat) clearInterval(heartbeat);
+    if (updates) clearInterval(updates);
+  };
+
+  const encodeEvent = (payload: unknown) => encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+
   const stream = new ReadableStream({
     start(controller) {
+      const safeEnqueue = (payload: unknown): boolean => {
+        if (streamClosed) return false;
+        try {
+          controller.enqueue(encodeEvent(payload));
+          return true;
+        } catch {
+          stopStream();
+          return false;
+        }
+      };
+
       void (async () => {
         try {
           const { config } = await getServices();
@@ -81,6 +104,7 @@ export async function GET(request: Request): Promise<Response> {
           const dashboardSessions = workerSessions.map(sessionToDashboard);
           const projectObserver = ensureObserver(config);
 
+          const attentionZones = config.dashboard?.attentionZones ?? "simple";
           const initialEvent = {
             type: "snapshot",
             correlationId,
@@ -89,11 +113,11 @@ export async function GET(request: Request): Promise<Response> {
               id: s.id,
               status: s.status,
               activity: s.activity,
-              attentionLevel: getAttentionLevel(s),
+              attentionLevel: getAttentionLevel(s, attentionZones),
               lastActivityAt: s.lastActivityAt,
             })),
           };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(initialEvent)}\n\n`));
+          safeEnqueue(initialEvent);
           if (projectObserver && observerProjectId) {
             projectObserver.recordOperation({
               metric: "sse_snapshot",
@@ -105,27 +129,28 @@ export async function GET(request: Request): Promise<Response> {
               level: "info",
             });
           }
-        } catch {
-          // If services aren't available, send empty snapshot
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "snapshot", correlationId, emittedAt: new Date().toISOString(), sessions: [] })}\n\n`,
-            ),
-          );
+        } catch (error) {
+          safeEnqueue({
+            type: "error",
+            correlationId,
+            emittedAt: new Date().toISOString(),
+            error: error instanceof Error ? error.message : "Failed to load live dashboard data",
+          });
         }
       })();
 
       // Send periodic heartbeat
       heartbeat = setInterval(() => {
+        if (streamClosed) return;
         try {
           controller.enqueue(encoder.encode(`: heartbeat\n\n`));
         } catch {
-          clearInterval(heartbeat);
-          clearInterval(updates);
+          stopStream();
         }
       }, 15000);
 
-      // Poll for session state changes every 5 seconds
+      // Poll for session state changes frequently enough that new workers
+      // appear in the dashboard/sidebar quickly after the orchestrator spawns them.
       updates = setInterval(() => {
         void (async () => {
           let dashboardSessions;
@@ -155,6 +180,7 @@ export async function GET(request: Request): Promise<Response> {
             }
 
             try {
+              const attentionZones = config.dashboard?.attentionZones ?? "simple";
               const event = {
                 type: "snapshot",
                 correlationId,
@@ -163,11 +189,11 @@ export async function GET(request: Request): Promise<Response> {
                   id: s.id,
                   status: s.status,
                   activity: s.activity,
-                  attentionLevel: getAttentionLevel(s),
+                  attentionLevel: getAttentionLevel(s, attentionZones),
                   lastActivityAt: s.lastActivityAt,
                 })),
               };
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+              safeEnqueue(event);
               if (projectObserver && observerProjectId) {
                 projectObserver.recordOperation({
                   metric: "sse_snapshot",
@@ -179,21 +205,27 @@ export async function GET(request: Request): Promise<Response> {
                   level: "info",
                 });
               }
-            } catch {
-              // enqueue failure means the stream is closed — clean up both intervals
-              clearInterval(updates);
-              clearInterval(heartbeat);
+            } catch (error) {
+              safeEnqueue({
+                type: "error",
+                correlationId,
+                emittedAt: new Date().toISOString(),
+                error: error instanceof Error ? error.message : "Live dashboard update failed",
+              });
             }
-          } catch {
-            // Transient service error — skip this poll, retry on next interval
-            return;
+          } catch (error) {
+            safeEnqueue({
+              type: "error",
+              correlationId,
+              emittedAt: new Date().toISOString(),
+              error: error instanceof Error ? error.message : "Live dashboard update failed",
+            });
           }
         })();
-      }, 5000);
+      }, SESSION_EVENTS_POLL_INTERVAL_MS);
     },
     cancel() {
-      clearInterval(heartbeat);
-      clearInterval(updates);
+      stopStream();
       void (async () => {
         try {
           const { config } = await getServices();

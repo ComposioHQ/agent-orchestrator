@@ -20,7 +20,7 @@ import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js
 type ClientMessage =
   | { ch: "terminal"; id: string; type: "data"; data: string }
   | { ch: "terminal"; id: string; type: "resize"; cols: number; rows: number }
-  | { ch: "terminal"; id: string; type: "open" }
+  | { ch: "terminal"; id: string; type: "open"; tmuxName?: string }
   | { ch: "terminal"; id: string; type: "close" }
   | { ch: "system"; type: "ping" }
   | { ch: "subscribe"; topics: ("sessions")[] };
@@ -35,11 +35,21 @@ type ServerMessage =
   | { ch: "system"; type: "pong" }
   | { ch: "system"; type: "error"; message: string };
 
+// Mirrors AttentionLevel in src/lib/types.ts — keep in sync.
+type AttentionLevel =
+  | "merge"
+  | "action"
+  | "respond"
+  | "review"
+  | "pending"
+  | "working"
+  | "done";
+
 interface SessionPatch {
   id: string;
   status: string;
   activity: string | null;
-  attentionLevel: string;
+  attentionLevel: AttentionLevel;
   lastActivityAt: string;
 }
 
@@ -236,13 +246,15 @@ class TerminalManager {
    * Open/attach to a terminal. If already open, just return.
    * If has subscribers but PTY crashed, re-attach.
    */
-  open(id: string): string {
+  open(id: string, tmuxName?: string): string {
     // Validate and resolve
     if (!validateSessionId(id)) {
       throw new Error(`Invalid session ID: ${id}`);
     }
 
-    const tmuxSessionId = resolveTmuxSession(id, this.TMUX);
+    // Use provided tmuxName, or reuse from existing terminal entry, or resolve
+    const existing = this.terminals.get(id);
+    const tmuxSessionId = tmuxName ?? existing?.tmuxSessionId ?? resolveTmuxSession(id, this.TMUX);
     if (!tmuxSessionId) {
       throw new Error(`Session not found: ${id}`);
     }
@@ -274,10 +286,10 @@ class TerminalManager {
       console.error(`[MuxServer] Failed to set mouse mode for ${tmuxSessionId}:`, err.message);
     });
 
-    // Hide the status bar
-    const statusProc = spawn(this.TMUX, ["set-option", "-t", tmuxSessionId, "status", "off"]);
+    // Enable the status bar for session context visibility
+    const statusProc = spawn(this.TMUX, ["set-option", "-t", tmuxSessionId, "status", "on"]);
     statusProc.on("error", (err) => {
-      console.error(`[MuxServer] Failed to hide status bar for ${tmuxSessionId}:`, err.message);
+      console.error(`[MuxServer] Failed to enable status bar for ${tmuxSessionId}:`, err.message);
     });
 
     // Build environment
@@ -489,7 +501,7 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
           try {
             if (type === "open") {
               // Validate session exists
-              terminalManager.open(id);
+              terminalManager.open(id, "tmuxName" in msg ? msg.tmuxName : undefined);
 
               // Send opened confirmation (idempotent — safe to send on re-open)
               const openedMsg: ServerMessage = { ch: "terminal", id, type: "opened" };

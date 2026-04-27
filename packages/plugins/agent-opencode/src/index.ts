@@ -2,13 +2,10 @@ import {
   DEFAULT_READY_THRESHOLD_MS,
   DEFAULT_ACTIVE_WINDOW_MS,
   shellEscape,
-  buildAgentPath,
   readLastActivityEntry,
   checkActivityLogState,
   getActivityFallbackState,
   recordTerminalActivity,
-  setupPathWrapperWorkspace,
-  PREFERRED_GH_PATH,
   asValidOpenCodeSessionId,
   type Agent,
   type AgentSessionInfo,
@@ -214,34 +211,23 @@ function createOpenCodeAgent(): Agent {
     getLaunchCommand(config: AgentLaunchConfig): string {
       const options: string[] = [];
       const sharedOptions: string[] = [];
+      const agentConfig = config.projectConfig.agentConfig;
 
       const existingSessionId = asValidOpenCodeSessionId(
-        (config.projectConfig.agentConfig as OpenCodeAgentConfig | undefined)?.opencodeSessionId,
+        agentConfig?.opencodeSessionId,
       );
 
       if (existingSessionId) {
         options.push("--session", shellEscape(existingSessionId));
       }
 
-      // Select specific OpenCode subagent if configured
-      if (config.subagent) {
-        sharedOptions.push("--agent", shellEscape(config.subagent));
+      const selectedAgentName = config.subagent;
+
+      if (selectedAgentName) {
+        sharedOptions.push("--agent", shellEscape(selectedAgentName));
       }
 
-      let promptValue: string | undefined;
-      if (config.prompt) {
-        if (config.systemPromptFile) {
-          promptValue = `"$(cat ${shellEscape(config.systemPromptFile)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt)})"`;
-        } else if (config.systemPrompt) {
-          promptValue = shellEscape(`${config.systemPrompt}\n\n${config.prompt}`);
-        } else {
-          promptValue = shellEscape(config.prompt);
-        }
-      } else if (config.systemPromptFile) {
-        promptValue = `"$(cat ${shellEscape(config.systemPromptFile)})"`;
-      } else if (config.systemPrompt) {
-        promptValue = shellEscape(config.systemPrompt);
-      }
+      const promptValue = config.prompt ? shellEscape(config.prompt) : undefined;
 
       if (config.model) {
         sharedOptions.push("--model", shellEscape(config.model));
@@ -287,9 +273,7 @@ function createOpenCodeAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
-      // Prepend ~/.ao/bin to PATH so our gh/git wrappers intercept commands.
-      env["PATH"] = buildAgentPath(process.env["PATH"]);
-      env["GH_PATH"] = PREFERRED_GH_PATH;
+      // PATH and GH_PATH are injected by session-manager for all agents.
 
       return env;
     },
@@ -448,13 +432,12 @@ function createOpenCodeAgent(): Agent {
       return parts.join(" ");
     },
 
-    async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      await setupPathWrapperWorkspace(workspacePath);
+    async setupWorkspaceHooks(_workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+      // PATH wrappers are installed by session-manager for all agents.
     },
 
-    async postLaunchSetup(session: Session): Promise<void> {
-      if (!session.workspacePath) return;
-      await setupPathWrapperWorkspace(session.workspacePath);
+    async postLaunchSetup(_session: Session): Promise<void> {
+      // PATH wrappers are re-ensured by session-manager.
     },
   };
 }

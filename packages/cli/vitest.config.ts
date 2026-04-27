@@ -1,7 +1,21 @@
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  plugins: [
+    {
+      name: "raw-markdown",
+      enforce: "pre",
+      async load(id) {
+        if (!id.endsWith(".md")) {
+          return null;
+        }
+
+        return `export default ${JSON.stringify(await readFile(id, "utf8"))};`;
+      },
+    },
+  ],
   test: {
     include: ["__tests__/**/*.test.ts"],
     testTimeout: 10000,

@@ -22,7 +22,7 @@ export function scanAllSessions(
   for (const [projectKey, project] of Object.entries(config.projects)) {
     if (projectIdFilter && projectKey !== projectIdFilter) continue;
 
-    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    const sessionsDir = getSessionsDir(project.storageKey);
     if (!existsSync(sessionsDir)) continue;
 
     for (const file of listMetadata(sessionsDir)) {

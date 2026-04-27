@@ -62,6 +62,31 @@ describe("list", () => {
     expect(sessions.map((s) => s.id).sort()).toEqual(["app-1", "app-2"]);
   });
 
+  it("does not backfill role onto foreign bare-id orchestrator records (issue #1048)", async () => {
+    // Regression guard for PR #1075 review comment: a legacy record whose id
+    // is `{projectId}-orchestrator` (pre-numbered scheme, wrong prefix) must
+    // NOT get `role: orchestrator` stamped by the repair-on-read path. If it
+    // did, the record would then pass isOrchestratorSession() via the
+    // role-metadata branch and leak into the dashboard with an id that
+    // doesn't match the canonical `{prefix}-orchestrator-N` shape — which
+    // was the root cause of the dashboard/CLI id divergence in issue #1048.
+    writeMetadata(sessionsDir, "my-app-orchestrator", {
+      worktree: config.projects["my-app"]!.path,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-legacy-bare")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.list("my-app");
+
+    // After list(), the record on disk must still have no role metadata.
+    const raw = readMetadataRaw(sessionsDir, "my-app-orchestrator");
+    expect(raw).not.toBeNull();
+    expect(raw!["role"]).toBeUndefined();
+  });
+
   it("preserves lastActivityAt when read-time repair rewrites metadata", async () => {
     writeMetadata(sessionsDir, "app-orchestrator", {
       worktree: config.projects["my-app"]!.path,
@@ -86,6 +111,34 @@ describe("list", () => {
     expect(repaired!["pr"]).toBeUndefined();
     expect(repaired!["prAutoDetect"]).toBe("off");
     expect(repaired!["status"]).toBe("working");
+  });
+
+  it("persists canonical lifecycle payloads for legacy session metadata on read", async () => {
+    writeMetadata(sessionsDir, "app-legacy", {
+      worktree: "/tmp/legacy",
+      branch: "feat/legacy",
+      status: "working",
+      project: "my-app",
+      createdAt: "2025-01-01T00:00:00.000Z",
+    });
+
+    const oldTime = new Date("2026-01-02T00:00:00.000Z");
+    utimesSync(join(sessionsDir, "app-legacy"), oldTime, oldTime);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const sessions = await sm.list("my-app");
+    const legacy = sessions.find((session) => session.id === "app-legacy");
+
+    expect(legacy).toBeDefined();
+    expect(legacy!.lastActivityAt.getTime()).toBe(oldTime.getTime());
+
+    const repaired = readMetadataRaw(sessionsDir, "app-legacy");
+    expect(repaired?.["stateVersion"]).toBe("2");
+    expect(repaired?.["statePayload"]).toBeTruthy();
+
+    const payload = JSON.parse(repaired!["statePayload"]);
+    expect(payload.session.startedAt).toBe("2025-01-01T00:00:00.000Z");
+    expect(payload.session.lastTransitionAt).toBe("2025-01-01T00:00:00.000Z");
   });
 
   it("filters by project ID", async () => {
@@ -315,6 +368,7 @@ describe("list", () => {
 
     // Should keep null (absent) when getActivityState fails
     expect(sessions[0].activity).toBeNull();
+    expect(sessions[0].activitySignal.state).toBe("probe_failure");
   });
 
   it("keeps existing activity when getActivityState returns null", async () => {
@@ -345,6 +399,36 @@ describe("list", () => {
     // null = "I don't know" — activity stays null (absent)
     expect(agentWithNull.getActivityState).toHaveBeenCalled();
     expect(sessions[0].activity).toBeNull();
+    expect(sessions[0].activitySignal.state).toBe("null");
+  });
+
+  it("marks terminal fallback-free stale activity explicitly when timing is missing", async () => {
+    const agentWithIdleNoTimestamp: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "idle" }),
+    };
+    const registryWithStaleSignal: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return agentWithIdleNoTimestamp;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithStaleSignal });
+    const sessions = await sm.list();
+
+    expect(sessions[0].activity).toBe("idle");
+    expect(sessions[0].activitySignal.state).toBe("stale");
   });
 
   it("updates lastActivityAt when detection timestamp is newer", async () => {

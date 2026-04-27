@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import { resolve } from "node:path";
 import {
   loadConfig,
+  resolveSpawnTarget,
   TERMINAL_STATUSES,
   type OrchestratorConfig,
 } from "@aoagents/ao-core";
@@ -14,6 +15,7 @@ import { getSessionManager } from "../lib/create-session-manager.js";
 import { preflight } from "../lib/preflight.js";
 import { findProjectForDirectory } from "../lib/project-resolution.js";
 import { getRunning } from "../lib/running-state.js";
+import { projectSessionUrl } from "../lib/routes.js";
 
 /**
  * Auto-detect the project ID from the config.
@@ -154,7 +156,7 @@ async function spawnSession(
     spinner.succeed(
       `Session ${chalk.green(session.id)} spawned${issueLabel}${claimLabel}`,
     );
-    console.log(`  View:     ${chalk.dim(`http://localhost:${port}/sessions/${session.id}`)}`);
+    console.log(`  View:     ${chalk.dim(projectSessionUrl(port, projectId, session.id))}`);
 
     // Warn if prompt delivery failed (for post-launch agents like Claude Code)
     const promptDelivered = session.metadata?.promptDelivered;
@@ -190,8 +192,11 @@ export function registerSpawn(program: Command): void {
   program
     .command("spawn")
     .description("Spawn a single agent session")
-    .argument("[first]", "Issue identifier (project is auto-detected)")
-    .argument("[second]", "" /* hidden second arg to catch old two-arg usage */)
+    .argument(
+      "[issue]",
+      "Issue identifier. Accepts bare ids (42, INT-100) or prefixed forms (x402-identity/42, xid/42) to target a specific project by id or sessionPrefix.",
+    )
+    .allowExcessArguments()
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
@@ -199,8 +204,7 @@ export function registerSpawn(program: Command): void {
     .option("--prompt <text>", "Initial prompt/instructions for the agent (use instead of an issue)")
     .action(
       async (
-        first: string | undefined,
-        second: string | undefined,
+        issue: string | undefined,
         opts: {
           open?: boolean;
           agent?: string;
@@ -208,15 +212,14 @@ export function registerSpawn(program: Command): void {
           assignOnGithub?: boolean;
           prompt?: string;
         },
+        command: Command,
       ) => {
-        // Catch old two-arg usage: ao spawn <project> <issue>
-        if (first && second) {
-          console.warn(
-            chalk.yellow(
-              `⚠ 'ao spawn <project> <issue>' is no longer supported.\n` +
-                `  The project is now auto-detected. Use:\n\n` +
-                `    ao spawn ${second}    # spawn with issue ${second}\n` +
-                `    ao spawn              # spawn without an issue\n`,
+        if (command.args.length > 1) {
+          console.error(
+            chalk.red(
+              `✗ \`ao spawn\` accepts at most 1 argument, but ${command.args.length} were provided.\n\n` +
+                `Use:\n` +
+                `  ao spawn [issue]`,
             ),
           );
           process.exit(1);
@@ -226,13 +229,19 @@ export function registerSpawn(program: Command): void {
         let projectId: string;
         let issueId: string | undefined;
 
-        if (first) {
-          issueId = first;
-          try {
-            projectId = autoDetectProject(config);
-          } catch (err) {
-            console.error(chalk.red(err instanceof Error ? err.message : String(err)));
-            process.exit(1);
+        if (issue) {
+          const prefixed = resolveSpawnTarget(config.projects, issue);
+          if (prefixed) {
+            projectId = prefixed.projectId;
+            issueId = prefixed.issueId;
+          } else {
+            issueId = issue;
+            try {
+              projectId = autoDetectProject(config);
+            } catch (err) {
+              console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+              process.exit(1);
+            }
           }
         } else {
           // No args: auto-detect project, no issue
@@ -271,97 +280,124 @@ export function registerBatchSpawn(program: Command): void {
   program
     .command("batch-spawn")
     .description("Spawn sessions for multiple issues with duplicate detection")
-    .argument("<issues...>", "Issue identifiers (project is auto-detected)")
+    .argument(
+      "<issues...>",
+      "Issue identifiers. Accepts bare ids or prefixed forms (x402-identity/42, xid/42); mixed projects are grouped automatically.",
+    )
     .option("--open", "Open sessions in terminal tabs")
     .action(async (issues: string[], opts: { open?: boolean }) => {
       const config = loadConfig();
-      let projectId: string;
 
-      try {
-        projectId = autoDetectProject(config);
-      } catch (err) {
-        console.error(chalk.red(err instanceof Error ? err.message : String(err)));
-        process.exit(1);
+      // Resolve each issue to its target project. Issues without a prefix fall
+      // back to auto-detection; prefixed issues route to the matched project.
+      let fallbackProjectId: string | null = null;
+      const needsFallback = issues.some(
+        (issue) => resolveSpawnTarget(config.projects, issue) === null,
+      );
+      if (needsFallback) {
+        try {
+          fallbackProjectId = autoDetectProject(config);
+        } catch (err) {
+          console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+          process.exit(1);
+        }
       }
 
-      if (!config.projects[projectId]) {
-        console.error(
-          chalk.red(
-            `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
-          ),
-        );
-        process.exit(1);
+      // Group issues by resolved project so each group preflights once.
+      const groups = new Map<string, Array<{ original: string; resolved: string }>>();
+      for (const issue of issues) {
+        const target = resolveSpawnTarget(config.projects, issue, fallbackProjectId ?? undefined);
+        if (!target) {
+          console.error(chalk.red(`Could not resolve project for issue: ${issue}`));
+          process.exit(1);
+        }
+        if (!config.projects[target.projectId]) {
+          console.error(
+            chalk.red(
+              `Unknown project: ${target.projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
+            ),
+          );
+          process.exit(1);
+        }
+        if (!groups.has(target.projectId)) groups.set(target.projectId, []);
+        groups.get(target.projectId)!.push({ original: issue, resolved: target.issueId });
       }
 
       console.log(banner("BATCH SESSION SPAWNER"));
       console.log();
-      console.log(`  Project: ${chalk.bold(projectId)}`);
-      console.log(`  Issues:  ${issues.join(", ")}`);
+      for (const [pid, items] of groups) {
+        console.log(
+          `  ${chalk.bold(pid)}: ${items.map((i) => i.original).join(", ")}`,
+        );
+      }
       console.log();
 
-      // Pre-flight once before the loop so a missing prerequisite fails fast
-      try {
-        await runSpawnPreflight(config, projectId);
-        await warnIfAONotRunning(projectId);
-      } catch (err) {
-        console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
-      }
-
-      const sm = await getSessionManager(config);
       const created: Array<{ session: string; issue: string }> = [];
       const skipped: Array<{ issue: string; existing: string }> = [];
       const failed: Array<{ issue: string; error: string }> = [];
-      const spawnedIssues = new Set<string>();
 
-      // Load existing sessions once before the loop to avoid repeated reads + enrichment.
-      // Exclude terminal sessions so completed/merged sessions don't block respawning
-      // (e.g. when an issue is reopened after its PR was merged).
-      const existingSessions = await sm.list(projectId);
-      const existingIssueMap = new Map(
-        existingSessions
-          .filter((s) => s.issueId && !TERMINAL_STATUSES.has(s.status))
-          .map((s) => [s.issueId!.toLowerCase(), s.id]),
-      );
+      const sm = await getSessionManager(config);
 
-      for (const issue of issues) {
-        // Duplicate detection — check both existing sessions and same-run duplicates
-        if (spawnedIssues.has(issue.toLowerCase())) {
-          console.log(chalk.yellow(`  Skip ${issue} — duplicate in this batch`));
-          skipped.push({ issue, existing: "(this batch)" });
-          continue;
-        }
-
-        // Check existing sessions (pre-loaded before loop)
-        const existingSessionId = existingIssueMap.get(issue.toLowerCase());
-        if (existingSessionId) {
-          console.log(chalk.yellow(`  Skip ${issue} — already has session ${existingSessionId}`));
-          skipped.push({ issue, existing: existingSessionId });
-          continue;
-        }
-
+      for (const [groupProjectId, items] of groups) {
+        // Pre-flight once per project group so a missing prerequisite fails fast.
         try {
-          const session = await sm.spawn({ projectId, issueId: issue });
-          created.push({ session: session.id, issue });
-          spawnedIssues.add(issue.toLowerCase());
-          console.log(chalk.green(`  Created ${session.id} for ${issue}`));
-
-          if (opts.open) {
-            try {
-              const tmuxTarget = session.runtimeHandle?.id ?? session.id;
-              await exec("open-iterm-tab", [tmuxTarget]);
-            } catch {
-              // best effort
-            }
-          }
+          await runSpawnPreflight(config, groupProjectId);
+          await warnIfAONotRunning(groupProjectId);
         } catch (err) {
-          failed.push({
-            issue,
-            error: err instanceof Error ? err.message : String(err),
-          });
-          console.log(
-            chalk.red(`  Failed ${issue} — ${err instanceof Error ? err.message : String(err)}`),
-          );
+          console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
+          process.exit(1);
+        }
+
+        // Load existing sessions once per group (exclude terminal sessions so
+        // merged/completed sessions don't block respawning a reopened issue).
+        const existingSessions = await sm.list(groupProjectId);
+        const existingIssueMap = new Map(
+          existingSessions
+            .filter((s) => s.issueId && !TERMINAL_STATUSES.has(s.status))
+            .map((s) => [s.issueId!.toLowerCase(), s.id]),
+        );
+        const spawnedIssues = new Set<string>();
+
+        for (const { original, resolved } of items) {
+          if (spawnedIssues.has(resolved.toLowerCase())) {
+            console.log(chalk.yellow(`  Skip ${original} — duplicate in this batch`));
+            skipped.push({ issue: original, existing: "(this batch)" });
+            continue;
+          }
+          const existingSessionId = existingIssueMap.get(resolved.toLowerCase());
+          if (existingSessionId) {
+            console.log(
+              chalk.yellow(`  Skip ${original} — already has session ${existingSessionId}`),
+            );
+            skipped.push({ issue: original, existing: existingSessionId });
+            continue;
+          }
+
+          try {
+            const session = await sm.spawn({ projectId: groupProjectId, issueId: resolved });
+            created.push({ session: session.id, issue: original });
+            spawnedIssues.add(resolved.toLowerCase());
+            console.log(chalk.green(`  Created ${session.id} for ${original}`));
+
+            if (opts.open) {
+              try {
+                const tmuxTarget = session.runtimeHandle?.id ?? session.id;
+                await exec("open-iterm-tab", [tmuxTarget]);
+              } catch {
+                // best effort
+              }
+            }
+          } catch (err) {
+            failed.push({
+              issue: original,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            console.log(
+              chalk.red(
+                `  Failed ${original} — ${err instanceof Error ? err.message : String(err)}`,
+              ),
+            );
+          }
         }
       }
 

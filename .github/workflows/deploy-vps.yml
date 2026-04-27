@@ -81,13 +81,13 @@ jobs:
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.VPS_HOST }}
-          username: root
+          username: aoagent
           key: ${{ secrets.VPS_SSH_KEY }}
           fingerprint: ${{ secrets.VPS_HOST_FINGERPRINT }}
           envs: DEPLOY_SHA,FETCH_REF
           script: |
             set -e
-            cd /root/agent-orchestrator
+            cd /home/aoagent/agent-orchestrator
             echo "==> Ensuring full worktree..."
             if [ "$(git config --bool core.sparseCheckout || echo false)" = "true" ]; then
               git sparse-checkout disable
@@ -103,6 +103,7 @@ jobs:
             pnpm install --frozen-lockfile
             echo "==> Building..."
             pnpm build
+            echo "==> Release requirement: AO_ALLOW_FILESYSTEM_BROWSE=1 must be present in the ao web runtime for the multi-project add-project browser."
             echo "==> Restarting services..."
             pm2 restart ao --update-env
             pm2 restart openclaw-gateway --update-env || true
