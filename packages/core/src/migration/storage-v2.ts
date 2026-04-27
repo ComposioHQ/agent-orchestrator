@@ -21,6 +21,7 @@ import {
   writeFileSync,
   cpSync,
   unlinkSync,
+  type Dirent,
 } from "node:fs";
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
@@ -653,7 +654,7 @@ function migrateProject(
         // Compact form: 20260420T143052Z. Legacy form: 2026-04-20T14:30:52.000Z
         // (the colon-and-dot legacy format predates the compact rewrite).
         const match = archiveFile.match(
-          /^(.+)_(\d{8}T\d{6}Z|\d{4}-\d{2}-\d{2}T[\d:.\-]+Z)(?:\.json)?$/,
+          /^(.+)_(\d{8}T\d{6}Z|\d{4}-\d{2}-\d{2}T[\d:.-]+Z)(?:\.json)?$/,
         );
         if (!match?.[1]) continue;
         const archivedSessionId = match[1];
@@ -976,7 +977,7 @@ function rewriteCodexSessionStorage(
   // Walk year/month/day shards collecting rollout-*.jsonl files.
   const jsonlFiles: string[] = [];
   function walk(dir: string): void {
-    let entries: import("node:fs").Dirent[];
+    let entries: Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
@@ -1450,7 +1451,7 @@ function countPostMigrationSessions(
       // the lazy `[a-zA-Z0-9_-]+?_\d` mismatched any sessionId containing
       // `_<digit>` (e.g. `team_1-7`).
       const match = file.match(
-        /^(.+)_(\d{8}T\d{6}Z|\d{4}-\d{2}-\d{2}T[\d:.\-]+Z)(?:\.json)?$/,
+        /^(.+)_(\d{8}T\d{6}Z|\d{4}-\d{2}-\d{2}T[\d:.-]+Z)(?:\.json)?$/,
       );
       if (match?.[1]) {
         migratedSessionIds.add(match[1]);

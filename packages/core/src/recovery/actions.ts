@@ -1,4 +1,10 @@
-import type { OrchestratorConfig, PluginRegistry, Runtime, Workspace } from "../types.js";
+import type {
+  CanonicalSessionLifecycle,
+  OrchestratorConfig,
+  PluginRegistry,
+  Runtime,
+  Workspace,
+} from "../types.js";
 import { updateMetadata } from "../metadata.js";
 import { getProjectSessionsDir } from "../paths.js";
 import { validateStatus } from "../utils/validation.js";
@@ -8,7 +14,6 @@ import {
   cloneLifecycle,
   parseCanonicalLifecycle,
 } from "../lifecycle-state.js";
-import type { CanonicalSessionLifecycle } from "../types.js";
 import type { RecoveryAssessment, RecoveryResult, RecoveryContext } from "./types.js";
 
 /**
