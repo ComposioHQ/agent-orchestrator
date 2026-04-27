@@ -1534,7 +1534,12 @@ export function registerStart(program: Command): void {
           // does not keep the event loop alive on its own and dies with the
           // process on SIGTERM/SIGINT.
           startBunTmpJanitor({
-            onSweep: ({ errors }) => {
+            onSweep: ({ removed, freedBytes, errors }) => {
+              if (removed > 0) {
+                console.info(
+                  `[bun-tmp-janitor] reclaimed ${removed} file(s) / ${freedBytes} bytes`,
+                );
+              }
               if (errors > 0) {
                 console.warn(`[bun-tmp-janitor] sweep had ${errors} error(s)`);
               }
@@ -1547,7 +1552,7 @@ export function registerStart(program: Command): void {
           // removes Node's default exit behavior, so without an explicit
           // exit the interval timer would keep the event loop alive.
           let shuttingDown = false;
-          const shutdown = (signal: NodeJS.Signals): void => {
+          const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
             if (shuttingDown) return;
             shuttingDown = true;
             try {
@@ -1556,14 +1561,20 @@ export function registerStart(program: Command): void {
               // Best-effort cleanup — never block shutdown on observability.
             }
             try {
-              stopBunTmpJanitor();
+              // Await the in-flight sweep so SIGTERM never exits while
+              // unlink() is mid-flight against the filesystem.
+              await stopBunTmpJanitor();
             } catch {
               // Best-effort cleanup.
             }
             process.exit(signal === "SIGINT" ? 130 : 0);
           };
-          process.once("SIGINT", shutdown);
-          process.once("SIGTERM", shutdown);
+          process.once("SIGINT", (sig) => {
+            void shutdown(sig);
+          });
+          process.once("SIGTERM", (sig) => {
+            void shutdown(sig);
+          });
         } catch (err) {
           if (err instanceof Error) {
             console.error(chalk.red("\nError:"), err.message);

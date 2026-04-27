@@ -75,6 +75,13 @@ import {
 } from "./paths.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import {
+  getCachedOpenCodeSessionList,
+  getOpenCodeChildEnv,
+  invalidateOpenCodeSessionListCache,
+  resetOpenCodeSessionListCache as resetSharedOpenCodeSessionListCache,
+  type OpenCodeSessionListEntry,
+} from "./opencode-shared.js";
+import {
   writeWorkspaceOpenCodeAgentsMd,
 } from "./opencode-agents-md.js";
 import {
@@ -114,10 +121,15 @@ async function deleteOpenCodeSession(sessionId: string): Promise<void> {
     try {
       await execFileAsync("opencode", ["session", "delete", validatedSessionId], {
         timeout: 30_000,
+        env: getOpenCodeChildEnv(),
       });
+      // Drop cached list immediately so reuse / remap / restore call sites
+      // do not observe the deleted id for the remainder of the TTL window.
+      invalidateOpenCodeSessionListCache();
       return;
     } catch (err) {
       if (errorIncludesSessionNotFound(err)) {
+        invalidateOpenCodeSessionListCache();
         return;
       }
       lastError = err;
@@ -126,99 +138,15 @@ async function deleteOpenCodeSession(sessionId: string): Promise<void> {
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-interface OpenCodeSessionListEntry {
-  id: string;
-  title: string;
-  updatedAt?: number;
-}
-
-// TTL cache + in-flight dedupe for `opencode session list --format json`.
-//
-// Background (issue #1046): every invocation of `opencode session list` spawns
-// a new opencode process that extracts ~4.3 MB of `libopentui.so` to /tmp and
-// never cleans it up (upstream Bun bug). AO previously spawned this from 7
-// different call sites — lifecycle polls, per-session enrichment, every CLI
-// command, and a 6-attempt send-confirmation loop — producing up to 23
-// concurrent processes and ~13 GB/h of leaked /tmp files.
-//
-// The TTL is sized to cover the worst amplifier (the send-confirmation loop:
-// SEND_CONFIRMATION_POLL_MS=500 × SEND_CONFIRMATION_ATTEMPTS=6 ≈ 3s) while
-// remaining short enough that send/discovery/enrichment flows still observe
-// near-immediate session updates. The in-flight promise is always reused
-// regardless of TTL so concurrent callers from different sites collapse into
-// a single child process.
-const OPENCODE_SESSION_LIST_CACHE_TTL_MS = 3_000;
-
-interface OpenCodeSessionListCache {
-  entries: OpenCodeSessionListEntry[];
-  timestamp: number;
-  promise?: Promise<OpenCodeSessionListEntry[]>;
-}
-
-let openCodeSessionListCache: OpenCodeSessionListCache | null = null;
-
-function parseOpenCodeSessionListStdout(stdout: string): OpenCodeSessionListEntry[] {
-  const parsed = safeJsonParse<unknown>(stdout);
-  if (!Array.isArray(parsed)) return [];
-
-  return parsed.flatMap((entry) => {
-    if (!entry || typeof entry !== "object") return [];
-    const title = typeof entry["title"] === "string" ? entry["title"] : "";
-    const id = asValidOpenCodeSessionId(entry["id"]);
-    if (!id) return [];
-    const rawUpdated = entry["updated"];
-    let updatedAt: number | undefined;
-    if (typeof rawUpdated === "number" && Number.isFinite(rawUpdated)) {
-      updatedAt = rawUpdated;
-    } else if (typeof rawUpdated === "string") {
-      const parsedUpdated = Date.parse(rawUpdated);
-      if (!Number.isNaN(parsedUpdated)) {
-        updatedAt = parsedUpdated;
-      }
-    }
-    return [{ id, title, ...(updatedAt !== undefined ? { updatedAt } : {}) }];
-  });
-}
-
-/** Test-only: clear the module-level opencode session list cache. */
+/** Re-export so existing core test-utils + session-manager call sites keep working. */
 export function resetOpenCodeSessionListCache(): void {
-  openCodeSessionListCache = null;
+  resetSharedOpenCodeSessionListCache();
 }
 
 async function fetchOpenCodeSessionList(
-  timeoutMs = OPENCODE_DISCOVERY_TIMEOUT_MS,
+  timeoutMs: number = OPENCODE_DISCOVERY_TIMEOUT_MS,
 ): Promise<OpenCodeSessionListEntry[]> {
-  const now = Date.now();
-  if (openCodeSessionListCache) {
-    if (openCodeSessionListCache.promise) {
-      return openCodeSessionListCache.promise;
-    }
-    if (now - openCodeSessionListCache.timestamp < OPENCODE_SESSION_LIST_CACHE_TTL_MS) {
-      return openCodeSessionListCache.entries;
-    }
-  }
-
-  const promise: Promise<OpenCodeSessionListEntry[]> = execFileAsync(
-    "opencode",
-    ["session", "list", "--format", "json"],
-    { timeout: timeoutMs },
-  )
-    .then(({ stdout }) => {
-      const entries = parseOpenCodeSessionListStdout(stdout);
-      if (openCodeSessionListCache?.promise === promise) {
-        openCodeSessionListCache = { entries, timestamp: Date.now() };
-      }
-      return entries;
-    })
-    .catch(() => {
-      if (openCodeSessionListCache?.promise === promise) {
-        openCodeSessionListCache = null;
-      }
-      return [] as OpenCodeSessionListEntry[];
-    });
-
-  openCodeSessionListCache = { entries: [], timestamp: now, promise };
-  return promise;
+  return getCachedOpenCodeSessionList({ timeoutMs });
 }
 
 async function discoverOpenCodeSessionIdsByTitle(
