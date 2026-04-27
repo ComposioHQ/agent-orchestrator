@@ -1675,6 +1675,7 @@ export interface SessionMetadata {
   statePayload?: string;
   tmuxName?: string; // Globally unique tmux session name (includes hash)
   issue?: string;
+  issueTitle?: string; // Issue title for event enrichment
   pr?: string;
   prAutoDetect?: "on" | "off";
   summary?: string;

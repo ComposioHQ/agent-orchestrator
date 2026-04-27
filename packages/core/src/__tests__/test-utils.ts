@@ -203,13 +203,20 @@ export function createMockSCM(overrides: Partial<SCM> = {}): SCM {
     enrichSessionsPRBatch: vi.fn().mockImplementation(async (prs: PRInfo[]) => {
       const result = new Map();
       for (const pr of prs) {
+        const [state, ciStatus, reviewDecision, mergeability, ciChecks] = await Promise.all([
+          scm.getPRState(pr),
+          scm.getCISummary(pr),
+          scm.getReviewDecision(pr),
+          scm.getMergeability(pr),
+          scm.getCIChecks(pr),
+        ]);
         result.set(`${pr.owner}/${pr.repo}#${pr.number}`, {
-          state: "open" as const,
-          ciStatus: "passing" as const,
-          reviewDecision: "none" as const,
-          mergeable: false,
-          hasConflicts: false,
-          ciChecks: [],
+          state: state ?? "open",
+          ciStatus: ciStatus ?? "passing",
+          reviewDecision: reviewDecision ?? "none",
+          mergeable: mergeability?.mergeable ?? false,
+          hasConflicts: mergeability ? !mergeability.noConflicts : false,
+          ciChecks: ciChecks ?? [],
         });
       }
       return result;

@@ -1,5 +1,11 @@
 # @composio/ao-cli
 
+## [Unreleased]
+
+### Fixed
+
+- Restore the most recently active dead orchestrator on `ao start` when its tmux session is gone, instead of silently spawning a new orchestrator.
+
 ## 0.2.2
 
 ### Patch Changes

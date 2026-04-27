@@ -2483,6 +2483,7 @@ describe("reactions", () => {
     const mockSCM = createMockSCM({
       getPRState: vi.fn().mockResolvedValue("closed"),
       getMergeability,
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "closed" }),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -3318,5 +3319,145 @@ describe("auto-cleanup on merge (#1309)", () => {
     const meta = readMetadataRaw(env.sessionsDir, "app-1");
     expect(meta?.["status"]).toBe("merged");
     expect(meta?.["mergedPendingCleanupSince"]).toMatch(/\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+describe("event enrichment", () => {
+  it("includes PR context in event data when session has PR", async () => {
+    const notifier = createMockNotifier();
+    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("closed") });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+      notifier,
+    });
+
+    const session = makeSession({
+      status: "pr_open",
+      pr: makePR({ number: 42, url: "https://github.com/org/repo/pull/42" }),
+      branch: "feat/test-123",
+    });
+    const lm = setupCheck("app-1", {
+      session,
+      registry,
+      configOverride: {
+        ...config,
+        notificationRouting: {
+          ...config.notificationRouting,
+          info: ["desktop"],
+        },
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "pr.closed",
+        data: expect.objectContaining({
+          context: expect.objectContaining({
+            pr: expect.objectContaining({
+              url: "https://github.com/org/repo/pull/42",
+              number: 42,
+            }),
+            branch: "feat/test-123",
+          }),
+          schemaVersion: 2,
+        }),
+      }),
+    );
+  });
+
+  it("includes issue context in event data when session has issue", async () => {
+    const notifier = createMockNotifier();
+    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("closed") });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+      notifier,
+    });
+
+    const session = makeSession({
+      status: "pr_open",
+      pr: makePR(),
+      issueId: "INT-123",
+      metadata: { issueTitle: "Fix login bug" },
+    });
+    const lm = setupCheck("app-1", {
+      session,
+      registry,
+      configOverride: {
+        ...config,
+        notificationRouting: {
+          ...config.notificationRouting,
+          info: ["desktop"],
+        },
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "pr.closed",
+        data: expect.objectContaining({
+          context: expect.objectContaining({
+            issueId: "INT-123",
+            issueTitle: "Fix login bug",
+          }),
+          schemaVersion: 2,
+        }),
+      }),
+    );
+  });
+
+  it("gracefully omits PR context when session has no PR", async () => {
+    const notifier = createMockNotifier();
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      notifier,
+    });
+
+    // Create a session without PR that will transition to needs_input
+    const session = makeSession({
+      status: "working",
+      pr: null,
+      issueId: "INT-456",
+    });
+    // Mock activity detection to return waiting_input
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "waiting_input",
+      timestamp: new Date(),
+    });
+
+    const lm = setupCheck("app-1", {
+      session,
+      registry,
+      configOverride: {
+        ...config,
+        notificationRouting: {
+          ...config.notificationRouting,
+          urgent: ["desktop"],
+        },
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "session.needs_input",
+        data: expect.objectContaining({
+          context: expect.objectContaining({
+            pr: null,
+            issueId: "INT-456",
+          }),
+          schemaVersion: 2,
+        }),
+      }),
+    );
   });
 });

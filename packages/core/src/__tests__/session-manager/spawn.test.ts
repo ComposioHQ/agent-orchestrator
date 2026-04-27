@@ -849,6 +849,47 @@ describe("spawn", () => {
     expect(session.issueId).toBe("INT-100");
   });
 
+  it("persists issueTitle to metadata during spawn", async () => {
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({
+        id: "INT-200",
+        title: "Add dark mode support",
+        description: "Implement dark mode toggle",
+        url: "https://linear.app/test/issue/INT-200",
+        state: "open",
+        labels: [],
+      }),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn().mockReturnValue("https://linear.app/test/issue/INT-200"),
+      branchName: vi.fn().mockReturnValue("feat/INT-200"),
+      generatePrompt: vi.fn().mockResolvedValue("Work on INT-200"),
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({
+      config,
+      registry: registryWithTracker,
+    });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "INT-200" });
+
+    // Verify issueTitle is persisted to metadata file and can be read back
+    const metadata = readMetadata(sessionsDir, session.id);
+    expect(metadata).not.toBeNull();
+    expect(metadata!.issueTitle).toBe("Add dark mode support");
+  });
+
   it("succeeds with ad-hoc issue string when tracker returns IssueNotFoundError", async () => {
     const mockTracker: Tracker = {
       name: "mock-tracker",

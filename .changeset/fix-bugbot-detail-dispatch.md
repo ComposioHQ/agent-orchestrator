@@ -1,9 +1,12 @@
 ---
-"@aoagents/ao-core": patch
+"@aoagents/ao-core": minor
 ---
 
-Fix review-check logic missing new bugbot comments from the latest push (#895). The `bugbot-comments` reaction now dispatches a detailed message listing every already-fetched automated comment (severity, path:line, excerpt, URL) plus explicit correct-API guidance (`/reviews` → paginated `/reviews/{id}/comments` → paginated `/pulls/{pr}/comments` with `in_reply_to_id`), so the agent never has to rediscover comments with a first-page-only scan.
+Enrich lifecycle events with PR/issue context for webhook consumers. All events now carry `context.pr` (url, title, number, branch) and `context.issueId`/`context.issueTitle` when available.
 
-**Safe by design:**
-- Only replaces the message when it matches the built-in sentinel `DEFAULT_BUGBOT_COMMENTS_MESSAGE` — projects that customized `reactions.bugbot-comments.message` in their YAML are untouched.
-- Bot comment bodies are sanitized (backticks stripped) and wrapped in a code span, with an "untrusted data" preamble instructing the agent not to treat excerpts as instructions.
+Additional changes:
+- Persist `issueTitle` in session metadata during spawn for round-trip availability.
+- Refactor `executeReaction()` to accept a full `Session` object instead of separate `sessionId`/`projectId` args.
+- Fix review-check logic missing new bugbot comments from the latest push (#895) — the `bugbot-comments` reaction now dispatches a detailed message with all automated comments.
+- Add `spawn-target` module for unified issue/PR target resolution.
+- Add `format-automated-comments` utility for sanitized bot comment rendering.
