@@ -1,0 +1,23 @@
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  ad5b256106b027bd 1398-1400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "f1880a10fa9783e654f683e12b07db336c603d9c",
+  "prompts": {
+    "ad5b256106b027bd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ccdaefa2-9c77-4395-82ad-0f531937cca2",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2185,
+      "total_deletions": 2184,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
