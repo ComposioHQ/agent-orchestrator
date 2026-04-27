@@ -2143,8 +2143,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       ...lifecycleMetadataUpdates(raw, terminatedLifecycle),
       // Mark OpenCode cleanup in active metadata so the flag survives into the
       // eventual archive (written by cleanup() via the idempotency path above).
-      // Also clear opencodeSessionId so findOpenCodeSessionIds() won't return
-      // the deleted session ID for future reuse.
+      // the deleted session ID for future reuse (mirrors markArchivedOpenCodeCleanup).
       ...(didPurgeOpenCodeSession && {
         opencodeSessionId: "",
         opencodeCleanedAt: new Date().toISOString(),
