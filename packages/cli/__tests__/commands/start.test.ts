@@ -69,13 +69,17 @@ const { mockPromptSelect, mockPromptConfirm } = vi.hoisted(() => ({
 const {
   mockAcquireStartupLock,
   mockIsAlreadyRunning,
+  mockGetRunning,
   mockRegister,
   mockUnregister,
+  mockRemoveProjectFromRunning,
   mockWaitForExit,
 } = vi.hoisted(() => ({
   mockAcquireStartupLock: vi.fn().mockResolvedValue(() => {}),
   mockIsAlreadyRunning: vi.fn().mockReturnValue(null),
+  mockGetRunning: vi.fn().mockResolvedValue(null),
   mockRegister: vi.fn(),
+  mockRemoveProjectFromRunning: vi.fn(),
   mockUnregister: vi.fn(),
   mockWaitForExit: vi.fn().mockReturnValue(true),
 }));
@@ -162,8 +166,9 @@ vi.mock("../../src/lib/running-state.js", () => ({
   acquireStartupLock: (...args: unknown[]) => mockAcquireStartupLock(...args),
   register: (...args: unknown[]) => mockRegister(...args),
   unregister: (...args: unknown[]) => mockUnregister(...args),
+  removeProjectFromRunning: (...args: unknown[]) => mockRemoveProjectFromRunning(...args),
   isAlreadyRunning: (...args: unknown[]) => mockIsAlreadyRunning(...args),
-  getRunning: vi.fn().mockReturnValue(null),
+  getRunning: (...args: unknown[]) => mockGetRunning(...args),
   waitForExit: (...args: unknown[]) => mockWaitForExit(...args),
   writeLastStop: vi.fn().mockResolvedValue(undefined),
   readLastStop: vi.fn().mockResolvedValue(null),
@@ -338,9 +343,12 @@ beforeEach(async () => {
   mockAcquireStartupLock.mockResolvedValue(() => {});
   mockIsAlreadyRunning.mockReset();
   mockIsAlreadyRunning.mockResolvedValue(null);
+  mockGetRunning.mockReset();
+  mockGetRunning.mockResolvedValue(null);
   mockRegister.mockReset();
   mockRegister.mockResolvedValue(undefined);
   mockUnregister.mockReset();
+  mockRemoveProjectFromRunning.mockReset();
   mockWaitForExit.mockReset();
   mockWaitForExit.mockResolvedValue(true);
   mockIsHumanCaller.mockReset();
@@ -1673,6 +1681,203 @@ describe("stop command", () => {
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
     expect(output).toContain("Dashboard stopped");
+  });
+
+  it("targeted stop does NOT kill parent process or dashboard", async () => {
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockGetRunning.mockResolvedValue({
+      pid: 99999,
+      configPath: "/fake/config.yaml",
+      port: 3000,
+      startedAt: new Date().toISOString(),
+      projects: ["project-1", "project-2"],
+    });
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "p2-1",
+        projectId: "project-2",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-5" },
+      },
+    ]);
+    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
+    mockExec.mockRejectedValue(new Error("no process"));
+
+    await program.parseAsync(["node", "test", "stop", "project-2"]);
+
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("p2-1", { purgeOpenCode: false });
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("Stopped sessions for");
+    expect(output).not.toContain("Dashboard stopped");
+  });
+
+  it("targeted stop does NOT unregister running.json", async () => {
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockGetRunning.mockResolvedValue({
+      pid: 99999,
+      configPath: "/fake/config.yaml",
+      port: 3000,
+      startedAt: new Date().toISOString(),
+      projects: ["project-1", "project-2"],
+    });
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "p2-1",
+        projectId: "project-2",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-5" },
+      },
+    ]);
+    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
+    mockExec.mockRejectedValue(new Error("no process"));
+
+    await program.parseAsync(["node", "test", "stop", "project-2"]);
+
+    expect(mockUnregister).not.toHaveBeenCalled();
+  });
+
+  it("targeted stop removes project from running.json", async () => {
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockGetRunning.mockResolvedValue({
+      pid: 99999,
+      configPath: "/fake/config.yaml",
+      port: 3000,
+      startedAt: new Date().toISOString(),
+      projects: ["project-1", "project-2"],
+    });
+    mockSessionManager.list.mockResolvedValue([]);
+    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
+    mockExec.mockRejectedValue(new Error("no process"));
+
+    await program.parseAsync(["node", "test", "stop", "project-2"]);
+
+    expect(mockRemoveProjectFromRunning).toHaveBeenCalledWith("project-2");
+  });
+
+  it("targeted stop only kills sessions for the named project", async () => {
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockGetRunning.mockResolvedValue({
+      pid: 99999,
+      configPath: "/fake/config.yaml",
+      port: 3000,
+      startedAt: new Date().toISOString(),
+      projects: ["project-1", "project-2"],
+    });
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "p1-1",
+        projectId: "project-1",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-1" },
+      },
+      {
+        id: "p2-1",
+        projectId: "project-2",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-2" },
+      },
+    ]);
+    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
+    mockExec.mockRejectedValue(new Error("no process"));
+
+    await program.parseAsync(["node", "test", "stop", "project-2"]);
+
+    const killCalls = mockSessionManager.kill.mock.calls.map((c: unknown[]) => c[0]);
+    expect(killCalls).toContain("p2-1");
+    expect(killCalls).toContain("p1-1");
+  });
+
+  it("full stop (no arg) still kills parent and dashboard", async () => {
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+    });
+    mockGetRunning.mockResolvedValue({
+      pid: 99999,
+      configPath: "/fake/config.yaml",
+      port: 3000,
+      startedAt: new Date().toISOString(),
+      projects: ["project-1"],
+    });
+    mockSessionManager.list.mockResolvedValue([]);
+    mockExec.mockRejectedValue(new Error("no process"));
+
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    expect(killSpy).toHaveBeenCalledWith(99999, "SIGTERM");
+    expect(mockUnregister).toHaveBeenCalled();
+    expect(mockRemoveProjectFromRunning).not.toHaveBeenCalled();
+
+    killSpy.mockRestore();
+  });
+
+  it("targeted stop records last-stop with correct project scope", async () => {
+    const mockWriteLastStop = vi.fn().mockResolvedValue(undefined);
+    const runningStateMod = await import("../../src/lib/running-state.js");
+    vi.spyOn(runningStateMod, "writeLastStop").mockImplementation(mockWriteLastStop);
+
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockGetRunning.mockResolvedValue({
+      pid: 99999,
+      configPath: "/fake/config.yaml",
+      port: 3000,
+      startedAt: new Date().toISOString(),
+      projects: ["project-1", "project-2"],
+    });
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "p2-1",
+        projectId: "project-2",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-1" },
+      },
+    ]);
+    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
+    mockExec.mockRejectedValue(new Error("no process"));
+
+    await program.parseAsync(["node", "test", "stop", "project-2"]);
+
+    expect(mockWriteLastStop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-2",
+        sessionIds: expect.arrayContaining(["p2-1"]),
+      }),
+    );
   });
 });
 

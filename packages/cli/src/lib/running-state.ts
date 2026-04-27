@@ -200,6 +200,25 @@ export async function unregister(): Promise<void> {
 }
 
 /**
+ * Remove a single project from the running state's project list.
+ * Used by `ao stop <project>` so that `ao start <project>` can restart
+ * the orchestrator without hitting the "already running" gate.
+ * No-op if the state is missing or the project isn't listed.
+ */
+export async function removeProjectFromRunning(projectId: string): Promise<void> {
+  const release = await acquireLock(STATE_LOCK_FILE, 5000, "running.json lock");
+  try {
+    const state = readState();
+    if (!state) return;
+    const updated = state.projects.filter((p) => p !== projectId);
+    if (updated.length === state.projects.length) return;
+    writeState({ ...state, projects: updated });
+  } finally {
+    release();
+  }
+}
+
+/**
  * Get the currently running AO instance, if any.
  * Auto-prunes stale entries (dead PIDs).
  */
