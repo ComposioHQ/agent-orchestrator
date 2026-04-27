@@ -1789,21 +1789,77 @@ export function registerStart(program: Command): void {
           });
           unlockStartup();
 
-          // Install shutdown handlers so `ao stop` (which sends SIGTERM to
-          // this pid) flushes lifecycle health state before exit. Handlers
-          // MUST call process.exit() — installing a SIGINT/SIGTERM listener
-          // removes Node's default exit behavior, so without an explicit
-          // exit the interval timer would keep the event loop alive.
+          // Install shutdown handlers so Ctrl+C and `ao stop` (which sends
+          // SIGTERM) perform a full graceful shutdown: kill sessions, record
+          // last-stop state for restore, unregister, then exit.
+          // Installing a SIGINT/SIGTERM listener removes Node's default exit
+          // behavior, so we MUST call process.exit() explicitly.
           let shuttingDown = false;
           const shutdown = (signal: NodeJS.Signals): void => {
             if (shuttingDown) return;
             shuttingDown = true;
+
+            const exitCode = signal === "SIGINT" ? 130 : 0;
+
             try {
               stopAllLifecycleWorkers();
             } catch {
-              // Best-effort cleanup — never block shutdown on observability.
+              // Best-effort — never block shutdown on observability.
             }
-            process.exit(signal === "SIGINT" ? 130 : 0);
+
+            const SHUTDOWN_TIMEOUT_MS = 10_000;
+            const forceExit = setTimeout(() => process.exit(exitCode), SHUTDOWN_TIMEOUT_MS);
+            forceExit.unref();
+
+            (async () => {
+              try {
+                const shutdownConfig = loadConfig(config.configPath);
+                const sm = await getSessionManager(shutdownConfig);
+                const allSessions = await sm.list();
+                const activeSessions = allSessions.filter((s) => !isTerminalSession(s));
+
+                const killedSessionIds: string[] = [];
+                for (const session of activeSessions) {
+                  try {
+                    const result = await sm.kill(session.id);
+                    if (result.cleaned || result.alreadyTerminated) {
+                      killedSessionIds.push(session.id);
+                    }
+                  } catch {
+                    // Best-effort per session
+                  }
+                }
+
+                if (killedSessionIds.length > 0) {
+                  const targetIds = killedSessionIds.filter((id) =>
+                    activeSessions.some((s) => s.id === id && s.projectId === projectId),
+                  );
+                  const otherProjects: Array<{ projectId: string; sessionIds: string[] }> = [];
+                  const otherByProject = new Map<string, string[]>();
+                  for (const s of activeSessions) {
+                    if (s.projectId === projectId) continue;
+                    if (!killedSessionIds.includes(s.id)) continue;
+                    const list = otherByProject.get(s.projectId ?? "unknown") ?? [];
+                    list.push(s.id);
+                    otherByProject.set(s.projectId ?? "unknown", list);
+                  }
+                  for (const [pid, ids] of otherByProject) {
+                    otherProjects.push({ projectId: pid, sessionIds: ids });
+                  }
+                  await writeLastStop({
+                    stoppedAt: new Date().toISOString(),
+                    projectId,
+                    sessionIds: targetIds,
+                    otherProjects: otherProjects.length > 0 ? otherProjects : undefined,
+                  });
+                }
+
+                await unregister();
+              } catch {
+                // Best-effort — always exit even if cleanup fails
+              }
+              process.exit(exitCode);
+            })();
           };
           process.once("SIGINT", shutdown);
           process.once("SIGTERM", shutdown);
