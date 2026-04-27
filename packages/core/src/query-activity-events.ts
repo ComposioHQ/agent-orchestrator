@@ -18,7 +18,7 @@ import {
 export interface ActivityEventFilter {
   projectId?: string;
   sessionId?: string;
-  kind?: ActivityEventKind;
+  kind?: ActivityEventKind | string;
   source?: ActivityEventSource;
   level?: ActivityEventLevel;
   since?: Date;
@@ -90,7 +90,8 @@ export function queryActivityEvents(filter: ActivityEventFilter = {}): ActivityE
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const limit = Math.min(filter.limit ?? 100, 1000);
+  const rawLimit = filter.limit ?? 100;
+  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(rawLimit, 1000)) : 100;
 
   try {
     const rows = db
@@ -117,7 +118,7 @@ export function searchActivityEvents(rawQuery: string, projectId?: string, limit
   const ftsQuery = tokens.join(" AND ");
 
   const projectFilter = projectId ? "AND ae.project_id = ?" : "";
-  const clampedLimit = Math.min(limit, 1000);
+  const clampedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(limit, 1000)) : 100;
   const params: unknown[] = [ftsQuery];
   if (projectId) params.push(projectId);
   params.push(clampedLimit);

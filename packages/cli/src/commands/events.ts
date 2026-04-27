@@ -24,7 +24,7 @@ function formatRow(ev: ActivityEvent): string {
   const session = ev.sessionId ? ev.sessionId.slice(0, 12) : "—";
   const kind = chalk.cyan(ev.kind.padEnd(22));
   // Pad raw string before chalk-wrapping: chalk adds ANSI codes that inflate .length
-  const levelLabel = ev.level.padEnd(5);
+  const levelLabel = ev.level.padEnd(9);
   const level =
     ev.level === "error"
       ? chalk.red(levelLabel)
