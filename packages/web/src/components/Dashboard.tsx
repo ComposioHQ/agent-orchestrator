@@ -161,11 +161,17 @@ function DashboardInner({
   const { sessions, connectionStatus, sseAttentionLevels, liveSessionsResolved, loadError } =
     useSessionEvents({
       initialSessions,
-      project: projectId,
+      // No project filter — sidebar needs all sessions across all projects.
+      // Kanban filtering is applied client-side via projectSessions below.
       muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
       initialAttentionLevels,
       attentionZones,
     });
+
+  const projectSessions = useMemo(() => {
+    if (!projectId) return sessions;
+    return sessions.filter((s) => s.projectId === projectId);
+  }, [sessions, projectId]);
   const recoveredFromLoadError = Boolean(dashboardLoadError) && liveSessionsResolved;
   const visibleDashboardLoadError =
     loadError ?? (recoveredFromLoadError ? undefined : dashboardLoadError);
@@ -215,9 +221,9 @@ function DashboardInner({
   const currentProjectSpawnError = projectId ? (spawnErrors[projectId] ?? null) : null;
 
   const displaySessions = useMemo(() => {
-    if (allProjectsView || !activeSessionId) return sessions;
-    return sessions.filter((s) => s.id === activeSessionId);
-  }, [sessions, allProjectsView, activeSessionId]);
+    if (allProjectsView || !activeSessionId) return projectSessions;
+    return projectSessions.filter((s) => s.id === activeSessionId);
+  }, [projectSessions, allProjectsView, activeSessionId]);
 
   useEffect(() => {
     setActiveOrchestrators((current) => mergeOrchestrators(current, orchestratorLinks));
