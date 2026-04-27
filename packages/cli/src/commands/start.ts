@@ -1850,9 +1850,11 @@ export function registerStop(program: Command): void {
         }
 
         let config = loadConfig();
-        // If the user targets a project not in the local config, fall back
-        // to the global config which has all registered projects.
-        if (projectArg && !config.projects[projectArg]) {
+        // ao stop affects all projects (it kills the parent ao start process),
+        // so load the global config which has all registered projects.
+        // When a specific project is targeted, only fall back to global if
+        // the project isn't in the local config.
+        if (!projectArg || !config.projects[projectArg]) {
           const globalPath = getGlobalConfigPath();
           if (existsSync(globalPath)) {
             config = loadConfig(globalPath);
