@@ -2146,28 +2146,28 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // 1. Kill the root session
     const rootResult = await kill(rootSessionId, options);
 
-    // 2. Find all descendants by scanning all sessions for parentSessionId matches
+    // 2. Find all descendants by scanning sessions once, then traversing via
+    // parent -> children lookups instead of repeated full-array scans.
     const allSessions = await list();
     const descendants: Array<{ id: SessionId; result: KillResult }> = [];
     const errors: Array<{ id: SessionId; error: string }> = [];
+    const childrenByParent = new Map<SessionId, SessionId[]>();
+
+    for (const session of allSessions) {
+      if (!session.parentSessionId) continue;
+      const children = childrenByParent.get(session.parentSessionId) ?? [];
+      children.push(session.id);
+      childrenByParent.set(session.parentSessionId, children);
+    }
 
     // Build descendant set via BFS (handles nested orchestrators)
-    const children = allSessions.filter(
-      (s) => s.parentSessionId === rootSessionId,
-    );
-
     // Recursively collect all descendants (children, grandchildren, etc.)
     const toKill: SessionId[] = [];
-    const queue = [...children.map((c) => c.id)];
+    const queue = [...(childrenByParent.get(rootSessionId) ?? [])];
     while (queue.length > 0) {
       const current = queue.shift()!;
       toKill.push(current);
-      // Find children of this session
-      for (const s of allSessions) {
-        if (s.parentSessionId === current) {
-          queue.push(s.id);
-        }
-      }
+      queue.push(...(childrenByParent.get(current) ?? []));
     }
 
     // Kill in reverse order (deepest descendants first)
