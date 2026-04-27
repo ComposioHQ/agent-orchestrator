@@ -16,6 +16,7 @@ import {
   mkdirSync,
   unlinkSync,
   readdirSync,
+  renameSync,
   statSync,
   openSync,
   closeSync,
@@ -343,8 +344,26 @@ export function mutateMetadata(
     if (content !== undefined) {
       if (content) {
         const raw = parseMetadataContent(content);
-        if (raw) existing = flattenToStringRecord(raw);
-        // corrupt JSON → treat as empty record (preserves createIfMissing semantics)
+        if (raw) {
+          existing = flattenToStringRecord(raw);
+        } else {
+          // Corrupt JSON. Preserve forensic evidence by side-renaming
+          // the file before we overwrite it with the merged update.
+          // Without this, the very next mutateMetadata call destroys
+          // the corrupt bytes permanently and the user has no signal
+          // that anything was wrong — the file just becomes "not
+          // corrupt anymore — and missing fields".
+          const corruptPath = `${path}.corrupt-${Date.now()}`;
+          try {
+            renameSync(path, corruptPath);
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[metadata] corrupt JSON at ${path}; preserved as ${corruptPath} before rewriting`,
+            );
+          } catch {
+            // best effort — proceed even if the rename fails (e.g. EACCES)
+          }
+        }
       }
     } else if (!options.createIfMissing) {
       return null;

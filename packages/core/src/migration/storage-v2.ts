@@ -319,7 +319,7 @@ function escapeRegExp(s: string): string {
 
 /**
  * Convert old key=value metadata content to a JSON object.
- * Handles all the grouping and type conversions specified in STORAGE_REDESIGN.md.
+ * Handles all the grouping and type conversions.
  */
 export function convertKeyValueToJson(kvContent: string): Record<string, unknown> {
   const kv = parseKeyValueContent(kvContent);

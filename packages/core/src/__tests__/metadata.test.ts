@@ -284,6 +284,54 @@ describe("updateMetadata", () => {
   });
 });
 
+// Regression for the boundary-bug-hunter Phase 2 review on PR #1466:
+// when a metadata file is corrupt JSON, mutateMetadata used to merge
+// against an empty record and atomically rewrite the file. The corrupt
+// bytes were lost — the user had no signal anything was wrong, just
+// "missing fields". The fix side-renames the corrupt file to
+// `<path>.corrupt-<ts>` before rewriting so forensics survive.
+describe("mutateMetadata corrupt-file handling", () => {
+  it("preserves corrupt JSON as `<path>.corrupt-<ts>` before overwriting", () => {
+    const sessionPath = join(dataDir, "ao-1.json");
+    writeFileSync(sessionPath, "{ this is not json", "utf-8");
+
+    const result = mutateMetadata(
+      dataDir,
+      "ao-1",
+      () => ({ branch: "feat/x", project: "myproject" }),
+      { createIfMissing: true },
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!["branch"]).toBe("feat/x");
+
+    // Forensic copy must exist with the original corrupt bytes.
+    const corruptCopies = readdirSync(dataDir).filter((f) =>
+      f.startsWith("ao-1.json.corrupt-"),
+    );
+    expect(corruptCopies).toHaveLength(1);
+    const corruptContent = readFileSync(join(dataDir, corruptCopies[0]), "utf-8");
+    expect(corruptContent).toBe("{ this is not json");
+
+    // The original path now holds the new (valid) JSON.
+    const rewritten = JSON.parse(readFileSync(sessionPath, "utf-8"));
+    expect(rewritten.branch).toBe("feat/x");
+    expect(rewritten.project).toBe("myproject");
+  });
+
+  it("does not create a .corrupt copy for healthy JSON", () => {
+    writeMetadata(dataDir, "ao-2", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+    });
+    mutateMetadata(dataDir, "ao-2", (existing) => ({ ...existing, summary: "hi" }));
+
+    const corruptCopies = readdirSync(dataDir).filter((f) => f.includes(".corrupt-"));
+    expect(corruptCopies).toHaveLength(0);
+  });
+});
+
 describe("readCanonicalLifecycle", () => {
   it("reads canonical lifecycle from lifecycle field", () => {
     writeMetadata(dataDir, "lifecycle-1", {
