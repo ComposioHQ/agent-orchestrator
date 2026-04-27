@@ -1519,9 +1519,102 @@ export function registerStart(program: Command): void {
           // running.json projects list, it was stopped via `ao stop <project>`.
           // Skip the "already running" menu and go straight to orchestrator
           // creation — the dashboard and lifecycle worker are still up.
-          // Only applies when projectArg is a project ID, not a URL or path.
           const isProjectId =
             projectArg && !isRepoUrl(projectArg) && !isLocalPath(projectArg);
+          const projectArgIsUrlOrPath =
+            !!projectArg && (isRepoUrl(projectArg) || isLocalPath(projectArg));
+
+          // URL/path arg while AO is already running: handle it here instead
+          // of letting the "already running" gate ignore the arg. Falling
+          // through to runStartup would spawn a duplicate dashboard, so we
+          // register the project against the active config and open the
+          // existing dashboard — same pattern as the menu's "Add cwd" choice.
+          // Non-TTY callers (scripts/agents) keep the old "already running"
+          // message and do NOT mutate config behind the user's back.
+          if (running && projectArgIsUrlOrPath && isHumanCaller()) {
+            const activeCfg = loadConfig();
+
+            // Try to find an existing registration in the daemon's active
+            // config (URL → match by repo, path → match by canonical path).
+            let existingId: string | null = null;
+            if (isRepoUrl(projectArg!)) {
+              try {
+                const parsed = parseRepoUrl(projectArg!);
+                for (const [id, p] of Object.entries(activeCfg.projects)) {
+                  if (p.repo === parsed.ownerRepo) {
+                    existingId = id;
+                    break;
+                  }
+                }
+              } catch {
+                /* unparseable URL — fall through to clone */
+              }
+            } else {
+              const resolvedPath = resolve(
+                projectArg!.replace(/^~/, process.env["HOME"] || ""),
+              );
+              let canonicalTarget: string;
+              try {
+                canonicalTarget = realpathSync(resolvedPath);
+              } catch {
+                canonicalTarget = resolvedPath;
+              }
+              for (const [id, p] of Object.entries(activeCfg.projects)) {
+                try {
+                  const expanded = resolve(p.path.replace(/^~/, process.env["HOME"] || ""));
+                  if (realpathSync(expanded) === canonicalTarget) {
+                    existingId = id;
+                    break;
+                  }
+                } catch {
+                  /* skip unreadable */
+                }
+              }
+            }
+
+            if (existingId && running.projects.includes(existingId)) {
+              // Already registered and running — just open the dashboard.
+              console.log(chalk.cyan(`\nℹ AO is already running.`));
+              console.log(`  Dashboard: ${chalk.cyan(`http://localhost:${running.port}`)}`);
+              console.log(`  Project "${existingId}" is already registered and running.\n`);
+              openUrl(`http://localhost:${running.port}`);
+              unlockStartup();
+              process.exit(0);
+            }
+
+            // Not yet registered (or registered but parent forgot it).
+            // Register and tell the user to open the dashboard. Don't spawn
+            // a second dashboard/orchestrator here — the running daemon is
+            // the source of truth.
+            let resolvedId: string;
+            if (existingId) {
+              resolvedId = existingId;
+            } else if (isRepoUrl(projectArg!)) {
+              const result = await handleUrlStart(projectArg!);
+              const lookup = await resolveProjectByRepo(result.config, result.parsed);
+              resolvedId = lookup.projectId;
+            } else {
+              const resolvedPath = resolve(
+                projectArg!.replace(/^~/, process.env["HOME"] || ""),
+              );
+              resolvedId = await addProjectToConfig(activeCfg, resolvedPath);
+            }
+
+            console.log(
+              chalk.green(
+                `\n✓ Project "${resolvedId}" is registered. Opening the dashboard...\n`,
+              ),
+            );
+            console.log(
+              chalk.dim(
+                `  To start an orchestrator for it: \`ao stop && ao start ${resolvedId}\` or use the dashboard.`,
+              ),
+            );
+            openUrl(`http://localhost:${running.port}`);
+            unlockStartup();
+            process.exit(0);
+          }
+
           const projectNeedsRestart =
             running && isProjectId && !running.projects.includes(projectArg);
 

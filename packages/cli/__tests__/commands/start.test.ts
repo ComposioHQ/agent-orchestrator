@@ -1993,6 +1993,126 @@ describe("start command — already-running detection", () => {
     expect(output).toContain("AO is already running");
   });
 
+  it("path arg already registered + running: opens dashboard without prompting and does not mutate YAML", async () => {
+    const repoDir = join(tmpDir, "registered-repo");
+    createFakeRepo(repoDir, "https://github.com/org/registered-repo.git");
+
+    mockIsAlreadyRunning.mockResolvedValue({
+      pid: 9999,
+      configPath: "/fake/config.yaml",
+      port: 3000,
+      startedAt: "2026-01-01T00:00:00Z",
+      projects: ["my-app"],
+    });
+
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ path: repoDir }),
+    });
+
+    await expect(
+      program.parseAsync([
+        "node",
+        "test",
+        "start",
+        repoDir,
+        "--no-dashboard",
+        "--no-orchestrator",
+      ]),
+    ).rejects.toThrow("process.exit(1)");
+
+    // No menu shown
+    expect(mockPromptSelect).not.toHaveBeenCalled();
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("AO is already running");
+    expect(output).toContain("my-app");
+    expect(output).toContain("already registered and running");
+  });
+
+  it("path arg unregistered + AO running: registers without prompting and does not show the menu", async () => {
+    const repoDir = join(tmpDir, "new-repo");
+    createFakeRepo(repoDir, "https://github.com/org/new-repo.git");
+
+    const configPath = join(tmpDir, "agent-orchestrator.yaml");
+    const { stringify: yamlStringify } = await import("yaml");
+    writeFileSync(
+      configPath,
+      yamlStringify(
+        {
+          defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          projects: {
+            "my-app": {
+              name: "My App",
+              repo: "org/my-app",
+              path: join(tmpDir, "main-repo"),
+              defaultBranch: "main",
+              sessionPrefix: "app",
+            },
+          },
+        },
+        { indent: 2 },
+      ),
+    );
+    mockConfigRef.current = {
+      ...makeConfig({
+        "my-app": makeProject({ path: join(tmpDir, "main-repo") }),
+      }),
+      configPath,
+    };
+
+    mockIsAlreadyRunning.mockResolvedValue({
+      pid: 9999,
+      configPath,
+      port: 3000,
+      startedAt: "2026-01-01T00:00:00Z",
+      projects: ["my-app"],
+    });
+
+    // Mock git so addProjectToConfig can detect the new repo without prompting.
+    const shell = await import("../../src/lib/shell.js");
+    vi.mocked(shell.git).mockImplementation(async (args: string[], workingDir?: string) => {
+      if (args[0] === "rev-parse" && args[1] === "--git-dir" && workingDir === repoDir)
+        return ".git";
+      if (
+        args[0] === "remote" &&
+        args[1] === "get-url" &&
+        args[2] === "origin" &&
+        workingDir === repoDir
+      ) {
+        return "https://github.com/org/new-repo.git";
+      }
+      if (args[0] === "symbolic-ref" && workingDir === repoDir)
+        return "refs/remotes/origin/main";
+      if (args[0] === "rev-parse" && args[1] === "--verify" && workingDir === repoDir)
+        return "abc";
+      return null;
+    });
+
+    await expect(
+      program.parseAsync([
+        "node",
+        "test",
+        "start",
+        repoDir,
+        "--no-dashboard",
+        "--no-orchestrator",
+      ]),
+    ).rejects.toThrow("process.exit(1)");
+
+    // No menu shown — went straight to register + open
+    expect(mockPromptSelect).not.toHaveBeenCalled();
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("registered");
+    expect(output).toContain("Opening the dashboard");
+  });
+
   it("offers to add cwd when AO is running and cwd is an unregistered git repo", async () => {
     mockIsAlreadyRunning.mockResolvedValue({
       pid: 9999,
