@@ -1700,6 +1700,140 @@ describe("migration edge cases", () => {
     }
   });
 
+  // Regression for the boundary-bug-hunter finding on PR #1466: Codex stores
+  // its rollouts at ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl with the
+  // session cwd embedded in the first JSONL line's `session_meta` payload.
+  // The agent-codex plugin's restore lookup matches `session_meta.cwd ===
+  // session.workspacePath` exactly, so post-migration the new V2 worktree
+  // path no longer matches and `getRestoreCommand` returns null. The
+  // migrator must rewrite that cwd in place so Codex restore continues to
+  // find the prior thread.
+  it(
+    "rewrites ~/.codex/sessions/**/rollout-*.jsonl session_meta.cwd for migrated worktrees",
+    async () => {
+      const origHome = process.env["HOME"];
+      const fakeHome = join(testDir, "fake-home-codex");
+      mkdirSync(fakeHome, { recursive: true });
+      process.env["HOME"] = fakeHome;
+
+      try {
+        const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+        mkdirSync(join(hashDir, "sessions"), { recursive: true });
+        const oldWorktreePath = join(hashDir, "worktrees", "ao-1");
+        mkdirSync(oldWorktreePath, { recursive: true });
+
+        writeFileSync(
+          join(hashDir, "sessions", "ao-1"),
+          [
+            "project=myproject",
+            "agent=codex",
+            "branch=session/ao-1",
+            `worktree=${oldWorktreePath}`,
+          ].join("\n"),
+        );
+
+        const codexShard = join(fakeHome, ".codex", "sessions", "2026", "04", "28");
+        mkdirSync(codexShard, { recursive: true });
+        const rolloutPath = join(codexShard, "rollout-2026-04-28T12-00-00-thread.jsonl");
+        const sessionMeta = {
+          type: "session_meta",
+          payload: {
+            id: "thread-1",
+            cwd: oldWorktreePath,
+            model: "gpt-5",
+          },
+        };
+        const otherEntry = { type: "user", payload: { content: "hi" } };
+        writeFileSync(
+          rolloutPath,
+          JSON.stringify(sessionMeta) + "\n" + JSON.stringify(otherEntry) + "\n",
+        );
+
+        const result = await migrateStorage({
+          aoBaseDir,
+          globalConfigPath: configPath,
+          force: true,
+          log: () => {},
+        });
+
+        const newWorktreePath = join(
+          aoBaseDir,
+          "projects",
+          "myproject",
+          "worktrees",
+          "ao-1",
+        );
+
+        const rewritten = readFileSync(rolloutPath, "utf-8");
+        const lines = rewritten.split("\n").filter(Boolean);
+        const firstParsed = JSON.parse(lines[0]) as {
+          type: string;
+          payload: { cwd: string; id: string; model: string };
+        };
+        expect(firstParsed.type).toBe("session_meta");
+        expect(firstParsed.payload.cwd).toBe(newWorktreePath);
+        // Other payload fields must survive the rewrite.
+        expect(firstParsed.payload.id).toBe("thread-1");
+        expect(firstParsed.payload.model).toBe("gpt-5");
+        // Subsequent lines are copied byte-for-byte.
+        expect(lines[1]).toBe(JSON.stringify(otherEntry));
+        expect(result.codexSessionsRewritten).toBe(1);
+      } finally {
+        if (origHome === undefined) delete process.env["HOME"];
+        else process.env["HOME"] = origHome;
+      }
+    },
+  );
+
+  // Safety: rollouts that don't match any moved cwd must be left alone
+  // byte-for-byte. The migrator must never touch unrelated Codex history.
+  it("leaves Codex rollouts with non-matching cwd untouched", async () => {
+    const origHome = process.env["HOME"];
+    const fakeHome = join(testDir, "fake-home-codex-2");
+    mkdirSync(fakeHome, { recursive: true });
+    process.env["HOME"] = fakeHome;
+
+    try {
+      const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+      mkdirSync(join(hashDir, "sessions"), { recursive: true });
+      const oldWorktreePath = join(hashDir, "worktrees", "ao-1");
+      mkdirSync(oldWorktreePath, { recursive: true });
+
+      writeFileSync(
+        join(hashDir, "sessions", "ao-1"),
+        [
+          "project=myproject",
+          "agent=codex",
+          "branch=session/ao-1",
+          `worktree=${oldWorktreePath}`,
+        ].join("\n"),
+      );
+
+      const codexShard = join(fakeHome, ".codex", "sessions", "2026", "04", "28");
+      mkdirSync(codexShard, { recursive: true });
+      const unrelatedPath = join(codexShard, "rollout-2026-04-28T09-00-00-other.jsonl");
+      const unrelatedContent =
+        JSON.stringify({
+          type: "session_meta",
+          payload: { id: "other", cwd: "/some/unrelated/path", model: "gpt-5" },
+        }) + "\n";
+      writeFileSync(unrelatedPath, unrelatedContent);
+
+      const result = await migrateStorage({
+        aoBaseDir,
+        globalConfigPath: configPath,
+        force: true,
+        log: () => {},
+      });
+
+      expect(readFileSync(unrelatedPath, "utf-8")).toBe(unrelatedContent);
+      expect(result.codexSessionsRewritten).toBe(0);
+    } finally {
+      if (origHome === undefined) delete process.env["HOME"];
+      else process.env["HOME"] = origHome;
+    }
+  });
+
   it("handles corrupt session metadata during migration without crashing", async () => {
     const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });

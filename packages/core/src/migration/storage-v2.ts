@@ -88,6 +88,8 @@ export interface MigrationResult {
   strayWorktreesMoved: number;
   /** Number of Claude Code session-storage directories relinked to the new worktree path. */
   claudeSessionsRelinked: number;
+  /** Number of Codex JSONL `session_meta.cwd` fields rewritten to the new worktree path. */
+  codexSessionsRewritten: number;
 }
 
 /** A single (oldWorkspacePath, newWorkspacePath) pair captured during migration. */
@@ -870,6 +872,122 @@ function relinkClaudeSessionStorage(
   return relinked;
 }
 
+/**
+ * Codex stores rollouts at `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` and
+ * embeds the working directory inside the very first JSONL record's
+ * `session_meta` payload. The `agent-codex` plugin's restore lookup matches
+ * `session_meta.cwd === session.workspacePath` exactly, so once
+ * `migrate-storage` rewrites a session's `workspacePath` to the V2 layout,
+ * Codex restore stops finding the prior thread and `getRestoreCommand`
+ * returns null — the user loses chat history on `ao start` restore.
+ *
+ * For each (oldPath → newPath) move, scan rollout files, look at the first
+ * non-empty parsed line, and if it is a `session_meta` entry whose
+ * `payload.cwd` exactly matches `oldWorkspacePath`, rewrite that single line
+ * to point at `newWorkspacePath`. Other lines are copied byte-for-byte. The
+ * rewrite goes through an atomic temp-file rename so a crash mid-rewrite
+ * cannot corrupt the rollout.
+ *
+ * Returns the number of rollout files actually rewritten.
+ */
+function rewriteCodexSessionStorage(
+  moves: ReadonlyArray<WorkspacePathMove>,
+  dryRun: boolean,
+  log: (message: string) => void,
+): number {
+  if (moves.length === 0) return 0;
+
+  const codexSessionsDir = join(homedir(), ".codex", "sessions");
+  if (!existsSync(codexSessionsDir)) return 0;
+
+  // Index moves by old path for O(1) lookup.
+  const oldToNew = new Map<string, string>();
+  for (const { oldWorkspacePath, newWorkspacePath } of moves) {
+    if (oldWorkspacePath !== newWorkspacePath) {
+      oldToNew.set(oldWorkspacePath, newWorkspacePath);
+    }
+  }
+  if (oldToNew.size === 0) return 0;
+
+  // Walk year/month/day shards collecting rollout-*.jsonl files.
+  const jsonlFiles: string[] = [];
+  function walk(dir: string): void {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && entry.name.startsWith("rollout-") && entry.name.endsWith(".jsonl")) {
+        jsonlFiles.push(full);
+      }
+    }
+  }
+  walk(codexSessionsDir);
+
+  let rewritten = 0;
+  for (const filePath of jsonlFiles) {
+    let content: string;
+    try {
+      content = readFileSync(filePath, "utf-8");
+    } catch {
+      continue;
+    }
+
+    // Find the first parseable JSONL line. Codex writes session_meta as the
+    // very first record so this is cheap; bail out after a small bounded
+    // scan to avoid pathological cases.
+    const newlineIdx = content.indexOf("\n");
+    const firstLineEnd = newlineIdx === -1 ? content.length : newlineIdx;
+    const firstLine = content.slice(0, firstLineEnd);
+    if (!firstLine.trim()) continue;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(firstLine);
+    } catch {
+      continue;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
+    const entry = parsed as { type?: string; payload?: { cwd?: unknown } };
+    if (entry.type !== "session_meta") continue;
+    const cwd = entry.payload?.cwd;
+    if (typeof cwd !== "string") continue;
+
+    const newCwd = oldToNew.get(cwd);
+    if (!newCwd) continue;
+
+    if (dryRun) {
+      log(`  [dry-run] Would rewrite Codex session_meta cwd: ${filePath}`);
+      log(`    ${cwd} → ${newCwd}`);
+      rewritten++;
+      continue;
+    }
+
+    // Mutate only the cwd field. Preserve insertion order and other payload
+    // fields by editing the parsed object then re-serialising.
+    (entry.payload as { cwd: string }).cwd = newCwd;
+    const newFirstLine = JSON.stringify(entry);
+    const rest = newlineIdx === -1 ? "" : content.slice(newlineIdx);
+    try {
+      atomicWriteFileSync(filePath, newFirstLine + rest);
+      log(`  Rewrote Codex session_meta cwd in ${filePath}`);
+      rewritten++;
+    } catch (err) {
+      log(
+        `  [warn] failed to rewrite Codex session ${filePath}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  return rewritten;
+}
+
 // ---------------------------------------------------------------------------
 // Stray worktree detection
 // ---------------------------------------------------------------------------
@@ -1052,6 +1170,7 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
       emptyDirsDeleted: 0,
       strayWorktreesMoved: 0,
       claudeSessionsRelinked: 0,
+      codexSessionsRewritten: 0,
     };
   }
 
@@ -1095,6 +1214,7 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     emptyDirsDeleted: 0,
     strayWorktreesMoved: 0,
     claudeSessionsRelinked: 0,
+    codexSessionsRewritten: 0,
   };
 
   // (oldWorkspacePath, newWorkspacePath) pairs collected across both
@@ -1185,6 +1305,7 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
   // worktree-path change. Without this, ao start → restore launches a
   // fresh `claude` instance and the prior conversation is lost.
   totals.claudeSessionsRelinked = relinkClaudeSessionStorage(allWorkspaceMoves, dryRun, log);
+  totals.codexSessionsRewritten = rewriteCodexSessionStorage(allWorkspaceMoves, dryRun, log);
 
   // Only strip storageKey and remove marker when ALL projects succeeded.
   // Partial failure leaves the marker and config intact so the migration
@@ -1206,6 +1327,9 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
   }
   if (totals.claudeSessionsRelinked > 0) {
     log(`Relinked ${totals.claudeSessionsRelinked} Claude session director${totals.claudeSessionsRelinked !== 1 ? "ies" : "y"} to new worktree paths.`);
+  }
+  if (totals.codexSessionsRewritten > 0) {
+    log(`Rewrote ${totals.codexSessionsRewritten} Codex rollout file${totals.codexSessionsRewritten !== 1 ? "s" : ""} to new worktree paths.`);
   }
   if (totals.emptyDirsDeleted > 0) {
     log(`Deleted ${totals.emptyDirsDeleted} empty director${totals.emptyDirsDeleted !== 1 ? "ies" : "y"}.`);
@@ -1465,6 +1589,9 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
     // Reverse the Claude session-storage relink so chat history follows
     // the worktree back to its V1 encoded path.
     relinkClaudeSessionStorage(rollbackWorkspaceMoves, dryRun, log);
+    // Reverse the Codex session_meta cwd rewrite so Codex restore lookup
+    // continues to find threads after rollback.
+    rewriteCodexSessionStorage(rollbackWorkspaceMoves, dryRun, log);
 
     // Remove project directories that are safe to delete
     for (const projectId of safeToDeleteProjects) {

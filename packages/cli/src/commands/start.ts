@@ -62,7 +62,6 @@ import { preflight } from "../lib/preflight.js";
 import {
   register,
   unregister,
-  addProjectToRunning,
   removeProjectFromRunning,
   isAlreadyRunning,
   getRunning,
@@ -1804,10 +1803,14 @@ export function registerStart(program: Command): void {
               systemPrompt,
             });
 
-            // Re-add to running.json so subsequent `ao stop` (no args)
-            // sees this orchestrator and a follow-up `ao spawn` doesn't
-            // print the "running instance is not polling project X" warning.
-            await addProjectToRunning(projectArg);
+            // Deliberately do NOT add the project to `running.projects`.
+            // That field is the single source of truth for "lifecycle polling
+            // is attached", and polling cannot be added to the live daemon
+            // mid-flight — it requires a full daemon restart. Persisting the
+            // project here would make `ao spawn` suppress its
+            // "instance is not polling project X" warning while polling is in
+            // fact missing. The user is told below to restart the daemon for
+            // full polling; until they do, `ao spawn` should keep warning.
 
             console.log(
               chalk.green(`✓ Orchestrator session ready: ${session.id}`),
@@ -2279,7 +2282,14 @@ export function registerStop(program: Command): void {
           // kills the parent process which affects all projects. When a
           // specific project is targeted, scope to that project only.
           const stopAll = !projectArg;
-          const allSessions = await sm.list(stopAll ? undefined : _projectId);
+          const rawSessions = await sm.list(stopAll ? undefined : _projectId);
+          // Defensive consumer-side filter. `sm.list(projectId)` already scopes
+          // to the named project, but the kill loop hard-stops processes — a
+          // contract regression here would silently kill another project's
+          // work. When a project arg is given, drop anything that isn't ours.
+          const allSessions = stopAll
+            ? rawSessions
+            : rawSessions.filter((s) => s.projectId === _projectId);
           const activeSessions = allSessions.filter((s) => !isTerminalSession(s));
           const killedSessionIds: string[] = [];
 

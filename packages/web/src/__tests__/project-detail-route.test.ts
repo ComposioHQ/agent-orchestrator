@@ -283,6 +283,54 @@ describe("/api/projects/[id]", () => {
     );
   });
 
+  // Regression for the boundary-bug-hunter finding on PR #1466: DELETE used
+  // to invoke `cleanupManagedWorkspaces(id, ...)` BEFORE validating `id`
+  // through `getProjectDir(id)`, so a malformed registered key would reach
+  // workspace plugin code with an unsafe id (path traversal, illegal chars)
+  // before the route returned 400. Validate first, plugin second.
+  it("DELETE rejects an unsafe project id with 400 before any workspace plugin call", async () => {
+    // Hand-write a global config with an unsafe key so registration's
+    // sanitizer can't scrub it. `..` triggers `assertSafeProjectId`.
+    const repoDir = path.join(tempRoot, "demo-unsafe");
+    mkdirSync(repoDir, { recursive: true });
+    // `_bad` passes the global-config schema (`[a-zA-Z0-9_-]+`) but fails
+    // `assertSafeProjectId` (paths.ts), which requires an alphanumeric first
+    // character. The route must catch the unsafe id via `getProjectDir`
+    // BEFORE handing it to the workspace plugin.
+    const unsafeId = "_bad";
+    writeFileSync(
+      configPath,
+      [
+        "projects:",
+        `  "${unsafeId}":`,
+        '    name: "Unsafe"',
+        `    path: ${repoDir}`,
+        "",
+      ].join("\n"),
+    );
+
+    const destroy = vi.fn().mockResolvedValue(undefined);
+    const list = vi.fn().mockResolvedValue([]);
+    getServices.mockResolvedValue({
+      registry: {
+        get: vi.fn().mockReturnValue({ list, destroy }),
+      },
+    });
+
+    const { DELETE } = await import("@/app/api/projects/[id]/route");
+    const response = await DELETE(makeRequest("DELETE", undefined, unsafeId), {
+      params: Promise.resolve({ id: unsafeId }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: expect.stringContaining("Invalid project ID"),
+    });
+    // Plugin must NOT have been called with an unsafe id.
+    expect(list).not.toHaveBeenCalled();
+    expect(destroy).not.toHaveBeenCalled();
+  });
+
   it("POST repairs wrapped local configs for degraded projects", async () => {
     const repoDir = path.join(tempRoot, "broken");
     mkdirSync(repoDir, { recursive: true });

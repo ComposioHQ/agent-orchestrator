@@ -256,15 +256,20 @@ export async function DELETE(
       return NextResponse.json({ error: `Unknown project: ${id}` }, { status: 404 });
     }
 
-    const workspacePluginName = state.project?.workspace ?? state.config.defaults.workspace ?? "worktree";
-    await cleanupManagedWorkspaces(id, workspacePluginName);
-
+    // Validate the project ID against V2 storage path rules BEFORE handing
+    // it to any plugin. A malformed ID (path traversal, illegal characters)
+    // must never reach `cleanupManagedWorkspaces`, which calls plugin code
+    // that may resolve paths under the project directory.
     let projectDir: string;
     try {
       projectDir = getProjectDir(id);
     } catch {
       return NextResponse.json({ error: `Invalid project ID: ${id}` }, { status: 400 });
     }
+
+    const workspacePluginName = state.project?.workspace ?? state.config.defaults.workspace ?? "worktree";
+    await cleanupManagedWorkspaces(id, workspacePluginName);
+
     const hadStorageDir = existsSync(projectDir);
     if (hadStorageDir) {
       rmSync(projectDir, { recursive: true, force: true });

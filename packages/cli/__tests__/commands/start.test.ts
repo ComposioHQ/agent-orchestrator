@@ -1814,9 +1814,11 @@ describe("stop command", () => {
 
     await program.parseAsync(["node", "test", "stop", "project-2"]);
 
+    // Even if `sm.list` returns mixed projects (regression at producer), the
+    // CLI must defensively drop foreign sessions before the kill loop.
     const killCalls = mockSessionManager.kill.mock.calls.map((c: unknown[]) => c[0]);
     expect(killCalls).toContain("p2-1");
-    expect(killCalls).toContain("p1-1");
+    expect(killCalls).not.toContain("p1-1");
   });
 
   it("full stop (no arg) still kills parent and dashboard", async () => {
@@ -1928,8 +1930,10 @@ describe("stop command", () => {
       expect(mockSessionManager.ensureOrchestrator).toHaveBeenCalledWith(
         expect.objectContaining({ projectId: "project-2" }),
       );
-      // running.json gets the project re-added so subsequent ao stop sees it.
-      expect(mockAddProjectToRunning).toHaveBeenCalledWith("project-2");
+      // running.projects must NOT be expanded — lifecycle polling cannot be
+      // attached to the live daemon mid-flight, and `ao spawn` reads this
+      // field to decide whether to warn that polling is missing.
+      expect(mockAddProjectToRunning).not.toHaveBeenCalled();
       // No menu — this is a deterministic attach, not an interactive choice.
       expect(mockPromptSelect).not.toHaveBeenCalled();
 
