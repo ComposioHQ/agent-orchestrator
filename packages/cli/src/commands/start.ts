@@ -29,8 +29,6 @@ import {
   generateConfigFromUrl,
   configToYaml,
   isCanonicalGlobalConfigPath,
-  isOrchestratorSession,
-  isTerminalSession,
   ConfigNotFoundError,
   loadLocalProjectConfigDetailed,
   registerProjectInGlobalConfig,
@@ -1626,51 +1624,45 @@ export function registerStop(program: Command): void {
 
         console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(project.name)}\n`));
 
-        // Resolve the actual orchestrator session id by listing the project's sessions
-        // and finding the most-recently-active orchestrator. This avoids relying on the
-        // legacy `${prefix}-orchestrator` (no-N) phantom id, which never matches a real
-        // numbered session and causes ao stop to silently no-op.
+        // Kill ALL sessions for this project (orchestrator + workers).
+        // Previously ao stop only killed the orchestrator, leaving worker sessions orphaned.
         const sm = await getSessionManager(config);
-        const allSessionPrefixes = Object.entries(config.projects).map(
-          ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
-        );
-        let orchestratorToKill: { id: string } | null = null;
-        let lookupFailed = false;
-        try {
-          const projectSessions = await sm.list(_projectId);
-          const orchestrators = projectSessions
-            .filter((s) =>
-              isOrchestratorSession(s, project.sessionPrefix ?? _projectId, allSessionPrefixes),
-            )
-            .filter((s) => !isTerminalSession(s));
-          const sorted = [...orchestrators].sort(
-            (a, b) => (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0),
-          );
-          orchestratorToKill = sorted[0] ?? null;
-        } catch (err) {
-          lookupFailed = true;
-          console.log(
-            chalk.yellow(
-              `  Could not list sessions to locate orchestrator: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            ),
-          );
-        }
+        const allSessions = await sm.list(_projectId);
+        const purgeOpenCode = opts?.purgeSession === true;
 
-        if (orchestratorToKill) {
-          const spinner = ora("Stopping orchestrator session").start();
-          const purgeOpenCode = opts?.purgeSession === true;
-          await sm.kill(orchestratorToKill.id, { purgeOpenCode });
-          spinner.succeed(`Orchestrator session stopped (${orchestratorToKill.id})`);
-          // Also log to console.log so the killed id is visible in non-TTY callers
-          // (CI, scripts) and in test capture, since spinner output is suppressed.
-          console.log(chalk.green(`  Stopped orchestrator session: ${orchestratorToKill.id}`));
-        } else if (!lookupFailed) {
-          // Suppress the "no orchestrator found" message when sm.list threw —
-          // the catch above already explained the real reason and adding a
-          // second message would falsely imply the lookup succeeded.
-          console.log(chalk.yellow(`No running orchestrator session found for "${project.name}"`));
+        if (allSessions.length > 0) {
+          const spinner = ora(`Stopping ${allSessions.length} session(s)`).start();
+          const killErrors: { id: string; message: string }[] = [];
+          for (const session of allSessions) {
+            try {
+              await sm.kill(session.id, { purgeOpenCode });
+            } catch (err) {
+              killErrors.push({
+                id: session.id,
+                message: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+          if (killErrors.length === 0) {
+            spinner.succeed(`Stopped ${allSessions.length} session(s)`);
+          } else {
+            spinner.stop();
+            const ok = allSessions.length - killErrors.length;
+            if (ok > 0) {
+              console.log(
+                chalk.green(`Stopped ${ok} of ${allSessions.length} session(s)`),
+              );
+            } else {
+              console.log(
+                chalk.yellow(`Failed to stop ${killErrors.length} session(s)`),
+              );
+            }
+            for (const e of killErrors) {
+              console.warn(chalk.yellow(`  ${e.id}: ${e.message}`));
+            }
+          }
+        } else {
+          console.log(chalk.yellow("No running sessions found"));
         }
 
         // Lifecycle polling runs in-process inside the `ao start` process

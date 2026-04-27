@@ -39,6 +39,7 @@ const {
     ensureOrchestrator: vi.fn(),
     send: vi.fn(),
     claimPR: vi.fn(),
+    restore: vi.fn(),
   },
   mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
   mockSpawn: vi.fn(),
@@ -50,7 +51,7 @@ const { mockDetectOpenClawInstallation } = vi.hoisted(() => ({
 }));
 
 const { mockProcessCwd } = vi.hoisted(() => ({
-  mockProcessCwd: vi.fn<[], string>(),
+  mockProcessCwd: vi.fn<() => string | undefined>(),
 }));
 
 const { mockPromptSelect, mockPromptConfirm } = vi.hoisted(() => ({
@@ -81,14 +82,28 @@ vi.mock("../../src/lib/shell.js", () => ({
 }));
 
 vi.mock("ora", () => ({
-  default: () => ({
-    start: vi.fn().mockReturnThis(),
-    stop: vi.fn().mockReturnThis(),
-    succeed: vi.fn().mockReturnThis(),
-    fail: vi.fn().mockReturnThis(),
-    info: vi.fn().mockReturnThis(),
-    text: "",
-  }),
+  default: () => {
+    const spinner = {
+      text: "",
+      start: vi.fn(function (this: typeof spinner) {
+        return this;
+      }),
+      stop: vi.fn(function (this: typeof spinner) {
+        return this;
+      }),
+      succeed: vi.fn(function (this: typeof spinner, msg?: string) {
+        if (msg !== undefined) console.log(msg);
+        return this;
+      }),
+      fail: vi.fn(function (this: typeof spinner) {
+        return this;
+      }),
+      info: vi.fn(function (this: typeof spinner) {
+        return this;
+      }),
+    };
+    return spinner;
+  },
 }));
 
 vi.mock("@aoagents/ao-core", async (importOriginal) => {
@@ -1468,70 +1483,54 @@ describe("stop command", () => {
     });
   }
 
-  it("stops the actual numbered orchestrator session and dashboard", async () => {
+  it("kills all project sessions via sm.list()", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    // Issue #1048: ao stop must look up the real numbered orchestrator id
-    // (e.g. app-orchestrator-3) via sm.list — never the phantom `${prefix}-orchestrator`.
     mockSessionManager.list.mockResolvedValue([
-      {
-        id: "app-orchestrator-3",
-        projectId: "my-app",
-        status: "working",
-        activity: "active",
-        metadata: { role: "orchestrator" },
-        lastActivityAt: new Date(),
-        runtimeHandle: { id: "tmux-3" },
-      },
+      { id: "app-orchestrator-1", status: "running" },
+      { id: "ao-155", status: "running" },
+      { id: "ao-156", status: "running" },
     ]);
     mockSessionManager.kill.mockResolvedValue(undefined);
-    mockDashboardOnPort(3000);
 
     await program.parseAsync(["node", "test", "stop"]);
 
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-3", {
+    // sm.list called with project ID
+    expect(mockSessionManager.list).toHaveBeenCalledWith("my-app");
+    // sm.kill called for every session returned
+    expect(mockSessionManager.kill).toHaveBeenCalledTimes(3);
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-1", {
+      purgeOpenCode: false,
+    });
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("ao-155", {
+      purgeOpenCode: false,
+    });
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("ao-156", {
       purgeOpenCode: false,
     });
     const output = vi
       .mocked(console.log)
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
-    expect(output).toContain("Orchestrator stopped");
-    expect(output).toContain("app-orchestrator-3");
+    expect(output).toContain("Stopped 3 session(s)");
   });
 
-  it("kills the most-recently-active orchestrator when multiple exist", async () => {
+  it("kills single session (no workers)", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    const now = Date.now();
     mockSessionManager.list.mockResolvedValue([
-      {
-        id: "app-orchestrator",
-        projectId: "my-app",
-        status: "working",
-        activity: "active",
-        metadata: { role: "orchestrator" },
-        lastActivityAt: new Date(now - 10_000),
-        runtimeHandle: { id: "tmux-1" },
-      },
-      {
-        id: "app-orchestrator",
-        projectId: "my-app",
-        status: "working",
-        activity: "active",
-        metadata: { role: "orchestrator" },
-        lastActivityAt: new Date(now),
-        runtimeHandle: { id: "tmux-2" },
-      },
+      { id: "app-orchestrator-1", status: "running" },
     ]);
     mockSessionManager.kill.mockResolvedValue(undefined);
+    mockDashboardOnPort(3000);
 
     await program.parseAsync(["node", "test", "stop"]);
 
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
+    expect(mockSessionManager.kill).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-1", {
       purgeOpenCode: false,
     });
   });
 
-  it("handles missing orchestrator session gracefully", async () => {
+  it("handles no running sessions gracefully", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
     mockSessionManager.list.mockResolvedValue([]);
     mockExec.mockRejectedValue(new Error("no process"));
@@ -1543,30 +1542,58 @@ describe("stop command", () => {
       .mocked(console.log)
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
-    expect(output).toContain("No running orchestrator session found");
+    expect(output).toContain("No running sessions found");
   });
 
-  it("passes purge flag when stopping orchestrator with --purge-session", async () => {
+  it("passes purge flag to all sessions with --purge-session", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
     mockSessionManager.list.mockResolvedValue([
-      {
-        id: "app-orchestrator",
-        projectId: "my-app",
-        status: "working",
-        activity: "active",
-        metadata: { role: "orchestrator" },
-        lastActivityAt: new Date(),
-        runtimeHandle: { id: "tmux-1" },
-      },
+      { id: "app-orchestrator-1", status: "running" },
+      { id: "ao-155", status: "running" },
     ]);
     mockSessionManager.kill.mockResolvedValue(undefined);
     mockDashboardOnPort(3000);
 
     await program.parseAsync(["node", "test", "stop", "--purge-session"]);
 
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-1", {
       purgeOpenCode: true,
     });
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("ao-155", {
+      purgeOpenCode: true,
+    });
+  });
+
+  it("continues killing remaining sessions when one sm.kill throws", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.list.mockResolvedValue([
+      { id: "app-orchestrator-1", status: "running" },
+      { id: "ao-155", status: "running" },
+      { id: "ao-156", status: "running" },
+    ]);
+    let call = 0;
+    mockSessionManager.kill.mockImplementation(async (_id: string) => {
+      call += 1;
+      if (call === 2) {
+        throw new Error("SessionNotFoundError");
+      }
+    });
+    mockExec.mockResolvedValue({ stdout: "12345", stderr: "" });
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    expect(mockSessionManager.kill).toHaveBeenCalledTimes(3);
+    const logged = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(logged).toContain("Stopped 2 of 3 session(s)");
+    const warnings = vi
+      .mocked(console.warn)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(warnings).toContain("ao-155");
   });
 
   it("finds orphaned dashboard on a reassigned port via port scan", async () => {
@@ -1672,7 +1699,11 @@ describe("start command — autoCreateConfig", () => {
     });
 
     const { detectProjectType } = await import("../../src/lib/project-detection.js");
-    vi.mocked(detectProjectType).mockReturnValue({ languages: [], frameworks: [] });
+    vi.mocked(detectProjectType).mockReturnValue({
+      languages: [],
+      frameworks: [],
+      tools: [],
+    });
 
     const { detectAvailableAgents, detectAgentRuntime } = await import("../../src/lib/detect-agent.js");
     vi.mocked(detectAvailableAgents).mockResolvedValue([]);
