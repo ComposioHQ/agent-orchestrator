@@ -1,0 +1,27 @@
+.github/workflows/canary.yml
+  1c3bcc6b135556a1 55,58,67-68,81
+CONTRIBUTING.md
+  1c3bcc6b135556a1 83
+.github/workflows/release.yml
+  1c3bcc6b135556a1 30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "f2d5eaae9a9bdb3ff4598c5a98d8e79c74dc2d85",
+  "prompts": {
+    "1c3bcc6b135556a1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a53b7ba3-21ff-454a-978c-dbad4b784e1f",
+        "model": "<synthetic>"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 7,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
