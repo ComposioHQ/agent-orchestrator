@@ -40,6 +40,7 @@ const {
     list: vi.fn(),
     restore: vi.fn(),
     kill: vi.fn(),
+    killTree: vi.fn(),
     cleanup: vi.fn(),
     get: vi.fn(),
     spawn: vi.fn(),
@@ -319,6 +320,12 @@ beforeEach(async () => {
     return mockSessionManager.spawnOrchestrator(args);
   });
   mockSessionManager.kill.mockReset();
+  mockSessionManager.killTree.mockReset();
+  mockSessionManager.killTree.mockResolvedValue({
+    root: { cleaned: true, alreadyTerminated: false },
+    descendants: [],
+    errors: [],
+  });
   mockExec.mockReset();
   mockExecSilent.mockReset();
   // Default command availability:
@@ -1591,12 +1598,11 @@ describe("stop command", () => {
         runtimeHandle: { id: "tmux-3" },
       },
     ]);
-    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
     mockDashboardOnPort(3000);
 
     await program.parseAsync(["node", "test", "stop"]);
 
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-3", {
+    expect(mockSessionManager.killTree).toHaveBeenCalledWith("app-orchestrator-3", {
       purgeOpenCode: false,
     });
     const output = vi
@@ -1630,11 +1636,9 @@ describe("stop command", () => {
         runtimeHandle: { id: "tmux-2" },
       },
     ]);
-    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
-
     await program.parseAsync(["node", "test", "stop"]);
 
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
+    expect(mockSessionManager.killTree).toHaveBeenCalledWith("app-orchestrator", {
       purgeOpenCode: false,
     });
   });
@@ -1646,7 +1650,7 @@ describe("stop command", () => {
 
     await program.parseAsync(["node", "test", "stop"]);
 
-    expect(mockSessionManager.kill).not.toHaveBeenCalled();
+    expect(mockSessionManager.killTree).not.toHaveBeenCalled();
     const output = vi
       .mocked(console.log)
       .mock.calls.map((c) => c.join(" "))
@@ -1667,12 +1671,11 @@ describe("stop command", () => {
         runtimeHandle: { id: "tmux-1" },
       },
     ]);
-    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
     mockDashboardOnPort(3000);
 
     await program.parseAsync(["node", "test", "stop", "--purge-session"]);
 
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
+    expect(mockSessionManager.killTree).toHaveBeenCalledWith("app-orchestrator", {
       purgeOpenCode: true,
     });
   });
