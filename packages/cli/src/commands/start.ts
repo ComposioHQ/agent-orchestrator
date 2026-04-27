@@ -44,6 +44,7 @@ import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { exec, execSilent, git } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker, stopAllLifecycleWorkers } from "../lib/lifecycle-service.js";
+import { startBunTmpJanitor, stopBunTmpJanitor } from "../lib/bun-tmp-janitor.js";
 import {
   findWebDir,
   buildDashboardEnv,
@@ -1551,13 +1552,32 @@ export function registerStart(program: Command): void {
           });
           unlockStartup();
 
+          // Start the Bun-extracted /tmp/.*.{so,dylib} janitor once per AO
+          // process. Single-instance is enforced by running.json + the
+          // startup lock above, so this call site is reached at most once
+          // per process. The janitor uses an unref'd interval timer, so it
+          // does not keep the event loop alive on its own and dies with the
+          // process on SIGTERM/SIGINT.
+          startBunTmpJanitor({
+            onSweep: ({ removed, freedBytes, errors }) => {
+              if (removed > 0) {
+                console.info(
+                  `[bun-tmp-janitor] reclaimed ${removed} file(s) / ${freedBytes} bytes`,
+                );
+              }
+              if (errors > 0) {
+                console.warn(`[bun-tmp-janitor] sweep had ${errors} error(s)`);
+              }
+            },
+          });
+
           // Install shutdown handlers so `ao stop` (which sends SIGTERM to
           // this pid) flushes lifecycle health state before exit. Handlers
           // MUST call process.exit() — installing a SIGINT/SIGTERM listener
           // removes Node's default exit behavior, so without an explicit
           // exit the interval timer would keep the event loop alive.
           let shuttingDown = false;
-          const shutdown = (signal: NodeJS.Signals): void => {
+          const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
             if (shuttingDown) return;
             shuttingDown = true;
             try {
@@ -1565,10 +1585,21 @@ export function registerStart(program: Command): void {
             } catch {
               // Best-effort cleanup — never block shutdown on observability.
             }
+            try {
+              // Await the in-flight sweep so SIGTERM never exits while
+              // unlink() is mid-flight against the filesystem.
+              await stopBunTmpJanitor();
+            } catch {
+              // Best-effort cleanup.
+            }
             process.exit(signal === "SIGINT" ? 130 : 0);
           };
-          process.once("SIGINT", shutdown);
-          process.once("SIGTERM", shutdown);
+          process.once("SIGINT", (sig) => {
+            void shutdown(sig);
+          });
+          process.once("SIGTERM", (sig) => {
+            void shutdown(sig);
+          });
         } catch (err) {
           if (err instanceof Error) {
             console.error(chalk.red("\nError:"), err.message);

@@ -152,6 +152,16 @@ export {
 } from "./scm-webhook-utils.js";
 export { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 export {
+  OPENCODE_SESSION_LIST_CACHE_TTL_MS,
+  getOpenCodeTmpDir,
+  ensureOpenCodeTmpDir,
+  getOpenCodeChildEnv,
+  getCachedOpenCodeSessionList,
+  invalidateOpenCodeSessionListCache,
+  resetOpenCodeSessionListCache,
+} from "./opencode-shared.js";
+export type { OpenCodeSessionListEntry } from "./opencode-shared.js";
+export {
   getWorkspaceAgentsMdPath,
   writeWorkspaceOpenCodeAgentsMd,
 } from "./opencode-agents-md.js";

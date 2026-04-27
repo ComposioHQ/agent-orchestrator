@@ -75,6 +75,13 @@ import {
 } from "./paths.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import {
+  getCachedOpenCodeSessionList,
+  getOpenCodeChildEnv,
+  invalidateOpenCodeSessionListCache,
+  resetOpenCodeSessionListCache as resetSharedOpenCodeSessionListCache,
+  type OpenCodeSessionListEntry,
+} from "./opencode-shared.js";
+import {
   writeWorkspaceOpenCodeAgentsMd,
 } from "./opencode-agents-md.js";
 import { writeOpenCodeConfig } from "./opencode-config.js";
@@ -115,10 +122,15 @@ async function deleteOpenCodeSession(sessionId: string): Promise<void> {
     try {
       await execFileAsync("opencode", ["session", "delete", validatedSessionId], {
         timeout: 30_000,
+        env: getOpenCodeChildEnv(),
       });
+      // Drop cached list immediately so reuse / remap / restore call sites
+      // do not observe the deleted id for the remainder of the TTL window.
+      invalidateOpenCodeSessionListCache();
       return;
     } catch (err) {
       if (errorIncludesSessionNotFound(err)) {
+        invalidateOpenCodeSessionListCache();
         return;
       }
       lastError = err;
@@ -127,42 +139,15 @@ async function deleteOpenCodeSession(sessionId: string): Promise<void> {
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-interface OpenCodeSessionListEntry {
-  id: string;
-  title: string;
-  updatedAt?: number;
+/** Re-export so existing core test-utils + session-manager call sites keep working. */
+export function resetOpenCodeSessionListCache(): void {
+  resetSharedOpenCodeSessionListCache();
 }
 
 async function fetchOpenCodeSessionList(
-  timeoutMs = OPENCODE_DISCOVERY_TIMEOUT_MS,
+  timeoutMs: number = OPENCODE_DISCOVERY_TIMEOUT_MS,
 ): Promise<OpenCodeSessionListEntry[]> {
-  try {
-    const { stdout } = await execFileAsync("opencode", ["session", "list", "--format", "json"], {
-      timeout: timeoutMs,
-    });
-    const parsed = safeJsonParse<unknown>(stdout);
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed.flatMap((entry) => {
-      if (!entry || typeof entry !== "object") return [];
-      const title = typeof entry["title"] === "string" ? entry["title"] : "";
-      const id = asValidOpenCodeSessionId(entry["id"]);
-      if (!id) return [];
-      const rawUpdated = entry["updated"];
-      let updatedAt: number | undefined;
-      if (typeof rawUpdated === "number" && Number.isFinite(rawUpdated)) {
-        updatedAt = rawUpdated;
-      } else if (typeof rawUpdated === "string") {
-        const parsedUpdated = Date.parse(rawUpdated);
-        if (!Number.isNaN(parsedUpdated)) {
-          updatedAt = parsedUpdated;
-        }
-      }
-      return [{ id, title, ...(updatedAt !== undefined ? { updatedAt } : {}) }];
-    });
-  } catch {
-    return [];
-  }
+  return getCachedOpenCodeSessionList({ timeoutMs });
 }
 
 async function discoverOpenCodeSessionIdsByTitle(
