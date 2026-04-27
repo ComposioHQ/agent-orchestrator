@@ -549,7 +549,17 @@ function migrateProject(
   };
 
   // Collect all sessions across hash dirs
-  const allSessions = new Map<string, { metadata: Record<string, unknown>; sourcePath: string }>();
+  const allSessions = new Map<
+    string,
+    {
+      metadata: Record<string, unknown>;
+      sourcePath: string;
+      /** 12-hex prefix of the source hash dir; needed to alias duplicates. */
+      sourceHash: string;
+      /** Set when this entry is a renamed duplicate that lost the canonical id. */
+      renamedFrom?: string;
+    }
+  >();
 
   for (const hashDir of hashDirs) {
     const oldSessionsDir = join(hashDir.path, "sessions");
@@ -572,24 +582,61 @@ function migrateProject(
         continue;
       }
 
-      // Handle duplicate session IDs across hash dirs
+      // Handle duplicate session IDs across hash dirs.
+      //
+      // The multi-hash bug this PR cleans up made it possible for two
+      // unrelated `{hash}-{projectId}/sessions/` dirs to each carry an
+      // independently-numbered `ao-N` for the same project. Silently
+      // dropping the loser would lose work the user never marked
+      // terminal. Instead, rename the loser to
+      // `${sessionId}__from-${hash}` so both records survive in V2.
+      // The renamed copy is still a valid V2 sessionId
+      // (alphanum/underscore/hyphen) and never collides because the
+      // hash prefix is unique per V1 dir. We pick a "winner" using
+      // createdAt (newest first), then mtime, then path tiebreaker, so
+      // the most recent record keeps the canonical id.
       const existing = allSessions.get(sessionId);
       if (existing) {
         const existingCreated = new Date(String(existing.metadata["createdAt"] ?? "")).getTime() || 0;
         const newCreated = new Date(String(metadata["createdAt"] ?? "")).getTime() || 0;
-        // Tiebreaker: if timestamps are equal (both 0 or same date), prefer
-        // the file with the more recent mtime, then alphabetical source path.
         const newIsNewer = newCreated > existingCreated
           || (newCreated === existingCreated && fileMtime(filePath) > fileMtime(existing.sourcePath))
           || (newCreated === existingCreated && fileMtime(filePath) === fileMtime(existing.sourcePath) && filePath > existing.sourcePath);
+
         if (newIsNewer) {
-          log?.(`  [skip] duplicate session ${sessionId}: already migrated from another hash dir`);
-          allSessions.set(sessionId, { metadata, sourcePath: filePath });
+          // The new record wins the canonical id. Park the previous
+          // entry under a hash-suffixed alias before replacing it.
+          const loserHash = existing.sourceHash;
+          const loserAlias = `${sessionId}__from-${loserHash}`;
+          if (!allSessions.has(loserAlias)) {
+            allSessions.set(loserAlias, {
+              metadata: existing.metadata,
+              sourcePath: existing.sourcePath,
+              sourceHash: existing.sourceHash,
+              renamedFrom: sessionId,
+            });
+            log?.(`  [rename] duplicate session ${sessionId} from hash ${loserHash} → ${loserAlias}`);
+          } else {
+            log?.(`  [warn] could not park duplicate ${sessionId} under ${loserAlias}: alias already taken`);
+          }
+          allSessions.set(sessionId, { metadata, sourcePath: filePath, sourceHash: hashDir.hash });
         } else {
-          log?.(`  [skip] duplicate session ${sessionId}: already migrated from another hash dir`);
+          // The existing entry wins. Park THIS record under the alias.
+          const loserAlias = `${sessionId}__from-${hashDir.hash}`;
+          if (!allSessions.has(loserAlias)) {
+            allSessions.set(loserAlias, {
+              metadata,
+              sourcePath: filePath,
+              sourceHash: hashDir.hash,
+              renamedFrom: sessionId,
+            });
+            log?.(`  [rename] duplicate session ${sessionId} from hash ${hashDir.hash} → ${loserAlias}`);
+          } else {
+            log?.(`  [warn] could not park duplicate ${sessionId} under ${loserAlias}: alias already taken`);
+          }
         }
       } else {
-        allSessions.set(sessionId, { metadata, sourcePath: filePath });
+        allSessions.set(sessionId, { metadata, sourcePath: filePath, sourceHash: hashDir.hash });
       }
     }
 
@@ -597,8 +644,17 @@ function migrateProject(
     const oldArchiveDir = join(oldSessionsDir, "archive");
     if (existsSync(oldArchiveDir)) {
       for (const archiveFile of readdirSync(oldArchiveDir)) {
-        // Extract sessionId from archive filename: {sessionId}_{timestamp}...
-        const match = archiveFile.match(/^([a-zA-Z0-9_-]+?)_\d/);
+        // Extract sessionId from archive filename: `{sessionId}_{timestamp}[.json]`.
+        // Anchor on the timestamp suffix instead of a lazy prefix match —
+        // a lazy `[a-zA-Z0-9_-]+?` stops at the first `_<digit>`, so a
+        // session like `team_1-7` would be captured as `team` and the
+        // archive would be flattened under the wrong sessionId, silently
+        // overwriting another session's record.
+        // Compact form: 20260420T143052Z. Legacy form: 2026-04-20T14:30:52.000Z
+        // (the colon-and-dot legacy format predates the compact rewrite).
+        const match = archiveFile.match(
+          /^(.+)_(\d{8}T\d{6}Z|\d{4}-\d{2}-\d{2}T[\d:.\-]+Z)(?:\.json)?$/,
+        );
         if (!match?.[1]) continue;
         const archivedSessionId = match[1];
 
@@ -671,9 +727,17 @@ function migrateProject(
   }
 
   // Write all sessions to sessions/ (including orchestrators — runtime reads from sessions/)
-  for (const [sessionId, { metadata }] of allSessions) {
-    // Update worktree path to new V2 location — only if the worktree was actually moved
-    if (typeof metadata["worktree"] === "string" && metadata["worktree"]) {
+  for (const [sessionId, { metadata, renamedFrom }] of allSessions) {
+    // Renamed (loser-of-conflict) entries are preserved for inspection
+    // only — their V1 worktree was clobbered by the canonical entry's
+    // move (workspace dirs are keyed on the un-aliased sessionId). Keep
+    // the metadata pointing at the V1 worktree path so the user can
+    // still locate the original directory under its `.migrated` parent.
+    if (
+      !renamedFrom &&
+      typeof metadata["worktree"] === "string" &&
+      metadata["worktree"]
+    ) {
       const oldWorktreePath = metadata["worktree"];
       const newWorktreePath = join(worktreesDir, sessionId);
       if (existsSync(newWorktreePath) || dryRun) {
@@ -1382,7 +1446,12 @@ function countPostMigrationSessions(
     if (!existsSync(oldArchiveDir)) continue;
     for (const file of readdirSync(oldArchiveDir)) {
       if (file.startsWith(".")) continue;
-      const match = file.match(/^([a-zA-Z0-9_-]+?)_\d/);
+      // Same anchor-on-timestamp pattern as the archive flattening loop;
+      // the lazy `[a-zA-Z0-9_-]+?_\d` mismatched any sessionId containing
+      // `_<digit>` (e.g. `team_1-7`).
+      const match = file.match(
+        /^(.+)_(\d{8}T\d{6}Z|\d{4}-\d{2}-\d{2}T[\d:.\-]+Z)(?:\.json)?$/,
+      );
       if (match?.[1]) {
         migratedSessionIds.add(match[1]);
       }

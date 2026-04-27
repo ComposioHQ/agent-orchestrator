@@ -1381,6 +1381,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         branch,
         status: deriveLegacyStatus(lifecycle),
         ...buildLifecycleMetadataPatch(lifecycle),
+        // Override stringified lifecycle/runtimeHandle from the patch
+        // with their canonical object forms. `buildLifecycleMetadataPatch`
+        // produces `Partial<Record<string, string>>` for the
+        // updateMetadata/mutateMetadata path; spreading it directly into
+        // a typed `SessionMetadata` literal silently widens the
+        // `lifecycle`/`runtimeHandle` fields to strings, which then get
+        // re-encoded by `JSON.stringify` and rejected by
+        // `parseLifecycleField` on the next read.
+        lifecycle,
         tmuxName, // Store tmux name for mapping
         issue: spawnConfig.issueId,
         project: spawnConfig.projectId,
@@ -1720,6 +1729,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         branch,
         status: deriveLegacyStatus(lifecycle),
         ...buildLifecycleMetadataPatch(lifecycle),
+        // Object overrides for the typed writeMetadata path —
+        // see the spawnSession site for the rationale.
+        lifecycle,
         role: "orchestrator",
         tmuxName,
         project: orchestratorConfig.projectId,

@@ -476,13 +476,15 @@ describe("migrateStorage", () => {
     );
   });
 
-  it("handles duplicate session IDs across hash dirs — older is skipped", async () => {
+  it("handles duplicate session IDs across hash dirs — newer keeps the canonical id, older is renamed", async () => {
     const hash1 = join(aoBaseDir, "aaaaaaaaaaaa-myproject");
     const hash2 = join(aoBaseDir, "bbbbbbbbbbbb-myproject");
     mkdirSync(join(hash1, "sessions"), { recursive: true });
     mkdirSync(join(hash2, "sessions"), { recursive: true });
 
-    // Same session ID, different timestamps — newer wins
+    // Same session ID, different timestamps. Both records must
+    // survive in V2 — the newer one keeps `ao-1`, the older is
+    // renamed to `ao-1__from-{hash}` so no work is silently lost.
     writeFileSync(
       join(hash1, "sessions", "ao-1"),
       "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
@@ -500,16 +502,22 @@ describe("migrateStorage", () => {
       log: (msg) => logs.push(msg),
     });
 
-    expect(result.sessions).toBe(1);
+    expect(result.sessions).toBe(2);
 
-    // The newer session should be kept
-    const session = JSON.parse(
-      readFileSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"), "utf-8"),
-    );
-    expect(session.createdAt).toBe("2026-04-21T14:00:00.000Z");
+    // The newer session keeps the canonical id.
+    const sessionsDir = join(aoBaseDir, "projects", "myproject", "sessions");
+    const canonical = JSON.parse(readFileSync(join(sessionsDir, "ao-1.json"), "utf-8"));
+    expect(canonical.createdAt).toBe("2026-04-21T14:00:00.000Z");
 
-    // Older duplicate should be skipped with a log message
-    expect(logs.some((l) => l.includes("[skip] duplicate session ao-1"))).toBe(true);
+    // The older duplicate is preserved under a hash-suffixed alias
+    // (the loser was hash1 = aaaaaaaaaaaa).
+    const aliasPath = join(sessionsDir, "ao-1__from-aaaaaaaaaaaa.json");
+    expect(existsSync(aliasPath)).toBe(true);
+    const aliased = JSON.parse(readFileSync(aliasPath, "utf-8"));
+    expect(aliased.createdAt).toBe("2026-04-21T12:00:00.000Z");
+
+    // The rename should be logged so the user can audit it.
+    expect(logs.some((l) => l.includes("[rename] duplicate session ao-1"))).toBe(true);
   });
 
   it("deletes empty hash directories", async () => {
@@ -1399,13 +1407,13 @@ describe("migration edge cases", () => {
     expect(meta!.status).toBe("working");
   });
 
-  it("duplicate sessions across hash dirs are skipped, not archived", async () => {
+  it("duplicate sessions across hash dirs are renamed to a hash-suffixed alias, not archived", async () => {
     const hash1 = join(aoBaseDir, "aaaaaaaaaaaa-myproject");
     const hash2 = join(aoBaseDir, "bbbbbbbbbbbb-myproject");
     mkdirSync(join(hash1, "sessions"), { recursive: true });
     mkdirSync(join(hash2, "sessions"), { recursive: true });
 
-    // Same session ID in both hash dirs
+    // Same session ID in both hash dirs.
     writeFileSync(
       join(hash1, "sessions", "ao-1"),
       "project=myproject\ncreatedAt=2026-04-21T10:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
@@ -1423,20 +1431,27 @@ describe("migration edge cases", () => {
       log: (msg) => logs.push(msg),
     });
 
-    // Only one session should be written (the newer one)
-    expect(result.sessions).toBe(1);
+    // BOTH sessions are preserved — the newer keeps the canonical id,
+    // the older lands under `ao-1__from-{loserHash}`.
+    expect(result.sessions).toBe(2);
 
-    // No archive directory should exist
-    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "archive"))).toBe(false);
+    const sessionsDir = join(aoBaseDir, "projects", "myproject", "sessions");
 
-    // Duplicate should be logged as skipped
-    expect(logs.some((l) => l.includes("[skip] duplicate session ao-1"))).toBe(true);
+    // Archive directory must NOT be re-created.
+    expect(existsSync(join(sessionsDir, "archive"))).toBe(false);
 
-    // The newer session should be kept
-    const session = JSON.parse(
-      readFileSync(join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json"), "utf-8"),
+    // Rename should be logged so the user can audit it.
+    expect(logs.some((l) => l.includes("[rename] duplicate session ao-1"))).toBe(true);
+
+    // Newer session keeps `ao-1`.
+    const canonical = JSON.parse(readFileSync(join(sessionsDir, "ao-1.json"), "utf-8"));
+    expect(canonical.createdAt).toBe("2026-04-21T12:00:00.000Z");
+
+    // Older session is preserved under the alias suffix.
+    const alias = JSON.parse(
+      readFileSync(join(sessionsDir, "ao-1__from-aaaaaaaaaaaa.json"), "utf-8"),
     );
-    expect(session.createdAt).toBe("2026-04-21T12:00:00.000Z");
+    expect(alias.createdAt).toBe("2026-04-21T10:00:00.000Z");
   });
 
   it("moves stray worktrees from nested ~/.worktrees/{projectId}/{sessionId}/ layout", async () => {

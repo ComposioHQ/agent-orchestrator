@@ -11,6 +11,7 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
+import { atomicWriteFileSync } from "@aoagents/ao-core";
 
 export interface RunningState {
   pid: number;
@@ -170,7 +171,10 @@ function writeState(state: RunningState | null): void {
   if (state === null) {
     try { unlinkSync(STATE_FILE); } catch { /* file may not exist */ }
   } else {
-    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+    // Atomic temp+rename so a crash mid-write cannot leave torn JSON
+    // that makes `getRunning()` silently return `null` and orphan a
+    // still-alive AO process from later CLI commands.
+    atomicWriteFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   }
 }
 
@@ -296,7 +300,10 @@ export async function waitForExit(pid: number, timeoutMs = 5000): Promise<boolea
 export async function writeLastStop(state: LastStopState): Promise<void> {
   const release = await acquireLock(LAST_STOP_LOCK_FILE, 5000, "last-stop.json lock");
   try {
-    writeFileSync(LAST_STOP_FILE, JSON.stringify(state, null, 2), "utf-8");
+    // Atomic temp+rename so a crash mid-write cannot leave torn JSON
+    // that makes `readLastStop()` silently return `null` and lose the
+    // restore prompt for sessions the user just stopped.
+    atomicWriteFileSync(LAST_STOP_FILE, JSON.stringify(state, null, 2));
   } finally {
     release();
   }

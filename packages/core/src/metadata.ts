@@ -252,10 +252,13 @@ export function writeMetadata(
   const data: Record<string, unknown> = {
     worktree: metadata.worktree,
     branch: metadata.branch,
-    // Only persist status for pre-lifecycle sessions; lifecycle sessions derive it on read.
-    // Check for object type specifically — buildLifecycleMetadataPatch spreads lifecycle as
-    // a JSON string, which should still trigger status persistence as a safety net.
-    ...(typeof metadata.lifecycle === "object" && metadata.lifecycle !== null ? {} : { status: metadata.status }),
+    // Only persist status for pre-lifecycle sessions; lifecycle sessions
+    // derive it on read via deriveLegacyStatus(lifecycle). Callers that
+    // build the metadata literal must pass `lifecycle` as the typed
+    // object (not a JSON string) — see the writeMetadata sites in
+    // session-manager that override the buildLifecycleMetadataPatch
+    // spread with the object form.
+    ...(metadata.lifecycle ? {} : { status: metadata.status }),
   };
 
   if (metadata.tmuxName) data["tmuxName"] = metadata.tmuxName;

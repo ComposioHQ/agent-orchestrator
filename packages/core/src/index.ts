@@ -356,3 +356,5 @@ export type {
   RollbackOptions,
   HashDirEntry,
 } from "./migration/storage-v2.js";
+
+export { atomicWriteFileSync } from "./atomic-write.js";
