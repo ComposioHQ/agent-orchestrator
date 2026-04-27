@@ -33,6 +33,7 @@ import {
   ConfigNotFoundError,
   loadLocalProjectConfigDetailed,
   registerProjectInGlobalConfig,
+  repairWrappedLocalProjectConfig,
   getAoBaseDir,
   getGlobalConfigPath,
   inventoryHashDirs,
@@ -1595,9 +1596,12 @@ export function registerStart(program: Command): void {
             if (existingId) {
               resolvedId = existingId;
             } else if (isRepoUrl(projectArg!)) {
-              // handleUrlStart clones into a new dir and writes a local
-              // agent-orchestrator.yaml. Re-register against the global
-              // config so the running daemon's dashboard can see it.
+              // handleUrlStart clones into a new dir and writes a wrapped
+              // (legacy `projects:`) agent-orchestrator.yaml. Register the
+              // project against the global config so the dashboard sees it,
+              // then convert the wrapped local config to the flat format
+              // the new resolver expects — otherwise loadConfig moves the
+              // project into degradedProjects and the dashboard 404s.
               const result = await handleUrlStart(projectArg!);
               const lookup = await resolveProjectByRepo(result.config, result.parsed);
               const localProject = result.config.projects[lookup.projectId];
@@ -1614,6 +1618,11 @@ export function registerStart(program: Command): void {
                 },
                 globalConfigPath,
               );
+              try {
+                repairWrappedLocalProjectConfig(resolvedId, localProject.path);
+              } catch {
+                /* repair is best-effort — defaults will fill in if behavior is missing */
+              }
             } else {
               const resolvedPath = resolve(
                 projectArg!.replace(/^~/, process.env["HOME"] || ""),
