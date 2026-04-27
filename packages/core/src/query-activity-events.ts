@@ -107,7 +107,7 @@ export function queryActivityEvents(filter: ActivityEventFilter = {}): ActivityE
  * Returns [] if DB is unavailable or search fails.
  * projectId filter is pushed into SQL so it applies before the LIMIT.
  */
-export function searchActivityEvents(rawQuery: string, projectId?: string): ActivityEvent[] {
+export function searchActivityEvents(rawQuery: string, projectId?: string, limit = 100): ActivityEvent[] {
   const db = getDb();
   if (!db) return [];
 
@@ -117,8 +117,10 @@ export function searchActivityEvents(rawQuery: string, projectId?: string): Acti
   const ftsQuery = tokens.join(" AND ");
 
   const projectFilter = projectId ? "AND ae.project_id = ?" : "";
+  const clampedLimit = Math.min(limit, 1000);
   const params: unknown[] = [ftsQuery];
   if (projectId) params.push(projectId);
+  params.push(clampedLimit);
 
   try {
     const rows = db
@@ -127,7 +129,7 @@ export function searchActivityEvents(rawQuery: string, projectId?: string): Acti
          JOIN activity_events_fts fts ON fts.rowid = ae.id
          WHERE fts MATCH ? ${projectFilter}
          ORDER BY ae.ts_epoch DESC
-         LIMIT 100`,
+         LIMIT ?`,
       )
       .all(...params) as Record<string, unknown>[];
     return rows.map(rowToEvent);

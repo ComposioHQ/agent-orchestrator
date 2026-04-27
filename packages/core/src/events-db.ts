@@ -77,6 +77,8 @@ function openDb(): BetterSqlite3Database {
 
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 3000");
+  // WAL + NORMAL gives one checkpoint window of exposure (acceptable for a diagnostic log)
+  db.pragma("synchronous = NORMAL");
 
   const version = db.pragma("user_version", { simple: true }) as number;
   if (version < 1) {
@@ -101,8 +103,10 @@ export function getDb(): BetterSqlite3Database | null {
   try {
     _db = openDb();
     return _db;
-  } catch {
+  } catch (err) {
     _dbFailed = true;
+    // Log once so operators know events are being dropped; subsequent calls return null silently.
+    console.warn("[ao] activity-events DB unavailable — events will be dropped:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

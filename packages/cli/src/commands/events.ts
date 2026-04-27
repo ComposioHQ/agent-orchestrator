@@ -23,13 +23,15 @@ function formatRow(ev: ActivityEvent): string {
   const ts = new Date(ev.tsEpoch).toLocaleTimeString();
   const session = ev.sessionId ? ev.sessionId.slice(0, 12) : "—";
   const kind = chalk.cyan(ev.kind.padEnd(22));
+  // Pad raw string before chalk-wrapping: chalk adds ANSI codes that inflate .length
+  const levelLabel = ev.level.padEnd(5);
   const level =
     ev.level === "error"
-      ? chalk.red(ev.level)
+      ? chalk.red(levelLabel)
       : ev.level === "warn"
-        ? chalk.yellow(ev.level)
-        : chalk.gray(ev.level);
-  return `${chalk.dim(ts)}  ${kind}  ${level.padEnd(9)}  ${chalk.dim(session)}  ${ev.summary}`;
+        ? chalk.yellow(levelLabel)
+        : chalk.gray(levelLabel);
+  return `${chalk.dim(ts)}  ${kind}  ${level}  ${chalk.dim(session)}  ${ev.summary}`;
 }
 
 async function loadCfg() {
@@ -102,9 +104,11 @@ export function registerEvents(program: Command): void {
     .command("search <query>")
     .description("Full-text search across event summaries and data")
     .option("-p, --project <id>", "Filter by project ID")
+    .option("-n, --limit <n>", "Max results", "100")
     .option("--json", "Output as JSON")
     .action(async (query: string, opts: Record<string, string | undefined>) => {
-      const results = searchActivityEvents(query, opts["project"]);
+      const limit = parseInt(opts["limit"] ?? "100", 10);
+      const results = searchActivityEvents(query, opts["project"], limit);
 
       if (opts["json"]) {
         console.log(JSON.stringify(results, null, 2));

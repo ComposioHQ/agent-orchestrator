@@ -18,7 +18,6 @@ export type ActivityEventKind =
   | "session.spawned"
   | "session.spawn_failed"
   | "session.killed"
-  | "session.cleanup"
   | "activity.transition"
   | "lifecycle.transition"
   | "ci.failing"
@@ -56,17 +55,13 @@ export function droppedEventCount(): number {
   return _droppedEventCount;
 }
 
-// Patterns that indicate sensitive field names
+// Patterns that indicate sensitive field names (top-level keys only)
 const SENSITIVE_KEY_RE = /token|password|secret|authorization|cookie|api[-_]?key/i;
-
-function redactValue(value: unknown): unknown {
-  return value;
-}
 
 function sanitizeData(data: Record<string, unknown>): string | undefined {
   const cleaned: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) {
-    cleaned[k] = SENSITIVE_KEY_RE.test(k) ? "[redacted]" : redactValue(v);
+    cleaned[k] = SENSITIVE_KEY_RE.test(k) ? "[redacted]" : v;
   }
 
   let json: string;
