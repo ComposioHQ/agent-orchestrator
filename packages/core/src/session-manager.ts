@@ -11,7 +11,8 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
+import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
+import { recordActivityEvent } from "./activity-events.js";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -1085,6 +1086,22 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
   // Define methods as local functions so `this` is not needed
   async function spawn(spawnConfig: SessionSpawnConfig): Promise<Session> {
+    try {
+      return await _spawnInner(spawnConfig);
+    } catch (err) {
+      recordActivityEvent({
+        projectId: spawnConfig.projectId,
+        source: "session-manager",
+        kind: "session.spawn_failed",
+        level: "error",
+        summary: `spawn failed`,
+        data: { reason: err instanceof Error ? err.message : String(err) },
+      });
+      throw err;
+    }
+  }
+
+  async function _spawnInner(spawnConfig: SessionSpawnConfig): Promise<Session> {
     const project = config.projects[spawnConfig.projectId];
     if (!project) {
       throw new Error(`Unknown project: ${spawnConfig.projectId}`);
@@ -1477,6 +1494,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       updateMetadata(sessionsDir, sessionId, session.metadata);
       invalidateCache();
     }
+
+    recordActivityEvent({
+      projectId: spawnConfig.projectId,
+      sessionId,
+      source: "session-manager",
+      kind: "session.spawned",
+      summary: `spawned: ${sessionId}`,
+      data: { agent: plugins.agent.name, branch: session.branch ?? undefined },
+    });
 
     return session;
   }
@@ -2134,6 +2160,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
 
     invalidateCache();
+    if (didPurgeOpenCodeSession) {
+      markArchivedOpenCodeCleanup(sessionsDir, sessionId);
+    }
+    recordActivityEvent({
+      projectId,
+      sessionId,
+      source: "session-manager",
+      kind: "session.killed",
+      summary: `killed: ${sessionId}`,
+      data: { reason: killReason },
+    });
     return { cleaned: true, alreadyTerminated: false };
   }
 
