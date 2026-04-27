@@ -49,6 +49,9 @@ export interface ActivityEvent {
 }
 
 let _droppedEventCount = 0;
+let _lastPruneMs = 0;
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /** Number of events dropped due to DB errors in this process. */
 export function droppedEventCount(): number {
@@ -57,11 +60,19 @@ export function droppedEventCount(): number {
 
 // Patterns that indicate sensitive field names (top-level keys only)
 const SENSITIVE_KEY_RE = /token|password|secret|authorization|cookie|api[-_]?key/i;
+// URL credentials: https://token@host or http://user:pass@host
+const CREDENTIAL_URL_RE = /https?:\/\/[^@\s]+@/g;
 
 function sanitizeData(data: Record<string, unknown>): string | undefined {
   const cleaned: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) {
-    cleaned[k] = SENSITIVE_KEY_RE.test(k) ? "[redacted]" : v;
+    if (SENSITIVE_KEY_RE.test(k)) {
+      cleaned[k] = "[redacted]";
+    } else if (typeof v === "string") {
+      cleaned[k] = v.replace(CREDENTIAL_URL_RE, "https://[redacted]@");
+    } else {
+      cleaned[k] = v;
+    }
   }
 
   let json: string;
@@ -117,6 +128,11 @@ export function recordActivityEvent(event: ActivityEventInput): void {
       summary,
       data ?? null,
     );
+    // Periodically purge old events so long-lived processes don't grow the DB indefinitely
+    if (now - _lastPruneMs >= PRUNE_INTERVAL_MS) {
+      _lastPruneMs = now;
+      db.prepare("DELETE FROM activity_events WHERE ts_epoch < ?").run(now - RETENTION_MS);
+    }
   } catch {
     _droppedEventCount++;
   }

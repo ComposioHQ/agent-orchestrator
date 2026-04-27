@@ -127,8 +127,8 @@ export function searchActivityEvents(rawQuery: string, projectId?: string, limit
     const rows = db
       .prepare(
         `SELECT ae.* FROM activity_events ae
-         JOIN activity_events_fts fts ON fts.rowid = ae.id
-         WHERE fts MATCH ? ${projectFilter}
+         JOIN activity_events_fts ON activity_events_fts.rowid = ae.id
+         WHERE activity_events_fts MATCH ? ${projectFilter}
          ORDER BY ae.ts_epoch DESC
          LIMIT ?`,
       )
