@@ -1,0 +1,1338 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PR #1466 Behavior Dashboard - Agent Orchestrator</title>
+    <style>
+      :root {
+        --ink: #17211d;
+        --muted: #66736d;
+        --paper: #f7f0e3;
+        --panel: #fffdf8;
+        --line: #d9cdb7;
+        --green: #176b48;
+        --green-soft: #dceee4;
+        --blue: #275d8f;
+        --blue-soft: #deebf6;
+        --red: #9c412f;
+        --red-soft: #f4ded6;
+        --gold: #a87316;
+        --gold-soft: #f3e4bf;
+        --shadow: 0 24px 70px rgba(36, 28, 18, 0.14);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 16% 8%, rgba(23, 107, 72, 0.16), transparent 32rem),
+          radial-gradient(circle at 86% 2%, rgba(39, 93, 143, 0.13), transparent 31rem),
+          linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 38%),
+          var(--paper);
+        font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+        line-height: 1.45;
+      }
+
+      body::before {
+        content: "";
+        pointer-events: none;
+        position: fixed;
+        inset: 0;
+        opacity: 0.18;
+        background-image:
+          linear-gradient(rgba(23, 33, 29, 0.05) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(23, 33, 29, 0.045) 1px, transparent 1px);
+        background-size: 30px 30px;
+        mask-image: linear-gradient(to bottom, black, transparent 78%);
+      }
+
+      main {
+        position: relative;
+        max-width: 1220px;
+        margin: 0 auto;
+        padding: 44px 28px 72px;
+      }
+
+      .panel,
+      .hero-card,
+      .brief,
+      .matrix,
+      .summary {
+        background: rgba(255, 253, 248, 0.88);
+        border: 1px solid rgba(92, 76, 48, 0.24);
+        border-radius: 10px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.18fr) 390px;
+        gap: 24px;
+        align-items: stretch;
+      }
+
+      .hero-card {
+        position: relative;
+        overflow: hidden;
+        min-height: 450px;
+        padding: 44px;
+      }
+
+      .hero-card::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(90deg, transparent 0 67%, rgba(23, 107, 72, 0.12) 67% 68%, transparent 68%),
+          linear-gradient(0deg, transparent 0 77%, rgba(168, 115, 22, 0.12) 77% 78%, transparent 78%);
+      }
+
+      .hero-card > * {
+        position: relative;
+        z-index: 1;
+      }
+
+      .kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 34px;
+        color: var(--green);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .kicker::before {
+        content: "";
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--green);
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        font-weight: 500;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        max-width: 780px;
+        font-size: clamp(48px, 7vw, 88px);
+        line-height: 0.94;
+      }
+
+      .subtitle {
+        max-width: 730px;
+        margin: 28px 0 0;
+        color: #44514b;
+        font-size: 19px;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 34px;
+      }
+
+      code,
+      .chip {
+        font-family: "SFMono-Regular", Consolas, monospace;
+      }
+
+      code {
+        padding: 2px 5px;
+        border-radius: 5px;
+        background: rgba(23, 33, 29, 0.08);
+      }
+
+      .chip {
+        display: inline-flex;
+        min-height: 34px;
+        align-items: center;
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.54);
+        color: #39463f;
+        font-size: 12px;
+      }
+
+      .brief {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 28px;
+      }
+
+      .brief h2 {
+        font-size: 31px;
+      }
+
+      .brief p,
+      .note,
+      .panel p,
+      .summary p {
+        color: var(--muted);
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 22px;
+      }
+
+      .metric {
+        min-height: 112px;
+        padding: 17px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fffaf0;
+      }
+
+      .metric strong {
+        display: block;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 34px;
+        line-height: 1;
+        font-weight: 500;
+      }
+
+      .metric span {
+        display: block;
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      section {
+        margin-top: 54px;
+      }
+
+      .section-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 24px;
+        margin-bottom: 18px;
+      }
+
+      .section-head h2 {
+        font-size: 42px;
+      }
+
+      .note {
+        max-width: 470px;
+        margin: 0;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .grid.three {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .panel {
+        padding: 24px;
+      }
+
+      .panel h3 {
+        font-size: 26px;
+      }
+
+      .tag {
+        display: inline-flex;
+        margin-bottom: 15px;
+        padding: 6px 9px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .tag.green {
+        color: var(--green);
+        background: var(--green-soft);
+      }
+
+      .tag.blue {
+        color: var(--blue);
+        background: var(--blue-soft);
+      }
+
+      .tag.red {
+        color: var(--red);
+        background: var(--red-soft);
+      }
+
+      .tag.gold {
+        color: var(--gold);
+        background: var(--gold-soft);
+      }
+
+      .compare {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin-top: 18px;
+      }
+
+      .side {
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.5);
+      }
+
+      .side b {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        color: #4a574f;
+      }
+
+      li + li {
+        margin-top: 7px;
+      }
+
+      .matrix {
+        overflow: hidden;
+      }
+
+      .matrix h3 {
+        padding: 24px 24px 0;
+        font-size: 30px;
+      }
+
+      table {
+        width: 100%;
+        margin-top: 18px;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        vertical-align: top;
+        padding: 18px 20px;
+        border-top: 1px solid var(--line);
+        text-align: left;
+      }
+
+      th {
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      td:first-child {
+        width: 180px;
+        font-weight: 800;
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .step {
+        min-height: 138px;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fffaf0;
+      }
+
+      .num {
+        display: inline-grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        margin-bottom: 12px;
+        border-radius: 50%;
+        background: #202824;
+        color: white;
+        font-family: Georgia, "Times New Roman", serif;
+      }
+
+      .step b {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .step span:not(.num) {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .storage-map {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 18px;
+        align-items: stretch;
+      }
+
+      .tree-card {
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+        min-height: 100%;
+      }
+
+      pre.tree {
+        overflow: auto;
+        margin: 18px 0 0;
+        padding: 18px;
+        border: 1px solid rgba(23, 33, 29, 0.14);
+        border-radius: 8px;
+        background: #1d2722;
+        color: #f5ead6;
+        font-family: "SFMono-Regular", Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.62;
+        white-space: pre;
+      }
+
+      .ledger {
+        display: grid;
+        grid-template-columns: 180px 1fr 1fr;
+        gap: 0;
+        overflow: hidden;
+        margin-top: 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.48);
+      }
+
+      .ledger > div {
+        padding: 16px;
+        border-top: 1px solid var(--line);
+      }
+
+      .ledger > div:nth-child(-n + 3) {
+        border-top: 0;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+
+      .ledger > div:nth-child(3n + 1) {
+        font-weight: 800;
+      }
+
+      .evidence {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .evidence-item {
+        padding: 15px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fffaf0;
+      }
+
+      .evidence-item b {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .evidence-item span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .loc {
+        display: grid;
+        grid-template-columns: 430px 1fr;
+        gap: 18px;
+      }
+
+      .bars {
+        display: grid;
+        gap: 14px;
+        margin-top: 20px;
+      }
+
+      .bar-row {
+        display: grid;
+        grid-template-columns: 160px 1fr 112px;
+        gap: 12px;
+        align-items: center;
+        font-size: 13px;
+      }
+
+      .bar-row label {
+        font-weight: 800;
+      }
+
+      .track {
+        height: 13px;
+        overflow: hidden;
+        border: 1px solid rgba(23, 33, 29, 0.12);
+        border-radius: 999px;
+        background: rgba(23, 33, 29, 0.08);
+      }
+
+      .bar {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--green), var(--blue));
+      }
+
+      .delta {
+        color: var(--green);
+        font-family: "SFMono-Regular", Consolas, monospace;
+      }
+
+      .summary {
+        display: grid;
+        grid-template-columns: 0.95fr 1.05fr;
+        gap: 26px;
+        padding: 30px;
+      }
+
+      .summary h2 {
+        font-size: 38px;
+      }
+
+      .verdict {
+        display: grid;
+        gap: 12px;
+      }
+
+      .verdict-item {
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.52);
+      }
+
+      .verdict-item b {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .verdict-item span {
+        color: var(--muted);
+      }
+
+      footer {
+        margin-top: 44px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 980px) {
+        main {
+          padding: 24px 16px 54px;
+        }
+
+        .hero,
+        .grid,
+        .grid.three,
+        .compare,
+        .flow,
+        .storage-map,
+        .ledger,
+        .evidence,
+        .loc,
+        .summary,
+        .section-head {
+          display: grid;
+          grid-template-columns: 1fr;
+        }
+
+        .bar-row {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-card {
+          padding: 30px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero" aria-labelledby="title">
+        <div class="hero-card">
+          <p class="kicker">PR #1466 board brief</p>
+          <h1 id="title">Storage V2 lands with hashed identity, migration tooling, and broader stop recovery.</h1>
+          <p class="subtitle">
+            Replaces hash-based storage with <code>projects/{projectId}</code>, introduces
+            deterministic hashed project IDs, removes the storageKey system, adds crash-safe
+            migration with rollback, and makes <code>ao stop</code>/<code>ao start</code> recoverable.
+          </p>
+          <div class="chips" aria-label="Compared refs">
+            <span class="chip">Base: upstream/main</span>
+            <span class="chip">Head: storage-redesign</span>
+            <span class="chip">Diff: +6,481 / -2,421</span>
+          </div>
+        </div>
+
+        <aside class="brief">
+          <div>
+            <h2>Executive readout</h2>
+            <p>
+              Introduces JSON metadata, <code>projects/{projectId}</code> storage with deterministic
+              hashed IDs, a crash-safe migration/rollback command, archiving removal, and a
+              restore-on-next-start flow after <code>ao stop</code>. Fully removes the storageKey system.
+              Adds cross-project CLI support, stale runtime reconciliation, graceful Ctrl+C shutdown,
+              and fixes dashboard sidebar scoping.
+            </p>
+          </div>
+          <div class="metrics">
+            <div class="metric"><strong>90</strong><span>files changed</span></div>
+            <div class="metric"><strong>+4,060</strong><span>net LOC</span></div>
+            <div class="metric"><strong>+6,481</strong><span>insertions</span></div>
+            <div class="metric"><strong>-2,421</strong><span>deletions</span></div>
+          </div>
+        </aside>
+      </section>
+
+      <section aria-labelledby="start-stop">
+        <div class="section-head">
+          <h2 id="start-stop">1. Start and Stop</h2>
+          <p class="note">
+            The corrected direction shows <code>ao stop</code> becoming broader, and
+            <code>ao start</code> gaining a restore prompt for sessions stopped previously.
+          </p>
+        </div>
+
+        <div class="grid">
+          <article class="panel">
+            <span class="tag green">ao start</span>
+            <h3>Startup now offers to restore stopped sessions</h3>
+            <div class="compare">
+              <div class="side">
+                <b>Before, upstream/main</b>
+                <ul>
+                  <li>Started dashboard, lifecycle worker, and ensured the orchestrator.</li>
+                  <li>No <code>last-stop.json</code> recovery prompt after startup.</li>
+                  <li>Already-running flow offered open, new orchestrator, restart, or quit.</li>
+                </ul>
+              </div>
+              <div class="side">
+                <b>After, PR head</b>
+                <ul>
+                  <li>Still starts dashboard, lifecycle worker, and orchestrator.</li>
+                  <li>Reads <code>last-stop.json</code> including <code>otherProjects</code> field.</li>
+                  <li>Prompts to restore ALL sessions — current project and cross-project.</li>
+                  <li>Loads global config for cross-project session manager access.</li>
+                  <li>Skips restoring the orchestrator when already restored by <code>ensureOrchestrator()</code>.</li>
+                </ul>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <span class="tag red">ao stop</span>
+            <h3>Stop now tears down all sessions across all projects</h3>
+            <div class="compare">
+              <div class="side">
+                <b>Before, upstream/main</b>
+                <ul>
+                  <li>Located the most recently active orchestrator session.</li>
+                  <li>Killed only that orchestrator session.</li>
+                  <li>Stopped dashboard and unregistered <code>running.json</code>.</li>
+                  <li>Only saw sessions from the local config (1 project).</li>
+                </ul>
+              </div>
+              <div class="side">
+                <b>After, PR head</b>
+                <ul>
+                  <li>Loads global config to see ALL registered projects.</li>
+                  <li><code>ao stop</code> (no args): kills all sessions across all projects, stops parent process and dashboard.</li>
+                  <li><code>ao stop &lt;project&gt;</code>: kills only that project's sessions, parent process and dashboard stay alive.</li>
+                  <li>Records killed IDs to <code>last-stop.json</code> with <code>otherProjects</code> field for cross-project restore.</li>
+                  <li>Groups killed sessions by project in output display.</li>
+                </ul>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <span class="tag green">Ctrl+C</span>
+            <h3>Ctrl+C performs full graceful shutdown</h3>
+            <div class="compare">
+              <div class="side">
+                <b>Before, upstream/main</b>
+                <ul>
+                  <li>Stopped lifecycle workers and exited immediately.</li>
+                  <li>Left sessions alive in tmux as orphans.</li>
+                  <li>No <code>last-stop.json</code> recorded.</li>
+                  <li><code>running.json</code> left stale (auto-pruned on next read).</li>
+                </ul>
+              </div>
+              <div class="side">
+                <b>After, PR head</b>
+                <ul>
+                  <li>Mirrors <code>ao stop</code>: kills all sessions, writes <code>last-stop.json</code>, unregisters.</li>
+                  <li>10s hard timeout ensures exit even if cleanup hangs.</li>
+                  <li>Next <code>ao start</code> can restore sessions that were killed.</li>
+                </ul>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section aria-labelledby="buttons">
+        <div class="section-head">
+          <h2 id="buttons">2. Kill and Restore Buttons</h2>
+          <p class="note">
+            The web endpoints still call the same session-manager methods, but the PR changes
+            metadata lifecycle semantics underneath those actions.
+          </p>
+        </div>
+
+        <div class="matrix">
+          <h3>Dashboard action behavior</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Before, upstream/main</th>
+                <th>After, PR head</th>
+                <th>Implication</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Kill button</td>
+                <td>
+                  Calls <code>POST /api/sessions/:id/kill</code>. Kill updated lifecycle and
+                  archived metadata by deleting the active metadata file with archive enabled.
+                </td>
+                <td>
+                  Same endpoint, but killed sessions remain represented as metadata with a
+                  terminated lifecycle. Idempotency checks look for terminated lifecycle state
+                  instead of archive presence.
+                </td>
+                <td>
+                  Killed sessions are easier for restore/status flows to find without archive lookup.
+                </td>
+              </tr>
+              <tr>
+                <td>Restore button</td>
+                <td>
+                  Restore checked active metadata first, then archived metadata. Archived restore
+                  rehydrated metadata and set status to <code>spawning</code>.
+                </td>
+                <td>
+                  Restore finds active metadata only, validates restorability, recreates workspace
+                  if needed, relaunches runtime, resets lifecycle to working, and clears terminal PR state.
+                </td>
+                <td>
+                  Restore becomes lifecycle-reset based and tied to the active V2 metadata record.
+                </td>
+              </tr>
+              <tr>
+                <td>Done bar restore</td>
+                <td>
+                  Done cards suppress Restore for merged cards using
+                  <code>canRestore &amp;&amp; !isMerged</code>.
+                </td>
+                <td>
+                  Restore is shown whenever the status is not in
+                  <code>NON_RESTORABLE_STATUSES</code>, so more done-card states expose recovery.
+                </td>
+                <td>
+                  More completed/terminal-looking sessions can be resumed from the UI.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="identity">
+        <div class="section-head">
+          <h2 id="identity">3. Hashed Project Identity</h2>
+          <p class="note">
+            Project IDs become deterministic hashes instead of bare basenames,
+            eliminating collisions across checkouts of the same repo.
+          </p>
+        </div>
+
+        <div class="grid">
+          <article class="panel">
+            <span class="tag green">New system</span>
+            <h3><code>generateExternalId(path, originUrl?)</code></h3>
+            <div class="compare">
+              <div class="side">
+                <b>Before, upstream/main</b>
+                <ul>
+                  <li>Project ID was a bare basename: <code>agent-orchestrator</code></li>
+                  <li>Collisions between same-name repos required manual suffix (<code>-1</code>, <code>-2</code>)</li>
+                  <li>Storage key was a 12-char SHA-256 of config directory</li>
+                  <li>Re-cloning the same repo produced a different storage key</li>
+                </ul>
+              </div>
+              <div class="side">
+                <b>After, PR head</b>
+                <ul>
+                  <li>Format: <code>{sanitized_basename}_{SHA256(path+originUrl)[0:10]}</code></li>
+                  <li>Example: <code>agent-orchestrator_a1b2c3d4e5</code></li>
+                  <li>Deterministic: same path + origin always produces the same ID</li>
+                  <li>Collision throws instead of silently degrading</li>
+                  <li>Basename capped at 30 chars, parsed via <code>id.match(/^(.+)_([0-9a-f]{10})$/)</code></li>
+                </ul>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <span class="tag red">Removed</span>
+            <h3>storageKey system fully removed</h3>
+            <ul>
+              <li><code>ensureProjectStorageIdentity</code> &mdash; removed</li>
+              <li><code>relinkProjectInGlobalConfig</code> &mdash; removed</li>
+              <li><code>deriveProjectStorageIdentity</code> &mdash; removed</li>
+              <li><code>findStorageKeyOwner</code>, <code>StorageKeyCollisionError</code> &mdash; removed</li>
+              <li><code>storageKey</code> kept as optional schema field until <code>ao migrate-storage</code> strips it</li>
+              <li><code>registerProjectInGlobalConfig</code> now returns the effective hashed project ID</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section aria-labelledby="migration">
+        <div class="section-head">
+          <h2 id="migration">4. migrate-storage</h2>
+          <p class="note">
+            In the corrected diff, <code>migrate-storage</code> is introduced, not removed.
+          </p>
+        </div>
+
+        <article class="panel">
+          <span class="tag gold">New command</span>
+          <h3>Purpose-built migration from legacy hash storage to V2 project storage</h3>
+          <div class="flow">
+            <div class="step">
+              <span class="num">1</span>
+              <b>Inventory</b>
+              <span>Scans <code>~/.agent-orchestrator</code> for legacy hash-based directories.</span>
+            </div>
+            <div class="step">
+              <span class="num">2</span>
+              <b>Guard</b>
+              <span>Detects active tmux sessions and blocks migration unless <code>--force</code> is used.</span>
+            </div>
+            <div class="step">
+              <span class="num">3</span>
+              <b>Convert</b>
+              <span>Moves sessions/worktrees into <code>projects/{projectId}</code> and converts key/value metadata to JSON.</span>
+            </div>
+            <div class="step">
+              <span class="num">4</span>
+              <b>Rollback</b>
+              <span>Supports <code>--rollback</code> by restoring <code>*.migrated</code> directories and repairing git worktree references.</span>
+            </div>
+          </div>
+          <div class="compare">
+            <div class="side">
+              <b>Before, upstream/main</b>
+              <ul>
+                <li>No registered <code>ao migrate-storage</code> command.</li>
+                <li>Runtime used storage-key directories and flat key/value metadata.</li>
+                <li>Project relinking handled storage-key changes.</li>
+              </ul>
+            </div>
+            <div class="side">
+              <b>After, PR head</b>
+              <ul>
+                <li>CLI registers <code>ao migrate-storage</code>.</li>
+                <li>Options: <code>--dry-run</code>, <code>--force</code>, <code>--rollback</code>.</li>
+                <li>New core module: <code>packages/core/src/migration/storage-v2.ts</code>.</li>
+                <li>Large test coverage added in <code>migration-storage-v2.test.ts</code>.</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel" style="margin-top: 18px">
+          <span class="tag green">Safety hardening</span>
+          <h3>Migration crash safety and concurrency fixes</h3>
+          <p>Five post-review fixes applied to make the migration safe for production data:</p>
+          <div class="flow">
+            <div class="step">
+              <span class="num">1</span>
+              <b>Atomic writes</b>
+              <span>All session JSON writes use <code>atomicWriteFileSync</code>. Crash mid-write no longer truncates files.</span>
+            </div>
+            <div class="step">
+              <span class="num">2</span>
+              <b>Config lock</b>
+              <span><code>stripStorageKeysFromConfig</code> wrapped in <code>withFileLockSync</code>. No more race with concurrent <code>ao start</code>.</span>
+            </div>
+            <div class="step">
+              <span class="num">3</span>
+              <b>macOS collision</b>
+              <span>Case-insensitive projectId collision detection prevents silent data merge on HFS+/APFS.</span>
+            </div>
+            <div class="step">
+              <span class="num">4</span>
+              <b>Partial failure</b>
+              <span>Stray worktree moves skip failed projects. Rollback calls <code>repairGitWorktrees</code>.</span>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section aria-labelledby="storage-layout">
+        <div class="section-head">
+          <h2 id="storage-layout">5. Storage Layout: Before vs Now</h2>
+          <p class="note">
+            This is the architectural center of the PR: AO moves from storage-key/hash buckets
+            to stable project directories with JSON session metadata.
+          </p>
+        </div>
+
+        <div class="storage-map">
+          <article class="panel tree-card">
+            <span class="tag red">Before, upstream/main</span>
+            <h3>Storage key was the filesystem identity</h3>
+            <pre class="tree">~/.agent-orchestrator/
+├── 7dc54da05c9e-agent-orchestrator/
+│   ├── sessions/
+│   │   ├── ao-79              # key=value metadata
+│   │   ├── ao-orchestrator    # key=value metadata
+│   │   └── archive/
+│   │       └── ao-79_20260422T083732Z
+│   └── worktrees/
+│       └── ao-79/
+├── eca743472f76-donna/
+│   ├── sessions/
+│   └── worktrees/
+└── config.yaml
+    projects.*.storageKey: 7dc54da05c9e</pre>
+          </article>
+
+          <article class="panel tree-card">
+            <span class="tag green">After, PR head</span>
+            <h3>Project ID is the filesystem identity</h3>
+            <pre class="tree">~/.agent-orchestrator/
+├── projects/
+│   ├── agent-orchestrator/
+│   │   ├── sessions/
+│   │   │   ├── ao-79.json
+│   │   │   ├── ao-orchestrator.json
+│   │   │   └── .agent-report-audit/
+│   │   │       └── ao-79.ndjson
+│   │   ├── worktrees/
+│   │   │   └── ao-79/
+│   │   └── worker-prompt-ao-79.md
+│   └── donna/
+│       ├── sessions/
+│       └── worktrees/
+├── 7dc54da05c9e-agent-orchestrator.migrated/
+└── config.yaml
+    projects.*.projectId: agent-orchestrator</pre>
+          </article>
+        </div>
+
+        <article class="matrix" style="margin-top: 18px">
+          <h3>What moved where</h3>
+          <div class="ledger" role="table" aria-label="Storage layout comparison">
+            <div>Object</div>
+            <div>Before</div>
+            <div>Now</div>
+
+            <div>Projects</div>
+            <div>
+              Project data was spread across hash/storage-key directories such as
+              <code>~/.agent-orchestrator/7dc54da05c9e-agent-orchestrator</code>.
+            </div>
+            <div>
+              Project data is grouped under
+              <code>~/.agent-orchestrator/projects/{projectId}</code>, for example
+              <code>projects/agent-orchestrator</code>.
+            </div>
+
+            <div>Sessions</div>
+            <div>
+              Session files lived in <code>{storageKey}/sessions/{sessionId}</code> without a
+              JSON extension.
+            </div>
+            <div>
+              Session files live in <code>projects/{projectId}/sessions/{sessionId}.json</code>.
+            </div>
+
+            <div>Metadata</div>
+            <div>
+              Metadata was flat <code>key=value</code> text. Status, runtime handle, lifecycle, and
+              report fields were split across scalar keys.
+            </div>
+            <div>
+              Metadata is canonical JSON. Lifecycle, runtime handle, dashboard, agent report, and
+              report watcher data are structured objects.
+            </div>
+
+            <div>Archived sessions</div>
+            <div>
+              Deleted/killed records moved into <code>sessions/archive/{sessionId}_{timestamp}</code>.
+            </div>
+            <div>
+              Terminated sessions remain visible as JSON metadata in <code>sessions/</code>.
+              Migration flattens legacy archive files into terminated records.
+            </div>
+
+            <div>Worktrees</div>
+            <div>
+              Worktrees lived under <code>{storageKey}/worktrees/{sessionId}</code>, tied to the
+              derived storage key.
+            </div>
+            <div>
+              Worktrees live under <code>projects/{projectId}/worktrees/{sessionId}</code>, tied to
+              project identity.
+            </div>
+
+            <div>Config</div>
+            <div>
+              Global config carried <code>storageKey</code> per project to locate the hash bucket.
+            </div>
+            <div>
+              Runtime lookup is project-ID based. On successful migration, <code>storageKey</code>
+              is stripped and old hash dirs are renamed to <code>*.migrated</code>.
+            </div>
+          </div>
+        </article>
+
+        <div class="evidence">
+          <div class="evidence-item">
+            <b>Local legacy evidence</b>
+            <span>Many <code>12hex-name.migrated</code> dirs remain under <code>~/.agent-orchestrator</code>.</span>
+          </div>
+          <div class="evidence-item">
+            <b>Local V2 evidence</b>
+            <span><code>~/.agent-orchestrator/projects/agent-orchestrator/sessions/*.json</code> exists.</span>
+          </div>
+          <div class="evidence-item">
+            <b>Project worktrees</b>
+            <span><code>projects/agent-orchestrator/worktrees/ao-84</code> shows V2 worktree placement.</span>
+          </div>
+          <div class="evidence-item">
+            <b>Report audit</b>
+            <span><code>sessions/.agent-report-audit/*.ndjson</code> stores report history beside session metadata.</span>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="ux">
+        <div class="section-head">
+          <h2 id="ux">6. UX Changes</h2>
+          <p class="note">
+            The PR exposes the storage-redesign workflow through CLI, dashboard, and project settings.
+          </p>
+        </div>
+
+        <div class="grid three">
+          <article class="panel">
+            <span class="tag blue">Start/stop</span>
+            <h3>Stop becomes recoverable</h3>
+            <p>
+              <code>ao stop</code> records stopped sessions, and <code>ao start</code> can restore them
+              interactively on the next launch.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag blue">Project identity</span>
+            <h3>Storage key fades from UI</h3>
+            <p>
+              The PR removes storage key from some project settings surfaces as storage moves to
+              <code>projects/{projectId}</code>.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag blue">Add project</span>
+            <h3>ID collision UX returns</h3>
+            <p>
+              Add-project conflict handling moves back toward project-ID suggestions instead of
+              storage-key reuse confirmation.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag blue">Status CLI</span>
+            <h3>Report history added</h3>
+            <p>
+              <code>ao status --reports &lt;value&gt;</code> can show agent report audit history,
+              with <code>full</code> or a numeric limit.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag blue">Project CLI</span>
+            <h3>Relink command removed</h3>
+            <p>
+              The storage-key relink command disappears because V2 storage no longer depends on
+              repo-origin derived storage keys.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag blue">Metadata</span>
+            <h3>JSON becomes canonical</h3>
+            <p>
+              Session files become <code>.json</code>, with lifecycle stored as an object and status
+              derived from lifecycle where possible.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag red">Bug fix</span>
+            <h3>Orchestrator tmux double-prefix</h3>
+            <p>
+              <code>getOrchestratorSessionId()</code> already returns <code>{prefix}-orchestrator</code>.
+              The spawn path was prepending the prefix again, producing <code>ao-ao-orchestrator</code>.
+              Fixed to use <code>sessionId</code> directly as the tmux name.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag green">Worktree routing</span>
+            <h3>Plugin routes to V2 layout</h3>
+            <p>
+              Added <code>worktreeDir</code> to <code>WorkspaceCreateConfig</code>.
+              Session manager passes <code>getProjectWorktreesDir(projectId)</code> at all 3 spawn/restore sites,
+              routing worktrees to <code>projects/{id}/worktrees/</code> instead of <code>~/.worktrees/</code>.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag red">Archiving removed</span>
+            <h3>No more archive/ directory</h3>
+            <p>
+              Killed/terminated sessions stay as JSON metadata in <code>sessions/</code> with a terminal
+              lifecycle state. The <code>archive/</code> directory concept, <code>deleteMetadata</code> archiving,
+              and archive path functions are fully removed.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section aria-labelledby="behavior-fixes">
+        <div class="section-head">
+          <h2 id="behavior-fixes">7. Behavioral Bug Fixes</h2>
+          <p class="note">
+            Cross-cutting fixes discovered during storage redesign testing &mdash; runtime reconciliation,
+            dashboard scoping, config resolution, and tab completions.
+          </p>
+        </div>
+
+        <div class="grid">
+          <article class="panel">
+            <span class="tag red">Bug fix</span>
+            <h3>Stale runtime reconciliation</h3>
+            <p>
+              Sessions with dead tmux runtimes showed as "active" indefinitely.
+              <code>sm.list()</code> now detects dead runtimes during enrichment and persists
+              <code>runtime_lost</code> reason to disk. <code>deriveLegacyStatus()</code> maps
+              <code>runtime_lost</code> &rarr; <code>killed</code>.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag red">Bug fix</span>
+            <h3>Dashboard sidebar shows all projects</h3>
+            <p>
+              Sidebar only showed sessions for the currently-viewed project.
+              <code>useSessionEvents</code> in <code>Dashboard.tsx</code> is now called without
+              a project filter. Kanban filters client-side via <code>projectSessions</code> memo.
+              Sidebar always sees every project's sessions.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag red">Bug fix</span>
+            <h3>Tab completions show all projects</h3>
+            <p>
+              <code>listProjects()</code> only called <code>loadConfig()</code>, which found the local
+              config (1 project). Now also reads global config via <code>loadGlobalConfig()</code>
+              and merges both project lists.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag red">Bug fix</span>
+            <h3>Config resolution falls back to global</h3>
+            <p>
+              <code>ao stop donna</code> failed with "project not found" when cwd config didn't
+              contain it. CLI now falls back to global config at
+              <code>~/.agent-orchestrator/config.yaml</code> for both <code>ao stop</code> and
+              <code>ao start</code>.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section aria-labelledby="docs">
+        <div class="section-head">
+          <h2 id="docs">8. Documentation Updates</h2>
+          <p class="note">
+            Architecture docs updated to reflect CLI behavior, lifecycle, and dashboard changes.
+          </p>
+        </div>
+
+        <div class="grid">
+          <article class="panel">
+            <span class="tag blue">CLAUDE.md</span>
+            <h3>Session lifecycle, storage, CLI behavior</h3>
+            <p>
+              Added canonical lifecycle states/reasons, stale runtime reconciliation, <code>LastStopState</code>
+              + <code>running.json</code> to storage section, config resolution note, new "CLI Behavior"
+              section (ao start/stop/Ctrl+C semantics, dashboard sidebar behavior), and key files
+              (<code>lifecycle-state.ts</code>, <code>running-state.ts</code>, <code>start.ts</code>).
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag blue">AGENTS.md + copilot-instructions.md</span>
+            <h3>Key files and common mistakes</h3>
+            <p>
+              Added <code>lifecycle-state.ts</code>, <code>start.ts</code>, <code>running-state.ts</code>
+              to key files. Added common mistakes: <code>runtime_lost</code> without
+              <code>deriveLegacyStatus</code>, sidebar project scoping, <code>ao stop</code> parent
+              process kill scoping.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section aria-labelledby="loc">
+        <div class="section-head">
+          <h2 id="loc">9. LOC Change Overview</h2>
+          <p class="note">
+            Fetched comparison: <code>git diff --shortstat upstream/main..HEAD</code>.
+          </p>
+        </div>
+
+        <div class="loc">
+          <aside class="panel">
+            <h3>Shortstat</h3>
+            <div class="metrics">
+              <div class="metric"><strong>6,481</strong><span>insertions</span></div>
+              <div class="metric"><strong>2,421</strong><span>deletions</span></div>
+              <div class="metric"><strong>90</strong><span>files changed</span></div>
+              <div class="metric"><strong>+4,060</strong><span>net LOC</span></div>
+            </div>
+          </aside>
+
+          <article class="panel">
+            <h3>By area</h3>
+            <div class="bars">
+              <div class="bar-row">
+                <label>packages/core</label>
+                <div class="track"><div class="bar" style="width: 100%"></div></div>
+                <span class="delta">+3,448</span>
+              </div>
+              <div class="bar-row">
+                <label>STORAGE_REDESIGN.md</label>
+                <div class="track"><div class="bar" style="width: 15%"></div></div>
+                <span class="delta">+405</span>
+              </div>
+              <div class="bar-row">
+                <label>packages/cli</label>
+                <div class="track"><div class="bar" style="width: 14%"></div></div>
+                <span class="delta">+280</span>
+              </div>
+              <div class="bar-row">
+                <label>packages/web</label>
+                <div class="track"><div class="bar" style="width: 4%"></div></div>
+                <span class="delta">+103</span>
+              </div>
+              <div class="bar-row">
+                <label>plugins</label>
+                <div class="track"><div class="bar" style="width: 2%"></div></div>
+                <span class="delta">+50</span>
+              </div>
+              <div class="bar-row">
+                <label>integration-tests</label>
+                <div class="track"><div class="bar" style="width: 1%"></div></div>
+                <span class="delta" style="color: var(--red)">-20</span>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section aria-labelledby="summary">
+        <div class="summary">
+          <div>
+            <span class="tag green">Overall summary</span>
+            <h2 id="summary">This PR ships the storage redesign, cross-project CLI, and behavioral hardening.</h2>
+            <p>
+              The PR moves AO from storage-key based flat metadata to project-scoped JSON
+              storage with deterministic hashed project IDs. It removes the entire storageKey system,
+              removes archiving (terminated sessions stay visible), adds a crash-safe migration command
+              with rollback, and makes stop/start fully recoverable with cross-project awareness.
+              Fixes stale runtime detection, dashboard sidebar scoping, Ctrl+C shutdown, tab completions,
+              and config resolution across all CLI commands.
+            </p>
+          </div>
+          <div class="verdict">
+            <div class="verdict-item">
+              <b>Strategic direction</b>
+              <span>Adopts V2 storage: <code>projects/{projectId}</code>, JSON metadata, lifecycle-centered status. Removes the entire storageKey system.</span>
+            </div>
+            <div class="verdict-item">
+              <b>Identity model</b>
+              <span>Hashed project IDs (<code>{basename}_{hash}</code>) replace bare basenames. Deterministic, collision-safe, no manual suffixes.</span>
+            </div>
+            <div class="verdict-item">
+              <b>Cross-project CLI</b>
+              <span><code>ao stop</code> sees all projects via global config, records cross-project sessions. <code>ao stop &lt;project&gt;</code> is surgical. <code>ao start</code> restores all including cross-project. Ctrl+C mirrors <code>ao stop</code>.</span>
+            </div>
+            <div class="verdict-item">
+              <b>Runtime reconciliation</b>
+              <span>Dead tmux sessions detected by <code>sm.list()</code> enrichment and persisted as <code>runtime_lost</code> &rarr; <code>killed</code>. No more stale "active" sessions.</span>
+            </div>
+            <div class="verdict-item">
+              <b>Dashboard</b>
+              <span>Sidebar always shows all projects' sessions. Kanban filters client-side. Tab completions merge local + global config.</span>
+            </div>
+            <div class="verdict-item">
+              <b>Migration safety</b>
+              <span>Atomic writes, file-locked config updates, macOS case-insensitive collision detection, git worktree repair in rollback, partial-failure isolation.</span>
+            </div>
+            <div class="verdict-item">
+              <b>Documentation</b>
+              <span>CLAUDE.md, AGENTS.md, copilot-instructions.md, and DESIGN.md updated with CLI behavior, lifecycle states, and architectural invariants.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer>
+        Corrected after <code>git fetch upstream</code> and generated from
+        <code>upstream/main..HEAD</code> in
+        <code>/Users/harshitsinghbhandari/Downloads/side-quests/agent-orchestrator</code>.
+      </footer>
+    </main>
+  </body>
+</html>
