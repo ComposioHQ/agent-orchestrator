@@ -34,7 +34,6 @@ const {
     restore: vi.fn(),
     kill: vi.fn(),
     cleanup: vi.fn(),
-    restore: vi.fn(),
     remap: vi.fn(),
     get: vi.fn(),
     spawn: vi.fn(),
