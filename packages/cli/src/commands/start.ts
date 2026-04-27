@@ -1264,20 +1264,22 @@ async function runStartup(
       const lastStop = await readLastStop();
       if (lastStop && lastStop.sessionIds.length > 0) {
         const stoppedAgo = `stopped at ${new Date(lastStop.stoppedAt).toLocaleString()}`;
-
-        // Collect all restorable sessions: current project + other projects
-        const currentProjectSessions = lastStop.projectId === projectId ? lastStop.sessionIds : [];
         const otherProjects = lastStop.otherProjects ?? [];
 
-        // Show current project sessions
+        // Build flat list of all sessions to restore, grouped for display
+        const allRestoreSessions: string[] = [
+          ...(lastStop.projectId === projectId ? lastStop.sessionIds : []),
+          ...otherProjects.flatMap((p) => p.sessionIds),
+        ];
+
+        // Display grouped by project
+        const currentProjectSessions = lastStop.projectId === projectId ? lastStop.sessionIds : [];
         if (currentProjectSessions.length > 0) {
           console.log(
             chalk.yellow(`\n  ${currentProjectSessions.length} session(s) were active before last ao stop (${stoppedAgo}):`),
           );
           console.log(chalk.dim(`  ${currentProjectSessions.join(", ")}\n`));
         }
-
-        // Show other project sessions
         if (otherProjects.length > 0) {
           const otherTotal = otherProjects.reduce((sum, p) => sum + p.sessionIds.length, 0);
           console.log(
@@ -1289,15 +1291,22 @@ async function runStartup(
           console.log();
         }
 
-        // Only restore current project sessions (other projects need their own ao start)
-        if (currentProjectSessions.length > 0) {
+        if (allRestoreSessions.length > 0) {
           const shouldRestore = await promptConfirm("Restore these sessions?", true);
           if (shouldRestore) {
-            const sm = await getSessionManager(config);
-            const restoreSpinner = ora(`Restoring ${currentProjectSessions.length} session(s)`).start();
+            // Use global config so the session manager can see all projects
+            let restoreConfig = config;
+            if (otherProjects.length > 0) {
+              const globalPath = getGlobalConfigPath();
+              if (existsSync(globalPath)) {
+                restoreConfig = loadConfig(globalPath);
+              }
+            }
+            const sm = await getSessionManager(restoreConfig);
+            const restoreSpinner = ora(`Restoring ${allRestoreSessions.length} session(s)`).start();
             let restoredCount = 0;
             const warnings: string[] = [];
-            for (const sessionId of currentProjectSessions) {
+            for (const sessionId of allRestoreSessions) {
               // Skip the orchestrator — it was already restored by ensureOrchestrator above
               if (selectedOrchestratorId && sessionId === selectedOrchestratorId) {
                 restoredCount++;
@@ -1312,10 +1321,10 @@ async function runStartup(
                 );
               }
             }
-            if (restoredCount === currentProjectSessions.length) {
-              restoreSpinner.succeed(`Restored ${restoredCount}/${currentProjectSessions.length} session(s)`);
+            if (restoredCount === allRestoreSessions.length) {
+              restoreSpinner.succeed(`Restored ${restoredCount}/${allRestoreSessions.length} session(s)`);
             } else {
-              restoreSpinner.warn(`Restored ${restoredCount}/${currentProjectSessions.length} session(s)`);
+              restoreSpinner.warn(`Restored ${restoredCount}/${allRestoreSessions.length} session(s)`);
             }
             for (const w of warnings) {
               console.log(chalk.yellow(w));
