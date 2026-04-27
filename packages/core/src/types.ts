@@ -322,7 +322,7 @@ export interface Session {
   metadata: Record<string, string>;
 
   /** ID of the parent session that spawned this one (null for top-level sessions) */
-  parentSessionId: SessionId | null;
+  parentSessionId: SessionId | null | undefined;
 }
 
 export function isOrchestratorSession(
