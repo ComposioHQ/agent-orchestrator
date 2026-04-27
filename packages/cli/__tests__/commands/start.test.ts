@@ -1997,49 +1997,61 @@ describe("start command — already-running detection", () => {
     const repoDir = join(tmpDir, "registered-repo");
     createFakeRepo(repoDir, "https://github.com/org/registered-repo.git");
 
-    mockIsAlreadyRunning.mockResolvedValue({
-      pid: 9999,
-      configPath: "/fake/config.yaml",
-      port: 3000,
-      startedAt: "2026-01-01T00:00:00Z",
-      projects: ["my-app"],
-    });
+    // Point AO_GLOBAL_CONFIG at a non-existent file so the global lookup
+    // falls back to mockConfigRef.current.
+    const origGlobalEnv = process.env["AO_GLOBAL_CONFIG"];
+    process.env["AO_GLOBAL_CONFIG"] = join(tmpDir, "no-such-global.yaml");
 
-    mockConfigRef.current = makeConfig({
-      "my-app": makeProject({ path: repoDir }),
-    });
+    try {
+      mockIsAlreadyRunning.mockResolvedValue({
+        pid: 9999,
+        configPath: "/fake/config.yaml",
+        port: 3000,
+        startedAt: "2026-01-01T00:00:00Z",
+        projects: ["my-app"],
+      });
 
-    await expect(
-      program.parseAsync([
-        "node",
-        "test",
-        "start",
-        repoDir,
-        "--no-dashboard",
-        "--no-orchestrator",
-      ]),
-    ).rejects.toThrow("process.exit(1)");
+      mockConfigRef.current = makeConfig({
+        "my-app": makeProject({ path: repoDir }),
+      });
 
-    // No menu shown
-    expect(mockPromptSelect).not.toHaveBeenCalled();
+      await expect(
+        program.parseAsync([
+          "node",
+          "test",
+          "start",
+          repoDir,
+          "--no-dashboard",
+          "--no-orchestrator",
+        ]),
+      ).rejects.toThrow("process.exit(1)");
 
-    const output = vi
-      .mocked(console.log)
-      .mock.calls.map((c) => c.join(" "))
-      .join("\n");
-    expect(output).toContain("AO is already running");
-    expect(output).toContain("my-app");
-    expect(output).toContain("already registered and running");
+      // No menu shown
+      expect(mockPromptSelect).not.toHaveBeenCalled();
+
+      const output = vi
+        .mocked(console.log)
+        .mock.calls.map((c) => c.join(" "))
+        .join("\n");
+      expect(output).toContain("AO is already running");
+      expect(output).toContain("my-app");
+      expect(output).toContain("already registered and running");
+    } finally {
+      if (origGlobalEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+      else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
+    }
   });
 
-  it("path arg unregistered + AO running: registers without prompting and does not show the menu", async () => {
+  it("path arg unregistered + AO running: registers in global config and spawns orchestrator without showing the menu", async () => {
     const repoDir = join(tmpDir, "new-repo");
     createFakeRepo(repoDir, "https://github.com/org/new-repo.git");
 
-    const configPath = join(tmpDir, "agent-orchestrator.yaml");
+    // Point AO_GLOBAL_CONFIG at a real file in tmpDir so addProjectToConfig
+    // routes through registerProjectInGlobalConfig.
+    const globalConfigPath = join(tmpDir, "global-config.yaml");
     const { stringify: yamlStringify } = await import("yaml");
     writeFileSync(
-      configPath,
+      globalConfigPath,
       yamlStringify(
         {
           defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
@@ -2056,61 +2068,77 @@ describe("start command — already-running detection", () => {
         { indent: 2 },
       ),
     );
-    mockConfigRef.current = {
-      ...makeConfig({
+
+    const origGlobalEnv = process.env["AO_GLOBAL_CONFIG"];
+    const origConfigEnv = process.env["AO_CONFIG_PATH"];
+    process.env["AO_GLOBAL_CONFIG"] = globalConfigPath;
+    process.env["AO_CONFIG_PATH"] = globalConfigPath;
+
+    try {
+      mockConfigRef.current = makeConfig({
         "my-app": makeProject({ path: join(tmpDir, "main-repo") }),
-      }),
-      configPath,
-    };
+      });
 
-    mockIsAlreadyRunning.mockResolvedValue({
-      pid: 9999,
-      configPath,
-      port: 3000,
-      startedAt: "2026-01-01T00:00:00Z",
-      projects: ["my-app"],
-    });
+      mockIsAlreadyRunning.mockResolvedValue({
+        pid: 9999,
+        configPath: globalConfigPath,
+        port: 3000,
+        startedAt: "2026-01-01T00:00:00Z",
+        projects: ["my-app"],
+      });
 
-    // Mock git so addProjectToConfig can detect the new repo without prompting.
-    const shell = await import("../../src/lib/shell.js");
-    vi.mocked(shell.git).mockImplementation(async (args: string[], workingDir?: string) => {
-      if (args[0] === "rev-parse" && args[1] === "--git-dir" && workingDir === repoDir)
-        return ".git";
-      if (
-        args[0] === "remote" &&
-        args[1] === "get-url" &&
-        args[2] === "origin" &&
-        workingDir === repoDir
-      ) {
-        return "https://github.com/org/new-repo.git";
-      }
-      if (args[0] === "symbolic-ref" && workingDir === repoDir)
-        return "refs/remotes/origin/main";
-      if (args[0] === "rev-parse" && args[1] === "--verify" && workingDir === repoDir)
-        return "abc";
-      return null;
-    });
+      const shell = await import("../../src/lib/shell.js");
+      vi.mocked(shell.git).mockImplementation(async (args: string[], workingDir?: string) => {
+        if (args[0] === "rev-parse" && args[1] === "--git-dir" && workingDir === repoDir)
+          return ".git";
+        if (
+          args[0] === "remote" &&
+          args[1] === "get-url" &&
+          args[2] === "origin" &&
+          workingDir === repoDir
+        ) {
+          return "https://github.com/org/new-repo.git";
+        }
+        if (args[0] === "symbolic-ref" && workingDir === repoDir)
+          return "refs/remotes/origin/main";
+        if (args[0] === "rev-parse" && args[1] === "--verify" && workingDir === repoDir)
+          return "abc";
+        return null;
+      });
 
-    await expect(
-      program.parseAsync([
-        "node",
-        "test",
-        "start",
-        repoDir,
-        "--no-dashboard",
-        "--no-orchestrator",
-      ]),
-    ).rejects.toThrow("process.exit(1)");
+      await expect(
+        program.parseAsync([
+          "node",
+          "test",
+          "start",
+          repoDir,
+          "--no-dashboard",
+          "--no-orchestrator",
+        ]),
+      ).rejects.toThrow("process.exit(1)");
 
-    // No menu shown — went straight to register + open
-    expect(mockPromptSelect).not.toHaveBeenCalled();
+      // No menu shown — went straight to register + spawn
+      expect(mockPromptSelect).not.toHaveBeenCalled();
 
-    const output = vi
-      .mocked(console.log)
-      .mock.calls.map((c) => c.join(" "))
-      .join("\n");
-    expect(output).toContain("registered");
-    expect(output).toContain("Opening the dashboard");
+      // ensureOrchestrator was called for the newly-registered project
+      expect(mockSessionManager.ensureOrchestrator).toHaveBeenCalled();
+      const callArgs = mockSessionManager.ensureOrchestrator.mock.calls[0]?.[0];
+      expect(callArgs?.projectId).toBeDefined();
+      expect(callArgs?.projectId).not.toBe("my-app");
+
+      const output = vi
+        .mocked(console.log)
+        .mock.calls.map((c) => c.join(" "))
+        .join("\n");
+      expect(output).toContain("registered in the global config");
+      expect(output).toContain("Orchestrator session ready");
+      expect(output).toContain("Opening dashboard");
+    } finally {
+      if (origGlobalEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+      else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
+      if (origConfigEnv === undefined) delete process.env["AO_CONFIG_PATH"];
+      else process.env["AO_CONFIG_PATH"] = origConfigEnv;
+    }
   });
 
   it("offers to add cwd when AO is running and cwd is an unregistered git repo", async () => {

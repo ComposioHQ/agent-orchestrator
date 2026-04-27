@@ -1527,20 +1527,26 @@ export function registerStart(program: Command): void {
           // URL/path arg while AO is already running: handle it here instead
           // of letting the "already running" gate ignore the arg. Falling
           // through to runStartup would spawn a duplicate dashboard, so we
-          // register the project against the active config and open the
-          // existing dashboard — same pattern as the menu's "Add cwd" choice.
-          // Non-TTY callers (scripts/agents) keep the old "already running"
-          // message and do NOT mutate config behind the user's back.
+          // register against the GLOBAL config (so the dashboard sees it),
+          // spawn the orchestrator session, and open the existing dashboard.
+          //
+          // Non-TTY callers (scripts/agents) keep the old "AO is already
+          // running" message and do NOT mutate config behind the user's back.
           if (running && projectArgIsUrlOrPath && isHumanCaller()) {
-            const activeCfg = loadConfig();
+            // Always register against the GLOBAL config — never the cwd's
+            // local config. Cross-project visibility lives in the global
+            // registry, and addProjectToConfig only routes to global when
+            // its config arg has the canonical global path.
+            const globalConfigPath = getGlobalConfigPath();
+            const globalCfg = existsSync(globalConfigPath)
+              ? loadConfig(globalConfigPath)
+              : loadConfig();
 
-            // Try to find an existing registration in the daemon's active
-            // config (URL → match by repo, path → match by canonical path).
             let existingId: string | null = null;
             if (isRepoUrl(projectArg!)) {
               try {
                 const parsed = parseRepoUrl(projectArg!);
-                for (const [id, p] of Object.entries(activeCfg.projects)) {
+                for (const [id, p] of Object.entries(globalCfg.projects)) {
                   if (p.repo === parsed.ownerRepo) {
                     existingId = id;
                     break;
@@ -1559,7 +1565,7 @@ export function registerStart(program: Command): void {
               } catch {
                 canonicalTarget = resolvedPath;
               }
-              for (const [id, p] of Object.entries(activeCfg.projects)) {
+              for (const [id, p] of Object.entries(globalCfg.projects)) {
                 try {
                   const expanded = resolve(p.path.replace(/^~/, process.env["HOME"] || ""));
                   if (realpathSync(expanded) === canonicalTarget) {
@@ -1572,8 +1578,9 @@ export function registerStart(program: Command): void {
               }
             }
 
+            // Already registered AND covered by the running daemon — open
+            // the dashboard, no menu, no re-clone.
             if (existingId && running.projects.includes(existingId)) {
-              // Already registered and running — just open the dashboard.
               console.log(chalk.cyan(`\nℹ AO is already running.`));
               console.log(`  Dashboard: ${chalk.cyan(`http://localhost:${running.port}`)}`);
               console.log(`  Project "${existingId}" is already registered and running.\n`);
@@ -1582,34 +1589,72 @@ export function registerStart(program: Command): void {
               process.exit(0);
             }
 
-            // Not yet registered (or registered but parent forgot it).
-            // Register and tell the user to open the dashboard. Don't spawn
-            // a second dashboard/orchestrator here — the running daemon is
-            // the source of truth.
+            // Register (or resolve existing) against the global config and
+            // spawn the orchestrator session.
             let resolvedId: string;
             if (existingId) {
               resolvedId = existingId;
             } else if (isRepoUrl(projectArg!)) {
+              // handleUrlStart clones into a new dir and writes a local
+              // agent-orchestrator.yaml. Re-register against the global
+              // config so the running daemon's dashboard can see it.
               const result = await handleUrlStart(projectArg!);
               const lookup = await resolveProjectByRepo(result.config, result.parsed);
-              resolvedId = lookup.projectId;
+              const localProject = result.config.projects[lookup.projectId];
+              resolvedId = registerProjectInGlobalConfig(
+                lookup.projectId,
+                localProject.name ?? lookup.projectId,
+                localProject.path,
+                {
+                  ...(localProject.repo ? { repo: localProject.repo } : {}),
+                  defaultBranch: localProject.defaultBranch ?? "main",
+                  ...(localProject.sessionPrefix
+                    ? { sessionPrefix: localProject.sessionPrefix }
+                    : {}),
+                },
+                globalConfigPath,
+              );
             } else {
               const resolvedPath = resolve(
                 projectArg!.replace(/^~/, process.env["HOME"] || ""),
               );
-              resolvedId = await addProjectToConfig(activeCfg, resolvedPath);
+              resolvedId = await addProjectToConfig(globalCfg, resolvedPath);
             }
 
+            // Reload the global config so the new project is visible to
+            // the session manager.
+            const refreshedConfig = loadConfig(globalConfigPath);
+            const newProject = refreshedConfig.projects[resolvedId];
+            if (!newProject) {
+              throw new Error(
+                `Failed to register "${resolvedId}" in the global config — aborting.`,
+              );
+            }
+
+            console.log(chalk.dim("\n  Spawning orchestrator session...\n"));
+            const sm = await getSessionManager(refreshedConfig);
+            const systemPrompt = generateOrchestratorPrompt({
+              config: refreshedConfig,
+              projectId: resolvedId,
+              project: newProject,
+            });
+            const session = await sm.ensureOrchestrator({
+              projectId: resolvedId,
+              systemPrompt,
+            });
+
             console.log(
-              chalk.green(
-                `\n✓ Project "${resolvedId}" is registered. Opening the dashboard...\n`,
+              chalk.green(`\n✓ Project "${resolvedId}" registered in the global config.`),
+            );
+            console.log(chalk.green(`✓ Orchestrator session ready: ${session.id}`));
+            console.log(
+              chalk.yellow(
+                `\n⚠ Lifecycle polling for "${resolvedId}" runs inside the long-lived ao start\n` +
+                  `  process, which is currently scoped to: ${running.projects.join(", ")}.\n` +
+                  `  Run \`ao stop && ao start ${resolvedId}\` to enable polling.\n`,
               ),
             );
-            console.log(
-              chalk.dim(
-                `  To start an orchestrator for it: \`ao stop && ao start ${resolvedId}\` or use the dashboard.`,
-              ),
-            );
+            console.log(chalk.dim(`  Opening dashboard: http://localhost:${running.port}\n`));
             openUrl(`http://localhost:${running.port}`);
             unlockStartup();
             process.exit(0);
