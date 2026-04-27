@@ -62,7 +62,6 @@ import { preflight } from "../lib/preflight.js";
 import {
   register,
   unregister,
-  removeProjectFromRunning,
   isAlreadyRunning,
   getRunning,
   waitForExit,
@@ -1333,6 +1332,7 @@ async function runStartup(
             const sm = await getSessionManager(restoreConfig);
             const restoreSpinner = ora(`Restoring ${allRestoreSessions.length} session(s)`).start();
             let restoredCount = 0;
+            const failedSessionIds = new Set<string>();
             const warnings: string[] = [];
             for (const sessionId of allRestoreSessions) {
               // Skip the orchestrator — it was already restored by ensureOrchestrator above
@@ -1344,6 +1344,7 @@ async function runStartup(
                 await sm.restore(sessionId);
                 restoredCount++;
               } catch (err) {
+                failedSessionIds.add(sessionId);
                 warnings.push(
                   `  Warning: could not restore ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
                 );
@@ -1357,9 +1358,47 @@ async function runStartup(
             for (const w of warnings) {
               console.log(chalk.yellow(w));
             }
+
+            // Preserve restore state for sessions that failed (transient
+            // workspace/runtime errors). Without this, a single failure on
+            // the first `ao start` would erase the only persisted record
+            // and the remaining sessions would never be retryable. When
+            // every session restored (or was skipped), clear the file.
+            if (failedSessionIds.size > 0) {
+              const remainingTarget = lastStop.sessionIds.filter((id) =>
+                failedSessionIds.has(id),
+              );
+              const remainingOther = otherProjects
+                .map((p) => ({
+                  projectId: p.projectId,
+                  sessionIds: p.sessionIds.filter((id) => failedSessionIds.has(id)),
+                }))
+                .filter((p) => p.sessionIds.length > 0);
+              if (remainingTarget.length > 0 || remainingOther.length > 0) {
+                await writeLastStop({
+                  stoppedAt: lastStop.stoppedAt,
+                  projectId: lastStop.projectId,
+                  sessionIds: remainingTarget,
+                  ...(remainingOther.length > 0 ? { otherProjects: remainingOther } : {}),
+                });
+                console.log(
+                  chalk.dim(
+                    `  Kept ${failedSessionIds.size} session(s) in last-stop record for retry on next ao start.\n`,
+                  ),
+                );
+              } else {
+                await clearLastStop();
+              }
+            } else {
+              await clearLastStop();
+            }
+          } else {
+            // User declined restore — clear the record.
+            await clearLastStop();
           }
+        } else {
+          await clearLastStop();
         }
-        await clearLastStop();
       }
     } catch {
       // Non-fatal: don't block startup if last-stop handling fails
@@ -1769,16 +1808,18 @@ export function registerStart(program: Command): void {
             process.exit(0);
           }
 
-          // Project-ID arg + daemon running, but the project isn't in
-          // `running.projects` (typically because `ao stop <project>` just
-          // removed it via removeProjectFromRunning). Attach the project to
-          // the existing daemon: spawn its orchestrator session via the live
-          // session manager, reload the dashboard, re-add to running.json.
+          // Project-ID arg + daemon running. Always attach to the existing
+          // daemon: spawn the orchestrator session via the live session
+          // manager and reload the dashboard. We do NOT condition on
+          // `running.projects.includes(projectArg)` — that field is the
+          // truth about whether lifecycle polling is attached, but the
+          // user still expects `ao start <project>` to (re)create the
+          // orchestrator session whether polling is attached or not.
           //
           // Critically: do NOT fall through to runStartup() — that would
           // start a second dashboard on a new port and clobber running.json,
           // leaving the original parent process orphaned.
-          if (running && isProjectId && !running.projects.includes(projectArg)) {
+          if (running && isProjectId) {
             const globalConfigPath = getGlobalConfigPath();
             const cfg = existsSync(globalConfigPath)
               ? loadConfig(globalConfigPath)
@@ -1843,13 +1884,21 @@ export function registerStart(program: Command): void {
               );
             }
 
-            console.log(
-              chalk.yellow(
-                `\n⚠ Lifecycle polling for "${projectArg}" still runs inside the original ao start\n` +
-                  `  process. Activity/PR state for this project won't auto-update until the\n` +
-                  `  daemon is fully restarted (\`ao stop && ao start ${projectArg}\`).\n`,
-              ),
-            );
+            // Only warn about missing polling when the parent process is
+            // genuinely not polling this project. After `ao stop <project>`
+            // we deliberately leave the project in `running.projects`
+            // because the parent's in-memory lifecycle worker is still
+            // active — no warning needed in that case.
+            if (!running.projects.includes(projectArg)) {
+              console.log(
+                chalk.yellow(
+                  `\n⚠ Lifecycle polling for "${projectArg}" is not attached to this ao start\n` +
+                    `  process (it was started before the project was registered).\n` +
+                    `  Activity/PR state won't auto-update until the daemon is fully restarted\n` +
+                    `  (\`ao stop && ao start ${projectArg}\`).\n`,
+                ),
+              );
+            }
             if (isHumanCaller()) {
               console.log(chalk.dim(`  Opening dashboard: http://localhost:${running.port}\n`));
               openUrl(`http://localhost:${running.port}`);
@@ -2387,12 +2436,16 @@ export function registerStop(program: Command): void {
             await unregister();
           }
           await stopDashboard(running?.port ?? port);
-        } else if (running) {
-          // Targeted stop: remove this project from running.json so
-          // `ao start <project>` can re-create the orchestrator without
-          // hitting the "already running" gate.
-          await removeProjectFromRunning(_projectId);
         }
+        // Targeted stop deliberately does NOT remove the project from
+        // `running.json`. The parent `ao start` process keeps an in-memory
+        // lifecycle worker for this project (a child CLI process cannot
+        // reach into the parent's memory to stop it), so `running.projects`
+        // — which is the source of truth for "polling is attached" —
+        // continues to truthfully list this project. Subsequent
+        // `ao start <project>` falls into the attach branch and re-spawns
+        // the orchestrator session; `ao spawn` keeps suppressing its
+        // "not polling project X" warning because polling really is alive.
 
         if (projectArg) {
           console.log(chalk.bold.green(`\n✓ Stopped sessions for ${project.name}\n`));

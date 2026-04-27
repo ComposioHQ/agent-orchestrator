@@ -75,6 +75,9 @@ const {
   mockRemoveProjectFromRunning,
   mockAddProjectToRunning,
   mockWaitForExit,
+  mockReadLastStop,
+  mockWriteLastStop,
+  mockClearLastStop,
 } = vi.hoisted(() => ({
   mockAcquireStartupLock: vi.fn().mockResolvedValue(() => {}),
   mockIsAlreadyRunning: vi.fn().mockReturnValue(null),
@@ -84,6 +87,9 @@ const {
   mockAddProjectToRunning: vi.fn(),
   mockUnregister: vi.fn(),
   mockWaitForExit: vi.fn().mockReturnValue(true),
+  mockReadLastStop: vi.fn().mockResolvedValue(null),
+  mockWriteLastStop: vi.fn().mockResolvedValue(undefined),
+  mockClearLastStop: vi.fn().mockResolvedValue(undefined),
 }));
 
 const { mockIsHumanCaller } = vi.hoisted(() => ({
@@ -106,6 +112,7 @@ vi.mock("ora", () => ({
     stop: vi.fn().mockReturnThis(),
     succeed: vi.fn().mockReturnThis(),
     fail: vi.fn().mockReturnThis(),
+    warn: vi.fn().mockReturnThis(),
     info: vi.fn().mockReturnThis(),
     text: "",
   }),
@@ -173,9 +180,9 @@ vi.mock("../../src/lib/running-state.js", () => ({
   isAlreadyRunning: (...args: unknown[]) => mockIsAlreadyRunning(...args),
   getRunning: (...args: unknown[]) => mockGetRunning(...args),
   waitForExit: (...args: unknown[]) => mockWaitForExit(...args),
-  writeLastStop: vi.fn().mockResolvedValue(undefined),
-  readLastStop: vi.fn().mockResolvedValue(null),
-  clearLastStop: vi.fn().mockResolvedValue(undefined),
+  writeLastStop: (...args: unknown[]) => mockWriteLastStop(...args),
+  readLastStop: (...args: unknown[]) => mockReadLastStop(...args),
+  clearLastStop: (...args: unknown[]) => mockClearLastStop(...args),
 }));
 
 vi.mock("../../src/lib/caller-context.js", () => ({
@@ -355,6 +362,12 @@ beforeEach(async () => {
   mockAddProjectToRunning.mockReset();
   mockWaitForExit.mockReset();
   mockWaitForExit.mockResolvedValue(true);
+  mockReadLastStop.mockReset();
+  mockReadLastStop.mockResolvedValue(null);
+  mockWriteLastStop.mockReset();
+  mockWriteLastStop.mockResolvedValue(undefined);
+  mockClearLastStop.mockReset();
+  mockClearLastStop.mockResolvedValue(undefined);
   mockIsHumanCaller.mockReset();
   mockIsHumanCaller.mockReturnValue(true);
 });
@@ -1466,6 +1479,66 @@ describe("start command — orchestrator session strategy display", () => {
     expect(fakeDashboard.kill).toHaveBeenCalled();
   });
 
+  // Regression for the boundary-bug-hunter Phase 3 finding on PR #1466:
+  // partial restore failure used to call clearLastStop() unconditionally,
+  // erasing the only persisted record of the sessions that failed to
+  // restore. A transient workspace/runtime error therefore became
+  // permanent. The fix rewrites last-stop.json with only the unrestored
+  // sessions when at least one failed.
+  it("preserves last-stop record for sessions that failed to restore (partial failure)", async () => {
+    mockReadLastStop.mockResolvedValue({
+      stoppedAt: "2026-04-28T10:00:00.000Z",
+      projectId: "my-app",
+      sessionIds: ["app-1", "app-2"],
+    });
+
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = { on: vi.fn(), kill: vi.fn(), emit: vi.fn() };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    // app-1 restores fine; app-2 fails (transient).
+    mockSessionManager.restore.mockImplementation((id: string) => {
+      if (id === "app-2") return Promise.reject(new Error("workspace gone"));
+      return Promise.resolve(undefined);
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
+
+    expect(mockClearLastStop).not.toHaveBeenCalled();
+    expect(mockWriteLastStop).toHaveBeenCalledTimes(1);
+    const written = mockWriteLastStop.mock.calls[0][0];
+    expect(written.sessionIds).toEqual(["app-2"]);
+    expect(written.projectId).toBe("my-app");
+    expect(written.stoppedAt).toBe("2026-04-28T10:00:00.000Z");
+  });
+
+  it("clears last-stop record when every session restored successfully", async () => {
+    mockReadLastStop.mockResolvedValue({
+      stoppedAt: "2026-04-28T10:00:00.000Z",
+      projectId: "my-app",
+      sessionIds: ["app-1"],
+    });
+
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = { on: vi.fn(), kill: vi.fn(), emit: vi.fn() };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    mockSessionManager.restore.mockResolvedValue(undefined);
+
+    await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
+
+    expect(mockWriteLastStop).not.toHaveBeenCalled();
+    expect(mockClearLastStop).toHaveBeenCalled();
+  });
+
   it("opens the bare dashboard URL when --no-orchestrator skips the orchestrator block", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 
@@ -1756,7 +1829,13 @@ describe("stop command", () => {
     expect(mockUnregister).not.toHaveBeenCalled();
   });
 
-  it("targeted stop removes project from running.json", async () => {
+  // Regression for boundary-bug-hunter Phase 3 finding 2: targeted stop
+  // used to call `removeProjectFromRunning` from a child CLI process, but
+  // the parent ao-start process's in-memory lifecycle worker for that
+  // project keeps polling. The state file then claimed "not polling"
+  // while the live parent was still polling. Targeted stop must leave
+  // `running.projects` intact so it remains a truthful signal.
+  it("targeted stop leaves the project in running.json (parent is still polling)", async () => {
     mockConfigRef.current = makeConfig({
       "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
       "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
@@ -1774,7 +1853,7 @@ describe("stop command", () => {
 
     await program.parseAsync(["node", "test", "stop", "project-2"]);
 
-    expect(mockRemoveProjectFromRunning).toHaveBeenCalledWith("project-2");
+    expect(mockRemoveProjectFromRunning).not.toHaveBeenCalled();
   });
 
   it("targeted stop only kills sessions for the named project", async () => {

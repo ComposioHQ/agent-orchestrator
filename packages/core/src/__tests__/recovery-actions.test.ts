@@ -402,6 +402,171 @@ describe("cleanupSession", () => {
   });
 });
 
+// Regression for the boundary-bug-hunter Phase 2 finding on PR #1466:
+// Recovery actions used to write a flat `status` field, but for V2
+// lifecycle-backed sessions `readMetadataRaw()` overrides flat `status`
+// with `deriveLegacyStatus(lifecycle)`. So a cleanup or escalation that
+// only mutated the flat field was silently overridden on the next read.
+// The fix updates the lifecycle object alongside the flat field.
+describe("recovery actions update lifecycle for V2 sessions", () => {
+  let rootDir: string;
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    rootDir = join(tmpdir(), `ao-recovery-lifecycle-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+    previousHome = process.env["HOME"];
+    process.env["HOME"] = rootDir;
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = previousHome;
+    if (rootDir) {
+      const projectBaseDir = getProjectDir(PROJECT_ID);
+      if (existsSync(projectBaseDir)) rmSync(projectBaseDir, { recursive: true, force: true });
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  function v2LifecycleString(state: string, reason: string): string {
+    return JSON.stringify({
+      version: 2,
+      session: {
+        kind: "worker",
+        state,
+        reason,
+        startedAt: "2026-04-28T10:00:00.000Z",
+        completedAt: null,
+        terminatedAt: null,
+        lastTransitionAt: "2026-04-28T10:00:00.000Z",
+      },
+      pr: { state: "none", reason: "no_pr", url: null, number: null, lastTransitionAt: "2026-04-28T10:00:00.000Z" },
+      runtime: { state: "alive", reason: "spawned", handle: null, tmuxName: null, lastTransitionAt: "2026-04-28T10:00:00.000Z" },
+    });
+  }
+
+  it("cleanupSession writes lifecycle.session.state = terminated for V2 sessions", async () => {
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment({
+      rawMetadata: {
+        project: "app",
+        branch: "feat/x",
+        status: "working",
+        lifecycle: v2LifecycleString("working", "task_in_progress"),
+      },
+    });
+    const context = makeContext(rootDir);
+
+    const result = await cleanupSession(assessment, config, registry, context);
+    expect(result.success).toBe(true);
+
+    const sessionsDir = getProjectSessionsDir(PROJECT_ID);
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta).not.toBeNull();
+    // For V2 sessions the flat status is derived from the lifecycle on
+    // read. `state=terminated` + `reason=auto_cleanup` maps to the legacy
+    // status "cleanup" (see deriveLegacyStatus). The pre-fix bug was that
+    // the lifecycle wasn't updated at all, so this would have read back as
+    // "working" — the lifecycle state of the prior phase.
+    expect(meta!["status"]).toBe("cleanup");
+
+    const persistedLifecycle = JSON.parse(meta!["lifecycle"]) as {
+      session: { state: string; reason: string; terminatedAt: string | null };
+    };
+    expect(persistedLifecycle.session.state).toBe("terminated");
+    expect(persistedLifecycle.session.reason).toBe("auto_cleanup");
+    expect(persistedLifecycle.session.terminatedAt).toBeTruthy();
+  });
+
+  it("escalateSession writes lifecycle.session.state = stuck for V2 sessions", async () => {
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment({
+      action: "escalate",
+      reason: "Probe failed three times",
+      rawMetadata: {
+        project: "app",
+        branch: "feat/x",
+        status: "working",
+        lifecycle: v2LifecycleString("working", "task_in_progress"),
+      },
+    });
+    const context = makeContext(rootDir);
+
+    const result = await escalateSession(assessment, config, registry, context);
+    expect(result.success).toBe(true);
+
+    const sessionsDir = getProjectSessionsDir(PROJECT_ID);
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta!["status"]).toBe("stuck");
+
+    const persistedLifecycle = JSON.parse(meta!["lifecycle"]) as {
+      session: { state: string; reason: string };
+    };
+    expect(persistedLifecycle.session.state).toBe("stuck");
+    expect(persistedLifecycle.session.reason).toBe("probe_failure");
+  });
+
+  it("recoverSession writes lifecycle.session.state = stuck when max attempts exceeded", async () => {
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment({
+      rawMetadata: {
+        project: "app",
+        branch: "feat/x",
+        status: "working",
+        recoveryCount: "3",
+        lifecycle: v2LifecycleString("working", "task_in_progress"),
+      },
+    });
+    const context = makeContext(rootDir, {
+      recoveryConfig: {
+        ...DEFAULT_RECOVERY_CONFIG,
+        logPath: join(rootDir, "recovery.log"),
+        maxRecoveryAttempts: 3,
+      },
+    });
+
+    const result = await recoverSession(assessment, config, registry, context);
+    expect(result.action).toBe("escalate");
+
+    const sessionsDir = getProjectSessionsDir(PROJECT_ID);
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta!["status"]).toBe("stuck");
+
+    const persistedLifecycle = JSON.parse(meta!["lifecycle"]) as {
+      session: { state: string; reason: string };
+    };
+    expect(persistedLifecycle.session.state).toBe("stuck");
+    expect(persistedLifecycle.session.reason).toBe("probe_failure");
+  });
+
+  it("does not add a lifecycle field to legacy (pre-V2) sessions", async () => {
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment({
+      rawMetadata: {
+        project: "app",
+        branch: "feat/x",
+        status: "working",
+        // no `lifecycle` and no V2 statePayload — legacy session
+      },
+    });
+    const context = makeContext(rootDir);
+
+    await cleanupSession(assessment, config, registry, context);
+
+    const sessionsDir = getProjectSessionsDir(PROJECT_ID);
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta!["status"]).toBe("terminated");
+    expect(meta!["lifecycle"]).toBeUndefined();
+  });
+});
+
 describe("recovery manager and scanner", () => {
   let rootDir: string;
   let previousHome: string | undefined;
