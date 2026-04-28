@@ -10,6 +10,18 @@ import {
   type ActivityEventKind,
 } from "@aoagents/ao-core";
 
+function toJsonOutput(ev: ActivityEvent): Record<string, unknown> {
+  let data: unknown = ev.data;
+  if (typeof ev.data === "string") {
+    try {
+      data = JSON.parse(ev.data);
+    } catch {
+      // leave as raw string if not valid JSON
+    }
+  }
+  return { ...ev, data };
+}
+
 function parseSinceDuration(raw: string): Date | undefined {
   const match = raw.match(/^(\d+)(m|h|d)$/);
   if (!match) return undefined;
@@ -80,7 +92,7 @@ export function registerEvents(program: Command): void {
       });
 
       if (opts["json"]) {
-        console.log(JSON.stringify(results, null, 2));
+        console.log(JSON.stringify(results.map(toJsonOutput), null, 2));
         return;
       }
 
@@ -111,7 +123,7 @@ export function registerEvents(program: Command): void {
       const results = searchActivityEvents(query, opts["project"], limit);
 
       if (opts["json"]) {
-        console.log(JSON.stringify(results, null, 2));
+        console.log(JSON.stringify(results.map(toJsonOutput), null, 2));
         return;
       }
 

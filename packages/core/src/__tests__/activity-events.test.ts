@@ -95,6 +95,37 @@ describe("recordActivityEvent", () => {
     expect(parsed["agent"]).toBe("claude-code");
   });
 
+  it("preserves error messages that mention sensitive words in values", () => {
+    // Greptile flagged this as a bug: values like "token expired" or
+    // "authorization header missing" would be redacted. They are not —
+    // SENSITIVE_KEY_RE only matches key names, not string values.
+    let capturedData: unknown;
+    const captureDb = {
+      prepare: (_sql: string) => ({
+        run: (...args: unknown[]) => {
+          capturedData = args[8];
+        },
+        all: () => [],
+      }),
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(eventsDb.getDb).mockReturnValueOnce(captureDb as any);
+    recordActivityEvent({
+      source: "session-manager",
+      kind: "session.spawn_failed",
+      summary: "spawn failed",
+      data: {
+        reason: "token expired",
+        message: "authorization header missing",
+        agent: "claude-code",
+      },
+    });
+    const parsed = JSON.parse(capturedData as string);
+    expect(parsed["reason"]).toBe("token expired");
+    expect(parsed["message"]).toBe("authorization header missing");
+    expect(parsed["agent"]).toBe("claude-code");
+  });
+
   it("handles BigInt in data without throwing", () => {
     let capturedData: unknown;
     const captureDb = {
