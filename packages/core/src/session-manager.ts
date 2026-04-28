@@ -11,7 +11,7 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
+import { statSync, existsSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
 import { recordActivityEvent } from "./activity-events.js";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
@@ -2160,9 +2160,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
 
     invalidateCache();
-    if (didPurgeOpenCodeSession) {
-      markArchivedOpenCodeCleanup(sessionsDir, sessionId);
-    }
     recordActivityEvent({
       projectId,
       sessionId,

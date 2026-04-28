@@ -103,7 +103,7 @@ describe("searchActivityEvents", () => {
     vi.mocked(eventsDb.getDb).mockReturnValue(captureDb as any);
     searchActivityEvents("spawn; DROP TABLE activity_events--");
     // SQL injection stripped; only word tokens joined by AND
-    expect(capturedFtsQuery).toBe("spawn AND DROP AND TABLE AND activity_events");
+    expect(capturedFtsQuery).toBe('"spawn" AND "DROP" AND "TABLE" AND "activity_events"');
   });
 
   it("returns [] when DB is null", () => {

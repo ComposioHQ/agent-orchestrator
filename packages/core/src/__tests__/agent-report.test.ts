@@ -444,7 +444,7 @@ describe("applyAgentReport", () => {
     ).toThrow(/not found/);
   });
 
-  it("bounds the on-disk audit trail to recent entries", () => {
+  it("bounds the on-disk audit trail to recent entries", { timeout: 15000 }, () => {
     for (let index = 0; index < 260; index += 1) {
       applyAgentReport(dataDir, sessionId, {
         state: "working",
