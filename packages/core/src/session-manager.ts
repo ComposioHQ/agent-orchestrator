@@ -2482,21 +2482,49 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         throw new SessionNotFoundError(sessionId);
       }
 
-      const handle =
-        current.runtimeHandle ??
-        ({
-          id: sessionId,
-          runtimeName,
-          data: {},
-        } satisfies RuntimeHandle);
-      const normalized = current.runtimeHandle ? current : { ...current, runtimeHandle: handle };
+      // Refuse to operate unless we can recover a real identity for the
+      // runtime session. `ensureHandleAndEnrich` fabricates a handle from the
+      // bare sessionId when metadata has neither a `runtimeHandle` nor a
+      // `tmuxName`; using that fabricated handle here is actively harmful,
+      // because restore() would spawn a brand-new tmux session under the
+      // wrong name (the real name is `{projectHash}-{sessionId}`), leaving
+      // two agent instances on the same worktree. See #1456.
+      //
+      // Accept sessions where `ensureHandleAndEnrich` could build a correct
+      // handle: either the stored `runtimeHandle` JSON parsed successfully,
+      // or a `tmuxName` is present to fall back on. Refuse otherwise — this
+      // also covers the corrupt-JSON case when there's no tmuxName to save
+      // us, which the previous guard missed.
+      const rawHandleJson = current.metadata["runtimeHandle"];
+      const storedTmuxName = current.metadata["tmuxName"]?.trim();
+      const hasParseableHandle = parsedHandle !== null;
+      const hasTmuxName =
+        typeof storedTmuxName === "string" && storedTmuxName.length > 0;
+      if (!hasParseableHandle && !hasTmuxName) {
+        const reason = rawHandleJson
+          ? "has a corrupt runtime handle in metadata and no tmuxName fallback"
+          : "is missing its runtime handle";
+        throw new Error(
+          `Session ${sessionId} ${reason} — ` +
+            `use 'ao session ls' to inspect or 'ao session restore ${sessionId}' explicitly`,
+        );
+      }
+      if (!current.runtimeHandle) {
+        // Defensive: ensureHandleAndEnrich should have populated this from
+        // either the parsed handle or tmuxName. If it didn't, surface it
+        // rather than silently falling through.
+        throw new Error(
+          `Session ${sessionId} has no runtime handle after enrichment`,
+        );
+      }
+      const handle = current.runtimeHandle;
 
-      if (forceRestore || isRestorable(normalized)) {
+      if (forceRestore || isRestorable(current)) {
         return restoreForDelivery(
           forceRestore
             ? "session needed to be restarted before delivery"
             : "session is not running",
-          normalized,
+          current,
         );
       }
 
@@ -2505,8 +2533,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         agentPlugin.isProcessRunning(handle).catch(() => true),
       ]);
 
-      if (normalized.status === "spawning" && runtimeAlive) {
-        await waitForInteractiveReadiness(normalized, SEND_BOOTSTRAP_READY_TIMEOUT_MS);
+      if (current.status === "spawning" && runtimeAlive) {
+        await waitForInteractiveReadiness(current, SEND_BOOTSTRAP_READY_TIMEOUT_MS);
         [runtimeAlive, processRunning] = await Promise.all([
           runtimePlugin.isAlive(handle).catch(() => true),
           agentPlugin.isProcessRunning(handle).catch(() => true),
@@ -2516,11 +2544,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (!runtimeAlive || !processRunning) {
         return restoreForDelivery(
           !runtimeAlive ? "runtime is not alive" : "agent process is not running",
-          normalized,
+          current,
         );
       }
 
-      return normalized;
+      return current;
     };
 
     const sendWithConfirmation = async (session: Session): Promise<void> => {
