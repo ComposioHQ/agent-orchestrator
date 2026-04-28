@@ -13,10 +13,12 @@
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { recordActivityEvent } from "./activity-events.js";
 import {
   ACTIVITY_STATE,
   SESSION_STATUS,
   TERMINAL_STATUSES,
+  type ActivityState,
   type LifecycleManager,
   type OpenCodeSessionManager,
   type SessionId,
@@ -393,6 +395,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   const observer = createProjectObserver(config, "lifecycle-manager");
 
   const states = new Map<SessionId, SessionStatus>();
+  const activityStateCache = new Map<string, ActivityState>(); // sessionId → last observed activity
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
@@ -864,6 +867,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           activitySignal = classifyActivitySignal(detectedActivity, "native");
           activityEvidence = formatActivitySignalEvidence(activitySignal);
           lifecycle.runtime.lastObservedAt = nowIso;
+          const prevActivity = activityStateCache.get(session.id);
+          activityStateCache.set(session.id, detectedActivity.state);
+          if (prevActivity !== undefined && prevActivity !== detectedActivity.state) {
+            recordActivityEvent({
+              projectId: session.projectId,
+              sessionId: session.id,
+              source: "lifecycle",
+              kind: "activity.transition",
+              summary: `${prevActivity} → ${detectedActivity.state}`,
+              data: { from: prevActivity, to: detectedActivity.state },
+            });
+          }
           if (lifecycle.runtime.state !== "missing" && lifecycle.runtime.state !== "probe_failed") {
             lifecycle.runtime.state = "alive";
             lifecycle.runtime.reason = "process_running";
@@ -1854,6 +1869,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // State transition detected
       states.set(session.id, newStatus);
       updateSessionMetadata(session, { status: newStatus });
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle",
+        kind: "lifecycle.transition",
+        level: newStatus === "ci_failed" ? "warn" : "info",
+        summary: `${oldStatus} → ${newStatus}`,
+        data: { from: oldStatus, to: newStatus },
+      });
       observer.recordOperation({
         metric: "lifecycle_poll",
         operation: "lifecycle.transition",
@@ -2163,6 +2187,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       for (const trackedId of states.keys()) {
         if (!currentSessionIds.has(trackedId)) {
           states.delete(trackedId);
+        }
+      }
+      for (const trackedId of activityStateCache.keys()) {
+        if (!currentSessionIds.has(trackedId)) {
+          activityStateCache.delete(trackedId);
         }
       }
       for (const trackerKey of reactionTrackers.keys()) {
