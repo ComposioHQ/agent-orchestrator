@@ -17,6 +17,7 @@ import {
   sessionToDashboard,
   resolveProject,
   enrichSessionPR,
+  enrichSessionIssue,
   readPREnrichmentFromMetadata,
   enrichSessionAgentSummary,
   enrichSessionIssueTitle,

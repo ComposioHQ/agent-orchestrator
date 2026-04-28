@@ -40,6 +40,7 @@ const {
     list: vi.fn(),
     restore: vi.fn(),
     kill: vi.fn(),
+    killTree: vi.fn(),
     cleanup: vi.fn(),
     get: vi.fn(),
     spawn: vi.fn(),
@@ -258,9 +259,12 @@ import { registerStart, registerStop, createConfigOnly } from "../../src/command
 let tmpDir: string;
 let program: Command;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
+let originalAoGlobalConfig: string | undefined;
 
 beforeEach(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-start-test-"));
+  originalAoGlobalConfig = process.env["AO_GLOBAL_CONFIG"];
+  process.env["AO_GLOBAL_CONFIG"] = join(tmpDir, "global-config.yaml");
 
   program = new Command();
   program.exitOverride();
@@ -319,6 +323,12 @@ beforeEach(async () => {
     return mockSessionManager.spawnOrchestrator(args);
   });
   mockSessionManager.kill.mockReset();
+  mockSessionManager.killTree.mockReset();
+  mockSessionManager.killTree.mockResolvedValue({
+    root: { cleaned: true, alreadyTerminated: false },
+    descendants: [],
+    errors: [],
+  });
   mockExec.mockReset();
   mockExecSilent.mockReset();
   // Default command availability:
@@ -374,6 +384,11 @@ beforeEach(async () => {
 
 afterEach(() => {
   if (cwdSpy) cwdSpy.mockRestore();
+  if (originalAoGlobalConfig === undefined) {
+    delete process.env["AO_GLOBAL_CONFIG"];
+  } else {
+    process.env["AO_GLOBAL_CONFIG"] = originalAoGlobalConfig;
+  }
   rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -1631,7 +1646,6 @@ describe("stop command", () => {
       },
     ]);
     mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
-
     await program.parseAsync(["node", "test", "stop"]);
 
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
