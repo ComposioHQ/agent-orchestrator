@@ -1,0 +1,26 @@
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  ad5b256106b027bd 1530-1544,1547-1562
+packages/core/src/session-manager.ts
+  463e148e96538f59 1810-1813,2061-2063,2144-2145
+  ad5b256106b027bd 2146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "e15ab713852231e51be93a9b788a342f618614ce",
+  "prompts": {
+    "ad5b256106b027bd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ccdaefa2-9c77-4395-82ad-0f531937cca2",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 3023,
+      "total_deletions": 4,
+      "accepted_lines": 32,
+      "overriden_lines": 0
+    }
+  }
+}
