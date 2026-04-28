@@ -13,6 +13,7 @@
 
 import { statSync, existsSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
 import { execFile } from "node:child_process";
+import { randomInt } from "node:crypto";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
@@ -216,6 +217,16 @@ function getSessionNumber(sessionId: string, prefix: string): number | undefined
 
   const parsed = Number.parseInt(match[1], 10);
   return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+const SESSION_BRANCH_SUFFIX_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
+
+function generateSessionBranchSuffix(length = 5): string {
+  let suffix = "";
+  for (let i = 0; i < length; i += 1) {
+    suffix += SESSION_BRANCH_SUFFIX_ALPHABET[randomInt(SESSION_BRANCH_SUFFIX_ALPHABET.length)];
+  }
+  return suffix;
 }
 
 const PR_TRACKING_STATUSES: ReadonlySet<string> = new Set([
@@ -789,7 +800,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
           const ref = trimmed.split(/\s+/)[1] ?? "";
           const match = ref.match(
-            new RegExp(`refs/heads/session/${escapeRegex(project.sessionPrefix)}-(\\d+)$`),
+            new RegExp(
+              `refs/heads/session/${escapeRegex(project.sessionPrefix)}-(\\d+)(?:-[a-z0-9]{5})?$`,
+            ),
           );
           if (!match) return [];
 
@@ -1153,7 +1166,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             .replace(/^-+|-+$/g, "");
       branch = `feat/${slug || sessionId}`;
     } else {
-      branch = `session/${sessionId}`;
+      branch = `session/${sessionId}-${generateSessionBranchSuffix()}`;
     }
 
     // Create workspace (if workspace plugin is available)
