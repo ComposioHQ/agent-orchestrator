@@ -2,7 +2,7 @@ import type { ITheme } from "@xterm/xterm";
 
 export type TerminalVariant = "agent" | "orchestrator";
 
-export function buildTerminalThemes(_variant: TerminalVariant): { dark: ITheme; light: ITheme } {
+export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; light: ITheme } {
   // Orchestrator and agent currently share the design-system accent; the
   // variant parameter is preserved for API compatibility and future divergence.
   const accent = {
@@ -18,23 +18,27 @@ export function buildTerminalThemes(_variant: TerminalVariant): { dark: ITheme; 
     cursorAccent: "#0a0a0f",
     selectionBackground: accent.selDark,
     selectionInactiveBackground: "rgba(128, 128, 128, 0.2)",
-    // ANSI colors — slightly warmer than pure defaults
-    black: "#1a1a24",
-    red: "#ef4444",
-    green: "#22c55e",
-    yellow: "#f59e0b",
-    blue: "#5b7ef8",
-    magenta: "#a371f7",
-    cyan: "#22d3ee",
-    white: "#d4d4d8",
-    brightBlack: "#50506a",
-    brightRed: "#f87171",
-    brightGreen: "#4ade80",
-    brightYellow: "#fbbf24",
-    brightBlue: "#7b9cfb",
-    brightMagenta: "#c084fc",
-    brightCyan: "#67e8f9",
-    brightWhite: "#eeeef5",
+    ...(variant === "orchestrator"
+      ? {
+          // Keep the orchestrator terminal aligned with the AO design system.
+          black: "#1a1a24",
+          red: "#ef4444",
+          green: "#22c55e",
+          yellow: "#f59e0b",
+          blue: "#5b7ef8",
+          magenta: "#a371f7",
+          cyan: "#22d3ee",
+          white: "#d4d4d8",
+          brightBlack: "#50506a",
+          brightRed: "#f87171",
+          brightGreen: "#4ade80",
+          brightYellow: "#fbbf24",
+          brightBlue: "#7b9cfb",
+          brightMagenta: "#c084fc",
+          brightCyan: "#67e8f9",
+          brightWhite: "#eeeef5",
+        }
+      : {}),
   };
 
   const light: ITheme = {

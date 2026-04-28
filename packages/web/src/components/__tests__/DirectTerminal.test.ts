@@ -34,12 +34,21 @@ function contrastRatio(a: string, b: string): number {
 }
 
 describe("buildTerminalThemes", () => {
-  it("dark theme has valid hex colors for bg, fg, and all ANSI slots", () => {
-    const { dark } = buildTerminalThemes("agent");
+  it("orchestrator dark theme has valid hex colors for bg, fg, and all ANSI slots", () => {
+    const { dark } = buildTerminalThemes("orchestrator");
     expect(dark.background).toMatch(HEX_RE);
     expect(dark.foreground).toMatch(HEX_RE);
     for (const key of ANSI_KEYS) {
       expect(dark[key]).toMatch(HEX_RE);
+    }
+  });
+
+  it("agent dark theme leaves ANSI slots unset so terminal-native colors are preserved", () => {
+    const { dark } = buildTerminalThemes("agent");
+    expect(dark.background).toMatch(HEX_RE);
+    expect(dark.foreground).toMatch(HEX_RE);
+    for (const key of ANSI_KEYS) {
+      expect(dark[key]).toBeUndefined();
     }
   });
 
@@ -73,12 +82,21 @@ describe("buildTerminalThemes", () => {
     expect(agent.light.selectionBackground).toBe(orch.light.selectionBackground);
   });
 
+  it("orchestrator dark theme keeps its AO-specific ANSI palette", () => {
+    const { dark } = buildTerminalThemes("orchestrator");
+    expect(dark.blue).toBe("#5b7ef8");
+    expect(dark.magenta).toBe("#a371f7");
+  });
+
   it("keeps ANSI magenta distinct from ANSI blue", () => {
-    const { dark, light } = buildTerminalThemes("agent");
-    expect(dark.magenta).not.toBe(dark.blue);
-    expect(dark.brightMagenta).not.toBe(dark.brightBlue);
-    expect(light.magenta).not.toBe(light.blue);
-    expect(light.brightMagenta).not.toBe(light.brightBlue);
+    const { dark: agentDark, light: agentLight } = buildTerminalThemes("agent");
+    const { dark: orchDark } = buildTerminalThemes("orchestrator");
+    expect(agentDark.magenta).toBeUndefined();
+    expect(agentDark.brightMagenta).toBeUndefined();
+    expect(orchDark.magenta).not.toBe(orchDark.blue);
+    expect(orchDark.brightMagenta).not.toBe(orchDark.brightBlue);
+    expect(agentLight.magenta).not.toBe(agentLight.blue);
+    expect(agentLight.brightMagenta).not.toBe(agentLight.brightBlue);
   });
 
   it("selection colors differ between dark and light themes", () => {

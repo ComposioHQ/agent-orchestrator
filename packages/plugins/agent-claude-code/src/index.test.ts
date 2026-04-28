@@ -266,6 +266,12 @@ describe("getEnvironment", () => {
     expect(env["CLAUDECODE"]).toBe("");
   });
 
+  it("forces ANSI colors for piped stdio launches", () => {
+    const env = agent.getEnvironment(makeLaunchConfig());
+    expect(env["FORCE_COLOR"]).toBe("1");
+    expect(env["TERM"]).toBe("xterm-256color");
+  });
+
   it("sets AO_SESSION_ID but not AO_PROJECT_ID (caller's responsibility)", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["AO_SESSION_ID"]).toBe("sess-1");
