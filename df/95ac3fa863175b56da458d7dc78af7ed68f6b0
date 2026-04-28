@@ -1,0 +1,25 @@
+packages/core/src/__tests__/query-activity-events.test.ts
+  173a7c58af4f6973 106
+packages/core/src/__tests__/agent-report.test.ts
+  173a7c58af4f6973 447
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "df95ac3fa863175b56da458d7dc78af7ed68f6b0",
+  "prompts": {
+    "173a7c58af4f6973": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "815b749e-aad3-485f-9ea0-e8ac6550745c",
+        "model": "<synthetic>"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
