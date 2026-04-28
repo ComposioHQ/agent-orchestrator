@@ -1,0 +1,25 @@
+packages/core/src/query-activity-events.ts
+  173a7c58af4f6973 132
+packages/cli/src/commands/events.ts
+  173a7c58af4f6973 13-19,102-114,145-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "c664dccf40b9c97912102db3c7ed0b9bf13bff78",
+  "prompts": {
+    "173a7c58af4f6973": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "815b749e-aad3-485f-9ea0-e8ac6550745c",
+        "model": "<synthetic>"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 28,
+      "total_deletions": 3,
+      "accepted_lines": 30,
+      "overriden_lines": 0
+    }
+  }
+}
