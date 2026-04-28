@@ -1545,14 +1545,14 @@ describe("spawn", () => {
         branch: "orchestrator/app-orchestrator",
         status: "terminated",
         project: "my-app",
-        ...buildLifecycleMetadataPatch(lifecycle, "terminated"),
+        ...buildLifecycleMetadataPatch(lifecycle),
       });
       const sm = createSessionManager({ config, registry: mockRegistry });
 
       const session = await sm.ensureOrchestrator({ projectId: "my-app" });
 
       expect(session.id).toBe("app-orchestrator");
-      expect(session.status).toBe("spawning");
+      expect(session.status).toBe("working");
       // Workspace was reused (not recreated)
       expect(mockWorkspace.create).not.toHaveBeenCalled();
       // New runtime was created for the restored session

@@ -1813,7 +1813,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         // delete/ignore strategies need the slot to be free immediately.
         // deleteMetadata() is a no-op when the file is absent, so no try/catch
         // needed — real IO errors should propagate rather than be swallowed.
-        deleteMetadata(getProjectSessionsDir(orchestratorConfig.projectId), sessionId, true);
+        deleteMetadata(getProjectSessionsDir(orchestratorConfig.projectId), sessionId);
         return spawnOrchestrator(orchestratorConfig);
       }
       if (existing.lifecycle.session.state === "done") {
@@ -2059,13 +2059,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const existingLifecycle = parseCanonicalLifecycle(raw);
     if (existingLifecycle?.session.state === "terminated") {
       // Session was already terminated (kill() keeps it in the active dir so the
-      // kanban can show it in the Terminated column). Archive it now that a second
+      // kanban can show it in the Terminated column). Delete it now that a second
       // caller is asking to kill it — this is how cleanup() eventually removes it.
-      try {
-        deleteMetadata(sessionsDir, sessionId, true);
-      } catch {
-        // Already archived by a racing caller.
-      }
+      deleteMetadata(sessionsDir, sessionId);
       invalidateCache();
       return { cleaned: false, alreadyTerminated: true };
     }
