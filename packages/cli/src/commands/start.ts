@@ -2427,6 +2427,37 @@ export function registerStop(program: Command): void {
           );
         }
 
+        // Resolve the actual orchestrator session id by listing the project's sessions
+        // and finding the most-recently-active orchestrator. This avoids relying on the
+        // legacy `${prefix}-orchestrator` (no-N) phantom id, which never matches a real
+        // numbered session and causes ao stop to silently no-op.
+        const allSessionPrefixes = Object.entries(config.projects).map(
+          ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
+        );
+        let orchestratorToKill: { id: string } | null = null;
+        let lookupFailed = false;
+        try {
+          const projectSessions = await sm.list(_projectId);
+          const orchestrators = projectSessions
+            .filter((s) =>
+              isOrchestratorSession(s, project.sessionPrefix ?? _projectId, allSessionPrefixes),
+            )
+            .filter((s) => !isTerminalSession(s));
+          const sorted = [...orchestrators].sort(
+            (a, b) => (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0),
+          );
+          orchestratorToKill = sorted[0] ?? null;
+        } catch (err) {
+          lookupFailed = true;
+          console.log(
+            chalk.yellow(
+              `  Could not list sessions to locate orchestrator: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+          );
+        }
+
         if (orchestratorToKill) {
           const spinner = ora("Stopping orchestrator session and descendants").start();
           const purgeOpenCode = opts?.purgeSession === true;
