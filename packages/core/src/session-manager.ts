@@ -412,6 +412,48 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return roots.some((root) => isPathInside(workspacePath, root));
   }
 
+  function hasReapableManagedWorkspace(
+    project: ProjectConfig | undefined,
+    projectId: string | undefined,
+    workspacePath: string | undefined,
+  ): boolean {
+    return Boolean(
+      workspacePath &&
+        shouldDestroyWorkspacePath(project, projectId, workspacePath) &&
+        existsSync(workspacePath),
+    );
+  }
+
+  async function destroyManagedWorkspace(
+    project: ProjectConfig | undefined,
+    projectId: string | undefined,
+    workspacePath: string | undefined,
+    options: { requireExisting?: boolean } = {},
+  ): Promise<boolean> {
+    if (!workspacePath || !shouldDestroyWorkspacePath(project, projectId, workspacePath)) {
+      return false;
+    }
+
+    if (options.requireExisting && !existsSync(workspacePath)) {
+      return false;
+    }
+
+    const workspacePlugin = project
+      ? resolvePlugins(project).workspace
+      : registry.get<Workspace>("workspace", config.defaults.workspace);
+    if (!workspacePlugin) {
+      return false;
+    }
+
+    try {
+      await workspacePlugin.destroy(workspacePath);
+      return true;
+    } catch {
+      // Workspace might already be gone
+      return false;
+    }
+  }
+
   function isOrchestratorSessionRecord(
     sessionId: string,
     raw: Record<string, string> | null | undefined,
@@ -2048,11 +2090,22 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
     const { raw, sessionsDir, project, projectId } = located;
 
-    // Idempotency: if lifecycle already says terminated, don't re-run destroys
-    // (which could double-purge opencode or race with concurrent kills).
+    // Idempotency: terminal lifecycle means runtime/agent teardown has already
+    // been recorded, but it does not prove the workspace was reaped. A crashed
+    // kill or runtime_lost transition can leave the worktree on disk, so allow
+    // a safe workspace-only cleanup retry before returning.
     const existingLifecycle = parseCanonicalLifecycle(raw);
     if (existingLifecycle?.session.state === "terminated") {
-      return { cleaned: false, alreadyTerminated: true };
+      const cleanedWorkspace = await destroyManagedWorkspace(
+        project,
+        projectId,
+        raw["worktree"],
+        { requireExisting: true },
+      );
+      if (cleanedWorkspace) {
+        invalidateCache();
+      }
+      return { cleaned: cleanedWorkspace, alreadyTerminated: true };
     }
 
     const killReason: LifecycleKillReason = options?.reason ?? "manually_killed";
@@ -2077,19 +2130,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    const worktree = raw["worktree"];
-    if (worktree && shouldDestroyWorkspacePath(project, projectId, worktree)) {
-      const workspacePlugin = project
-        ? resolvePlugins(project).workspace
-        : registry.get<Workspace>("workspace", config.defaults.workspace);
-      if (workspacePlugin) {
-        try {
-          await workspacePlugin.destroy(worktree);
-        } catch {
-          // Workspace might already be gone
-        }
-      }
-    }
+    await destroyManagedWorkspace(project, projectId, raw["worktree"]);
 
     let didPurgeOpenCodeSession = false;
     if (options?.purgeOpenCode === true && cleanupAgent === "opencode") {
@@ -2260,10 +2301,26 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           continue;
         }
 
+        let cleanedTerminatedWorkspace = false;
+        if (options?.dryRun) {
+          cleanedTerminatedWorkspace = hasReapableManagedWorkspace(
+            project,
+            projectKey,
+            terminatedRaw["worktree"],
+          );
+        } else {
+          const killResult = await kill(terminatedId, { purgeOpenCode: false });
+          cleanedTerminatedWorkspace = killResult.cleaned;
+        }
+
         const cleanupAgent = resolveSelectionForSession(project, terminatedId, terminatedRaw).agentName;
         const mappedOpenCodeSessionId = asValidOpenCodeSessionId(terminatedRaw["opencodeSessionId"]);
         if (cleanupAgent === "opencode" && terminatedRaw["opencodeCleanedAt"]) {
-          pushSkipped(projectKey, terminatedId);
+          if (cleanedTerminatedWorkspace) {
+            pushKilled(projectKey, terminatedId);
+          } else {
+            pushSkipped(projectKey, terminatedId);
+          }
           continue;
         }
         if (cleanupAgent === "opencode" && mappedOpenCodeSessionId && shouldPurgeOpenCode) {
@@ -2283,6 +2340,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
               continue;
             }
           }
+          pushKilled(projectKey, terminatedId);
+        } else if (cleanedTerminatedWorkspace) {
           pushKilled(projectKey, terminatedId);
         } else {
           pushSkipped(projectKey, terminatedId);
