@@ -92,6 +92,11 @@ function parseDuration(str: string): number {
   }
 }
 
+/** Reaction keys for conditions that can oscillate (e.g. CI failing→pending→failing).
+ *  Their trackers survive status exit so the escalation budget accumulates
+ *  across oscillations instead of resetting to zero each time. */
+const PERSISTENT_REACTION_KEYS = new Set(["ci-failed", "merge-conflicts"]);
+
 type WorkspaceBranchProbe =
   | { kind: "branch"; branch: string }
   | { kind: "detached" }
@@ -1656,32 +1661,35 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         (reactionConfig.auto !== false || reactionConfig.action === "notify")
       ) {
         try {
-          if (reactionConfig.action === "send-to-agent") {
+          // Build enriched config with dynamic base branch message.
+          // Note: executeReaction's notify path defaults to "info" priority (was "warning"
+          // in the old direct-dispatch code). Users who set action:"notify" for merge-conflicts
+          // should set priority:"warning" explicitly in their config if needed.
+          const enrichedConfig = { ...reactionConfig };
+          if (reactionConfig.action === "send-to-agent" && !reactionConfig.message) {
             const baseBranch = session.pr.baseBranch ?? "the default branch";
             const behindNote = cachedData.isBehind ? ` is behind ${baseBranch} and` : "";
-            const message =
-              reactionConfig.message ??
-              `Your PR branch${behindNote} has merge conflicts with ${baseBranch}. Rebase your branch on ${baseBranch}, resolve the conflicts, and push. You should not need to call gh for merge status unless you need additional context — this information is current.`;
-            await sessionManager.send(session.id, message);
-          } else {
-            const event = createEvent("merge.conflicts", {
-              sessionId: session.id,
-              projectId: session.projectId,
-              message: `${session.id}: PR has merge conflicts`,
-            });
-            await notifyHuman(event, reactionConfig.priority ?? "warning");
+            enrichedConfig.message = `Your PR branch${behindNote} has merge conflicts with ${baseBranch}. Rebase your branch on ${baseBranch}, resolve the conflicts, and push. You should not need to call gh for merge status unless you need additional context — this information is current.`;
           }
 
-          updateSessionMetadata(session, {
-            lastMergeConflictDispatched: "true",
-          });
+          const result = await executeReaction(
+            session.id,
+            session.projectId,
+            conflictReactionKey,
+            enrichedConfig,
+          );
+          if (result.success) {
+            updateSessionMetadata(session, {
+              lastMergeConflictDispatched: "true",
+            });
+          }
         } catch {
-          // Send failed — will retry on next poll cycle
+          // Dispatch failed — will retry on next poll cycle
         }
       }
     } else if (lastDispatched === "true") {
-      // Conflicts resolved — clear so we can re-dispatch if they recur
-      clearReactionTracker(session.id, conflictReactionKey);
+      // Conflicts resolved — clear dedup flag so we can re-dispatch if they recur,
+      // but preserve reaction tracker so escalation budget accumulates.
       updateSessionMetadata(session, {
         lastMergeConflictDispatched: "",
       });
@@ -1879,11 +1887,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         allCompleteEmitted = false;
       }
 
-      // Clear reaction trackers for the old status so retries reset on state changes
+      // Clear reaction trackers for the old status so retries reset on state changes.
+      // Persistent keys (ci-failed, merge-conflicts) are excluded — their trackers
+      // survive oscillation so the escalation budget accumulates across cycles.
       const oldEventType = statusToEventType(undefined, oldStatus);
       if (oldEventType) {
         const oldReactionKey = eventToReactionKey(oldEventType);
-        if (oldReactionKey) {
+        if (oldReactionKey && !PERSISTENT_REACTION_KEYS.has(oldReactionKey)) {
           clearReactionTracker(session.id, oldReactionKey);
         }
       }
