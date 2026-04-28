@@ -171,6 +171,7 @@ export {
   getActivityFallbackState,
   classifyTerminalActivity,
   recordTerminalActivity,
+  recordActivityViaTerminal,
 } from "./activity-log.js";
 export {
   ACTIVITY_STRONG_WINDOW_MS,
