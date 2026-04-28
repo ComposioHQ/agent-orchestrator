@@ -1,0 +1,107 @@
+name: Canary
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: canary
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  canary:
+    name: Publish canary
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    steps:
+      - name: Check if SHA is current tip of main
+        id: check_sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CANARY_SHA="${{ github.event.workflow_run.head_sha }}"
+          MAIN_SHA=$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq '.object.sha')
+          if [ "$CANARY_SHA" != "$MAIN_SHA" ]; then
+            echo "Skipping: $CANARY_SHA is not tip of main ($MAIN_SHA)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check_sha.outputs.skip == 'false'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        if: steps.check_sha.outputs.skip == 'false'
+      - uses: actions/setup-node@v4
+        if: steps.check_sha.outputs.skip == 'false'
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: echo "HUSKY=0" >> $GITHUB_ENV
+        if: steps.check_sha.outputs.skip == 'false'
+
+      - run: pnpm install --frozen-lockfile
+        if: steps.check_sha.outputs.skip == 'false'
+
+      - run: pnpm -r --filter '!@aoagents/ao-web' build
+        if: steps.check_sha.outputs.skip == 'false'
+
+      - name: Create snapshot versions
+        if: steps.check_sha.outputs.skip == 'false'
+        run: |
+          # If no changesets exist (e.g. after a Version Packages merge), create a minimal one.
+          # changeset version --snapshot consumes and deletes it — no cleanup needed.
+          if [ -z "$(ls .changeset/*.md 2>/dev/null | grep -vi 'README')" ]; then
+            printf -- '---\n"@aoagents/ao": patch\n---\n\nchore: canary build\n' > .changeset/canary-temp.md
+          fi
+          pnpm changeset version --snapshot nightly
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish canary
+        if: steps.check_sha.outputs.skip == 'false'
+        id: publish
+        run: |
+          pnpm changeset publish --tag nightly --no-git-tag
+          # packages/ao is the user-facing CLI package; update this path if the package is renamed.
+          CANARY_VERSION=$(node -p "require('./packages/ao/package.json').version")
+          echo "version=$CANARY_VERSION" >> "$GITHUB_OUTPUT"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Comment on merged PR
+        if: steps.check_sha.outputs.skip == 'false' && steps.publish.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANARY_SHA: ${{ github.event.workflow_run.head_sha }}
+          CANARY_VERSION: ${{ steps.publish.outputs.version }}
+        run: |
+          PR_NUMBER=$(gh api repos/${{ github.repository }}/commits/${CANARY_SHA}/pulls \
+            --jq '.[0].number // empty')
+          if [ -n "$PR_NUMBER" ]; then
+            gh api repos/${{ github.repository }}/issues/${PR_NUMBER}/comments \
+              -f body="$(cat <<COMMENT
+**Canary published!** Test your changes:
+\`\`\`bash
+npm install -g @aoagents/ao@${CANARY_VERSION}
+# or: npm install -g @aoagents/ao@nightly
+\`\`\`
+COMMENT
+)"
+          fi
