@@ -391,16 +391,29 @@ function ghInstallAttempts(): InstallAttempt[] {
   return [];
 }
 
-async function runInteractiveCommand(cmd: string, args: string[]): Promise<void> {
+async function runInteractiveCommand(
+  cmd: string,
+  args: string[],
+  options?: {
+    cwd?: string;
+    env?: Record<string, string>;
+    action?: string;
+    installHints?: string[];
+  },
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: "inherit" });
+    const child = spawn(cmd, args, {
+      cwd: options?.cwd,
+      env: options?.env ? { ...process.env, ...options.env } : process.env,
+      stdio: "inherit",
+    });
     child.once("error", (err) => {
       reject(
         formatCommandError(err, {
           cmd,
           args,
-          action: "run an interactive installer",
-          installHints: genericInstallHints(cmd),
+          action: options?.action ?? "run an interactive command",
+          installHints: options?.installHints ?? genericInstallHints(cmd),
         }),
       );
     });
@@ -421,7 +434,10 @@ async function tryInstallWithAttempts(
   for (const attempt of attempts) {
     try {
       console.log(chalk.dim(`  Running: ${attempt.label}`));
-      await runInteractiveCommand(attempt.cmd, attempt.args);
+      await runInteractiveCommand(attempt.cmd, attempt.args, {
+        action: "run an interactive installer",
+        installHints: genericInstallHints(attempt.cmd),
+      });
       if (await verify()) return true;
     } catch {
       // Try next installer
@@ -516,7 +532,10 @@ async function promptInstallAgentRuntime(available: DetectedAgent[]): Promise<De
 
   console.log(chalk.dim(`  Installing ${selected.label}...`));
   try {
-    await runInteractiveCommand(selected.cmd, selected.args);
+    await runInteractiveCommand(selected.cmd, selected.args, {
+      action: `install ${selected.label}`,
+      installHints: genericInstallHints(selected.cmd),
+    });
     const refreshed = await detectAvailableAgents();
     if (refreshed.length > 0) {
       console.log(chalk.green(`  ✓ ${selected.label} installed successfully`));
@@ -570,9 +589,11 @@ async function cloneRepo(parsed: ParsedRepoUrl, targetDir: string, cwd: string):
     const ghAvailable = (await execSilent("gh", ["auth", "status"])) !== null;
     if (ghAvailable) {
       try {
-        await exec("gh", ["repo", "clone", parsed.ownerRepo, targetDir, "--", "--depth", "1"], {
-          cwd,
-        });
+        await runInteractiveCommand(
+          "gh",
+          ["repo", "clone", parsed.ownerRepo, targetDir, "--", "--depth", "1"],
+          { cwd, action: "clone repository via gh" },
+        );
         return;
       } catch {
         // gh clone failed — fall through to git clone with SSH
@@ -580,17 +601,23 @@ async function cloneRepo(parsed: ParsedRepoUrl, targetDir: string, cwd: string):
     }
   }
 
-  // 2. Try git clone with SSH URL (works with SSH keys for private repos)
+  // 2. Try git clone with SSH URL (works for SSH keys, may prompt for host key)
   const sshUrl = `git@${parsed.host}:${parsed.ownerRepo}.git`;
   try {
-    await exec("git", ["clone", "--depth", "1", sshUrl, targetDir], { cwd });
+    await runInteractiveCommand("git", ["clone", "--depth", "1", sshUrl, targetDir], {
+      cwd,
+      action: "clone repository via git (ssh)",
+    });
     return;
   } catch {
     // SSH failed — fall through to HTTPS
   }
 
   // 3. Final fallback: HTTPS (works for public repos)
-  await exec("git", ["clone", "--depth", "1", parsed.cloneUrl, targetDir], { cwd });
+  await runInteractiveCommand("git", ["clone", "--depth", "1", parsed.cloneUrl, targetDir], {
+    cwd,
+    action: "clone repository via git (https)",
+  });
 }
 
 /**
@@ -621,6 +648,7 @@ async function handleUrlStart(
   } else {
     spinner.start(`Cloning ${parsed.ownerRepo}`);
     try {
+      spinner.stop(); // Clear spinner before interactive command
       await cloneRepo(parsed, targetDir, cwd);
       spinner.succeed(`Cloned to ${targetDir}`);
     } catch (err) {

@@ -18,6 +18,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parse as parseYaml } from "yaml";
+import { EventEmitter } from "node:events";
 import type { SessionManager } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
@@ -41,6 +42,7 @@ const {
     restore: vi.fn(),
     kill: vi.fn(),
     cleanup: vi.fn(),
+    remap: vi.fn(),
     get: vi.fn(),
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
@@ -58,7 +60,7 @@ const { mockDetectOpenClawInstallation } = vi.hoisted(() => ({
 }));
 
 const { mockProcessCwd } = vi.hoisted(() => ({
-  mockProcessCwd: vi.fn<[], string>(),
+  mockProcessCwd: vi.fn<() => string | undefined>(),
 }));
 
 const { mockPromptSelect, mockPromptConfirm } = vi.hoisted(() => ({
@@ -259,6 +261,40 @@ let tmpDir: string;
 let program: Command;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
 
+function createSpawnChild(options?: {
+  /** Emit `error` instead of `close`. */
+  error?: Error;
+  /** Exit code emitted via `close` (0 = success). */
+  closeCode?: number;
+}): {
+  on: EventEmitter["on"];
+  once: EventEmitter["once"];
+  kill: () => void;
+  emit: EventEmitter["emit"];
+  stdout: null;
+  stderr: null;
+} {
+  const emitter = new EventEmitter();
+  const closeCode = options?.closeCode ?? 0;
+
+  queueMicrotask(() => {
+    if (options?.error) {
+      emitter.emit("error", options.error);
+      return;
+    }
+    emitter.emit("close", closeCode);
+  });
+
+  return {
+    on: emitter.on.bind(emitter),
+    once: emitter.once.bind(emitter),
+    kill: vi.fn(),
+    emit: emitter.emit.bind(emitter),
+    stdout: null,
+    stderr: null,
+  };
+}
+
 beforeEach(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-start-test-"));
 
@@ -273,9 +309,8 @@ beforeEach(async () => {
     throw new Error(`process.exit(${code})`);
   });
 
-  // Default: mock spawn to return a fake child process
-  const fakeChild = { on: vi.fn(), kill: vi.fn(), emit: vi.fn(), stdout: null, stderr: null };
-  mockSpawn.mockReturnValue(fakeChild);
+  // Default: mock spawn to "succeed" quickly.
+  mockSpawn.mockReturnValue(createSpawnChild({ closeCode: 0 }));
 
   // Re-prime web-dir mocks defeated by afterEach's vi.restoreAllMocks().
   // Without this, findFreePort/isPortAvailable return `undefined`, which makes
@@ -287,7 +322,7 @@ beforeEach(async () => {
   vi.mocked(webDir.findFreePort).mockResolvedValue(3000);
   vi.mocked(webDir.buildDashboardEnv).mockResolvedValue({});
   const projectDetection = await import("../../src/lib/project-detection.js");
-  vi.mocked(projectDetection.detectProjectType).mockReturnValue({ languages: [], frameworks: [] });
+  vi.mocked(projectDetection.detectProjectType).mockReturnValue({ languages: [], frameworks: [], tools: [] });
   vi.mocked(projectDetection.generateRulesFromTemplates).mockReturnValue(null);
   vi.mocked(projectDetection.formatProjectTypeForDisplay).mockReturnValue("");
 
@@ -608,15 +643,20 @@ describe("start command — URL argument", () => {
     // gh auth status succeeds
     mockExecSilent.mockResolvedValue("Logged in");
 
-    mockExec.mockImplementation(async (cmd: string, args: string[]) => {
+    mockSpawn.mockImplementation(
+      (
+        cmd: string,
+        args: string[],
+        _opts?: { cwd?: string; env?: NodeJS.ProcessEnv },
+      ) => {
       if (cmd === "gh" && args[0] === "repo" && args[1] === "clone") {
         createFakeRepo(repoDir, "https://github.com/owner/my-app.git", {
           "Cargo.toml": "",
         });
-        return { stdout: "", stderr: "" };
       }
-      return { stdout: "", stderr: "" };
-    });
+      return createSpawnChild({ closeCode: 0 });
+      },
+    );
 
     await program.parseAsync([
       "node",
@@ -627,7 +667,7 @@ describe("start command — URL argument", () => {
       "--no-orchestrator",
     ]);
 
-    expect(mockExec).toHaveBeenCalledWith(
+    expect(mockSpawn).toHaveBeenCalledWith(
       "gh",
       ["repo", "clone", "owner/my-app", repoDir, "--", "--depth", "1"],
       expect.anything(),
@@ -652,20 +692,28 @@ describe("start command — URL argument", () => {
       return null;
     });
 
-    mockExec.mockImplementation(async (cmd: string, args: string[]) => {
-      // SSH attempt fails
-      if (cmd === "git" && args[0] === "clone" && args[3]?.startsWith("git@")) {
-        throw new Error("Permission denied (publickey)");
-      }
-      // HTTPS fallback succeeds
+    mockSpawn.mockImplementation(
+      (
+        cmd: string,
+        args: string[],
+        _opts?: { cwd?: string; env?: NodeJS.ProcessEnv },
+      ) => {
       if (cmd === "git" && args[0] === "clone") {
+        const url = String(args[3] ?? "");
+        // SSH attempt fails (simulate non-zero exit)
+        if (url.startsWith("git@")) {
+          return createSpawnChild({ closeCode: 1 });
+        }
+
+        // HTTPS fallback succeeds
         createFakeRepo(repoDir, "https://github.com/owner/my-app.git", {
           "Cargo.toml": "",
         });
-        return { stdout: "", stderr: "" };
       }
-      return { stdout: "", stderr: "" };
-    });
+
+      return createSpawnChild({ closeCode: 0 });
+      },
+    );
 
     await program.parseAsync([
       "node",
@@ -677,12 +725,12 @@ describe("start command — URL argument", () => {
     ]);
 
     // Should have tried SSH first, then HTTPS
-    expect(mockExec).toHaveBeenCalledWith(
+    expect(mockSpawn).toHaveBeenCalledWith(
       "git",
       ["clone", "--depth", "1", "git@github.com:owner/my-app.git", repoDir],
       expect.anything(),
     );
-    expect(mockExec).toHaveBeenCalledWith(
+    expect(mockSpawn).toHaveBeenCalledWith(
       "git",
       ["clone", "--depth", "1", "https://github.com/owner/my-app.git", repoDir],
       expect.anything(),
@@ -786,7 +834,9 @@ describe("start command — URL argument", () => {
 
   it("fails on clone error with descriptive message", async () => {
     mockCwd(tmpDir);
-    mockExec.mockRejectedValue(new Error("fatal: repository not found"));
+    mockSpawn.mockImplementation(() =>
+      createSpawnChild({ error: new Error("fatal: repository not found") }),
+    );
 
     await expect(
       program.parseAsync([
@@ -2050,7 +2100,7 @@ describe("start command — autoCreateConfig", () => {
     });
 
     const { detectProjectType } = await import("../../src/lib/project-detection.js");
-    vi.mocked(detectProjectType).mockReturnValue({ languages: [], frameworks: [] });
+    vi.mocked(detectProjectType).mockReturnValue({ languages: [], frameworks: [], tools: [] });
 
     const { detectAvailableAgents, detectAgentRuntime } =
       await import("../../src/lib/detect-agent.js");
