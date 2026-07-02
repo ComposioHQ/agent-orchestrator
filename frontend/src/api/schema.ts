@@ -2364,7 +2364,6 @@ export interface components {
             project: components["schemas"]["Project"];
         };
         ProjectSummary: {
-            config?: components["schemas"]["ProjectConfig"];
             id: string;
             /** @enum {string} */
             kind: "single_repo" | "workspace" | "scratch";
