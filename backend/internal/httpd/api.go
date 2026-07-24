@@ -18,12 +18,14 @@ import (
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
+	userconfigsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/userconfig"
 )
 
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
 	Agents             controllers.AgentCatalog
 	Projects           projectsvc.Manager
+	UserConfig         userconfigsvc.Manager
 	Sessions           controllers.SessionService
 	DesktopWorkspaces  controllers.DesktopWorkspaceService
 	Activity           controllers.ActivityRecorder
@@ -102,6 +104,7 @@ type API struct {
 	deps          APIDeps
 	agents        *controllers.AgentsController
 	projects      *controllers.ProjectsController
+	userConfig    *controllers.UserConfigController
 	sessions      *controllers.SessionsController
 	desktop       *controllers.DesktopWorkspaceController
 	usage         *controllers.UsageController
@@ -134,6 +137,9 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		},
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,
+		},
+		userConfig: &controllers.UserConfigController{
+			Mgr: deps.UserConfig,
 		},
 		sessions: &controllers.SessionsController{
 			Svc:           deps.Sessions,
@@ -179,6 +185,7 @@ func (a *API) Register(root chi.Router) {
 			r.Use(presenceMiddleware(a.deps.Presence))
 			a.agents.Register(r)
 			a.projects.Register(r)
+			a.userConfig.Register(r)
 			a.sessions.Register(r)
 			a.desktop.Register(r)
 			a.usage.Register(r)
