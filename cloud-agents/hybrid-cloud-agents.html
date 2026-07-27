@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Design Doc — Hybrid Cloud Agents for Agent Orchestrator (rev.3)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2430; --border:#2a313c;
+    --text:#e6edf3; --muted:#9aa7b4; --accent:#4aa3ff; --good:#7ee787; --warn:#ffb454; --bad:#ff7b72;
+    --mono:"SF Mono",ui-monospace,"Cascadia Code",Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.65;font-size:16px}
+  .wrap{display:grid;grid-template-columns:270px 1fr;max-width:1360px;margin:0 auto}
+  nav{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;padding:26px 18px;border-right:1px solid var(--border);background:var(--panel)}
+  nav .brand{font-weight:700;font-size:16px;margin-bottom:2px}
+  nav .brand small{display:block;font-weight:400;font-size:12px;color:var(--muted)}
+  nav h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:20px 0 6px}
+  nav a{display:block;color:var(--muted);text-decoration:none;padding:4px 10px;border-radius:6px;font-size:13.5px}
+  nav a:hover{color:var(--text);background:var(--panel2)}
+  main{padding:38px 52px;min-width:0}
+  h1{font-size:29px;margin:0 0 4px;line-height:1.2}
+  .meta{color:var(--muted);font-size:14px;margin:0 0 8px}
+  .status{display:inline-block;font-size:12px;font-weight:600;padding:2px 10px;border-radius:20px;background:rgba(255,180,84,.15);color:var(--warn);border:1px solid rgba(255,180,84,.4)}
+  h2.sec{font-size:25px;margin:50px 0 6px;padding-bottom:10px;border-bottom:2px solid var(--border)}
+  h3{font-size:19px;margin:30px 0 8px}
+  h4{font-size:13px;margin:20px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  p{margin:10px 0}
+  code{font-family:var(--mono);background:var(--panel2);padding:2px 6px;border-radius:5px;font-size:13px;color:#ffd9a0}
+  pre.code{background:#0a0e14;border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:13px;color:#cdd9e5;line-height:1.5}
+  .lead{font-size:18px;color:var(--muted)}
+  .diagram{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:22px;margin:18px 0;overflow-x:auto;text-align:center}
+  .diagram .cap{text-align:left;font-size:13px;color:var(--muted);margin-top:12px;border-top:1px dashed var(--border);padding-top:10px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin:14px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.grid2{grid-template-columns:1fr}.wrap{grid-template-columns:1fr}nav{position:static;height:auto}main{padding:22px}}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{background:var(--panel2);font-weight:600}
+  tr:hover td{background:rgba(255,255,255,.02)}
+  .callout{border-left:4px solid var(--accent);background:var(--panel2);padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .callout.warn{border-color:var(--warn)} .callout.good{border-color:var(--good)} .callout.bad{border-color:var(--bad)}
+  ul{margin:8px 0;padding-left:22px}li{margin:5px 0}
+  .yes{color:var(--good);font-weight:600}.no{color:var(--bad);font-weight:600}.warncell{color:var(--warn);font-weight:600}
+  .goal{background:var(--panel);border:1px solid var(--border);border-left:4px solid var(--good);border-radius:0 8px 8px 0;padding:10px 16px;margin:10px 0}
+  .tag{font-family:var(--mono);font-size:12px;color:var(--good)}
+  .mermaid{font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div class="brand">Hybrid Cloud Agents<small>Design doc · AO · rev.3 (hosted + separate DB + auth)</small></div>
+  <h2>1 · Context &amp; Scope</h2>
+  <a href="#background">Background / Problem</a>
+  <a href="#goals">Goals</a>
+  <a href="#nongoals">Non-Goals</a>
+  <h2>2 · Architecture</h2>
+  <a href="#tiers">Three-tier shape</a>
+  <a href="#seam-idea">Execution seam</a>
+  <a href="#sysarch">System architecture</a>
+  <a href="#seq">Spawn sequence</a>
+  <a href="#seam">Ports table</a>
+  <a href="#providers">Provider matrix</a>
+  <a href="#runner">Runner protocol</a>
+  <a href="#datamodel">Data model &amp; keying</a>
+  <a href="#storage">Storage: separate Postgres</a>
+  <a href="#schema">Full DB schema</a>
+  <h2>3 · Operational</h2>
+  <a href="#infra">Operational reqs</a>
+  <a href="#security">Security &amp; privacy</a>
+  <a href="#authn">Authentication</a>
+  <a href="#monitoring">Monitoring / offline</a>
+  <a href="#failure">Failure modes</a>
+  <h2>4 · Alternatives</h2>
+  <a href="#alternatives">Alternatives</a>
+  <a href="#verify">Verification</a>
+</nav>
+
+<main>
+<h1>Design Document: Hybrid Cloud Agents for Agent Orchestrator (AO)</h1>
+<p class="meta"><span class="status">Draft · rev.3 — hosted coordinator, separate database, auth + runner protocol</span></p>
+<p class="lead">Move the coordinator off the laptop, make the database a separate always-available component,
+and run agents locally <i>or</i> in cloud sandboxes — so cloud runs persist 24/7 no matter which device is open.</p>
+
+<!-- 1 -->
+<h2 class="sec" id="background">1. Context and Scope</h2>
+<h3>Background / Problem Statement</h3>
+<p>AO runs coding agents in parallel git worktrees and shepherds their PRs. Today it is <b>local-first
+in two ways at once</b>, and both must change:</p>
+<ul>
+  <li><b>Execution is local</b> — agents run as processes on the daemon's machine (tmux/conpty + local PTY). Your laptop is the ceiling.</li>
+  <li><b>The coordinator IS the laptop</b> — the daemon runs on your machine and its state is an <b>embedded SQLite file on that disk</b> (<code>~/.ao/data/ao.db</code>, <code>storage/sqlite/db.go:56</code>). It's a <b>loopback, no-auth</b> service (<code>httpd/cors.go:13</code>).</li>
+</ul>
+<div class="callout bad"><b>The decisive failure.</b> You launch a cloud agent, then <b>close your laptop</b>.
+The agent keeps working on the remote VM — but the daemon (the only DB writer) and its database are on the
+sleeping laptop. <b>Nothing can be persisted</b>, and no other device can watch it. A long-lived,
+remotely-executing system cannot depend on a client that sleeps.</div>
+<p>This revision <b>moves the coordinator off the laptop</b> and <b>makes the database a separate,
+always-available component</b>, so cloud runs persist regardless of any one device. The laptop becomes a
+client you open when you want to look — the same principle every durable system follows: <b>state lives with
+a long-lived, always-on coordinator, not with an ephemeral client.</b></p>
+
+<h3 id="goals">Goals</h3>
+<div class="goal"><b>G1 — Always-on coordinator.</b> Host the daemon on an always-on host (not the laptop).
+Success = a cloud agent keeps running <b>and persisting</b> while every operator device is offline; reopening any client shows current state.</div>
+<div class="goal"><b>G2 — Database as a separate component.</b> Move durable state from an embedded on-daemon file to a standalone <b>networked PostgreSQL</b>, so DB availability/scaling/backup are independent of the daemon.</div>
+<div class="goal"><b>G3 — Hybrid, pluggable execution.</b> Run any session <code>local</code> or <code>cloud</code> behind a <code>SandboxProvider</code> port (SSH-to-VM deep; Daytona/E2B/Modal/Docker/k8s same-interface), SCM/PR loop unchanged.</div>
+
+<h3 id="nongoals">Non-Goals</h3>
+<ul>
+  <li><b>Not</b> a public multi-tenant SaaS. <b>V1 is self-hosted, single-operator AO</b> — you run the (hosted) daemon on infrastructure you control, for yourself/your team; it is <b>not</b> an AO-hosted service for many mutually-untrusting customers. SaaS would require <b>tenant isolation, billing/metering, org-auth (SSO/RBAC), per-tenant quotas, abuse controls, and much stronger secret isolation</b> — a distinct system, not a config flag. Single-operator is still <b>multi-device</b> (laptop + phone + CLI reach the one hosted daemon); multi-operator/SaaS is out of scope but no longer precluded.</li>
+  <li><b>Not</b> running the LLM ourselves — agents call their own model providers.</li>
+  <li><b>Not</b> implementing every provider in V1 — only <code>ssh</code>.</li>
+  <li><b>Not</b> keeping loopback/no-auth — exposing the daemon <b>requires auth</b> (§3); this design explicitly revises that invariant. (Auth = "prove it's the operator across devices," <b>not</b> the org-auth/RBAC a SaaS needs.)</li>
+</ul>
+
+<!-- 2 -->
+<h2 class="sec" id="tiers">2. Architecture and High-Level Design</h2>
+<h3>The three-tier shape</h3>
+<p>The revision splits AO into three independently-hosted tiers — the standard control-plane / data-plane / client separation:</p>
+<div class="grid2">
+  <div class="card"><h4>Coordinator (daemon)</h4><p>Always-on host. Owns business logic, the SCM/PR loop, CDC fan-out, runner-ingress, and the client API. Holds no durable state itself; runs no agent code.</p></div>
+  <div class="card"><h4>Database (separate)</h4><p>A managed <b>PostgreSQL</b> on its own host — the single source of truth, reached by the daemon over the network. Own uptime, backups, scaling.</p></div>
+</div>
+<div class="card"><h4>Clients (many, thin)</h4><p>Electron / CLI on laptop, phone, etc. Pure viewers/drivers over authenticated HTTPS + SSE. Closing them changes nothing. Execution is orthogonal: each session runs <code>local</code> (on the coordinator host) or <code>cloud</code> (in a sandbox that dials back). <b>The DB stays authoritative regardless of where the agent runs or which client is open.</b></p></div>
+
+<h3 id="seam-idea">The execution seam (unchanged)</h3>
+<p>AO already funnels all execution through <code>runtimeselect.Runtime</code> (<code>ports.Runtime</code> +
+<code>Attacher</code> + <code>SendMessage</code> + <code>GetOutput</code>) and <code>ports.Workspace</code>. A
+<b>RemoteRuntime</b> + <b>RemoteWorkspace</b> satisfy those exact interfaces, so <code>Manager.Spawn</code>
+(<code>manager.go:191</code>) is untouched. A small <b><code>aorunner</code></b> on the sandbox reuses AO's own
+<code>tmux</code>/<code>gitworktree</code> adapters locally and <b>dials back</b> a reverse WS tunnel
+(<code>coder/websocket</code>) to the hosted daemon — which, being always-on, always has a home for it.</p>
+
+<h3 id="sysarch">System Architecture</h3>
+<div class="diagram">
+<pre class="mermaid">
+flowchart TB
+  subgraph CLIENTS["Clients (thin, many) — open any time"]
+    L["Laptop: Electron / CLI"]; P["Phone / other device"]
+  end
+  CLIENTS -->|"authenticated HTTPS + SSE"| CO
+  subgraph HOST["Always-on host (VPS / container / k8s)"]
+    subgraph CO["AO daemon (coordinator)"]
+      API["Client API + auth"]; SM["Manager.Spawn"]
+      RS["runtimeselect (placement-aware)"]
+      RR["RemoteRuntime + RemoteWorkspace"]
+      CDC["CDC fan-out → SSE"]; SCM["SCM observer (PR/CI loop)"]
+      ING["runner-ingress (tokened, over tailnet)"]
+      API --> SM --> RS --> RR
+      RR --- ING
+    end
+  end
+  CO -->|"1 · SSH bootstrap"| VM
+  RUN -. "2 · reverse WS tunnel" .-> ING
+  subgraph VM["Cloud sandbox — SSH-to-VM (V1)"]
+    RUN["aorunner"]; TX["tmux + git worktree"]; AG["agent CLI"]
+    RUN --> TX --> AG
+  end
+  AG -->|"git push"| GH["GitHub"]
+  SCM -->|"poll PRs"| GH
+  subgraph DBTIER["Database host (separate)"]
+    DB[("PostgreSQL — single source of truth")]
+  end
+  CO -->|"SQL over tailnet"| DB
+  CDC -->|"LISTEN/NOTIFY"| DB
+</pre>
+<div class="cap"><b>Why closing your laptop no longer matters:</b> the daemon, runner-ingress, and DB all live
+on the always-on host / DB host. The cloud runner dials the daemon (up), which writes to Postgres (up). Your
+laptop is one client among several; reopen it and it pulls current state over SSE.</div>
+</div>
+
+<h3 id="seq">Spawn sequence (cloud path)</h3>
+<div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as Client (laptop/phone)
+  participant CO as Coordinator (hosted)
+  participant DB as PostgreSQL (separate)
+  participant SP as SandboxProvider (ssh)
+  participant VM as VM / aorunner
+  C->>CO: Spawn(location=cloud, provider=ssh) [authenticated]
+  CO->>DB: INSERT session (seed row)
+  CO->>SP: Provision() + Start(token, repo)
+  SP->>VM: SSH: install aorunner, launch with token + ingress URL
+  VM-->>CO: dial reverse WS tunnel, authenticate (token)
+  CO->>VM: Workspace.Create + Runtime.Create (worktree + tmux on VM)
+  VM-->>CO: PTY stream + activity + results
+  CO->>DB: persist facts (single writer)
+  DB-->>CO: change notification → SSE
+  CO-->>C: live updates (when a client is connected)
+  Note over C: laptop may close here — VM keeps running,<br/>CO keeps persisting to DB, no data lost
+</pre>
+<div class="cap">Same control flow as a local spawn; only routing, transport, and the networked DB differ. The
+existing transactional rollback + boot <code>Reconcile</code> apply unchanged.</div>
+</div>
+
+<h3 id="seam">The seam: ports added / reused</h3>
+<table>
+  <tr><th>Port</th><th>New / reused</th><th>Role</th></tr>
+  <tr><td><code>ports.Runtime</code> (+ Attacher, SendMessage, GetOutput)</td><td class="yes">Reused</td><td>RemoteRuntime implements it; <code>Manager.Spawn</code> unchanged</td></tr>
+  <tr><td><code>ports.Workspace</code></td><td class="yes">Reused</td><td>RemoteWorkspace implements it; preserve/restore identical</td></tr>
+  <tr><td><code>ports.Agent</code></td><td class="yes">Reused as-is</td><td>Location-agnostic — only builds argv</td></tr>
+  <tr><td><b><code>SandboxProvider</code></b></td><td class="warncell">New</td><td>Provision / Start / Terminate a sandbox</td></tr>
+  <tr><td><b>runner tunnel RPC</b></td><td class="warncell">New (internal)</td><td>Runtime/Workspace calls + PTY frames over the tunnel</td></tr>
+  <tr><td><b>storage/postgres</b></td><td class="warncell">New (replaces sqlite)</td><td>sqlc for Postgres; DB is a separate networked component</td></tr>
+</table>
+
+<h3 id="providers">Provider matrix (the <code>SandboxProvider</code> extension point)</h3>
+<table>
+  <tr><th>Provider</th><th>OSS?</th><th>Isolation</th><th>Cold start</th><th>How <code>aorunner</code> ships</th><th>Dial-back</th><th>V1?</th></tr>
+  <tr><td><b><code>ssh</code></b> (VM)</td><td class="yes">✅ fully</td><td>VM / OS boundary</td><td>slow (boot) / instant (reuse)</td><td>SSH scp + launch</td><td class="yes">✅ native</td><td class="yes">✅ deep</td></tr>
+  <tr><td><code>daytona</code></td><td class="yes">✅ self-host</td><td>container/VM sandbox</td><td>fast</td><td>baked into image</td><td class="yes">✅</td><td>future</td></tr>
+  <tr><td><code>e2b</code></td><td class="yes">✅ Firecracker</td><td>microVM</td><td>very fast</td><td>baked into template</td><td class="yes">✅</td><td>future</td></tr>
+  <tr><td><code>modal</code></td><td class="warncell">⚠️ SaaS (free tier)</td><td>gVisor sandbox</td><td>fast</td><td>baked into image</td><td class="yes">✅</td><td>future</td></tr>
+  <tr><td><code>docker</code></td><td class="yes">✅</td><td>container</td><td>fast</td><td>mount/COPY into image</td><td class="yes">✅ (Engine API/TLS)</td><td>future</td></tr>
+  <tr><td><code>kubernetes</code></td><td class="yes">✅</td><td>Pod</td><td>medium</td><td>init-container / image</td><td class="yes">✅ (Pod dials out)</td><td>future</td></tr>
+</table>
+<div class="callout good">The hosted coordinator itself can run on a VPS (<code>ssh</code>) or a container/Pod
+(<code>docker</code>/<code>kubernetes</code>) — but that's <i>deployment of the daemon</i>, separate from
+<i>where agents execute</i>.</div>
+
+<h3 id="runner">Runner protocol (<code>aorunner</code> contract)</h3>
+<p>One <code>coder/websocket</code> connection per session (runner→coordinator) carries two <b>multiplexed channels</b>: <b>RPC</b> (control) and <b>PTY</b> (live terminal).</p>
+<div class="grid2">
+  <div class="card"><h4>Commands (RPC)</h4><p>The coordinator sends the same Runtime/Workspace calls it uses locally (create/destroy the workspace and process, probe liveness, send input) down the tunnel; the runner sends back register/status/exit events. Just request/response over the socket — the port methods, now remote.</p></div>
+  <div class="card"><h4>PTY streaming</h4><p>The agent runs in <b>tmux on the VM</b>; <code>aorunner</code> relays its terminal as a live byte stream over the tunnel into AO's <b>unchanged</b> <code>terminal.Manager</code> → xterm.js, with keystrokes/resize flowing back. tmux gives persistence — a dropped tunnel doesn't kill the terminal; <code>aorunner</code> re-attaches on reconnect.</p></div>
+</div>
+<div class="grid2">
+  <div class="card"><h4>Heartbeat (CO ↔ VM — "Link B")</h4><p>ping/pong <b>30 s / 3-miss (~90 s) = dead</b>. CO misses runner → VM dead → <b>reap + StashUncommitted</b>. Runner misses CO → <b>buffer mode</b>. (Client↔CO keepalive only affects UI freshness.)</p></div>
+  <div class="card"><h4>Reconnect &amp; buffering</h4><p><b>Newest-wins:</b> re-dial + idempotent <code>hello</code> supersedes a stale connection. The offline buffer lives <b>at the edge — on the VM, not the DB</b> (the DB may be down); durable events + PTY output carry <b>seq</b> numbers and <b>replay from the last CO-acked seq</b> (like SSE <code>Last-Event-ID</code>).</p></div>
+</div>
+<div class="grid2">
+  <div class="card"><h4>Backpressure — drop oldest (split)</h4><p><b>Drop oldest</b> for the live PTY stream + logs; <b>never</b> drop durable events (session state, results, PR facts) — flow-controlled + replayed.</p></div>
+  <div class="card"><h4>Limits &amp; auth failure</h4><p><b>Ring-buffer</b> scrollback (~10k lines) + logs (~1–2 MB/session) with a visible <b>truncation marker</b>. <b>Auth:</b> hard failure (revoked/expired token) → close, <b>no retry</b>; transient network error → retry w/ backoff.</p></div>
+</div>
+
+<h3 id="datamodel">Data Model &amp; keying</h3>
+<p>Everything stays <b>keyed by conversation (session) id</b> — <code>sessions.id</code> PRIMARY KEY, with
+children (<code>pr</code>, <code>pr_checks</code>, <code>change_log</code>, new <code>sandboxes</code>)
+referencing <code>session_id ON DELETE CASCADE</code>. <code>sandboxes</code> is <code>PK session_id</code>
+(1:1 to the conversation). This is what makes hybrid safe: <b>execution moves, state does not</b> — the record
+lives in the separate DB regardless of where the agent ran or which client is open.</p>
+<div class="grid2">
+  <div class="card"><h4>AgentConfig / SpawnConfig additions</h4>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+      <tr><td><code>location</code></td><td>TEXT</td><td><code>local</code> (coordinator host) or <code>cloud</code></td></tr>
+      <tr><td><code>provider</code></td><td>TEXT</td><td><code>ssh</code>|<code>daytona</code>|<code>e2b</code>|<code>modal</code>|<code>docker</code>|<code>kubernetes</code></td></tr>
+    </table>
+  </div>
+  <div class="card"><h4>New table: <code>sandboxes</code></h4>
+    <p><code>PK session_id</code>; columns <code>provider</code>, <code>sandbox_id</code>, <code>endpoint</code>,
+    <code>status</code> (<code>provisioning</code>|<code>online</code>|<code>terminated</code>|<code>failed</code>),
+    <code>token_hash</code>, <code>created_at</code>. CDC on this table drives live UI status.</p>
+  </div>
+</div>
+
+<h3 id="storage">Storage: separate PostgreSQL (replacing embedded SQLite)</h3>
+<p><b>Decision:</b> promote the database to a standalone networked PostgreSQL component — required by G1/G2. You
+cannot have an always-on coordinator persisting cloud-run state if the store is an embedded file on a client machine.</p>
+<table>
+  <tr><th>Concern</th><th>Before (SQLite)</th><th>After (Postgres, separate)</th></tr>
+  <tr><td>Location</td><td><code>~/.ao/data/ao.db</code> on the laptop disk</td><td>Own managed instance, over the tailnet</td></tr>
+  <tr><td>Availability</td><td class="no">Dies when the machine sleeps</td><td class="yes">Independent uptime; survives daemon restarts</td></tr>
+  <tr><td>Writer model</td><td>Single embedded writer</td><td>Networked; daemon still single writer (one operator)</td></tr>
+  <tr><td>Backup / scale</td><td>Manual file copy</td><td>Managed backups, PITR, resize independently</td></tr>
+  <tr><td>CDC mechanism</td><td>SQLite triggers → <code>change_log</code> → in-proc poller</td><td>Postgres triggers + <b><code>LISTEN</code>/<code>NOTIFY</code></b> → fan-out → SSE</td></tr>
+</table>
+<div class="callout warn"><b>Migration cost (honest).</b> AO's <code>sqlc.yaml</code> targets
+<code>engine: "sqlite"</code> and CDC relies on SQLite triggers feeding an in-process poller
+(<code>cdc/broadcast.go</code>). Postgres means: (1) a Postgres sqlc target + regenerated <code>gen/</code>;
+(2) porting goose migrations to Postgres dialect; (3) re-implementing the change-feed with
+<code>LISTEN</code>/<code>NOTIFY</code> (or logical replication); (4) a network DSN + pool + retry/backoff.
+This is the largest single work item — hence the headline of this revision.</div>
+
+<h3 id="schema">Full database schema</h3>
+<p>Grouped <b>inherited</b> (carry over to Postgres), <b>new — cloud</b>, and <b>new — auth/secrets</b>.</p>
+<p><b>Inherited (unchanged except engine + 2 columns):</b> <code>projects</code>, <code>sessions</code> (+ new <code>location</code>, <code>provider</code>), <code>pr</code>, <code>pr_checks</code>, <code>pr_comment</code>, <code>pr_review*</code>/<code>review_run</code>, <code>change_log</code> (CDC feed), <code>telemetry_events</code>, <code>project_config</code>.</p>
+<h4>New — hybrid cloud</h4>
+<pre class="code">CREATE TABLE sandboxes (
+  session_id        TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+  provider          TEXT NOT NULL,   -- ssh|daytona|e2b|modal|docker|kubernetes
+  sandbox_id        TEXT NOT NULL,   -- provider-native handle (VM/container id)
+  endpoint          TEXT,            -- host:port for ssh bootstrap
+  status            TEXT NOT NULL,   -- provisioning|online|terminated|failed
+  runner_token_hash TEXT NOT NULL,   -- per-session reverse-tunnel token (HASHED)
+  region            TEXT,
+  last_heartbeat_at TIMESTAMPTZ,     -- Link-B liveness -&gt; reap
+  created_at        TIMESTAMPTZ NOT NULL,
+  terminated_at     TIMESTAMPTZ);
+-- + sessions.location / sessions.provider. CDC trigger on sandboxes -&gt; change_log.</pre>
+<h4>New — auth &amp; secrets  (login sessions = <code>auth_sessions</code>; <code>sessions</code> already means agent sessions)</h4>
+<pre class="code">CREATE TABLE users (          -- built-in accounts (NULL password_hash if OIDC-only)
+  id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT,
+  role TEXT NOT NULL DEFAULT 'operator',
+  created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
+
+CREATE TABLE auth_sessions (  -- per-device login (Electron + CLI); DB-backed revocation
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  device_label TEXT, refresh_token_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL, last_used_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,   -- ~30d sliding
+  revoked_at TIMESTAMPTZ);           -- non-NULL = revoked (instant)
+
+CREATE TABLE credentials (    -- encrypted GitHub / model secrets the CO injects
+  id TEXT PRIMARY KEY,
+  user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,                -- github | model_provider
+  provider TEXT, secret_encrypted BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);</pre>
+<div class="callout"><b>Notes.</b> Optional: <code>oidc_identities</code> (only if OIDC) and <code>api_tokens</code> (headless/CI only). <code>credentials</code> may instead extend AO's existing <code>project_config</code>. The CLI needs <b>no</b> table — with <code>ao login</code> it's just an <code>auth_sessions</code> device.</div>
+
+<!-- 3 -->
+<h2 class="sec" id="infra">3. Operational Requirements</h2>
+<div class="card" id="security"><h4>Security &amp; Privacy</h4>
+    <ul>
+      <li><b>Deployment shape.</b> The <b>coordinator</b> (AO daemon, containerized) runs on an always-on host; the <b>database</b> is a separate PostgreSQL instance with its own lifecycle/backups; <b><code>aorunner</code></b> is a static Go binary needing only <code>git</code>+<code>tmux</code> on the sandbox; <b>clients</b> (Electron/CLI) point at the hosted daemon.</li>
+      <li><b>Recommended networking — Tailscale.</b> Join the coordinator, operator devices, and sandboxes to a <b>Tailscale</b> tailnet (or <b>Headscale/WireGuard</b> for a pure-OSS self-hosted control plane). Sandboxes join via an <b>ephemeral auth key</b> injected at SSH bootstrap (auto-removed on teardown). WireGuard already encrypts node-to-node, so <b>a separate TLS layer is not required</b>; optionally use Tailscale MagicDNS HTTPS if the web UI needs a browser secure context. Nothing is public.</li>
+      <li><b>AO auth still mandatory</b> (<code>httpd/cors.go:13</code> loopback/no-auth ends). Tailscale authenticates <i>devices onto the network</i>, not the <i>operator to the app</i>. Since each user runs <b>their own orchestrator</b>, AO auth is how the operator logs in and <b>authorizes their GitHub token</b> and how multi-device works — a compromised tailnet node still can't drive the orchestrator. See <b>Authentication</b> below.</li>
+      <li><b>DB security:</b> Postgres over the tailnet, least-privilege creds via secret manager, not exposed to the public internet — only the daemon reaches it.</li>
+      <li><b>Bootstrap secrets:</b> model/git tokens injected into the sandbox at SSH time; never persisted; sandbox destroyed on teardown.</li>
+      <li><b>Isolation win:</b> agents run on disposable remote boxes, not any operator device.</li>
+    </ul>
+  </div>
+
+<h3 id="authn">Authentication</h3>
+<p><b>Where auth is required</b> — seven distinct boundaries. Tailscale (#7) is the network perimeter;
+app-layer auth is identity + credential binding on top.</p>
+<table>
+  <tr><th>#</th><th>Boundary</th><th>Who → whom</th><th>Mechanism</th></tr>
+  <tr><td>1</td><td>Client → Coordinator (API + SSE)</td><td>laptop/phone/CLI → daemon</td><td>operator login + session (below)</td></tr>
+  <tr><td>2</td><td>Runner → Coordinator (tunnel)</td><td>sandbox → daemon</td><td>per-session <b>hashed bearer token</b>, scoped to one <code>session_id</code>, revoked at teardown</td></tr>
+  <tr><td>3</td><td>Coordinator → PostgreSQL</td><td>daemon → DB</td><td>Postgres role, least-privilege, over the tailnet</td></tr>
+  <tr><td>4</td><td>Coordinator/agent → GitHub</td><td>operator credential</td><td><b>GitHub token</b> (PAT / App), bound to the operator's session</td></tr>
+  <tr><td>5</td><td>Coordinator → cloud VM</td><td>daemon → sandbox</td><td><b>SSH key</b>, host-key pinned</td></tr>
+  <tr><td>6</td><td>Agent → LLM provider</td><td>agent → model API</td><td>model API key <b>injected at bootstrap</b></td></tr>
+  <tr><td>7</td><td>Device/sandbox → tailnet</td><td>→ Tailscale</td><td>enrollment (ephemeral key for sandboxes) — <i>network</i>, not app auth</td></tr>
+</table>
+<p>Boundaries 2–7 are settled elsewhere; the decisions below are for <b>#1, Client → Coordinator</b>.</p>
+<div class="grid2">
+  <div class="card"><h4>Identity — built-in default, OIDC optional</h4>
+    <ul>
+      <li><b>Built-in accounts</b> (email + argon2 hash) — the default: zero external dependency, right for a solo self-hosted operator.</li>
+      <li><b>OIDC</b> — optional pluggable provider (OSS: <b>Authelia / Keycloak / Dex</b>, or Google/GitHub/Okta) for teams wanting SSO/MFA. The multi-operator path; out of scope for V1, not precluded.</li>
+    </ul>
+  </div>
+  <div class="card"><h4><code>ao login</code> — local browser, no code</h4>
+    <p>The CLI runs on the operator's own machine, so login is a fully-automatic <b>loopback OAuth</b> flow — <b>nothing is typed or pasted</b>:</p>
+    <ol>
+      <li><code>ao login</code> starts a temp server on a random <code>localhost</code> port + opens the browser (PKCE + <code>state</code>).</li>
+      <li>Operator authenticates in the browser.</li>
+      <li>Coordinator redirects to <code>localhost:&lt;port&gt;/callback?code=…</code>; the CLI catches it and exchanges for tokens automatically.</li>
+      <li>"✓ logged in." PKCE + <code>state</code> secure the exchange.</li>
+    </ol>
+  </div>
+</div>
+<div class="grid2">
+  <div class="card"><h4>Token storage</h4>
+    <p>Two tokens: short-lived <b>access</b> (every request) + longer-lived <b>refresh</b> (mints new access tokens).</p>
+    <ul>
+      <li><b>Electron:</b> refresh token in the <b>OS keychain</b> via <code>safeStorage</code>; access token <b>in memory only</b>.</li>
+      <li><b>CLI:</b> token in the OS keychain, <code>0600</code> file fallback.</li>
+      <li>Never plaintext / <code>localStorage</code>.</li>
+    </ul>
+  </div>
+  <div class="card"><h4>Session expiry &amp; revocation</h4>
+    <ul>
+      <li><b>Expiry:</b> access <b>~1 h</b> (silently auto-refreshed); refresh <b>~30 d sliding</b> (idle 30 d → fresh <code>ao login</code>).</li>
+      <li><b>Revocation:</b> <b>DB-backed, per-device</b> (fits AO's durable-facts + CDC model) → delete/flag the row, next request fails <b>instantly</b>. Revoke a lost laptop without dropping the phone; web UI lists active devices. Runner tokens auto-revoked at teardown.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- 3b -->
+<div class="callout warn" id="monitoring"><b>Monitoring &amp; offline behavior.</b> Surface
+<code>sandboxes.status</code> via CDC. <b>DB health</b>: alert on pool exhaustion, replication lag, disk/backups —
+the DB is now a first-class dependency with its own SLOs. <b>Coordinator uptime</b>: alert on daemon downtime.
+<b>Offline</b>: with the coordinator hosted, operator devices going offline is a no-op for persistence; if the
+coordinator is briefly down, runners buffer and replay on reconnect, and the agent's <code>git push</code> to
+GitHub is independent of AO regardless. Orphan sweep terminates <code>sandboxes</code> rows with no live session.</div>
+
+<h3 id="failure">Failure modes &amp; recovery</h3>
+<table>
+  <tr><th>Failure</th><th>Detection</th><th>Recovery</th><th>Data safety</th></tr>
+  <tr><td><b>DB down</b> <i>(new dep)</i></td><td>write/query error, pool timeout</td><td>CO rejects new spawns; runners keep <b>buffering at the edge</b>; flush on DB return</td><td class="yes">✅ if runners buffer + DB returns</td></tr>
+  <tr><td><b>Coordinator down</b></td><td>SSE drops; heartbeat miss</td><td>VMs keep running; runners <b>buffer (seq)</b> + replay; clients reconnect</td><td class="yes">✅ no loss</td></tr>
+  <tr><td><b>Runner disconnected</b></td><td>Link-B heartbeat (30 s/3-miss)</td><td>transient → reconnect + replay; dead → reap + <code>StashUncommitted</code></td><td class="yes">✅ work preserved</td></tr>
+  <tr><td><b>SSH bootstrap fails</b></td><td>provision step error</td><td><b>transactional Spawn rollback</b> — seed row deleted / half-made sandbox terminated</td><td class="yes">✅ clean; spawn error</td></tr>
+  <tr><td><b>VM orphaned</b></td><td>sweep (no live session)</td><td>terminate sandbox + revoke token</td><td class="warncell">💰 cost control</td></tr>
+  <tr><td><b>Token leaked</b></td><td>(assume worst)</td><td><b>revoke</b> <code>auth_sessions</code> row → next request fails; ~1 h access TTL caps window</td><td class="yes">✅ bounded</td></tr>
+  <tr><td><b>GitHub unavailable</b></td><td>API errors</td><td>SCM observer <b>backs off + retries</b>; loop pauses/resumes; <code>git push</code> retried</td><td class="yes">✅ re-derived on next poll</td></tr>
+  <tr><td><b>Client reconnects (days)</b></td><td>SSE <code>Last-Event-ID</code></td><td>snapshot + replay; beyond retention → full snapshot of current DB</td><td class="yes">✅ DB is truth</td></tr>
+</table>
+
+<!-- 4 -->
+<h2 class="sec" id="alternatives">4. Alternatives Considered</h2>
+<div class="card"><p><b>Alt 1 — Keep daemon + embedded SQLite on the laptop (rev.1).</b></p>
+  <p class="tag">Rejected: close the laptop → cloud runs can't persist and nothing is reachable from other devices. Exactly what this revision fixes.</p></div>
+<div class="card"><p><b>Alt 2 — Host the daemon but keep embedded SQLite co-located on it.</b></p>
+  <p class="tag">Rejected as default (kept as fallback): solves availability but ties DB backups/scaling to the daemon host and blocks multi-coordinator. Fine for a solo user; Postgres-as-separate satisfies G2 too.</p></div>
+<div class="card"><p><b>Alt 3 — Daemon dials OUT, no auth.</b></p>
+  <p class="tag">Rejected: fails on NAT'd/ephemeral sandboxes and awkward PTY; once the daemon is hosted, auth is required anyway. Dial-back + auth is uniform. (SSH-dial-out kept as degraded fallback.)</p></div>
+
+<h2 class="sec" id="verify">Appendix: Verification</h2>
+<ol>
+  <li><b>Seam sufficiency:</b> <code>Manager.Spawn</code> (<code>manager.go:191</code>) depends only on <code>workspace.Create</code> + <code>runtime.Create</code> + <code>runtimeselect.Runtime</code>.</li>
+  <li><b>Wiring point:</b> <code>runtimeselect.New(log)</code> (<code>daemon/daemon.go:101</code>) for placement-awareness.</li>
+  <li><b>Storage swap surface:</b> <code>sqlc.yaml</code> (<code>engine: "sqlite"</code>) + <code>storage/sqlite/*</code> + trigger-CDC in <code>cdc/broadcast.go</code> are the files that change; confirm no core/service code reaches SQLite directly (hexagonal boundary).</li>
+  <li><b>Invariant revised deliberately:</b> <code>httpd/cors.go:13</code> ("no-auth loopback service") is replaced by a Tailscale network perimeter + mandatory AO auth.</li>
+  <li><b>Deps:</b> <code>coder/websocket</code> + <code>x/crypto/ssh</code> already present; add a Postgres driver (e.g. <code>pgx</code>).</li>
+  <li><b>Offline smoke test:</b> start a <code>location=cloud, provider=ssh</code> session; <b>close every operator device</b>; confirm the sandbox keeps running and the coordinator keeps writing to Postgres; reopen a client and verify current state; confirm teardown destroys the VM + revokes the token.</li>
+</ol>
+
+</main>
+</div>
+<script>
+  mermaid.initialize({
+    startOnLoad:true, theme:'dark',
+    themeVariables:{
+      fontFamily:'-apple-system,Segoe UI,Roboto,sans-serif',
+      primaryColor:'#1c2430', primaryTextColor:'#e6edf3', primaryBorderColor:'#3a475a',
+      lineColor:'#6b7a8d', secondaryColor:'#21304a', tertiaryColor:'#2a2018',
+      actorBkg:'#1c2430', actorBorder:'#4aa3ff', actorTextColor:'#e6edf3',
+      signalColor:'#9aa7b4', signalTextColor:'#e6edf3', noteBkgColor:'#2a2018', noteTextColor:'#ffd9a0'
+    },
+    flowchart:{curve:'basis', htmlLabels:true}
+  });
+</script>
+</body>
+</html>
