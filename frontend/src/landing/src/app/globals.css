@@ -22,6 +22,16 @@ html[data-landing-platform="mac"] .landing-install-command {
 	justify-content: center;
 }
 
+.ao-cloud-app {
+	color-scheme: dark;
+	letter-spacing: normal;
+}
+
+.ao-cloud-app * {
+	scrollbar-color: rgb(255 255 255 / 12%) transparent;
+	scrollbar-width: thin;
+}
+
 input,
 textarea,
 [contenteditable="true"],
