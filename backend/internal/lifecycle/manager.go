@@ -427,8 +427,8 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 }
 
 // ApplyActivitySignal records an authoritative agent activity signal and any
-// native agent session id carried alongside it. Metadata-only hooks leave the
-// existing activity and first-signal facts untouched.
+// native agent session id carried alongside it. A metadata-only session-start
+// is also a receipt for the current spawn, but it does not assert activity.
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
 	s.LatestUserPrompt = strings.TrimSpace(s.LatestUserPrompt)
@@ -462,7 +462,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			}
 		}
 	}
-	if !s.Valid && s.AgentSessionID == "" && s.LatestUserPrompt == "" && s.LatestAssistantUpdate == "" && s.TranscriptPath == "" {
+	if !s.Valid && s.Event != "session-start" && s.AgentSessionID == "" && s.LatestUserPrompt == "" && s.LatestAssistantUpdate == "" && s.TranscriptPath == "" {
 		return nil
 	}
 	if s.LaunchID != "" {
@@ -533,15 +533,21 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		(s.LatestUserPrompt != "" && rec.Metadata.LatestUserPrompt != s.LatestUserPrompt) ||
 		(s.LatestAssistantUpdate != "" && rec.Metadata.LatestAssistantUpdate != s.LatestAssistantUpdate) ||
 		(s.TranscriptPath != "" && rec.Metadata.NativeTranscriptPath != s.TranscriptPath)
+	receiptChanged := !s.Valid && s.Event == "session-start" && rec.FirstSignalAt.IsZero()
 	if s.Valid {
 		s = m.applyToolPrecedenceLocked(id, rec.Activity.State, s)
 	}
-	if !s.Valid && !metadataChanged {
+	if !s.Valid && !metadataChanged && !receiptChanged {
 		m.mu.Unlock()
 		return nil
 	}
 	if !s.Valid {
-		applyActivityMetadata(&rec.Metadata, s)
+		if metadataChanged {
+			applyActivityMetadata(&rec.Metadata, s)
+		}
+		if receiptChanged {
+			rec.FirstSignalAt = timeOr(s.Timestamp, now)
+		}
 		rec.UpdatedAt = now
 		_, err := m.store.UpdateSessionFromActivitySignal(ctx, rec)
 		m.mu.Unlock()
