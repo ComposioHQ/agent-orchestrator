@@ -40,6 +40,15 @@ textarea,
 	user-select: text;
 }
 
+@keyframes cloud-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}
+
 /*
  * Blog code blocks - force dark theme
  * Note: !important is required to override Shiki's inline styles
