@@ -15,7 +15,6 @@
     "packages/*"
   ],
   "dependencies": {
-    "@ao/auth": "workspace:*",
     "@ao/email": "workspace:*",
     "@ao/shared": "workspace:*",
     "@ao/ui": "workspace:*",
