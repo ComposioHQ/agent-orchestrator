@@ -40,6 +40,7 @@ require (
 	github.com/getsentry/sentry-go v0.48.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/lestrrat-go/jwx/v3 v3.2.0
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-isatty v0.0.21 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
