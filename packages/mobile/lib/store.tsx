@@ -19,6 +19,7 @@ import {
 } from "./api";
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
 import { shouldKeepPolling } from "./connectionError";
+import { primeInstallId } from "./installId";
 import { collectPRs } from "./prView";
 import { MOBILE_EVENTS } from "./telemetry/events";
 import { mobileTelemetry, trackFeature } from "./telemetry/runtime";
@@ -116,6 +117,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// tells a fresh launch apart from a later reconnect.
 	const openRef = useRef(false);
 	const everConnectedRef = useRef(false);
+
+	// Warm the install id cache as early as possible so the first REST poll tick
+	// (fired from the config effect below) can send X-AO-Install-Id synchronously
+	// via cachedInstallId() in api.ts's req(). A module-load side effect would run
+	// this before React Native's AsyncStorage native module is guaranteed ready;
+	// a mount-time effect matches this file's existing pattern (see the active
+	// project load just below) and keeps the async I/O inside the component
+	// lifecycle instead of hidden at import time.
+	useEffect(() => {
+		void primeInstallId();
+	}, []);
 
 	// Load persisted active project once.
 	useEffect(() => {
