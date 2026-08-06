@@ -2160,9 +2160,11 @@ export interface components {
             /** @description True when the phone's app is open and polling. */
             live: boolean;
             muted: boolean;
+            /** @description True when this device has a push token registered. */
+            notificationsEnabled: boolean;
             /** @enum {string} */
             platform?: "ios" | "android";
-            token: string;
+            token?: string;
         };
         MobileDevicesResponse: {
             devices: components["schemas"]["MobileDeviceResponse"][];
@@ -2308,7 +2310,7 @@ export interface components {
             /** Format: date-time */
             lastSeenAt: string;
             platform?: string;
-            token: string;
+            token?: string;
         };
         RegisterPushDeviceRequest: {
             /** @description Human-friendly device label. */
@@ -2320,8 +2322,8 @@ export interface components {
              * @enum {string}
              */
             platform?: "ios" | "android";
-            /** @description Expo push token, e.g. ExponentPushToken[...]. */
-            token: string;
+            /** @description Expo push token, e.g. ExponentPushToken[...]. Optional: omitted when the phone has no push token yet. */
+            token?: string;
         };
         ReloadConversationMCPServersResponse: {
             servers: components["schemas"]["ConversationMCPServerPayload"][];
