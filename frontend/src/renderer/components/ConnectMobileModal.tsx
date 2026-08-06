@@ -8,6 +8,7 @@ import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { ConnectMobileGetApp } from "./settings/ConnectMobileGetApp";
 import { ConnectMobileSetup, type SetupMode } from "./settings/ConnectMobileSetup";
+import { MobileDevicesSection } from "./settings/MobileDevicesSection";
 import {
 	Dialog,
 	DialogClose,
@@ -364,6 +365,8 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 											{regenerate.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
 											{t("mobile.regenerate")}
 										</Button>
+
+										<MobileDevicesSection />
 									</div>
 								</div>
 							</div>
