@@ -112,7 +112,7 @@ export function SettingsOptionMenu<T extends string>({
 				// mouse click, leaving a stray focus ring. Skip the refocus.
 				onCloseAutoFocus={(event) => event.preventDefault()}
 				className={cn(
-					"settings-menu-surface min-w-[length:var(--size-settings-menu-min-width)] overflow-hidden! max-h-select-menu-max! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
+					"settings-menu-surface min-w-[length:var(--size-settings-menu-min-width)] overflow-hidden! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
 					menuClassName,
 				)}
 			>
@@ -128,10 +128,10 @@ export function SettingsOptionMenu<T extends string>({
 						/>
 					</div>
 				)}
-				<div className="relative min-h-0 flex-1 overflow-hidden">
+				<div className="relative min-h-0">
 					<div
 						ref={scrollRef}
-						className="model-menu-scroll h-full min-h-0 overflow-y-auto overscroll-contain"
+						className="model-menu-scroll max-h-select-menu-max overflow-y-auto overscroll-contain"
 						onScroll={updateScrollCue}
 					>
 						{visibleOptions.map((option) => (
