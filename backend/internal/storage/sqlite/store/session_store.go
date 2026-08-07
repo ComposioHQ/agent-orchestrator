@@ -40,6 +40,31 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 	return s.qw.UpdateSession(ctx, recordToUpdate(rec))
 }
 
+// ClaimChatControllerGeneration makes generation the only Chat controller that
+// may project provider events for this session. The narrow update avoids writing
+// a stale full SessionRecord over lifecycle facts changed by another goroutine.
+func (s *Store) ClaimChatControllerGeneration(
+	ctx context.Context,
+	id domain.SessionID,
+	generation string,
+	updatedAt time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.ClaimChatControllerGeneration(ctx, gen.ClaimChatControllerGenerationParams{
+		ControllerGeneration: generation,
+		UpdatedAt:            updatedAt,
+		ID:                   id,
+	})
+	if err != nil {
+		return fmt.Errorf("claim chat controller generation for %s: %w", id, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("claim chat controller generation for %s: chat session not found", id)
+	}
+	return nil
+}
+
 // RenameSession updates only the user-facing display name for an existing
 // session. It returns ok=false when the session id does not exist. The
 // sessions_cdc_update trigger fans out a session_updated CDC event when the
@@ -54,6 +79,22 @@ func (s *Store) RenameSession(ctx context.Context, id domain.SessionID, displayN
 	})
 	if err != nil {
 		return false, fmt.Errorf("rename session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
+// SetSessionPinned updates the pinned status of a session.
+func (s *Store) SetSessionPinned(ctx context.Context, id domain.SessionID, isPinned bool, pinnedAt *time.Time, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionPinned(ctx, gen.SetSessionPinnedParams{
+		ID:        id,
+		IsPinned:  isPinned,
+		PinnedAt:  timePtrToNullTime(pinnedAt),
+		UpdatedAt: updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set session pinned %s: %w", id, err)
 	}
 	return rows > 0, nil
 }
@@ -228,12 +269,15 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		Harness:         row.Harness,
 		ReviewerHarness: row.ReviewerHarness,
 		DisplayName:     row.DisplayName,
+		Mode:            domain.NormalizeSessionMode(row.SessionMode),
 		Activity: domain.Activity{
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
 		},
 		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
 		IsTerminated:       row.IsTerminated,
+		IsPinned:           row.IsPinned,
+		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
 		TerminateOnPRMerge: row.TerminateOnPRMerge,
 		Metadata: domain.SessionMetadata{
 			Branch:            row.Branch,
@@ -247,6 +291,9 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			Prompt:            row.Prompt,
 			PreviewURL:        row.PreviewURL,
 			PreviewRevision:   row.PreviewRevision,
+
+			ProviderConversationID: row.ProviderConversationID,
+			ControllerGeneration:   row.ControllerGeneration,
 		},
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,
@@ -269,6 +316,8 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		ActivityLastAt:     activity.LastActivityAt,
 		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
 		IsTerminated:       rec.IsTerminated,
+		IsPinned:           rec.IsPinned,
+		PinnedAt:           timePtrToNullTime(rec.PinnedAt),
 		Branch:             rec.Metadata.Branch,
 		WorkspacePath:      rec.Metadata.WorkspacePath,
 		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
@@ -282,8 +331,13 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		PreviewRevision:    rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
 		CleanupGeneration:  rec.CleanupGeneration,
-		CreatedAt:          rec.CreatedAt,
-		UpdatedAt:          rec.UpdatedAt,
+
+		SessionMode:            domain.NormalizeSessionMode(rec.Mode),
+		ProviderConversationID: rec.Metadata.ProviderConversationID,
+		ControllerGeneration:   rec.Metadata.ControllerGeneration,
+
+		CreatedAt: rec.CreatedAt,
+		UpdatedAt: rec.UpdatedAt,
 	}
 }
 
@@ -300,6 +354,8 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		ActivityLastAt:     activity.LastActivityAt,
 		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
 		IsTerminated:       rec.IsTerminated,
+		IsPinned:           rec.IsPinned,
+		PinnedAt:           timePtrToNullTime(rec.PinnedAt),
 		Branch:             rec.Metadata.Branch,
 		WorkspacePath:      rec.Metadata.WorkspacePath,
 		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
@@ -313,7 +369,11 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		PreviewRevision:    rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
 		CleanupGeneration:  rec.CleanupGeneration,
-		UpdatedAt:          rec.UpdatedAt,
+
+		ProviderConversationID: rec.Metadata.ProviderConversationID,
+		ControllerGeneration:   rec.Metadata.ControllerGeneration,
+
+		UpdatedAt: rec.UpdatedAt,
 	}
 }
 
@@ -331,6 +391,20 @@ func timeToNullTime(t time.Time) sql.NullTime {
 		return sql.NullTime{}
 	}
 	return sql.NullTime{Time: t, Valid: true}
+}
+
+func nullTimeToTimePtr(t sql.NullTime) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	return &t.Time
+}
+
+func timePtrToNullTime(t *time.Time) sql.NullTime {
+	if t == nil {
+		return sql.NullTime{}
+	}
+	return sql.NullTime{Time: *t, Valid: true}
 }
 
 func normalActivity(a domain.Activity, fallback time.Time) domain.Activity {
