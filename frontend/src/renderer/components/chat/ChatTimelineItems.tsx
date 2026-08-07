@@ -12,6 +12,7 @@ import {
 	AlertTriangle,
 	Archive,
 	Brain,
+	Check,
 	ChevronRight,
 	CircleAlert,
 	CornerDownRight,
@@ -30,6 +31,7 @@ import {
 	ShieldX,
 	SquareTerminal,
 	User,
+	X,
 } from "lucide-react";
 
 /** Fixed icon column, matching the prototype's row anatomy. */
@@ -153,71 +155,141 @@ export function HumanMessage({
 	apiBaseUrl?: string;
 	/** Typed while the agent was busy, and not sent yet. */
 	queued?: boolean;
-	onEdit?: (text: string) => void;
+	onEdit?: (message: ConversationMessage, text: string) => Promise<unknown> | void;
 }) {
 	const { body, attachments } = humanMessageParts(message.text);
+	const [editing, setEditing] = useState(false);
+	const [draft, setDraft] = useState(message.text);
+	const [saving, setSaving] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const canSave = draft.trim().length > 0 && !saving;
+
+	async function saveEdit() {
+		if (!onEdit || !canSave) return;
+		const next = draft.trimEnd();
+		if (next === message.text) {
+			setEditing(false);
+			setError(null);
+			return;
+		}
+		setSaving(true);
+		setError(null);
+		try {
+			await onEdit(message, next);
+			setEditing(false);
+		} catch {
+			setError("Edit not saved. Nothing was sent.");
+		} finally {
+			setSaving(false);
+		}
+	}
 	return (
 		<div className="group/message flex flex-col items-end gap-1">
 			{/* A queued message reads as not-yet-sent rather than as sent-and-ignored:
 			    the agent has not seen it, and the timeline should not imply it has. */}
-			<div
-				className={cn(
-					"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] border px-3 py-2.5 text-sm leading-[1.55]",
-					queued
-						? "border-dashed border-border-strong bg-transparent text-muted-foreground"
-						: "border-border bg-raised text-foreground",
-				)}
-			>
-				{body ? <p className="whitespace-pre-wrap text-pretty">{body}</p> : null}
-				{attachments.length > 0 ? (
-					<ul
-						aria-label="Attached files"
-						className={cn("flex max-w-full flex-wrap gap-2", body && "mt-2")}
-					>
-						{attachments.map((path) => {
-							const name = attachmentName(path);
-							return IMAGE_ATTACHMENT_PATH.test(path) ? (
-								<li key={path} className="max-w-full overflow-hidden rounded-md border border-border bg-background">
-									<img
-										src={attachmentURL(apiBaseUrl, sessionId, path)}
-										alt={name}
-										loading="lazy"
-										className="block h-auto max-h-80 max-w-full object-contain"
-									/>
-								</li>
+			{editing ? (
+				<div className="flex w-full max-w-[min(78%,560px)] flex-col gap-1.5 rounded-[10px] border border-logo-accent/50 bg-raised p-2">
+					<textarea
+						value={draft}
+						onChange={(event) => setDraft(event.target.value)}
+						aria-label="Edit message text"
+						autoFocus
+						rows={Math.max(2, Math.min(8, draft.split("\n").length))}
+						className="max-h-56 min-h-20 w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-sm leading-[1.55] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/35"
+					/>
+					<div className="flex items-center justify-end gap-1.5">
+						{error ? (
+							<span role="alert" className="mr-auto text-[11px] text-destructive">
+								{error}
+							</span>
+						) : null}
+						<Button
+							type="button"
+							size="icon-sm"
+							variant="ghost"
+							onClick={() => {
+								setDraft(message.text);
+								setEditing(false);
+								setError(null);
+							}}
+							disabled={saving}
+							aria-label="Cancel edit"
+							title="Cancel edit"
+							className="size-7"
+						>
+							<X aria-hidden="true" className="size-3.5" />
+						</Button>
+						<Button
+							type="button"
+							size="icon-sm"
+							onClick={() => void saveEdit()}
+							disabled={!canSave}
+							aria-label="Save edit"
+							title="Save edit"
+							className="size-7"
+						>
+							{saving ? (
+								<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
 							) : (
-								<li
-									key={path}
-									title={path}
-									className="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground"
-								>
-									<FileIcon aria-hidden="true" className="size-3.5 shrink-0" />
-									<span className="truncate">{name}</span>
-								</li>
-							);
-						})}
-					</ul>
-				) : null}
-			</div>
-			<div className="flex h-[18px] items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
-				<CopyButton
-					text={message.text}
-					label="Copy user message"
-					compact
-					className="-mr-1"
-				/>
-				{onEdit ? (
-					<button
-						type="button"
-						onClick={() => onEdit(message.text)}
-						aria-label="Edit user message"
-						title="Edit user message"
-						className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
-					>
-						<Pencil aria-hidden="true" className="size-3" />
-					</button>
-				) : null}
-			</div>
+								<Check aria-hidden="true" className="size-3.5" />
+							)}
+						</Button>
+					</div>
+				</div>
+			) : (
+				<div
+					className={cn(
+						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] border px-3 py-2.5 text-sm leading-[1.55]",
+						queued
+							? "border-dashed border-border-strong bg-transparent text-muted-foreground"
+							: "border-border bg-raised text-foreground",
+					)}
+				>
+					{body ? <p className="whitespace-pre-wrap text-pretty">{body}</p> : null}
+					{attachments.length > 0 ? (
+						<ul aria-label="Attached files" className={cn("flex max-w-full flex-wrap gap-2", body && "mt-2")}>
+							{attachments.map((path) => {
+								const name = attachmentName(path);
+								return IMAGE_ATTACHMENT_PATH.test(path) ? (
+									<li key={path} className="max-w-full overflow-hidden rounded-md border border-border bg-background">
+										<img src={attachmentURL(apiBaseUrl, sessionId, path)} alt={name} loading="lazy" className="block h-auto max-h-80 max-w-full object-contain" />
+									</li>
+								) : (
+									<li key={path} title={path} className="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground">
+										<FileIcon aria-hidden="true" className="size-3.5 shrink-0" />
+										<span className="truncate">{name}</span>
+									</li>
+								);
+							})}
+						</ul>
+					) : null}
+				</div>
+			)}
+			{editing ? null : (
+				<div className="flex h-[18px] items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
+					<CopyButton
+						text={message.text}
+						label="Copy user message"
+						compact
+						className="-mr-1"
+					/>
+					{onEdit ? (
+						<button
+							type="button"
+							onClick={() => {
+								setDraft(message.text);
+								setError(null);
+								setEditing(true);
+							}}
+							aria-label="Edit user message"
+							title="Edit user message"
+							className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+						>
+							<Pencil aria-hidden="true" className="size-3" />
+						</button>
+					) : null}
+				</div>
+			)}
 			{queued ? (
 				<span className="text-[11px] text-muted-foreground">Queued · sends when the agent finishes</span>
 			) : null}

@@ -87,6 +87,7 @@ import {
 	type ChatSkill,
 	type ConversationActivity,
 	type ConversationItem,
+	type ConversationMessage,
 	type TurnDiff,
 	type TurnSettings,
 } from "../../types/conversation";
@@ -162,7 +163,7 @@ export interface ChatWorkspaceProps {
 	 * Discard a turn and everything after it. Absent means the agent cannot undo,
 	 * and the affordance is not drawn at all rather than shown and then refused.
 	 */
-	onRollback?: (turnId: string) => void;
+	onRollback?: (turnId: string) => void | Promise<unknown>;
 	rollbackPending?: boolean;
 	rollbackError?: string;
 	/** The provider's skills. Empty leaves `/` an ordinary character. */
@@ -248,11 +249,9 @@ export function ChatWorkspace({
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
-	const [draftSeed, setDraftSeed] = useState<{ id: string; text: string } | undefined>(undefined);
 	const [chatFontSize, setChatFontSize] = useState(CHAT_FONT_SIZE_DEFAULT);
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const surfaceRef = useRef<HTMLElement | null>(null);
-	const draftSeedCounter = useRef(0);
 	const [topbarBounds, setTopbarBounds] = useState<TopbarBounds>({
 		leftInset: 0,
 		rightInset: 0,
@@ -322,10 +321,16 @@ export function ChatWorkspace({
 	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
-	const editHumanMessage = useCallback((text: string) => {
-		draftSeedCounter.current += 1;
-		setDraftSeed({ id: String(draftSeedCounter.current), text });
-	}, []);
+	const editHumanMessage = useCallback(
+		async (message: ConversationMessage, text: string) => {
+			if (!message.turnId || !onRollback || !onSend) {
+				throw new Error("editing this message is not available");
+			}
+			await onRollback(message.turnId);
+			await onSend(text, undefined);
+		},
+		[onRollback, onSend],
+	);
 
 	return (
 		<section
@@ -384,7 +389,7 @@ export function ChatWorkspace({
 					onResolveInput={onResolveInput}
 					busy={busy}
 					onRollback={rollbackTarget}
-					onEditHumanMessage={editHumanMessage}
+					onEditHumanMessage={onSend ? editHumanMessage : undefined}
 				/>
 			</ChatLinkProvider>
 
@@ -410,7 +415,6 @@ export function ChatWorkspace({
 					) : null}
 					<ChatComposer
 						onSend={(text, attachments) => onSend?.(text, attachments)}
-						draftSeed={draftSeed}
 						commandError={commandError}
 						settings={
 							onChooseSettings || onChooseConfigOption ? (
@@ -478,7 +482,7 @@ export function ChatWorkspace({
 					const turnId = confirming;
 					if (!turnId) return;
 					setConfirming(undefined);
-					onRollback?.(turnId);
+					void Promise.resolve(onRollback?.(turnId)).catch(() => {});
 				}}
 			/>
 		</section>
@@ -910,7 +914,7 @@ function Timeline({
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	busy?: boolean;
 	onRollback?: (turnId: string) => void;
-	onEditHumanMessage?: (text: string) => void;
+	onEditHumanMessage?: (message: ConversationMessage, text: string) => Promise<unknown> | void;
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const scrollContent = useRef<HTMLDivElement>(null);
@@ -1280,7 +1284,7 @@ const TurnGroup = memo(function TurnGroup({
 	onDecide: (requestId: string, decisionId: string) => void;
 	onResolveInput: NonNullable<ChatWorkspaceProps["onResolveInput"]>;
 	onRollback: (turnId: string) => void;
-	onEditHumanMessage: (text: string) => void;
+	onEditHumanMessage: (message: ConversationMessage, text: string) => Promise<unknown> | void;
 	/** The daemon would accept a rollback of this turn, so offer the affordance. */
 	canRollback: boolean;
 	busy?: boolean;
@@ -1357,7 +1361,7 @@ function TimelineItem({
 	apiBaseUrl: string;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
-	onEditHumanMessage?: (text: string) => void;
+	onEditHumanMessage?: (message: ConversationMessage, text: string) => Promise<unknown> | void;
 	busy?: boolean;
 	/**
 	 * The enclosing turn was recorded but not yet sent, so a waiting message can say
