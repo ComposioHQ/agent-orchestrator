@@ -89,16 +89,16 @@ describe("NewTaskDialog", () => {
 		renderDialog();
 		await waitForAgentCatalog();
 
-		const dialog = screen.getByRole("dialog", { name: "New task" });
+		const dialog = screen.getByRole("dialog", { name: "Create a new task" });
 		expect(dialog.querySelector(".composer-prompt-surface")).not.toBeNull();
-		expect(screen.getByText("New task")).toHaveClass("settings-dialog-title");
+		expect(screen.getByText("Create a new task")).toHaveClass("settings-dialog-title");
 		expect(screen.queryByText("Runs with")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Close new task dialog" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Agent" })).toHaveTextContent("Claude Code");
 		expect(await screen.findByLabelText("Model")).toHaveValue("");
 		expect(screen.getByRole("button", { name: "Add file" })).toBeInTheDocument();
-		expect(screen.getByLabelText("Task")).toHaveAttribute("placeholder", "Describe the task (optional)…");
+		expect(screen.getByLabelText("Task")).toHaveAttribute("placeholder", "e.g. Fix the flaky checkout test (optional)…");
 		expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
 	});

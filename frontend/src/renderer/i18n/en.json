@@ -362,7 +362,7 @@
 	"newTask.removeImage": "Remove image {{number}}",
 	"newTask.start": "Start task",
 	"newTask.starting": "Starting...",
-	"newTask.title": "New task",
+	"newTask.title": "Create a new task",
 	"newTask.titleLabel": "Title",
 	"newTask.titlePlaceholder": "Fix WebGL fallback renderer",
 	"newTask.titleRequired": "Title and brief are required.",
@@ -1006,7 +1006,7 @@
 	"zone.pending": "In review",
 	"zone.working": "Working",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "Describe the task (optional)…",
+	"newTask.taskPlaceholder": "e.g. Fix the flaky checkout test (optional)…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }
