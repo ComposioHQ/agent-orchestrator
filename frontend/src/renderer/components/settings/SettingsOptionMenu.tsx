@@ -1,5 +1,5 @@
 import { ChevronDown } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
@@ -44,6 +44,7 @@ export function SettingsOptionMenu<T extends string>({
 }) {
 	const { t } = useTranslation();
 	const [search, setSearch] = useState("");
+	const [menuOpen, setMenuOpen] = useState(false);
 	const selected = options.find((option) => option.value === value);
 	const normalizedSearch = search.trim().toLocaleLowerCase();
 	const visibleOptions = normalizedSearch
@@ -51,9 +52,32 @@ export function SettingsOptionMenu<T extends string>({
 				`${option.label} ${option.value}`.toLocaleLowerCase().includes(normalizedSearch),
 			)
 		: options;
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const [canScrollDown, setCanScrollDown] = useState(false);
+	const updateScrollCue = useCallback(() => {
+		const element = scrollRef.current;
+		setCanScrollDown(Boolean(element && element.scrollHeight - element.scrollTop > element.clientHeight + 1));
+	}, []);
+	useLayoutEffect(() => {
+		if (!menuOpen) {
+			setCanScrollDown(false);
+			return;
+		}
+		updateScrollCue();
+		const element = scrollRef.current;
+		if (!element || typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(updateScrollCue);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, [menuOpen, updateScrollCue, visibleOptions.length]);
 
 	return (
-		<DropdownMenu onOpenChange={(open) => !open && setSearch("")}>
+		<DropdownMenu
+			onOpenChange={(open) => {
+				setMenuOpen(open);
+				if (!open) setSearch("");
+			}}
+		>
 			<DropdownMenuTrigger asChild disabled={disabled}>
 				<button
 					type="button"
@@ -88,12 +112,12 @@ export function SettingsOptionMenu<T extends string>({
 				// mouse click, leaving a stray focus ring. Skip the refocus.
 				onCloseAutoFocus={(event) => event.preventDefault()}
 				className={cn(
-					"settings-menu-surface min-w-[length:var(--size-settings-menu-min-width)] overflow-y-auto! overflow-x-hidden! max-h-select-menu-max! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
+					"settings-menu-surface min-w-[length:var(--size-settings-menu-min-width)] overflow-hidden! max-h-select-menu-max! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
 					menuClassName,
 				)}
 			>
 				{searchable && (
-					<div className="p-1" onKeyDown={(event) => event.stopPropagation()}>
+					<div className="shrink-0 p-1" onKeyDown={(event) => event.stopPropagation()}>
 						<input
 							type="search"
 							aria-label={t("settings.options.searchAria", { label: ariaLabel.toLocaleLowerCase() })}
@@ -104,32 +128,44 @@ export function SettingsOptionMenu<T extends string>({
 						/>
 					</div>
 				)}
-				{visibleOptions.map((option) => (
-					<DropdownMenuItem
-						key={option.value}
-						disabled={option.disabled}
-						onSelect={() => onChange(option.value)}
-						className={cn(
-							"settings-menu-item min-w-0 cursor-default outline-none",
-							"focus:bg-settings-menu-selected focus:text-settings-title",
-							"data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-title",
-							option.value === value && "border-settings-menu bg-settings-menu-selected text-settings-title",
-							menuItemClassName,
-						)}
+				<div className="relative min-h-0 flex-1 overflow-hidden">
+					<div
+						ref={scrollRef}
+						className="model-menu-scroll h-full min-h-0 overflow-y-auto overscroll-contain"
+						onScroll={updateScrollCue}
 					>
-						{renderMenuItem ? (
-							renderMenuItem(option, option.value === value)
-						) : (
-							<>
-								{option.icon}
-								{option.label}
-							</>
+						{visibleOptions.map((option) => (
+							<DropdownMenuItem
+								key={option.value}
+								disabled={option.disabled}
+								onSelect={() => onChange(option.value)}
+								className={cn(
+									"settings-menu-item min-w-0 cursor-default outline-none",
+									"focus:bg-settings-menu-selected focus:text-settings-title",
+									"data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-title",
+									option.value === value && "border-settings-menu bg-settings-menu-selected text-settings-title",
+									menuItemClassName,
+								)}
+							>
+								{renderMenuItem ? (
+									renderMenuItem(option, option.value === value)
+								) : (
+									<>
+										{option.icon}
+										{option.label}
+									</>
+								)}
+							</DropdownMenuItem>
+						))}
+						{visibleOptions.length === 0 && (
+							<p className="px-2 py-1.5 text-xs text-settings-muted">{t("settings.options.noMatches")}</p>
 						)}
-					</DropdownMenuItem>
-				))}
-				{visibleOptions.length === 0 && (
-					<p className="px-2 py-1.5 text-xs text-settings-muted">{t("settings.options.noMatches")}</p>
-				)}
+					</div>
+					<div
+						className={cn("model-menu-overflow-cue", canScrollDown ? "opacity-100" : "opacity-0")}
+						aria-hidden="true"
+					/>
+				</div>
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);
