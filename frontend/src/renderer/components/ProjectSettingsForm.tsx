@@ -763,7 +763,14 @@ function repositoryHref(repository: string): string {
 		const [host, path] = repository.slice(4).split(":", 2);
 		return `https://${host}/${path.replace(/\.git$/, "")}`;
 	}
-	if (repository.startsWith("ssh://")) return repository.replace(/^ssh:\/\//, "https://").replace(/\.git$/, "");
+	if (repository.startsWith("ssh://")) {
+		try {
+			const parsed = new URL(repository);
+			return `https://${parsed.hostname}${parsed.pathname.replace(/\.git$/, "")}`;
+		} catch {
+			return repository;
+		}
+	}
 	return repository;
 }
 
