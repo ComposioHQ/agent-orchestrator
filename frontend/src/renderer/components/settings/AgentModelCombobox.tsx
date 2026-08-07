@@ -96,19 +96,23 @@ export function AgentModelCombobox({
 
 	const rankedModels = useMemo(() => {
 		if (!normalizedSearch) {
-			return rankInitialModels(searchIndex.models, value, recentModelIDs);
+			// Compact mode reads as a plain, stable list — picking a model
+			// shouldn't reorder it to the top on the next open.
+			return compact ? searchIndex.models : rankInitialModels(searchIndex.models, value, recentModelIDs);
 		}
 		return searchModelIndex(searchIndex, normalizedSearch).models;
-	}, [normalizedSearch, recentModelIDs, searchIndex, value]);
+	}, [compact, normalizedSearch, recentModelIDs, searchIndex, value]);
 
 	const visibleModels = rankedModels.slice(0, MAX_VISIBLE_MODELS);
 	const groups = useMemo(
 		() =>
-			groupModels(visibleModels, normalizedSearch === "", value, recentModelIDs, {
-				pinned: t("settings.models.currentDefaults"),
-				recent: t("settings.models.recent"),
-			}),
-		[normalizedSearch, recentModelIDs, t, value, visibleModels],
+			compact
+				? [{ key: "all", label: "", kind: "provider" as const, models: visibleModels }]
+				: groupModels(visibleModels, normalizedSearch === "", value, recentModelIDs, {
+						pinned: t("settings.models.currentDefaults"),
+						recent: t("settings.models.recent"),
+					}),
+		[compact, normalizedSearch, recentModelIDs, t, value, visibleModels],
 	);
 	const customSearchValue = search.trim();
 	const showCustomSearchAction = allowCustom && customSearchValue !== "" && rankedModels.length === 0;
