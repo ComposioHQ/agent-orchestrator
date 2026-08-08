@@ -35,9 +35,6 @@ type CDPRequest = {
 
 type ConnectionContext = {
 	socket: WebSocket;
-	targetId?: string;
-	trustedDevtools: boolean;
-	devtoolsClientKey?: string;
 };
 
 type AttachedTarget = {
@@ -49,9 +46,8 @@ type AttachedTarget = {
 
 /**
  * One physical Electron debugger attachment can serve multiple logical CDP
- * clients. The agent-browser daemon and the official Chromium DevTools
- * frontend both connect here; detaching either client must not detach the
- * underlying page debugger while the other client is still active.
+ * clients from the restricted agent-browser daemon. Detaching one logical
+ * client must not detach the underlying page debugger while another remains.
  */
 type PhysicalTargetAttachment = {
 	targetId: string;
@@ -62,16 +58,11 @@ type PhysicalTargetAttachment = {
 	ownedDebugger: boolean;
 };
 
-type DevtoolsCapability = {
-	targetId: string;
-};
-
 export class AgentBrowserCDPBridge {
 	private readonly server: WebSocketServer;
 	private readonly pathToken = randomBytes(32).toString("base64url");
 	private readonly attached = new Map<string, AttachedTarget>();
 	private readonly physical = new Map<string, PhysicalTargetAttachment>();
-	private readonly devtoolsCapabilities = new Map<string, DevtoolsCapability>();
 	private endpoint = "";
 
 	constructor(private readonly targets: AgentBrowserTargetProvider) {
@@ -94,42 +85,10 @@ export class AgentBrowserCDPBridge {
 			throw new Error("Unable to determine agent-browser CDP bridge address");
 		}
 		this.endpoint = `ws://127.0.0.1:${address.port}/${this.pathToken}`;
-		this.server.on("connection", (socket, request) => {
-			let requestURL: URL;
-			try {
-				requestURL = new URL(request.url ?? "/", "ws://127.0.0.1");
-			} catch {
-				socket.close(1008, "Invalid AO browser CDP endpoint");
-				return;
-			}
-			const devtoolsToken = optionalString(requestURL.searchParams.get("devtools"));
-			const devtoolsCapability = devtoolsToken ? this.devtoolsCapabilities.get(devtoolsToken) : undefined;
-			if (devtoolsToken && !devtoolsCapability) {
-				socket.close(1008, "Invalid AO browser DevTools capability");
-				return;
-			}
-			this.handleConnection(socket, {
-				socket,
-				targetId: devtoolsCapability?.targetId,
-				trustedDevtools: Boolean(devtoolsCapability),
-			});
+		this.server.on("connection", (socket) => {
+			this.handleConnection(socket, { socket });
 		});
 		return this.endpoint;
-	}
-
-	/** Returns a private, target-pinned endpoint for the Chromium DevTools UI. */
-	endpointForTarget(targetId: string): string {
-		if (!this.endpoint) throw new Error("AO browser CDP bridge is not started");
-		if (!this.targets.listTargets().some((target) => target.id === targetId)) {
-			throw new Error("Target is outside this AO worker");
-		}
-		// The target binding and elevated protocol role live in this in-memory map.
-		// Never derive either privilege from query-string values: the base endpoint
-		// is intentionally passed to the restricted agent-browser process.
-		const token = randomBytes(32).toString("base64url");
-		this.devtoolsCapabilities.set(token, { targetId });
-		const query = new URLSearchParams({ devtools: token });
-		return `${this.endpoint}?${query.toString()}`;
 	}
 
 	async close(): Promise<void> {
@@ -137,23 +96,19 @@ export class AgentBrowserCDPBridge {
 		for (const socket of this.server.clients) socket.close(1001, "AO browser session closed");
 		await new Promise<void>((resolve) => this.server.close(() => resolve()));
 		this.physical.clear();
-		this.devtoolsCapabilities.clear();
 		this.endpoint = "";
 	}
 
 	private handleConnection(socket: WebSocket, connection: ConnectionContext): void {
 		socket.on("message", (data) => {
 			// CDP correlates responses by request id and permits them to complete out
-			// of order. Serializing the whole socket makes DevTools startup painfully
-			// slow because its independent Page/DOM/Runtime/Network requests wait on
-			// one another for no protocol reason.
+			// of order. Do not serialize independent Page/DOM/Runtime/Network requests.
 			void this.handleMessage(connection, data).catch(() => undefined);
 		});
 		socket.on("close", () => {
 			for (const [sessionId, attached] of this.attached) {
 				if (attached.connection.socket === socket) this.detachTarget(sessionId);
 			}
-			this.releaseDirectDevtoolsClient(connection);
 		});
 	}
 
@@ -166,16 +121,11 @@ export class AgentBrowserCDPBridge {
 		}
 		if (!Number.isInteger(request.id) || typeof request.method !== "string") return;
 		try {
-			// The Chromium inspector URL points at a page endpoint. Keep that
-			// connection page-shaped and forward every domain (including Target.*)
-			// to Chromium. Synthesizing a browser/root attachment here creates an
-			// extra target in DevTools and leaves the real page panels half-initialized.
-			const result =
-				connection.trustedDevtools && connection.targetId
-					? await this.forwardDirectDevtoolsCommand(connection, request)
-					: request.sessionId
-						? await this.forwardTargetCommand(connection, request)
-						: await this.handleBrowserCommand(connection, request);
+			// Browser-level target management stays on the unscoped connection;
+			// page commands require a session created by Target.attachToTarget.
+			const result = request.sessionId
+				? await this.forwardTargetCommand(connection, request)
+				: await this.handleBrowserCommand(connection, request);
 			this.send(connection.socket, {
 				id: request.id,
 				result: result ?? {},
@@ -205,41 +155,19 @@ export class AgentBrowserCDPBridge {
 					jsVersion: process.versions.v8 ?? "",
 				};
 			case "Target.setDiscoverTargets": {
-				if (connection.trustedDevtools && connection.targetId && params.discover === true) {
-					const target = this.requireTarget(connection.targetId, connection);
-					this.send(connection.socket, {
-						method: "Target.targetCreated",
-						params: { targetInfo: this.targetInfo(target) },
-					});
-				}
 				return {};
 			}
 			case "Target.setAutoAttach": {
-				if (connection.trustedDevtools && connection.targetId && params.autoAttach === true) {
-					const target = this.requireTarget(connection.targetId, connection);
-					const sessionId = this.attachTarget(connection, target);
-					this.send(connection.socket, {
-						method: "Target.attachedToTarget",
-						params: {
-							sessionId,
-							targetInfo: this.targetInfo(target),
-							waitingForDebugger: false,
-						},
-					});
-				}
 				return {};
 			}
 			case "Target.getTargets":
-				return { targetInfos: this.listTargets(connection).map((target) => this.targetInfo(target)) };
+				return { targetInfos: this.listTargets().map((target) => this.targetInfo(target)) };
 			case "Target.getTargetInfo": {
-				const target = this.requireTarget(
-					optionalString(params.targetId) ?? this.listTargets(connection)[0]?.id,
-					connection,
-				);
+				const target = this.requireTarget(optionalString(params.targetId) ?? this.listTargets()[0]?.id);
 				return { targetInfo: this.targetInfo(target) };
 			}
 			case "Target.attachToTarget": {
-				const target = this.requireTarget(optionalString(params.targetId), connection);
+				const target = this.requireTarget(optionalString(params.targetId));
 				const sessionId = this.attachTarget(connection, target);
 				this.send(connection.socket, {
 					method: "Target.attachedToTarget",
@@ -276,20 +204,18 @@ export class AgentBrowserCDPBridge {
 				return this.forwardTargetCommand(connection, { ...nested, sessionId });
 			}
 			case "Target.createTarget": {
-				if (connection.targetId) throw new Error("Target creation is not permitted for a pinned DevTools client");
 				const url = safeNavigationURL(optionalString(params.url) ?? "about:blank");
 				const target = await this.targets.createTarget(url);
 				this.send(connection.socket, { method: "Target.targetCreated", params: { targetInfo: this.targetInfo(target) } });
 				return { targetId: target.id };
 			}
 			case "Target.activateTarget": {
-				const target = this.requireTarget(optionalString(params.targetId), connection);
+				const target = this.requireTarget(optionalString(params.targetId));
 				await this.targets.activateTarget(target.id);
 				return {};
 			}
 			case "Target.closeTarget": {
-				if (connection.targetId) throw new Error("Target closing is not permitted for a pinned DevTools client");
-				const target = this.requireTarget(optionalString(params.targetId), connection);
+				const target = this.requireTarget(optionalString(params.targetId));
 				for (const [sessionId, attached] of this.attached) {
 					if (attached.targetId === target.id) this.detachTarget(sessionId, false);
 				}
@@ -338,38 +264,11 @@ export class AgentBrowserCDPBridge {
 			chromiumSessionId = attached ? requestedSessionId : undefined;
 		}
 		if (!attached) throw new Error("Unknown or expired target session");
-		const target = this.requireTarget(attached.targetId, attached.connection);
-		if (!attached.connection.trustedDevtools) assertSafeTargetMethod(request.method, request.params);
+		const target = this.requireTarget(attached.targetId);
+		assertSafeTargetMethod(request.method, request.params);
 		return chromiumSessionId
 			? target.debugger.sendCommand(request.method, request.params, chromiumSessionId)
 			: target.debugger.sendCommand(request.method, request.params);
-	}
-
-	/**
-	 * Chromium's inspector frontend normally connects to a page WebSocket and
-	 * sends Runtime/Page/Network commands without a Target sessionId. A pinned
-	 * DevTools endpoint is allowed to use that page-target shape as well as the
-	 * browser-target handshake used by agent-browser.
-	 */
-	private async forwardDirectDevtoolsCommand(
-		connection: ConnectionContext,
-		request: CDPRequest,
-	): Promise<unknown> {
-		if (request.method === "Browser.close") {
-			throw new Error("Browser.close is not permitted for AO-owned previews");
-		}
-		const target = this.requireTarget(connection.targetId, connection);
-		const physical = this.ensurePhysical(target);
-		if (!connection.devtoolsClientKey) {
-			const clientKey = `devtools-${randomUUID()}`;
-			connection.devtoolsClientKey = clientKey;
-			physical.clients.set(clientKey, { targetId: target.id, connection, chromiumChildSessionIds: new Set() });
-		}
-		// User-facing DevTools intentionally retains the full CDP surface. AO's
-		// agent client remains on forwardTargetCommand and its safety policy.
-		return request.sessionId
-			? physical.debugger.sendCommand(request.method, request.params, request.sessionId)
-			: physical.debugger.sendCommand(request.method, request.params);
 	}
 
 	private ensurePhysical(target: AgentBrowserTarget): PhysicalTargetAttachment {
@@ -417,7 +316,6 @@ export class AgentBrowserCDPBridge {
 					...(client.protocolSessionId ? { sessionId: client.protocolSessionId } : {}),
 				});
 				if (client.protocolSessionId) this.attached.delete(client.protocolSessionId);
-				client.connection.devtoolsClientKey = undefined;
 				client.connection.socket.close(1012, "AO page debugger was released");
 			}
 			physical.clients.clear();
@@ -429,28 +327,13 @@ export class AgentBrowserCDPBridge {
 		return physical;
 	}
 
-	private releaseDirectDevtoolsClient(connection: ConnectionContext): void {
-		const clientKey = connection.devtoolsClientKey;
-		if (!clientKey) return;
-		for (const physical of this.physical.values()) {
-			const client = physical.clients.get(clientKey);
-			if (!client) continue;
-			physical.clients.delete(clientKey);
-			this.detachPhysicalIfUnused(physical, true);
-			break;
-		}
-		connection.devtoolsClientKey = undefined;
+	private listTargets(): AgentBrowserTarget[] {
+		return this.targets.listTargets();
 	}
 
-	private listTargets(connection?: ConnectionContext): AgentBrowserTarget[] {
-		const targets = this.targets.listTargets();
-		if (!connection?.targetId) return targets;
-		return targets.filter((target) => target.id === connection.targetId);
-	}
-
-	private requireTarget(targetId: string | undefined, connection?: ConnectionContext): AgentBrowserTarget {
+	private requireTarget(targetId: string | undefined): AgentBrowserTarget {
 		if (!targetId) throw new Error("targetId is required");
-		const target = this.listTargets(connection).find((candidate) => candidate.id === targetId);
+		const target = this.listTargets().find((candidate) => candidate.id === targetId);
 		if (!target) throw new Error("Target is outside this AO worker");
 		return target;
 	}

@@ -114,7 +114,7 @@ export type AgentBrowserRuntimeOptions = {
 
 export type AgentBrowserJSONResult = Record<string, unknown>;
 
-export type AgentBrowserBridge = Pick<AgentBrowserCDPBridge, "start" | "close" | "endpointForTarget">;
+export type AgentBrowserBridge = Pick<AgentBrowserCDPBridge, "start" | "close">;
 
 export type NativeProcessRunner = (
 	binaryPath: string,
@@ -245,21 +245,6 @@ export class AgentBrowserRuntime {
 		} finally {
 			await removePath(directory, this.log, "screenshot directory");
 		}
-	}
-
-	/**
-	 * Returns a private, target-pinned CDP endpoint for the official Chromium
-	 * DevTools frontend. The endpoint is never exposed through the daemon or
-	 * agent command output; the BrowserViewHost loads it directly in Electron.
-	 */
-	async devtoolsEndpoint(
-		sessionId: string,
-		targetId: string,
-		provider: AgentBrowserTargetProvider,
-	): Promise<string> {
-		const runtime = await this.ensureSession(sessionId, provider);
-		await this.touchRuntimeRoot();
-		return runtime.bridge.endpointForTarget(targetId);
 	}
 
 	async closeSession(sessionId: string): Promise<void> {

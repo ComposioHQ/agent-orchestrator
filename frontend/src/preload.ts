@@ -4,7 +4,6 @@ import type {
 	BrowserAgentActivityState,
 	BrowserDevToolsInput,
 	BrowserDevToolsState,
-	BrowserMirrorFrame,
 	BrowserNavState,
 	BrowserRect,
 	BrowserTabsState,
@@ -30,11 +29,25 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "./shared/browser-annotations";
 
+if (typeof document !== "undefined") {
+	const markNativeBrowserComposition = () => {
+		const root = document.documentElement;
+		if (root) {
+			root.dataset.nativeBrowserComposition = "true";
+			root.dataset.aoPlatform = process.platform;
+		}
+	};
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", markNativeBrowserComposition, { once: true });
+	} else {
+		markNativeBrowserComposition();
+	}
+}
+
 export type BrowserBoundsInput = {
 	viewId: string;
 	rect: BrowserRect;
 	visible: boolean;
-	parked?: boolean;
 };
 
 export type BrowserNavigateInput = {
@@ -195,13 +208,13 @@ const api = {
 		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,
 	},
 	browser: {
+		nativeCompositionEnabled: true,
 		ensure: (sessionId: string) => ipcRenderer.invoke("browser:ensure", sessionId) as Promise<BrowserNavState>,
 		setBounds: (input: BrowserBoundsInput) => ipcRenderer.send("browser:setBounds", input),
+		setOverlayOpen: (open: boolean) => ipcRenderer.send("browser:overlay", open),
 		navigate: (input: BrowserNavigateInput) =>
 			ipcRenderer.invoke("browser:navigate", input) as Promise<BrowserNavState>,
 		clear: (viewId: string) => ipcRenderer.invoke("browser:clear", viewId) as Promise<BrowserNavState>,
-		capture: (viewId: string) => ipcRenderer.invoke("browser:capture", viewId) as Promise<BrowserMirrorFrame | null>,
-		requestMirror: (viewId: string) => ipcRenderer.invoke("browser:requestMirror", viewId) as Promise<boolean>,
 		goBack: (viewId: string) => ipcRenderer.invoke("browser:goBack", viewId) as Promise<BrowserNavState>,
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
 		reload: (viewId: string) => ipcRenderer.invoke("browser:reload", viewId) as Promise<BrowserNavState>,
