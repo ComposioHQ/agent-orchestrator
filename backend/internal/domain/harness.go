@@ -23,10 +23,12 @@ const (
 	HarnessDevin      AgentHarness = "devin"
 	HarnessCline      AgentHarness = "cline"
 	HarnessKimi       AgentHarness = "kimi"
+	HarnessMuse       AgentHarness = "muse"
 	HarnessKiro       AgentHarness = "kiro"
 	HarnessKilocode   AgentHarness = "kilocode"
 	HarnessVibe       AgentHarness = "vibe"
 	HarnessPi         AgentHarness = "pi"
+	HarnessPrimeAgent AgentHarness = "prime-agent"
 	HarnessAutohand   AgentHarness = "autohand"
 	// HarnessFake is retained for existing test fixtures and historical session
 	// rows, but is not user-selectable.
@@ -39,8 +41,8 @@ var AllHarnesses = []AgentHarness{
 	HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessOpenCode, HarnessGrok,
 	HarnessDroid, HarnessAmp, HarnessAgy, HarnessCrush, HarnessCursor, HarnessQwen,
 	HarnessCopilot, HarnessGoose, HarnessAuggie, HarnessContinue, HarnessDevin,
-	HarnessCline, HarnessKimi, HarnessKiro, HarnessKilocode, HarnessVibe, HarnessPi,
-	HarnessAutohand,
+	HarnessCline, HarnessKimi, HarnessMuse, HarnessKiro, HarnessKilocode, HarnessVibe, HarnessPi,
+	HarnessPrimeAgent, HarnessAutohand,
 }
 
 // IsKnown reports whether h is one of the supported harnesses.

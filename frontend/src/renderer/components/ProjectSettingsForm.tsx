@@ -37,12 +37,11 @@ import { cn } from "../lib/utils";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
-import { ReviewerSelect } from "./ReviewerSelect";
+import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
-import { Switch } from "./ui/switch";
 import { Button } from "./ui/button";
 
 type Project = components["schemas"]["Project"];
@@ -50,7 +49,6 @@ type ProjectConfig = components["schemas"]["ProjectConfig"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
-
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
@@ -114,7 +112,6 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
-		autoReviewEnabled: config.autoReview?.enabled ?? false,
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
@@ -200,7 +197,6 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 							permissions: form.permissions || undefined,
 						}),
 						reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
-						autoReview: form.autoReviewEnabled ? { enabled: true } : undefined,
 						trackerIntake: buildIntake(intakeForm),
 					};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}", {
@@ -429,13 +425,11 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 										disabled={agentsQuery.isFetching && agentCatalog === undefined}
 									/>
 								</SettingsRow>
-								<SettingsRow icon={Shield} label={t("settings.project.autoReviewPullRequests")}>
-									<Switch
-										aria-label={t("settings.project.autoReviewPullRequests")}
-										checked={form.autoReviewEnabled}
-										onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReviewEnabled: checked }))}
-									/>
-								</SettingsRow>
+								{reviewerTrustWarning(form.reviewerHarness) ? (
+									<p className="px-1 text-xs leading-row text-warning" role="status">
+										{reviewerTrustWarning(form.reviewerHarness)}
+									</p>
+								) : null}
 							</SettingsSection>
 							{saveFooter}
 						</>
@@ -776,13 +770,7 @@ function projectKindLabel(kind: string, t: TFunction): string {
 }
 
 function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {
-	const {
-		defaultBranch: _defaultBranch,
-		reviewers: _reviewers,
-		autoReview: _autoReview,
-		trackerIntake: _trackerIntake,
-		...supported
-	} = config;
+	const { defaultBranch: _defaultBranch, reviewers: _reviewers, trackerIntake: _trackerIntake, ...supported } = config;
 	return supported;
 }
 

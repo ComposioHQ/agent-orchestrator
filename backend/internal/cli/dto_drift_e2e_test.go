@@ -63,9 +63,13 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 	}, len(cfg.Prompt), 0, nil
 }
 
-func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, _ bool) (domain.Session, error) {
+func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, _ bool, _ domain.SessionMode) (domain.Session, error) {
 	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
 	return s, err
+}
+
+func (f *fakeSessionService) DelegateTask(context.Context, sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error) {
+	return sessionsvc.DelegateTaskOutcome{}, nil
 }
 
 func (f *fakeSessionService) Get(context.Context, domain.SessionID) (domain.Session, error) {
@@ -139,6 +143,12 @@ func (f *fakeSessionService) WorkspaceWatchPaths(context.Context, domain.Session
 func (f *fakeSessionService) GetWorkspaceFile(context.Context, domain.SessionID, string) (sessionsvc.WorkspaceFileDetail, error) {
 	return sessionsvc.WorkspaceFileDetail{}, nil
 }
+
+func (f *fakeSessionService) StageAttachments(context.Context, domain.SessionID, []ports.SpawnAttachment) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakeSessionService) InvalidateWorkspaceCache(domain.SessionID) {}
 
 type fakeAgentCatalog struct{}
 

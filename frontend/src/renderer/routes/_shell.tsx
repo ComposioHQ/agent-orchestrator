@@ -45,6 +45,7 @@ import { useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
+import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
 
 export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
@@ -87,6 +88,8 @@ const shellTopbarHiddenByPlatform = hidesShellTopbar();
 // the old single <App>, with selection now owned by the router (route params)
 // instead of Zustand. The daemon-status effect runs here exactly once.
 function ShellLayout() {
+	// Reports how many agents this install has available, once per launch.
+	useAgentInventoryTelemetry();
 	const navigate = useNavigate();
 	const matchRoute = useMatchRoute();
 	const queryClient = useQueryClient();
@@ -172,7 +175,6 @@ function ShellLayout() {
 		!usesPreviewWorkspaceData &&
 		!daemonStatus.code &&
 		(daemonStatus.state !== "ready" || workspaceStartupState === "loading");
-
 	const cancelSidebarPeekClose = useCallback(() => {
 		if (sidebarPeekCloseTimerRef.current === undefined) return;
 		window.clearTimeout(sidebarPeekCloseTimerRef.current);
@@ -361,13 +363,14 @@ function ShellLayout() {
 	);
 
 	const restartOrchestrator = useCallback(
-		async (projectId: string) => {
+		async (projectId: string, mode?: "chat" | "tui") => {
 			await restartProjectOrchestrator({
 				projectId,
 				queryClient,
 				navigate,
 				setProjectRestarting,
 				setOrchestratorReplacementError,
+				mode,
 				onError: (error) => {
 					captureOrchestratorReplacementFailure(error, projectId);
 				},
@@ -588,7 +591,10 @@ function ShellLayout() {
 		setActiveShellTerminal,
 	]);
 
-	useEffect(() => aoBridge.app.onOpenSettingsShortcut(() => void navigate({ to: "/settings" })), [navigate]);
+	useEffect(
+		() => aoBridge.app.onOpenSettingsShortcut(() => useUiStore.getState().openGlobalSettings()),
+		[],
+	);
 
 	useEffect(() => {
 		const disposePrevious = aoBridge.app.onPreviousSessionShortcut(() => navigateSession(-1));
@@ -672,22 +678,16 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-					{routeParams.sessionId ? (
-						<SessionTopbarHost
-							className="relative z-chrome flex h-session-topbar w-full shrink-0 overflow-hidden bg-sidebar"
-							data-testid="session-topbar-host"
-						/>
-					) : null}
-					<div className="flex min-h-0 w-full flex-1 overflow-x-hidden" data-testid="shell-content-row">
-					{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
+				<div className="flex min-h-0 w-full flex-1 overflow-x-hidden" data-testid="shell-content-row">
+				{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
               cluster above a full-height sidebar; Windows hangs the sidebar
               below its custom titlebar. */}
-					<Sidebar
-						hideEdgeBorder={isWelcomeBoard}
-						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
-						onPreviewLeave={scheduleSidebarPeekClose}
-						underTopbar={isMac || isWindows || isLinux}
-						topbarOffset={routeParams.sessionId ? "session" : isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
+				<Sidebar
+					hideEdgeBorder={isWelcomeBoard}
+					isOverlay={isSidebarPeekOpen && !isSidebarOpen}
+					onPreviewLeave={scheduleSidebarPeekClose}
+					underTopbar={isMac || isWindows || isLinux}
+					topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
@@ -701,23 +701,46 @@ function ShellLayout() {
 								selfFramedCenterPanel ? (
 									<Outlet />
 								) : (
-									// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
-									<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-										<Outlet />
-									</CenterPanelShell>
-								)
-							) : framedAppTopbar ? (
-								<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-									{!routeParams.sessionId ? <ShellTopbar /> : null}
-									<div className="flex min-h-0 flex-1 flex-col">
-										<Outlet />
-									</div>
-								</CenterPanelShell>
-							) : (
-								<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+							// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
+							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+								{routeParams.sessionId ? (
+									<SessionTopbarHost
+										className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
+										data-testid="session-topbar-host"
+									/>
+								) : null}
+								<div className="flex min-h-0 flex-1 flex-col">
 									<Outlet />
-								</CenterPanelShell>
+								</div>
+							</CenterPanelShell>
+						)
+					) : framedAppTopbar ? (
+						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+							{routeParams.sessionId ? (
+								<SessionTopbarHost
+									className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
+									data-testid="session-topbar-host"
+								/>
+							) : (
+								<ShellTopbar />
 							)}
+							<div className="flex min-h-0 flex-1 flex-col">
+								<Outlet />
+							</div>
+						</CenterPanelShell>
+					) : (
+						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+							{routeParams.sessionId ? (
+								<SessionTopbarHost
+									className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
+									data-testid="session-topbar-host"
+								/>
+							) : null}
+							<div className="flex min-h-0 flex-1 flex-col">
+								<Outlet />
+							</div>
+						</CenterPanelShell>
+					)}
 						</div>
 					</main>
 					</div>
@@ -758,6 +781,7 @@ function ShellLayout() {
 						if (!open && replacementErrorProjectId) setOrchestratorReplacementError(replacementErrorProjectId, null);
 					}}
 					onRetry={(projectId) => void restartOrchestrator(projectId)}
+					onRetryAsTui={(projectId) => void restartOrchestrator(projectId, "tui")}
 					projectId={replacementErrorProjectId}
 					workspaces={workspaces}
 				/>

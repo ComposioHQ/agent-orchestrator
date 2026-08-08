@@ -12,16 +12,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 func newTestStore(t *testing.T) *sqlite.Store {
 	t.Helper()
-	s, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-	return s
+	return sqlitetest.MustOpen(t)
 }
 
 func seedProject(t *testing.T, s *sqlite.Store, id string) {
@@ -56,6 +52,17 @@ func TestSessionCreateAllowsFakeHarness(t *testing.T) {
 	rec.Harness = domain.HarnessFake
 	if _, err := s.CreateSession(ctx, rec); err != nil {
 		t.Fatalf("create fake-harness session: %v", err)
+	}
+}
+
+func TestSessionCreateAllowsPrimeAgentHarness(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Harness = domain.HarnessPrimeAgent
+	if _, err := s.CreateSession(ctx, rec); err != nil {
+		t.Fatalf("create prime-agent-harness session: %v", err)
 	}
 }
 
@@ -110,6 +117,38 @@ func TestSessionPersistsDiffBaseMetadata(t *testing.T) {
 	}
 	if updated.Metadata.DiffBaseSHA != "base-sha-2" || updated.Metadata.DiffBaseRef != "develop" {
 		t.Fatalf("updated diff base = sha:%q ref:%q", updated.Metadata.DiffBaseSHA, updated.Metadata.DiffBaseRef)
+	}
+}
+
+func TestSessionPersistsBrowserCapabilityVerifier(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Metadata.BrowserCapabilityVerifier = "one-way-verifier"
+
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get session: ok=%v err=%v", ok, err)
+	}
+	if got.Metadata.BrowserCapabilityVerifier != "one-way-verifier" {
+		t.Fatalf("created verifier = %q", got.Metadata.BrowserCapabilityVerifier)
+	}
+
+	got.Metadata.BrowserCapabilityVerifier = "rotated-verifier"
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("update session: %v", err)
+	}
+	updated, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get updated session: ok=%v err=%v", ok, err)
+	}
+	if updated.Metadata.BrowserCapabilityVerifier != "rotated-verifier" {
+		t.Fatalf("updated verifier = %q", updated.Metadata.BrowserCapabilityVerifier)
 	}
 }
 
