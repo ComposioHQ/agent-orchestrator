@@ -140,6 +140,9 @@ func migrate(db *sql.DB) error {
 	if err := prepareReviewPerHarnessMigration(db); err != nil {
 		return fmt.Errorf("prepare review per-harness migration: %w", err)
 	}
+	if err := prepareBrowserVerifierMigration(db); err != nil {
+		return fmt.Errorf("prepare browser verifier migration: %w", err)
+	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply
 	// those embedded migrations instead of permanently wedging daemon startup
@@ -148,6 +151,45 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// prepareBrowserVerifierMigration preserves development databases that ran an
+// earlier version of this branch where the verifier was mistakenly added to
+// shipped migration 0048. The restored 0048 no longer owns the column, so mark
+// the new 0081 migration applied when its exact schema effect already exists;
+// otherwise goose applies 0081 normally.
+func prepareBrowserVerifierMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+	var applied int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 81 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied); err != nil {
+		return err
+	}
+	if applied != 0 {
+		return nil
+	}
+	var verifierColumn int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'browser_capability_verifier'`,
+	).Scan(&verifierColumn); err != nil {
+		return err
+	}
+	if verifierColumn == 0 {
+		return nil
+	}
+	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (81, 1)`)
+	return err
 }
 
 func prepareBurnedSchemaRepairs(db *sql.DB) error {
@@ -204,8 +246,9 @@ SELECT COALESCE((
 
 // prepareReviewPerHarnessMigration makes the fresh 0080 rebuild executable on
 // field databases that already recorded 0048/0049 as applied without actually
-// running their SQL. Once 0080 has applied, it deliberately leaves the schema
-// alone so review_session is not recreated after the rebuild drops it.
+// running their SQL. Once 0080 has applied, it still repairs the physical review
+// table if it is missing columns or constraints expected by current queries, but
+// does not recreate review_session after the rebuild drops it.
 func prepareReviewPerHarnessMigration(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -229,9 +272,6 @@ SELECT COALESCE((
     WHERE version_id = 80 ORDER BY id DESC LIMIT 1
 ), 0)`).Scan(&applied80); err != nil {
 		return err
-	}
-	if applied80 != 0 {
-		return tx.Commit()
 	}
 	var applied48 int
 	if err := tx.QueryRow(`
@@ -264,6 +304,12 @@ SELECT COALESCE((
 			return err
 		}
 	}
+	if applied80 != 0 {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		return repairReviewPerHarnessShape(db)
+	}
 	var reviewSessionTable int
 	if err := tx.QueryRow(
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'review_session'`,
@@ -286,6 +332,116 @@ CREATE TABLE review_session (
 		}
 	}
 	return tx.Commit()
+}
+
+func repairReviewPerHarnessShape(db *sql.DB) error {
+	ok, err := reviewHasSessionHarnessUnique(db)
+	if err != nil || ok {
+		return err
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	defer func() { _, _ = db.Exec(`PRAGMA foreign_keys=ON`) }()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`
+CREATE TABLE review_repair (
+    id                 TEXT PRIMARY KEY,
+    session_id         TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+    project_id         TEXT NOT NULL REFERENCES projects (id),
+    harness            TEXT NOT NULL,
+    pr_url             TEXT NOT NULL DEFAULT '',
+    reviewer_handle_id TEXT NOT NULL DEFAULT '',
+    agent_session_id   TEXT NOT NULL DEFAULT '',
+    created_at         TIMESTAMP NOT NULL,
+    updated_at         TIMESTAMP NOT NULL,
+    UNIQUE(session_id, harness)
+)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+INSERT INTO review_repair (
+    id, session_id, project_id, harness, pr_url, reviewer_handle_id,
+    agent_session_id, created_at, updated_at
+)
+SELECT
+    id, session_id, project_id, harness, pr_url, reviewer_handle_id,
+    agent_session_id, created_at, updated_at
+FROM review`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE review`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE review_repair RENAME TO review`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func reviewHasSessionHarnessUnique(db *sql.DB) (bool, error) {
+	rows, err := db.Query(`PRAGMA index_list('review')`)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	uniqueIndexes := []string{}
+	for rows.Next() {
+		var seq int
+		var name, origin string
+		var unique, partial int
+		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			return false, err
+		}
+		if unique == 0 {
+			continue
+		}
+		uniqueIndexes = append(uniqueIndexes, name)
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	for _, name := range uniqueIndexes {
+		if indexColumnsMatch(db, name, []string{"session_id", "harness"}) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func indexColumnsMatch(db *sql.DB, indexName string, want []string) bool {
+	rows, err := db.Query(`PRAGMA index_info(` + quoteSQLiteIdent(indexName) + `)`)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = rows.Close() }()
+	got := make([]string, 0, len(want))
+	for rows.Next() {
+		var seqno, cid int
+		var name string
+		if err := rows.Scan(&seqno, &cid, &name); err != nil {
+			return false
+		}
+		got = append(got, name)
+	}
+	if rows.Err() != nil || len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func quoteSQLiteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // repairRenumberedChatMigrationHistory preserves databases opened by this
@@ -389,9 +545,9 @@ SELECT COALESCE((
 // column was just added, so healthy databases — where those statements would
 // clobber live data — are never touched.
 //
-// Any new migration numbered up to 0046 whose schema the generated queries
-// depend on MUST add an entry here, or the burned field profiles skip it and
-// regress to the 500s this exists to prevent.
+// Any migration whose schema the generated queries depend on MUST add an entry
+// here when a burned field profile can skip it, or the session list can regress
+// to the 500s this exists to prevent.
 var schemaRepairs = []struct {
 	version int64
 	table   string
@@ -462,8 +618,12 @@ BEGIN
             'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END)
         ),
         NEW.updated_at);
-END`,
+			END`,
 		}},
+	// 0081_browser_capability_verifier.sql. Keep the generated session queries
+	// healthy even if a field database has already burned this migration number.
+	{version: 81, table: "sessions", column: "browser_capability_verifier",
+		addDDL: `ALTER TABLE sessions ADD COLUMN browser_capability_verifier TEXT NOT NULL DEFAULT ''`},
 	// A pre-renumbered chat-mode branch created conversations before the
 	// current_session_id controller binding existed, then later builds recorded
 	// 0052 as applied. Generated chat queries require the column on startup.
@@ -512,10 +672,17 @@ func reconcileSchema(db *sql.DB) error {
 }
 
 const (
-	sessionsHarnessCheckWithoutMuse   = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
-	sessionsHarnessCheckWithMuse      = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
-	sessionsHarnessCheckWithoutMuseQM = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
-	sessionsHarnessCheckWithMuseQM    = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithoutMuse                = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuse                   = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithoutMuseQM              = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMuseQM                 = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMuseKimchi             = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuseQMKimchi           = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMusePrimeAgent         = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'prime-agent', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuseQMPrimeAgent       = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'prime-agent', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMuseQMLegacyPrimeAgent = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'prime-agent', 'fake'))`
+	sessionsHarnessCheckWithMuseKimchiPrimeAgent   = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'prime-agent', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuseQMKimchiPrimeAgent = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'prime-agent', 'autohand', 'qm', 'fake'))`
 )
 
 func reconcileHarnessConstraint(db *sql.DB) error {
@@ -525,27 +692,53 @@ func reconcileHarnessConstraint(db *sql.DB) error {
 	).Scan(&schema); err != nil {
 		return fmt.Errorf("schema verification: inspect sessions harness constraint: %w", err)
 	}
-	if strings.Contains(schema, "'muse'") {
+	needsMuse := !strings.Contains(schema, "'muse'")
+	needsKimchi := !strings.Contains(schema, "'kimchi'")
+	needsPrimeAgent := !strings.Contains(schema, "'prime-agent'")
+	if !needsMuse && !needsKimchi && !needsPrimeAgent {
 		return nil
 	}
 	if _, err := db.Exec(`PRAGMA writable_schema = ON`); err != nil {
 		return fmt.Errorf("schema repair: enable writable_schema for sessions harness constraint: %w", err)
 	}
-	for _, replacement := range []struct {
+	type replacement struct {
 		old string
 		new string
-	}{
-		{sessionsHarnessCheckWithoutMuse, sessionsHarnessCheckWithMuse},
-		{sessionsHarnessCheckWithoutMuseQM, sessionsHarnessCheckWithMuseQM},
-	} {
+	}
+	var repairs []replacement
+	if needsMuse {
+		repairs = append(repairs,
+			replacement{sessionsHarnessCheckWithoutMuse, sessionsHarnessCheckWithMuse},
+			replacement{sessionsHarnessCheckWithoutMuseQM, sessionsHarnessCheckWithMuseQM},
+		)
+	}
+	if needsKimchi {
+		// After the Muse repair (if any), the constraint will be in one of
+		// these known states — each gets Kimchi inserted in the same
+		// position as migration 0054 does.
+		repairs = append(repairs,
+			replacement{sessionsHarnessCheckWithMuse, sessionsHarnessCheckWithMuseKimchi},
+			replacement{sessionsHarnessCheckWithMuseQM, sessionsHarnessCheckWithMuseQMKimchi},
+			replacement{sessionsHarnessCheckWithMusePrimeAgent, sessionsHarnessCheckWithMuseKimchiPrimeAgent},
+			replacement{sessionsHarnessCheckWithMuseQMPrimeAgent, sessionsHarnessCheckWithMuseQMKimchiPrimeAgent},
+			replacement{sessionsHarnessCheckWithMuseQMLegacyPrimeAgent, sessionsHarnessCheckWithMuseQMKimchiPrimeAgent},
+		)
+	}
+	if needsPrimeAgent {
+		repairs = append(repairs,
+			replacement{sessionsHarnessCheckWithMuseKimchi, sessionsHarnessCheckWithMuseKimchiPrimeAgent},
+			replacement{sessionsHarnessCheckWithMuseQMKimchi, sessionsHarnessCheckWithMuseQMKimchiPrimeAgent},
+		)
+	}
+	for _, r := range repairs {
 		if _, err := db.Exec(
 			`UPDATE sqlite_master
 SET sql = replace(sql, ?, ?)
 WHERE type = 'table' AND name = 'sessions'`,
-			replacement.old,
-			replacement.new,
+			r.old,
+			r.new,
 		); err != nil {
-			return fmt.Errorf("schema repair: widen sessions harness constraint for Muse: %w", err)
+			return fmt.Errorf("schema repair: widen sessions harness constraint: %w", err)
 		}
 	}
 	if _, err := db.Exec(`PRAGMA writable_schema = RESET`); err != nil {
@@ -558,6 +751,12 @@ WHERE type = 'table' AND name = 'sessions'`,
 	}
 	if !strings.Contains(schema, "'muse'") {
 		return fmt.Errorf("schema repair: sessions harness constraint is missing Muse and did not match known pre-Muse schema")
+	}
+	if !strings.Contains(schema, "'kimchi'") {
+		return fmt.Errorf("schema repair: sessions harness constraint is missing Kimchi and did not match known pre-Kimchi schema")
+	}
+	if !strings.Contains(schema, "'prime-agent'") {
+		return fmt.Errorf("schema repair: sessions harness constraint is missing Prime Agent and did not match known pre-Prime-Agent schema")
 	}
 	return nil
 }

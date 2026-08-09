@@ -20,7 +20,7 @@ import { cn } from "../lib/utils";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
-import { ReviewerSelect } from "./ReviewerSelect";
+import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
@@ -452,6 +452,11 @@ function SettingsBody({
 										disabled={agentsQuery.isFetching && agentCatalog === undefined}
 									/>
 								</SettingsRow>
+								{reviewerTrustWarning(form.reviewerHarness) ? (
+									<p className="px-1 text-xs leading-row text-warning" role="status">
+										{reviewerTrustWarning(form.reviewerHarness)}
+									</p>
+								) : null}
 							</SettingsSection>
 						</>
 					) : (

@@ -59,7 +59,12 @@ function TopMenu({
 					{label}
 				</button>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" className="window-titlebar__menu" sideOffset={4}>
+			<DropdownMenuContent
+				align="start"
+				className="window-titlebar__menu"
+				data-browser-native-overlay="true"
+				sideOffset={4}
+			>
 				{children}
 			</DropdownMenuContent>
 		</DropdownMenu>

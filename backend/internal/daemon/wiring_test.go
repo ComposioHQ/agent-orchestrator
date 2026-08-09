@@ -117,6 +117,7 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 		{domain.HarnessKilocode, "kilocode"},
 		{domain.HarnessVibe, "vibe"},
 		{domain.HarnessPi, "pi"},
+		{domain.HarnessPrimeAgent, "prime-agent"},
 		{domain.HarnessAutohand, "autohand"},
 	} {
 		agent, ok := resolver.Agent(tc.harness)
@@ -155,6 +156,9 @@ func TestWiring_ActiveTurnSteeringComesFromAdapters(t *testing.T) {
 
 	if !steers(domain.HarnessCodex) {
 		t.Error("codex declares SteersActiveTurn; want true from the adapter-backed policy")
+	}
+	if !steers(domain.HarnessPrimeAgent) {
+		t.Error("prime-agent declares SteersActiveTurn; want true from the adapter-backed policy")
 	}
 	for _, harness := range []domain.AgentHarness{domain.HarnessClaudeCode, domain.HarnessAider, "definitely-not-an-agent", ""} {
 		if steers(harness) {
@@ -695,7 +699,6 @@ func (r *selectableRuntime) Attach(context.Context, ports.RuntimeHandle, uint16,
 }
 
 func (r *selectableRuntime) Interrupt(context.Context, ports.RuntimeHandle) error { return nil }
-
 func (r *selectableRuntime) SendInput(context.Context, ports.RuntimeHandle, string) error {
 	return nil
 }

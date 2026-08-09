@@ -4537,7 +4537,29 @@ components:
           enum:
           - claude-code
           - codex
+          - copilot
+          - cursor
+          - kilocode
           - opencode
+          - kiro
+          - pi
+          - qwen
+          - agy
+          - continue
+          - goose
+          - vibe
+          - devin
+          - droid
+          - kimi
+          - kimchi
+          - muse
+          - amp
+          - aider
+          - grok
+          - crush
+          - auggie
+          - cline
+          - autohand
           type: string
         scmStatus:
           enum:
@@ -5204,6 +5226,8 @@ components:
           - kilocode
           - vibe
           - pi
+          - kimchi
+          - prime-agent
           - autohand
           - fake
           type: string
@@ -6767,7 +6791,29 @@ components:
           enum:
           - claude-code
           - codex
+          - copilot
+          - cursor
+          - kilocode
           - opencode
+          - kiro
+          - pi
+          - qwen
+          - agy
+          - continue
+          - goose
+          - vibe
+          - devin
+          - droid
+          - kimi
+          - kimchi
+          - muse
+          - amp
+          - aider
+          - grok
+          - crush
+          - auggie
+          - cline
+          - autohand
           type: string
       type: object
     SettingsResponse:
@@ -6870,6 +6916,8 @@ components:
           - kilocode
           - vibe
           - pi
+          - kimchi
+          - prime-agent
           - autohand
           type: string
         issueId:
@@ -7037,7 +7085,29 @@ components:
           enum:
           - claude-code
           - codex
+          - copilot
+          - cursor
+          - kilocode
           - opencode
+          - kiro
+          - pi
+          - qwen
+          - agy
+          - continue
+          - goose
+          - vibe
+          - devin
+          - droid
+          - kimi
+          - kimchi
+          - muse
+          - amp
+          - aider
+          - grok
+          - crush
+          - auggie
+          - cline
+          - autohand
           type: string
       type: object
     TriggerReviewResponse:

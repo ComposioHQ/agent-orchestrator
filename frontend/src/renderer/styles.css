@@ -581,7 +581,8 @@
 	gap: var(--size-settings-row-icon-gap);
 	border-radius: var(--radius-settings-row);
 	background-color: var(--color-bg-settings-row);
-	padding: var(--size-settings-row-padding);
+	padding-inline: var(--size-settings-row-padding);
+	padding-block: var(--size-settings-row-padding);
 }
 
 /* Helper copy belongs to the preceding settings row, not a separate divided row. */
@@ -1514,6 +1515,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	transition: none;
 }
 
+/* Keep keyboard focus visible without adding a ring to the sidebar chrome. */
+.sidebar-focusless :focus-visible {
+	background-color: var(--color-interactive-hover) !important;
+	outline: none !important;
+	box-shadow: none !important;
+}
+
 /* Expanded-only sidebar chrome waits for the rail width transition to finish
  * before painting, so tap-to-expand does not flash labels inside the narrow
  * collapsed rail. */
@@ -1617,6 +1625,41 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	border-color: color-mix(in srgb, var(--color-logo-accent) 45%, var(--color-border-strong));
 	background: var(--color-bg-secondary);
 	box-shadow: var(--elevation-md);
+}
+
+/* The draft grows to seven lines before it becomes its own scroll surface. A
+   narrow inset thumb keeps long prompts legible without the platform scrollbar
+   competing with the composer controls. */
+.chat-composer-scrollbar {
+	scrollbar-width: thin;
+	scrollbar-color: var(--color-scrollbar-board) transparent;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar {
+	width: 8px;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar-button {
+	display: none;
+	width: 0;
+	height: 0;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar-track,
+.chat-composer-scrollbar::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar-thumb {
+	border: 2px solid transparent;
+	border-radius: var(--radius-full);
+	background: var(--color-scrollbar-board);
+	background-clip: content-box;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar-thumb:hover {
+	background: var(--color-scrollbar-board-hover);
+	background-clip: content-box;
 }
 
 .cursor-chat-human-message {
@@ -2943,16 +2986,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		background var(--duration-normal) ease;
 }
 
-.browser-panel--agent-active {
-	border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
-	box-shadow:
-		0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent),
-		0 0 28px color-mix(in srgb, var(--color-accent) 10%, transparent),
-		var(--elevation-sm);
-}
-
-/* Maximized workspace overlays: fixed layers portaled to <body>, so they cover
-   the sidebar + topbar too, not just the session area.
+/* Maximized browser overlay: a fixed layer over the app workspace (portaled to
+   <body>, so it covers the sidebar + topbar too, not just the session area).
    Electron's Window Controls Overlay owns the top-right titlebar region on
    Windows, so start below its reported safe-area height. macOS hides the shell
    topbar; windowed mode reserves the native traffic-light band below, while
@@ -2970,6 +3005,14 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	   maximized browser surface interactive even if those regions overlap while
 	   the window is transitioning between layouts. */
 	-webkit-app-region: no-drag;
+}
+
+/* BaseWindow's explicit shell WebContentsView does not always expose the
+   Window Controls Overlay safe-area env value. Keep maximized browser/files
+   surfaces below the Windows native min/max/close controls in that mode. */
+html[data-native-browser-composition="true"][data-ao-platform="win32"] .browser-popout-overlay,
+html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-popout-overlay {
+	top: var(--size-window-titlebar);
 }
 
 /* macOS keeps the native traffic lights visible while the window is not in
@@ -3167,6 +3210,78 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	background: color-mix(in srgb, var(--red) 8%, var(--bg));
 	color: var(--red);
 	font-size: 12px;
+}
+
+/* Native composition keeps the browser page in an Electron
+ * WebContentsView below the transparent shell renderer. The normal renderer
+ * path remains available for web-only development; these rules remove the
+ * opaque paint layers that would otherwise hide the native page behind the
+ * shell. Toolbar and controls stay opaque so the app chrome remains readable. */
+html[data-native-browser-composition="true"] body:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay),
+html[data-native-browser-composition="true"] #root:has(.browser-panel[data-browser-native-page="live"]) {
+	background: transparent;
+}
+
+html[data-native-browser-composition="true"] .platform-windows:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] .platform-linux:has(.browser-panel[data-browser-native-page="live"]) {
+	background: transparent;
+}
+
+/* A maximized BrowserPanel is portaled directly under <body>, outside the
+ * normal shell root. Clear the shell layers beneath that portal as well, or a
+ * sidebar/center surface can paint an opaque sheet over the live native page
+ * whenever the transparent shell is raised for its tabs/menu portals. */
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .platform-windows,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .platform-linux,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .center-panel-shell,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .center-panel-surface,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root [data-testid="session-detail"],
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .session-split,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .session-inspector,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .session-inspector__body,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root [data-slot="sidebar-container"],
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root [data-slot="sidebar-inner"],
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .dashboard-app-header,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .session-topbar-surface {
+	background: transparent !important;
+}
+
+/* The popout is the only visible workspace while maximized. Hide the normal
+ * shell subtree instead of letting its terminal/sidebar controls show through
+ * the transparent compositor when the shell is raised for a menu portal. The
+ * BrowserPanel portal and the Windows titlebar remain outside this wrapper and
+ * stay interactive. */
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root [data-slot="sidebar-wrapper"] {
+	visibility: hidden;
+}
+
+html[data-native-browser-composition="true"] .center-panel-shell--session:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] .center-panel-shell--session:has(.browser-panel[data-browser-native-page="live"]) > .center-panel-surface,
+html[data-native-browser-composition="true"] [data-testid="session-detail"]:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] .session-split:has(.browser-panel[data-browser-native-page="live"]) {
+	background: transparent;
+}
+
+html[data-native-browser-composition="true"] .browser-panel[data-browser-native-page="live"],
+html[data-native-browser-composition="true"] .browser-panel[data-browser-native-page="live"] .browser-panel__content,
+html[data-native-browser-composition="true"] .browser-panel[data-browser-native-page="live"] .browser-panel__viewport {
+	background: transparent !important;
+	box-shadow: none;
+}
+
+/* The inspector rail paints its own opaque background. When its browser tab is
+ * active, clear only that containing rail so the native page remains visible
+ * when the transparent shell is raised for a menu. Other inspector tabs keep
+ * their existing surface unchanged. */
+html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]) .session-inspector__body {
+	background: transparent;
+}
+
+html[data-native-browser-composition="true"] .browser-popout-overlay {
+	background: transparent;
 }
 
 @keyframes browser-popout-in {
