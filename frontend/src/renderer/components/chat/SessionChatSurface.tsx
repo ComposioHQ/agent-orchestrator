@@ -141,6 +141,12 @@ export function SessionChatSurface({
 			onRollback={commands.rollback}
 			rollbackPending={commands.rollbackPending}
 			rollbackError={commands.rollbackError}
+			onEditMessage={commands.editMessage}
+			editMessagePending={commands.editMessagePending}
+			editMessageError={commands.editMessageError}
+			onActivateBranch={commands.activateBranch}
+			activateBranchPending={commands.activateBranchPending}
+			activateBranchError={commands.activateBranchError}
 			skills={skills}
 			filePaths={paths}
 			filePathsTruncated={truncated}

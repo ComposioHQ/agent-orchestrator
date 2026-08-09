@@ -12,7 +12,6 @@ import {
 	AlertTriangle,
 	Archive,
 	Brain,
-	Check,
 	ChevronRight,
 	CircleAlert,
 	CornerDownRight,
@@ -31,7 +30,6 @@ import {
 	ShieldX,
 	SquareTerminal,
 	User,
-	X,
 } from "lucide-react";
 
 /** Fixed icon column, matching the prototype's row anatomy. */
@@ -54,6 +52,8 @@ import { getApiBaseUrl } from "../../lib/api-client";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
+import { HumanMessageEditor } from "./HumanMessageEditor";
+import { ConversationBranchNavigator } from "./ConversationBranchNavigator";
 import {
 	ACTIVITY_SUMMARY_BUTTON_CLASS,
 	commandCategory,
@@ -65,6 +65,7 @@ import {
 	reviewedPaths,
 	type ActivityKind,
 	type ConversationActivity,
+	type ConversationBranchPoint,
 	type ConversationMessage,
 	type DecisionOption,
 	type DeliveryState,
@@ -147,6 +148,13 @@ export function HumanMessage({
 	apiBaseUrl = getApiBaseUrl(),
 	queued,
 	onEdit,
+	editPending = false,
+	editBusy = false,
+	editError,
+	branchPoint,
+	onActivateBranch,
+	activateBranchPending = false,
+	activateBranchError,
 }: {
 	message: ConversationMessage;
 	/** The staged paths are relative to this session's workspace. */
@@ -155,87 +163,35 @@ export function HumanMessage({
 	apiBaseUrl?: string;
 	/** Typed while the agent was busy, and not sent yet. */
 	queued?: boolean;
-	onEdit?: (message: ConversationMessage, text: string) => Promise<unknown> | void;
+	onEdit?: (turnId: string, text: string) => Promise<unknown> | void;
+	editPending?: boolean;
+	editBusy?: boolean;
+	editError?: string;
+	branchPoint?: ConversationBranchPoint;
+	onActivateBranch?: (branchId: string) => Promise<unknown> | void;
+	activateBranchPending?: boolean;
+	activateBranchError?: string;
 }) {
 	const { body, attachments } = humanMessageParts(message.text);
 	const [editing, setEditing] = useState(false);
-	const [draft, setDraft] = useState(message.text);
-	const [saving, setSaving] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	const canSave = draft.trim().length > 0 && !saving;
-
-	async function saveEdit() {
-		if (!onEdit || !canSave) return;
-		const next = draft.trimEnd();
-		if (next === message.text) {
-			setEditing(false);
-			setError(null);
-			return;
-		}
-		setSaving(true);
-		setError(null);
-		try {
-			await onEdit(message, next);
-			setEditing(false);
-		} catch {
-			setError("Edit not saved. Nothing was sent.");
-		} finally {
-			setSaving(false);
-		}
-	}
 	return (
 		<div className="group/message flex flex-col items-end gap-1">
 			{/* A queued message reads as not-yet-sent rather than as sent-and-ignored:
 			    the agent has not seen it, and the timeline should not imply it has. */}
 			{editing ? (
-				<div className="flex w-full max-w-[min(78%,560px)] flex-col gap-1.5 rounded-[10px] border border-logo-accent/50 bg-raised p-2">
-					<textarea
-						value={draft}
-						onChange={(event) => setDraft(event.target.value)}
-						aria-label="Edit message text"
-						autoFocus
-						rows={Math.max(2, Math.min(8, draft.split("\n").length))}
-						className="max-h-56 min-h-20 w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-sm leading-[1.55] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/35"
-					/>
-					<div className="flex items-center justify-end gap-1.5">
-						{error ? (
-							<span role="alert" className="mr-auto text-[11px] text-destructive">
-								{error}
-							</span>
-						) : null}
-						<Button
-							type="button"
-							size="icon-sm"
-							variant="ghost"
-							onClick={() => {
-								setDraft(message.text);
-								setEditing(false);
-								setError(null);
-							}}
-							disabled={saving}
-							aria-label="Cancel edit"
-							title="Cancel edit"
-							className="size-7"
-						>
-							<X aria-hidden="true" className="size-3.5" />
-						</Button>
-						<Button
-							type="button"
-							size="icon-sm"
-							onClick={() => void saveEdit()}
-							disabled={!canSave}
-							aria-label="Save edit"
-							title="Save edit"
-							className="size-7"
-						>
-							{saving ? (
-								<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
-							) : (
-								<Check aria-hidden="true" className="size-3.5" />
-							)}
-						</Button>
-					</div>
-				</div>
+				<HumanMessageEditor
+					text={message.text}
+					content={message.content ?? []}
+					pending={editPending}
+					busy={editBusy}
+					error={editError}
+					onCancel={() => setEditing(false)}
+					onSend={async (text) => {
+						if (!message.turnId || !onEdit) return;
+						await onEdit(message.turnId, text);
+						setEditing(false);
+					}}
+				/>
 			) : (
 				<div
 					className={cn(
@@ -266,27 +222,30 @@ export function HumanMessage({
 				</div>
 			)}
 			{editing ? null : (
-				<div className="flex h-[18px] items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
-					<CopyButton
-						text={message.text}
-						label="Copy user message"
-						compact
-						className="-mr-1"
-					/>
-					{onEdit ? (
-						<button
-							type="button"
-							onClick={() => {
-								setDraft(message.text);
-								setError(null);
-								setEditing(true);
-							}}
-							aria-label="Edit user message"
-							title="Edit user message"
-							className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
-						>
-							<Pencil aria-hidden="true" className="size-3" />
-						</button>
+				<div className="flex h-[18px] items-center gap-0.5">
+					<div className="flex items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
+						<CopyButton text={message.text} label="Copy user message" compact className="-mr-1" />
+						{onEdit && message.turnId ? (
+							<button
+								type="button"
+								onClick={() => {
+									setEditing(true);
+								}}
+								aria-label="Edit user message"
+								title="Edit user message"
+								className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+							>
+								<Pencil aria-hidden="true" className="size-3" />
+							</button>
+						) : null}
+					</div>
+					{branchPoint && onActivateBranch ? (
+						<ConversationBranchNavigator
+							point={branchPoint}
+							pending={activateBranchPending}
+							error={activateBranchError}
+							onActivate={onActivateBranch}
+						/>
 					) : null}
 				</div>
 			)}

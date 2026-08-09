@@ -455,37 +455,39 @@ describe("ChatWorkspace message actions", () => {
 		);
 	});
 
-	it("edits a human message in place, rolls back to that turn, then sends the replacement", async () => {
+	it("edits a human message through the branch endpoint without touching the composer", async () => {
 		const user = userEvent.setup();
-		const calls: string[] = [];
-		const onRollback = vi.fn(async (turnId: string) => {
-			calls.push(`rollback:${turnId}`);
-		});
-		const onSend = vi.fn(async (text: string) => {
-			calls.push(`send:${text}`);
-		});
-		render(<ChatWorkspace snapshot={idleSnapshot()} onRollback={onRollback} onSend={onSend} />);
+		const onRollback = vi.fn();
+		const onEditMessage = vi.fn(async () => undefined);
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				onRollback={onRollback}
+				onEditMessage={onEditMessage}
+			/>,
+		);
+		const composer = screen.getByLabelText("Message the agent");
+		await user.type(composer, "unsent composer draft");
 
 		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
-		const composer = screen.getByLabelText("Message the agent");
-		expect(composer).toHaveValue("");
+		expect(composer).toHaveValue("unsent composer draft");
 
-		const editor = screen.getByLabelText("Edit message text");
+		const editor = screen.getByRole("textbox", { name: "Edit message" });
 		expect(editor).toHaveFocus();
 		expect(editor).toHaveValue("Check the worktree state and tell me what changed since the base commit.");
 
 		await user.clear(editor);
 		await user.type(editor, "Check worktree state, including staged files.");
-		await user.click(screen.getByRole("button", { name: "Save edit" }));
+		fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
 
 		await waitFor(() =>
-			expect(calls).toEqual([
-				"rollback:turn-1",
-				"send:Check worktree state, including staged files.",
-			]),
+			expect(onEditMessage).toHaveBeenCalledWith(
+				"turn-1",
+				"Check worktree state, including staged files.",
+			),
 		);
-		expect(onRollback).toHaveBeenCalledWith("turn-1");
-		expect(onSend).toHaveBeenCalledWith("Check worktree state, including staged files.", undefined);
+		expect(onRollback).not.toHaveBeenCalled();
+		expect(composer).toHaveValue("unsent composer draft");
 	});
 
 	it("keeps edit available while another turn is active", async () => {
@@ -493,8 +495,7 @@ describe("ChatWorkspace message actions", () => {
 		render(
 			<ChatWorkspace
 				snapshot={chatFixture}
-				onRollback={vi.fn(async () => undefined)}
-				onSend={vi.fn(async () => undefined)}
+				onEditMessage={vi.fn(async () => undefined)}
 			/>,
 		);
 
@@ -502,9 +503,62 @@ describe("ChatWorkspace message actions", () => {
 		expect(editButtons.length).toBeGreaterThan(0);
 
 		await user.click(editButtons[0]!);
-		expect(screen.getByLabelText("Edit message text")).toHaveValue(
+		expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue(
 			"Check the worktree state and tell me what changed since the base commit.",
 		);
+		expect(screen.getByRole("button", { name: "Send edited message" })).toBeDisabled();
+		expect(screen.getByText("Stop the current turn before branching")).toBeVisible();
+	});
+
+	it("retains the inline draft when branch creation fails", async () => {
+		const user = userEvent.setup();
+		const onEditMessage = vi.fn(async () => {
+			throw new Error("branch failed");
+		});
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				onEditMessage={onEditMessage}
+				editMessageError="branch failed"
+			/>,
+		);
+
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		const editor = screen.getByRole("textbox", { name: "Edit message" });
+		await user.clear(editor);
+		await user.type(editor, "keep this draft");
+		fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+
+		await waitFor(() => expect(onEditMessage).toHaveBeenCalledWith("turn-1", "keep this draft"));
+		expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue("keep this draft");
+		expect(screen.getByRole("alert")).toHaveTextContent("branch failed");
+	});
+
+	it("navigates prompt branches and explains that files are unchanged", async () => {
+		const user = userEvent.setup();
+		const onActivateBranch = vi.fn(async () => undefined);
+		const snapshot = {
+			...idleSnapshot(),
+			activeBranchId: "branch-current",
+			branchedFromEarlierMessage: true,
+			branchPoints: [
+				{
+					turnId: "turn-1",
+					position: 2,
+					total: 3,
+					previousBranchId: "branch-previous",
+					nextBranchId: "branch-next",
+				},
+			],
+		};
+		render(<ChatWorkspace snapshot={snapshot} onActivateBranch={onActivateBranch} />);
+
+		expect(screen.getByText("2 / 3")).toBeVisible();
+		await user.click(screen.getByRole("button", { name: "Previous conversation branch" }));
+		expect(onActivateBranch).toHaveBeenCalledWith("branch-previous");
+		expect(
+			screen.getByText("Conversation branched; worktree files were left unchanged."),
+		).toBeVisible();
 	});
 
 	it("copies an assistant message as the markdown the agent wrote", async () => {

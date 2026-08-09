@@ -122,6 +122,14 @@ export interface TurnDiff {
 	truncated?: boolean;
 }
 
+/** Lightweight, durable prompt content retained when a human message is edited. */
+export interface ConversationContentSummary {
+	type: string;
+	mimeType?: string;
+	uri?: string;
+	name?: string;
+}
+
 export interface ConversationMessage {
 	kind: "message";
 	id: string;
@@ -133,12 +141,24 @@ export interface ConversationMessage {
 	role: MessageRole;
 	origin: MessageOrigin;
 	text: string;
+	/** Server-authoritative prompt blocks, with heavy image/resource payloads removed. */
+	content?: ConversationContentSummary[];
+	/** False when the original prompt content cannot be reproduced safely. */
+	editAvailable?: boolean;
 	/** True while more deltas are expected. */
 	streaming: boolean;
 	delivery?: DeliveryState;
 	/** Set when origin is a worker or automation, for the attribution line. */
 	senderLabel?: string;
 	createdAt: string;
+}
+
+export interface ConversationBranchPoint {
+	turnId: string;
+	position: number;
+	total: number;
+	previousBranchId?: string;
+	nextBranchId?: string;
 }
 
 /** One choice the provider says is valid for a pending request. */
@@ -636,6 +656,9 @@ export interface ConversationSnapshot {
 	latestSequence: number;
 	oldestSequence: number;
 	hasMoreBefore: boolean;
+	activeBranchId?: string;
+	branchedFromEarlierMessage?: boolean;
+	branchPoints?: ConversationBranchPoint[];
 	/** What the next turn will be sent with. Daemon-owned, so it survives a
 	 *  restart and applies to turns AO dispatches on the user's behalf. */
 	settings: TurnSettings;

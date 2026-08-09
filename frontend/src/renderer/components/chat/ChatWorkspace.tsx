@@ -29,6 +29,7 @@ import {
 import {
 	Archive,
 	ArrowDown,
+	GitBranch,
 	Loader2,
 	Maximize2,
 	MessageSquare,
@@ -73,6 +74,7 @@ import {
 	activeTurn,
 	activityPlan,
 	brokenMcpServers,
+	can,
 	isCompaction,
 	isSteer,
 	pendingApproval,
@@ -86,8 +88,8 @@ import {
 	type ChatModel,
 	type ChatSkill,
 	type ConversationActivity,
+	type ConversationBranchPoint,
 	type ConversationItem,
-	type ConversationMessage,
 	type TurnDiff,
 	type TurnSettings,
 } from "../../types/conversation";
@@ -166,6 +168,14 @@ export interface ChatWorkspaceProps {
 	onRollback?: (turnId: string) => void | Promise<unknown>;
 	rollbackPending?: boolean;
 	rollbackError?: string;
+	/** Create a conversation branch by replacing a prior human prompt. */
+	onEditMessage?: (turnId: string, text: string) => void | Promise<unknown>;
+	editMessagePending?: boolean;
+	editMessageError?: string;
+	/** Switch the visible conversation to another branch. */
+	onActivateBranch?: (branchId: string) => void | Promise<unknown>;
+	activateBranchPending?: boolean;
+	activateBranchError?: string;
 	/** The provider's skills. Empty leaves `/` an ordinary character. */
 	skills?: ChatSkill[];
 	/** Worktree paths offered for `@`. */
@@ -230,6 +240,12 @@ export function ChatWorkspace({
 	onRollback,
 	rollbackPending,
 	rollbackError,
+	onEditMessage,
+	editMessagePending,
+	editMessageError,
+	onActivateBranch,
+	activateBranchPending,
+	activateBranchError,
 	skills,
 	filePaths,
 	filePathsTruncated,
@@ -321,16 +337,7 @@ export function ChatWorkspace({
 	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
-	const editHumanMessage = useCallback(
-		async (message: ConversationMessage, text: string) => {
-			if (!message.turnId || !onRollback || !onSend) {
-				throw new Error("editing this message is not available");
-			}
-			await onRollback(message.turnId);
-			await onSend(text, undefined);
-		},
-		[onRollback, onSend],
-	);
+	const editHumanMessage = can(snapshot, "fork") ? onEditMessage : undefined;
 
 	return (
 		<section
@@ -389,7 +396,13 @@ export function ChatWorkspace({
 					onResolveInput={onResolveInput}
 					busy={busy}
 					onRollback={rollbackTarget}
-					onEditHumanMessage={onSend ? editHumanMessage : undefined}
+					onEditHumanMessage={editHumanMessage}
+					editPending={editMessagePending}
+					editBusy={Boolean(turn)}
+					editError={editMessageError}
+					onActivateBranch={onActivateBranch}
+					activateBranchPending={activateBranchPending}
+					activateBranchError={activateBranchError}
 				/>
 			</ChatLinkProvider>
 
@@ -405,6 +418,12 @@ export function ChatWorkspace({
 						/>
 					</div>
 					{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
+					{snapshot.branchedFromEarlierMessage ? (
+						<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+							<GitBranch aria-hidden="true" className="size-3 shrink-0" />
+							Conversation branched; worktree files were left unchanged.
+						</p>
+					) : null}
 					{turn ? (
 						<LiveTurnBar
 							startedAt={turn.startedAt ?? turn.requestedAt}
@@ -905,6 +924,12 @@ function Timeline({
 	busy,
 	onRollback,
 	onEditHumanMessage,
+	editPending,
+	editBusy,
+	editError,
+	onActivateBranch,
+	activateBranchPending,
+	activateBranchError,
 }: {
 	snapshot: ConversationSnapshot;
 	hasOlder?: boolean;
@@ -914,7 +939,13 @@ function Timeline({
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	busy?: boolean;
 	onRollback?: (turnId: string) => void;
-	onEditHumanMessage?: (message: ConversationMessage, text: string) => Promise<unknown> | void;
+	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
+	editPending?: boolean;
+	editBusy?: boolean;
+	editError?: string;
+	onActivateBranch?: (branchId: string) => Promise<unknown> | void;
+	activateBranchPending?: boolean;
+	activateBranchError?: string;
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const scrollContent = useRef<HTMLDivElement>(null);
@@ -935,6 +966,17 @@ function Timeline({
 	const rollback = useStableCallback(onRollback);
 	const apiBaseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
 	const editHumanMessage = useStableCallback(onEditHumanMessage);
+	const activateBranch = useStableCallback(onActivateBranch);
+	const canEditHumanMessage = Boolean(onEditHumanMessage);
+	const canActivateBranch = Boolean(onActivateBranch);
+	const branchPoints = useMemo(
+		() => new Map((snapshot.branchPoints ?? []).map((point) => [point.turnId, point])),
+		[snapshot.branchPoints],
+	);
+	const editableTurns = useMemo(
+		() => new Set(snapshot.turns.filter((turn) => turn.providerTurnId).map((turn) => turn.id)),
+		[snapshot.turns],
+	);
 
 	const readable = useMemo(() => readableItems(snapshot), [snapshot]);
 	const items = useStableList(readable, itemKey, sameContent);
@@ -1154,7 +1196,15 @@ function Timeline({
 								onDecide={decide}
 								onResolveInput={resolveInput}
 								onRollback={rollback}
-								onEditHumanMessage={editHumanMessage}
+								onEditHumanMessage={canEditHumanMessage ? editHumanMessage : undefined}
+								editPending={editPending}
+								editBusy={editBusy}
+								editError={editError}
+								branchPoints={branchPoints}
+								editableTurns={editableTurns}
+								onActivateBranch={canActivateBranch ? activateBranch : undefined}
+								activateBranchPending={activateBranchPending}
+								activateBranchError={activateBranchError}
 								// Only a turn the provider actually accepted can be undone: a turn it
 								// never saw holds no history to discard, and the daemon refuses it
 								// rather than hiding rows the agent still remembers.
@@ -1274,6 +1324,14 @@ const TurnGroup = memo(function TurnGroup({
 	onResolveInput,
 	onRollback,
 	onEditHumanMessage,
+	editPending,
+	editBusy,
+	editError,
+	branchPoints,
+	editableTurns,
+	onActivateBranch,
+	activateBranchPending,
+	activateBranchError,
 	canRollback,
 	busy,
 	queued,
@@ -1284,7 +1342,15 @@ const TurnGroup = memo(function TurnGroup({
 	onDecide: (requestId: string, decisionId: string) => void;
 	onResolveInput: NonNullable<ChatWorkspaceProps["onResolveInput"]>;
 	onRollback: (turnId: string) => void;
-	onEditHumanMessage: (message: ConversationMessage, text: string) => Promise<unknown> | void;
+	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
+	editPending?: boolean;
+	editBusy?: boolean;
+	editError?: string;
+	branchPoints: Map<string, ConversationBranchPoint>;
+	editableTurns: Set<string>;
+	onActivateBranch?: (branchId: string) => Promise<unknown> | void;
+	activateBranchPending?: boolean;
+	activateBranchError?: string;
 	/** The daemon would accept a rollback of this turn, so offer the affordance. */
 	canRollback: boolean;
 	busy?: boolean;
@@ -1317,6 +1383,14 @@ const TurnGroup = memo(function TurnGroup({
 						onDecide={onDecide}
 						onResolveInput={onResolveInput}
 						onEditHumanMessage={onEditHumanMessage}
+						editPending={editPending}
+						editBusy={editBusy}
+						editError={editError}
+						branchPoints={branchPoints}
+						editableTurns={editableTurns}
+						onActivateBranch={onActivateBranch}
+						activateBranchPending={activateBranchPending}
+						activateBranchError={activateBranchError}
 						busy={busy}
 						queued={queued}
 						showCopy={run.items[0]?.id === copyableMessageId}
@@ -1351,6 +1425,14 @@ function TimelineItem({
 	onDecide,
 	onResolveInput,
 	onEditHumanMessage,
+	editPending,
+	editBusy,
+	editError,
+	branchPoints,
+	editableTurns,
+	onActivateBranch,
+	activateBranchPending,
+	activateBranchError,
 	busy,
 	queued,
 	showCopy,
@@ -1361,7 +1443,15 @@ function TimelineItem({
 	apiBaseUrl: string;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
-	onEditHumanMessage?: (message: ConversationMessage, text: string) => Promise<unknown> | void;
+	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
+	editPending?: boolean;
+	editBusy?: boolean;
+	editError?: string;
+	branchPoints: Map<string, ConversationBranchPoint>;
+	editableTurns: Set<string>;
+	onActivateBranch?: (branchId: string) => Promise<unknown> | void;
+	activateBranchPending?: boolean;
+	activateBranchError?: string;
 	busy?: boolean;
 	/**
 	 * The enclosing turn was recorded but not yet sent, so a waiting message can say
@@ -1393,7 +1483,18 @@ function TimelineItem({
 					sessionId={sessionId}
 					apiBaseUrl={apiBaseUrl}
 					queued={queued}
-					onEdit={onEditHumanMessage}
+					onEdit={
+						item.editAvailable && item.turnId && editableTurns.has(item.turnId)
+							? onEditHumanMessage
+							: undefined
+					}
+					editPending={editPending}
+					editBusy={editBusy}
+					editError={editError}
+					branchPoint={item.turnId ? branchPoints.get(item.turnId) : undefined}
+					onActivateBranch={onActivateBranch}
+					activateBranchPending={activateBranchPending}
+					activateBranchError={activateBranchError}
 				/>
 			);
 		}
