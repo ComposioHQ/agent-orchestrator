@@ -24,6 +24,7 @@ import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace
 import { AgentAvatar } from "./AgentAvatar";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
+import { SessionTerminalBar } from "./SessionTerminalBar";
 import { SessionTopbarPortal } from "./SessionTopbarPortal";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { Button } from "./ui/button";
@@ -44,8 +45,6 @@ type CenterPaneProps = {
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	/** Opens a new shell tab in this session's worktree (the button at the end of the tab bar). */
 	onNewShellTerminal?: () => void;
-	/** Session actions consolidated into the terminal bar by SessionView. */
-	topbarActions?: ReactNode;
 	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
 	agentInputDisabled?: boolean;
 };
@@ -82,7 +81,6 @@ export function CenterPane({
 	onCloseShellTerminal,
 	onRenameShellTerminal,
 	onNewShellTerminal,
-	topbarActions,
 	agentInputDisabled = false,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
@@ -249,8 +247,7 @@ export function CenterPane({
 	);
 
 	const terminalTopbar = (
-		<div className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
-
+		<SessionTerminalBar fullscreen={isFullscreen}>
 			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
 				<div
 					className={cn(
@@ -383,16 +380,8 @@ export function CenterPane({
 						</TerminalControl>
 					</div>
 				</div>
-				{isFullscreen ? null : (
-					<div
-						className="ml-auto flex shrink-0 items-center px-3"
-						data-testid="session-action-region"
-					>
-						{topbarActions}
-					</div>
-				)}
 			</div>
-		</div>
+		</SessionTerminalBar>
 	);
 
 	return (
@@ -401,7 +390,7 @@ export function CenterPane({
 			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col"
 			onWheelCapture={handleWheelZoom}
 		>
-			{isFullscreen ? terminalTopbar : <SessionTopbarPortal>{terminalTopbar}</SessionTopbarPortal>}
+			{terminalTopbar}
 			<div
 				aria-label={t("terminal.panelAria", { title: activeTerminalLabel })}
 				className="relative min-h-0 flex-1"

@@ -412,39 +412,31 @@ describe("CenterPane toolbar session label", () => {
 		expect(tablist.parentElement).toHaveClass("h-full");
 	});
 
-	it("keeps terminal controls in the measured terminal region and session actions outside it", () => {
+	it("keeps only terminal navigation and display controls in the dedicated terminal bar", () => {
 		renderCenterPane({
 			session: worker,
 			onNewShellTerminal: vi.fn(),
-			topbarActions: <button type="button">Session action</button>,
 		});
 
 		const terminalRegion = screen.getByTestId("session-terminal-region");
-		const workspaceTopbar = screen.getByTestId("session-workspace-topbar");
-		expect(workspaceTopbar).toHaveClass("session-topbar-surface");
-		expect(workspaceTopbar).toContainElement(terminalRegion);
+		const terminalBar = screen.getByTestId("session-terminal-bar");
+		expect(terminalBar).toContainElement(terminalRegion);
 		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Open terminals" }));
 		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "New terminal" }));
 		expect(terminalRegion).toContainElement(screen.getByRole("toolbar", { name: "Terminal display controls" }));
-		expect(terminalRegion).not.toContainElement(screen.getByTestId("session-action-region"));
-		const actionRegion = screen.getByTestId("session-action-region");
-		expect(actionRegion).not.toHaveClass("border-l");
-		expect(actionRegion).toContainElement(
-			screen.getByRole("button", { name: "Session action" }),
-		);
+		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
 	});
 
-	it("hides session-level actions while the terminal is fullscreen", () => {
-		const view = renderCenterPane({
-			session: worker,
-			topbarActions: <button type="button">Session action</button>,
-		});
+	it("keeps the terminal bar and controls available while the terminal is fullscreen", () => {
+		const view = renderCenterPane({ session: worker });
 		const pane = view.container.querySelector(".terminal-pane-frame");
 
 		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: pane });
 		act(() => document.dispatchEvent(new Event("fullscreenchange")));
 
 		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
+		expect(screen.getByTestId("session-terminal-bar")).toBeInTheDocument();
+		expect(screen.getByRole("toolbar", { name: "Terminal display controls" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Exit fullscreen" })).toBeInTheDocument();
 		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
 	});
