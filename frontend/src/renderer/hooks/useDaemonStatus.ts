@@ -8,6 +8,21 @@ import { createEventTransport } from "../lib/event-transport";
 const STATUS_REFRESH_MS = 2_000;
 const READY_STATUS_REFRESH_MS = 10_000;
 
+function statusesMatch(current: DaemonStatus, next: DaemonStatus): boolean {
+	return (
+		current.state === next.state &&
+		current.port === next.port &&
+		current.pid === next.pid &&
+		current.executablePath === next.executablePath &&
+		current.workingDirectory === next.workingDirectory &&
+		current.message === next.message &&
+		current.details === next.details &&
+		current.code === next.code &&
+		current.exitCode === next.exitCode &&
+		current.signal === next.signal
+	);
+}
+
 export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 	const [status, setStatus] = useState<DaemonStatus>({ state: "stopped" });
 	const statusRef = useRef(status);
@@ -50,7 +65,8 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 		const applyStatus = (nextStatus: DaemonStatus) => {
 			// Only point REST at the new port; the workspace refetch is the event
 			// transport's job (it invalidates, debounced, on every daemon status).
-			statusRef.current = nextStatus;
+			const changed = !statusesMatch(statusRef.current, nextStatus);
+			if (changed) statusRef.current = nextStatus;
 			if (nextStatus.state === "ready" && nextStatus.port) {
 				applyDaemonStatus(nextStatus);
 				clearRefresh();
@@ -59,7 +75,7 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 				applyDaemonStatus(nextStatus);
 				scheduleRefresh();
 			}
-			setStatus(nextStatus);
+			if (changed) setStatus(nextStatus);
 		};
 
 		refreshStatus();

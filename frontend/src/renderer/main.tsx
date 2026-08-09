@@ -1,3 +1,4 @@
+import { scan } from "react-scan";
 import "./lib/apply-initial-theme";
 import React from "react";
 import { createRoot } from "react-dom/client";
@@ -15,6 +16,12 @@ import { startDaemonFailureTelemetry } from "./lib/daemon-telemetry";
 import { startUpdateTelemetry } from "./lib/update-telemetry";
 import { appI18n } from "./i18n";
 import { useLocaleStore } from "./stores/locale-store";
+import { installRenderProfileBridge } from "./lib/render-profiler";
+
+if (import.meta.env.DEV) {
+	scan({ enabled: true });
+	installRenderProfileBridge(window);
+}
 
 const router = createAppRouter(queryClient);
 

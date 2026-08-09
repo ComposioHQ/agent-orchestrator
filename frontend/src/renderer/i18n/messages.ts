@@ -1,22 +1,8 @@
 import en from "./en.json";
-import zhCN from "./zh-CN.json";
-import ja from "./ja.json";
-import ko from "./ko.json";
-import es from "./es.json";
-import fr from "./fr.json";
-import de from "./de.json";
-import ptBR from "./pt-BR.json";
 import type { AppLocale } from "./locales";
 
 /** English is the source-of-truth catalog; keys are typed from it. */
 export const enMessages = en;
-export const zhCNMessages = zhCN;
-export const jaMessages = ja;
-export const koMessages = ko;
-export const esMessages = es;
-export const frMessages = fr;
-export const deMessages = de;
-export const ptBRMessages = ptBR;
 
 export type MessageKey = keyof typeof enMessages;
 
@@ -28,18 +14,26 @@ export type PluralMessageKey = MessageKey extends infer Key extends string
 	: never;
 
 export type MessageCatalog = Record<MessageKey, string>;
+type RuntimeCatalog = Readonly<Record<string, string>>;
 
-const catalogs: Record<AppLocale, Readonly<Record<string, string>>> = {
-	en: enMessages,
-	"zh-CN": zhCNMessages,
-	ja: jaMessages,
-	ko: koMessages,
-	es: esMessages,
-	fr: frMessages,
-	de: deMessages,
-	"pt-BR": ptBRMessages,
+const catalogLoaders: Record<Exclude<AppLocale, "en">, () => Promise<RuntimeCatalog>> = {
+	"zh-CN": () => import("./zh-CN.json").then((module) => module.default),
+	ja: () => import("./ja.json").then((module) => module.default),
+	ko: () => import("./ko.json").then((module) => module.default),
+	es: () => import("./es.json").then((module) => module.default),
+	fr: () => import("./fr.json").then((module) => module.default),
+	de: () => import("./de.json").then((module) => module.default),
+	"pt-BR": () => import("./pt-BR.json").then((module) => module.default),
 };
 
-export function catalogFor(locale: AppLocale): Readonly<Record<string, string>> {
-	return catalogs[locale] ?? catalogs.en;
+const pendingCatalogs = new Map<AppLocale, Promise<RuntimeCatalog>>();
+
+/** Load the selected locale on demand instead of including every catalog in the renderer entry chunk. */
+export function loadCatalog(locale: AppLocale): Promise<RuntimeCatalog> {
+	if (locale === "en") return Promise.resolve(enMessages);
+	const pending = pendingCatalogs.get(locale);
+	if (pending) return pending;
+	const loading = catalogLoaders[locale]();
+	pendingCatalogs.set(locale, loading);
+	return loading;
 }

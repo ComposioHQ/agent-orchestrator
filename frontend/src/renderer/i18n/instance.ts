@@ -1,28 +1,12 @@
 import { createInstance, type i18n } from "i18next";
 import { initReactI18next } from "react-i18next";
 import { APP_LOCALES, DEFAULT_LOCALE, type AppLocale } from "./locales";
-import {
-	deMessages,
-	enMessages,
-	esMessages,
-	frMessages,
-	jaMessages,
-	koMessages,
-	ptBRMessages,
-	zhCNMessages,
-} from "./messages";
+import { enMessages, loadCatalog } from "./messages";
 
-export type TranslationCatalogs = Record<AppLocale, Readonly<Record<string, string>>>;
+export type TranslationCatalogs = Partial<Record<AppLocale, Readonly<Record<string, string>>>>;
 
 export const appCatalogs: TranslationCatalogs = {
 	en: enMessages,
-	"zh-CN": zhCNMessages,
-	ja: jaMessages,
-	ko: koMessages,
-	es: esMessages,
-	fr: frMessages,
-	de: deMessages,
-	"pt-BR": ptBRMessages,
 };
 
 /** Create an isolated, synchronously initialized instance for app startup and unit tests. */
@@ -51,3 +35,10 @@ function initializeI18n(instance: i18n, locale: AppLocale, catalogs: Translation
 }
 
 export const appI18n = initializeI18n(createInstance().use(initReactI18next), DEFAULT_LOCALE, appCatalogs);
+
+/** Ensure the requested catalog is present before switching the renderer language. */
+export async function setAppLocale(locale: AppLocale): Promise<void> {
+	const catalog = await loadCatalog(locale);
+	appI18n.addResourceBundle(locale, "translation", catalog, true, true);
+	await appI18n.changeLanguage(locale);
+}

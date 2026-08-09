@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { aoBridge } from "../lib/bridge";
-import { appI18n, coerceLocale, DEFAULT_LOCALE, documentLang, type AppLocale } from "../i18n";
+import { appI18n, coerceLocale, DEFAULT_LOCALE, documentLang, setAppLocale, type AppLocale } from "../i18n";
 
 type LocaleState = {
 	locale: AppLocale;
@@ -12,7 +12,7 @@ type LocaleState = {
 };
 
 async function applyLocale(locale: AppLocale): Promise<void> {
-	const changingLanguage = appI18n.changeLanguage(locale);
+	const changingLanguage = setAppLocale(locale);
 	if (typeof document !== "undefined") {
 		document.documentElement.lang = documentLang(locale);
 		document.documentElement.dir = appI18n.dir(locale);

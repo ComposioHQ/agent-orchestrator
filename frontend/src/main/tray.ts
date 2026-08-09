@@ -1,15 +1,16 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { app, Menu, nativeImage, Tray, type MenuItemConstructorOptions } from "electron";
-import { catalogFor, type MessageKey, type PluralMessageKey } from "../renderer/i18n/messages";
+import type { PluralMessageKey } from "../renderer/i18n/messages";
 import type { AppLocale } from "../shared/ui-locale";
 import type { TrayAttentionState, TrayAttentionZone, TrayOpenSessionTarget, TraySessionEntry } from "../shared/tray";
+import { trayCatalogFor, type TrayMessageKey } from "./tray-messages";
 
 const MAX_MENU_SESSIONS = 8;
 
 const zoneRank: Record<TrayAttentionZone, number> = { merge: 0, action: 1 };
 
-const zoneLabelKey: Record<TrayAttentionZone, MessageKey> = { merge: "zone.merge", action: "zone.action" };
+const zoneLabelKey: Record<TrayAttentionZone, TrayMessageKey> = { merge: "zone.merge", action: "zone.action" };
 
 function format(template: string, vars: Record<string, string | number>): string {
 	return template.replace(/\{\{(\w+)\}\}/g, (match, key: string) => String(vars[key] ?? match));
@@ -44,15 +45,15 @@ export function createTrayController(options: TrayControllerOptions): TrayContro
 
 	const tray = new Tray(icon);
 	let sessions: TraySessionEntry[] = [];
-	let catalog = catalogFor(options.locale);
+	let catalog = trayCatalogFor(options.locale);
 
-	const t = (key: MessageKey, vars?: Record<string, string | number>): string => {
+	const t = (key: TrayMessageKey, vars?: Record<string, string | number>): string => {
 		const raw = catalog[key] ?? key;
 		return vars ? format(raw, vars) : raw;
 	};
 
 	const tPlural = (base: PluralMessageKey, count: number): string => {
-		const key = (count === 1 ? `${base}_one` : `${base}_other`) as MessageKey;
+		const key = (count === 1 ? `${base}_one` : `${base}_other`) as TrayMessageKey;
 		return t(key, { count });
 	};
 
@@ -107,7 +108,7 @@ export function createTrayController(options: TrayControllerOptions): TrayContro
 			render();
 		},
 		setLocale(locale) {
-			catalog = catalogFor(locale);
+			catalog = trayCatalogFor(locale);
 			render();
 		},
 		clear() {

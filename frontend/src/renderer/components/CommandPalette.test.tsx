@@ -459,6 +459,18 @@ describe("CommandPalette drill-in + Enter", () => {
 });
 
 describe("CommandPalette actions", () => {
+	it("keeps keyboard selection stable while a different command is hovered", async () => {
+		ctx.params = {};
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		await screen.findByPlaceholderText(/search projects/i);
+		const selectedBefore = document.querySelector('[cmdk-item][data-selected="true"]')?.getAttribute("data-value");
+
+		fireEvent.pointerMove(screen.getByText("Toggle theme"));
+
+		expect(document.querySelector('[cmdk-item][data-selected="true"]')?.getAttribute("data-value")).toBe(selectedBefore);
+	});
+
 	it("shows disabled New task reason, skips it for selection, and ignores clicks", async () => {
 		ctx.params = {};
 		renderPalette();

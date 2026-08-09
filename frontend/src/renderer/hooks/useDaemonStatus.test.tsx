@@ -171,6 +171,20 @@ describe("useDaemonStatus", () => {
 		expect(setApiBaseUrlMock).toHaveBeenLastCalledWith("http://127.0.0.1:4777");
 	});
 
+	it("keeps React state stable when focus observes the same daemon status", async () => {
+		getStatusMock.mockResolvedValueOnce({ state: "ready", port: 4777 }).mockResolvedValueOnce({ state: "ready", port: 4777 });
+		const queryClient = fakeQueryClient();
+		const { result } = renderHook(() => useDaemonStatus(queryClient));
+
+		await waitFor(() => expect(result.current).toEqual({ state: "ready", port: 4777 }));
+		const initialStatus = result.current;
+
+		act(() => window.dispatchEvent(new Event("focus")));
+		await waitFor(() => expect(getStatusMock).toHaveBeenCalledTimes(2));
+
+		expect(result.current).toBe(initialStatus);
+	});
+
 	it("still connects the transport when the initial IPC status call fails", async () => {
 		getStatusMock.mockRejectedValue(new Error("ipc unavailable"));
 		const queryClient = fakeQueryClient();

@@ -31,17 +31,22 @@ export function DropdownMenuContent({
 export function DropdownMenuItem({
 	className,
 	inset,
+	onPointerMove,
 	...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Item> & { inset?: boolean }) {
 	return (
 		<DropdownMenuPrimitive.Item
 			className={cn(
 				"relative flex cursor-default select-none items-center gap-2.5 rounded-md px-2 py-1.5 text-control outline-none transition-colors",
-				"text-muted-foreground focus:bg-interactive-hover focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+				"text-muted-foreground hover:bg-interactive-hover hover:text-foreground focus:bg-interactive-hover focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
 				"[&_svg]:size-icon-lg [&_svg]:shrink-0 [&_svg]:text-passive",
 				inset && "pl-8",
 				className,
 			)}
+			onPointerMove={(event) => {
+				onPointerMove?.(event);
+				event.preventDefault();
+			}}
 			{...props}
 		/>
 	);

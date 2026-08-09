@@ -1,8 +1,10 @@
 import type { AoBridge } from "../preload";
+import type { RenderProfileBridge } from "./lib/render-profiler";
 
 declare global {
 	interface Window {
 		ao?: AoBridge;
+		__aoRenderProfile?: RenderProfileBridge;
 	}
 
 	interface ImportMetaEnv {

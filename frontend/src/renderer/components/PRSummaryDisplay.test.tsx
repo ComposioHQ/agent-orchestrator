@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { appI18n } from "../i18n";
+import { setAppLocale } from "../i18n";
 import { useLocaleStore } from "../stores/locale-store";
 import { PRCardStatusSummary, PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 
@@ -107,11 +107,11 @@ describe("PRSummaryParts", () => {
 	});
 
 	it("localizes changed-file plurals instead of rebuilding English nouns", async () => {
-		await appI18n.changeLanguage("zh-CN");
+		await setAppLocale("zh-CN");
 		useLocaleStore.setState({ locale: "zh-CN" });
 		render(<PRSummaryMeta pr={summary({ changedFiles: 2 })} />);
 		expect(screen.getByText(/2 个文件/)).toBeInTheDocument();
-		await appI18n.changeLanguage("en");
+		await setAppLocale("en");
 		useLocaleStore.setState({ locale: "en" });
 	});
 

@@ -58,7 +58,6 @@ export function CommandPalette() {
 
 	const [view, setView] = useState<PaletteView>({ mode: "root" });
 	const [query, setQuery] = useState("");
-	const [selectedValue, setSelectedValue] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [pendingId, setPendingId] = useState<string | null>(null);
 	const [pendingDismiss, setPendingDismiss] = useState<null | "pop" | "close">(null);
@@ -99,16 +98,9 @@ export function CommandPalette() {
 		return displayGroups(rootItems, query, t);
 	}, [view.mode, rootItems, sessionActionItems, query, t, i18n.resolvedLanguage]);
 
-	const visibleItems = useMemo(() => groups.flatMap((group) => group.items), [groups]);
-	const value =
-		(visibleItems.some((item) => item.id === selectedValue && !item.disabled)
-			? selectedValue
-			: (visibleItems.find((item) => !item.disabled) ?? visibleItems[0])?.id) ?? "";
-
 	const resetTransient = useCallback(() => {
 		runGenerationRef.current += 1;
 		setQuery("");
-		setSelectedValue("");
 		setError(null);
 	}, []);
 
@@ -173,7 +165,6 @@ export function CommandPalette() {
 		if (view.mode === "session-actions" && !scoped) {
 			setView({ mode: "root" });
 			setQuery("");
-			setSelectedValue("");
 			setError(t("command.sessionUnavailable"));
 		}
 	}, [view, scoped, t]);
@@ -394,8 +385,7 @@ export function CommandPalette() {
 				}}
 				commandProps={{
 					shouldFilter: false,
-					value,
-					onValueChange: setSelectedValue,
+					disablePointerSelection: true,
 					loop: true,
 					label: t("command.palette"),
 				}}
