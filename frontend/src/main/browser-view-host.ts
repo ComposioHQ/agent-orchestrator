@@ -136,6 +136,7 @@ type BrowserWebContents = Pick<
 	| "id"
 	| "canGoBack"
 	| "canGoForward"
+	| "capturePage"
 	| "clearHistory"
 	| "debugger"
 	| "executeJavaScript"
