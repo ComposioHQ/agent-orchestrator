@@ -177,6 +177,17 @@ func (f *fakeStore) SetSessionTerminateOnPRMerge(_ context.Context, id domain.Se
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionAutoInjectReview(_ context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.AutoInjectReview = autoInject
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) SetSessionReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
 	r, ok := f.sessions[id]
 	if !ok {
@@ -352,6 +363,25 @@ func TestSessionSetTerminateOnPRMergePersistsPolicy(t *testing.T) {
 
 func TestSessionSetTerminateOnPRMergeUnknownSession(t *testing.T) {
 	if _, err := (&Service{store: newFakeStore()}).SetTerminateOnPRMerge(context.Background(), "ghost-1", true); err == nil {
+		t.Fatal("expected missing session error")
+	}
+}
+
+func TestSessionSetAutoInjectReviewPersistsPolicy(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, AutoInjectReview: true}
+
+	sess, err := (&Service{store: st}).SetAutoInjectReview(context.Background(), "mer-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.AutoInjectReview || st.sessions["mer-1"].AutoInjectReview {
+		t.Fatalf("auto-inject policy was not disabled: session=%+v stored=%+v", sess, st.sessions["mer-1"])
+	}
+}
+
+func TestSessionSetAutoInjectReviewUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).SetAutoInjectReview(context.Background(), "ghost-1", false); err == nil {
 		t.Fatal("expected missing session error")
 	}
 }
@@ -581,6 +611,51 @@ func TestWorkspaceFilesPRFallbackPrefersDefaultTargetPR(t *testing.T) {
 	}
 	if byPath["lower.go"].Status != WorkspaceFileAdded || byPath["upper.go"].Status != WorkspaceFileAdded {
 		t.Fatalf("stack files = lower:%#v upper:%#v, want both visible from root PR base", byPath["lower.go"], byPath["upper.go"])
+	}
+}
+
+func TestWorkspaceFilesPRFallbackUsesMergeBaseWhenTargetBranchAdvances(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+	forkBase := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "worker.go", "package main\n")
+	runGit(t, repo, "add", "worker.go")
+	runGit(t, repo, "commit", "-m", "worker change")
+	runGit(t, repo, "switch", "main")
+	writeWorkspaceFile(t, repo, "mainonly.go", "package main\n")
+	runGit(t, repo, "add", "mainonly.go")
+	runGit(t, repo, "commit", "-m", "main advanced independently")
+	prBaseSHA := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "ao/work")
+
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "mer",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo},
+	}
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: prBaseSHA, UpdatedAt: time.Unix(100, 0)},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != forkBase || files.CompareBaseRef != "main" {
+		t.Fatalf("compare base = sha:%q ref:%q, want merge base %s main", files.CompareBaseSHA, files.CompareBaseRef, forkBase)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["worker.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("worker.go = %#v, want added", byPath["worker.go"])
+	}
+	if got, ok := byPath["mainonly.go"]; ok {
+		t.Fatalf("mainonly.go = %#v, want excluded once compare resolves to the merge base instead of the advanced target tip", got)
 	}
 }
 
@@ -1072,12 +1147,15 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 type fakeCommander struct {
 	killed          []domain.SessionID
 	retired         []domain.SessionID
+	resumed         []domain.SessionID
+	ready           []domain.SessionID
 	sent            []domain.SessionID
 	sentMessages    []string
 	cleanupProjects []domain.ProjectID
 	killErr         error
 	retireErr       error
 	sendErr         error
+	sendFunc        func(domain.SessionID, string) error
 	cleanupErr      error
 	spawnErr        error
 	spawnRecord     domain.SessionRecord
@@ -1088,6 +1166,7 @@ type fakeCommander struct {
 	killsAtSpawn    int
 	restoreErr      error
 	restoreResult   sessionmanager.RestoreResult
+	readyErr        error
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
@@ -1112,7 +1191,8 @@ func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sess
 	}
 	return f.restoreResult, nil
 }
-func (f *fakeCommander) ResumeAgentWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
+func (f *fakeCommander) ResumeAgentWithMode(_ context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error) {
+	f.resumed = append(f.resumed, id)
 	if f.restoreErr != nil {
 		return sessionmanager.RestoreResult{}, f.restoreErr
 	}
@@ -1132,7 +1212,14 @@ func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.Sessio
 	f.retired = append(f.retired, id)
 	return nil
 }
-func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string) error {
+func (f *fakeCommander) WaitForMessageDeliveryReady(_ context.Context, id domain.SessionID) error {
+	f.ready = append(f.ready, id)
+	return f.readyErr
+}
+func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string, _ *ports.SpawnAttachment) error {
+	if f.sendFunc != nil {
+		return f.sendFunc(id, message)
+	}
 	if f.sendErr != nil {
 		return f.sendErr
 	}
@@ -1152,6 +1239,14 @@ func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (se
 }
 func (f *fakeCommander) RollbackSpawn(context.Context, domain.SessionID) (bool, bool, error) {
 	return false, false, nil
+}
+
+func (f *fakeCommander) StageAttachments(
+	context.Context,
+	domain.SessionID,
+	[]ports.SpawnAttachment,
+) ([]string, error) {
+	return nil, nil
 }
 
 // TestCleanupMapsManagerResult: the service forwards both reclaimed and
@@ -1218,7 +1313,7 @@ func TestSpawnOrchestratorCleanRetiresActiveOrchestratorsBeforeSpawn(t *testing.
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true); err != nil {
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true, ""); err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
 
@@ -1243,7 +1338,7 @@ func TestSpawnOrchestratorCleanContinuesWhenRetireNoticeFails(t *testing.T) {
 	fc := &fakeCommander{sendErr: errors.New("pane closed")}
 	svc := &Service{manager: fc, store: st}
 
-	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true); err != nil {
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true, ""); err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
 	if len(fc.retired) != 1 || fc.retired[0] != "mer-1" {
@@ -1254,6 +1349,56 @@ func TestSpawnOrchestratorCleanContinuesWhenRetireNoticeFails(t *testing.T) {
 	}
 }
 
+func TestSpawnOrchestratorCleanPreservesPersistedMode(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Mode: domain.SessionModeChat, CreatedAt: time.Unix(100, 0).UTC(),
+	}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true, ""); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if fc.spawnedCfg.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("replacement mode = %q, want persisted chat", fc.spawnedCfg.RequestedMode)
+	}
+}
+
+func TestSpawnOrchestratorCleanHonorsExplicitReplacementMode(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Mode: domain.SessionModeTUI, CreatedAt: time.Unix(100, 0).UTC(),
+	}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true, domain.SessionModeChat); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if fc.spawnedCfg.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("replacement mode = %q, want explicit chat", fc.spawnedCfg.RequestedMode)
+	}
+}
+
+func TestSpawnOrchestratorUsesExplicitModeForNewProjectOrchestrator(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", false, domain.SessionModeChat); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if fc.spawnedCfg.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("requested mode = %q, want chat", fc.spawnedCfg.RequestedMode)
+	}
+}
+
 func TestSpawnOrchestratorCleanRetireNoticeIsBranchNeutral(t *testing.T) {
 	st := newFakeStore()
 	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
@@ -1261,7 +1406,7 @@ func TestSpawnOrchestratorCleanRetireNoticeIsBranchNeutral(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	if _, err := svc.SpawnOrchestrator(context.Background(), "scratch", true); err != nil {
+	if _, err := svc.SpawnOrchestrator(context.Background(), "scratch", true, ""); err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
 	if len(fc.sentMessages) != 1 {
@@ -1579,7 +1724,7 @@ func TestSpawnOrchestratorUnknownProjectReturns404(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	_, err := svc.SpawnOrchestrator(context.Background(), "ghost", false)
+	_, err := svc.SpawnOrchestrator(context.Background(), "ghost", false, "")
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "PROJECT_NOT_FOUND" {
 		t.Fatalf("err = %v, want apierr.NotFound PROJECT_NOT_FOUND", err)
@@ -1612,6 +1757,10 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"agent exited", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAgentExited), apierr.KindConflict, "AGENT_EXITED"},
 		{"agent not exited", fmt.Errorf("resume agent mer-1: %w", sessionmanager.ErrAgentNotExited), apierr.KindConflict, "AGENT_NOT_EXITED"},
 		{"resume in progress", fmt.Errorf("resume agent mer-1: %w", sessionmanager.ErrResumeInProgress), apierr.KindConflict, "AGENT_RESUME_IN_PROGRESS"},
+		{"chat mode unsupported", fmt.Errorf("spawn: %w", ports.ErrChatUnsupported), apierr.KindConflict, "SESSION_MODE_UNSUPPORTED"},
+		{"chat driver unavailable", fmt.Errorf("spawn: %w", ports.ErrChatDriverUnavailable), apierr.KindConflict, "CHAT_DRIVER_UNAVAILABLE"},
+		{"chat driver incompatible", fmt.Errorf("spawn: %w", ports.ErrChatDriverIncompatible), apierr.KindConflict, "CHAT_DRIVER_INCOMPATIBLE"},
+		{"chat auth required", fmt.Errorf("spawn: %w", ports.ErrChatAuthRequired), apierr.KindConflict, "CHAT_AUTH_REQUIRED"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1859,7 +2008,7 @@ func TestSpawnOrchestratorNoCleanReturnsExistingWhenActiveExists(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false, "")
 	if err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
@@ -1891,7 +2040,7 @@ func TestSpawnOrchestratorNoCleanSpawnsWhenNoneExists(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false, "")
 	if err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
@@ -1923,9 +2072,46 @@ func TestSpawnOrchestratorVerifiesReplacementHarness(t *testing.T) {
 	}
 	svc := &Service{manager: fc, store: st}
 
-	_, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	_, err := svc.SpawnOrchestrator(context.Background(), "mer", false, "")
 	if err == nil || !strings.Contains(err.Error(), `uses harness "claude-code", want "codex"`) {
 		t.Fatalf("SpawnOrchestrator err = %v, want harness verification failure", err)
+	}
+}
+
+func TestDelegateTaskPassesAttachmentsToSpawnConfig(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st})
+	// This test only inspects the worker spawn. Keep asynchronous title
+	// refinement from issuing a second Spawn against the recording fake.
+	svc.runBackground = func(func()) {}
+
+	_, err := svc.DelegateTask(context.Background(), DelegateTaskInput{
+		ProjectID:      "mer",
+		Brief:          "Use the attached image.",
+		RequestedAgent: domain.HarnessCodex,
+		Attachments: []ports.SpawnAttachment{
+			{Ext: ".png", Data: []byte{1, 2, 3}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DelegateTask: %v", err)
+	}
+	if !fc.spawned {
+		t.Fatal("DelegateTask did not call Spawn")
+	}
+	if fc.spawnedCfg.ProjectID != "mer" || fc.spawnedCfg.Kind != domain.KindWorker {
+		t.Fatalf("spawned cfg identity = %#v", fc.spawnedCfg)
+	}
+	if fc.spawnedCfg.Harness != domain.HarnessCodex || fc.spawnedCfg.Prompt != "Use the attached image." {
+		t.Fatalf("spawned cfg fields = %#v", fc.spawnedCfg)
+	}
+	if len(fc.spawnedCfg.Attachments) != 1 {
+		t.Fatalf("attachments = %#v, want one", fc.spawnedCfg.Attachments)
+	}
+	if got := fc.spawnedCfg.Attachments[0]; got.Ext != ".png" || string(got.Data) != "\x01\x02\x03" {
+		t.Fatalf("attachment = %#v, want decoded png", got)
 	}
 }
 
@@ -1947,6 +2133,28 @@ type fakeSCM struct {
 	review    ports.SCMReviewObservation
 	fetchErr  error
 	reviewErr error
+}
+
+func TestClaimRowsFromSCMSnapshotsSessionReviewPolicy(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	obs := ports.SCMObservation{
+		PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7},
+		Review: ports.SCMReviewObservation{
+			Reviews: []ports.SCMReviewSummaryObservation{{ID: "r1", State: string(domain.ReviewChangesRequest), Body: "review body"}},
+			Threads: []ports.SCMReviewThreadObservation{{ID: "t1", Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Body: "inline comment"}}}},
+		},
+	}
+	for _, autoInject := range []bool{false, true} {
+		t.Run(fmt.Sprintf("auto_inject_%t", autoInject), func(t *testing.T) {
+			_, _, reviews, _, comments := claimRowsFromSCM("mer-1", obs, now, domain.SessionRecord{AutoInjectReview: autoInject})
+			if len(reviews) != 1 || reviews[0].AutoInjectReview != autoInject {
+				t.Fatalf("reviews = %+v, want policy %t", reviews, autoInject)
+			}
+			if len(comments) != 1 || comments[0].AutoInjectReview != autoInject {
+				t.Fatalf("comments = %+v, want policy %t", comments, autoInject)
+			}
+		})
+	}
 }
 
 func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {
@@ -2090,12 +2298,12 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		{Name: "lint", Status: domain.PRCheckPassed, Conclusion: "success", URL: "https://github.com/acme/repo/actions/runs/2"},
 	}
 	stList.reviews[prURL] = []domain.PullRequestReview{
-		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", Body: "summary: please fix the failing unit test", SubmittedAt: now.Add(-30 * time.Second)},
+		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", Body: "summary: please fix the failing unit test", SubmittedAt: now.Add(-30 * time.Second), AutoInjectReview: false},
 	}
 	stList.comments[prURL] = []domain.PullRequestComment{
-		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1"},
+		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1", AutoInjectReview: false},
 		{Author: "ci-bot", File: "main.go", Line: 13, Body: "bot body", URL: "https://github.com/acme/repo/pull/7#discussion_r2", IsBot: true},
-		{Author: "reviewer-a", File: "test.go", Line: 22, Body: "another raw body", URL: "https://github.com/acme/repo/pull/7#discussion_r3"},
+		{Author: "reviewer-a", File: "test.go", Line: 22, Body: "another raw body", URL: "https://github.com/acme/repo/pull/7#discussion_r3", AutoInjectReview: true},
 	}
 
 	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
@@ -2119,6 +2327,8 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		t.Fatalf("reviewer = %+v", reviewer)
 	} else if reviewer.ReviewURL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" {
 		t.Fatalf("review url = %q", reviewer.ReviewURL)
+	} else if reviewer.Links[0].AutoInjectReview || !reviewer.Links[1].AutoInjectReview {
+		t.Fatalf("comment injection decisions = %+v, want false then true", reviewer.Links)
 	}
 	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
 		t.Fatalf("mergeability = %+v", pr.Mergeability)
@@ -2128,7 +2338,7 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 	}
 	if entry := pr.Review.Reviews[0]; entry.Reviewer != "reviewer-a" || entry.Verdict != domain.ReviewChangesRequest ||
 		entry.Body != "summary: please fix the failing unit test" ||
-		entry.URL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" {
+		entry.URL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" || entry.AutoInjectReview {
 		t.Fatalf("review summary entry = %+v", entry)
 	}
 	// The review summary body is surfaced, but inline comment bodies and CI log

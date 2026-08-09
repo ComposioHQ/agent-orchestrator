@@ -63,7 +63,7 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 	}, len(cfg.Prompt), 0, nil
 }
 
-func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, _ bool) (domain.Session, error) {
+func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, _ bool, _ domain.SessionMode) (domain.Session, error) {
 	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
 	return s, err
 }
@@ -108,6 +108,10 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(context.Context, domain.Sessi
 	return domain.Session{}, nil
 }
 
+func (f *fakeSessionService) SetAutoInjectReview(context.Context, domain.SessionID, bool) (domain.Session, error) {
+	return domain.Session{}, nil
+}
+
 func (f *fakeSessionService) Pin(context.Context, domain.SessionID) (domain.Session, error) {
 	return domain.Session{}, nil
 }
@@ -120,7 +124,7 @@ func (f *fakeSessionService) SetReviewerHarness(context.Context, domain.SessionI
 	return domain.Session{}, nil
 }
 
-func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) error {
+func (f *fakeSessionService) Send(context.Context, domain.SessionID, string, *ports.SpawnAttachment) error {
 	return nil
 }
 
@@ -143,6 +147,12 @@ func (f *fakeSessionService) WorkspaceWatchPaths(context.Context, domain.Session
 func (f *fakeSessionService) GetWorkspaceFile(context.Context, domain.SessionID, string) (sessionsvc.WorkspaceFileDetail, error) {
 	return sessionsvc.WorkspaceFileDetail{}, nil
 }
+
+func (f *fakeSessionService) StageAttachments(context.Context, domain.SessionID, []ports.SpawnAttachment) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakeSessionService) InvalidateWorkspaceCache(domain.SessionID) {}
 
 type fakeAgentCatalog struct{}
 

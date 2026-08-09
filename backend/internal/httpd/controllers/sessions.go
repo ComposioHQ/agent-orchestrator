@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -35,16 +35,11 @@ const (
 	maxMessageLen     = 4096
 	maxModelLen       = 256
 	maxDisplayNameLen = 20
-	// maxDelegateTaskBodyBytes bounds the LAN-served delegation request before
-	// JSON decoding. It leaves ample room for escaped representations of the
-	// 4 KiB brief and 256-character model while preventing unbounded reads.
-	maxDelegateTaskBodyBytes = 32 << 10
-
-	// Attachment limits guard the daemon against oversized spawn bodies. Images
+	// Attachment limits guard the daemon against oversized spawn bodies. Files
 	// are pasted/dropped into the task brief and inlined as base64 in the JSON
 	// body, so the caps are deliberately conservative.
 	maxAttachments      = 8
-	maxAttachmentBytes  = 10 << 20 // 10 MiB per image, decoded
+	maxAttachmentBytes  = 10 << 20 // 10 MiB per file, decoded
 	maxAttachmentsBytes = 25 << 20 // 25 MiB total, decoded
 	// maxSpawnBodyBytes bounds the raw request body before it is decoded. The
 	// per-attachment and total caps above only apply after the whole body is
@@ -52,29 +47,30 @@ const (
 	// decoded total by ~4/3) would allocate in full first. Derived from the
 	// decoded total plus headroom for the prompt and JSON envelope.
 	maxSpawnBodyBytes = maxAttachmentsBytes*4/3 + (2 << 20)
+	// maxSendBodyBytes is the /send equivalent of maxSpawnBodyBytes, sized off
+	// maxAttachmentBytes (one attachment) rather than maxAttachmentsBytes
+	// (spawn's up-to-eight): unlike spawn, a send carries at most one inline
+	// attachment.
+	maxSendBodyBytes = maxAttachmentBytes*4/3 + (2 << 20)
 )
 
-// attachmentExtByMime maps the accepted image MIME types to the file extension
-// used when the image is written into the worktree. Raster formats only: the
-// agent is told to open the file for visual context, so active-content formats
-// (notably image/svg+xml, which is XML that can carry scripts/external entities)
-// are intentionally excluded.
-var attachmentExtByMime = map[string]string{
-	"image/png":  ".png",
-	"image/jpeg": ".jpg",
-	"image/jpg":  ".jpg",
-	"image/gif":  ".gif",
-	"image/webp": ".webp",
-	"image/bmp":  ".bmp",
+// blockedAttachmentMimes contains MIME types that are explicitly rejected for
+// security reasons. SVG is excluded because it is XML that can carry active
+// content (scripts/external entities).
+var blockedAttachmentMimes = map[string]bool{
+	"image/svg+xml": true,
 }
 
-var errPreviewFileNotFound = errors.New("preview file not found")
+var (
+	errPreviewFileNotFound         = errors.New("preview file not found")
+	errPreviewFileOutsideWorkspace = errors.New("preview file is outside the session workspace")
+)
 
 // SessionService is the controller-facing session service contract.
 type SessionService interface {
 	List(ctx context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error)
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error)
-	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
+	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool, requestedMode domain.SessionMode) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Restore(ctx context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error)
 	ResumeAgent(ctx context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error)
@@ -84,14 +80,17 @@ type SessionService interface {
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error)
+	SetAutoInjectReview(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error)
 	SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error)
-	Send(ctx context.Context, id domain.SessionID, message string) error
+	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	DelegateTask(ctx context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error)
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
+	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
 	WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) ([]string, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
 	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error)
+	InvalidateWorkspaceCache(id domain.SessionID)
 	Pin(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Unpin(ctx context.Context, id domain.SessionID) (domain.Session, error)
 }
@@ -116,7 +115,7 @@ type ManagedPreviewServer interface {
 // SessionCapabilityValidator verifies the daemon-issued token injected only
 // into the owning worker session.
 type SessionCapabilityValidator interface {
-	Valid(sessionID domain.SessionID, token string) bool
+	Valid(sessionID domain.SessionID, token, verifier string) bool
 }
 
 // UsageHookRecorder consumes transcript metadata from the same native hook
@@ -148,15 +147,20 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/preview/server", c.startPreviewServer)
 	r.Delete("/sessions/{sessionId}/preview/server", c.stopPreviewServer)
 	r.Get("/sessions/{sessionId}/preview/files/*", c.previewFile)
+	r.Post("/sessions/{sessionId}/attachments", c.stageAttachments)
 	r.Get("/sessions/{sessionId}/workspace/files", c.listWorkspaceFiles)
 	r.Get("/sessions/{sessionId}/workspace/file", c.getWorkspaceFile)
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
 	r.Patch("/sessions/{sessionId}/merge-policy", c.setMergePolicy)
+	r.Patch("/sessions/{sessionId}/auto-inject-review", c.setAutoInjectReviewPolicy)
 	r.Put("/sessions/{sessionId}/reviewer", c.setReviewer)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/resume-agent", c.resumeAgent)
+	r.Get("/sessions/{sessionId}/interface-transition", c.interfaceTransitionStatus)
+	r.Post("/sessions/{sessionId}/interface-transition", c.startInterfaceTransition)
+	r.Delete("/sessions/{sessionId}/interface-transition", c.cancelInterfaceTransition)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
@@ -213,6 +217,12 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
 		return
 	}
+	mode, err := domain.ParseSessionMode(string(in.Mode))
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "SESSION_MODE_INVALID", err.Error(), nil)
+		return
+	}
+	in.Mode = mode
 	if len(in.Prompt) > maxPromptLen {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROMPT_TOO_LONG", "prompt is too long", nil)
 		return
@@ -234,7 +244,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
 		return
 	}
-	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
+	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, RequestedMode: in.Mode, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -242,45 +252,106 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusCreated, SpawnSessionResponse{Session: sessionView(sess), PromptBytes: promptBytes, SystemPromptBytes: systemPromptBytes})
 }
 
-// spawnAttachmentError carries a client-facing API error code + message for a
+// attachmentError carries a client-facing API error code + message for a
 // rejected attachment payload.
-type spawnAttachmentError struct {
+type attachmentError struct {
 	code    string
 	message string
 }
 
-// decodeSpawnAttachments validates and base64-decodes the inline image
-// attachments from a spawn request, enforcing count, per-image, and total size
-// caps. It returns a nil slice when there are no attachments.
-func decodeSpawnAttachments(in []SpawnAttachmentInput) ([]ports.SpawnAttachment, *spawnAttachmentError) {
+// extensionForMimeType returns a file extension for a MIME type. For known
+// MIME types, it returns a standard extension. For unknown types, it attempts
+// to extract a reasonable extension from the MIME type, or falls back to ".bin".
+func extensionForMimeType(mimeType string) string {
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+
+	// Preferred extensions for MIME types with multiple options
+	preferredExts := map[string]string{
+		"image/jpeg": ".jpg",
+		"image/jpg":  ".jpg",
+		"text/plain": ".txt",
+	}
+
+	// Check if we have a preferred extension for this MIME type
+	if pref, ok := preferredExts[mimeType]; ok {
+		return pref
+	}
+
+	// Try the standard mime package
+	exts, err := mime.ExtensionsByType(mimeType)
+	if err == nil && len(exts) > 0 {
+		// Prefer common extensions when available
+		for _, ext := range exts {
+			switch ext {
+			case ".jpg", ".jpeg", ".png", ".gif", ".pdf", ".txt", ".json", ".xml", ".html", ".css", ".js", ".md", ".zip", ".tar", ".gz":
+				return ext
+			}
+		}
+		return exts[0] // Return the primary extension if no preferred match
+	}
+
+	// Fallback: extract from the MIME type itself
+	// e.g., "application/pdf" -> ".pdf", "text/plain" -> ".plain"
+	parts := strings.SplitN(mimeType, "/", 2)
+	if len(parts) == 2 {
+		subtype := parts[1]
+		// Handle common suffixes like "+xml", "+json"
+		if idx := strings.Index(subtype, "+"); idx >= 0 {
+			subtype = subtype[:idx]
+		}
+		return "." + subtype
+	}
+
+	// Ultimate fallback for unknown MIME types
+	return ".bin"
+}
+
+// decodeAttachment validates and base64-decodes a single inline file
+// attachment shared by spawn, delegate, stage, and send requests, enforcing
+// the blocked-MIME-type rule and per-file size cap. Callers handling multiple
+// attachments are responsible for the count and total-size caps.
+func decodeAttachment(a AttachmentInput) (ports.SpawnAttachment, *attachmentError) {
+	mimeType := strings.ToLower(strings.TrimSpace(a.MimeType))
+	if blockedAttachmentMimes[mimeType] {
+		return ports.SpawnAttachment{}, &attachmentError{"UNSUPPORTED_ATTACHMENT_TYPE", "unsupported attachment type"}
+	}
+	ext := extensionForMimeType(mimeType)
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(a.Data))
+	if err != nil {
+		return ports.SpawnAttachment{}, &attachmentError{"INVALID_ATTACHMENT_DATA", "attachment data is not valid base64"}
+	}
+	if len(data) == 0 {
+		return ports.SpawnAttachment{}, &attachmentError{"INVALID_ATTACHMENT_DATA", "attachment is empty"}
+	}
+	if len(data) > maxAttachmentBytes {
+		return ports.SpawnAttachment{}, &attachmentError{"ATTACHMENT_TOO_LARGE", "attachment is too large"}
+	}
+	return ports.SpawnAttachment{Ext: ext, Data: data}, nil
+}
+
+// decodeSpawnAttachments validates and base64-decodes the inline file
+// attachments from a spawn request, enforcing count, per-file, and total size
+// caps. It accepts any MIME type except explicitly blocked ones (e.g., SVG
+// for security reasons). Returns a nil slice when there are no attachments.
+func decodeSpawnAttachments(in []AttachmentInput) ([]ports.SpawnAttachment, *attachmentError) {
 	if len(in) == 0 {
 		return nil, nil
 	}
 	if len(in) > maxAttachments {
-		return nil, &spawnAttachmentError{"TOO_MANY_ATTACHMENTS", "too many attachments"}
+		return nil, &attachmentError{"TOO_MANY_ATTACHMENTS", "too many attachments"}
 	}
 	out := make([]ports.SpawnAttachment, 0, len(in))
 	total := 0
 	for _, a := range in {
-		ext, ok := attachmentExtByMime[strings.ToLower(strings.TrimSpace(a.MimeType))]
-		if !ok {
-			return nil, &spawnAttachmentError{"UNSUPPORTED_ATTACHMENT_TYPE", "unsupported attachment type"}
-		}
-		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(a.Data))
+		attachment, err := decodeAttachment(a)
 		if err != nil {
-			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment data is not valid base64"}
+			return nil, err
 		}
-		if len(data) == 0 {
-			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment is empty"}
-		}
-		if len(data) > maxAttachmentBytes {
-			return nil, &spawnAttachmentError{"ATTACHMENT_TOO_LARGE", "attachment is too large"}
-		}
-		total += len(data)
+		total += len(attachment.Data)
 		if total > maxAttachmentsBytes {
-			return nil, &spawnAttachmentError{"ATTACHMENTS_TOO_LARGE", "attachments are too large"}
+			return nil, &attachmentError{"ATTACHMENTS_TOO_LARGE", "attachments are too large"}
 		}
-		out = append(out, ports.SpawnAttachment{Ext: ext, Data: data})
+		out = append(out, attachment)
 	}
 	return out, nil
 }
@@ -498,6 +569,7 @@ func (c *SessionsController) streamWorkspaceChanges(w http.ResponseWriter, r *ht
 			if !ok {
 				return
 			}
+			c.Svc.InvalidateWorkspaceCache(sessionID(r))
 			if _, err := fmt.Fprint(w, "event: workspace_changed\ndata: {}\n\n"); err != nil {
 				return
 			}
@@ -520,7 +592,10 @@ func (c *SessionsController) streamWorkspaceChanges(w http.ResponseWriter, r *ht
 //     when no entry point exists.
 //   - An explicit workspace-local path (e.g. `index.html`, `./dist/index.html`)
 //     is served through the preview/files route so local files load.
-//   - Anything else (http(s)/file URLs, host:port dev servers) is kept verbatim.
+//   - Absolute paths and file: URLs are accepted only when their fully resolved
+//     target remains inside the fully resolved session workspace. They use the
+//     workspace-confined preview origin rather than an automatable file: URL.
+//   - External http(s) URLs and host:port dev servers are kept verbatim.
 //
 // Every call bumps the session's preview revision, so re-running `ao preview`
 // with the same target still refreshes the panel.
@@ -542,8 +617,10 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// Passive preview intentionally accepts an explicit external URL or an
-	// existing local file. Managed process execution uses the separately
-	// capability-protected /preview/server route.
+	// existing workspace-local file. Arbitrary local files are rejected by every
+	// browser surface because the target remains available to session automation.
+	// Managed process execution uses the separately capability-protected
+	// /preview/server route.
 	previewURL := strings.TrimSpace(in.URL)
 	if previewURL == "" {
 		if entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath); ok {
@@ -696,7 +773,11 @@ func (c *SessionsController) authorizePreviewServer(w http.ResponseWriter, r *ht
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "SESSION_TERMINATED", "Session is terminated", nil)
 		return false
 	}
-	if !c.Capabilities.Valid(id, strings.TrimSpace(r.Header.Get(browserCapabilityHeader))) {
+	if !c.Capabilities.Valid(
+		id,
+		strings.TrimSpace(r.Header.Get(browserCapabilityHeader)),
+		sess.Metadata.BrowserCapabilityVerifier,
+	) {
 		envelope.WriteAPIError(
 			w,
 			r,
@@ -841,6 +922,29 @@ func (c *SessionsController) setMergePolicy(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func (c *SessionsController) setAutoInjectReviewPolicy(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}/auto-inject-review")
+		return
+	}
+	var in SetSessionAutoInjectReviewRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	sess, err := c.Svc.SetAutoInjectReview(r.Context(), sessionID(r), in.AutoInjectReview)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SetSessionAutoInjectReviewResponse{
+		OK:               true,
+		SessionID:        sessionID(r),
+		AutoInjectReview: in.AutoInjectReview,
+		Session:          sessionView(sess),
+	})
+}
+
 func (c *SessionsController) setReviewer(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "PUT", "/api/v1/sessions/{sessionId}/reviewer")
@@ -970,6 +1074,7 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/send")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxSendBodyBytes)
 	var in SendSessionMessageRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
@@ -983,8 +1088,17 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MESSAGE_TOO_LONG", "Message is too long", nil)
 		return
 	}
+	var attachment *ports.SpawnAttachment
+	if in.Attachment != nil {
+		decoded, attachErr := decodeAttachment(*in.Attachment)
+		if attachErr != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
+			return
+		}
+		attachment = &decoded
+	}
 	message := domain.SanitizeControlChars(in.Message)
-	if err := c.Svc.Send(r.Context(), sessionID(r), message); err != nil {
+	if err := c.Svc.Send(r.Context(), sessionID(r), message, attachment); err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
@@ -996,7 +1110,7 @@ func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request
 		apispec.NotImplemented(w, r, "POST", "/api/v1/orchestrators/delegate")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxDelegateTaskBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, maxSpawnBodyBytes)
 	var in DelegateTaskRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
@@ -1004,10 +1118,6 @@ func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request
 	}
 	if in.ProjectID == "" {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
-		return
-	}
-	if strings.TrimSpace(in.Brief) == "" {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "TASK_REQUIRED", "Task is required", nil)
 		return
 	}
 	if len(in.Brief) > maxPromptLen {
@@ -1018,12 +1128,27 @@ func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MODEL_TOO_LONG", "Model must be 256 characters or fewer", nil)
 		return
 	}
+	if in.Mode != "" {
+		mode, err := domain.ParseSessionMode(string(in.Mode))
+		if err != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_SESSION_MODE", "mode must be chat or tui", nil)
+			return
+		}
+		in.Mode = mode
+	}
+	attachments, attachErr := decodeSpawnAttachments(in.Attachments)
+	if attachErr != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
+		return
+	}
 
 	out, err := c.Svc.DelegateTask(r.Context(), sessionsvc.DelegateTaskInput{
 		ProjectID:      in.ProjectID,
 		Brief:          domain.SanitizeControlChars(in.Brief),
 		RequestedAgent: in.Agent,
 		Model:          domain.SanitizeControlChars(strings.TrimSpace(in.Model)),
+		RequestedMode:  in.Mode,
+		Attachments:    attachments,
 	})
 	if err != nil {
 		envelope.WriteError(w, r, err)
@@ -1145,7 +1270,13 @@ func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Re
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
 		return
 	}
-	sess, err := c.Svc.SpawnOrchestrator(r.Context(), in.ProjectID, in.Clean)
+	if in.Mode != "" {
+		if _, err := domain.ParseSessionMode(string(in.Mode)); err != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "SESSION_MODE_INVALID", err.Error(), nil)
+			return
+		}
+	}
+	sess, err := c.Svc.SpawnOrchestrator(r.Context(), in.ProjectID, in.Clean, in.Mode)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -1269,8 +1400,14 @@ func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, ra
 
 func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
+	if filePath, isFileURL, err := previewFileURLPath(raw); isFileURL {
+		if err != nil {
+			return "", err
+		}
+		return workspaceAbsolutePreviewURL(r, id, workspacePath, filePath)
+	}
 	if isAbsolutePreviewPath(raw) {
-		return absolutePreviewFileURL(raw)
+		return workspaceAbsolutePreviewURL(r, id, workspacePath, raw)
 	}
 	if resolved, ok, err := resolveLocalPreview(r, id, workspacePath, raw); ok || err != nil {
 		return resolved, err
@@ -1286,23 +1423,66 @@ func isWindowsAbsolutePath(raw string) bool {
 	return len(raw) >= 3 && ((raw[0] >= 'a' && raw[0] <= 'z') || (raw[0] >= 'A' && raw[0] <= 'Z')) && raw[1] == ':' && (raw[2] == '\\' || raw[2] == '/')
 }
 
-func absolutePreviewFileURL(raw string) (string, error) {
-	file, err := filepath.Abs(raw)
+func previewFileURLPath(raw string) (string, bool, error) {
+	if len(raw) < len("file:") || !strings.EqualFold(raw[:len("file:")], "file:") {
+		return "", false, nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", true, errPreviewFileNotFound
+	}
+	if parsed.Host != "" && !strings.EqualFold(parsed.Host, "localhost") {
+		return "", true, errPreviewFileOutsideWorkspace
+	}
+	filePath := parsed.Path
+	if len(filePath) > 1 && filePath[0] == '/' && isWindowsAbsolutePath(filePath[1:]) {
+		filePath = filePath[1:]
+	}
+	filePath = filepath.FromSlash(filePath)
+	if !isAbsolutePreviewPath(filePath) {
+		return "", true, errPreviewFileNotFound
+	}
+	return filePath, true, nil
+}
+
+func workspaceAbsolutePreviewURL(
+	r *http.Request,
+	id domain.SessionID,
+	workspacePath,
+	filePath string,
+) (string, error) {
+	workspaceAbs, err := filepath.Abs(workspacePath)
 	if err != nil {
 		return "", errPreviewFileNotFound
 	}
-	info, err := os.Stat(file)
-	if err != nil || info.IsDir() {
+	workspaceResolved, err := filepath.EvalSymlinks(workspaceAbs)
+	if err != nil {
 		return "", errPreviewFileNotFound
 	}
-	filePath := filepath.ToSlash(file)
-	if filepath.VolumeName(file) != "" || isWindowsAbsolutePath(filePath) {
-		filePath = "/" + filePath
+	fileAbs, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", errPreviewFileNotFound
 	}
-	return (&url.URL{Scheme: "file", Path: filePath}).String(), nil
+	fileResolved, err := filepath.EvalSymlinks(fileAbs)
+	if err != nil {
+		return "", errPreviewFileNotFound
+	}
+	rel, err := filepath.Rel(workspaceResolved, fileResolved)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", errPreviewFileOutsideWorkspace
+	}
+	entry, ok := previewutil.EntryAtPath(workspaceResolved, filepath.ToSlash(rel))
+	if !ok {
+		return "", errPreviewFileNotFound
+	}
+	return previewFileURL(r, id, entry.Path)
 }
 
 func writePreviewResolveError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errPreviewFileOutsideWorkspace) {
+		envelope.WriteAPIError(w, r, http.StatusForbidden, "forbidden", "PREVIEW_FILE_OUTSIDE_WORKSPACE", "Preview files must stay inside the session workspace", nil)
+		return
+	}
 	if errors.Is(err, errPreviewFileNotFound) {
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
 		return

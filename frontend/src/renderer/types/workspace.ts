@@ -1,5 +1,7 @@
 import { attentionZone as presentationAttentionZone } from "../lib/session-presentation";
 
+import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
+
 export type SessionStatus =
 	| "working"
 	| "pr_open"
@@ -80,10 +82,12 @@ export type AgentProvider =
 	| "devin"
 	| "cline"
 	| "kimi"
+	| "muse"
 	| "kiro"
 	| "kilocode"
 	| "vibe"
 	| "pi"
+	| "kimchi"
 	| "autohand"
 	| "fake";
 
@@ -117,6 +121,9 @@ export type PullRequestFacts = {
 	updatedAt: string;
 };
 
+/** The daemon-committed controller currently responsible for the session. */
+export type SessionMode = "chat" | "tui";
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -127,8 +134,14 @@ export type WorkspaceSession = {
 	issueId?: string;
 	provider: AgentProvider;
 	/** Reviewer selected for this session; absent means use the project default. */
-	reviewerHarness?: "claude-code" | "codex" | "opencode";
+	reviewerHarness?: ReviewerHarnessId;
 	kind?: SessionKind;
+	/**
+	 * Which controller is currently committed for this session. The session
+	 * surface renders from THIS value, never from the current creation default.
+	 * Only the daemon's durable interface-transition coordinator may change it.
+	 */
+	mode?: SessionMode;
 	branch?: string;
 	status: SessionStatus;
 	/** Stack-aware PR context derived by the daemon independently of runtime activity. */
@@ -137,6 +150,8 @@ export type WorkspaceSession = {
 	isTerminated?: boolean;
 	/** User preference to tear down this session when its PR set completes through a merge. */
 	terminateOnPrMerge?: boolean;
+	/** Whether SCM review feedback is automatically injected into the worker. */
+	autoInjectReview?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
@@ -360,10 +375,12 @@ export function toAgentProvider(provider?: string): AgentProvider {
 		case "devin":
 		case "cline":
 		case "kimi":
+		case "muse":
 		case "kiro":
 		case "kilocode":
 		case "vibe":
 		case "pi":
+		case "kimchi":
 		case "autohand":
 		case "fake":
 			return provider;

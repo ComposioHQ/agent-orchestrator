@@ -71,6 +71,34 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// AgentInterfaceHandoff is an OPTIONAL capability for a TUI adapter whose
+// native resume identity is also understood by its structured Chat driver.
+// Merely supporting GetRestoreCommand is not enough: some harnesses expose a
+// different identifier through their TUI and protocol surfaces.
+type AgentInterfaceHandoff interface {
+	NativeConversationID(
+		ctx context.Context,
+		session SessionRef,
+		currentMode domain.SessionMode,
+		providerConversationID string,
+	) (id string, ok bool, err error)
+}
+
+// AgentInterfaceHandoffHistoryProbe is an OPTIONAL refinement for adapters
+// that reserve a native conversation id before the provider has persisted any
+// history. A missing history record means an interface transition may safely
+// start the target fresh: there is no provider context to carry. Without this
+// capability, Session Manager conservatively treats every declared id as an
+// existing conversation and requires a native resume.
+type AgentInterfaceHandoffHistoryProbe interface {
+	NativeConversationExists(
+		ctx context.Context,
+		session SessionRef,
+		nativeConversationID string,
+		env map[string]string,
+	) (bool, error)
+}
+
 // ModelSelectionMode tells clients how to render an agent's model control.
 type ModelSelectionMode string
 
@@ -137,11 +165,16 @@ type AgentModelDiscoveryRequest struct {
 	Env        map[string]string
 }
 
-// AgentModelDiscoverer isolates CLI execution and executable fingerprinting
-// from the core agent service.
+// AgentModelDiscoverer isolates CLI execution and discovery-input
+// fingerprinting from the core agent service.
 type AgentModelDiscoverer interface {
 	Discover(ctx context.Context, request AgentModelDiscoveryRequest) (AgentModelCatalog, error)
-	BinaryVersion(ctx context.Context, binary string) string
+	// CatalogFingerprint summarizes every input a discovery run would read: the
+	// resolved executable plus any configuration the adapter consults. The
+	// service compares it against the cached catalog's fingerprint, so it must
+	// change whenever the catalog those inputs produce would change, and it must
+	// stay cheap enough to compute before deciding to skip discovery.
+	CatalogFingerprint(ctx context.Context, request AgentModelDiscoveryRequest) string
 	Manual(agentID string) AgentModelCatalog
 }
 
@@ -173,6 +206,15 @@ type TerminalActivityDetector interface {
 	DetectTerminalActivity(output string) (domain.ActivityState, bool)
 }
 
+// ContinuousTerminalActivityDetector is implemented by adapters whose TUI is
+// the only authoritative source for some activity transitions. These adapters
+// are sampled on every observer tick, including while idle or waiting for
+// input, so terminal state can move in either direction.
+type ContinuousTerminalActivityDetector interface {
+	TerminalActivityDetector
+	ContinuouslyDetectTerminalActivity() bool
+}
+
 // PromptReadinessHints describes when an after-start prompt should be sent.
 // Empty hints mean "send immediately" to preserve existing adapter behavior.
 type PromptReadinessHints struct {
@@ -191,37 +233,43 @@ type AgentResolver interface {
 	Agent(harness domain.AgentHarness) (Agent, bool)
 }
 
-// ActivitySignaler is an OPTIONAL capability an Agent adapter may implement to
-// describe which durable activity signals its harness actually produces under
-// AO's headless launch. The Session Manager gates best-effort post-send
-// confirmation on it — see the two methods.
+// SubmitActivitySignaler is an OPTIONAL capability an Agent adapter may
+// implement to report whether its harness emits a prompt-submit signal (one
+// that flips Activity.State to active). Without it the confirm loop could
+// never observe active and would only burn its budget on spurious Enter
+// nudges.
 //
-// EmitsSubmitActivity reports whether the harness emits a prompt-submit signal
-// (one that flips Activity.State to active). Without it the confirm loop could
-// never observe active and would only burn its budget on spurious Enter nudges.
-//
-// EmitsBlockedActivity reports whether the harness emits a decision-pause
-// signal (a permission/approval prompt that flips Activity.State to blocked)
-// AND can clear that state before the turn ends — which requires the
-// pre/post-tool-use trio so lifecycle can correlate the approved tool's post
-// with the dialog that blocked the session. The Enter-only nudge is only SAFE
-// when this is true: a harness that submits but cannot report blocked leaves
-// the confirm loop unable to tell an unsubmitted draft from a pending
-// permission dialog, so an Enter meant to resubmit the draft could instead
-// answer the dialog. confirmActive therefore requires BOTH signals before it
-// will nudge.
-//
-// Only claude-code satisfies both halves: it installs the pre/post-tool-use
-// trio that lets lifecycle correlate the approved tool's post with the dialog
-// and clear blocked before the turn ends. codex maps permission-request to
-// waiting_input and opts out (no tool trio → blocked could not be cleared).
-// Every other harness simply does not implement this interface; it maps its
-// permission signal to waiting_input via the shared deriver and gets the
-// paste settle delay but no confirm loop. Adapters that later gain a
-// correlatable blocked signal implement this interface to opt in; see the
-// fork/archive/blocked-mappings branch for the prior 13-harness mapping set.
-type ActivitySignaler interface {
+// This is one half of the confirm-loop gate; the session manager also requires
+// BlockedActivitySignaler before it will nudge — see harnessNudgeSafe.
+type SubmitActivitySignaler interface {
 	EmitsSubmitActivity() bool
+}
+
+// BlockedActivitySignaler is an OPTIONAL capability an Agent adapter may
+// implement to report whether its harness emits a decision-pause signal (a
+// permission/approval prompt that flips Activity.State to blocked) AND can
+// clear that state before the turn ends — which requires the pre/post-tool-
+// use trio so lifecycle can correlate the approved tool's post with the dialog
+// that blocked the session. The Enter-only nudge is only SAFE when this is
+// true: a harness that submits but cannot report blocked leaves the confirm
+// loop unable to tell an unsubmitted draft from a pending permission dialog,
+// so an Enter meant to resubmit the draft could instead answer the dialog.
+//
+// Two adapters satisfy this today:
+//
+//   - claude-code installs the pre/post-tool-use trio that lets lifecycle
+//     correlate the approved tool's post with the dialog and clear blocked
+//     before the turn ends.
+//   - kimchi installs the same trio and maps Notification(permission_prompt)
+//     to ActivityBlocked. Unlike claude-code, kimchi has no separate
+//     permission-request hook — the blocked signal arrives via a Notification
+//     event whose payload carries tool_use_id, which the lifecycle correlator
+//     matches against the inflight map populated by PreToolUse.
+//
+// codex maps permission-request to waiting_input and opts out (no tool trio →
+// blocked could not be cleared). Adapters that later gain a correlatable
+// blocked signal implement this interface to opt in.
+type BlockedActivitySignaler interface {
 	EmitsBlockedActivity() bool
 }
 
@@ -318,11 +366,13 @@ type WorkspaceHookConfig struct {
 
 // RestoreConfig carries inputs needed to continue an existing native agent session.
 type RestoreConfig struct {
-	Config      AgentConfig
-	DataDir     string
-	Kind        domain.SessionKind
-	Permissions PermissionMode
-	Session     SessionRef
+	Config          AgentConfig
+	DataDir         string
+	Kind            domain.SessionKind
+	Permissions     PermissionMode
+	AllowedTools    []string
+	DisallowedTools []string
+	Session         SessionRef
 	// SystemPrompt carries the session's standing instructions (e.g. the
 	// orchestrator role). Agent CLIs rebuild their system prompt from flags on
 	// resume — it is not part of the transcript — so adapters whose CLI has a

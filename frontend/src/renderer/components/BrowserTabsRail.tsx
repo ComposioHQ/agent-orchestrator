@@ -60,22 +60,10 @@ type BrowserTabsRailProps = {
 	onCloseTab: (tabId: string) => Promise<void>;
 	onOpenTab: () => Promise<void>;
 	onReorderTabs: (orderedIds: string[]) => void;
-	onFlyoutOpenChange: (open: boolean) => void;
 };
 
 export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRailProps>(function BrowserTabsRail(
-	{
-		tabs,
-		activeTabId,
-		poppedOut,
-		pinned,
-		onPinnedChange,
-		onSelectTab,
-		onCloseTab,
-		onOpenTab,
-		onReorderTabs,
-		onFlyoutOpenChange,
-	},
+	{ tabs, activeTabId, poppedOut, pinned, onPinnedChange, onSelectTab, onCloseTab, onOpenTab, onReorderTabs },
 	ref,
 ) {
 	const { t } = useTranslation();
@@ -119,15 +107,6 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 			if (expanded) return;
 			clearCloseTimer();
 			if (flyoutOpen || openTimerRef.current !== null) return;
-			// Warm the mirror frame now, not when the flyout box actually appears:
-			// the native view parks (and visually disappears) the instant
-			// data-state flips to "open", but the replacement screenshot is an
-			// async capture — starting it here overlaps that round trip with the
-			// hover-intent delay below, so by the time the box shows, the parked
-			// swap already has a frame ready instead of a blank flash first. The
-			// native view still paints over this frame's <img> until it's
-			// actually parked, so warming early is invisible either way.
-			onFlyoutOpenChange(true);
 			const apply = () => {
 				openTimerRef.current = null;
 				setFlyoutOpen(true);
@@ -138,7 +117,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 			}
 			openTimerRef.current = window.setTimeout(apply, HOVER_OPEN_DELAY_MS);
 		},
-		[clearCloseTimer, expanded, flyoutOpen, onFlyoutOpenChange],
+		[clearCloseTimer, expanded, flyoutOpen],
 	);
 
 	const closeFlyout = useCallback(
@@ -187,12 +166,9 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 	}, [clearCloseTimer, clearOpenTimer]);
 
 	// Selecting/closing a tab closes the flyout immediately rather than waiting
-	// for the hover-close delay: while the flyout is open the native view is
-	// parked and mirrored by a single captured frame (see useBrowserView.ts), so
-	// the newly-active tab would otherwise stay invisible — showing the old
-	// tab's frozen frame — until the pointer actually leaves the rail. The
-	// toolbar's new-tab button gets the same treatment via the closeFlyout
-	// handle exposed above.
+	// for the hover-close delay, so the menu doesn't linger open over the newly
+	// active tab. The toolbar's new-tab button gets the same treatment via the
+	// closeFlyout handle exposed above.
 	const handleSelectTab = useCallback(
 		(tabId: string) => {
 			closeFlyout(true);
@@ -326,12 +302,13 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 				/>
 			) : null}
 			{/* Kept mounted (not conditionally rendered) so `data-state` alone drives
-			    visibility: the existing OPEN_DIALOG_OR_MENU_SELECTOR MutationObserver
-			    in useBrowserView.ts already watches role="menu" + data-state="open"
-			    anywhere in the document, so toggling this attribute reuses the native
-			    view's park/mirror machinery with no changes there. Positioned
-			    relative to this same rail root that `<nav>` fills top-to-bottom, so
-			    the two row lists start at the exact same y with no separate spacer. */}
+			    visibility: the OPEN_BROWSER_OVERLAY_SELECTOR MutationObserver in
+			    useBrowserView.ts watches `[data-browser-native-overlay="true"]
+			    [data-state="open"]` anywhere in the document, so toggling this
+			    attribute reorders the native browser view behind this flyout with no
+			    changes needed there. Positioned relative to this same rail root that
+			    `<nav>` fills top-to-bottom, so the two row lists start at the exact
+			    same y with no separate spacer. */}
 			{!expanded ? (
 				<div
 					className={cn(
@@ -340,6 +317,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 						"data-[state=closed]:pointer-events-none data-[state=closed]:opacity-0 data-[state=closed]:-translate-x-3",
 						"data-[state=open]:opacity-100 data-[state=open]:translate-x-0",
 					)}
+					data-browser-native-overlay="true"
 					data-state={flyoutOpen ? "open" : "closed"}
 					data-testid="browser-tabs-flyout"
 					role="menu"

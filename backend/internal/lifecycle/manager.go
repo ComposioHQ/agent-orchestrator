@@ -28,10 +28,29 @@ type sessionStore interface {
 	// when no open PR remains and at least one merged) and to suppress
 	// merge-conflict nudges on PRs stacked behind an open parent.
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	// ListPRReviews and ListPRComments return the effective rows committed by
+	// the SCM observer, including each item's preserved injection decision.
+	ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error)
+	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
 	// GetPRLastNudgeSignature / UpdatePRLastNudgeSignature persist the
 	// reaction-dedup map so nudges survive a daemon restart.
 	GetPRLastNudgeSignature(ctx context.Context, prURL string) (string, error)
 	UpdatePRLastNudgeSignature(ctx context.Context, prURL, payload string) error
+}
+
+// controllerEpochStore is the atomic persistence primitive used by
+// CommitControllerEpoch. It stays optional on the broad lifecycle store so
+// focused reducer fakes do not need controller-transition methods; production
+// SQLite implements it.
+type controllerEpochStore interface {
+	CommitSessionControllerEpoch(
+		context.Context,
+		domain.SessionID,
+		domain.SessionMode,
+		domain.SessionMode,
+		string,
+		time.Time,
+	) (bool, error)
 }
 
 // notificationSink is the optional lifecycle-to-notification-producer boundary.
@@ -352,6 +371,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
 	s.LaunchID = strings.TrimSpace(s.LaunchID)
+	s.ControllerGeneration = strings.TrimSpace(s.ControllerGeneration)
 	if !s.Valid && s.AgentSessionID == "" {
 		return nil
 	}
@@ -390,8 +410,14 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return nil
 	}
+	if s.ControllerGeneration != "" &&
+		(domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat ||
+			s.ControllerGeneration != rec.Metadata.ControllerGeneration) {
+		m.mu.Unlock()
+		return nil
+	}
 	if !s.ExpectedUpdatedAt.IsZero() &&
-		(rec.Activity.State != domain.ActivityActive || !rec.UpdatedAt.Equal(s.ExpectedUpdatedAt)) {
+		!rec.UpdatedAt.Equal(s.ExpectedUpdatedAt) {
 		m.mu.Unlock()
 		return nil
 	}
@@ -521,14 +547,21 @@ const maxInflightTools = 128
 // isToolUseEvent reports whether the AO hook event is one of the tool-use
 // trio whose signals must not demote a sticky state on their own.
 func isToolUseEvent(event string) bool {
-	return event == "pre-tool-use" || event == "post-tool-use" || event == "post-tool-use-failure"
+	return event == "pre-tool-use" || isPostToolUseEvent(event)
+}
+
+func isPostToolUseEvent(event string) bool {
+	// post-tool-use-fail is retained for Kimchi hook files installed before the
+	// adapter switched to AO's canonical failure event name.
+	return event == "post-tool-use" || event == "post-tool-use-failure" || event == "post-tool-use-fail"
 }
 
 // isTurnBoundaryEvent reports the events that reliably mean the pending
 // dialog is gone: a prompt cannot be submitted while a dialog holds the
 // composer, and a turn cannot end (or the session exit) with one on screen.
 func isTurnBoundaryEvent(event string) bool {
-	return event == "user-prompt-submit" || event == "stop" || event == "session-end" || event == "process-exited"
+	return event == "user-prompt-submit" || event == "stop" || event == "session-end" ||
+		event == "process-exited" || event == "chat.controller.stopped"
 }
 
 // applyToolPrecedenceLocked folds an event-tagged activity signal through the
@@ -564,7 +597,7 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 			}
 			f.inflight[s.ToolUseID] = s.ToolName
 		}
-	case "post-tool-use", "post-tool-use-failure":
+	case "post-tool-use", "post-tool-use-failure", "post-tool-use-fail":
 		if fl != nil {
 			delete(fl.inflight, s.ToolUseID)
 		}
@@ -586,10 +619,23 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 		// candidate is recorded and the block clears only at a turn boundary
 		// (fail-closed).
 		f := ensure()
-		if s.ToolName != "" {
-			// Recompute from scratch: this is a fresh dialog, so any candidate
-			// carried from a prior one must not leak in.
+		// Recompute only when this signal identifies a dialog. Claude can emit an
+		// identity-less Notification duplicate after permission-request; that
+		// duplicate must not erase the candidate captured by the first signal.
+		if s.ToolUseID != "" || s.ToolName != "" {
 			f.blockedCandidate = ""
+		}
+		if s.ToolUseID != "" {
+			// If the blocking signal carries a tool_use_id that is in the
+			// inflight map, use it directly — this is more precise than a
+			// name match and handles adapters whose notification payloads
+			// use a different tool_name casing than their PreToolUse/PostToolUse
+			// payloads (e.g. Kimchi: "bash" in notification vs "Bash" in hooks).
+			if _, ok := f.inflight[s.ToolUseID]; ok {
+				f.blockedCandidate = s.ToolUseID
+			}
+		}
+		if f.blockedCandidate == "" && s.ToolName != "" {
 			for useID, name := range f.inflight {
 				if name != s.ToolName {
 					continue
@@ -612,7 +658,7 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 		case isTurnBoundaryEvent(s.Event):
 			delete(m.flights, id)
 			return s
-		case (s.Event == "post-tool-use" || s.Event == "post-tool-use-failure") &&
+		case isPostToolUseEvent(s.Event) &&
 			fl != nil && fl.blockedCandidate != "" && s.ToolUseID == fl.blockedCandidate:
 			// The single unambiguous blocking tool finished: the dialog was
 			// answered. Clear the candidate so a later dialog in the same turn
@@ -749,6 +795,83 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	}
 	reactivateSessionUsage(ctx, id, launchID, reactivator)
 	return nil
+}
+
+// CommitControllerEpoch atomically changes which controller owns a live
+// session. Session Manager coordinates the external-process saga, but only
+// Lifecycle Manager is allowed to write the durable controller/activity facts.
+// A false result means the expected source controller no longer owns the row.
+// startFresh is accepted only with an empty native id; Session Manager sets it
+// after an adapter proved the reserved id has no persisted conversation.
+func (m *Manager) CommitControllerEpoch(
+	ctx context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+	startFresh bool,
+) (bool, error) {
+	if !source.Valid() || !target.Valid() || source == target {
+		return false, fmt.Errorf("lifecycle: invalid controller epoch %q -> %q", source, target)
+	}
+	nativeConversationID = strings.TrimSpace(nativeConversationID)
+	if nativeConversationID == "" && !startFresh {
+		return false, fmt.Errorf("lifecycle: controller epoch for %q has no native conversation id", id)
+	}
+	if nativeConversationID != "" && startFresh {
+		return false, fmt.Errorf("lifecycle: fresh controller epoch for %q also supplied a native conversation id", id)
+	}
+	writer, ok := m.store.(controllerEpochStore)
+	if !ok {
+		return false, fmt.Errorf("lifecycle: controller epoch persistence is unavailable")
+	}
+
+	m.mu.Lock()
+	previous, found, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		m.mu.Unlock()
+		return false, err
+	}
+	if !found {
+		m.mu.Unlock()
+		return false, fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
+	}
+	if previous.IsTerminated || domain.NormalizeSessionMode(previous.Mode) != source {
+		m.mu.Unlock()
+		return false, nil
+	}
+	now := m.clock()
+	changed, err := writer.CommitSessionControllerEpoch(
+		ctx, id, source, target, nativeConversationID, now,
+	)
+	if err != nil || !changed {
+		m.mu.Unlock()
+		return changed, err
+	}
+
+	// Mirror the atomic store write for lifecycle side effects. MarkSpawned will
+	// clear FirstSignalAt and attach the target's process generation once the new
+	// controller is actually live.
+	next := previous
+	next.Mode = target
+	next.Metadata.RuntimeHandleID = ""
+	next.Metadata.RuntimeLaunchID = ""
+	next.Metadata.AgentSessionID = nativeConversationID
+	next.Metadata.ProviderConversationID = nativeConversationID
+	next.Metadata.ControllerGeneration = ""
+	next.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	next.UpdatedAt = now
+	delete(m.flights, id)
+	resolutions := needsInputResolutions(previous, next, now)
+	waitingEvents := m.waitingInputEvents(
+		next, previous.Activity.State, previous.Activity.LastActivityAt, now,
+	)
+	m.mu.Unlock()
+
+	for _, ev := range waitingEvents {
+		m.emitTelemetry(ctx, ev)
+	}
+	m.resolveNotifications(ctx, resolutions...)
+	return true, nil
 }
 
 // MarkTerminated marks a session terminated. Runtime/workspace teardown is the
@@ -908,5 +1031,14 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	base.RuntimeLaunchID = in.RuntimeLaunchID
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
+	set(&base.BrowserCapabilityVerifier, in.BrowserCapabilityVerifier)
+	// The chat controller's resume handle. Without this a restart has no thread to
+	// resume and the conversation is stranded — the provider still holds it, but
+	// AO no longer knows its id.
+	set(&base.ProviderConversationID, in.ProviderConversationID)
+	// Assigned rather than set: a relaunch rotates the generation, and the whole
+	// point is that the new value replaces the old one so events from the
+	// controller this one superseded can be told apart.
+	base.ControllerGeneration = in.ControllerGeneration
 	return base
 }

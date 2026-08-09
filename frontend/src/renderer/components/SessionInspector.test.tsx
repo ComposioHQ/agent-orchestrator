@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -70,6 +70,7 @@ const session = (prs: PullRequestFacts[], overrides: Partial<WorkspaceSession> =
 	branch: "feat/ns",
 	status: "review_pending",
 	updatedAt: "2026-06-15T00:00:00Z",
+	autoInjectReview: true,
 	prs,
 	...overrides,
 });
@@ -210,6 +211,7 @@ const approvedReview = {
 	prUrl: "https://example.com/pr/3",
 	targetSha: "abc123",
 	createdAt: "2026-06-16T10:06:00Z",
+	autoInjectReview: true,
 };
 
 const failedReview = {
@@ -236,6 +238,7 @@ beforeEach(() => {
 	navigateMock.mockReset();
 	patchMock.mockReset();
 	postMock.mockReset();
+	useUiStore.setState({ inspectorSessions: {} });
 	putMock.mockReset();
 	mockCommonGets();
 	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
@@ -268,6 +271,20 @@ describe("SessionInspector tabs", () => {
 		expect(summaryTab).toHaveClass("h-control-md", "px-1.5");
 		expect(summaryTab).toHaveAttribute("title", "Summary");
 		expect(within(summaryTab).getByText("Summary")).toHaveClass("@max-[350px]/inspector:hidden");
+	});
+
+	it("shows the glow only while real browser activity is unseen", () => {
+		const currentSession = session([]);
+		const view = renderWithQuery(<SessionInspector session={currentSession} />);
+		expect(screen.queryByTestId("browser-unseen-indicator")).not.toBeInTheDocument();
+		view.unmount();
+
+		useUiStore.getState().setBrowserUnseen(currentSession.id, true);
+		renderWithQuery(<SessionInspector session={currentSession} />);
+		expect(screen.getByTestId("browser-unseen-indicator")).toBeInTheDocument();
+
+		act(() => useUiStore.getState().setInspectorView(currentSession.id, "browser"));
+		expect(screen.queryByTestId("browser-unseen-indicator")).not.toBeInTheDocument();
 	});
 
 	it("renders the supplied files view when the Files tab opens", async () => {
@@ -1267,6 +1284,20 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getByText("Changes requested")).toBeInTheDocument();
 	});
 
+	it("hides agent review PR rows while a triggered review is still running without a verdict", async () => {
+		const running = {
+			...reviewState(3, "running", "sha-1"),
+			latestRun: { ...approvedReview, id: "run-live", harness: "codex", status: "running", verdict: "" },
+		};
+		mockCommonGets([], "reviewer-pane", [running]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await screen.findByText("Review in progress · codex");
+
+		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reviews")).not.toBeInTheDocument();
+	});
+
 	it("shows eligible and up-to-date open PR review rows", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [
 			reviewState(3, "needs_review", "abc123"),
@@ -1288,6 +1319,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
 	});
@@ -1371,7 +1403,7 @@ describe("SessionInspector summary reviews", () => {
 
 	it.each([
 		["needs_review", "changes_requested", "Not run", "Run review"],
-		["running", "approved", "Reviewing...", "Cancel review"],
+		["running", "approved", "Reviewing...", "Stop review"],
 	] as const)(
 		"keeps the current AO review state clear while the current head is %s",
 		async (status, previousVerdict, runLabel, actionLabel) => {
@@ -1450,8 +1482,8 @@ describe("SessionInspector summary reviews", () => {
 											reviewerId: "maya",
 											count: 2,
 											links: [
-												{ file: "a.ts", line: 3 },
-												{ file: "a.ts", line: 9 },
+												{ file: "a.ts", line: 3, autoInjectReview: true },
+												{ file: "a.ts", line: 9, autoInjectReview: true },
 											],
 										},
 									],
@@ -1469,8 +1501,12 @@ describe("SessionInspector summary reviews", () => {
 		expect(await screen.findByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
 		expect(screen.getByText(/2 unresolved/)).toBeInTheDocument();
-		expect(screen.getByText("Reviews on the pull request")).toBeInTheDocument();
-		expect(screen.queryByText("No one has reviewed this pull request yet.")).not.toBeInTheDocument();
+		// AO's runs and the PR's own reviews share one section keyed by PR, so the
+		// unresolved count rides the same row as the AO verdict.
+		expect(screen.getByText("Reviews")).toBeInTheDocument();
+		expect(screen.queryByText("Reviews on the pull request")).not.toBeInTheDocument();
+		expect(screen.queryByText("AO code reviews")).not.toBeInTheDocument();
+		expect(screen.queryByText("No unresolved threads.")).not.toBeInTheDocument();
 	});
 
 	it("renders PR review summaries as Markdown", async () => {
@@ -1504,6 +1540,7 @@ describe("SessionInspector summary reviews", () => {
 											submittedAt: "2026-06-16T11:00:00Z",
 											body: "Looks **ready**.\n\n1. Ship it",
 											reviewUrl: "https://example.com/pr/3#pullrequestreview-456",
+											autoInjectReview: true,
 										},
 									],
 									unresolvedBy: [],
@@ -1525,6 +1562,86 @@ describe("SessionInspector summary reviews", () => {
 		expect(summary).not.toHaveTextContent("**ready**");
 	});
 
+	it("marks SCM reviews and individual comments using their stored injection decision", async () => {
+		const previous = getMock.getMockImplementation()!;
+		getMock.mockImplementation(async (path: string, opts?: unknown) => {
+			if (path === "/api/v1/sessions/{sessionId}/pr") {
+				return {
+					data: {
+						prs: [
+							prSummary(3, "open", {
+								review: {
+									decision: "changes_requested",
+									hasUnresolvedHumanComments: true,
+									reviews: [
+										{
+											reviewerId: "maya",
+											verdict: "changes_requested",
+											submittedAt: "2026-06-16T11:00:00Z",
+											autoInjectReview: true,
+										},
+									],
+									unresolvedBy: [
+										{
+											reviewerId: "maya",
+											count: 2,
+											links: [
+												{ file: "a.ts", line: 3, autoInjectReview: true },
+												{ file: "a.ts", line: 9, autoInjectReview: false },
+											],
+										},
+									],
+								},
+							}),
+						],
+					},
+				};
+			}
+			return previous(path, opts);
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		expect(await screen.findByText("Not injected")).toBeInTheDocument();
+		expect(screen.getByText("On GitHub")).toBeInTheDocument();
+	});
+
+	it("marks an AO review using its stored injection decision", async () => {
+		mockCommonGets(
+			[],
+			"reviewer-pane",
+			[
+				{
+					...reviewState(3, "up_to_date", "abc123"),
+					latestRun: { ...approvedReview, autoInjectReview: false },
+				},
+			],
+		);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		expect(await screen.findByText("Not injected")).toBeInTheDocument();
+		expect(screen.getByText("AO review")).toBeInTheDocument();
+	});
+
+	it("persists the automatic review injection toggle", async () => {
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		const toggle = screen.getByRole("switch", { name: "Automatically send review feedback" });
+		expect(toggle).toBeChecked();
+		await userEvent.click(toggle);
+
+		await waitFor(() =>
+			expect(patchMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/auto-inject-review", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { autoInjectReview: false },
+			}),
+		);
+	});
+
 	it("persists the chosen reviewer for the session and uses it for the run", async () => {
 		mockCommonGets([], "reviewer-pane", [reviewState(3, "needs_review", "sha-1")]);
 		postMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, response: { status: 201 } });
@@ -1535,7 +1652,7 @@ describe("SessionInspector summary reviews", () => {
 		await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
 		await userEvent.click(await screen.findByRole("menuitem", { name: /opencode/ }));
 		await waitFor(() =>
-			expect(putMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviewer", {
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/switch", {
 				params: { path: { sessionId: "sess-1" } },
 				body: { harness: "opencode" },
 			}),
@@ -1678,9 +1795,13 @@ describe("SessionInspector summary reviews", () => {
 
 		await userEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
 
-		expect(
-			await screen.findByText("This commit has already been reviewed. Push a new commit to run another review."),
-		).toBeInTheDocument();
+		// The notice is a compact marker; the sentence itself is its accessible name
+		// and rides a tooltip, so it costs the rail one line instead of a boxed
+		// paragraph that outlives the click that caused it.
+		const alreadyReviewed = await screen.findByRole("button", {
+			name: "This commit has already been reviewed. Push a new commit to run another review.",
+		});
+		expect(alreadyReviewed).toHaveTextContent("This commit has already been reviewed");
 		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
 	});
 
@@ -1696,9 +1817,9 @@ describe("SessionInspector summary reviews", () => {
 		);
 		await openReviewsSection();
 
-		await waitFor(() => expect(screen.getByRole("button", { name: "Cancel review" })).toBeEnabled());
+		await waitFor(() => expect(screen.getByRole("button", { name: "Stop review" })).toBeEnabled());
 		expect(screen.queryByRole("button", { name: /re-run review/i })).not.toBeInTheDocument();
-		await userEvent.click(screen.getByRole("button", { name: /cancel review/i }));
+		await userEvent.click(screen.getByRole("button", { name: /stop review/i }));
 
 		await waitFor(() => {
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/cancel", {

@@ -12,8 +12,8 @@ import {
 	Files as FilesIcon,
 	GitPullRequest,
 	GitMerge,
+	Info,
 	Play,
-	Terminal,
 	Trash2,
 	Loader2,
 	X,
@@ -48,6 +48,7 @@ import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { Switch } from "./ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
 import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
@@ -211,9 +212,11 @@ export function SessionInspector({
 						<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
 							{entry.icon}
 							{entry.id === "browser" && browserUnseen ? (
-								<span aria-hidden="true" className="absolute -right-1 -top-1 inline-flex size-dot-sm">
-									{/* Pinging halo + solid core: a glowing beacon that draws the eye to
-									    a link that arrived in the terminal, cleared once the tab opens. */}
+								<span
+									aria-hidden="true"
+									className="absolute -right-1 -top-1 inline-flex size-dot-sm"
+									data-testid="browser-unseen-indicator"
+								>
 									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
 									<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
 								</span>
@@ -501,7 +504,7 @@ function UsageDisclosureRow({
 	const exactTotal = totalTokens?.toLocaleString("en-US");
 
 	return (
-		<div>
+		<div className="p-2">
 			<button
 				aria-controls={detailID}
 				aria-expanded={open}
@@ -1124,6 +1127,11 @@ function ReviewsSection({
 	const hasPr = sortedPRs(session).length > 0;
 	const queryClient = useQueryClient();
 	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
+	useEffect(() => {
+		if (!reviewNotice) return;
+		const timer = window.setTimeout(() => setReviewNotice(null), 10_000);
+		return () => window.clearTimeout(timer);
+	}, [reviewNotice]);
 	const reviewsQuery = useQuery({
 		queryKey: ["session-reviews", session.id],
 		enabled: hasPr,
@@ -1165,13 +1173,15 @@ function ReviewsSection({
 	}, [session.id, session.reviewerHarness]);
 	const saveReviewer = useMutation({
 		mutationFn: async (harness: ReviewerHarness | "") => {
-			const { error } = await apiClient.PUT("/api/v1/sessions/{sessionId}/reviewer", {
+			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/switch", {
 				params: { path: { sessionId: session.id } },
 				body: { harness: harness || undefined },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to save reviewer"));
+			if (data) queryClient.setQueryData(["session-reviews", session.id], data);
 		},
 		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
@@ -1216,6 +1226,42 @@ function ReviewsSection({
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
+	const killReview = useMutation({
+		mutationFn: async () => {
+			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/kill", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableKillReviewSession")));
+			return data;
+		},
+		onSuccess: (data) => {
+			setReviewNotice(null);
+			if (data) queryClient.setQueryData(["session-reviews", session.id], data);
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
+	const [autoInjectReview, setAutoInjectReview] = useState(session.autoInjectReview ?? true);
+	useEffect(() => {
+		setAutoInjectReview(session.autoInjectReview ?? true);
+	}, [session.id, session.autoInjectReview]);
+	const saveAutoInjectReview = useMutation({
+		mutationFn: async (enabled: boolean) => {
+			const { error } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/auto-inject-review", {
+				params: { path: { sessionId: session.id } },
+				body: { autoInjectReview: enabled },
+			});
+			if (error) {
+				throw new Error(apiErrorMessage(error, t("inspector.review.autoInjectError")));
+			}
+		},
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+		onError: () => {
+			setAutoInjectReview(session.autoInjectReview ?? true);
+		},
+	});
+
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
 	const scmSummary = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
@@ -1225,48 +1271,208 @@ function ReviewsSection({
 			((pr.review?.reviews?.length ?? 0) > 0 ||
 				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
-	const unresolvedTotal = githubReviews
-		.reduce((total, pr) => total + (pr.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0), 0);
-	const githubReviewCount = githubReviews.reduce((n, pr) => n + (pr.review?.reviews?.length ?? 0), 0);
 
 	return (
-		<div>
-			{/* One panel, two sources, in the order they happen: AO's own reviewer runs
-			    first, then whatever humans and bots leave on the PR. Tabs hid one
-			    behind the other when the point is to read them together. */}
-				<ReviewPanel
-					config={projectConfigQuery.data}
-					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error ?? saveReviewer.error}
+		<div className="p-2">
+			{/* Running a review is an action; reading them is a list. The action stays
+			    on top, then one list carrying both sources keyed by PR. */}
+			<ReviewPanel
+				config={projectConfigQuery.data}
+				error={
+					reviewsQuery.error ??
+					triggerReview.error ??
+					cancelReview.error ??
+					killReview.error ??
+					saveReviewer.error ??
+					saveAutoInjectReview.error
+				}
 				isLoading={reviewsQuery.isLoading}
 				isCancelling={cancelReview.isPending}
+				isKilling={killReview.isPending}
+				isSwitchingReviewer={saveReviewer.isPending}
 				isTriggering={triggerReview.isPending}
-				onOpenTerminal={onOpenReviewerTerminal}
 				onCancel={() => cancelReview.mutate()}
+				onKill={() => killReview.mutate()}
 				onTrigger={() => triggerReview.mutate()}
 				reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 				reviewStates={reviewStates}
+				notice={reviewNotice}
+				agentCatalog={agentsQuery.data}
+				reviewerOverride={reviewerOverride}
+				onReviewerOverrideChange={(next) => {
+					setReviewerOverride(next);
+					saveReviewer.mutate(next);
+				}}
+				session={session}
+			/>
+			<MergedReviewsSection
+				githubPRs={githubReviews}
+				isLoading={scmSummary.isLoading}
+				reviewStates={reviewStates}
 				runs={reviewsQuery.data?.runs ?? []}
-					notice={reviewNotice}
-					agentCatalog={agentsQuery.data}
-					reviewerOverride={reviewerOverride}
-					onReviewerOverrideChange={(next) => {
-						setReviewerOverride(next);
-						saveReviewer.mutate(next);
+				session={session}
+			/>
+			<div className="mt-2.5 flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2.5">
+				<div className="min-w-0">
+					<div className="flex min-w-0 items-center gap-1.5">
+						<p className="truncate text-xs font-medium text-foreground">{t("inspector.review.autoInject")}</p>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+									aria-label={t("inspector.review.autoInjectDescription")}
+								>
+									<Info aria-hidden="true" className="size-icon-2xs" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent className="max-w-60 leading-normal">
+								{t("inspector.review.autoInjectDescription")}
+							</TooltipContent>
+						</Tooltip>
+					</div>
+				</div>
+				<Switch
+					aria-label={t("inspector.review.autoInject")}
+					checked={autoInjectReview}
+					disabled={saveAutoInjectReview.isPending}
+					onCheckedChange={(enabled) => {
+						setAutoInjectReview(enabled);
+						saveAutoInjectReview.mutate(enabled);
 					}}
-					session={session}
 				/>
-			{scmSummary.isLoading || githubReviewCount > 0 || unresolvedTotal > 0 ? (
-				<Section
-					surface
-					title={`${t("inspector.reviewsOnPR")}${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}
-				>
-					<GithubReviewPanel
-						isLoading={scmSummary.isLoading}
-						prs={githubReviews}
-						unresolvedTotal={unresolvedTotal}
-					/>
-				</Section>
+			</div>
+		</div>
+	);
+}
+
+/**
+ * AO's own reviewer passes and the reviews humans and bots left on GitHub, in
+ * one list keyed by PR. They were two sections, which made the same PR appear
+ * twice and left the reader joining them up by number; a review is a review,
+ * and what matters is who wrote it. Each group inside a PR names its source —
+ * "AO codex" against the agent that ran, "On GitHub" for everyone else.
+ */
+function MergedReviewsSection({
+	githubPRs,
+	isLoading,
+	reviewStates,
+	runs,
+	session,
+}: {
+	githubPRs: SessionPRSummary[];
+	isLoading: boolean;
+	reviewStates: PRReviewState[];
+	runs: ReviewRunFacts[];
+	session: WorkspaceSession;
+}) {
+	const { t } = useTranslation();
+	const openReviewStates = openReviewStatesFor(session, reviewStates);
+	const runsByPR = runsByPRFrom(openReviewStates, runs);
+	const aoStates = triggeredReviewStatesFrom(openReviewStates, runs);
+
+	// Union by PR number, newest PR first. A PR can appear on either side alone.
+	const byNumber = new Map<number, { ao?: PRReviewState; github?: SessionPRSummary }>();
+	for (const state of aoStates) {
+		byNumber.set(state.prNumber, { ...byNumber.get(state.prNumber), ao: state });
+	}
+	for (const pr of githubPRs) {
+		byNumber.set(pr.number, { ...byNumber.get(pr.number), github: pr });
+	}
+	const rows = [...byNumber.entries()].sort(([a], [b]) => b - a);
+
+	if (isLoading && rows.length === 0) {
+		return (
+			<Section surface title={t("inspector.reviews")}>
+				<p className={inspectorEmptyClass}>{t("inspector.loadingReviews")}</p>
+			</Section>
+		);
+	}
+	if (rows.length === 0) return null;
+
+	return (
+		<Section surface title={t("inspector.reviews")}>
+			<div className="flex flex-col divide-y divide-border">
+				{rows.map(([number, { ao, github }]) => {
+					const aoRuns = ao ? (runsByPR.get(ao.prUrl) ?? []) : [];
+					const aoReviewNotInjected = aoRuns.some((run) => run.autoInjectReview === false);
+					const entries = github?.review?.reviews ?? [];
+					const unresolved = (github?.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0);
+					const scmReviewNotInjected =
+						entries.some((review) => review.autoInjectReview === false) ||
+						(github?.review?.unresolvedBy ?? []).some((reviewer) =>
+							reviewer.links.some((link) => link.autoInjectReview === false),
+						);
+					const meta = [
+						ao ? aoReviewMeta(ao) : `#${number}`,
+						unresolved > 0 ? t("inspector.unresolvedCount", { count: unresolved }) : null,
+					]
+						.filter(Boolean)
+						.join(" · ");
+					return (
+						<ReviewDisclosure
+							collapsible
+							defaultOpen={false}
+							key={number}
+							meta={meta}
+							title={(ao?.title ?? github?.title)?.trim() || `PR #${number}`}
+							verdict={ao ? reviewVerdict(ao) : undefined}
+						>
+							{ao ? (
+								<div className="flex min-w-0 flex-col gap-2.5">
+									{/* Names the side, not the agent. A PR's passes can come from
+									    different reviewers, so one harness on the group caption is
+									    wrong as often as it is right, and every run row below already
+									    carries its own agent name and avatar. */}
+									<ReviewSourceLabel
+										marker={aoReviewNotInjected ? t("inspector.review.notInjected") : undefined}
+									>
+										{t("inspector.reviewBySource.ao")}
+									</ReviewSourceLabel>
+									<ReviewerRuns reviewState={ao} runs={aoRuns} />
+								</div>
+							) : null}
+							{entries.length > 0 || unresolved > 0 ? (
+								<div className="flex min-w-0 flex-col gap-2.5">
+									<ReviewSourceLabel
+										marker={scmReviewNotInjected ? t("inspector.review.notInjected") : undefined}
+									>
+										{t("inspector.reviewBySource.github")}
+									</ReviewSourceLabel>
+									{entries.map((entry) => (
+										<GithubReviewRow entry={entry} key={`${entry.reviewerId}:${entry.submittedAt}`} />
+									))}
+								</div>
+							) : null}
+						</ReviewDisclosure>
+					);
+				})}
+			</div>
+		</Section>
+	);
+}
+
+/**
+ * Heading for one source's reviews inside a PR row.
+ *
+ * A bare caption sat on the same visual plane as the rows beneath it, so it
+ * read as one more line of text and the two groups ran together. It now takes
+ * the Section heading's own weight and colour, and a rule carries it to the
+ * edge — enough to bracket the group without spending the vertical space a
+ * real section header would cost inside an already-nested row.
+ */
+function ReviewSourceLabel({ children, marker }: { children: ReactNode; marker?: string }) {
+	return (
+		<div className="flex min-w-0 items-center gap-2">
+			<span className="shrink-0 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+				{children}
+			</span>
+			{marker ? (
+				<Badge className="h-4 px-1.5 text-[9px] leading-none text-passive" variant="outline">
+					{marker}
+				</Badge>
 			) : null}
+			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
 		</div>
 	);
 }
@@ -1361,6 +1567,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 			const latestRun =
 				pr.review === "approved" || pr.review === "changes_requested"
 					? {
+							autoInjectReview: session.autoInjectReview ?? true,
 							batchId: `demo-batch-${session.id}`,
 							body:
 								pr.review === "approved"
@@ -1379,6 +1586,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 						}
 					: undefined;
 			const run = (over: Record<string, unknown>) => ({
+				autoInjectReview: session.autoInjectReview ?? true,
 				batchId: `demo-batch-${session.id}`,
 				body: "",
 				createdAt: reviewedAt,
@@ -1443,6 +1651,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 	// on the same PR is the case the control exists for.
 	const runs: ReviewRunFacts[] = states.flatMap((state) => {
 		const base = {
+			autoInjectReview: session.autoInjectReview ?? true,
 			batchId: `demo-batch-${session.id}`,
 			githubReviewId: "",
 			prUrl: state.prUrl,
@@ -1494,11 +1703,12 @@ function ReviewPanel({
 	session,
 	config,
 	reviewStates,
-	runs,
 	reviewerHandleId,
 	isLoading,
 	isTriggering,
 	isCancelling,
+	isKilling,
+	isSwitchingReviewer,
 	error,
 	notice,
 	agentCatalog,
@@ -1506,16 +1716,17 @@ function ReviewPanel({
 	onReviewerOverrideChange,
 	onTrigger,
 	onCancel,
-	onOpenTerminal,
+	onKill,
 }: {
 	session: WorkspaceSession;
 	config?: ProjectConfig;
 	reviewStates: PRReviewState[];
-	runs: ReviewRunFacts[];
 	reviewerHandleId: string;
 	isLoading: boolean;
 	isTriggering: boolean;
 	isCancelling: boolean;
+	isKilling: boolean;
+	isSwitchingReviewer: boolean;
 	error: unknown;
 	notice: string | null;
 	agentCatalog?: AgentCatalog;
@@ -1523,7 +1734,7 @@ function ReviewPanel({
 	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
 	onTrigger: () => void;
 	onCancel: () => void;
-	onOpenTerminal?: OpenReviewerTerminal;
+	onKill: () => void;
 }) {
 	const { t } = useTranslation();
 	if (sortedPRs(session).length === 0) {
@@ -1533,12 +1744,7 @@ function ReviewPanel({
 		return <p className={inspectorEmptyClass}>{t("inspector.loadingReviews")}</p>;
 	}
 
-	const openPRURLs = new Set(
-		sortedPRs(session)
-			.filter((pr) => pr.state === "open")
-			.map((pr) => pr.url),
-	);
-	const openReviewStates = reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
+	const openReviewStates = openReviewStatesFor(session, reviewStates);
 	// Whichever PR happens to come first is not the reviewer to name. With one PR
 	// reviewed earlier by claude-code and another running under codex, taking the
 	// first run reported the wrong agent as the one working. Prefer the run
@@ -1551,43 +1757,14 @@ function ReviewPanel({
 	const latest = runningRun ?? newestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const projectDefaultLabel = t("newTask.projectDefault");
-	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
+	const hasReviewerSession = reviewerHandleId.trim() !== "";
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
-	const openReviewerTerminal = () => {
-		if (!terminalEnabled) return;
-		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
-	};
-	// Every recorded pass per PR, so each reviewer keeps its own tab. Falls back
-	// to the state's own runs against a daemon that predates the runs field.
-	const runsByPR = new Map<string, ReviewRunFacts[]>();
-	for (const run of runs.filter(
-		(run) => (run.status === "complete" || run.status === "delivered") && Boolean(run.body?.trim()),
-	)) {
-		runsByPR.set(run.prUrl, [...(runsByPR.get(run.prUrl) ?? []), run]);
-	}
-	if (runs.length === 0) {
-		for (const state of openReviewStates) {
-			const fallback = [state.latestRun, state.previousRun].filter(
-				(run): run is ReviewRunFacts =>
-					Boolean(run) &&
-					(run!.status === "complete" || run!.status === "delivered") &&
-					Boolean(run!.body?.trim()),
-			);
-			if (fallback.length > 0) runsByPR.set(state.prUrl, fallback);
-		}
-	}
-	const triggeredReviewStates = openReviewStates.filter(
-		(reviewState) =>
-			Boolean(reviewState.latestRun) ||
-			Boolean(reviewState.previousRun) ||
-			runs.some((run) => run.prUrl === reviewState.prUrl) ||
-			reviewState.status === "up_to_date" ||
-			reviewState.status === "changes_requested",
-	);
 	const runDisabled =
 		isTriggering ||
+		isKilling ||
+		isSwitchingReviewer ||
 		openReviewStates.length === 0 ||
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 	const primaryReviewActionLabel = reviewRunning
@@ -1595,6 +1772,7 @@ function ReviewPanel({
 			? t("inspector.review.cancelling")
 			: t("inspector.review.cancel")
 		: runAction;
+	const killDisabled = isKilling || isTriggering || isSwitchingReviewer || !hasReviewerSession;
 
 	return (
 		<div className="mb-2.5 flex flex-col">
@@ -1607,11 +1785,30 @@ function ReviewPanel({
 				{/* Neutral, not success: a notice is the trigger declining to run and
 				    saying why, so nothing has succeeded. Green reads as "the review ran"
 				    at a glance, and DESIGN.md reserves it for the success/mergeable
-				    signal. The error variant above keeps red for actual failures. */}
+				    signal. The error variant above keeps red for actual failures.
+
+				    Two lines of boxed prose was a lot of permanent rail for one
+				    sentence the user only needs once. The short form confirms the
+				    click landed; the sentence itself is a hover/focus away. */}
 				{notice ? (
-					<p className="m-0 rounded-md border border-border bg-raised px-2.5 py-2 text-sm-md leading-normal text-muted-foreground">
-						{notice}
-					</p>
+					<TooltipProvider>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									aria-label={notice}
+									className="mb-2 flex max-w-full shrink-0 items-start gap-1 self-start rounded-sm text-left text-2xs font-medium leading-normal text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+									type="button"
+								>
+									<Info aria-hidden="true" className="mt-px size-icon-2xs shrink-0" />
+									{/* Wraps rather than truncates: this is a sentence now, and
+									    clipping it mid-word would hide the part that identifies
+									    which commit is meant. The rest still rides the tooltip. */}
+									<span className="min-w-0">{t("inspector.reviewAlreadyRanShort")}</span>
+								</button>
+							</TooltipTrigger>
+							<TooltipContent className="max-w-56 leading-normal">{notice}</TooltipContent>
+						</Tooltip>
+					</TooltipProvider>
 				) : null}
 				<div className="review-run-controls-container min-w-0">
 					<div className="review-run-controls flex min-w-0 items-center gap-1.5">
@@ -1621,7 +1818,7 @@ function ReviewPanel({
 							defaultHarness={harness}
 							defaultOptionLabel={harness ? `${projectDefaultLabel} (${harness})` : projectDefaultLabel}
 							defaultTriggerLabel={harness || projectDefaultLabel}
-							disabled={reviewRunning}
+							disabled={reviewRunning || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
@@ -1632,7 +1829,7 @@ function ReviewPanel({
 							<Button
 								aria-label={primaryReviewActionLabel}
 								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
-								disabled={reviewRunning ? isCancelling : runDisabled}
+								disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled}
 								onClick={reviewRunning ? onCancel : onTrigger}
 								size="sm"
 								title={primaryReviewActionLabel}
@@ -1642,101 +1839,32 @@ function ReviewPanel({
 								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
 								<span className="review-run-action-label">{primaryReviewActionLabel}</span>
 							</Button>
-							{reviewHasRun ? (
+							{hasReviewerSession ? (
 								<Button
-									aria-label={t("inspector.openTerminal")}
-									className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
-									disabled={!terminalEnabled}
-									onClick={openReviewerTerminal}
+									aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+									className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
+									disabled={killDisabled}
+									onClick={onKill}
 									size="sm"
-									title={t("inspector.openTerminal")}
+									title={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
 									type="button"
 									variant="ghost"
 								>
-									<Terminal aria-hidden="true" />
-									<span className="review-run-action-label">{t("inspector.openTerminal")}</span>
+									<Trash2 aria-hidden="true" />
 								</Button>
 							) : null}
 						</div>
 					</div>
-					</div>
+				</div>
 				{reviewRunning ? (
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
-							<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
+						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
 						<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
 							{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${harness}`}
 						</span>
 					</div>
 				) : null}
 			</Section>
-			{triggeredReviewStates.length > 0 ? (
-				<Section surface title={t("inspector.aoCodeReviews")}>
-					<div className="flex flex-col divide-y divide-border">
-						{triggeredReviewStates.map((reviewState) => (
-							<ReviewDisclosure
-								key={`${reviewState.prUrl}:${reviewState.targetSha}`}
-								collapsible
-								defaultOpen={false}
-								meta={aoReviewMeta(reviewState)}
-								verdict={reviewVerdict(reviewState)}
-								title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
-							>
-								<ReviewerRuns
-									reviewState={reviewState}
-									runs={runsByPR.get(reviewState.prUrl) ?? []}
-								/>
-							</ReviewDisclosure>
-						))}
-					</div>
-				</Section>
-			) : null}
-		</div>
-	);
-}
-
-/**
- * Reviews left on the PR by humans and bots, as opposed to AO's own runs.
- *
- */
-function GithubReviewPanel({
-	prs,
-	unresolvedTotal,
-	isLoading,
-}: {
-	prs: SessionPRSummary[];
-	unresolvedTotal: number;
-	isLoading: boolean;
-}) {
-	const { t } = useTranslation();
-	if (isLoading) {
-		return <p className={inspectorEmptyClass}>{t("inspector.loadingReviews")}</p>;
-	}
-	if (prs.length === 0) {
-		return <p className={inspectorEmptyClass}>{t("inspector.noOneReviewedYet")}</p>;
-	}
-
-	return (
-		<div className="flex flex-col gap-3">
-			<div className="flex flex-col divide-y divide-border">
-				{prs.map((pr) => {
-					const entries = pr.review?.reviews ?? [];
-					const unresolved = (pr.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0);
-					return (
-						<ReviewDisclosure
-							key={pr.number}
-							collapsible
-							defaultOpen={false}
-							meta={`#${pr.number}${unresolved > 0 ? ` · ${unresolved} unresolved` : ""}`}
-							title={pr.title?.trim() || `PR #${pr.number}`}
-						>
-							{entries.map((entry) => (
-								<GithubReviewRow entry={entry} key={`${entry.reviewerId}:${entry.submittedAt}`} />
-							))}
-						</ReviewDisclosure>
-					);
-				})}
-			</div>
-			{unresolvedTotal === 0 ? <p className={inspectorEmptyClass}>{t("inspector.noUnresolvedThreads")}</p> : null}
 		</div>
 	);
 }
@@ -1947,6 +2075,66 @@ function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: s
 					</span>
 				) : null}
 		</div>
+	);
+}
+
+/* The reviews view is assembled from two queries that live in different
+   components, so the derivations both need are module-level rather than
+   recomputed (and allowed to drift) in each. */
+
+/** Review states for PRs this session still has open. */
+function openReviewStatesFor(session: WorkspaceSession, reviewStates: PRReviewState[]): PRReviewState[] {
+	const openPRURLs = new Set(
+		sortedPRs(session)
+			.filter((pr) => pr.state === "open")
+			.map((pr) => pr.url),
+	);
+	return reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
+}
+
+/** Every recorded reviewer pass per PR, so each reviewer keeps its own tab.
+ *  Falls back to the state's own runs against a daemon predating the runs field. */
+function runsByPRFrom(openReviewStates: PRReviewState[], runs: ReviewRunFacts[]): Map<string, ReviewRunFacts[]> {
+	const byPR = new Map<string, ReviewRunFacts[]>();
+	for (const run of runs.filter(
+		(run) => (run.status === "complete" || run.status === "delivered") && Boolean(run.body?.trim()),
+	)) {
+		byPR.set(run.prUrl, [...(byPR.get(run.prUrl) ?? []), run]);
+	}
+	if (runs.length === 0) {
+		for (const state of openReviewStates) {
+			const fallback = [state.latestRun, state.previousRun].filter(
+				(run): run is ReviewRunFacts =>
+					Boolean(run) &&
+					(run!.status === "complete" || run!.status === "delivered") &&
+					Boolean(run!.body?.trim()),
+			);
+			if (fallback.length > 0) byPR.set(state.prUrl, fallback);
+		}
+	}
+	return byPR;
+}
+
+function reviewRunHasOutcome(run: ReviewRunFacts | undefined): boolean {
+	return Boolean(
+		run &&
+			(run.verdict?.trim() ||
+				run.status === "complete" ||
+				run.status === "delivered" ||
+				run.status === "failed" ||
+				run.status === "cancelled"),
+	);
+}
+
+/** The PRs AO has an agent review outcome for. */
+function triggeredReviewStatesFrom(openReviewStates: PRReviewState[], runs: ReviewRunFacts[]): PRReviewState[] {
+	return openReviewStates.filter(
+		(reviewState) =>
+			reviewRunHasOutcome(reviewState.latestRun) ||
+			reviewRunHasOutcome(reviewState.previousRun) ||
+			runs.some((run) => run.prUrl === reviewState.prUrl && reviewRunHasOutcome(run)) ||
+			reviewState.status === "up_to_date" ||
+			reviewState.status === "changes_requested",
 	);
 }
 

@@ -3,6 +3,9 @@ import { useTranslation } from "react-i18next";
 import {
 	ArrowLeft,
 	ArrowRight,
+	Bug,
+	Check,
+	Dock,
 	Globe2,
 	Layers3,
 	Maximize2,
@@ -14,11 +17,19 @@ import {
 } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
+import type { BrowserDevToolsPlacement } from "../../main/browser-view-host";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { BrowserTabsRail, type BrowserTabsRailHandle } from "./BrowserTabsRail";
 import { cn } from "../lib/utils";
 import { appI18n, type MessageKey } from "../i18n";
@@ -96,7 +107,7 @@ export function useBrowserAnnotationQueue({
 				const message = formatBrowserAnnotationMessage(payload);
 				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
 					params: { path: { sessionId: sendSessionId } },
-					body: { message },
+					body: { message, attachment: payload.snapshot },
 				});
 				if (error) {
 					failureMessage = apiErrorMessage(error, appI18n.t("browser.unableSendAnnotation"));
@@ -229,8 +240,6 @@ export function BrowserPanelView({
 	const {
 		viewId,
 		navState,
-		mirrorUrl,
-		mirrorStream,
 		slotRef,
 		navigate,
 		goBack,
@@ -244,17 +253,20 @@ export function BrowserPanelView({
 		closeTab,
 		openTab,
 		reorderTabs,
-		prepareForOverlay,
-		finishOverlay,
 		agentBrowserActive,
 		agentBrowserActivity,
+		devtoolsState = { viewId: "", open: false, activeTabId: "" },
+		openDevTools = async () => undefined,
+		closeDevTools = async () => undefined,
+		setDevToolsPlacement = async () => undefined,
 		annotationMode,
 		setAnnotationMode,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
-	const showStaticPreview = !window.ao?.browser && navState.url !== "";
+	const hasNativeBrowser = Boolean(window.ao?.browser);
+	const showStaticPreview = !hasNativeBrowser && navState.url !== "";
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 	const canOpenTab = tabs.length < MAX_BROWSER_TABS;
@@ -267,6 +279,35 @@ export function BrowserPanelView({
 		setPinned(next);
 		window.localStorage.setItem(RAIL_PINNED_STORAGE_KEY, next ? "1" : "0");
 	}, []);
+
+	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
+	const nativeCompositionEnabled = Boolean(window.ao?.browser?.nativeCompositionEnabled);
+	const [devtoolsPlacementMenuOpen, setDevtoolsPlacementMenuOpen] = useState(false);
+	const devtoolsPlacement = devtoolsState.placement ?? "right";
+	const devtoolsPlacementLabels: Record<BrowserDevToolsPlacement, string> = {
+		right: t("browser.devtoolsRight"),
+		bottom: t("browser.devtoolsBottom"),
+		left: t("browser.devtoolsLeft"),
+		undocked: t("browser.devtoolsUndocked"),
+	};
+
+	const handleOpenDevTools = useCallback(async () => {
+		if (nativeCompositionEnabled) {
+			const saved = window.localStorage?.getItem("ao.browser.devtoolsPlacement") as BrowserDevToolsPlacement | null;
+			if (saved === "right" || saved === "bottom" || saved === "left" || saved === "undocked") {
+				await setDevToolsPlacement(saved);
+			}
+		}
+		await openDevTools();
+	}, [nativeCompositionEnabled, openDevTools, setDevToolsPlacement]);
+
+	const handleDevToolsPlacement = useCallback(
+		(placement: BrowserDevToolsPlacement) => {
+			window.localStorage?.setItem("ao.browser.devtoolsPlacement", placement);
+			void setDevToolsPlacement(placement);
+		},
+		[setDevToolsPlacement],
+	);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
@@ -312,15 +353,6 @@ export function BrowserPanelView({
 		}
 	};
 
-	// The hover-flyout warms a frame the same way the old dropdown trigger did;
-	// selecting a tab always tears the overlay/mirror down afterward.
-	const handleFlyoutOpenChange = useCallback(
-		(open: boolean) => {
-			if (open) void prepareForOverlay();
-		},
-		[prepareForOverlay],
-	);
-
 	// The button lives in the toolbar, not inside the rail, so a fast
 	// hover-rail-then-click-here still needs to force the flyout closed first —
 	// same reason rows inside the rail do it (see BrowserTabsRail.tsx). A blank
@@ -338,12 +370,10 @@ export function BrowserPanelView({
 			try {
 				await selectTab(tabId);
 			} catch {
-				// The existing tab remains active; overlay cleanup still runs below.
-			} finally {
-				finishOverlay();
+				// The existing tab remains active.
 			}
 		},
-		[finishOverlay, selectTab],
+		[selectTab],
 	);
 
 	const annotationStatusLabel =
@@ -361,7 +391,6 @@ export function BrowserPanelView({
 							? error
 							: "";
 	const agentStatusLabel = agentActivityLabel(agentBrowserActivity, agentBrowserActive);
-
 	return (
 		<div
 			className={cn(
@@ -369,6 +398,7 @@ export function BrowserPanelView({
 				poppedOut && "browser-panel--popped-out",
 				agentStatusLabel && "browser-panel--agent-active",
 			)}
+			data-browser-native-page={navState.url ? "live" : "empty"}
 			data-testid="browser-panel"
 			role="tabpanel"
 		>
@@ -465,6 +495,56 @@ export function BrowserPanelView({
 					</span>
 				) : null}
 				<Button
+					aria-label={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
+					className={cn(devtoolsState.open && "bg-accent-weak text-accent")}
+					disabled={!canUseDevTools}
+					onClick={() => void (devtoolsState.open ? closeDevTools() : handleOpenDevTools())}
+					size="icon-sm"
+					title={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
+					type="button"
+					variant="ghost"
+				>
+					<Bug aria-hidden="true" className="size-icon-base" />
+				</Button>
+				{nativeCompositionEnabled && devtoolsState.open ? (
+					<DropdownMenu
+						modal={false}
+						onOpenChange={setDevtoolsPlacementMenuOpen}
+						open={devtoolsPlacementMenuOpen}
+					>
+						<DropdownMenuTrigger asChild>
+							<Button
+								aria-label={t("browser.devtoolsPlacement")}
+								className="browser-panel__devtools-placement"
+								size="icon-sm"
+								type="button"
+								title={t("browser.devtoolsPlacement")}
+								variant="ghost"
+							>
+								<Dock aria-hidden="true" className="size-icon-base" />
+							</Button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent
+							align="end"
+							className="w-44"
+							data-browser-native-overlay="true"
+							sideOffset={8}
+						>
+							<DropdownMenuLabel>{t("browser.dockDevTools")}</DropdownMenuLabel>
+							{(["right", "bottom", "left", "undocked"] as BrowserDevToolsPlacement[]).map((placement) => (
+								<DropdownMenuItem
+									key={placement}
+									data-testid={`browser-devtools-placement-${placement}`}
+									onSelect={() => handleDevToolsPlacement(placement)}
+								>
+									<span>{devtoolsPlacementLabels[placement]}</span>
+									{placement === devtoolsPlacement ? <Check aria-hidden="true" className="ml-auto" /> : null}
+								</DropdownMenuItem>
+							))}
+						</DropdownMenuContent>
+					</DropdownMenu>
+				) : null}
+				<Button
 					aria-label={poppedOut ? t("browser.returnToPanel") : t("browser.popOut")}
 					onClick={() => onTogglePopOut(!poppedOut)}
 					size="icon-sm"
@@ -535,7 +615,6 @@ export function BrowserPanelView({
 					<BrowserTabsRail
 						activeTabId={activeTabId}
 						onCloseTab={closeTab}
-						onFlyoutOpenChange={handleFlyoutOpenChange}
 						onOpenTab={handleOpenTab}
 						onPinnedChange={handlePinnedChange}
 						onReorderTabs={reorderTabs}
@@ -550,12 +629,7 @@ export function BrowserPanelView({
 					className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden bg-background"
 					data-testid="browser-viewport"
 				>
-					<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
-					{mirrorStream ? (
-						<MirrorVideo stream={mirrorStream} />
-					) : mirrorUrl ? (
-						<img alt="" className="absolute inset-0 h-full w-full object-fill" src={mirrorUrl} />
-					) : null}
+					<div className="browser-panel__slot absolute inset-0 min-h-px min-w-px" ref={slotRef} />
 					{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 					{navState.url === "" ? (
 						<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
@@ -578,7 +652,6 @@ export function BrowserPanelView({
 					<BrowserTabsRail
 						activeTabId={activeTabId}
 						onCloseTab={closeTab}
-						onFlyoutOpenChange={handleFlyoutOpenChange}
 						onOpenTab={handleOpenTab}
 						onPinnedChange={handlePinnedChange}
 						onReorderTabs={reorderTabs}
@@ -638,18 +711,6 @@ function browserActionVerb(action: string): string {
 		}
 	})();
 	return appI18n.t(key);
-}
-
-function MirrorVideo({ stream }: { stream: MediaStream }) {
-	const attach = useCallback(
-		(node: HTMLVideoElement | null) => {
-			if (node && node.srcObject !== stream) {
-				node.srcObject = stream;
-			}
-		},
-		[stream],
-	);
-	return <video autoPlay className="absolute inset-0 h-full w-full object-cover" muted playsInline ref={attach} />;
 }
 
 function StaticPreview({ url }: { url: string }) {

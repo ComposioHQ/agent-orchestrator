@@ -18,6 +18,8 @@ var ctx = context.Background()
 type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
 	prs        map[domain.SessionID][]domain.PullRequest
+	reviews    map[string][]domain.PullRequestReview
+	comments   map[string][]domain.PullRequestComment
 	signatures map[string]string
 
 	listPRsErr        error
@@ -26,7 +28,13 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
+	return &fakeStore{
+		sessions:   map[domain.SessionID]domain.SessionRecord{},
+		prs:        map[domain.SessionID][]domain.PullRequest{},
+		reviews:    map[string][]domain.PullRequestReview{},
+		comments:   map[string][]domain.PullRequestComment{},
+		signatures: map[string]string{},
+	}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
@@ -39,6 +47,14 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 		return nil, f.listPRsErr
 	}
 	return f.prs[id], nil
+}
+
+func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	return append([]domain.PullRequestReview(nil), f.reviews[prURL]...), nil
+}
+
+func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {
+	return append([]domain.PullRequestComment(nil), f.comments[prURL]...), nil
 }
 
 func (f *fakeStore) ListSessions(_ context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {
@@ -54,6 +70,29 @@ func (f *fakeStore) ListSessions(_ context.Context, project domain.ProjectID) ([
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
 	f.sessions[rec.ID] = rec
 	return nil
+}
+
+func (f *fakeStore) CommitSessionControllerEpoch(
+	_ context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+	now time.Time,
+) (bool, error) {
+	rec, ok := f.sessions[id]
+	if !ok || rec.IsTerminated || domain.NormalizeSessionMode(rec.Mode) != source {
+		return false, nil
+	}
+	rec.Mode = target
+	rec.Metadata.RuntimeHandleID = ""
+	rec.Metadata.RuntimeLaunchID = ""
+	rec.Metadata.AgentSessionID = nativeConversationID
+	rec.Metadata.ProviderConversationID = nativeConversationID
+	rec.Metadata.ControllerGeneration = ""
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	rec.UpdatedAt = now
+	f.sessions[id] = rec
+	return true, nil
 }
 
 func (f *fakeStore) GetPRLastNudgeSignature(_ context.Context, prURL string) (string, error) {
@@ -114,7 +153,7 @@ func newManager() (*Manager, *fakeStore, *fakeMessenger) {
 }
 
 func working(id domain.SessionID) domain.SessionRecord {
-	return domain.SessionRecord{ID: id, ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()}}
+	return domain.SessionRecord{ID: id, ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()}, AutoInjectReview: true}
 }
 
 func TestRuntimeObservation_ConfirmedRuntimeDeathTerminates(t *testing.T) {
@@ -492,7 +531,7 @@ func TestActivity_SameStateSignalStillStoresAgentSessionID(t *testing.T) {
 	}
 }
 
-func TestActivity_ReconciledIdleRequiresUnchangedActiveSnapshot(t *testing.T) {
+func TestActivity_TerminalReconciliationRequiresUnchangedSnapshot(t *testing.T) {
 	m, st, _ := newManager()
 	updatedAt := time.Unix(100, 0).UTC()
 	rec := working("mer-1")
@@ -523,6 +562,19 @@ func TestActivity_ReconciledIdleRequiresUnchangedActiveSnapshot(t *testing.T) {
 	}
 	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityIdle {
 		t.Fatalf("current reconciliation left activity %q", got)
+	}
+
+	idleUpdatedAt := st.sessions[rec.ID].UpdatedAt
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid:             true,
+		State:             domain.ActivityActive,
+		Event:             "terminal-active",
+		ExpectedUpdatedAt: idleUpdatedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("current idle snapshot did not reconcile to active: %q", got)
 	}
 }
 
@@ -950,6 +1002,71 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	}
 }
 
+func TestCommitControllerEpochOwnsModeAndActivityFacts(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: time.Unix(10, 0)},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "runtime-1", RuntimeLaunchID: "launch-1",
+			AgentSessionID: "native-1",
+		},
+	}
+
+	changed, err := m.CommitControllerEpoch(
+		ctx, "mer-1", domain.SessionModeTUI, domain.SessionModeChat, "native-1", false,
+	)
+	if err != nil || !changed {
+		t.Fatalf("CommitControllerEpoch: changed=%v err=%v", changed, err)
+	}
+	got := st.sessions["mer-1"]
+	if got.Mode != domain.SessionModeChat || got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("controller facts = mode:%q activity:%q", got.Mode, got.Activity.State)
+	}
+	if got.Metadata.RuntimeHandleID != "" || got.Metadata.RuntimeLaunchID != "" ||
+		got.Metadata.AgentSessionID != "native-1" ||
+		got.Metadata.ProviderConversationID != "native-1" ||
+		got.Metadata.ControllerGeneration != "" {
+		t.Fatalf("controller metadata = %+v", got.Metadata)
+	}
+	changed, err = m.CommitControllerEpoch(
+		ctx, "mer-1", domain.SessionModeTUI, domain.SessionModeChat, "native-1", false,
+	)
+	if err != nil || changed {
+		t.Fatalf("stale controller epoch: changed=%v err=%v", changed, err)
+	}
+}
+
+func TestCommitControllerEpochAllowsExplicitFreshHandoff(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "runtime-1", RuntimeLaunchID: "launch-1",
+			AgentSessionID: "reserved-but-empty",
+		},
+	}
+
+	changed, err := m.CommitControllerEpoch(
+		ctx, "mer-1", domain.SessionModeTUI, domain.SessionModeChat, "", true,
+	)
+	if err != nil || !changed {
+		t.Fatalf("CommitControllerEpoch fresh: changed=%v err=%v", changed, err)
+	}
+	got := st.sessions["mer-1"]
+	if got.Mode != domain.SessionModeChat || got.Metadata.AgentSessionID != "" ||
+		got.Metadata.ProviderConversationID != "" {
+		t.Fatalf("fresh controller facts = %+v", got)
+	}
+
+	if _, err := m.CommitControllerEpoch(
+		ctx, "mer-1", domain.SessionModeChat, domain.SessionModeTUI, "", false,
+	); err == nil {
+		t.Fatal("blank native id without explicit fresh handoff was accepted")
+	}
+}
+
 // TestMarkSpawned_StampsUTCActivity locks the lifecycle clock to UTC so
 // activity-driven timestamps match the session manager's spawn timestamps. A
 // local clock here left `ao session get` showing created in UTC but updated in
@@ -1079,10 +1196,11 @@ func TestFormatCIFailureMessageUsesNonMutatingFence(t *testing.T) {
 func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
-	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{
-		{ID: "1", ThreadID: "T1", Author: "alice", File: "foo.go", Line: 12, Body: "fix this", URL: "https://github.com/o/r/pull/1#discussion_r1"},
-		{ID: "2", Author: "bob", Body: "already handled", Resolved: true},
-	}}
+	st.comments["pr1"] = []domain.PullRequestComment{
+		{ID: "1", ThreadID: "T1", Author: "alice", File: "foo.go", Line: 12, Body: "fix this", URL: "https://github.com/o/r/pull/1#discussion_r1", AutoInjectReview: true},
+		{ID: "2", Author: "bob", Body: "already handled", Resolved: true, AutoInjectReview: true},
+	}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
 	}
@@ -1106,16 +1224,55 @@ func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	}
 }
 
+func TestPRObservation_ReviewFeedbackNotInjectedWhenDisabled(t *testing.T) {
+	m, st, msg := newManager()
+	rec := working("mer-1")
+	st.sessions[rec.ID] = rec
+	st.comments["pr1"] = []domain.PullRequestComment{{ID: "1", Author: "alice", Body: "fix this", AutoInjectReview: false}}
+	st.reviews["pr1"] = []domain.PullRequestReview{{ID: "r1", Author: "alice", State: domain.ReviewChangesRequest, Body: "change this too", AutoInjectReview: false}}
+	o := ports.PRObservation{
+		Fetched: true,
+		URL:     "pr1",
+		CI:      domain.CIFailing,
+		Checks:  []ports.PRCheckObservation{{Name: "build", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Review:  domain.ReviewChangesRequest,
+	}
+	if err := m.ApplyPRObservation(ctx, rec.ID, o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "boom") || strings.Contains(msg.msgs[0], "fix this") {
+		t.Fatalf("messages = %v, want CI only while review feedback is not injected", msg.msgs)
+	}
+}
+
+func TestPRObservation_MixedPersistedCommentDecisions(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.comments["pr1"] = []domain.PullRequestComment{
+		{ID: "1", Author: "alice", Body: "captured while disabled", AutoInjectReview: false},
+		{ID: "2", Author: "alice", Body: "captured while enabled", AutoInjectReview: true},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want only the injectable comment to nudge, got %v", msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[0], "captured while enabled") || strings.Contains(msg.msgs[0], "captured while disabled") {
+		t.Fatalf("nudge did not honor per-comment persisted decisions: %q", msg.msgs[0])
+	}
+}
+
 func TestPRObservation_CIFailingAndReviewBothNudge(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
+	st.comments["pr1"] = []domain.PullRequestComment{{ID: "1", Author: "alice", Body: "fix this", AutoInjectReview: true}}
 	o := ports.PRObservation{
-		Fetched:  true,
-		URL:      "pr1",
-		CI:       domain.CIFailing,
-		Checks:   []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
-		Review:   domain.ReviewChangesRequest,
-		Comments: []ports.PRCommentObservation{{ID: "1", Author: "alice", Body: "fix this"}},
+		Fetched: true,
+		URL:     "pr1",
+		CI:      domain.CIFailing,
+		Checks:  []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Review:  domain.ReviewChangesRequest,
 	}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
@@ -1148,6 +1305,7 @@ func TestPRObservation_CIFailingAndReviewBothNudge(t *testing.T) {
 func TestPRObservation_MergeConflictReadErrorStillSendsCIAndReview(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
+	st.comments["pr1"] = []domain.PullRequestComment{{ID: "1", Author: "alice", Body: "fix this", AutoInjectReview: true}}
 	st.listPRsErr = errors.New("transient store read failure")
 	o := ports.PRObservation{
 		Fetched:      true,
@@ -1155,7 +1313,6 @@ func TestPRObservation_MergeConflictReadErrorStillSendsCIAndReview(t *testing.T)
 		CI:           domain.CIFailing,
 		Checks:       []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
 		Review:       domain.ReviewChangesRequest,
-		Comments:     []ports.PRCommentObservation{{ID: "1", Author: "alice", Body: "fix this"}},
 		Mergeability: domain.MergeConflicting,
 	}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err == nil {
@@ -1216,7 +1373,8 @@ func TestPRObservation_CINudgeSanitizesLogTailControlChars(t *testing.T) {
 func TestPRObservation_ReviewNudgeSanitizesCommentControlChars(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
-	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{{ID: "1", Body: "please\x1b]0;pwned\afix this"}}}
+	st.comments["pr1"] = []domain.PullRequestComment{{ID: "1", Body: "please\x1b]0;pwned\afix this", AutoInjectReview: true}}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
 	}
@@ -1229,6 +1387,35 @@ func TestPRObservation_ReviewNudgeSanitizesCommentControlChars(t *testing.T) {
 	}
 	if !strings.Contains(got, "please") || !strings.Contains(got, "fix this") {
 		t.Fatalf("review nudge dropped visible text: %q", got)
+	}
+}
+
+func TestPRObservation_ChangesRequestedReviewUsesPersistedBodyAndDecision(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.reviews["pr1"] = []domain.PullRequestReview{
+		{ID: "r1", Author: "alice\x1b]0;pwned\a", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", Body: "please\x1b[2Jfix this", AutoInjectReview: true},
+		{ID: "r2", Author: "bob", State: domain.ReviewApproved, Body: "approved", AutoInjectReview: true},
+		{ID: "r3", Author: "carol", State: domain.ReviewChangesRequest, Body: "do not inject", AutoInjectReview: false},
+	}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one persisted review nudge, got %v", msg.msgs)
+	}
+	got := msg.msgs[0]
+	for _, want := range []string{"@alice", "please", "fix this", "https://github.com/o/r/pull/1#pullrequestreview-1", "Review ID: r1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("review nudge missing %q:\n%s", want, got)
+		}
+	}
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\a') {
+		t.Fatalf("review nudge still carries control bytes: %q", got)
+	}
+	if strings.Contains(got, "approved") || strings.Contains(got, "do not inject") {
+		t.Fatalf("review nudge included an ineligible persisted review: %q", got)
 	}
 }
 
@@ -1696,12 +1883,16 @@ func TestApplyReviewBatchNoopsWhenWorkerCannotBeNudged(t *testing.T) {
 		{
 			name:   "worker waiting input",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
-			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityWaitingInput}},
+			rec: func() domain.SessionRecord {
+				r := working("mer-1")
+				r.Activity.State = domain.ActivityWaitingInput
+				return r
+			}(),
 		},
 		{
 			name:   "worker agent exited",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
-			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityExited}},
+			rec:    func() domain.SessionRecord { r := working("mer-1"); r.Activity.State = domain.ActivityExited; return r }(),
 		},
 	}
 	for _, tt := range tests {
@@ -2675,5 +2866,93 @@ func TestRuntimeObservation_WorkloadDeathAloneDoesNotReap(t *testing.T) {
 	}
 	if len(cr.sessions) != 0 {
 		t.Fatalf("expected no reap call for a non-terminal transition, got %v", cr.sessions)
+	}
+}
+
+// mergeMetadata is an explicit allowlist, so a field added to SessionMetadata
+// without a line here is silently dropped on every spawn and restore. That
+// happened to the chat resume handle: the provider still held the conversation,
+// but AO forgot its id, so no restart could ever resume it — and nothing failed
+// loudly, the column was just empty.
+func TestMarkSpawnedPersistsChatControllerFacts(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeChat}
+	m := New(st, nil)
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath:          "/ws",
+		ProviderConversationID: "thread-abc",
+		ControllerGeneration:   "gen-1",
+	}); err != nil {
+		t.Fatalf("MarkSpawned: %v", err)
+	}
+
+	got, _, err := st.GetSession(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got.Metadata.ProviderConversationID != "thread-abc" {
+		t.Fatalf("provider conversation id = %q; without it a restart cannot resume",
+			got.Metadata.ProviderConversationID)
+	}
+	if got.Metadata.ControllerGeneration != "gen-1" {
+		t.Fatalf("controller generation = %q", got.Metadata.ControllerGeneration)
+	}
+
+	// A relaunch rotates the generation: the new value must replace the old, or
+	// events from the superseded controller could not be told apart.
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath:          "/ws",
+		ProviderConversationID: "thread-abc",
+		ControllerGeneration:   "gen-2",
+	}); err != nil {
+		t.Fatalf("second MarkSpawned: %v", err)
+	}
+	got, _, _ = st.GetSession(ctx, "mer-1")
+	if got.Metadata.ControllerGeneration != "gen-2" {
+		t.Fatalf("generation = %q after relaunch, want it rotated to gen-2", got.Metadata.ControllerGeneration)
+	}
+}
+
+func TestActivitySignalRejectsStaleChatControllerGenerationAcrossHandoff(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeChat,
+		Metadata: domain.SessionMetadata{ControllerGeneration: "chat-generation-2"},
+		Activity: domain.Activity{State: domain.ActivityIdle},
+	}
+	m := New(st, nil)
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, ControllerGeneration: "chat-generation-1",
+	}); err != nil {
+		t.Fatalf("stale signal: %v", err)
+	}
+	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("stale generation changed activity to %q", got)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, ControllerGeneration: "chat-generation-2",
+	}); err != nil {
+		t.Fatalf("current signal: %v", err)
+	}
+	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("current generation left activity at %q", got)
+	}
+
+	rec := st.sessions["mer-1"]
+	rec.Mode = domain.SessionModeTUI
+	rec.Activity.State = domain.ActivityIdle
+	st.sessions["mer-1"] = rec
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, ControllerGeneration: "chat-generation-2",
+	}); err != nil {
+		t.Fatalf("post-handoff stale signal: %v", err)
+	}
+	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("old Chat controller changed TUI activity to %q", got)
 	}
 }

@@ -154,9 +154,32 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	rec := l.store.sessions[id]
 	rec.IsTerminated = false
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
+	rec.FirstSignalAt = time.Now()
 	rec.Metadata = metadata
 	l.store.sessions[id] = rec
 	return nil
+}
+
+func (l *fakeLCM) CommitControllerEpoch(
+	_ context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+	_ bool,
+) (bool, error) {
+	rec, ok := l.store.sessions[id]
+	if !ok || rec.IsTerminated || domain.NormalizeSessionMode(rec.Mode) != source {
+		return false, nil
+	}
+	rec.Mode = target
+	rec.Metadata.RuntimeHandleID = ""
+	rec.Metadata.RuntimeLaunchID = ""
+	rec.Metadata.AgentSessionID = nativeConversationID
+	rec.Metadata.ProviderConversationID = nativeConversationID
+	rec.Metadata.ControllerGeneration = ""
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
+	l.store.sessions[id] = rec
+	return true, nil
 }
 func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	if l.terminated == nil {
@@ -709,7 +732,7 @@ func TestSend_WrapsCopilotOrchestratorMessageWithDelegationDirective(t *testing.
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
-	if err := m.Send(ctx, "mer-1", "make the button red"); err != nil {
+	if err := m.Send(ctx, "mer-1", "make the button red", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(msg.msgs) != 1 {
@@ -740,7 +763,7 @@ func TestSend_DoesNotWrapCopilotWorkerMessage(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
-	if err := m.Send(ctx, "mer-2", "make the button red"); err != nil {
+	if err := m.Send(ctx, "mer-2", "make the button red", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := msg.msgs[0]; got != "make the button red" {
@@ -759,11 +782,106 @@ func TestSend_DoesNotWrapNonCopilotOrchestratorMessage(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
-	if err := m.Send(ctx, "mer-1", "make the button red"); err != nil {
+	if err := m.Send(ctx, "mer-1", "make the button red", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := msg.msgs[0]; got != "make the button red" {
 		t.Fatalf("non-copilot orchestrator message = %q, want original", got)
+	}
+}
+
+func TestSend_WritesAttachmentAndAppendsReference(t *testing.T) {
+	dir := t.TempDir()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessClaudeCode,
+		Metadata:  domain.SessionMetadata{WorkspacePath: dir},
+	}
+	msg := &fakeMessenger{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
+
+	attachment := &ports.SpawnAttachment{Ext: ".png", Data: []byte("snapshot-bytes")}
+	if err := m.Send(ctx, "mer-1", "Make the button blue.", attachment); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(msg.msgs) != 1 {
+		t.Fatalf("messages = %d, want 1", len(msg.msgs))
+	}
+	got := msg.msgs[0]
+	if !strings.HasPrefix(got, "Make the button blue.\n\n") {
+		t.Fatalf("delivered message lost the original text: %q", got)
+	}
+	if !strings.Contains(got, "Attached files (read these files in the workspace for context):") {
+		t.Fatalf("delivered message missing attachment reference block: %q", got)
+	}
+
+	// The referenced path in the delivered message must be the file actually
+	// written to disk, not just well-formed text.
+	refLine := ""
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "- .ao/attachments/attachment-") {
+			refLine = strings.TrimPrefix(line, "- ")
+		}
+	}
+	if refLine == "" {
+		t.Fatalf("no attachment reference line found in: %q", got)
+	}
+	writtenBytes, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(refLine)))
+	if err != nil {
+		t.Fatalf("read written attachment: %v", err)
+	}
+	if string(writtenBytes) != "snapshot-bytes" {
+		t.Errorf("written attachment content = %q, want %q", writtenBytes, "snapshot-bytes")
+	}
+
+	if len(ws.calls) == 0 || !strings.Contains(ws.calls[0], "AddExclude") {
+		t.Errorf("workspace calls = %v, want AddExclude", ws.calls)
+	}
+}
+
+func TestSend_WithoutAttachmentSkipsWorkspaceWrite(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	msg := &fakeMessenger{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
+
+	if err := m.Send(ctx, "mer-1", "make the button red", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := msg.msgs[0]; got != "make the button red" {
+		t.Fatalf("message = %q, want unchanged original", got)
+	}
+	if len(ws.calls) != 0 {
+		t.Errorf("workspace calls = %v, want none when no attachment is sent", ws.calls)
+	}
+}
+
+// A session with no WorkspacePath has nowhere safe to write an attachment:
+// StageAttachments' filepath.Join would otherwise produce a relative
+// ".ao/attachments" path, writing beneath the daemon's own working directory
+// instead of the session's worktree and handing the agent a reference it
+// cannot reach. Send must refuse rather than silently mis-deliver.
+func TestSend_RejectsAttachmentWithEmptyWorkspace(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	msg := &fakeMessenger{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
+
+	attachment := &ports.SpawnAttachment{Ext: ".png", Data: []byte("snapshot-bytes")}
+	err := m.Send(ctx, "mer-1", "Make the button blue.", attachment)
+	if err == nil {
+		t.Fatal("want an error for a session with no workspace, got nil")
+	}
+	if len(msg.msgs) != 0 {
+		t.Errorf("messenger calls = %v, want none: the send must not proceed after the attachment write fails", msg.msgs)
 	}
 }
 
@@ -1837,8 +1955,10 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	m, st, rt, ws := newManager()
 	preview := &fakePreviewLifecycle{}
 	browser := &fakeBrowserLifecycle{}
+	reviewer := &fakeReviewerTerminator{}
 	m.preview = preview
 	m.browser = browser
+	m.SetReviewerTerminator(reviewer)
 	dataDir := t.TempDir()
 	m.dataDir = dataDir
 	st.sessions["mer-1"] = mkLive("mer-1")
@@ -1858,7 +1978,36 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	if !reflect.DeepEqual(browser.destroyed, []domain.SessionID{"mer-1"}) {
 		t.Fatalf("browser destroys = %v, want [mer-1]", browser.destroyed)
 	}
+	if !reflect.DeepEqual(reviewer.calls, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("reviewer terminates = %v, want [mer-1]", reviewer.calls)
+	}
+	if len(reviewer.bodies) != 1 || !strings.Contains(reviewer.bodies[0], "termination") {
+		t.Fatalf("reviewer terminate bodies = %v", reviewer.bodies)
+	}
 	requireNoPromptDir(t, dataDir, "mer-1")
+}
+
+func TestKill_ReviewerTeardownFailureLeavesSessionActive(t *testing.T) {
+	m, st, rt, ws := newManager()
+	m.SetReviewerTerminator(&fakeReviewerTerminator{err: errors.New("reviewer still alive")})
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err == nil || !strings.Contains(err.Error(), "reviewer still alive") {
+		t.Fatalf("freed=%v err=%v, want reviewer teardown error", freed, err)
+	}
+	if freed {
+		t.Fatal("workspace must not be reported freed when reviewer teardown fails")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("worker runtime destroy calls = %d, want 1", rt.destroyed)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("workspace destroy calls = %d, want 0 after reviewer failure", ws.destroyed)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must remain active when reviewer teardown fails")
+	}
 }
 
 // TestKill_TerminatesIncompleteHandle: a session whose runtime handle or
@@ -1892,6 +2041,42 @@ func (f *fakeShellTerminalCloser) BeginSessionTeardown(_ context.Context, id dom
 			*f.sharedLog = append(*f.sharedLog, "EndSessionTeardown:"+string(id))
 		}
 	}, nil
+}
+
+type fakeReviewerTerminator struct {
+	calls         []domain.SessionID
+	bodies        []string
+	teardownCalls []domain.SessionID
+	restoreCalls  []domain.SessionID
+	err           error
+	teardownErr   error
+	restoreErr    error
+	sharedLog     *[]string
+}
+
+func (f *fakeReviewerTerminator) TerminateReviewer(_ context.Context, id domain.SessionID, body string) error {
+	f.calls = append(f.calls, id)
+	f.bodies = append(f.bodies, body)
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "TerminateReviewer:"+string(id))
+	}
+	return f.err
+}
+
+func (f *fakeReviewerTerminator) TeardownReviewerTerminal(_ context.Context, id domain.SessionID) error {
+	f.teardownCalls = append(f.teardownCalls, id)
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "TeardownReviewerTerminal:"+string(id))
+	}
+	return f.teardownErr
+}
+
+func (f *fakeReviewerTerminator) RestoreReviewer(_ context.Context, id domain.SessionID) error {
+	f.restoreCalls = append(f.restoreCalls, id)
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "RestoreReviewer:"+string(id))
+	}
+	return f.restoreErr
 }
 
 // TestKill_ClosesScopedShellTerminalsBeforeWorkspaceTeardown is the regression
@@ -2177,6 +2362,58 @@ func TestRestore_ReopensTerminal(t *testing.T) {
 	}
 	if rt.created != 1 {
 		t.Fatal("restore should relaunch")
+	}
+}
+
+func TestRestore_RestoresReviewerWithoutTerminating(t *testing.T) {
+	m, st, rt, _ := newManager()
+	reviewer := &fakeReviewerTerminator{err: errors.New("reviewer still alive")}
+	m.SetReviewerTerminator(reviewer)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+	rec := st.sessions["mer-1"]
+	rec.Kind = domain.KindWorker
+	rec.Harness = domain.HarnessClaudeCode
+	st.sessions["mer-1"] = rec
+
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime created = %d, want 1", rt.created)
+	}
+	if len(reviewer.calls) != 0 {
+		t.Fatalf("reviewer terminates = %v, want none", reviewer.calls)
+	}
+	if !reflect.DeepEqual(reviewer.restoreCalls, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("reviewer restores = %v, want [mer-1]", reviewer.restoreCalls)
+	}
+}
+
+func TestRestore_ReviewerRestoreFailureLeavesWorkerRestored(t *testing.T) {
+	m, st, rt, _ := newManager()
+	reviewer := &fakeReviewerTerminator{restoreErr: errors.New("reviewer unavailable")}
+	m.SetReviewerTerminator(reviewer)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+	rec := st.sessions["mer-1"]
+	rec.Kind = domain.KindWorker
+	rec.Harness = domain.HarnessClaudeCode
+	st.sessions["mer-1"] = rec
+
+	res, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+	if res.Session.ID != "mer-1" || res.Session.IsTerminated {
+		t.Fatalf("restore result session = %+v, want active mer-1", res.Session)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime created = %d, want 1", rt.created)
+	}
+	if !reflect.DeepEqual(reviewer.restoreCalls, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("reviewer restores = %v, want [mer-1]", reviewer.restoreCalls)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("worker session must remain restored when reviewer restore fails")
 	}
 }
 
@@ -2576,6 +2813,9 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	// under a namespace that can also hold sibling PR branches.
 	if got := st.sessions[s.ID].Metadata.Branch; got != "ao/mer-1/root" {
 		t.Fatalf("default branch = %q, want ao/mer-1/root", got)
+	}
+	if !st.sessions[s.ID].AutoInjectReview {
+		t.Fatal("automatic review injection must default to enabled")
 	}
 }
 
@@ -4491,6 +4731,87 @@ func TestSaveAndTeardownAll_ClosesScopedShellTerminalsBeforeForceDestroy(t *test
 	}
 }
 
+func TestSaveAndTeardownAll_TeardownsReviewerTerminalWithoutTerminate(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	reviewer := &fakeReviewerTerminator{sharedLog: &sharedLog}
+	m.SetReviewerTerminator(reviewer)
+	ws.stashRef = "refs/ao/preserved/mer-1"
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", RuntimeHandleID: "h1"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+	if len(reviewer.calls) != 0 {
+		t.Fatalf("reviewer terminates = %v, want none for shutdown save/teardown", reviewer.calls)
+	}
+	if len(reviewer.teardownCalls) != 1 || reviewer.teardownCalls[0] != "mer-1" {
+		t.Fatalf("reviewer teardowns = %v, want [mer-1]", reviewer.teardownCalls)
+	}
+	teardownIdx, forceIdx := -1, -1
+	for i, c := range sharedLog {
+		switch c {
+		case "TeardownReviewerTerminal:mer-1":
+			teardownIdx = i
+		case "ForceDestroy:mer-1":
+			forceIdx = i
+		}
+	}
+	if teardownIdx == -1 || forceIdx == -1 {
+		t.Fatalf("call log missing expected entries: %v", sharedLog)
+	}
+	if teardownIdx >= forceIdx {
+		t.Fatalf("call order = %v, want reviewer teardown before force destroy", sharedLog)
+	}
+}
+
+func TestSaveAndTeardownAllThenRestoreAll_TeardownsAndRestoresReviewerTerminal(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	reviewer := &fakeReviewerTerminator{}
+	m.SetReviewerTerminator(reviewer)
+	ws.stashRef = "refs/ao/preserved/mer-1"
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:   "/ws/mer-1",
+			Branch:          "ao/mer-1/root",
+			RuntimeHandleID: "h1",
+			AgentSessionID:  "agent-w",
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+	if len(reviewer.teardownCalls) != 1 || reviewer.teardownCalls[0] != "mer-1" {
+		t.Fatalf("reviewer teardowns = %v, want [mer-1]", reviewer.teardownCalls)
+	}
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("RestoreAll runtime creates = %d, want 1", rt.created)
+	}
+	if len(reviewer.restoreCalls) != 1 || reviewer.restoreCalls[0] != "mer-1" {
+		t.Fatalf("reviewer restores = %v, want [mer-1]", reviewer.restoreCalls)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be live after RestoreAll")
+	}
+}
+
 func TestSaveAndTeardownAll_SkipsScratchSessions(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
 	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents()}
@@ -6006,7 +6327,7 @@ func TestReconcileReap_TerminatedAndDeadTmuxLeftAlone(t *testing.T) {
 
 // signalingAgent is a fakeAgent that advertises BOTH a prompt-submit and a
 // blocked activity signal, so Manager.Send runs confirmActive for its harness
-// (see ports.ActivitySignaler).
+// (see ports.SubmitActivitySignaler and ports.BlockedActivitySignaler).
 type signalingAgent struct{ fakeAgent }
 
 func (signalingAgent) EmitsSubmitActivity() bool  { return true }
@@ -6046,7 +6367,7 @@ func newSendTestManager(t *testing.T, agent ports.Agent, messenger ports.AgentMe
 }
 
 func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
-	// A harness whose adapter does NOT implement ActivitySignaler (plain
+	// A harness whose adapter does NOT implement the activity-signal interfaces (plain
 	// fakeAgent) must skip confirmActive entirely: one Send, no nudges, and the
 	// call returns immediately without polling.
 	st := newFakeStore()
@@ -6055,7 +6376,7 @@ func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 	m := newSendTestManager(t, fakeAgent{}, msg, st)
 
 	start := time.Now()
-	if err := m.Send(context.Background(), "s1", "hello"); err != nil {
+	if err := m.Send(context.Background(), "s1", "hello", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
@@ -6079,7 +6400,7 @@ func TestSend_ConfirmsAndNudgesUntilActive(t *testing.T) {
 	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "do the thing"); err != nil {
+	if err := m.Send(context.Background(), "s1", "do the thing", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 2 {
@@ -6107,7 +6428,7 @@ func TestSend_ConfirmBudgetCapsRetries(t *testing.T) {
 	var logBuf bytes.Buffer
 	m.logger = slog.New(slog.NewTextHandler(&logBuf, nil))
 
-	if err := m.Send(context.Background(), "s1", "stuck prompt"); err != nil {
+	if err := m.Send(context.Background(), "s1", "stuck prompt", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) > m.sendConfirm.maxAttempts {
@@ -6136,7 +6457,7 @@ func TestSend_BlockedSessionRejectsDelivery(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	err := m.Send(context.Background(), "s1", "status update please")
+	err := m.Send(context.Background(), "s1", "status update please", nil)
 	if !errors.Is(err, ErrAwaitingDecision) {
 		t.Fatalf("Send error = %v, want ErrAwaitingDecision", err)
 	}
@@ -6152,7 +6473,7 @@ func TestSend_ExitedAgentRejectsDelivery(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	err := m.Send(context.Background(), "s1", "status update please")
+	err := m.Send(context.Background(), "s1", "status update please", nil)
 	if !errors.Is(err, ErrAgentExited) {
 		t.Fatalf("Send error = %v, want ErrAgentExited", err)
 	}
@@ -6171,7 +6492,7 @@ func TestSend_NoNudgeWhenBlockedAppearsMidWait(t *testing.T) {
 	msg := &blockOnSendMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "run the migration"); err != nil {
+	if err := m.Send(context.Background(), "s1", "run the migration", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
@@ -6189,7 +6510,7 @@ func TestSend_StillNudgesWhenWaitingInput(t *testing.T) {
 	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "do the thing"); err != nil {
+	if err := m.Send(context.Background(), "s1", "do the thing", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 2 {
@@ -6241,7 +6562,7 @@ func TestSend_NoNudgeWhenBlockedAppearsBeforeNudge(t *testing.T) {
 	})
 	m.sendConfirm = sendConfirmConfig{pollInterval: time.Millisecond, attemptDeadline: 0, maxAttempts: 3}
 
-	if err := m.Send(context.Background(), "s1", "run the migration"); err != nil {
+	if err := m.Send(context.Background(), "s1", "run the migration", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
@@ -6262,7 +6583,7 @@ func TestSend_SkipsConfirmForSubmitOnlyHarness(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, submitOnlyAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "do the thing"); err != nil {
+	if err := m.Send(context.Background(), "s1", "do the thing", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {

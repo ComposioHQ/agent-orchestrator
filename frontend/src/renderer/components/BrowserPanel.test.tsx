@@ -28,8 +28,12 @@ const hookState = vi.hoisted(() => ({
 	stop: vi.fn(),
 	selectTab: vi.fn(),
 	closeTab: vi.fn(),
-	prepareForOverlay: vi.fn(async () => undefined),
-	finishOverlay: vi.fn(),
+	openTab: vi.fn(),
+	reorderTabs: vi.fn(),
+	openDevTools: vi.fn(),
+	closeDevTools: vi.fn(),
+	setDevToolsPlacement: vi.fn(),
+	devtoolsState: { viewId: "42:sess-1", open: false, activeTabId: "t1", placement: "undocked" },
 	setAnnotationMode: vi.fn(),
 	tabs: [{ id: "t1", url: "", title: "", active: true }],
 	activeTabId: "t1",
@@ -62,12 +66,16 @@ vi.mock("../hooks/useBrowserView", () => ({
 			tabs: hookState.tabs,
 			activeTabId: hookState.activeTabId,
 			tabNotice: hookState.tabNotice,
-			agentBrowserActive: hookState.agentBrowserActive,
-			agentBrowserActivity: hookState.agentBrowserActivity,
 			selectTab: hookState.selectTab,
 			closeTab: hookState.closeTab,
-			prepareForOverlay: hookState.prepareForOverlay,
-			finishOverlay: hookState.finishOverlay,
+			openTab: hookState.openTab,
+			reorderTabs: hookState.reorderTabs,
+			agentBrowserActive: hookState.agentBrowserActive,
+			agentBrowserActivity: hookState.agentBrowserActivity,
+			devtoolsState: hookState.devtoolsState,
+			openDevTools: hookState.openDevTools,
+			closeDevTools: hookState.closeDevTools,
+			setDevToolsPlacement: hookState.setDevToolsPlacement,
 			annotationMode: false,
 			setAnnotationMode: hookState.setAnnotationMode,
 		};
@@ -102,8 +110,7 @@ function annotationPayload(instruction: string): ElementAnnotationPayload {
 				tag: "button",
 				classes: [],
 				selector: "button",
-				rect: { x: 0, y: 0, width: 80, height: 30 },
-				nearbyText: [],
+				size: { width: 80, height: 30 },
 				computedStyle: {},
 			},
 		},
@@ -146,6 +153,7 @@ describe("BrowserPanel", () => {
 	const annotationCancelListeners = new Set<(payload: BrowserAnnotationCancelPayload) => void>();
 
 	beforeEach(() => {
+		window.localStorage.clear();
 		hookState.navigate.mockReset();
 		hookState.goBack.mockReset();
 		hookState.goForward.mockReset();
@@ -153,8 +161,11 @@ describe("BrowserPanel", () => {
 		hookState.stop.mockReset();
 		hookState.selectTab.mockReset();
 		hookState.closeTab.mockReset();
-		hookState.prepareForOverlay.mockReset();
-		hookState.finishOverlay.mockReset();
+		hookState.openDevTools.mockReset();
+		hookState.closeDevTools.mockReset();
+		hookState.setDevToolsPlacement.mockReset();
+		window.ao!.browser.nativeCompositionEnabled = false;
+		hookState.devtoolsState = { viewId: "42:sess-1", open: false, activeTabId: "t1", placement: "undocked" };
 		hookState.setAnnotationMode.mockReset();
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
 		postMock.mockReset();
@@ -177,8 +188,6 @@ describe("BrowserPanel", () => {
 		hookState.tabs = [{ id: "t1", url: "", title: "", active: true }];
 		hookState.activeTabId = "t1";
 		hookState.tabNotice = "";
-		hookState.agentBrowserActive = false;
-		hookState.agentBrowserActivity = null;
 		hookState.navState = {
 			viewId: "42:sess-1",
 			url: "",
@@ -266,7 +275,80 @@ describe("BrowserPanel", () => {
 		await userEvent.click(screen.getByRole("button", { name: "First app" }));
 
 		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t1"));
-		expect(hookState.finishOverlay).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not render a tab-specific agent marker", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+		];
+		hookState.activeTabId = "t2";
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+
+		expect(screen.queryByText("Agent", { exact: true })).not.toBeInTheDocument();
+	});
+
+	it("opens DevTools from a direct toolbar control", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Open DevTools" }));
+		expect(hookState.openDevTools).toHaveBeenCalledOnce();
+
+		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1", placement: "undocked" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		await userEvent.click(screen.getByRole("button", { name: "Close DevTools" }));
+		expect(hookState.closeDevTools).toHaveBeenCalledOnce();
+	});
+
+	it("offers AO-owned placement controls for the native DevTools surface", async () => {
+		window.ao!.browser.nativeCompositionEnabled = true;
+		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1", placement: "right" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "DevTools placement" }));
+		await userEvent.click(await screen.findByTestId("browser-devtools-placement-bottom"));
+
+		expect(hookState.setDevToolsPlacement).toHaveBeenCalledWith("bottom");
+	});
+
+	it("restores the saved native placement before opening DevTools", async () => {
+		window.ao!.browser.nativeCompositionEnabled = true;
+		window.localStorage.setItem("ao.browser.devtoolsPlacement", "left");
+		const calls: string[] = [];
+		hookState.setDevToolsPlacement.mockImplementation(async () => {
+			calls.push("placement");
+		});
+		hookState.openDevTools.mockImplementation(async () => {
+			calls.push("open");
+		});
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Open DevTools" }));
+
+		expect(hookState.setDevToolsPlacement).toHaveBeenCalledWith("left");
+		expect(calls).toEqual(["placement", "open"]);
+	});
+
+	it("marks blank native panels as opaque and loaded panels as live", () => {
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+		expect(screen.getByTestId("browser-panel")).toHaveAttribute("data-browser-native-page", "empty");
+
+		hookState.navState = { ...hookState.navState, url: "http://localhost:3000/" };
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getByTestId("browser-panel")).toHaveAttribute("data-browser-native-page", "live");
 	});
 
 	it("releases the tabs overlay when tab selection fails", async () => {
@@ -289,10 +371,10 @@ describe("BrowserPanel", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Second app" }));
 
-		await waitFor(() => expect(hookState.finishOverlay).toHaveBeenCalled());
+		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t2"));
 	});
 
-	it("warms the mirror frame and opens the flyout on hover, before the box actually appears", () => {
+	it("opens the flyout on hover, after the hover-intent delay", () => {
 		hookState.tabs = [
 			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
@@ -304,9 +386,6 @@ describe("BrowserPanel", () => {
 		vi.useFakeTimers();
 		try {
 			fireEvent.pointerEnter(rail);
-			// The frame warms immediately on hover, ahead of the box itself, so
-			// the parked native view has something to show the instant it opens.
-			expect(hookState.prepareForOverlay).toHaveBeenCalled();
 			expect(flyout).toHaveAttribute("data-state", "closed");
 
 			act(() => {
@@ -395,52 +474,14 @@ describe("BrowserPanel", () => {
 		expect(hookState.setAnnotationMode).toHaveBeenCalledWith(true);
 	});
 
-	it("shows browser activity only for browser commands, not general worker activity", () => {
+	it("does not render a global browser activity status", () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		const first = render(
-			<BrowserPanel
-				active
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={{
-					...session,
-					status: "idle",
-					activity: { state: "active", lastActivityAt: "2026-06-15T00:00:00Z" },
-				}}
-			/>,
-		);
-
-		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
-		expect(screen.queryByText("Agent using browser")).not.toBeInTheDocument();
-
-		first.unmount();
-		hookState.agentBrowserActive = true;
-		render(
-			<BrowserPanel
-				active
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={{
-					...session,
-					status: "working",
-					activity: { state: "idle", lastActivityAt: "2026-06-15T00:00:00Z" },
-				}}
-			/>,
-		);
-
-		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
-		expect(screen.getByText("Agent using browser")).toBeInTheDocument();
-	});
-
-	it("shows the concrete browser action while the agent controls the page", () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.agentBrowserActive = true;
-		hookState.agentBrowserActivity = { active: true, action: "click", phase: "started" };
 
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		expect(screen.getByText("Agent clicking")).toBeInTheDocument();
+		expect(screen.queryByText("Agent clicking")).not.toBeInTheDocument();
 		expect(screen.queryByText("Agent using browser")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("browser-agent-status")).not.toBeInTheDocument();
 	});
 
 	it("renders the premium browser shell hooks in the default view", () => {
@@ -458,7 +499,6 @@ describe("BrowserPanel", () => {
 		expect(icon).not.toHaveClass("top-1/2");
 		expect(icon).not.toHaveClass("-translate-y-1/2");
 	});
-
 	it("disables annotation mode when no page is loaded", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
@@ -490,9 +530,8 @@ describe("BrowserPanel", () => {
 							id: "save",
 							classes: ["primary"],
 							selector: "button#save",
-							rect: { x: 16, y: 24, width: 140, height: 36 },
+							size: { width: 140, height: 36 },
 							visibleText: "Save changes",
-							nearbyText: ["Profile settings"],
 							computedStyle: {},
 						},
 					},
@@ -510,6 +549,41 @@ describe("BrowserPanel", () => {
 		const body = postMock.mock.calls[0][1].body as { message: string };
 		expect(body.message).toContain("button#save");
 		expect(body.message.length).toBeLessThanOrEqual(4096);
+	});
+
+	it("forwards the captured snapshot as the /send body's attachment field", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={{ ...session, status: "idle" }} />,
+		);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) =>
+				listener({
+					...annotationPayload("Make this button blue."),
+					snapshot: { mimeType: "image/png", data: "cG5nLWJ5dGVz" },
+				}),
+			);
+		});
+
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		const body = postMock.mock.calls[0][1].body as { attachment?: { mimeType: string; data: string } };
+		expect(body.attachment).toEqual({ mimeType: "image/png", data: "cG5nLWJ5dGVz" });
+	});
+
+	it("omits the attachment field when the payload has no snapshot", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={{ ...session, status: "idle" }} />,
+		);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) => listener(annotationPayload("Make this button blue.")));
+		});
+
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		const body = postMock.mock.calls[0][1].body as { attachment?: unknown };
+		expect(body.attachment).toBeUndefined();
 	});
 
 	it("sends a follow-up annotation without waiting for an activity-state cycle", async () => {
@@ -576,7 +650,7 @@ describe("BrowserPanel", () => {
 		expect(postMock).toHaveBeenCalledTimes(3);
 		expect(
 			postMock.mock.calls.map(
-				(call) => (call[1].body as { message: string }).message.match(/Change request:\n(.+)/)?.[1],
+				(call) => (call[1].body as { message: string }).message.match(/Request: (.+)/)?.[1],
 			),
 		).toEqual(instructions);
 	});
@@ -640,8 +714,7 @@ describe("BrowserPanel", () => {
 					tag: "button",
 					classes: [],
 					selector: "button",
-					rect: { x: 0, y: 0, width: 80, height: 30 },
-					nearbyText: [],
+					size: { width: 80, height: 30 },
 					computedStyle: {},
 				},
 			},
@@ -699,8 +772,7 @@ describe("BrowserPanel", () => {
 							tag: "section",
 							classes: [],
 							selector: "section",
-							rect: { x: 0, y: 0, width: 320, height: 180 },
-							nearbyText: [],
+							size: { width: 320, height: 180 },
 							computedStyle: {},
 						},
 					},
@@ -762,8 +834,7 @@ describe("BrowserPanel", () => {
 							tag: "button",
 							classes: [],
 							selector: "button",
-							rect: { x: 0, y: 0, width: 80, height: 30 },
-							nearbyText: [],
+							size: { width: 80, height: 30 },
 							computedStyle: {},
 						},
 					},
