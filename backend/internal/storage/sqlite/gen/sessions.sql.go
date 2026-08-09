@@ -88,8 +88,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
 reviewer_harness, is_pinned, pinned_at,
-    session_mode, provider_conversation_id, controller_generation,
-    browser_capability_verifier, auto_inject_review, model
+    session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
+    auto_inject_review, latest_user_prompt, latest_assistant_update, native_transcript_path, model
 FROM sessions WHERE id = ?
 `
 
@@ -131,6 +131,9 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.ControllerGeneration,
 		&i.BrowserCapabilityVerifier,
 		&i.AutoInjectReview,
+		&i.LatestUserPrompt,
+		&i.LatestAssistantUpdate,
+		&i.NativeTranscriptPath,
 		&i.Model,
 	)
 	return i, err
@@ -142,6 +145,7 @@ INSERT INTO sessions (
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
+    latest_user_prompt, latest_assistant_update, native_transcript_path,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation, browser_capability_verifier,
     session_mode, provider_conversation_id, controller_generation,
     model, created_at, updated_at, is_pinned, pinned_at, auto_inject_review
@@ -149,7 +153,7 @@ INSERT INTO sessions (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?
 )
 `
 
@@ -175,6 +179,9 @@ type InsertSessionParams struct {
 	RuntimeLaunchID           string
 	AgentSessionID            string
 	Prompt                    string
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
 	PreviewURL                string
 	PreviewRevision           int64
 	TerminateOnPRMerge        bool
@@ -214,6 +221,9 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.RuntimeLaunchID,
 		arg.AgentSessionID,
 		arg.Prompt,
+		arg.LatestUserPrompt,
+		arg.LatestAssistantUpdate,
+		arg.NativeTranscriptPath,
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
@@ -240,8 +250,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
 reviewer_harness, is_pinned, pinned_at,
-    session_mode, provider_conversation_id, controller_generation,
-    browser_capability_verifier, auto_inject_review, model
+    session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
+    auto_inject_review, latest_user_prompt, latest_assistant_update, native_transcript_path, model
 FROM sessions ORDER BY project_id, num
 `
 
@@ -289,6 +299,9 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.ControllerGeneration,
 			&i.BrowserCapabilityVerifier,
 			&i.AutoInjectReview,
+			&i.LatestUserPrompt,
+			&i.LatestAssistantUpdate,
+			&i.NativeTranscriptPath,
 			&i.Model,
 		); err != nil {
 			return nil, err
@@ -312,8 +325,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
 reviewer_harness, is_pinned, pinned_at,
-    session_mode, provider_conversation_id, controller_generation,
-    browser_capability_verifier, auto_inject_review, model
+    session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
+    auto_inject_review, latest_user_prompt, latest_assistant_update, native_transcript_path, model
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -361,6 +374,9 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.ControllerGeneration,
 			&i.BrowserCapabilityVerifier,
 			&i.AutoInjectReview,
+			&i.LatestUserPrompt,
+			&i.LatestAssistantUpdate,
+			&i.NativeTranscriptPath,
 			&i.Model,
 		); err != nil {
 			return nil, err
@@ -385,6 +401,29 @@ func (q *Queries) NextSessionNum(ctx context.Context, projectID domain.ProjectID
 	var next int64
 	err := row.Scan(&next)
 	return next, err
+}
+
+const recordSessionLatestUserPrompt = `-- name: RecordSessionLatestUserPrompt :execrows
+UPDATE sessions SET
+    latest_user_prompt = ?1,
+    updated_at = ?2
+WHERE id = ?3
+  AND is_terminated = 0
+  AND updated_at <= ?2
+`
+
+type RecordSessionLatestUserPromptParams struct {
+	LatestUserPrompt string
+	UpdatedAt        time.Time
+	ID               domain.SessionID
+}
+
+func (q *Queries) RecordSessionLatestUserPrompt(ctx context.Context, arg RecordSessionLatestUserPromptParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordSessionLatestUserPrompt, arg.LatestUserPrompt, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const renameSession = `-- name: RenameSession :execrows
@@ -414,6 +453,9 @@ SELECT EXISTS(
       AND runtime_handle_id = ''
       AND agent_session_id = ''
       AND prompt = ''
+      AND latest_user_prompt = ''
+      AND latest_assistant_update = ''
+      AND native_transcript_path = ''
 ) AS is_seed
 `
 
@@ -534,6 +576,7 @@ UPDATE sessions SET
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
+    latest_user_prompt = ?, latest_assistant_update = ?, native_transcript_path = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
     cleanup_generation = ?, browser_capability_verifier = ?,
     provider_conversation_id = ?, controller_generation = ?, model = ?, updated_at = ?,
@@ -560,6 +603,9 @@ type UpdateSessionParams struct {
 	RuntimeLaunchID           string
 	AgentSessionID            string
 	Prompt                    string
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
 	PreviewURL                string
 	PreviewRevision           int64
 	TerminateOnPRMerge        bool
@@ -595,6 +641,9 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.RuntimeLaunchID,
 		arg.AgentSessionID,
 		arg.Prompt,
+		arg.LatestUserPrompt,
+		arg.LatestAssistantUpdate,
+		arg.NativeTranscriptPath,
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,

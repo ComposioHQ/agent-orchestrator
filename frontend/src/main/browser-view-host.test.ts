@@ -30,6 +30,13 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		mainFrame: { frameToken: "preview-frame" },
 		canGoBack: () => false,
 		canGoForward: () => false,
+		capturePage: vi.fn(async () => ({
+			isEmpty: () => false,
+			toJPEG: () => Buffer.from("snapshot"),
+			toPNG: () => Buffer.from("png-snapshot"),
+			getSize: () => ({ width: 640, height: 480 }),
+			resize: vi.fn(() => ({ toPNG: () => Buffer.from("resized-png") })),
+		})),
 		debugger: {
 			attach: vi.fn(() => {
 				debuggerAttached = true;
@@ -140,6 +147,12 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	const rendererFrame = { processId: 5, routingId: 7 };
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: 1 }, senderFrame: rendererFrame }, ...args) as Promise<BrowserNavState>;
+	// browser:annotation:submit is a handle() (invoke/await), not an on() —
+	// unlike invoke() above it must impersonate the browser tab's own
+	// webContents (senderId), not the shell window's, so forwardAnnotationSubmit
+	// can resolve it via tabsByWebContentsId.
+	const invokeFromTab = (channel: string, senderId: number, ...args: unknown[]) =>
+		handlers.get(channel)!({ sender: { id: senderId } }, ...args);
 	const emit = (channel: string, zoomFactor: number, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => zoomFactor } }, ...args);
 	const send = (channel: string, senderId: number, ...args: unknown[]) =>
@@ -172,6 +185,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		emitBeforeInput,
 		host,
 		invoke,
+		invokeFromTab,
 		mainContentView,
 		rendererFrame,
 		send,
@@ -1094,10 +1108,10 @@ describe("browser annotation IPC", () => {
 	});
 
 	it("forwards a single-element preview annotation submission to the renderer-owned view", async () => {
-		const { invoke, send, sent } = setupHost();
+		const { invoke, invokeFromTab, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		send("browser:annotation:submit", 99, {
+		await invokeFromTab("browser:annotation:submit", 99, {
 			instruction: "Make this button blue.",
 			selection: {
 				kind: "element",
@@ -1106,8 +1120,7 @@ describe("browser annotation IPC", () => {
 					tag: "button",
 					classes: [],
 					selector: "button",
-					rect: { x: 0, y: 0, width: 80, height: 30 },
-					nearbyText: [],
+					size: { width: 80, height: 30 },
 					computedStyle: {},
 				},
 			},
@@ -1122,15 +1135,82 @@ describe("browser annotation IPC", () => {
 					kind: "element",
 					context: expect.objectContaining({ selector: "button" }),
 				}),
+				snapshot: {
+					mimeType: "image/png",
+					data: Buffer.from("png-snapshot").toString("base64"),
+				},
 			}),
 		});
 	});
 
+	it("resizes a captured snapshot that exceeds the longest-edge cap", async () => {
+		const { invoke, invokeFromTab, sent, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		const resize = vi.fn(() => ({ toPNG: () => Buffer.from("resized-png") }));
+		webContents.capturePage.mockResolvedValueOnce({
+			isEmpty: () => false,
+			toJPEG: () => Buffer.from("snapshot"),
+			toPNG: () => Buffer.from("full-size-png"),
+			getSize: () => ({ width: 2000, height: 1000 }),
+			resize,
+		});
+
+		await invokeFromTab("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/",
+					tag: "button",
+					classes: [],
+					selector: "button",
+					size: { width: 80, height: 30 },
+					computedStyle: {},
+				},
+			},
+		});
+
+		expect(resize).toHaveBeenCalledWith({ width: 1568 });
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:submitted",
+			payload: expect.objectContaining({
+				snapshot: { mimeType: "image/png", data: Buffer.from("resized-png").toString("base64") },
+			}),
+		});
+	});
+
+	it("forwards without a snapshot when capture exceeds the timeout budget", async () => {
+		const { invoke, invokeFromTab, sent, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		// Never resolves: forces the capture-vs-timeout race to resolve via the
+		// timeout branch, proving a hung capturePage() cannot block the send.
+		webContents.capturePage.mockReturnValueOnce(new Promise(() => undefined));
+
+		await invokeFromTab("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/",
+					tag: "button",
+					classes: [],
+					selector: "button",
+					size: { width: 80, height: 30 },
+					computedStyle: {},
+				},
+			},
+		});
+
+		const forwarded = sent.find((entry) => entry.channel === "browser:annotation:submitted");
+		expect(forwarded).toBeDefined();
+		expect((forwarded?.payload as { snapshot?: unknown }).snapshot).toBeUndefined();
+	});
+
 	it("forwards a multi-element preview annotation submission to the renderer-owned view", async () => {
-		const { invoke, send, sent } = setupHost();
+		const { invoke, invokeFromTab, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		send("browser:annotation:submit", 99, {
+		await invokeFromTab("browser:annotation:submit", 99, {
 			instruction: "Align these two.",
 			selection: {
 				kind: "elements",
@@ -1140,8 +1220,7 @@ describe("browser annotation IPC", () => {
 						tag: "button",
 						classes: [],
 						selector: "button#a",
-						rect: { x: 0, y: 0, width: 80, height: 30 },
-						nearbyText: [],
+						size: { width: 80, height: 30 },
 						computedStyle: {},
 					},
 					{
@@ -1149,8 +1228,7 @@ describe("browser annotation IPC", () => {
 						tag: "button",
 						classes: [],
 						selector: "button#b",
-						rect: { x: 100, y: 0, width: 80, height: 30 },
-						nearbyText: [],
+						size: { width: 80, height: 30 },
 						computedStyle: {},
 					},
 				],
@@ -1174,10 +1252,10 @@ describe("browser annotation IPC", () => {
 	});
 
 	it("ignores a malformed annotation selection instead of forwarding it", async () => {
-		const { invoke, send, sent } = setupHost();
+		const { invoke, invokeFromTab, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		send("browser:annotation:submit", 99, {
+		await invokeFromTab("browser:annotation:submit", 99, {
 			instruction: "Make this button blue.",
 			selection: { kind: "elements", contexts: [] },
 		});
@@ -1186,10 +1264,10 @@ describe("browser annotation IPC", () => {
 	});
 
 	it("ignores a single-element selection whose context is missing required fields", async () => {
-		const { invoke, send, sent } = setupHost();
+		const { invoke, invokeFromTab, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		send("browser:annotation:submit", 99, {
+		await invokeFromTab("browser:annotation:submit", 99, {
 			instruction: "Make this button blue.",
 			selection: {
 				kind: "element",
@@ -1201,10 +1279,10 @@ describe("browser annotation IPC", () => {
 	});
 
 	it("ignores a multi-element selection containing a malformed context entry", async () => {
-		const { invoke, send, sent } = setupHost();
+		const { invoke, invokeFromTab, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		send("browser:annotation:submit", 99, {
+		await invokeFromTab("browser:annotation:submit", 99, {
 			instruction: "Align these two.",
 			selection: {
 				kind: "elements",
@@ -1214,8 +1292,7 @@ describe("browser annotation IPC", () => {
 						tag: "button",
 						classes: [],
 						selector: "button",
-						rect: { x: 0, y: 0, width: 1, height: 1 },
-						nearbyText: [],
+						size: { width: 1, height: 1 },
 						computedStyle: {},
 					},
 					null,

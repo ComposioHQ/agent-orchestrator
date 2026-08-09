@@ -624,7 +624,9 @@ type fakeSessionLifecycle struct {
 	restoreErr       error
 }
 
-func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string) error { return nil }
+func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string, *ports.SpawnAttachment) error {
+	return nil
+}
 
 func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
 	return false, nil
@@ -642,7 +644,11 @@ func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
 
 func (f *fakeSessionLifecycle) SetShellTerminalCloser(sessionmanager.ShellTerminalCloser) {}
 func (f *fakeSessionLifecycle) SetTerminalInputGate(sessionmanager.TerminalInputGate)     {}
+func (f *fakeSessionLifecycle) AcquireSessionInput(domain.SessionID) (func(), bool) {
+	return func() {}, true
+}
 
+func (f *fakeSessionLifecycle) SessionMutationInProgress(domain.SessionID) bool         { return false }
 func (f *fakeSessionLifecycle) SetReviewerTerminator(sessionmanager.ReviewerTerminator) {}
 
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the

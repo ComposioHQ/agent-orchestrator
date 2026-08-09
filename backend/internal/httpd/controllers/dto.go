@@ -109,6 +109,11 @@ type SessionIDParam struct {
 	SessionID string `path:"sessionId" description:"Session identifier, e.g. project-1."`
 }
 
+// AgentSwitchIDParam is the {switchId} path parameter for one durable switch saga.
+type AgentSwitchIDParam struct {
+	SwitchID string `path:"switchId" description:"Durable agent-switch identifier."`
+}
+
 // ListSessionsQuery is the query string accepted by GET /api/v1/sessions.
 type ListSessionsQuery struct {
 	Project          string `query:"project,omitempty" description:"Project id filter."`
@@ -179,11 +184,12 @@ type SpawnSessionRequest struct {
 	// Attachments are files pasted or dropped into the task brief. Each carries
 	// its bytes as standard base64 (no data: URL prefix). The daemon writes them
 	// into the session worktree and appends path references to the prompt.
-	Attachments []SpawnAttachmentInput `json:"attachments,omitempty"`
+	Attachments []AttachmentInput `json:"attachments,omitempty"`
 }
 
-// SpawnAttachmentInput is one file attached to a spawn request.
-type SpawnAttachmentInput struct {
+// AttachmentInput is one file attached to a spawn, delegate, stage, or send
+// request.
+type AttachmentInput struct {
 	// MimeType is the browser-reported content type (e.g. "image/png"). Used to
 	// derive the on-disk file extension. Explicitly blocked types are rejected.
 	MimeType string `json:"mimeType,omitempty"`
@@ -206,12 +212,61 @@ type SpawnSessionResponse struct {
 	SystemPromptBytes int         `json:"systemPromptBytes"`
 }
 
+// SwitchAgentRequest is the body of POST /api/v1/sessions/{sessionId}/switch-agent.
+type SwitchAgentRequest struct {
+	TargetHarness  domain.AgentHarness `json:"targetHarness" enum:"claude-code,codex" description:"Agent harness to continue the logical AO session with."`
+	Note           string              `json:"note,omitempty" maxLength:"4096" description:"Optional user guidance included in the bounded handoff context."`
+	IdempotencyKey string              `json:"idempotencyKey,omitempty" maxLength:"128" description:"Optional retry key. Reusing it with a different request is rejected."`
+}
+
+// AgentSwitchView is the deliberately small public projection of a durable
+// switch saga. Provider context, local artifact paths, retry keys, generation
+// fences, and raw failure details remain daemon-private.
+type AgentSwitchView struct {
+	ID                      domain.AgentSwitchID                     `json:"id"`
+	SessionID               domain.SessionID                         `json:"sessionId"`
+	FromHarness             domain.AgentHarness                      `json:"fromHarness"`
+	TargetHarness           domain.AgentHarness                      `json:"targetHarness"`
+	TargetStartMode         domain.AgentSwitchTargetStartMode        `json:"targetStartMode,omitempty" enum:"fresh,resumed"`
+	State                   domain.AgentSwitchState                  `json:"state" enum:"preparing_handoff,stopping_source,source_stopped,starting_target,target_ready,delivering_context,completed,failed"`
+	AgentHandoffStatus      domain.AgentHandoffStatus                `json:"agentHandoffStatus" enum:"not_attempted,requested,received,unavailable,timed_out,failed,rejected"`
+	SemanticHandoffIncluded bool                                     `json:"semanticHandoffIncluded"`
+	SourceTranscriptStatus  domain.AgentSwitchSourceTranscriptStatus `json:"sourceTranscriptStatus,omitempty" enum:"not_attempted,available,unavailable"`
+	ErrorCode               domain.AgentSwitchErrorCode              `json:"errorCode,omitempty" enum:"daemon_restart_pre_stop,daemon_restart_post_stop,daemon_restart_unrecoverable_target,daemon_restart_before_delivery,delivery_unconfirmed,source_session_terminated,source_stop_unconfirmed,target_binary_missing,target_agent_unauthorized,target_start_unconfirmed,request_cancelled,source_blocked,failed_pre_stop,failed_post_stop,target_ready_failed,delivery_failed,switch_failed"`
+	RequestedAt             time.Time                                `json:"requestedAt"`
+	UpdatedAt               time.Time                                `json:"updatedAt"`
+}
+
+// AgentSwitchResponse is the body returned by switch creation, reads, and
+// generation-fenced handoff submission.
+type AgentSwitchResponse struct {
+	Switch AgentSwitchView `json:"switch"`
+}
+
+// ListAgentSwitchesResponse is the body of
+// GET /api/v1/sessions/{sessionId}/agent-switches.
+type ListAgentSwitchesResponse struct {
+	Switches []AgentSwitchView `json:"switches"`
+}
+
+// SubmitAgentHandoffRequest is the body of
+// POST /api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff.
+// Handoff remains provider-neutral JSON and is accepted only from the source
+// generation recorded by the durable switch.
+type SubmitAgentHandoffRequest struct {
+	SourceGenerationID domain.AgentGenerationID `json:"sourceGenerationId" description:"Source invocation generation that authored this handoff."`
+	// RawMessage deliberately preserves the source object's original token
+	// stream. Decoding into a map here would silently collapse duplicate keys
+	// before the semantic validator can reject them.
+	Handoff json.RawMessage `json:"handoff" description:"Structured, source-agent-authored handoff enrichment."`
+}
+
 // StageSessionAttachmentsRequest attaches files to a session that is already
 // running, for a caller that will name the returned paths in its next message.
 type StageSessionAttachmentsRequest struct {
 	// Attachments each carry their bytes as standard base64 (no data: URL prefix).
 	// The same count, size, and blocked-type rules as spawn apply.
-	Attachments []SpawnAttachmentInput `json:"attachments"`
+	Attachments []AttachmentInput `json:"attachments"`
 }
 
 // StageSessionAttachmentsResponse is where the files were written.
@@ -478,6 +533,10 @@ type CleanupSessionsResponse struct {
 // SendSessionMessageRequest is the body of POST /api/v1/sessions/{sessionId}/send.
 type SendSessionMessageRequest struct {
 	Message string `json:"message" minLength:"1" maxLength:"4096"`
+	// Attachment is an optional inline image (e.g. a browser-annotation
+	// snapshot) delivered alongside the message. The daemon writes it into the
+	// session worktree and appends a path reference to the message.
+	Attachment *AttachmentInput `json:"attachment,omitempty"`
 }
 
 // SendSessionMessageResponse is the body of POST /api/v1/sessions/{sessionId}/send.
@@ -501,7 +560,7 @@ type DelegateTaskRequest struct {
 	// brief. Each carries bytes as standard base64 (no data: URL prefix). The
 	// daemon writes them into the spawned worker worktree and appends path
 	// references to the worker prompt.
-	Attachments []SpawnAttachmentInput `json:"attachments,omitempty"`
+	Attachments []AttachmentInput `json:"attachments,omitempty"`
 }
 
 // DelegateTaskResponse confirms which worker was spawned and, when available,
@@ -724,13 +783,16 @@ type ClaimPRResponse struct {
 // state-only semantics.
 // AgentSessionID may arrive without State on metadata-only SessionStart hooks.
 type SetActivityRequest struct {
-	State          string             `json:"state,omitempty" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook. Optional for metadata-only hooks."`
-	Event          string             `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
-	ToolName       string             `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
-	ToolUseID      string             `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
-	AgentSessionID string             `json:"agentSessionId,omitempty" description:"Native agent session identifier used to resume its transcript."`
-	LaunchID       string             `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
-	Usage          *UsageHookMetadata `json:"usage,omitempty" description:"Provider transcript metadata used by the local usage pipeline."`
+	State                 string             `json:"state,omitempty" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook. Optional for metadata-only hooks."`
+	Event                 string             `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
+	ToolName              string             `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
+	ToolUseID             string             `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
+	AgentSessionID        string             `json:"agentSessionId,omitempty" description:"Native agent session identifier used to resume its transcript."`
+	LatestUserPrompt      string             `json:"latestUserPrompt,omitempty" maxLength:"16384" description:"Latest real user prompt exposed by the provider hook."`
+	LatestAssistantUpdate string             `json:"latestAssistantUpdate,omitempty" maxLength:"16384" description:"Latest assistant update exposed by the provider hook."`
+	TranscriptPath        string             `json:"transcriptPath,omitempty" maxLength:"4096" description:"Read-only provider-native transcript path exposed by the hook."`
+	LaunchID              string             `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
+	Usage                 *UsageHookMetadata `json:"usage,omitempty" description:"Provider transcript metadata used by the local usage pipeline."`
 }
 
 // UsageHookMetadata is the transcript metadata carried by supported Claude
