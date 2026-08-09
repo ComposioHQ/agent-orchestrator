@@ -187,6 +187,30 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "true");
 	});
 
+	it("keeps a new admission presented above unrelated settled completion history", () => {
+		const settledSession = {
+			...worker,
+			provider: "codex",
+			terminalHandleId: "settled-target-terminal",
+		} satisfies WorkspaceSession;
+		agentSwitchMocks.switches.push(switchRecord({ state: "completed" }));
+		agentSwitchMocks.mutation.input = {
+			idempotencyKey: "switch-request-2",
+			note: "",
+			session: settledSession,
+			targetHarness: "claude-code",
+		};
+		agentSwitchMocks.mutation.isPending = true;
+
+		renderCenterPane({ session: settledSession });
+
+		expect(
+			screen.getByRole("status", { name: "Switching from Codex to Claude Code" }),
+		).toHaveAttribute("aria-busy", "true");
+		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "true");
+	});
+
 	it.each([
 		["preparing_handoff", "Preparing handoff"],
 		["stopping_source", "Stopping source agent"],
@@ -394,12 +418,28 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 	});
 
-	it("keeps a cold latest completion covered while the target terminal is unsettled", () => {
+	it("observes a cold unsettled completion, then selects and focuses its target on settlement", () => {
+		const onSelectSessionTerminal = vi.fn();
 		agentSwitchMocks.switches.push(switchRecord({ state: "completed" }));
 
-		renderCenterPane({ session: worker });
+		const view = renderCenterPane({ onSelectSessionTerminal, session: worker });
 
 		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
+		expect(screen.getByRole("status")).toHaveTextContent("Completed");
+
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane
+					daemonReady
+					onSelectSessionTerminal={onSelectSessionTerminal}
+					session={{ ...worker, provider: "codex", terminalHandleId: "target-terminal" }}
+					theme="dark"
+				/>
+			</TooltipProvider>,
+		);
+
+		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-focus-requested", "true");
 		expect(screen.getByRole("status")).toHaveTextContent("Completed");
 	});
 

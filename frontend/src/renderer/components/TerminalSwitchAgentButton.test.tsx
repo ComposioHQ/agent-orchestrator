@@ -165,6 +165,32 @@ describe("TerminalSwitchAgentButton", () => {
 		);
 	});
 
+	it("keeps a new admission busy above unrelated settled completion history", async () => {
+		const settledSession = {
+			...worker,
+			provider: "codex",
+			terminalHandleId: "settled-target-terminal",
+		} satisfies WorkspaceSession;
+		getMock.mockResolvedValue({
+			data: { switches: [switchRecord({ state: "completed" })] },
+			error: undefined,
+			response: { status: 200 },
+		});
+		postMock.mockReturnValue(new Promise(() => {}));
+		renderControl(settledSession);
+
+		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
+		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
+		expect(await within(dialog).findByText("Completed")).toBeInTheDocument();
+		await userEvent.click(within(dialog).getByRole("button", { name: "Switch" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(screen.getByRole("button", { name: "Switching to Claude Code…" })).toHaveAttribute(
+			"aria-busy",
+			"true",
+		);
+	});
+
 	it("keeps the dialog open when the daemon does not accept the switch", async () => {
 		postMock.mockResolvedValue({
 			data: { switch: switchRecord() },

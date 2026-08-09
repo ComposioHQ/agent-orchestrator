@@ -146,15 +146,13 @@ export function CenterPane({
 		(entry) =>
 			isTerminalAgentSwitch(entry) && observedNonterminalSwitchIdsRef.current.has(entry.id),
 	);
-	const durableAgentSwitch =
+	const currentAgentSwitch =
 		detailedSessionSwitch ??
 		sessionAgentSwitch ??
 		recoveryHistorySwitch ??
-		activeHistorySwitch ??
-		latestCompletedSwitch ??
-		observedTerminalSwitch;
+		activeHistorySwitch;
 	const admissionAgentSwitch: AgentSwitchSummary<string> | undefined =
-		!durableAgentSwitch && switchMutation.isPending && switchMutation.input
+		!currentAgentSwitch && switchMutation.isPending && switchMutation.input
 			? {
 				agentHandoffStatus: "not_attempted",
 				fromHarness: switchMutation.input.session.provider,
@@ -167,7 +165,11 @@ export function CenterPane({
 				updatedAt: "",
 			}
 			: undefined;
-	const agentSwitch = durableAgentSwitch ?? admissionAgentSwitch;
+	const agentSwitch =
+		currentAgentSwitch ??
+		admissionAgentSwitch ??
+		latestCompletedSwitch ??
+		observedTerminalSwitch;
 	if (agentSwitch && !isTerminalAgentSwitch(agentSwitch)) {
 		observedNonterminalSwitchIdsRef.current.add(agentSwitch.id);
 	}
@@ -181,6 +183,13 @@ export function CenterPane({
 				terminalHandleId: session.terminalHandleId,
 			})
 			: undefined;
+	if (
+		agentSwitch?.state === "completed" &&
+		presentation?.outcome === "in_progress" &&
+		presentation.stage === "confirming_takeover"
+	) {
+		observedNonterminalSwitchIdsRef.current.add(agentSwitch.id);
+	}
 	const observedSettledSwitch = Boolean(
 		agentSwitch &&
 			presentation?.outcome === "success" &&
@@ -227,11 +236,11 @@ export function CenterPane({
 	);
 
 	useEffect(() => {
-		if (!switchMutation.isPending || durableAgentSwitch) return;
+		if (!switchMutation.isPending || currentAgentSwitch) return;
 		void agentSwitchesQuery.refetch();
 		const timer = window.setInterval(() => void agentSwitchesQuery.refetch(), 500);
 		return () => window.clearInterval(timer);
-	}, [agentSwitchesQuery.refetch, durableAgentSwitch, switchMutation.isPending]);
+	}, [agentSwitchesQuery.refetch, currentAgentSwitch, switchMutation.isPending]);
 
 	useEffect(() => {
 		setTransientSuccessSwitchId(undefined);

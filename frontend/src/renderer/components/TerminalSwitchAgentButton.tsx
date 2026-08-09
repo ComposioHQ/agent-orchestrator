@@ -45,15 +45,13 @@ export function TerminalSwitchAgentButton({ session }: TerminalSwitchAgentButton
 		(entry) =>
 			isTerminalAgentSwitch(entry) && observedNonterminalSwitchIdsRef.current.has(entry.id),
 	);
-	const durableSwitch =
+	const currentSwitch =
 		detailedSessionSwitch ??
 		sessionSwitch ??
 		recoveryHistorySwitch ??
-		activeHistorySwitch ??
-		latestCompletedSwitch ??
-		observedTerminalSwitch;
+		activeHistorySwitch;
 	const admissionSwitch: AgentSwitchSummary<string> | undefined =
-		!durableSwitch && switchMutation.isPending && switchMutation.input
+		!currentSwitch && switchMutation.isPending && switchMutation.input
 			? {
 				agentHandoffStatus: "not_attempted",
 				fromHarness: switchMutation.input.session.provider,
@@ -66,7 +64,11 @@ export function TerminalSwitchAgentButton({ session }: TerminalSwitchAgentButton
 				updatedAt: "",
 			}
 			: undefined;
-	const agentSwitch = durableSwitch ?? admissionSwitch;
+	const agentSwitch =
+		currentSwitch ??
+		admissionSwitch ??
+		latestCompletedSwitch ??
+		observedTerminalSwitch;
 	if (agentSwitch && !isTerminalAgentSwitch(agentSwitch)) {
 		observedNonterminalSwitchIdsRef.current.add(agentSwitch.id);
 	}
