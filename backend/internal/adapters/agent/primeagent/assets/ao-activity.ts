@@ -32,7 +32,10 @@ export default function aoActivityExtension(prime) {
   let pendingPrompt = "";
 
   prime.on("session_start", bestEffort((event, context) => {
-    report("session-start", { reason: event.reason ?? "" }, context.cwd);
+    report("session-start", {
+      reason: event.reason ?? "",
+      session_id: context.sessionManager.getSessionId(),
+    }, context.cwd);
   }));
 
   prime.on("before_agent_start", bestEffort((event) => {

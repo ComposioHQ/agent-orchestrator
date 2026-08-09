@@ -131,6 +131,10 @@ const cwd = process.argv[3];
 const handlers = new Map();
 const loaded = await import(pathToFileURL(extensionPath).href);
 loaded.default({ on(name, handler) { handlers.set(name, handler); } });
+const context = {
+  cwd,
+  sessionManager: { getSessionId() { return "prime-native-123"; } },
+};
 for (const [name, event] of [
   ["session_start", { reason: "startup" }],
   ["before_agent_start", { prompt: "--leading-hyphen prompt" }],
@@ -146,7 +150,7 @@ for (const [name, event] of [
   ["session_start", { reason: "fork" }],
   ["session_shutdown", { reason: "quit" }],
 ]) {
-  await handlers.get(name)(event, { cwd });
+  await handlers.get(name)(event, context);
 }
 for (const name of ["session_start", "before_agent_start", "agent_start", "agent_end", "session_shutdown"]) {
   await handlers.get(name)(undefined, undefined);
@@ -209,13 +213,17 @@ for (const name of ["session_start", "before_agent_start", "agent_start", "agent
 	}
 	for i, wantReason := range wantReasons {
 		var payload struct {
-			Reason string `json:"reason"`
+			Reason    string `json:"reason"`
+			SessionID string `json:"session_id"`
 		}
 		if err := json.Unmarshal([]byte(strings.TrimSpace(calls[i].Input)), &payload); err != nil {
 			t.Fatalf("call %d lifecycle payload is not JSON: %v", i, err)
 		}
 		if payload.Reason != wantReason {
 			t.Fatalf("call %d reason = %q, want %q", i, payload.Reason, wantReason)
+		}
+		if calls[i].Args[2] == "session-start" && payload.SessionID != "prime-native-123" {
+			t.Fatalf("call %d session_id = %q, want prime-native-123", i, payload.SessionID)
 		}
 	}
 }
