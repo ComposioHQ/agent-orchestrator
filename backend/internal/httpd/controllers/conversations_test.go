@@ -48,6 +48,14 @@ type fakeConversationService struct {
 	inputResponse  ports.ChatInputResponse
 }
 
+func (f *fakeConversationService) EditMessage(context.Context, domain.SessionID, string, ports.ChatUserMessage) (chatsvc.EditMessageResult, error) {
+	return chatsvc.EditMessageResult{}, nil
+}
+
+func (f *fakeConversationService) ActivateBranch(context.Context, domain.SessionID, string) (string, error) {
+	return "", nil
+}
+
 func (f *fakeConversationService) Snapshot(context.Context, domain.SessionID) (chatsvc.Snapshot, error) {
 	return f.snapshot, nil
 }
@@ -138,6 +146,64 @@ func conversationSnapshotBody(t *testing.T, snapshot chatsvc.Snapshot) map[strin
 		t.Fatalf("decode: %v", err)
 	}
 	return decoded
+}
+
+func TestConversationSnapshotExposesSafeEditContentAndBranchMetadata(t *testing.T) {
+	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	body := conversationSnapshotBody(t, chatsvc.Snapshot{
+		Conversation: domain.ConversationRecord{ID: "conversation-1", ActiveBranchID: "branch-child"},
+		SessionID:    domain.SessionID("p1-1"),
+		Messages: []domain.ConversationMessage{
+			{
+				ID: "valid", Role: domain.MessageRoleUser, Origin: domain.MessageOriginHuman,
+				Text: "inspect", CreatedAt: now,
+				DeliveryContentJSON: `[{"type":"text","text":"inspect"},{"type":"image","data":"secret-bytes","mimeType":"image/png","name":"diagram.png"},{"type":"resource","uri":"file:///notes.md","name":"notes.md","text":"secret resource text"},{"type":"skill_binding"}]`,
+			},
+			{ID: "legacy", Role: domain.MessageRoleUser, Origin: domain.MessageOriginHuman, Text: "legacy", CreatedAt: now},
+			{ID: "malformed", Role: domain.MessageRoleUser, Origin: domain.MessageOriginHuman, Text: "broken", DeliveryContentJSON: `{broken`, CreatedAt: now},
+		},
+		BranchPoints: []domain.ConversationBranchPoint{{
+			TurnID: "turn-edited", Position: 2, Total: 2, PreviousBranchID: "branch-root",
+		}},
+		BranchedFromEarlierMessage: true,
+	})
+	if body["activeBranchId"] != "branch-child" {
+		t.Fatalf("activeBranchId = %#v", body["activeBranchId"])
+	}
+	if body["branchedFromEarlierMessage"] != true {
+		t.Fatalf("branchedFromEarlierMessage = %#v", body["branchedFromEarlierMessage"])
+	}
+	points := body["branchPoints"].([]any)
+	if len(points) != 1 || points[0].(map[string]any)["previousBranchId"] != "branch-root" {
+		t.Fatalf("branchPoints = %#v", points)
+	}
+	messages := body["messages"].([]any)
+	valid := messages[0].(map[string]any)
+	if valid["editAvailable"] != true {
+		t.Fatalf("valid editAvailable = %#v", valid["editAvailable"])
+	}
+	content := valid["content"].([]any)
+	if len(content) != 3 {
+		t.Fatalf("content summaries = %#v", content)
+	}
+	for _, raw := range content {
+		summary := raw.(map[string]any)
+		if _, exists := summary["data"]; exists {
+			t.Fatalf("content summary leaked data: %#v", summary)
+		}
+		if _, exists := summary["text"]; exists {
+			t.Fatalf("content summary leaked text: %#v", summary)
+		}
+	}
+	if content[2].(map[string]any)["name"] != "skill_binding" {
+		t.Fatalf("unknown content summary = %#v", content[2])
+	}
+	if messages[1].(map[string]any)["editAvailable"] != true {
+		t.Fatalf("legacy message is not editable: %#v", messages[1])
+	}
+	if messages[2].(map[string]any)["editAvailable"] != false {
+		t.Fatalf("malformed message is editable: %#v", messages[2])
+	}
 }
 
 func TestSendConversationPreservesNativeImageAndResourceContent(t *testing.T) {

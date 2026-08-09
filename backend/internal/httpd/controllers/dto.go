@@ -1189,6 +1189,38 @@ type SendConversationMessageResponse struct {
 	Duplicate bool `json:"duplicate"`
 }
 
+// EditConversationMessageRequest changes the readable text of one durable human
+// prompt. Structured content is intentionally absent: the service reuses the
+// server-side blocks recorded with the original message.
+type EditConversationMessageRequest struct {
+	Text            string `json:"text"`
+	ClientMessageID string `json:"clientMessageId,omitempty"`
+}
+
+// ConversationContentSummaryResponse is a lightweight attachment/resource chip.
+// Image bytes and embedded resource text never leave the durable server record.
+type ConversationContentSummaryResponse struct {
+	Type     string `json:"type"`
+	MIMEType string `json:"mimeType,omitempty"`
+	URI      string `json:"uri,omitempty"`
+	Name     string `json:"name,omitempty"`
+}
+
+// EditConversationMessageResponse identifies the newly selected branch and its
+// replacement turn.
+type EditConversationMessageResponse struct {
+	SourceBranchID string           `json:"sourceBranchId"`
+	ActiveBranchID string           `json:"activeBranchId"`
+	TurnID         string           `json:"turnId,omitempty"`
+	ProviderTurnID string           `json:"providerTurnId,omitempty"`
+	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,interrupted,failed"`
+}
+
+// ActivateConversationBranchResponse reports the durable head after switching.
+type ActivateConversationBranchResponse struct {
+	ActiveBranchID string `json:"activeBranchId"`
+}
+
 // ConversationModelsResponse is the provider's model catalog plus what is selected.
 type ConversationModelsResponse struct {
 	Models   []ConversationModelResponse     `json:"models"`
@@ -1385,14 +1417,16 @@ type ConversationDiffFileResponse struct {
 
 // ConversationMessageResponse is one readable block of text.
 type ConversationMessageResponse struct {
-	Kind     string `json:"kind" enum:"message"`
-	ID       string `json:"id"`
-	TurnID   string `json:"turnId,omitempty"`
-	Sequence int64  `json:"sequence"`
-	Revision int64  `json:"revision"`
-	Role     string `json:"role" enum:"user,assistant"`
-	Origin   string `json:"origin" enum:"human,automation,daemon,provider"`
-	Text     string `json:"text"`
+	Kind          string                               `json:"kind" enum:"message"`
+	ID            string                               `json:"id"`
+	TurnID        string                               `json:"turnId,omitempty"`
+	Sequence      int64                                `json:"sequence"`
+	Revision      int64                                `json:"revision"`
+	Role          string                               `json:"role" enum:"user,assistant"`
+	Origin        string                               `json:"origin" enum:"human,automation,daemon,provider"`
+	Text          string                               `json:"text"`
+	Content       []ConversationContentSummaryResponse `json:"content,omitempty"`
+	EditAvailable bool                                 `json:"editAvailable"`
 	// Streaming is true while more deltas are expected for this message.
 	Streaming bool   `json:"streaming"`
 	CreatedAt string `json:"createdAt"`
@@ -1445,19 +1479,22 @@ type ConversationActivityResponse struct {
 
 // ConversationSnapshotResponse is the durable read model a client bootstraps from.
 type ConversationSnapshotResponse struct {
-	ConversationID string `json:"conversationId"`
-	SessionID      string `json:"sessionId"`
-	Harness        string `json:"harness,omitempty"`
-	Mode           string `json:"mode" enum:"chat,tui"`
+	ConversationID             string `json:"conversationId"`
+	ActiveBranchID             string `json:"activeBranchId,omitempty"`
+	BranchedFromEarlierMessage bool   `json:"branchedFromEarlierMessage"`
+	SessionID                  string `json:"sessionId"`
+	Harness                    string `json:"harness,omitempty"`
+	Mode                       string `json:"mode" enum:"chat,tui"`
 	// Controller is reported separately from history so a client can tell "no
 	// messages yet" apart from "the agent is not running".
-	Controller     string                         `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
-	LatestSequence int64                          `json:"latestSequence"`
-	OldestSequence int64                          `json:"oldestSequence,omitempty"`
-	HasMoreBefore  bool                           `json:"hasMoreBefore"`
-	Turns          []ConversationTurnResponse     `json:"turns"`
-	Messages       []ConversationMessageResponse  `json:"messages"`
-	Activities     []ConversationActivityResponse `json:"activities"`
+	Controller     string                            `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
+	LatestSequence int64                             `json:"latestSequence"`
+	OldestSequence int64                             `json:"oldestSequence,omitempty"`
+	HasMoreBefore  bool                              `json:"hasMoreBefore"`
+	Turns          []ConversationTurnResponse        `json:"turns"`
+	Messages       []ConversationMessageResponse     `json:"messages"`
+	Activities     []ConversationActivityResponse    `json:"activities"`
+	BranchPoints   []ConversationBranchPointResponse `json:"branchPoints,omitempty"`
 	// Settings are the provider choices for the next turn. Carried on the snapshot
 	// the client already polls so the composer can label itself without a second
 	// request, and so a choice made on another client shows up here.
@@ -1502,6 +1539,15 @@ type ConversationSnapshotResponse struct {
 	// unstarted session's abilities are not yet known — and a client must treat
 	// absent as "do not offer yet" rather than as "cannot".
 	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// ConversationBranchPointResponse describes sibling continuations at one prompt.
+type ConversationBranchPointResponse struct {
+	TurnID           string `json:"turnId"`
+	Position         int    `json:"position"`
+	Total            int    `json:"total"`
+	PreviousBranchID string `json:"previousBranchId,omitempty"`
+	NextBranchID     string `json:"nextBranchId,omitempty"`
 }
 
 // ConversationModelReroutePayload is the provider answering with a model other than
@@ -1616,6 +1662,11 @@ type ConversationConfigIDParam struct {
 // ConversationTurnIDParam names one turn in a session's conversation.
 type ConversationTurnIDParam struct {
 	TurnID string `path:"turnId" description:"AO conversation turn identifier, from the snapshot's turns array."`
+}
+
+// ConversationBranchIDParam names one durable provider-thread branch.
+type ConversationBranchIDParam struct {
+	BranchID string `path:"branchId" description:"Conversation branch identifier, from a snapshot branch navigation point."`
 }
 
 // RollbackConversationResponse reports what an undo discarded.

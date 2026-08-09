@@ -1919,6 +1919,60 @@ paths:
       summary: Answer a pending approval in a chat session
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/branches/{branchId}/activate:
+    post:
+      operationId: activateSessionConversationBranch
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Conversation branch identifier, from a snapshot branch navigation
+          point.
+        in: path
+        name: branchId
+        required: true
+        schema:
+          description: Conversation branch identifier, from a snapshot branch navigation
+            point.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivateConversationBranchResponse'
+          description: Accepted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resume a durable conversation branch without sending
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/conversation/compact:
     post:
       operationId: compactSessionConversation
@@ -2536,6 +2590,71 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Name the provider's conversation thread
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit:
+    post:
+      operationId: editSessionConversationMessage
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditConversationMessageRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EditConversationMessageResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Branch before and replace an earlier human prompt
       tags:
       - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback:
@@ -4436,6 +4555,13 @@ components:
       - code
       - message
       type: object
+    ActivateConversationBranchResponse:
+      properties:
+        activeBranchId:
+          type: string
+      required:
+      - activeBranchId
+      type: object
     AddProjectInput:
       properties:
         asWorkspace:
@@ -4988,6 +5114,23 @@ components:
       - summary
       - createdAt
       type: object
+    ConversationBranchPointResponse:
+      properties:
+        nextBranchId:
+          type: string
+        position:
+          type: integer
+        previousBranchId:
+          type: string
+        total:
+          type: integer
+        turnId:
+          type: string
+      required:
+      - turnId
+      - position
+      - total
+      type: object
     ConversationConfigChoiceResponse:
       properties:
         description:
@@ -5043,6 +5186,19 @@ components:
       required:
       - options
       type: object
+    ConversationContentSummaryResponse:
+      properties:
+        mimeType:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        uri:
+          type: string
+      required:
+      - type
+      type: object
     ConversationDiffFileResponse:
       properties:
         additions:
@@ -5094,8 +5250,14 @@ components:
       type: object
     ConversationMessageResponse:
       properties:
+        content:
+          items:
+            $ref: '#/components/schemas/ConversationContentSummaryResponse'
+          type: array
         createdAt:
           type: string
+        editAvailable:
+          type: boolean
         id:
           type: string
         kind:
@@ -5134,6 +5296,7 @@ components:
       - role
       - origin
       - text
+      - editAvailable
       - streaming
       - createdAt
       type: object
@@ -5278,10 +5441,18 @@ components:
       properties:
         account:
           $ref: '#/components/schemas/ConversationAccountPayload'
+        activeBranchId:
+          type: string
         activities:
           items:
             $ref: '#/components/schemas/ConversationActivityResponse'
           type: array
+        branchPoints:
+          items:
+            $ref: '#/components/schemas/ConversationBranchPointResponse'
+          type: array
+        branchedFromEarlierMessage:
+          type: boolean
         capabilities:
           items:
             type: string
@@ -5343,6 +5514,7 @@ components:
           $ref: '#/components/schemas/ConversationUsagePayload'
       required:
       - conversationId
+      - branchedFromEarlierMessage
       - sessionId
       - mode
       - controller
@@ -5638,6 +5810,37 @@ components:
           type: string
       required:
       - harness
+      type: object
+    EditConversationMessageRequest:
+      properties:
+        clientMessageId:
+          type: string
+        text:
+          type: string
+      required:
+      - text
+      type: object
+    EditConversationMessageResponse:
+      properties:
+        activeBranchId:
+          type: string
+        providerTurnId:
+          type: string
+        sourceBranchId:
+          type: string
+        state:
+          enum:
+          - queued
+          - running
+          - completed
+          - interrupted
+          - failed
+          type: string
+        turnId:
+          type: string
+      required:
+      - sourceBranchId
+      - activeBranchId
       type: object
     ImportReport:
       properties:

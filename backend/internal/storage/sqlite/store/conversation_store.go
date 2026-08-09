@@ -1634,13 +1634,14 @@ func (s *Store) ApplyProviderTitle(
 
 // ConversationSnapshot is the durable read model for one conversation.
 type ConversationSnapshot struct {
-	Conversation   domain.ConversationRecord
-	Turns          []domain.ConversationTurn
-	Messages       []domain.ConversationMessage
-	Activities     []domain.ConversationActivity
-	BranchPoints   []domain.ConversationBranchPoint
-	OldestSequence int64
-	HasMoreBefore  bool
+	Conversation               domain.ConversationRecord
+	Turns                      []domain.ConversationTurn
+	Messages                   []domain.ConversationMessage
+	Activities                 []domain.ConversationActivity
+	BranchPoints               []domain.ConversationBranchPoint
+	BranchedFromEarlierMessage bool
+	OldestSequence             int64
+	HasMoreBefore              bool
 }
 
 // DefaultConversationPageSize is the standard bounded read size for conversation snapshots.
@@ -1718,10 +1719,11 @@ func (s *Store) LoadConversationSnapshotPage(
 	}
 
 	snapshot := ConversationSnapshot{
-		Conversation:   conversationToDomain(conv),
-		BranchPoints:   s.conversationBranchPoints(ctx, conversationID),
-		OldestSequence: oldest,
-		HasMoreBefore:  hasMore,
+		Conversation:               conversationToDomain(conv),
+		BranchPoints:               s.conversationBranchPoints(ctx, conversationID),
+		BranchedFromEarlierMessage: s.conversationBranchedFromEarlierMessage(ctx, conversationID, conv.ActiveBranchID),
+		OldestSequence:             oldest,
+		HasMoreBefore:              hasMore,
 	}
 	for _, row := range turnRows {
 		snapshot.Turns = append(snapshot.Turns, turnToDomain(row))
@@ -1772,8 +1774,9 @@ func (s *Store) LoadConversationSnapshot(
 	}
 
 	snapshot := ConversationSnapshot{
-		Conversation: conversationToDomain(conv),
-		BranchPoints: s.conversationBranchPoints(ctx, conversationID),
+		Conversation:               conversationToDomain(conv),
+		BranchPoints:               s.conversationBranchPoints(ctx, conversationID),
+		BranchedFromEarlierMessage: s.conversationBranchedFromEarlierMessage(ctx, conversationID, conv.ActiveBranchID),
 	}
 	for _, row := range turnRows {
 		snapshot.Turns = append(snapshot.Turns, turnToDomain(row))
@@ -1785,6 +1788,14 @@ func (s *Store) LoadConversationSnapshot(
 		snapshot.Activities = append(snapshot.Activities, activityToDomain(row))
 	}
 	return snapshot, nil
+}
+
+func (s *Store) conversationBranchedFromEarlierMessage(
+	ctx context.Context,
+	conversationID, activeBranchID string,
+) bool {
+	branch, err := s.ConversationBranch(ctx, conversationID, activeBranchID)
+	return err == nil && branch.ParentBranchID != ""
 }
 
 // conversationBranchPoints builds prompt-local sibling navigation from durable

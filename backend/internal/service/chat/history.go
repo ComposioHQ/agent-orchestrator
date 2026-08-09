@@ -155,7 +155,7 @@ func (s *Service) EditMessage(
 	forker, canFork := source.conv.(ports.ChatForker)
 	anchor, err := s.store.ConversationEditAnchor(ctx, source.conversation.ID, turnID)
 	if err != nil {
-		return EditMessageResult{}, fmt.Errorf("%w: %v", ErrEditTurnInvalid, err)
+		return EditMessageResult{}, fmt.Errorf("%w: %w", ErrEditTurnInvalid, err)
 	}
 	var content []ports.ChatContent
 	if anchor.OriginalDeliveryContentJSON != "" {

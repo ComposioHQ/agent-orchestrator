@@ -571,17 +571,18 @@ func (s *Service) StopAll(ctx context.Context) {
 
 // Snapshot is the durable read model a client bootstraps from.
 type Snapshot struct {
-	Conversation   domain.ConversationRecord
-	SessionID      domain.SessionID
-	Harness        domain.AgentHarness
-	Mode           domain.SessionMode
-	Controller     ports.ChatControllerState
-	Turns          []domain.ConversationTurn
-	Messages       []domain.ConversationMessage
-	Activities     []domain.ConversationActivity
-	BranchPoints   []domain.ConversationBranchPoint
-	OldestSequence int64
-	HasMoreBefore  bool
+	Conversation               domain.ConversationRecord
+	SessionID                  domain.SessionID
+	Harness                    domain.AgentHarness
+	Mode                       domain.SessionMode
+	Controller                 ports.ChatControllerState
+	Turns                      []domain.ConversationTurn
+	Messages                   []domain.ConversationMessage
+	Activities                 []domain.ConversationActivity
+	BranchPoints               []domain.ConversationBranchPoint
+	BranchedFromEarlierMessage bool
+	OldestSequence             int64
+	HasMoreBefore              bool
 	// Usage and RateLimits are current state carried on the snapshot the client
 	// already polls, rather than timeline entries or a second request. Both are nil
 	// until the provider has reported, so a client can tell "not known yet" from a
@@ -615,13 +616,14 @@ type SnapshotPageReader interface {
 
 // ConversationRows is the raw durable read.
 type ConversationRows struct {
-	Conversation   domain.ConversationRecord
-	Turns          []domain.ConversationTurn
-	Messages       []domain.ConversationMessage
-	Activities     []domain.ConversationActivity
-	BranchPoints   []domain.ConversationBranchPoint
-	OldestSequence int64
-	HasMoreBefore  bool
+	Conversation               domain.ConversationRecord
+	Turns                      []domain.ConversationTurn
+	Messages                   []domain.ConversationMessage
+	Activities                 []domain.ConversationActivity
+	BranchPoints               []domain.ConversationBranchPoint
+	BranchedFromEarlierMessage bool
+	OldestSequence             int64
+	HasMoreBefore              bool
 }
 
 // Snapshot reads a session's conversation.
@@ -665,18 +667,19 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 	}
 
 	return Snapshot{
-		Conversation: rows.Conversation,
-		SessionID:    id,
-		Harness:      record.Harness,
-		Mode:         domain.NormalizeSessionMode(record.Mode),
-		Controller:   state,
-		Turns:        rows.Turns,
-		Messages:     rows.Messages,
-		Activities:   rows.Activities,
-		BranchPoints: rows.BranchPoints,
-		Capabilities: caps,
-		Usage:        rows.Conversation.Usage,
-		RateLimits:   rows.Conversation.RateLimits,
+		Conversation:               rows.Conversation,
+		SessionID:                  id,
+		Harness:                    record.Harness,
+		Mode:                       domain.NormalizeSessionMode(record.Mode),
+		Controller:                 state,
+		Turns:                      rows.Turns,
+		Messages:                   rows.Messages,
+		Activities:                 rows.Activities,
+		BranchPoints:               rows.BranchPoints,
+		BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
+		Capabilities:               caps,
+		Usage:                      rows.Conversation.Usage,
+		RateLimits:                 rows.Conversation.RateLimits,
 	}, nil
 }
 
@@ -715,20 +718,21 @@ func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeS
 		caps = controller.Capabilities()
 	}
 	return Snapshot{
-		Conversation:   rows.Conversation,
-		SessionID:      id,
-		Harness:        record.Harness,
-		Mode:           domain.NormalizeSessionMode(record.Mode),
-		Controller:     state,
-		Turns:          rows.Turns,
-		Messages:       rows.Messages,
-		Activities:     rows.Activities,
-		BranchPoints:   rows.BranchPoints,
-		OldestSequence: rows.OldestSequence,
-		HasMoreBefore:  rows.HasMoreBefore,
-		Capabilities:   caps,
-		Usage:          rows.Conversation.Usage,
-		RateLimits:     rows.Conversation.RateLimits,
+		Conversation:               rows.Conversation,
+		SessionID:                  id,
+		Harness:                    record.Harness,
+		Mode:                       domain.NormalizeSessionMode(record.Mode),
+		Controller:                 state,
+		Turns:                      rows.Turns,
+		Messages:                   rows.Messages,
+		Activities:                 rows.Activities,
+		BranchPoints:               rows.BranchPoints,
+		BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
+		OldestSequence:             rows.OldestSequence,
+		HasMoreBefore:              rows.HasMoreBefore,
+		Capabilities:               caps,
+		Usage:                      rows.Conversation.Usage,
+		RateLimits:                 rows.Conversation.RateLimits,
 	}, nil
 }
 

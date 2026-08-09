@@ -81,11 +81,11 @@ Changing the active branch and provider conversation ID is transactional after t
 
 ### Structured prompt preservation
 
-The edit request carries structured prompt blocks, not only flattened display text. AO persists the structured human input needed to reconstruct attachments and mention bindings. Legacy messages that contain only text remain editable as text; AO does not fabricate missing attachment metadata.
+AO persists the structured human input needed to reconstruct attachments and mention bindings. The edit request carries only replacement display text and an idempotency key; the service reuses the exact durable blocks, so a browser cannot accidentally omit an image or resource binding. Legacy text-only messages remain editable. Malformed legacy structured content is marked unavailable rather than fabricated.
 
 ### HTTP and frontend boundary
 
-Add a code-first endpoint under the conversation controller for editing/forking a turn. The request contains the edited structured prompt and the response identifies the active branch and new turn. Regenerate OpenAPI and frontend schema artifacts together.
+Add a code-first endpoint under the conversation controller for editing/forking a turn. Snapshot messages expose lightweight content summaries with image bytes and embedded resource text stripped, plus an explicit edit-availability flag. The edit response identifies the active branch and new turn. Regenerate OpenAPI and frontend schema artifacts together.
 
 The frontend calls one edit operation rather than composing `rollback` and `send`. `ChatWorkspace` owns which message is being edited; `HumanMessage` owns only the inline presentation and draft interaction. Session command hooks own the mutation, pending state, and error envelope.
 
