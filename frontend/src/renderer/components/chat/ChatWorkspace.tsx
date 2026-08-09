@@ -46,7 +46,7 @@ import type { SessionKind, WorkspaceSession } from "../../types/workspace";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SessionTerminalBar } from "../SessionTerminalBar";
-import { SessionTerminalPicker, SessionTerminalTabs } from "../SessionTerminalTabs";
+import { NewTerminalButton, SessionTerminalTab } from "../SessionTerminalTabs";
 import {
 	ActivityRow,
 	ApprovalCard,
@@ -135,11 +135,6 @@ export interface ChatWorkspaceProps {
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
-	projectSessions?: WorkspaceSession[];
-	availableProjectSessions?: WorkspaceSession[];
-	onAddProjectSession?: (session: WorkspaceSession) => void;
-	onCloseProjectSession?: (session: WorkspaceSession) => void;
-	onSelectProjectSession?: (session: WorkspaceSession) => void;
 	/** Open an HTTP(S) link in this session's AO Browser panel. */
 	onLinkOpen?: (url: string) => void;
 	/** A send or decision is in flight. */
@@ -217,11 +212,6 @@ export function ChatWorkspace({
 	onOpenShell,
 	openingShell,
 	shellError,
-	projectSessions,
-	availableProjectSessions,
-	onAddProjectSession,
-	onCloseProjectSession,
-	onSelectProjectSession,
 	onLinkOpen,
 	busy,
 	models,
@@ -340,11 +330,6 @@ export function ChatWorkspace({
 			<ChatHeader
 				snapshot={snapshot}
 				sessionTitle={sessionTitle}
-				projectSessions={projectSessions}
-				availableProjectSessions={availableProjectSessions}
-				onAddProjectSession={onAddProjectSession}
-				onCloseProjectSession={onCloseProjectSession}
-				onSelectProjectSession={onSelectProjectSession}
 				onOpenShell={onOpenShell}
 				openingShell={openingShell}
 				shellError={shellError}
@@ -594,11 +579,6 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 function ChatHeader({
 	snapshot,
 	sessionTitle,
-	projectSessions,
-	availableProjectSessions,
-	onAddProjectSession,
-	onCloseProjectSession,
-	onSelectProjectSession,
 	onOpenShell,
 	openingShell,
 	shellError,
@@ -611,11 +591,6 @@ function ChatHeader({
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
-	projectSessions?: WorkspaceSession[];
-	availableProjectSessions?: WorkspaceSession[];
-	onAddProjectSession?: (session: WorkspaceSession) => void;
-	onCloseProjectSession?: (session: WorkspaceSession) => void;
-	onSelectProjectSession?: (session: WorkspaceSession) => void;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
@@ -627,91 +602,74 @@ function ChatHeader({
 	topbarBounds: TopbarBounds;
 }) {
 	const label = sessionTitle || snapshot.title || snapshot.sessionId;
-	const visibleProjectSessions = projectSessions?.length
-		? projectSessions
-		: [
-				{
-					id: snapshot.sessionId,
-					workspaceId: "",
-					workspaceName: "",
-					title: label,
-					provider: snapshot.harness as WorkspaceSession["provider"],
-					status: "unknown" as const,
-					updatedAt: "",
-					prs: [],
-				},
-			];
+	const terminalSession = {
+		id: snapshot.sessionId,
+		workspaceId: "",
+		workspaceName: "",
+		title: label,
+		provider: snapshot.harness as WorkspaceSession["provider"],
+		status: "unknown" as const,
+		updatedAt: "",
+		prs: [],
+	};
 	return (
 		<SessionTerminalBar fullscreen={isFullscreen}>
-				<div className="session-topbar-surface flex min-w-0 flex-1">
-					<div
-						className="flex min-w-0 shrink items-center pr-1.5"
-						data-testid="session-terminal-region"
-						style={{ width: topbarBounds.width > 0 ? topbarBounds.width : "100%" }}
-					>
-						<div className="flex h-full min-w-flex-min flex-1 items-center">
-							<div
-								aria-label="Chat tabs"
-								className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
-								role="tablist"
-							>
-								<SessionTerminalTabs
-									activeSessionId={snapshot.sessionId}
-									isSessionSurfaceActive
-									onCloseProjectSession={onCloseProjectSession}
-									onSelectProjectSession={onSelectProjectSession}
-									projectSessions={visibleProjectSessions}
-								/>
-							</div>
-							<SessionTerminalPicker
-								availableProjectSessions={availableProjectSessions ?? []}
-								newTerminalDisabled={Boolean(openingShell)}
-								newTerminalError={shellError}
-								onAddProjectSession={onAddProjectSession}
-								onNewTerminal={onOpenShell}
-								openProjectSessionIds={visibleProjectSessions.map((session) => session.id)}
-							/>
-						</div>
+			<div className="session-topbar-surface flex min-w-0 flex-1">
+				<div
+					className="flex min-w-0 shrink items-center pr-1.5"
+					data-testid="session-terminal-region"
+					style={{ width: topbarBounds.width > 0 ? topbarBounds.width : "100%" }}
+				>
+					<div className="flex h-full min-w-flex-min flex-1 items-center">
 						<div
-							aria-label="Chat display controls"
-							className="ml-1.5 flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1.5"
-							role="toolbar"
+							aria-label="Chat tabs"
+							className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
+							role="tablist"
 						>
-							<ChatTopbarControl
-								disabled={fontSize <= CHAT_FONT_SIZE_MIN}
-								label="Decrease font size"
-								onClick={onDecreaseFontSize}
-							>
-								<Minus aria-hidden="true" className="size-icon-sm" />
-							</ChatTopbarControl>
-							<span
-								aria-label={`Chat font size: ${fontSize} pixels`}
-								className="w-font-size-label text-center font-mono text-micro tabular-nums text-muted-foreground"
-							>
-								{fontSize}px
-							</span>
-							<ChatTopbarControl
-								disabled={fontSize >= CHAT_FONT_SIZE_MAX}
-								label="Increase font size"
-								onClick={onIncreaseFontSize}
-							>
-								<Plus aria-hidden="true" className="size-icon-sm" />
-							</ChatTopbarControl>
-							<div aria-hidden="true" className="mx-1 h-4 w-px bg-border/70" />
-							<ChatTopbarControl
-								isPressed={isFullscreen}
-								label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-								onClick={onToggleFullscreen}
-							>
-								{isFullscreen ? (
-									<Minimize2 aria-hidden="true" className="size-icon-md" />
-								) : (
-									<Maximize2 aria-hidden="true" className="size-icon-md" />
-								)}
-							</ChatTopbarControl>
+							<SessionTerminalTab isActive session={terminalSession} />
 						</div>
+						<NewTerminalButton disabled={Boolean(openingShell)} error={shellError} onClick={onOpenShell} />
+					</div>
+					<div
+						aria-label="Chat display controls"
+						className="ml-1.5 flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1.5"
+						role="toolbar"
+					>
+						<ChatTopbarControl
+							disabled={fontSize <= CHAT_FONT_SIZE_MIN}
+							label="Decrease font size"
+							onClick={onDecreaseFontSize}
+						>
+							<Minus aria-hidden="true" className="size-icon-sm" />
+						</ChatTopbarControl>
+						<span
+							aria-label={`Chat font size: ${fontSize} pixels`}
+							className="w-font-size-label text-center font-mono text-micro tabular-nums text-muted-foreground"
+						>
+							{fontSize}px
+						</span>
+						<ChatTopbarControl
+							disabled={fontSize >= CHAT_FONT_SIZE_MAX}
+							label="Increase font size"
+							onClick={onIncreaseFontSize}
+						>
+							<Plus aria-hidden="true" className="size-icon-sm" />
+						</ChatTopbarControl>
+						<div aria-hidden="true" className="mx-1 h-4 w-px bg-border/70" />
+						<ChatTopbarControl
+							isPressed={isFullscreen}
+							label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+							onClick={onToggleFullscreen}
+						>
+							{isFullscreen ? (
+								<Minimize2 aria-hidden="true" className="size-icon-md" />
+							) : (
+								<Maximize2 aria-hidden="true" className="size-icon-md" />
+							)}
+						</ChatTopbarControl>
 					</div>
 				</div>
+			</div>
 		</SessionTerminalBar>
 	);
 }

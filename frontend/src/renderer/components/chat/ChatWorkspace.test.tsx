@@ -12,31 +12,10 @@ import {
 	chatFixtureThreadError,
 } from "../../lib/chat-fixture";
 import type { ConversationMessage, ConversationSnapshot } from "../../types/conversation";
-import type { WorkspaceSession } from "../../types/workspace";
 import { setApiBaseUrl } from "../../lib/api-client";
 
 const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
-
-const chatSession = {
-	id: chatFixture.sessionId,
-	workspaceId: "proj-1",
-	workspaceName: "my-app",
-	title: chatFixture.title ?? chatFixture.sessionId,
-	provider: "codex",
-	kind: "worker",
-	status: "working",
-	updatedAt: "2026-08-08T00:00:00Z",
-	activity: { state: "active", lastActivityAt: "2026-08-08T00:00:00Z" },
-	prs: [],
-} satisfies WorkspaceSession;
-
-const siblingSession = {
-	...chatSession,
-	id: "ao-15",
-	title: "review the change",
-	provider: "claude-code",
-} satisfies WorkspaceSession;
 
 vi.mock("../../lib/bridge", () => ({
 	aoBridge: {
@@ -164,22 +143,18 @@ describe("HumanMessage attachments", () => {
 });
 
 describe("ChatWorkspace timeline", () => {
-	it("adds a same-project session from the chat picker", async () => {
-		const user = userEvent.setup();
-		const onAddProjectSession = vi.fn();
+	it("creates a native terminal directly from the add button", () => {
+		const onOpenShell = vi.fn();
 		render(
 			<ChatWorkspace
 				snapshot={chatFixture}
-				availableProjectSessions={[siblingSession]}
-				onAddProjectSession={onAddProjectSession}
-				onOpenShell={vi.fn()}
-				projectSessions={[chatSession]}
+				onOpenShell={onOpenShell}
 			/>,
 		);
 
-		await user.click(screen.getByRole("button", { name: "Add terminal or session" }));
-		await user.click(screen.getByRole("menuitem", { name: /review the change/i }));
-		expect(onAddProjectSession).toHaveBeenCalledWith(siblingSession);
+		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+		expect(onOpenShell).toHaveBeenCalledOnce();
+		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 	});
 
 	it("keeps chat font controls scoped to the chat instead of native page zoom", () => {

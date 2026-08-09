@@ -813,7 +813,6 @@
 	"termination.confirmAria": "예, 세션 종료",
 	"termination.dialog": "세션을 종료하시겠습니까?",
 	"termination.dialogNamed": "{{title}}을(를) 종료하시겠습니까?",
-	"terminal.addTerminalOrSession": "터미널 또는 세션 추가",
 	"terminal.agent": "agent",
 	"terminal.backToAgent": "에이전트 터미널로 돌아가기",
 	"terminal.clear": "지우기",

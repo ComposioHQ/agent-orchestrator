@@ -813,7 +813,6 @@
 	"termination.confirmAria": "はい、セッションを終了します",
 	"termination.dialog": "セッションを終了しますか？",
 	"termination.dialogNamed": "{{title}} を終了しますか？",
-	"terminal.addTerminalOrSession": "ターミナルまたはセッションを追加",
 	"terminal.agent": "agent",
 	"terminal.backToAgent": "エージェントターミナルに戻る",
 	"terminal.clear": "クリア",

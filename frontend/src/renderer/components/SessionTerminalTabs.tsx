@@ -1,4 +1,4 @@
-import { Plus, Terminal, X } from "lucide-react";
+import { Plus } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
@@ -7,15 +7,6 @@ import { cn } from "../lib/utils";
 import type { WorkspaceSession } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
 import { Button } from "./ui/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuLabel,
-	DropdownMenuSeparator,
-	DropdownMenuShortcut,
-	DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 const newTerminalShortcutLabel = shortcutBindingLabel(
@@ -23,55 +14,21 @@ const newTerminalShortcutLabel = shortcutBindingLabel(
 	isMacPlatform(),
 );
 
-type SessionTerminalTabsProps = {
-	activeSessionId?: string;
-	isSessionSurfaceActive: boolean;
-	onCloseProjectSession?: (session: WorkspaceSession) => void;
-	onSelectProjectSession?: (session: WorkspaceSession) => void;
-	projectSessions: WorkspaceSession[];
-	renderSessionAction?: (session: WorkspaceSession) => ReactNode;
-};
-
-export function SessionTerminalTabs({
-	activeSessionId,
-	isSessionSurfaceActive,
-	onCloseProjectSession,
-	onSelectProjectSession,
-	projectSessions,
-	renderSessionAction,
-}: SessionTerminalTabsProps) {
-	const ownerSessionId = projectSessions[0]?.id;
-
-	return projectSessions.map((session) => (
-		<SessionTerminalTab
-			key={session.id}
-			action={renderSessionAction?.(session)}
-			isActive={isSessionSurfaceActive && session.id === activeSessionId}
-			isCloseable={session.id !== ownerSessionId}
-			onClose={onCloseProjectSession ? () => onCloseProjectSession(session) : undefined}
-			onSelect={onSelectProjectSession ? () => onSelectProjectSession(session) : undefined}
-			session={session}
-		/>
-	));
-}
-
-function SessionTerminalTab({
+export function SessionTerminalTab({
 	action,
 	isActive,
-	isCloseable,
-	onClose,
+	labelOverride,
 	onSelect,
 	session,
 }: {
 	action?: ReactNode;
 	isActive: boolean;
-	isCloseable: boolean;
-	onClose?: () => void;
+	labelOverride?: string;
 	onSelect?: () => void;
 	session: WorkspaceSession;
 }) {
 	const { t } = useTranslation();
-	const label = session.kind === "orchestrator" ? t("shell.orchestrator") : session.title;
+	const label = labelOverride ?? (session.kind === "orchestrator" ? t("shell.orchestrator") : session.title);
 
 	return (
 		<span
@@ -101,84 +58,42 @@ function SessionTerminalTab({
 				<span className="truncate">{label}</span>
 			</button>
 			{action}
-			{isCloseable && onClose ? (
-				<button
-					aria-label={t("terminal.closeSessionTab", { label })}
-					className="ml-1 inline-flex size-icon-xl shrink-0 items-center justify-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-					onClick={onClose}
-					type="button"
-				>
-					<X aria-hidden="true" className="size-icon-sm" />
-				</button>
-			) : null}
 		</span>
 	);
 }
 
-export function SessionTerminalPicker({
-	availableProjectSessions,
-	openProjectSessionIds = [],
-	newTerminalDisabled,
-	newTerminalError,
-	onAddProjectSession,
-	onNewTerminal,
+export function NewTerminalButton({
+	disabled,
+	error,
+	onClick,
 }: {
-	availableProjectSessions: WorkspaceSession[];
-	openProjectSessionIds?: string[];
-	newTerminalDisabled?: boolean;
-	newTerminalError?: string;
-	onAddProjectSession?: (session: WorkspaceSession) => void;
-	onNewTerminal?: () => void;
+	disabled?: boolean;
+	error?: string;
+	onClick?: () => void;
 }) {
 	const { t } = useTranslation();
-	const openSessionIds = new Set(openProjectSessionIds);
-	const sessionsToAdd = availableProjectSessions.filter((session) => !openSessionIds.has(session.id));
-	const disabled = (!onNewTerminal || newTerminalDisabled) && sessionsToAdd.length === 0;
-	const pickerLabel = t("terminal.addTerminalOrSession");
+	const label = t("shortcut.new-shell-terminal");
 	return (
-		<DropdownMenu modal={false}>
-			<TooltipProvider>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<DropdownMenuTrigger asChild>
-							<Button
-								aria-label={pickerLabel}
-								className="shrink-0 text-muted-foreground"
-								disabled={disabled}
-								size="icon-sm"
-								type="button"
-								variant="outline"
-							>
-								<Plus aria-hidden="true" className="size-icon-md" />
-							</Button>
-						</DropdownMenuTrigger>
-					</TooltipTrigger>
-					<TooltipContent>{pickerLabel}</TooltipContent>
-				</Tooltip>
-			</TooltipProvider>
-			<DropdownMenuContent align="start" className="w-64">
-				<DropdownMenuItem
-					disabled={!onNewTerminal || newTerminalDisabled}
-					onSelect={onNewTerminal}
-					title={newTerminalError}
-				>
-					<Terminal aria-hidden="true" />
-					<span>{t("shortcut.new-shell-terminal")}</span>
-					<DropdownMenuShortcut>{newTerminalShortcutLabel}</DropdownMenuShortcut>
-				</DropdownMenuItem>
-				{sessionsToAdd.length > 0 ? (
-					<>
-						<DropdownMenuSeparator />
-						<DropdownMenuLabel>{t("command.group.sessions")}</DropdownMenuLabel>
-						{sessionsToAdd.map((session) => (
-							<DropdownMenuItem key={session.id} onSelect={() => onAddProjectSession?.(session)}>
-								<AgentAvatar className="size-terminal-agent-icon" decorative provider={session.provider} />
-								<span className="truncate">{session.title}</span>
-							</DropdownMenuItem>
-						))}
-					</>
-				) : null}
-			</DropdownMenuContent>
-		</DropdownMenu>
+		<TooltipProvider>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<Button
+						aria-label={label}
+						className="shrink-0 text-muted-foreground"
+						disabled={!onClick || disabled}
+						onClick={onClick}
+						size="icon-sm"
+						title={error}
+						type="button"
+						variant="outline"
+					>
+						<Plus aria-hidden="true" className="size-icon-md" />
+					</Button>
+				</TooltipTrigger>
+				<TooltipContent>
+					{error ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
+				</TooltipContent>
+			</Tooltip>
+		</TooltipProvider>
 	);
 }

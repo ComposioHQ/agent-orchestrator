@@ -1,7 +1,6 @@
 import { ArrowRight, ChevronLeft, ChevronRight, Maximize2, Minimize2, Minus, Plus, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import {
 	findActiveAgentSwitch,
@@ -25,18 +24,13 @@ import { AgentAvatar } from "./AgentAvatar";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 import { SessionTerminalBar } from "./SessionTerminalBar";
-import { SessionTerminalPicker, SessionTerminalTabs } from "./SessionTerminalTabs";
+import { NewTerminalButton, SessionTerminalTab } from "./SessionTerminalTabs";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
-	projectSessions?: WorkspaceSession[];
-	availableProjectSessions?: WorkspaceSession[];
-	onAddProjectSession?: (session: WorkspaceSession) => void;
-	onCloseProjectSession?: (session: WorkspaceSession) => void;
-	onSelectProjectSession?: (session: WorkspaceSession) => void;
 	theme: Theme;
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
@@ -59,8 +53,6 @@ const WHEEL_ZOOM_THRESHOLD = 80;
 const WHEEL_ZOOM_RESET_MS = 250;
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
-const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("new-shell-terminal", isMac)[0], isMac);
-
 function clampTerminalFontSize(size: number): number {
 	return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, size));
 }
@@ -75,11 +67,6 @@ function initialTerminalFontSize(): number {
 
 export function CenterPane({
 	session,
-	projectSessions,
-	availableProjectSessions,
-	onAddProjectSession,
-	onCloseProjectSession,
-	onSelectProjectSession,
 	theme,
 	daemonReady,
 	terminalTarget,
@@ -131,7 +118,6 @@ export function CenterPane({
 			: target.kind === "reviewer"
 				? `${t("terminal.reviewer")} · ${target.harness}`
 				: sessionTabLabel;
-	const visibleProjectSessions = session ? (projectSessions?.length ? projectSessions : [session]) : [];
 	const selectAdjacentTab = useCallback(
 		(direction: -1 | 1) => {
 			const activeIndex =
@@ -292,17 +278,11 @@ export function CenterPane({
 							role="tablist"
 						>
 							{session ? (
-								<SessionTerminalTabs
-									activeSessionId={session.id}
-									isSessionSurfaceActive={target.kind === "worker"}
-									onCloseProjectSession={onCloseProjectSession}
-									onSelectProjectSession={onSelectProjectSession ?? (() => onSelectSessionTerminal?.())}
-									projectSessions={visibleProjectSessions}
-									renderSessionAction={(candidate) =>
-										candidate.id === session.id ? (
-											<TerminalSwitchAgentButton key={candidate.id} session={candidate} />
-										) : null
-									}
+								<SessionTerminalTab
+									action={<TerminalSwitchAgentButton session={session} />}
+									isActive={target.kind === "worker"}
+									onSelect={onSelectSessionTerminal}
+									session={session}
 								/>
 							) : (
 								<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
@@ -328,14 +308,7 @@ export function CenterPane({
 								/>
 							))}
 						</div>
-						{session ? (
-							<SessionTerminalPicker
-								availableProjectSessions={availableProjectSessions ?? []}
-								onAddProjectSession={onAddProjectSession}
-								onNewTerminal={onNewShellTerminal}
-								openProjectSessionIds={visibleProjectSessions.map((projectSession) => projectSession.id)}
-							/>
-						) : null}
+						<NewTerminalButton onClick={onNewShellTerminal} />
 						{tabsOverflow.canScrollRight ? (
 							<button
 								aria-label={t("terminal.scrollTabsRight")}
@@ -346,24 +319,6 @@ export function CenterPane({
 							>
 								<ChevronRight aria-hidden="true" className="size-icon-md" />
 							</button>
-						) : null}
-						{!session ? (
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<Button
-										aria-label={t("shortcut.new-shell-terminal")}
-										className="shrink-0 text-muted-foreground"
-										disabled={!onNewShellTerminal}
-										onClick={onNewShellTerminal}
-										size="icon-sm"
-										type="button"
-										variant="outline"
-									>
-										<Plus aria-hidden="true" className="size-icon-md" />
-									</Button>
-								</TooltipTrigger>
-								<TooltipContent>{t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}</TooltipContent>
-							</Tooltip>
 						) : null}
 					</div>
 					<div

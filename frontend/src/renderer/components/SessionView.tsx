@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -36,7 +35,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { hidesShellTopbar } from "../lib/platform";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
-import { isOrchestratorSession, sessionIsActive, workerSessions } from "../types/workspace";
+import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
@@ -83,10 +82,7 @@ function reviewerTerminalFromReviews(data?: ReviewsResponse): ReviewerTerminalTa
 
 type SessionViewProps = {
 	sessionId: string;
-	tabOwnerSessionId?: string;
 };
-
-const emptySessionTabIds: string[] = [];
 
 // The session detail screen: terminal + git rail. On Win/Linux the shell owns
 // ShellTopbar above this view; when the platform hides the shell topbar
@@ -105,9 +101,8 @@ const emptySessionTabIds: string[] = [];
 // hard-stops at INSPECTOR_MIN_SIZE; only the explicit controls collapse it.
 // Content keeps a stable min-width inside the clipped panel so nothing reflows
 // mid-animation; the persisted pixel width is clamped by the panel constraints.
-export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) {
+export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
-	const navigate = useNavigate();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const theme = useResolvedTheme();
@@ -136,76 +131,8 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 
 	const allSessions = workspaces.flatMap((workspace) => workspace.sessions);
 	const session = allSessions.find((candidate) => candidate.id === sessionId);
-	const requestedTabOwner = allSessions.find((candidate) => candidate.id === tabOwnerSessionId);
-	const tabOwnerSession =
-		requestedTabOwner &&
-		session &&
-		requestedTabOwner.workspaceId === session.workspaceId &&
-		sessionIsActive(requestedTabOwner)
-			? requestedTabOwner
-			: session;
-	const ownerSessionId = tabOwnerSession?.id ?? sessionId;
-	const storedSessionTabIds = useUiStore((state) => state.sessionTabsByOwner[ownerSessionId] ?? emptySessionTabIds);
-	const addSessionTab = useUiStore((state) => state.addSessionTab);
-	const removeSessionTab = useUiStore((state) => state.removeSessionTab);
 	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
-	const projectSessions = tabOwnerSession
-		? [
-				tabOwnerSession,
-				...storedSessionTabIds
-					.map((tabId) => allSessions.find((candidate) => candidate.id === tabId))
-					.filter((candidate): candidate is NonNullable<typeof candidate> =>
-						Boolean(
-							candidate &&
-								candidate.id !== tabOwnerSession.id &&
-								candidate.workspaceId === tabOwnerSession.workspaceId &&
-								sessionIsActive(candidate) &&
-								!isOrchestratorSession(candidate),
-						),
-					),
-			]
-		: [];
-	if (
-		session &&
-		tabOwnerSession &&
-		session.workspaceId === tabOwnerSession.workspaceId &&
-		sessionIsActive(session) &&
-		!projectSessions.some((candidate) => candidate.id === session.id)
-	) {
-		projectSessions.push(session);
-	}
-	const availableProjectSessions = tabOwnerSession
-		? workerSessions(
-				workspaces.find((workspace) => workspace.id === tabOwnerSession.workspaceId)?.sessions ?? [],
-			).filter((candidate) => candidate.id !== tabOwnerSession.id && sessionIsActive(candidate))
-		: [];
-	const selectProjectSession = useCallback(
-		(projectSession: NonNullable<typeof session>) => {
-			setActiveShellTerminal(null);
-			setTerminalTarget({ kind: "worker" });
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: projectSession.workspaceId, sessionId: projectSession.id },
-				search: projectSession.id === ownerSessionId ? {} : { tabOwner: ownerSessionId },
-			});
-		},
-		[navigate, ownerSessionId, setActiveShellTerminal],
-	);
-	const addProjectSession = useCallback(
-		(projectSession: NonNullable<typeof session>) => {
-			addSessionTab(ownerSessionId, projectSession.id);
-			selectProjectSession(projectSession);
-		},
-		[addSessionTab, ownerSessionId, selectProjectSession],
-	);
-	const closeProjectSession = useCallback(
-		(projectSession: NonNullable<typeof session>) => {
-			removeSessionTab(ownerSessionId, projectSession.id);
-			if (projectSession.id === sessionId && tabOwnerSession) selectProjectSession(tabOwnerSession);
-		},
-		[ownerSessionId, removeSessionTab, selectProjectSession, sessionId, tabOwnerSession],
-	);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],
@@ -231,8 +158,8 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	// scoped to the session on screen so each session has its own shell set.
 	const allShellTerminals = useShellTerminals().data ?? [];
 	const shellTerminals = useMemo(
-		() => allShellTerminals.filter((shell) => shell.sessionId === ownerSessionId),
-		[allShellTerminals, ownerSessionId],
+		() => allShellTerminals.filter((shell) => shell.sessionId === sessionId),
+		[allShellTerminals, sessionId],
 	);
 	const openShellTerminal = useOpenShellTerminal();
 	const closeShellTerminal = useCloseShellTerminal();
@@ -249,7 +176,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	// workspace can no longer be resolved).
 	const addShellTerminal = useCallback(() => {
 		openShellTerminal.mutate(
-			{ projectId: tabOwnerSession?.workspaceId, sessionId: ownerSessionId },
+			{ projectId: session?.workspaceId, sessionId },
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
@@ -257,13 +184,13 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 						generation: shell.createdAt,
 						kind: "shell",
 						handleId: shell.handleId,
-						sessionId: ownerSessionId,
+						sessionId,
 						title: shell.title,
 					});
 				},
 			},
 		);
-	}, [openShellTerminal, ownerSessionId, setActiveShellTerminal, tabOwnerSession?.workspaceId]);
+	}, [openShellTerminal, session?.workspaceId, sessionId, setActiveShellTerminal]);
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
@@ -274,11 +201,11 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 				generation: shell.createdAt,
 				kind: "shell",
 				handleId: shell.handleId,
-				sessionId: ownerSessionId,
+				sessionId,
 				title: shell.title,
 			});
 		},
-		[ownerSessionId, shellTerminals, setActiveShellTerminal],
+		[sessionId, shellTerminals, setActiveShellTerminal],
 	);
 
 	const closeShellTerminalByHandle = useCallback(
@@ -295,7 +222,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 						generation: nextShell.createdAt,
 						kind: "shell",
 						handleId: nextShell.handleId,
-						sessionId: ownerSessionId,
+						sessionId,
 						title: nextShell.title,
 					});
 				} else {
@@ -311,7 +238,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 			activeShellTerminalHandleId,
 			closeShellTerminal,
 			setActiveShellTerminal,
-			ownerSessionId,
+			sessionId,
 			shellTerminals,
 			terminalTarget,
 		],
@@ -346,11 +273,11 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 						generation: shell.createdAt,
 						kind: "shell",
 						handleId: shell.handleId,
-						sessionId: ownerSessionId,
+						sessionId,
 						title: shell.title,
 					},
 		);
-	}, [activeShellTerminalHandleId, ownerSessionId, shellTerminals]);
+	}, [activeShellTerminalHandleId, sessionId, shellTerminals]);
 
 	// If the pane is pointed at a shell that is not in THIS session's strip — e.g.
 	// after navigating to a different session whose globally-active shell belongs
@@ -500,7 +427,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	// previous session's shell/reviewer synchronously so its handle can never be
 	// cached under the destination session.
 	const routedTerminalTarget = terminalTarget.kind === "shell"
-		? terminalTargetBelongsToSession(terminalTarget, ownerSessionId)
+		? terminalTargetBelongsToSession(terminalTarget, sessionId)
 			? terminalTarget
 			: ({ kind: "worker" } satisfies TerminalTarget)
 		: terminalTargetBelongsToSession(terminalTarget, sessionId)
@@ -777,11 +704,6 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 							{showChatSurface ? (
 								<SessionChatSurface
 									session={session}
-									availableProjectSessions={availableProjectSessions}
-									onAddProjectSession={addProjectSession}
-									onCloseProjectSession={closeProjectSession}
-									onSelectProjectSession={selectProjectSession}
-									projectSessions={projectSessions}
 									controllerTransitioning={chatControllerTransitioning}
 									onOpenShell={addShellTerminal}
 									openingShell={openShellTerminal.isPending}
@@ -795,18 +717,13 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 										(interfaceSwitch.starting || activeInterfaceTransition) && session?.mode === "tui"
 									}
 									daemonReady={daemonStatus.state === "ready"}
-									availableProjectSessions={availableProjectSessions}
-									onAddProjectSession={addProjectSession}
-									onCloseProjectSession={closeProjectSession}
 									onCloseShellTerminal={closeShellTerminalByHandle}
 									onNewShellTerminal={addShellTerminal}
 									onRenameShellTerminal={renameShellTerminalByHandle}
-									onSelectProjectSession={selectProjectSession}
 									onSelectSessionTerminal={selectSessionTerminal}
 									onSelectReviewerTerminal={selectReviewerTerminal}
 									onSelectShellTerminal={selectShellTerminal}
 									reviewerTerminal={reviewerTerminal}
-									projectSessions={projectSessions}
 									session={session}
 									shellTerminals={shellTerminals}
 									terminalTarget={routedTerminalTarget}

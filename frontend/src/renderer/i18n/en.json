@@ -804,7 +804,6 @@
 	"termination.confirmAria": "Yes, terminate session",
 	"termination.dialog": "Terminate session?",
 	"termination.dialogNamed": "Terminate {{title}}?",
-	"terminal.addTerminalOrSession": "Add terminal or session",
 	"terminal.agent": "agent",
 	"terminal.backToAgent": "Back to agent terminal",
 	"terminal.clear": "Clear",

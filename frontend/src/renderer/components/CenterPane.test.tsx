@@ -1,5 +1,4 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSwitch } from "../hooks/useAgentSwitches";
@@ -91,8 +90,6 @@ const worker = {
 	activity: { state: "active", lastActivityAt: "2026-06-10T00:00:00Z" },
 	prs: [],
 } satisfies WorkspaceSession;
-
-const secondWorker = { ...worker, id: "sess-2", title: "review the change", provider: "codex" } satisfies WorkspaceSession;
 
 function renderCenterPane(props: Partial<ComponentProps<typeof CenterPane>> = {}) {
 	return render(
@@ -362,43 +359,16 @@ describe("CenterPane toolbar session label", () => {
 		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-sess-1", harness: "codex" });
 	});
 
-	it("keeps the owner permanent and lets added project sessions be selected or closed", () => {
-		const onCloseProjectSession = vi.fn();
-		const onSelectProjectSession = vi.fn();
-		renderCenterPane({
-			session: secondWorker,
-			projectSessions: [worker, secondWorker],
-			onCloseProjectSession,
-			onSelectProjectSession,
-		});
-
-		expect(screen.queryByRole("button", { name: "Close session tab do the thing" })).not.toBeInTheDocument();
-		fireEvent.click(screen.getByRole("tab", { name: /^review the change/ }));
-		expect(onSelectProjectSession).toHaveBeenCalledWith(secondWorker);
-		fireEvent.click(screen.getByRole("button", { name: "Close session tab review the change" }));
-		expect(onCloseProjectSession).toHaveBeenCalledWith(secondWorker);
-	});
-
-	it("opens a picker with separate new-terminal and same-project session actions", async () => {
-		const user = userEvent.setup();
-		const onAddProjectSession = vi.fn();
+	it("creates a native terminal directly from the add button", () => {
 		const onNewShellTerminal = vi.fn();
 		renderCenterPane({
 			session: worker,
-			projectSessions: [worker],
-			availableProjectSessions: [secondWorker],
-			onAddProjectSession,
 			onNewShellTerminal,
 		});
 
-		await user.click(screen.getByRole("button", { name: "Add terminal or session" }));
-		const sessionItem = screen.getByRole("menuitem", { name: /review the change/i });
-		expect(sessionItem.querySelector("img")).toHaveClass("size-terminal-agent-icon");
-		await user.click(sessionItem);
-		expect(onAddProjectSession).toHaveBeenCalledWith(secondWorker);
-		await user.click(screen.getByRole("button", { name: "Add terminal or session" }));
-		await user.click(screen.getByRole("menuitem", { name: /New terminal/i }));
+		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
 		expect(onNewShellTerminal).toHaveBeenCalledOnce();
+		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 	});
 
 	it("shows 'No session' when there is no session", () => {
@@ -416,7 +386,7 @@ describe("CenterPane toolbar session label", () => {
 		const terminalBar = screen.getByTestId("session-terminal-bar");
 		expect(terminalBar).toContainElement(terminalRegion);
 		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Open terminals" }));
-		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "Add terminal or session" }));
+		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "New terminal" }));
 		expect(terminalRegion).toContainElement(screen.getByRole("toolbar", { name: "Terminal display controls" }));
 	});
 

@@ -7,7 +7,6 @@ import { SessionTopbarProvider } from "./SessionTopbarPortal";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const navigateMock = vi.hoisted(() => vi.fn());
 const openShellTerminalMock = vi.hoisted(() => vi.fn());
 const closeShellTerminalMock = vi.hoisted(() => vi.fn());
 const nativeFullScreenMock = vi.hoisted(() => vi.fn(() => false));
@@ -22,10 +21,6 @@ const interfaceTransitionState = vi.hoisted(() => ({
 		| undefined,
 }));
 const reviewGetMock = vi.hoisted(() => vi.fn());
-
-vi.mock("@tanstack/react-router", () => ({
-	useNavigate: () => navigateMock,
-}));
 
 vi.mock("../lib/platform", () => ({
 	// Exercise the macOS shell layout without changing the existing Ctrl-based
@@ -157,10 +152,6 @@ vi.mock("./CenterPane", () => ({
 		onSelectSessionTerminal,
 		onSelectReviewerTerminal,
 		onNewShellTerminal,
-		projectSessions = [],
-		availableProjectSessions = [],
-		onAddProjectSession,
-		onCloseProjectSession,
 		reviewerTerminal,
 		terminalTarget,
 	}: {
@@ -170,10 +161,6 @@ vi.mock("./CenterPane", () => ({
 		onSelectSessionTerminal?: () => void;
 		onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		onNewShellTerminal?: () => void;
-		projectSessions?: WorkspaceSession[];
-		availableProjectSessions?: WorkspaceSession[];
-		onAddProjectSession?: (session: WorkspaceSession) => void;
-		onCloseProjectSession?: (session: WorkspaceSession) => void;
 		reviewerTerminal?: { handleId: string; harness: string };
 		terminalTarget?: { kind: string; handleId?: string };
 	}) => (
@@ -182,16 +169,6 @@ vi.mock("./CenterPane", () => ({
 			<div data-testid="terminal-target">
 				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : (terminalTarget?.kind ?? "worker")}
 			</div>
-			{projectSessions.slice(1).map((candidate) => (
-				<button key={`close-project-${candidate.id}`} type="button" onClick={() => onCloseProjectSession?.(candidate)}>
-					close project {candidate.title}
-				</button>
-			))}
-			{availableProjectSessions.map((candidate) => (
-				<button key={`add-project-${candidate.id}`} type="button" onClick={() => onAddProjectSession?.(candidate)}>
-					add project {candidate.title}
-				</button>
-			))}
 			<div data-testid="reviewer-harness">{reviewerTerminal?.harness ?? ""}</div>
 			{reviewerTerminal ? (
 				<button type="button" onClick={() => onSelectReviewerTerminal?.(reviewerTerminal)}>
@@ -472,7 +449,6 @@ describe("SessionView", () => {
 		useUiStore.setState({
 			activeShellTerminalHandleId: null,
 			inspectorSessions: {},
-			sessionTabsByOwner: {},
 			visibleTerminalKindBySession: {},
 		});
 		panels.clear();
@@ -481,7 +457,6 @@ describe("SessionView", () => {
 		browserViewState.url = "";
 		browserViewState.agentBrowserActive = false;
 		shellTerminalsState.data = [];
-	navigateMock.mockReset();
 	openShellTerminalMock.mockReset();
 	closeShellTerminalMock.mockReset();
 	interfaceTransitionMock.start.mockReset();
@@ -490,33 +465,6 @@ describe("SessionView", () => {
 		interfaceTransitionState.status = undefined;
 		reviewGetMock.mockReset();
 		reviewGetMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [], runs: [] }, error: undefined });
-	});
-
-	it("adds an active worker from the same project and navigates the whole session route", () => {
-		render(<SessionView sessionId="sess-1" />);
-
-		fireEvent.click(screen.getByRole("button", { name: "add project do the other thing" }));
-
-		expect(useUiStore.getState().sessionTabsByOwner).toEqual({ "sess-1": ["sess-2"] });
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-2" },
-			search: { tabOwner: "sess-1" },
-		});
-	});
-
-	it("closes the active added session and returns to its originating session", () => {
-		useUiStore.setState({ sessionTabsByOwner: { "sess-1": ["sess-2"] } });
-		render(<SessionView sessionId="sess-2" tabOwnerSessionId="sess-1" />);
-
-		fireEvent.click(screen.getByRole("button", { name: "close project do the other thing" }));
-
-		expect(useUiStore.getState().sessionTabsByOwner).toEqual({});
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-1" },
-			search: {},
-		});
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session

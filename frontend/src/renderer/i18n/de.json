@@ -813,7 +813,6 @@
 	"termination.confirmAria": "Ja, Sitzung beenden",
 	"termination.dialog": "Sitzung beenden?",
 	"termination.dialogNamed": "{{title}} beenden?",
-	"terminal.addTerminalOrSession": "Terminal oder Sitzung hinzufügen",
 	"terminal.agent": "agent",
 	"terminal.backToAgent": "Zurück zum Agent-Terminal",
 	"terminal.clear": "Leeren",
