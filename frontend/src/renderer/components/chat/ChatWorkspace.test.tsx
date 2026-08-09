@@ -143,19 +143,35 @@ describe("HumanMessage attachments", () => {
 });
 
 describe("ChatWorkspace timeline", () => {
-	it("uses the shared session topbar chrome for workers and orchestrators", () => {
-		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" />);
+	it("keeps only chat-terminal navigation and display controls in the dedicated terminal bar", () => {
+		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" onOpenShell={vi.fn()} />);
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "worker");
-		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
-		expect(screen.getByTestId("session-terminal-region")).toBeInTheDocument();
-		expect(screen.getByRole("tab", { name: chatFixture.title })).toBeInTheDocument();
+		const terminalBar = screen.getByTestId("session-terminal-bar");
+		expect(terminalBar).toContainElement(screen.getByTestId("session-terminal-region"));
+		expect(terminalBar).toContainElement(screen.getByRole("tab", { name: chatFixture.title }));
+		expect(terminalBar).toContainElement(screen.getByRole("button", { name: "New terminal" }));
+		expect(terminalBar).toContainElement(screen.getByRole("toolbar", { name: "Chat display controls" }));
+		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
 
-		view.rerender(<ChatWorkspace snapshot={chatFixture} sessionRole="orchestrator" />);
+		view.rerender(<ChatWorkspace snapshot={chatFixture} sessionRole="orchestrator" onOpenShell={vi.fn()} />);
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
-		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
-		expect(screen.getByTestId("session-action-region")).toBeInTheDocument();
+		expect(screen.getByTestId("session-terminal-bar")).toBeInTheDocument();
+		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
+	});
+
+	it("keeps the chat terminal bar available in fullscreen", () => {
+		render(<ChatWorkspace snapshot={chatFixture} onOpenShell={vi.fn()} />);
+		const chat = screen.getByLabelText("Chat");
+
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: chat });
+		fireEvent(document, new Event("fullscreenchange"));
+
+		expect(screen.getByTestId("session-terminal-bar")).toBeInTheDocument();
+		expect(screen.getByRole("toolbar", { name: "Chat display controls" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Exit fullscreen" })).toBeInTheDocument();
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
 	});
 
 	it("keeps chat font controls scoped to the chat instead of native page zoom", () => {

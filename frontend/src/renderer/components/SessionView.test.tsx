@@ -140,10 +140,9 @@ vi.mock("./ShellTopbar", () => ({
 	),
 }));
 vi.mock("./chat/SessionChatSurface", () => ({
-	SessionChatSurface: ({ onOpenShell, headerActions }: { onOpenShell?: () => void; headerActions?: ReactNode }) => (
+	SessionChatSurface: ({ onOpenShell }: { onOpenShell?: () => void }) => (
 		<div data-testid="chat-surface">
 			chat surface
-			{headerActions}
 			<button type="button" onClick={onOpenShell}>
 				open shell from chat
 			</button>
@@ -159,7 +158,6 @@ vi.mock("./CenterPane", () => ({
 		onSelectSessionTerminal,
 		onSelectReviewerTerminal,
 		onNewShellTerminal,
-		topbarActions,
 		reviewerTerminal,
 		terminalTarget,
 	}: {
@@ -170,13 +168,11 @@ vi.mock("./CenterPane", () => ({
 		onSelectSessionTerminal?: () => void;
 		onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		onNewShellTerminal?: () => void;
-		topbarActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		terminalTarget?: { kind: string; handleId?: string };
 	}) => (
 		<div>
 			terminal center
-			{topbarActions}
 			<div data-testid="terminal-target">
 				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : (terminalTarget?.kind ?? "worker")}
 			</div>

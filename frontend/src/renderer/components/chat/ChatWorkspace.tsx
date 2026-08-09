@@ -46,7 +46,7 @@ import type { SessionKind } from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { SessionTopbarPortal } from "../SessionTopbarPortal";
+import { SessionTerminalBar } from "../SessionTerminalBar";
 import {
 	ActivityRow,
 	ApprovalCard,
@@ -111,8 +111,6 @@ export interface ChatWorkspaceProps {
 	sessionTitle?: string;
 	/** The AO role using this shared conversation surface. */
 	sessionRole?: SessionKind;
-	/** Session-level actions owned above the conversation surface. */
-	headerActions?: ReactNode;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
 	/** Older durable history is available but not loaded into the DOM yet. */
@@ -199,7 +197,6 @@ export function ChatWorkspace({
 	snapshot,
 	sessionTitle,
 	sessionRole = "worker",
-	headerActions,
 	controllerTransitioning,
 	hasOlder,
 	loadingOlder,
@@ -333,7 +330,6 @@ export function ChatWorkspace({
 			<ChatHeader
 				snapshot={snapshot}
 				sessionTitle={sessionTitle}
-				headerActions={headerActions}
 				onOpenShell={onOpenShell}
 				openingShell={openingShell}
 				shellError={shellError}
@@ -583,7 +579,6 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 function ChatHeader({
 	snapshot,
 	sessionTitle,
-	headerActions,
 	onOpenShell,
 	openingShell,
 	shellError,
@@ -596,7 +591,6 @@ function ChatHeader({
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
-	headerActions?: ReactNode;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
@@ -609,8 +603,7 @@ function ChatHeader({
 }) {
 	const label = sessionTitle || snapshot.title || snapshot.sessionId;
 	return (
-		<SessionTopbarPortal>
-			<header className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
+		<SessionTerminalBar fullscreen={isFullscreen}>
 				<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
 					<div
 						className="flex min-w-0 shrink items-center pr-1.5"
@@ -698,12 +691,8 @@ function ChatHeader({
 							</ChatTopbarControl>
 						</div>
 					</div>
-					<div className="ml-auto flex shrink-0 items-center px-3" data-testid="session-action-region">
-						{headerActions}
-					</div>
 				</div>
-			</header>
-		</SessionTopbarPortal>
+		</SessionTerminalBar>
 	);
 }
 

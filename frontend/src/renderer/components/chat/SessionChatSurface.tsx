@@ -8,7 +8,6 @@
  */
 
 import { AlertTriangle, Loader2 } from "lucide-react";
-import type { ReactNode } from "react";
 import { ChatWorkspace } from "./ChatWorkspace";
 import {
 	useConversation,
@@ -28,14 +27,12 @@ export function SessionChatSurface({
 	onOpenShell,
 	openingShell,
 	shellError,
-	headerActions,
 	controllerTransitioning,
 }: {
 	session: WorkspaceSession;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
-	headerActions?: ReactNode;
 	/** The target controller is being installed by an interface handoff. */
 	controllerTransitioning?: boolean;
 }) {
@@ -110,7 +107,6 @@ export function SessionChatSurface({
 			onLinkOpen={openLinkInBrowser}
 			sessionTitle={session.title}
 			sessionRole={session.kind}
-			headerActions={headerActions}
 			controllerTransitioning={controllerTransitioning}
 			hasOlder={hasOlder}
 			loadingOlder={isLoadingOlder}
