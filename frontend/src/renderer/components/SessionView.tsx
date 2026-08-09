@@ -16,6 +16,7 @@ import {
 	SessionInterfaceTransitionNotice,
 } from "./SessionInterfaceSwitch";
 import { ShellTopbar } from "./ShellTopbar";
+import { SessionTopbarHost } from "./SessionTopbarPortal";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useBrowserView } from "../hooks/useBrowserView";
 import {
@@ -664,46 +665,52 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					minSize={`${100 - INSPECTOR_MAX_PERCENT}%`}
 					style={{ overflow: "hidden" }}
 				>
-					<div className="relative h-full min-h-0">
-						{/* The committed mode owns the agent surface. Auxiliary shell and
-						    reviewer targets remain terminal surfaces in either mode. */}
-						{showChatSurface ? (
-							<SessionChatSurface
-								session={session}
-								headerActions={sessionHeaderActions}
-								controllerTransitioning={chatControllerTransitioning}
-								onOpenShell={addShellTerminal}
-								openingShell={openShellTerminal.isPending}
-								shellError={
-									openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined
-								}
-							/>
-						) : (
-							<CenterPane
-								agentInputDisabled={
-									(interfaceSwitch.starting || activeInterfaceTransition) && session?.mode === "tui"
-								}
-								daemonReady={daemonStatus.state === "ready"}
-								onCloseShellTerminal={closeShellTerminalByHandle}
-								onNewShellTerminal={addShellTerminal}
-								onRenameShellTerminal={renameShellTerminalByHandle}
-								onSelectSessionTerminal={selectSessionTerminal}
-								onSelectReviewerTerminal={selectReviewerTerminal}
-								onSelectShellTerminal={selectShellTerminal}
-								reviewerTerminal={reviewerTerminal}
-								session={session}
-								shellTerminals={shellTerminals}
-								terminalTarget={routedTerminalTarget}
-								theme={theme}
-								topbarActions={sessionHeaderActions}
-							/>
-						)}
-						{interfaceSwitch.transition?.id !== dismissedTransitionID ? (
-							<SessionInterfaceTransitionNotice
-								transition={interfaceSwitch.transition}
-								onDismiss={() => setDismissedTransitionID(interfaceSwitch.transition?.id ?? "")}
-							/>
-						) : null}
+					<div className="relative flex h-full min-h-0 flex-col">
+						<SessionTopbarHost
+							className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
+							data-testid="session-topbar-host"
+						/>
+						<div className="relative min-h-0 flex-1">
+							{/* The committed mode owns the agent surface. Auxiliary shell and
+							    reviewer targets remain terminal surfaces in either mode. */}
+							{showChatSurface ? (
+								<SessionChatSurface
+									session={session}
+									headerActions={sessionHeaderActions}
+									controllerTransitioning={chatControllerTransitioning}
+									onOpenShell={addShellTerminal}
+									openingShell={openShellTerminal.isPending}
+									shellError={
+										openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined
+									}
+								/>
+							) : (
+								<CenterPane
+									agentInputDisabled={
+										(interfaceSwitch.starting || activeInterfaceTransition) && session?.mode === "tui"
+									}
+									daemonReady={daemonStatus.state === "ready"}
+									onCloseShellTerminal={closeShellTerminalByHandle}
+									onNewShellTerminal={addShellTerminal}
+									onRenameShellTerminal={renameShellTerminalByHandle}
+									onSelectSessionTerminal={selectSessionTerminal}
+									onSelectReviewerTerminal={selectReviewerTerminal}
+									onSelectShellTerminal={selectShellTerminal}
+									reviewerTerminal={reviewerTerminal}
+									session={session}
+									shellTerminals={shellTerminals}
+									terminalTarget={routedTerminalTarget}
+									theme={theme}
+									topbarActions={sessionHeaderActions}
+								/>
+							)}
+							{interfaceSwitch.transition?.id !== dismissedTransitionID ? (
+								<SessionInterfaceTransitionNotice
+									transition={interfaceSwitch.transition}
+									onDismiss={() => setDismissedTransitionID(interfaceSwitch.transition?.id ?? "")}
+								/>
+							) : null}
+						</div>
 					</div>
 				</ResizablePanel>
 				{hasInspector ? (

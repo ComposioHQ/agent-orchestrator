@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
+import { SessionTopbarProvider } from "./SessionTopbarPortal";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
@@ -427,7 +428,11 @@ function render(ui: ReactNode) {
 	});
 	return {
 		...rtlRender(ui, {
-			wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+			wrapper: ({ children }) => (
+				<QueryClientProvider client={client}>
+					<SessionTopbarProvider>{children}</SessionTopbarProvider>
+				</QueryClientProvider>
+			),
 		}),
 		client,
 	};
@@ -810,6 +815,17 @@ describe("SessionView", () => {
 		expect(panelSizes("terminal")).toEqual(["72%", "50%"]);
 		expect(panelSizes("inspector")).toEqual(["360px", "360px", "50%"]);
 		expect(screen.getByTestId("panel-inspector")).toHaveClass("session-inspector-panel");
+	});
+
+	it("places the session topbar inside the terminal column so the inspector header shares the top row", () => {
+		render(<SessionView sessionId="sess-1" />);
+
+		const terminalPanel = screen.getByTestId("panel-terminal");
+		const inspectorPanel = screen.getByTestId("panel-inspector");
+		const host = within(terminalPanel).getByTestId("session-topbar-host");
+
+		expect(host).toHaveClass("h-inspector-tabs");
+		expect(inspectorPanel).not.toContainElement(host);
 	});
 
 	it("opens the Summary inspector alongside the terminal by default", () => {
