@@ -128,7 +128,15 @@ CREATE TABLE agent_switches (
     target_generation_id       TEXT NOT NULL DEFAULT '',
     target_runtime_handle_id   TEXT NOT NULL DEFAULT '',
     target_acknowledged_at     TIMESTAMP,
-    error_code                 TEXT NOT NULL DEFAULT '',
+    error_code                 TEXT NOT NULL DEFAULT ''
+        CHECK (error_code IN (
+            '', 'daemon_restart_pre_stop', 'daemon_restart_post_stop',
+            'daemon_restart_unrecoverable_target', 'daemon_restart_before_delivery',
+            'delivery_unconfirmed', 'source_session_terminated', 'source_stop_unconfirmed',
+            'target_binary_missing', 'target_agent_unauthorized', 'target_start_unconfirmed',
+            'request_cancelled', 'source_blocked', 'failed_pre_stop', 'failed_post_stop',
+            'target_ready_failed', 'delivery_failed', 'switch_failed'
+        )),
     requested_at               TIMESTAMP NOT NULL,
     updated_at                 TIMESTAMP NOT NULL,
     final_handoff_path         TEXT NOT NULL DEFAULT '',
@@ -146,6 +154,15 @@ CREATE TABLE agent_switches (
         (agent_handoff_status <> 'received' AND agent_handoff_path = '' AND agent_handoff_hash = '')
     ),
     CHECK (state NOT IN ('completed', 'failed') OR agent_handoff_status <> 'requested'),
+    CHECK (
+        (state = 'failed' AND error_code NOT IN ('', 'target_start_unconfirmed'))
+        OR (
+            state = 'starting_target'
+            AND target_runtime_handle_id = ''
+            AND error_code = 'target_start_unconfirmed'
+        )
+        OR (state <> 'failed' AND error_code = '')
+    ),
     CHECK (updated_at >= requested_at),
     CHECK (target_runtime_handle_id = '' OR target_generation_id <> ''),
     CHECK (target_acknowledged_at IS NULL OR target_generation_id <> ''),
