@@ -30,8 +30,7 @@ const hookState = vi.hoisted(() => ({
 	closeTab: vi.fn(),
 	openDevTools: vi.fn(),
 	closeDevTools: vi.fn(),
-	setDevToolsPlacement: vi.fn(),
-	devtoolsState: { viewId: "42:sess-1", open: false, activeTabId: "t1", placement: "undocked" },
+	devtoolsState: { viewId: "42:sess-1", open: false, activeTabId: "t1" },
 	setAnnotationMode: vi.fn(),
 	tabs: [{ id: "t1", url: "", title: "", active: true }],
 	activeTabId: "t1",
@@ -67,7 +66,6 @@ vi.mock("../hooks/useBrowserView", () => ({
 			devtoolsState: hookState.devtoolsState,
 			openDevTools: hookState.openDevTools,
 			closeDevTools: hookState.closeDevTools,
-			setDevToolsPlacement: hookState.setDevToolsPlacement,
 			annotationMode: false,
 			setAnnotationMode: hookState.setAnnotationMode,
 		};
@@ -145,7 +143,6 @@ describe("BrowserPanel", () => {
 	const annotationCancelListeners = new Set<(payload: BrowserAnnotationCancelPayload) => void>();
 
 	beforeEach(() => {
-		window.localStorage.clear();
 		hookState.navigate.mockReset();
 		hookState.goBack.mockReset();
 		hookState.goForward.mockReset();
@@ -155,9 +152,7 @@ describe("BrowserPanel", () => {
 		hookState.closeTab.mockReset();
 		hookState.openDevTools.mockReset();
 		hookState.closeDevTools.mockReset();
-		hookState.setDevToolsPlacement.mockReset();
-		window.ao!.browser.nativeCompositionEnabled = false;
-		hookState.devtoolsState = { viewId: "42:sess-1", open: false, activeTabId: "t1", placement: "undocked" };
+		hookState.devtoolsState = { viewId: "42:sess-1", open: false, activeTabId: "t1" };
 		hookState.setAnnotationMode.mockReset();
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
 		postMock.mockReset();
@@ -282,44 +277,19 @@ describe("BrowserPanel", () => {
 	});
 
 	it("opens DevTools from a direct toolbar control", async () => {
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+		const toolbarButtonCount = screen.getAllByRole("button").length;
 
 		await userEvent.click(screen.getByRole("button", { name: "Open DevTools" }));
 		expect(hookState.openDevTools).toHaveBeenCalledOnce();
 
-		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1", placement: "undocked" };
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1" };
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getAllByRole("button")).toHaveLength(toolbarButtonCount);
 		await userEvent.click(screen.getByRole("button", { name: "Close DevTools" }));
 		expect(hookState.closeDevTools).toHaveBeenCalledOnce();
-	});
-
-	it("offers AO-owned placement controls for the native DevTools surface", async () => {
-		window.ao!.browser.nativeCompositionEnabled = true;
-		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1", placement: "right" };
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		await userEvent.click(screen.getByRole("button", { name: "DevTools placement" }));
-		await userEvent.click(await screen.findByTestId("browser-devtools-placement-bottom"));
-
-		expect(hookState.setDevToolsPlacement).toHaveBeenCalledWith("bottom");
-	});
-
-	it("restores the saved native placement before opening DevTools", async () => {
-		window.ao!.browser.nativeCompositionEnabled = true;
-		window.localStorage.setItem("ao.browser.devtoolsPlacement", "left");
-		const calls: string[] = [];
-		hookState.setDevToolsPlacement.mockImplementation(async () => {
-			calls.push("placement");
-		});
-		hookState.openDevTools.mockImplementation(async () => {
-			calls.push("open");
-		});
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		await userEvent.click(screen.getByRole("button", { name: "Open DevTools" }));
-
-		expect(hookState.setDevToolsPlacement).toHaveBeenCalledWith("left");
-		expect(calls).toEqual(["placement", "open"]);
 	});
 
 	it("marks blank native panels as opaque and loaded panels as live", () => {
