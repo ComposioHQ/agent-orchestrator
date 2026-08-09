@@ -343,7 +343,7 @@
 	"newTask.refreshingAgents": "正在刷新代理...",
 	"newTask.removeFile": "移除 {{name}}",
 	"newTask.runsWith": "运行于",
-	"newTask.letAgentChoose": "由 {{agent}} 选择",
+	"newTask.letAgentChoose": "使用 {{agent}} 的默认设置",
 	"newTask.autoModel": "自动",
 	"newTask.emptyHint": "现在即可开始，详细信息之后再补充。",
 	"newTask.newlineHint": "Shift+Enter 换行",
@@ -353,7 +353,7 @@
 	"newTask.removeImage": "移除图片 {{number}}",
 	"newTask.start": "开始任务",
 	"newTask.starting": "正在开始...",
-	"newTask.title": "新建任务",
+	"newTask.title": "创建新任务",
 	"newTask.titleLabel": "标题",
 	"newTask.titlePlaceholder": "修复 WebGL 回退渲染器",
 	"newTask.titleRequired": "标题和简述为必填项。",
@@ -997,7 +997,7 @@
 	"settings.dev.decreaseAria": "减少{{label}}",
 	"settings.dev.increaseAria": "增加{{label}}",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "描述任务（可选）…",
+	"newTask.taskPlaceholder": "例如：修复不稳定的结账测试（可选）…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }

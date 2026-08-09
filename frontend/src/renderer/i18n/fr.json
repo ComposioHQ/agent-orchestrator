@@ -318,7 +318,7 @@
 	"newTask.refreshingAgents": "Actualisation des agents...",
 	"newTask.removeFile": "Supprimer {{name}}",
 	"newTask.runsWith": "Exécuté avec",
-	"newTask.letAgentChoose": "Laisser {{agent}} choisir",
+	"newTask.letAgentChoose": "Utiliser la valeur par défaut de {{agent}}",
 	"newTask.autoModel": "Automatique",
 	"newTask.emptyHint": "Démarrez maintenant — ajoutez les détails plus tard.",
 	"newTask.newlineHint": "Shift+Entrée pour une nouvelle ligne",
@@ -328,7 +328,7 @@
 	"newTask.removeImage": "Supprimer l'image {{number}}",
 	"newTask.start": "Démarrer la tâche",
 	"newTask.starting": "Démarrage...",
-	"newTask.title": "Nouvelle tâche",
+	"newTask.title": "Créer une nouvelle tâche",
 	"newTask.titleLabel": "Titre",
 	"newTask.titlePlaceholder": "Corriger le moteur de rendu de secours WebGL",
 	"newTask.titleRequired": "Le titre et le brief sont obligatoires.",
@@ -1031,7 +1031,7 @@
 	"shell.pinSession": "Pin session",
 	"shell.unpinSession": "Unpin session",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "Décrivez la tâche (facultatif)…",
+	"newTask.taskPlaceholder": "p. ex. Corriger le test de paiement instable (facultatif)…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }

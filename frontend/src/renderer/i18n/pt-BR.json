@@ -318,7 +318,7 @@
 	"newTask.refreshingAgents": "Atualizando agentes...",
 	"newTask.removeFile": "Remover {{name}}",
 	"newTask.runsWith": "Executa com",
-	"newTask.letAgentChoose": "Deixar {{agent}} escolher",
+	"newTask.letAgentChoose": "Usar o padrão de {{agent}}",
 	"newTask.autoModel": "Automático",
 	"newTask.emptyHint": "Comece agora — adicione os detalhes depois.",
 	"newTask.newlineHint": "Shift+Enter para uma nova linha",
@@ -328,7 +328,7 @@
 	"newTask.removeImage": "Remover imagem {{number}}",
 	"newTask.start": "Iniciar tarefa",
 	"newTask.starting": "Iniciando...",
-	"newTask.title": "Nova tarefa",
+	"newTask.title": "Criar uma nova tarefa",
 	"newTask.titleLabel": "Título",
 	"newTask.titlePlaceholder": "Corrigir renderer de fallback WebGL",
 	"newTask.titleRequired": "Título e briefing são obrigatórios.",
@@ -1031,7 +1031,7 @@
 	"shell.pinSession": "Pin session",
 	"shell.unpinSession": "Unpin session",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "Descreva a tarefa (opcional)…",
+	"newTask.taskPlaceholder": "ex.: Corrigir o teste de checkout instável (opcional)…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }

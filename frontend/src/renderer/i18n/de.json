@@ -316,7 +316,7 @@
 	"newTask.refreshingAgents": "Agenten werden aktualisiert...",
 	"newTask.removeFile": "{{name}} entfernen",
 	"newTask.runsWith": "Läuft mit",
-	"newTask.letAgentChoose": "{{agent}} entscheiden lassen",
+	"newTask.letAgentChoose": "{{agent}}-Standard verwenden",
 	"newTask.autoModel": "Automatisch",
 	"newTask.emptyHint": "Jetzt starten – Details können später folgen.",
 	"newTask.newlineHint": "Shift+Enter für eine neue Zeile",
@@ -326,7 +326,7 @@
 	"newTask.removeImage": "Bild {{number}} entfernen",
 	"newTask.start": "Aufgabe starten",
 	"newTask.starting": "Wird gestartet...",
-	"newTask.title": "Neue Aufgabe",
+	"newTask.title": "Neue Aufgabe erstellen",
 	"newTask.titleLabel": "Titel",
 	"newTask.titlePlaceholder": "WebGL-Fallback-Renderer reparieren",
 	"newTask.titleRequired": "Titel und Briefing sind erforderlich.",
@@ -1015,7 +1015,7 @@
 	"shell.pinSession": "Pin session",
 	"shell.unpinSession": "Unpin session",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "Aufgabe beschreiben (optional)…",
+	"newTask.taskPlaceholder": "z. B. Den instabilen Checkout-Test reparieren (optional)…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }

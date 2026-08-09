@@ -318,7 +318,7 @@
 	"newTask.refreshingAgents": "Actualizando agentes...",
 	"newTask.removeFile": "Quitar {{name}}",
 	"newTask.runsWith": "Se ejecuta con",
-	"newTask.letAgentChoose": "Que elija {{agent}}",
+	"newTask.letAgentChoose": "Usar el valor predeterminado de {{agent}}",
 	"newTask.autoModel": "Automático",
 	"newTask.emptyHint": "Empieza ahora; añade los detalles después.",
 	"newTask.newlineHint": "Shift+Enter para una nueva línea",
@@ -328,7 +328,7 @@
 	"newTask.removeImage": "Quitar imagen {{number}}",
 	"newTask.start": "Iniciar tarea",
 	"newTask.starting": "Iniciando...",
-	"newTask.title": "Nueva tarea",
+	"newTask.title": "Crear una nueva tarea",
 	"newTask.titleLabel": "Título",
 	"newTask.titlePlaceholder": "Corregir el renderizador de respaldo de WebGL",
 	"newTask.titleRequired": "El título y la descripción son obligatorios.",
@@ -1031,7 +1031,7 @@
 	"shell.pinSession": "Pin session",
 	"shell.unpinSession": "Unpin session",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "Describe la tarea (opcional)…",
+	"newTask.taskPlaceholder": "p. ej. Arreglar la prueba de pago inestable (opcional)…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }
