@@ -1,4 +1,4 @@
-import { ArrowRightLeft, Loader2, TriangleAlert, X } from "lucide-react";
+import { ArrowRightLeft, Loader2, MessageSquare, SquareTerminal, TriangleAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
 	SessionInterfaceMode,
@@ -106,13 +106,14 @@ export function SessionInterfaceSwitchButton({
 	}
 
 	const label = `Switch to ${targetLabel(target)}`;
+	const TargetIcon = target === "chat" ? MessageSquare : SquareTerminal;
 	return (
 		<Button
 			type="button"
-			size="sm"
+			size="icon-sm"
 			variant="ghost"
 			className={cn(
-				"h-7 gap-1.5 px-2.5 text-xs text-muted-foreground",
+				"text-muted-foreground",
 				supported && "hover:text-foreground",
 				!supported && "opacity-50",
 				className,
@@ -125,9 +126,8 @@ export function SessionInterfaceSwitchButton({
 			{pending ? (
 				<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
 			) : (
-				<ArrowRightLeft aria-hidden="true" className="size-3.5" />
+				<TargetIcon aria-hidden="true" className="size-3.5" />
 			)}
-			<span className="whitespace-nowrap">{label}</span>
 		</Button>
 	);
 }

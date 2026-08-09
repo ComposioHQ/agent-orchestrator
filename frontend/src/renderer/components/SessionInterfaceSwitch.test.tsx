@@ -50,12 +50,17 @@ describe("SessionInterfaceSwitchButton", () => {
 		expect(screen.queryByRole("button", { name: "Cancel switch to Chat UI" })).not.toBeInTheDocument();
 	});
 
-	it("shows explicit switch copy for the target interface", () => {
+	it.each([
+		["chat", "Switch to chat UI", "lucide-message-square"],
+		["tui", "Switch to terminal UI", "lucide-square-terminal"],
+	] as const)("uses an icon-only destination control for %s", (target, label, iconClass) => {
 		const onClick = vi.fn();
-		render(<SessionInterfaceSwitchButton target="tui" supported onClick={onClick} />);
+		render(<SessionInterfaceSwitchButton target={target} supported onClick={onClick} />);
 
-		const button = screen.getByRole("button", { name: "Switch to terminal UI" });
-		expect(button).toHaveTextContent("Switch to terminal UI");
+		const button = screen.getByRole("button", { name: label });
+		expect(button).toHaveTextContent(/^$/);
+		expect(button.querySelector("svg")).toHaveClass(iconClass);
+		expect(button).toHaveAttribute("title", `${label} using this agent's native conversation`);
 		fireEvent.click(button);
 		expect(onClick).toHaveBeenCalledOnce();
 	});
