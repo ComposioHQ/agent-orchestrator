@@ -20,6 +20,7 @@ import { NewTerminalButton } from "./SessionTerminalTabs";
 import { ShellTopbar } from "./ShellTopbar";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { SessionTopbarHost } from "./SessionTopbarPortal";
+import type { TerminalTabStripProps } from "./TerminalTabStrip";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useBrowserView } from "../hooks/useBrowserView";
 import {
@@ -139,9 +140,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const isNativeFullScreen = useWindowFullScreen();
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((candidate) => candidate.id === sessionId);
-	const ownerSessionId = sessionId;
-	const terminalBarLayout = useUiStore((state) => state.terminalBarsByOwner[ownerSessionId] ?? emptyTerminalBar);
-	const addTerminalTab = useUiStore((state) => state.addTerminalTab);
+	const terminalBarLayout = useUiStore((state) => state.terminalBarsByOwner[sessionId] ?? emptyTerminalBar);
 	const activateTerminalTab = useUiStore((state) => state.activateTerminalTab);
 	const closeTerminalTab = useUiStore((state) => state.closeTerminalTab);
 	const setTerminalTabPinned = useUiStore((state) => state.setTerminalTabPinned);
@@ -194,8 +193,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			{ projectId: session?.workspaceId, sessionId },
 			{
 				onSuccess: (shell) => {
-					addTerminalTab(ownerSessionId, `shell:${shell.handleId}`);
-					activateTerminalTab(ownerSessionId, `shell:${shell.handleId}`);
+					activateTerminalTab(sessionId, `shell:${shell.handleId}`);
 					setActiveShellTerminal(shell.handleId);
 					setTerminalTarget({
 						generation: shell.createdAt,
@@ -207,13 +205,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				},
 			},
 		);
-	}, [activateTerminalTab, addTerminalTab, openShellTerminal, ownerSessionId, session?.workspaceId, sessionId, setActiveShellTerminal]);
+	}, [activateTerminalTab, openShellTerminal, session?.workspaceId, sessionId, setActiveShellTerminal]);
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
 			const shell = shellTerminals.find((s) => s.handleId === handleId);
 			if (!shell) return;
-			activateTerminalTab(ownerSessionId, `shell:${shell.handleId}`);
+			activateTerminalTab(sessionId, `shell:${shell.handleId}`);
 			setActiveShellTerminal(shell.handleId);
 			setTerminalTarget({
 				generation: shell.createdAt,
@@ -223,21 +221,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				title: shell.title,
 			});
 		},
-		[activateTerminalTab, ownerSessionId, shellTerminals, setActiveShellTerminal],
+		[activateTerminalTab, sessionId, shellTerminals, setActiveShellTerminal],
 	);
 
-	// Selecting the session's own pane also drops the active shell, so the effect
-	// above does not immediately pull the view back to that shell.
 	const selectSessionTerminal = useCallback(() => {
-		activateTerminalTab(ownerSessionId, `session:${sessionId}`);
+		activateTerminalTab(sessionId, `session:${sessionId}`);
 		setActiveShellTerminal(null);
 		setTerminalTarget({ kind: "worker" });
-	}, [activateTerminalTab, ownerSessionId, sessionId, setActiveShellTerminal]);
+	}, [activateTerminalTab, sessionId, setActiveShellTerminal]);
+
 	const selectReviewerTerminal = useCallback((target: ReviewerTerminalTarget) => {
-		activateTerminalTab(ownerSessionId, `reviewer:${target.handleId}`);
+		activateTerminalTab(sessionId, `reviewer:${target.handleId}`);
 		setActiveShellTerminal(null);
 		setTerminalTarget({ kind: "reviewer", handleId: target.handleId, harness: target.harness, sessionId });
-	}, [activateTerminalTab, ownerSessionId, sessionId, setActiveShellTerminal]);
+	}, [activateTerminalTab, sessionId, setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
 	// and ⌘T / Ctrl+T work everywhere); this view only follows the result. When a new
@@ -447,38 +444,27 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Route props change one render before the passive reset above. Reject the
 	// previous session's shell/reviewer synchronously so its handle can never be
 	// cached under the destination session.
-	const routedTerminalTarget = terminalTarget.kind === "shell"
-		? terminalTargetBelongsToSession(terminalTarget, sessionId)
-			? terminalTarget
-			: ({ kind: "worker" } satisfies TerminalTarget)
-		: terminalTargetBelongsToSession(terminalTarget, sessionId)
-			? terminalTarget
-			: ({ kind: "worker" } satisfies TerminalTarget);
+	const routedTerminalTarget = terminalTargetBelongsToSession(terminalTarget, sessionId)
+		? terminalTarget
+		: ({ kind: "worker" } satisfies TerminalTarget);
 	const activeTerminalTabKey: TerminalTabKey =
 		routedTerminalTarget.kind === "shell"
 			? `shell:${routedTerminalTarget.handleId}`
 			: routedTerminalTarget.kind === "reviewer"
 				? `reviewer:${routedTerminalTarget.handleId}`
 				: `session:${sessionId}`;
-	const availableTerminalTabKeys: TerminalTabKey[] = [
-		`session:${sessionId}`,
-		...shellTerminals.map((shell) => `shell:${shell.handleId}` as const),
-		...(reviewerTerminal ? ([`reviewer:${reviewerTerminal.handleId}`] as const) : []),
-	];
-	const availableTerminalTabSignature = availableTerminalTabKeys.join("|");
+	const availableTerminalTabKeys = useMemo<TerminalTabKey[]>(
+		() => [
+			`session:${sessionId}`,
+			...shellTerminals.map((shell) => `shell:${shell.handleId}` as const),
+			...(reviewerTerminal ? ([`reviewer:${reviewerTerminal.handleId}`] as const) : []),
+		],
+		[reviewerTerminal?.handleId, sessionId, shellTerminals],
+	);
 
-	// Daemon-discovered shells join the in-memory bar once per availability
-	// change. Nothing is persisted across an app restart.
 	useEffect(() => {
-		for (const key of availableTerminalTabKeys) addTerminalTab(ownerSessionId, key);
-		// The signature is the stable dependency; the array is intentionally rebuilt
-		// from live daemon data on each render.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [addTerminalTab, availableTerminalTabSignature, ownerSessionId]);
-	useEffect(() => {
-		addTerminalTab(ownerSessionId, activeTerminalTabKey);
-		activateTerminalTab(ownerSessionId, activeTerminalTabKey);
-	}, [activateTerminalTab, activeTerminalTabKey, addTerminalTab, ownerSessionId]);
+		activateTerminalTab(sessionId, activeTerminalTabKey);
+	}, [activateTerminalTab, activeTerminalTabKey, sessionId]);
 
 	const selectTerminalTab = useCallback(
 		(key: TerminalTabKey) => {
@@ -499,23 +485,35 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const closeTerminalTabByKey = useCallback(
 		(key: ReorderableTerminalTabKey) => {
 			const wasActive = key === activeTerminalTabKey;
-			const nextKey = closeTerminalTab(ownerSessionId, key, availableTerminalTabKeys);
+			const nextKey = closeTerminalTab(sessionId, key, availableTerminalTabKeys);
 			closeShellTerminal.mutate(key.slice("shell:".length));
 			if (wasActive && nextKey) selectTerminalTab(nextKey);
 		},
 		[
 			activeTerminalTabKey,
-			availableTerminalTabSignature,
+			availableTerminalTabKeys,
 			closeShellTerminal,
 			closeTerminalTab,
-			ownerSessionId,
+			sessionId,
 			selectTerminalTab,
 		],
 	);
-	const closeShellTerminalByHandle = useCallback(
-		(handleId: string) => closeTerminalTabByKey(`shell:${handleId}`),
-		[closeTerminalTabByKey],
-	);
+	const terminalTabs = session
+		? ({
+				activeKey: activeTerminalTabKey,
+				layout: terminalBarLayout,
+				onClose: closeTerminalTabByKey,
+				onPinnedChange: (key, pinned) => setTerminalTabPinned(sessionId, key, pinned),
+				onRenameShell: renameShellTerminalByHandle,
+				onReorder: (group, keys) => reorderTerminalTabs(sessionId, group, keys),
+				onSelect: selectTerminalTab,
+				ownerSession: session,
+				reviewerTerminal: reviewerTerminal
+					? { ...reviewerTerminal, label: t("terminal.reviewer") }
+					: undefined,
+				shellTerminals,
+			} satisfies TerminalTabStripProps)
+		: undefined;
 	const showChatSurface = session?.mode === "chat" && routedTerminalTarget.kind === "worker";
 
 	// The pane shows one terminal at a time, so selecting a shell or the reviewer
@@ -807,17 +805,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							    reviewer targets remain terminal surfaces in either mode. */}
 							{showChatSurface ? (
 								<SessionChatSurface
-									activeTerminalTabKey={activeTerminalTabKey}
 									session={session}
 									headerActions={sessionHeaderActions}
-									terminalBarLayout={terminalBarLayout}
-									onCloseTerminalTab={closeTerminalTabByKey}
-									onPinTerminalTab={(key, pinned) => setTerminalTabPinned(ownerSessionId, key, pinned)}
-									onReorderTerminalTabs={(group, keys) => reorderTerminalTabs(ownerSessionId, group, keys)}
-									onSelectTerminalTab={selectTerminalTab}
-									reviewerTerminal={reviewerTerminal}
-									shellTerminals={shellTerminals}
-									onRenameShellTerminal={renameShellTerminalByHandle}
+									terminalTabs={terminalTabs}
 									controllerTransitioning={chatControllerTransitioning}
 									onOpenShell={addShellTerminal}
 									openingShell={openShellTerminal.isPending}
@@ -827,25 +817,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								/>
 							) : (
 								<CenterPane
-									activeTerminalTabKey={activeTerminalTabKey}
 									agentInputDisabled={
 										(interfaceSwitch.starting || activeInterfaceTransition) && session?.mode === "tui"
 									}
 									daemonReady={daemonStatus.state === "ready"}
-									onCloseTerminalTab={closeTerminalTabByKey}
-									onCloseShellTerminal={closeShellTerminalByHandle}
-									onRenameShellTerminal={renameShellTerminalByHandle}
-									onSelectSessionTerminal={selectSessionTerminal}
-									onSelectReviewerTerminal={selectReviewerTerminal}
-									onSelectShellTerminal={selectShellTerminal}
-									onSelectTerminalTab={selectTerminalTab}
-									onPinTerminalTab={(key, pinned) => setTerminalTabPinned(ownerSessionId, key, pinned)}
-									onReorderTerminalTabs={(group, keys) => reorderTerminalTabs(ownerSessionId, group, keys)}
-									reviewerTerminal={reviewerTerminal}
+									onNewShellTerminal={addShellTerminal}
 									session={session}
-									shellTerminals={shellTerminals}
+									terminalTabs={terminalTabs}
 									terminalTarget={routedTerminalTarget}
-									terminalBarLayout={terminalBarLayout}
 									theme={theme}
 									topbarActions={sessionHeaderActions}
 								/>

@@ -2,7 +2,6 @@ import { create } from "zustand";
 import type { TerminalTarget } from "../types/terminal";
 import {
 	activateTerminalTab as activateTerminalTabLayout,
-	addTerminalTab as addTerminalTabLayout,
 	closeTerminalTab as closeTerminalTabLayout,
 	emptyTerminalBarLayout,
 	reorderTerminalTabs as reorderTerminalTabLayout,
@@ -107,7 +106,6 @@ type UiState = {
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
-	addTerminalTab: (ownerSessionId: string, key: TerminalTabKey) => void;
 	activateTerminalTab: (ownerSessionId: string, key: TerminalTabKey) => void;
 	setTerminalTabPinned: (ownerSessionId: string, key: ReorderableTerminalTabKey, pinned: boolean) => void;
 	reorderTerminalTabs: (
@@ -153,6 +151,22 @@ function initialSidebarOpen() {
 
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
 	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
+}
+
+function updateTerminalBar(
+	state: UiState,
+	ownerSessionId: string,
+	update: (layout: TerminalBarLayout) => TerminalBarLayout,
+) {
+	const current = state.terminalBarsByOwner[ownerSessionId] ?? emptyTerminalBarLayout();
+	const next = update(current);
+	if (next === current) return state;
+	return {
+		terminalBarsByOwner: {
+			...state.terminalBarsByOwner,
+			[ownerSessionId]: next,
+		},
+	};
 }
 
 const initialThemePreference = readStoredThemePreference();
@@ -244,49 +258,16 @@ export const useUiStore = create<UiState>((set, get) => ({
 				},
 			};
 		}),
-	addTerminalTab: (ownerSessionId, key) =>
-		set((state) => ({
-			terminalBarsByOwner: {
-				...state.terminalBarsByOwner,
-				[ownerSessionId]: addTerminalTabLayout(
-					state.terminalBarsByOwner[ownerSessionId] ?? emptyTerminalBarLayout(),
-					key,
-					`session:${ownerSessionId}`,
-				),
-			},
-		})),
 	activateTerminalTab: (ownerSessionId, key) =>
-		set((state) => ({
-			terminalBarsByOwner: {
-				...state.terminalBarsByOwner,
-				[ownerSessionId]: activateTerminalTabLayout(
-					state.terminalBarsByOwner[ownerSessionId] ?? emptyTerminalBarLayout(),
-					key,
-				),
-			},
-		})),
+		set((state) => updateTerminalBar(state, ownerSessionId, (layout) => activateTerminalTabLayout(layout, key))),
 	setTerminalTabPinned: (ownerSessionId, key, pinned) =>
-		set((state) => ({
-			terminalBarsByOwner: {
-				...state.terminalBarsByOwner,
-				[ownerSessionId]: setTerminalTabPinnedLayout(
-					state.terminalBarsByOwner[ownerSessionId] ?? emptyTerminalBarLayout(),
-					key,
-					pinned,
-				),
-			},
-		})),
+		set((state) =>
+			updateTerminalBar(state, ownerSessionId, (layout) => setTerminalTabPinnedLayout(layout, key, pinned)),
+		),
 	reorderTerminalTabs: (ownerSessionId, group, keys) =>
-		set((state) => ({
-			terminalBarsByOwner: {
-				...state.terminalBarsByOwner,
-				[ownerSessionId]: reorderTerminalTabLayout(
-					state.terminalBarsByOwner[ownerSessionId] ?? emptyTerminalBarLayout(),
-					group,
-					keys,
-				),
-			},
-		})),
+		set((state) =>
+			updateTerminalBar(state, ownerSessionId, (layout) => reorderTerminalTabLayout(layout, group, keys)),
+		),
 	closeTerminalTab: (ownerSessionId, key, availableKeys) => {
 		let nextActiveKey: TerminalTabKey | undefined;
 		set((state) => {
@@ -297,12 +278,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 				`session:${ownerSessionId}`,
 			);
 			nextActiveKey = result.nextActiveKey;
-			return {
-				terminalBarsByOwner: {
-					...state.terminalBarsByOwner,
-					[ownerSessionId]: result.layout,
-				},
-			};
+			return updateTerminalBar(state, ownerSessionId, () => result.layout);
 		});
 		return nextActiveKey;
 	},

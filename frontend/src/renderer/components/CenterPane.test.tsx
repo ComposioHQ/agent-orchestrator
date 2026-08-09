@@ -3,9 +3,10 @@ import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSwitch } from "../hooks/useAgentSwitches";
 import type { SwitchAgentInput } from "../hooks/useSwitchAgent";
-import { useUiStore } from "../stores/ui-store";
+import { emptyTerminalBarLayout } from "../lib/terminal-tab-state";
 import type { WorkspaceSession } from "../types/workspace";
 import { CenterPane } from "./CenterPane";
+import type { TerminalTabStripProps } from "./TerminalTabStrip";
 import { TooltipProvider } from "./ui/tooltip";
 
 const shortcutMocks = vi.hoisted(() => ({
@@ -98,10 +99,36 @@ const worker = {
 	prs: [],
 } satisfies WorkspaceSession;
 
+function makeTerminalTabs(overrides: Partial<TerminalTabStripProps> = {}): TerminalTabStripProps {
+	const ownerSession = overrides.ownerSession ?? worker;
+	return {
+		activeKey: `session:${ownerSession.id}`,
+		layout: emptyTerminalBarLayout(),
+		onClose: vi.fn(),
+		onPinnedChange: vi.fn(),
+		onReorder: vi.fn(),
+		onSelect: vi.fn(),
+		ownerSession,
+		shellTerminals: [],
+		...overrides,
+	};
+}
 function renderCenterPane(props: Partial<ComponentProps<typeof CenterPane>> = {}) {
+	const target = props.terminalTarget;
+	const defaultTabs = props.session
+		? makeTerminalTabs({
+				activeKey:
+					target?.kind === "shell"
+						? `shell:${target.handleId}`
+						: target?.kind === "reviewer"
+							? `reviewer:${target.handleId}`
+							: `session:${props.session.id}`,
+				ownerSession: props.session,
+			})
+		: undefined;
 	return render(
 		<TooltipProvider>
-			<CenterPane daemonReady theme="dark" {...props} />
+			<CenterPane daemonReady terminalTabs={props.terminalTabs ?? defaultTabs} theme="dark" {...props} />
 		</TooltipProvider>,
 	);
 }
@@ -117,7 +144,6 @@ beforeEach(() => {
 	agentSwitchMocks.mutation.error = null;
 	agentSwitchMocks.mutation.input = undefined;
 	agentSwitchMocks.mutation.isPending = false;
-	useUiStore.setState({ isSidebarOpen: true });
 });
 
 describe("CenterPane toolbar session label", () => {
@@ -128,16 +154,6 @@ describe("CenterPane toolbar session label", () => {
 			workingDir: "/tmp/ws",
 			createdAt: "2026-07-22T00:00:00Z",
 		}));
-
-	it("keeps the terminal strip flush left when the sidebar is collapsed", () => {
-		useUiStore.setState({ isSidebarOpen: false });
-		renderCenterPane({ session: worker });
-
-		expect(screen.getByTestId("session-terminal-region")).not.toHaveClass(
-			"session-topbar-titlebar-clearance-mac",
-			"session-topbar-titlebar-clearance-linux",
-		);
-	});
 
 	it("shows the session display name for a worker", () => {
 		renderCenterPane({ session: worker });
@@ -256,7 +272,10 @@ describe("CenterPane toolbar session label", () => {
 		const [shell] = makeShells(1);
 		renderCenterPane({
 			session: worker,
-			shellTerminals: [shell],
+			terminalTabs: makeTerminalTabs({
+				activeKey: `shell:${shell.handleId}`,
+				shellTerminals: [shell],
+			}),
 			terminalTarget: {
 				generation: shell.createdAt,
 				kind: "shell",
@@ -288,66 +307,77 @@ describe("CenterPane toolbar session label", () => {
 
 	it("closes only the selected auxiliary terminal from the application shortcut", () => {
 		const [shell] = makeShells(1);
-		const onCloseShellTerminal = vi.fn();
+		const onClose = vi.fn();
 		renderCenterPane({
 			session: worker,
-			shellTerminals: [shell],
+			terminalTabs: makeTerminalTabs({
+				activeKey: `shell:${shell.handleId}`,
+				onClose,
+				shellTerminals: [shell],
+			}),
 			terminalTarget: {
 				generation: shell.createdAt,
 				kind: "shell",
 				handleId: shell.handleId,
 				title: shell.title,
 			},
-			onCloseShellTerminal,
 		});
 
 		act(() => shortcutMocks.closeListener?.());
-		expect(onCloseShellTerminal).toHaveBeenCalledWith(shell.handleId);
+		expect(onClose).toHaveBeenCalledWith(`shell:${shell.handleId}`);
 	});
 
 	it("keeps the permanent main terminal open when the close shortcut fires", () => {
-		const onCloseShellTerminal = vi.fn();
-		renderCenterPane({ session: worker, onCloseShellTerminal });
+		const onClose = vi.fn();
+		renderCenterPane({ session: worker, terminalTabs: makeTerminalTabs({ onClose }) });
 
 		act(() => shortcutMocks.closeListener?.());
-		expect(onCloseShellTerminal).not.toHaveBeenCalled();
+		expect(onClose).not.toHaveBeenCalled();
 	});
 
 	it("cycles from the session terminal to its next shell tab", () => {
 		const [shell] = makeShells(1);
-		const onSelectShellTerminal = vi.fn();
-		renderCenterPane({ session: worker, shellTerminals: [shell], onSelectShellTerminal });
+		const onSelect = vi.fn();
+		renderCenterPane({
+			session: worker,
+			terminalTabs: makeTerminalTabs({ onSelect, shellTerminals: [shell] }),
+		});
 
 		act(() => shortcutMocks.nextTabListener?.());
-		expect(onSelectShellTerminal).toHaveBeenCalledWith(shell.handleId);
+		expect(onSelect).toHaveBeenCalledWith(`shell:${shell.handleId}`);
 	});
 
 	it("wraps from a shell tab to the session terminal", () => {
 		const [shell] = makeShells(1);
-		const onSelectSessionTerminal = vi.fn();
+		const onSelect = vi.fn();
 		renderCenterPane({
 			session: worker,
-			shellTerminals: [shell],
+			terminalTabs: makeTerminalTabs({
+				activeKey: `shell:${shell.handleId}`,
+				onSelect,
+				shellTerminals: [shell],
+			}),
 			terminalTarget: { generation: shell.createdAt, kind: "shell", handleId: shell.handleId, title: shell.title },
-			onSelectSessionTerminal,
 		});
 
 		act(() => shortcutMocks.nextTabListener?.());
-		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+		expect(onSelect).toHaveBeenCalledWith(`session:${worker.id}`);
 	});
 
 	it("enables the global close shortcut only while a closeable shell is active", () => {
 		const [shell] = makeShells(1);
 		const view = renderCenterPane({
 			session: worker,
-			shellTerminals: [shell],
+			terminalTabs: makeTerminalTabs({
+				activeKey: `shell:${shell.handleId}`,
+				shellTerminals: [shell],
+			}),
 			terminalTarget: {
 				generation: shell.createdAt,
 				kind: "shell",
 				handleId: shell.handleId,
 				title: shell.title,
 			},
-			onCloseShellTerminal: vi.fn(),
 		});
 
 		expect(shortcutMocks.closeableStates.at(-1)).toBe(true);
@@ -356,9 +386,13 @@ describe("CenterPane toolbar session label", () => {
 	});
 
 	it("shows reviewer as its own active harness tab", () => {
+		const reviewerTerminal = { handleId: "review-sess-1", harness: "codex" };
 		renderCenterPane({
 			session: worker,
-			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
+			terminalTabs: makeTerminalTabs({
+				activeKey: "reviewer:review-sess-1",
+				reviewerTerminal,
+			}),
 			terminalTarget: { kind: "reviewer", handleId: "review-sess-1", harness: "codex", sessionId: worker.id },
 		});
 
@@ -369,15 +403,41 @@ describe("CenterPane toolbar session label", () => {
 	});
 
 	it("opens reviewer from the tab strip when a reviewer handle exists", () => {
-		const onSelectReviewerTerminal = vi.fn();
+		const onSelect = vi.fn();
 		renderCenterPane({
 			session: worker,
-			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
-			onSelectReviewerTerminal,
+			terminalTabs: makeTerminalTabs({
+				onSelect,
+				reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
+			}),
 		});
 
 		fireEvent.click(screen.getByRole("tab", { name: "Reviewer" }));
-		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-sess-1", harness: "codex" });
+		expect(onSelect).toHaveBeenCalledWith("reviewer:review-sess-1");
+	});
+
+	it("keeps fixed tabs around a pinned shell and maps its unpin action", () => {
+		const [shell] = makeShells(1);
+		const onPinnedChange = vi.fn();
+		renderCenterPane({
+			session: worker,
+			terminalTabs: makeTerminalTabs({
+				layout: { pinned: [`shell:${shell.handleId}`], unpinned: [], history: [] },
+				onPinnedChange,
+				reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
+				shellTerminals: [shell],
+			}),
+		});
+
+		expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"))).toEqual([
+			"do the thing",
+			"agent-orchestrator-0",
+			"Reviewer",
+		]);
+		const unpin = screen.getByRole("button", { name: "Unpin tab" });
+		expect(unpin.nextElementSibling).toBe(screen.getByRole("button", { name: "Close terminal agent-orchestrator-0" }));
+		fireEvent.click(unpin);
+		expect(onPinnedChange).toHaveBeenCalledWith("shell:h-0", false);
 	});
 
 	it("keeps the new-terminal action with the session controls, outside the tab strip", () => {
@@ -434,7 +494,7 @@ describe("CenterPane toolbar session label", () => {
 
 	it("lets tabs shrink into a scrollable strip instead of overflowing onto the controls", () => {
 		const shells = makeShells(8);
-		renderCenterPane({ session: worker, shellTerminals: shells });
+		renderCenterPane({ session: worker, terminalTabs: makeTerminalTabs({ shellTerminals: shells }) });
 
 		const scrollRegion = document.querySelector(".overflow-x-auto");
 		expect(scrollRegion).toHaveClass("scrollbar-none", "min-w-flex-min", "flex-1");
@@ -454,7 +514,7 @@ describe("CenterPane toolbar session label", () => {
 
 	it("reveals scroll chevrons only when the tab strip actually overflows", () => {
 		const shells = makeShells(8);
-		renderCenterPane({ session: worker, shellTerminals: shells });
+		renderCenterPane({ session: worker, terminalTabs: makeTerminalTabs({ shellTerminals: shells }) });
 
 		const scrollRegion = document.querySelector(".overflow-x-auto") as HTMLElement;
 		Object.defineProperty(scrollRegion, "clientWidth", {
@@ -486,7 +546,7 @@ describe("CenterPane toolbar session label", () => {
 
 	it("scrolls the tab strip horizontally with the mouse wheel", () => {
 		const shells = makeShells(8);
-		renderCenterPane({ session: worker, shellTerminals: shells });
+		renderCenterPane({ session: worker, terminalTabs: makeTerminalTabs({ shellTerminals: shells }) });
 
 		const scrollRegion = document.querySelector(".overflow-x-auto") as HTMLElement;
 		Object.defineProperty(scrollRegion, "clientWidth", {
@@ -514,15 +574,11 @@ describe("CenterPane toolbar session label", () => {
 
 	it("uses roving keyboard focus to select terminal tabs", () => {
 		const shells = makeShells(2);
-		const onSelectShellTerminal = vi.fn();
-		const onSelectSessionTerminal = vi.fn();
-		const onRenameShellTerminal = vi.fn();
+		const onSelect = vi.fn();
+		const onRenameShell = vi.fn();
 		renderCenterPane({
 			session: worker,
-			shellTerminals: shells,
-			onSelectSessionTerminal,
-			onSelectShellTerminal,
-			onRenameShellTerminal,
+			terminalTabs: makeTerminalTabs({ onRenameShell, onSelect, shellTerminals: shells }),
 		});
 
 		const sessionTab = screen.getByRole("tab", { name: /^do the thing/ });
@@ -535,11 +591,11 @@ describe("CenterPane toolbar session label", () => {
 		sessionTab.focus();
 		fireEvent.keyDown(sessionTab, { key: "ArrowRight" });
 		expect(firstShellTab).toHaveFocus();
-		expect(onSelectShellTerminal).toHaveBeenCalledWith("h-0");
+		expect(onSelect).toHaveBeenCalledWith("shell:h-0");
 
 		fireEvent.keyDown(firstShellTab, { key: "Home" });
 		expect(sessionTab).toHaveFocus();
-		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+		expect(onSelect).toHaveBeenCalledWith(`session:${worker.id}`);
 
 		// Revisiting a tab quickly by keyboard must not count as a double-click
 		// and enter rename mode.

@@ -20,7 +20,7 @@ export type TerminalTabStripProps = {
 	ownerSession: WorkspaceSession;
 	shellTerminals: ShellTerminal[];
 	reviewerTerminal?: ReviewerTerminalTab;
-	renderSessionAction?: (session: WorkspaceSession) => ReactNode;
+	ownerAction?: ReactNode;
 	onClose: (key: ReorderableTerminalTabKey) => void;
 	onPinnedChange: (key: ReorderableTerminalTabKey, pinned: boolean) => void;
 	onRenameShell?: (handleId: string, title: string) => void;
@@ -55,7 +55,7 @@ export function TerminalTabStrip({
 	ownerSession,
 	shellTerminals,
 	reviewerTerminal,
-	renderSessionAction,
+	ownerAction,
 	onClose,
 	onPinnedChange,
 	onRenameShell,
@@ -63,13 +63,13 @@ export function TerminalTabStrip({
 	onSelect,
 }: TerminalTabStripProps) {
 	const ownerKey = `session:${ownerSession.id}` as const;
-	const shells = new Map<TerminalTabKey, ShellTerminal>(
+	const shells = new Map<ReorderableTerminalTabKey, ShellTerminal>(
 		shellTerminals.map((shell) => [`shell:${shell.handleId}` as const, shell]),
 	);
 	const reviewerKey = reviewerTerminal ? (`reviewer:${reviewerTerminal.handleId}` as const) : undefined;
 	const availableKeys: TerminalTabKey[] = [ownerKey, ...shells.keys()];
 	if (reviewerKey) availableKeys.push(reviewerKey);
-	const resolved = resolveTerminalTabLayout(layout, availableKeys, ownerKey);
+	const resolved = resolveTerminalTabLayout(layout, availableKeys);
 
 	const renderTab = (key: ReorderableTerminalTabKey, pinned: boolean) => {
 		const shell = shells.get(key);
@@ -107,7 +107,7 @@ export function TerminalTabStrip({
 	return (
 		<>
 			<SessionTerminalTab
-				action={renderSessionAction?.(ownerSession)}
+				action={ownerAction}
 				isActive={activeKey === ownerKey}
 				onSelect={() => onSelect(ownerKey)}
 				session={ownerSession}
@@ -121,7 +121,7 @@ export function TerminalTabStrip({
 					onSelect={() => onSelect(reviewerKey)}
 					session={{
 						...ownerSession,
-						id: reviewerKey,
+						id: reviewerTerminal.handleId,
 						provider: reviewerTerminal.harness as WorkspaceSession["provider"],
 						title: reviewerTerminal.label ?? "Reviewer",
 					}}

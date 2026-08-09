@@ -12,7 +12,7 @@ export function emptyTerminalBarLayout(): TerminalBarLayout {
 	return { pinned: [], unpinned: [], history: [] };
 }
 
-export function isReorderableTerminalTabKey(key: TerminalTabKey): key is ReorderableTerminalTabKey {
+function isReorderableTerminalTabKey(key: TerminalTabKey): key is ReorderableTerminalTabKey {
 	return key.startsWith("shell:");
 }
 
@@ -20,23 +20,8 @@ function unique<T extends string>(values: readonly T[]): T[] {
 	return [...new Set(values)];
 }
 
-export function addTerminalTab(
-	layout: TerminalBarLayout,
-	key: TerminalTabKey,
-	ownerKey: TerminalTabKey,
-): TerminalBarLayout {
-	if (
-		key === ownerKey ||
-		!isReorderableTerminalTabKey(key) ||
-		layout.pinned.includes(key) ||
-		layout.unpinned.includes(key)
-	) {
-		return layout;
-	}
-	return { ...layout, unpinned: [...layout.unpinned, key] };
-}
-
 export function activateTerminalTab(layout: TerminalBarLayout, key: TerminalTabKey): TerminalBarLayout {
+	if (layout.history.at(-1) === key) return layout;
 	return { ...layout, history: [...layout.history.filter((candidate) => candidate !== key), key] };
 }
 
@@ -45,8 +30,7 @@ export function setTerminalTabPinned(
 	key: ReorderableTerminalTabKey,
 	pinned: boolean,
 ): TerminalBarLayout {
-	const exists = layout.pinned.includes(key) || layout.unpinned.includes(key);
-	if (!exists || layout.pinned.includes(key) === pinned) return layout;
+	if (layout.pinned.includes(key) === pinned) return layout;
 	return pinned
 		? {
 				...layout,
@@ -56,7 +40,7 @@ export function setTerminalTabPinned(
 		: {
 				...layout,
 				pinned: layout.pinned.filter((candidate) => candidate !== key),
-				unpinned: [key, ...layout.unpinned],
+				unpinned: [key, ...layout.unpinned.filter((candidate) => candidate !== key)],
 			};
 }
 
@@ -66,10 +50,10 @@ export function reorderTerminalTabs(
 	keys: readonly ReorderableTerminalTabKey[],
 ): TerminalBarLayout {
 	const current = layout[group];
-	const currentSet = new Set(current);
-	const reordered = unique(keys.filter((key) => currentSet.has(key)));
-	for (const key of current) {
-		if (!reordered.includes(key)) reordered.push(key);
+	const otherGroup = new Set(group === "pinned" ? layout.unpinned : layout.pinned);
+	const reordered = unique(keys.filter((key) => !otherGroup.has(key)));
+	if (reordered.length === current.length && reordered.every((key, index) => key === current[index])) {
+		return layout;
 	}
 	return { ...layout, [group]: reordered };
 }
@@ -77,14 +61,13 @@ export function reorderTerminalTabs(
 export function resolveTerminalTabLayout(
 	layout: TerminalBarLayout,
 	availableKeys: readonly TerminalTabKey[],
-	ownerKey: TerminalTabKey,
 ): TerminalBarLayout {
 	const available = new Set(availableKeys);
 	const pinned = unique(layout.pinned.filter((key) => available.has(key)));
 	const claimed = new Set<ReorderableTerminalTabKey>(pinned);
 	const unpinned = unique(layout.unpinned.filter((key) => available.has(key) && !claimed.has(key)));
 	for (const key of availableKeys) {
-		if (key !== ownerKey && isReorderableTerminalTabKey(key) && !claimed.has(key) && !unpinned.includes(key)) {
+		if (isReorderableTerminalTabKey(key) && !claimed.has(key) && !unpinned.includes(key)) {
 			unpinned.push(key);
 		}
 	}

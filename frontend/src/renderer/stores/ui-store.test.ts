@@ -6,35 +6,18 @@ describe("ui-store terminal bar layouts", () => {
 		vi.resetModules();
 	});
 
-	it("keeps ordered pin and MRU state in memory per owner", async () => {
+	it("keeps terminal layout state per owner without persisting it", async () => {
 		const { useUiStore } = await import("./ui-store");
+		const actions = useUiStore.getState();
 
-		useUiStore.getState().addTerminalTab("owner", "shell:shell-b");
-		useUiStore.getState().addTerminalTab("owner", "shell:shell-c");
-		useUiStore.getState().activateTerminalTab("owner", "session:owner");
-		useUiStore.getState().activateTerminalTab("owner", "shell:shell-b");
-		useUiStore.getState().setTerminalTabPinned("owner", "shell:shell-b", true);
+		actions.activateTerminalTab("owner", "session:owner");
+		actions.activateTerminalTab("owner", "shell:shell-b");
+		actions.setTerminalTabPinned("owner", "shell:shell-b", true);
 
-		expect(useUiStore.getState().terminalBarsByOwner).toEqual({
-			owner: {
-				pinned: ["shell:shell-b"],
-				unpinned: ["shell:shell-c"],
-				history: ["session:owner", "shell:shell-b"],
-			},
-		});
-
-		const next = useUiStore
-			.getState()
-			.closeTerminalTab("owner", "shell:shell-b", [
-				"session:owner",
-				"shell:shell-b",
-				"shell:shell-c",
-			]);
-		expect(next).toBe("session:owner");
 		expect(useUiStore.getState().terminalBarsByOwner.owner).toEqual({
-			pinned: [],
-			unpinned: ["shell:shell-c"],
-			history: ["session:owner"],
+			pinned: ["shell:shell-b"],
+			unpinned: [],
+			history: ["session:owner", "shell:shell-b"],
 		});
 		expect(window.localStorage.getItem("ao.terminalBars")).toBeNull();
 	});
