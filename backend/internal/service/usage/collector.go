@@ -517,12 +517,9 @@ func (c *Collector) BackfillActive(ctx context.Context) error {
 }
 
 func (c *Collector) backfillPiPaths(ctx context.Context) error {
-	paths, err := filepath.Glob(filepath.Join(c.roots.PiSessions, "*", "*.jsonl"))
+	paths, err := newestPiPaths(ctx, c.roots.PiSessions, 256)
 	if err != nil {
 		return err
-	}
-	if len(paths) > 256 {
-		paths = paths[len(paths)-256:]
 	}
 	var errs []error
 	for _, path := range paths {
@@ -605,15 +602,16 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 	if _, err := c.registerSource(ctx, binding, kind, nativeID, "", path, now, false); err != nil {
 		return err
 	}
-	if session.Harness == domain.HarnessClaudeCode {
+	switch session.Harness {
+	case domain.HarnessClaudeCode:
 		if err := c.registerDiscoveredClaudeSubagents(ctx, binding, path, now, false); err != nil {
 			return err
 		}
-	} else if session.Harness == domain.HarnessCodex {
+	case domain.HarnessCodex:
 		if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
 			return err
 		}
-	} else if session.Harness == domain.HarnessKimi {
+	case domain.HarnessKimi:
 		if err := c.registerDiscoveredKimiAgents(ctx, binding, path, now, false); err != nil {
 			return err
 		}
@@ -661,7 +659,7 @@ func (c *Collector) ReconcilePath(ctx context.Context, path string) error {
 
 	resolved, _, _, err := c.validateSourcePath(ctx, domain.HarnessCodex, path)
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // Watch notifications may be for another provider's path.
 	}
 	meta, ok := readCodexSessionMeta(resolved)
 	if !ok || len(meta.NativeSessionID) > maxUsageMetadataBytes ||
@@ -715,7 +713,7 @@ func (c *Collector) ReconcilePath(ctx context.Context, path string) error {
 func (c *Collector) reconcilePiPath(ctx context.Context, path string) error {
 	resolved, _, _, err := c.validateSourcePath(ctx, domain.HarnessPi, path)
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // Watch notifications may be for another provider's path.
 	}
 	meta, ok := readPiSessionMeta(resolved)
 	if !ok {
@@ -723,7 +721,7 @@ func (c *Collector) reconcilePiPath(ctx context.Context, path string) error {
 	}
 	workspace, err := filepath.EvalSymlinks(filepath.Clean(meta.CWD))
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // Ignore stale or malformed provider session metadata.
 	}
 	sessions, err := c.store.ListAllSessions(ctx)
 	if err != nil {
@@ -918,15 +916,16 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 	if _, err := c.registerSource(ctx, binding, kind, binding.NativeRootID, "", path, now, false); err != nil {
 		return err
 	}
-	if binding.Harness == domain.HarnessClaudeCode {
+	switch binding.Harness {
+	case domain.HarnessClaudeCode:
 		if err := c.registerDiscoveredClaudeSubagents(ctx, binding, path, now, false); err != nil {
 			return err
 		}
-	} else if binding.Harness == domain.HarnessCodex {
+	case domain.HarnessCodex:
 		if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
 			return err
 		}
-	} else if binding.Harness == domain.HarnessKimi {
+	case domain.HarnessKimi:
 		if err := c.registerDiscoveredKimiAgents(ctx, binding, path, now, false); err != nil {
 			return err
 		}
@@ -1153,7 +1152,7 @@ func (c *Collector) registerHookSource(
 	if kind == domain.UsageSourceCodexRollout && subagentID != "" {
 		expectedParentID = binding.NativeRootID
 	}
-	if err := validateSourceAttribution(
+	if err := c.validateSourceAttribution(
 		binding,
 		kind,
 		nativeSessionID,
@@ -1198,7 +1197,7 @@ func (c *Collector) registerSourceWithExpectedParent(
 	if err != nil {
 		return false, err
 	}
-	if err := validateSourceAttribution(
+	if err := c.validateSourceAttribution(
 		binding,
 		kind,
 		nativeSessionID,
@@ -1244,7 +1243,7 @@ func (c *Collector) registerSourceWithInventory(
 	if err != nil {
 		return false, err
 	}
-	if err := validateSourceAttribution(
+	if err := c.validateSourceAttribution(
 		binding,
 		kind,
 		nativeSessionID,
@@ -1808,7 +1807,8 @@ func validateSourceAttribution(
 		}
 		if binding.Harness != domain.HarnessKimi || nativeSessionID != binding.NativeRootID ||
 			filepath.Base(resolved) != "wire.jsonl" || filepath.Base(agentsDir) != "agents" ||
-			filepath.Base(sessionDir) != binding.NativeRootID || subagentID != wantSubagent {
+			filepath.Base(sessionDir) != binding.NativeRootID ||
+			filepath.Base(filepath.Dir(sessionDir)) != "sessions" || subagentID != wantSubagent {
 			return rejected()
 		}
 	case domain.UsageSourcePiSession:
@@ -1824,6 +1824,35 @@ func validateSourceAttribution(
 		}
 	default:
 		return rejected()
+	}
+	return nil
+}
+
+func (c *Collector) validateSourceAttribution(
+	binding domain.UsageBindingRecord,
+	kind domain.UsageSourceKind,
+	nativeSessionID string,
+	subagentID string,
+	resolved string,
+	expectedParentID string,
+) error {
+	if err := validateSourceAttribution(
+		binding, kind, nativeSessionID, subagentID, resolved, expectedParentID,
+	); err != nil {
+		return err
+	}
+	if kind != domain.UsageSourceKimiWire {
+		return nil
+	}
+	expectedSessionDir, err := filepath.EvalSymlinks(filepath.Join(
+		c.roots.KimiHome, "sessions", binding.NativeRootID,
+	))
+	if err != nil {
+		return errors.New(domain.UsageErrorArtifactPathRejected)
+	}
+	actualSessionDir := filepath.Dir(filepath.Dir(filepath.Dir(resolved)))
+	if filepath.Clean(actualSessionDir) != filepath.Clean(expectedSessionDir) {
+		return errors.New(domain.UsageErrorArtifactPathRejected)
 	}
 	return nil
 }
@@ -1944,10 +1973,13 @@ func (c *Collector) discoverKimiPath(ctx context.Context, nativeID string) (stri
 	if err != nil {
 		return "", err
 	}
-	defer index.Close()
+	defer func() { _ = index.Close() }()
 
 	var latest kimiIndexRecord
-	scanner := bufio.NewScanner(io.LimitReader(index, 8<<20))
+	// Replay the full append-only index so the last record for this session
+	// wins even after the file grows. Memory remains bounded by the scanner's
+	// per-record cap; provider index size does not become an allocation.
+	scanner := bufio.NewScanner(index)
 	scanner.Buffer(make([]byte, 4096), 64<<10)
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
@@ -1989,7 +2021,7 @@ func readPiSessionMeta(path string) (piSessionMeta, bool) {
 	if err != nil {
 		return piSessionMeta{}, false
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	reader := bufio.NewReader(io.LimitReader(file, 64<<10))
 	line, err := reader.ReadBytes('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -2004,22 +2036,53 @@ func readPiSessionMeta(path string) (piSessionMeta, bool) {
 }
 
 func (c *Collector) discoverPiPath(ctx context.Context, nativeID string) (string, error) {
-	paths, err := filepath.Glob(filepath.Join(c.roots.PiSessions, "*", "*.jsonl"))
+	paths, err := newestPiPaths(ctx, c.roots.PiSessions, 256)
 	if err != nil {
 		return "", err
 	}
-	if len(paths) > 256 {
-		paths = paths[len(paths)-256:]
-	}
-	for index := len(paths) - 1; index >= 0; index-- {
+	for _, path := range paths {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		if meta, ok := readPiSessionMeta(paths[index]); ok && meta.ID == nativeID {
-			return paths[index], nil
+		if meta, ok := readPiSessionMeta(path); ok && meta.ID == nativeID {
+			return path, nil
 		}
 	}
 	return "", nil
+}
+
+func newestPiPaths(ctx context.Context, root string, limit int) ([]string, error) {
+	paths, err := filepath.Glob(filepath.Join(root, "*", "*.jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct {
+		path string
+		mod  time.Time
+	}
+	candidates := make([]candidate, 0, len(paths))
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+			candidates = append(candidates, candidate{path: path, mod: info.ModTime()})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].mod.Equal(candidates[j].mod) {
+			return candidates[i].path > candidates[j].path
+		}
+		return candidates[i].mod.After(candidates[j].mod)
+	})
+	if limit > 0 && len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		result = append(result, candidate.path)
+	}
+	return result, nil
 }
 
 func qwenUsageFilename(name string) bool {

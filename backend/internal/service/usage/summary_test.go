@@ -76,7 +76,7 @@ func TestSummaryReaderGetAggregatesModelsAndIntegrity(t *testing.T) {
 	}
 	if got.Totals.InputTokens == nil || *got.Totals.InputTokens != 1100 ||
 		got.Totals.OutputTokens == nil || *got.Totals.OutputTokens != 225 ||
-		got.Totals.ReasoningTokens == nil || *got.Totals.ReasoningTokens != 40 {
+		got.Totals.ReasoningTokens != nil {
 		t.Fatalf("totals = %+v", got.Totals)
 	}
 	if len(got.Harnesses) != 2 || got.Harnesses[0].Models[0].ModelID != "gpt-5.6" {
@@ -127,6 +127,9 @@ func TestSummaryReaderGetAppliesHarnessMetricCoverage(t *testing.T) {
 	mustNoError(t, err)
 	if len(got.Harnesses) != 2 {
 		t.Fatalf("harnesses = %+v", got.Harnesses)
+	}
+	if got.Totals.CacheWriteTokens != nil || got.Totals.ReasoningTokens != nil {
+		t.Fatalf("mixed-harness totals expose partial metrics = %+v", got.Totals)
 	}
 	qwen := got.Harnesses[0].Totals
 	if qwen.CacheWriteTokens != nil {

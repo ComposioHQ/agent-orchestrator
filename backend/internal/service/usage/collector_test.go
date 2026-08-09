@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1718,6 +1719,34 @@ func TestCollectorDiscoversCopilotShutdownSource(t *testing.T) {
 	}
 }
 
+func TestCollectorRetriesCopilotSourceCreatedAfterSessionStart(t *testing.T) {
+	const nativeID = "11111111-1111-4111-8111-111111111111"
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCopilot, nativeID, false)
+	root := filepath.Join(t.TempDir(), "session-state")
+	collector := NewCollector(store, SourceRoots{CopilotSessions: root}, nil)
+
+	mustNoError(t, collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Harness: domain.HarnessCopilot, Event: "session-start", NativeSessionID: nativeID,
+	}))
+	pending, err := store.HasPendingUsageDiscovery(context.Background())
+	if err != nil || !pending {
+		t.Fatalf("pending=%v err=%v, want durable discovery retry", pending, err)
+	}
+	path := filepath.Join(root, nativeID, "events.jsonl")
+	writeUsageFixture(t, path, `{"type":"session.shutdown","data":{"modelMetrics":{}}}`+"\n")
+	mustNoError(t, collector.ReconcileSources(context.Background(), -1))
+
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 || sources[0].ArtifactPath != canonicalUsagePath(t, path) {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+}
+
 func TestCollectorRejectsCopilotSourceForDifferentNativeSession(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "session-state")
 	path := filepath.Join(root, "other-native", "events.jsonl")
@@ -1799,6 +1828,39 @@ func TestCollectorKimiIndexRejectsDeletedAndEscapingSessions(t *testing.T) {
 	}
 }
 
+func TestCollectorKimiIndexReplaysRecordsBeyondEightMiB(t *testing.T) {
+	const nativeID = "kimi-late-session"
+	home := t.TempDir()
+	sessionDir := filepath.Join(home, "sessions", nativeID)
+	wire := filepath.Join(sessionDir, "agents", "main", "wire.jsonl")
+	writeUsageFixture(t, wire, "{}\n")
+	fillerLine := []byte(`{"sessionId":"unrelated","deleted":true}` + "\n")
+	filler := bytes.Repeat(fillerLine, (8<<20)/len(fillerLine)+1)
+	late := []byte(fmt.Sprintf(`{"sessionId":%q,"sessionDir":%q}`+"\n", nativeID, sessionDir))
+	writeUsageFixture(t, filepath.Join(home, "session_index.jsonl"), string(append(filler, late...)))
+	collector := NewCollector(collectorTestStore(t), SourceRoots{KimiHome: home}, nil)
+
+	path, err := collector.discoverPath(context.Background(), domain.HarnessKimi, nativeID)
+	mustNoError(t, err)
+	if path != wire {
+		t.Fatalf("discovered %q, want late-index wire %q", path, wire)
+	}
+}
+
+func TestCollectorRejectsKimiWireOutsideCanonicalSessionsDirectory(t *testing.T) {
+	const nativeID = "kimi-session-1"
+	home := t.TempDir()
+	path := filepath.Join(home, "attacker", "sessions", nativeID, "agents", "main", "wire.jsonl")
+	writeUsageFixture(t, path, "{}\n")
+	binding := domain.UsageBindingRecord{Harness: domain.HarnessKimi, NativeRootID: nativeID}
+	collector := NewCollector(collectorTestStore(t), SourceRoots{KimiHome: home}, nil)
+	if err := collector.validateSourceAttribution(
+		binding, domain.UsageSourceKimiWire, nativeID, "", canonicalUsagePath(t, path), "",
+	); err == nil {
+		t.Fatal("accepted Kimi wire outside <KimiHome>/sessions/<native-id>")
+	}
+}
+
 func TestCollectorDiscoversPiSessionByHeaderID(t *testing.T) {
 	const nativeID = "pi-session-1"
 	store := collectorTestStore(t)
@@ -1818,6 +1880,28 @@ func TestCollectorDiscoversPiSessionByHeaderID(t *testing.T) {
 	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
 	if err != nil || len(sources) != 1 || sources[0].Kind != domain.UsageSourcePiSession {
 		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+}
+
+func TestCollectorPiDiscoveryCapsNewestFilesByModificationTime(t *testing.T) {
+	const nativeID = "pi-newest-session"
+	root := t.TempDir()
+	newest := filepath.Join(root, "a-project", "000-newest.jsonl")
+	writeUsageFixture(t, newest, `{"type":"session","id":"`+nativeID+`","cwd":"/repo","version":3}`+"\n")
+	old := time.Now().Add(-time.Hour)
+	for index := 0; index < 256; index++ {
+		path := filepath.Join(root, fmt.Sprintf("z-project-%03d", index), "old.jsonl")
+		writeUsageFixture(t, path, fmt.Sprintf(`{"type":"session","id":"old-%03d","cwd":"/repo","version":3}`+"\n", index))
+		mustNoError(t, os.Chtimes(path, old, old))
+	}
+	newTime := time.Now().Add(time.Hour)
+	mustNoError(t, os.Chtimes(newest, newTime, newTime))
+	collector := NewCollector(collectorTestStore(t), SourceRoots{PiSessions: root}, nil)
+
+	path, err := collector.discoverPath(context.Background(), domain.HarnessPi, nativeID)
+	mustNoError(t, err)
+	if path != newest {
+		t.Fatalf("discovered %q, want newest %q", path, newest)
 	}
 }
 
@@ -1896,6 +1980,35 @@ func TestCollectorBackfillFindsPiSessionWithoutCapturedNativeID(t *testing.T) {
 	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
 	if err != nil || len(bindings) != 1 || bindings[0].NativeRootID != "pi-existing" {
 		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+}
+
+func TestCollectorBindsPiWhenLifecycleCapturesNativeSessionID(t *testing.T) {
+	const nativeID = "pi-captured"
+	store := collectorTestStore(t)
+	workspace := t.TempDir()
+	session := collectorTestSession(t, store, domain.HarnessPi, "", false)
+	session.Metadata.WorkspacePath = workspace
+	session.Metadata.RuntimeLaunchID = "launch-1"
+	mustNoError(t, store.UpdateSession(context.Background(), session))
+	root := t.TempDir()
+	path := filepath.Join(root, "project", "captured.jsonl")
+	writeUsageFixture(t, path, fmt.Sprintf(`{"type":"session","id":%q,"cwd":%q,"version":3}`+"\n", nativeID, workspace))
+	collector := NewCollector(store, SourceRoots{PiSessions: root}, nil)
+	manager := lifecycle.New(store, nil)
+	manager.SetUsageFinalizer(collector)
+
+	mustNoError(t, manager.ApplyActivitySignal(context.Background(), session.ID, ports.ActivitySignal{
+		AgentSessionID: nativeID,
+		LaunchID:       "launch-1",
+	}))
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].NativeRootID != nativeID {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 || sources[0].ArtifactPath != canonicalUsagePath(t, path) {
+		t.Fatalf("sources=%+v err=%v", sources, err)
 	}
 }
 

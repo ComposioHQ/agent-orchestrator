@@ -55,8 +55,11 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 }
 
 func usageTotals(models []domain.UsageModelAggregate) domain.UsageMetricTotals {
+	if len(models) == 0 {
+		return domain.UsageMetricTotals{}
+	}
 	var input, uncached, cacheRead, cacheWrite, output, reasoning, reasoningEvents int64
-	var uncachedAvailable, cacheReadAvailable, cacheWriteAvailable, reasoningAvailable bool
+	uncachedAvailable, cacheReadAvailable, cacheWriteAvailable, reasoningAvailable := true, true, true, true
 	for _, model := range models {
 		coverage := MetricCoverage(model.Harness)
 		input += model.Tokens.InputTokens
@@ -64,17 +67,14 @@ func usageTotals(models []domain.UsageModelAggregate) domain.UsageMetricTotals {
 		cacheRead += model.Tokens.CacheReadTokens
 		cacheWrite += model.Tokens.CacheWriteTokens
 		output += model.Tokens.OutputTokens
-		uncachedAvailable = uncachedAvailable || coverage.UncachedInput
-		cacheReadAvailable = cacheReadAvailable || coverage.CacheRead
-		cacheWriteAvailable = cacheWriteAvailable || coverage.CacheWrite
-		reasoningAvailable = reasoningAvailable || coverage.Reasoning
+		uncachedAvailable = uncachedAvailable && coverage.UncachedInput
+		cacheReadAvailable = cacheReadAvailable && coverage.CacheRead
+		cacheWriteAvailable = cacheWriteAvailable && coverage.CacheWrite
+		reasoningAvailable = reasoningAvailable && coverage.Reasoning
 		if model.Tokens.ReasoningTokens != nil {
 			reasoning += *model.Tokens.ReasoningTokens
 		}
 		reasoningEvents += model.ReasoningEventCount
-	}
-	if len(models) == 0 {
-		return domain.UsageMetricTotals{}
 	}
 	totals := domain.UsageMetricTotals{
 		InputTokens: &input, OutputTokens: &output,
