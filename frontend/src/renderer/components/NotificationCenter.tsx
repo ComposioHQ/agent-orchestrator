@@ -41,6 +41,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type NotificationCenterProps = {
+	className?: string;
 	style?: React.CSSProperties;
 };
 
@@ -147,7 +148,7 @@ export function NotificationRuntime() {
 	return null;
 }
 
-export function NotificationCenter({ style }: NotificationCenterProps) {
+export function NotificationCenter({ className, style }: NotificationCenterProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [actionError, setActionError] = useState<string | null>(null);
@@ -285,7 +286,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			<PopoverTrigger asChild>
 				<TopbarButton
 					aria-label={unreadCount > 0 ? t("notify.unreadCount", { count: unreadCount }) : t("notify.bell")}
-					className="relative"
+					className={cn("relative", className)}
 					style={style}
 					variant="icon"
 				>
