@@ -1403,9 +1403,10 @@ func TestUpsertSessionWorktreeEmptyStateDefaultsToActive(t *testing.T) {
 	}
 }
 
-// Migration 0085 added agent_session_id and provider_conversation_id to the
-// sessions_cdc_update WHEN guard. A write to either column must emit exactly
-// one session_updated event; an unrelated metadata write must not.
+// Migration 0086 added provider_conversation_id to the sessions_cdc_update
+// WHEN guard that 0085_agent_switching established (which already included
+// agent_session_id). A write to either column must emit exactly one
+// session_updated event; an unrelated metadata write must not.
 func TestSessionAgentSessionIDFiresCDCEvent(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
