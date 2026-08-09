@@ -124,6 +124,32 @@ export type PullRequestFacts = {
 /** The daemon-committed controller currently responsible for the session. */
 export type SessionMode = "chat" | "tui";
 
+export type AgentSwitchState =
+	| "preparing_handoff"
+	| "stopping_source"
+	| "source_stopped"
+	| "starting_target"
+	| "target_ready"
+	| "delivering_context"
+	| "completed"
+	| "failed";
+
+/** Redacted durable switch fields shared by session summaries and switch history. */
+export type AgentSwitchSummary<State extends string = AgentSwitchState> = {
+	agentHandoffStatus: string;
+	errorCode?: string;
+	fromHarness: string;
+	id: string;
+	requestedAt: string;
+	semanticHandoffIncluded: boolean;
+	sessionId: string;
+	sourceTranscriptStatus?: string;
+	state: State;
+	targetHarness: string;
+	targetStartMode?: string;
+	updatedAt: string;
+};
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -160,6 +186,8 @@ export type WorkspaceSession = {
 	pinnedAt?: string;
 	/** Raw agent lifecycle activity from the daemon. */
 	activity?: SessionActivity;
+	/** Redacted nonterminal switch projection from the daemon's session read model. */
+	activeAgentSwitch?: AgentSwitchSummary;
 	/**
 	 * Live preview target set by the daemon (via `ao preview`) and streamed over
 	 * CDC. When non-empty, the browser panel opens and navigates here.

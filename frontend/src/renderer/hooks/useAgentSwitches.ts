@@ -2,14 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
+import type { AgentSwitchSummary } from "../types/workspace";
 
 type GeneratedAgentSwitch = components["schemas"]["AgentSwitch"];
 
 // Keep forward compatibility with newer daemons so unknown errors can fall
-// back to a generic label instead of becoming impossible to represent.
-export type AgentSwitch = Omit<GeneratedAgentSwitch, "errorCode"> & {
-	errorCode?: string;
-};
+// back to protected presentation instead of becoming impossible to represent.
+export type AgentSwitch = AgentSwitchSummary<string>;
 
 const terminalAgentSwitchStates = new Set<AgentSwitch["state"]>(["completed", "failed"]);
 
@@ -44,7 +43,7 @@ async function fetchAgentSwitches(sessionId: string): Promise<AgentSwitch[]> {
 	if (error) {
 		throw new Error(apiErrorMessage(error, "Unable to load agent switch status"));
 	}
-	return data?.switches ?? [];
+	return (data?.switches ?? []) satisfies GeneratedAgentSwitch[];
 }
 
 export function useAgentSwitches(sessionId: string) {

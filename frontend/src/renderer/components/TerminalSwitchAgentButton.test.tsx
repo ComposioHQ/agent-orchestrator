@@ -104,7 +104,7 @@ describe("TerminalSwitchAgentButton", () => {
 
 	it("opens the existing dialog and submits the selected switch", async () => {
 		const activeSwitch = switchRecord();
-		postMock.mockResolvedValue({ data: { switch: activeSwitch }, error: undefined, response: { status: 200 } });
+		postMock.mockResolvedValue({ data: { switch: activeSwitch }, error: undefined, response: { status: 202 } });
 		const { queryClient } = renderControl();
 		const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
 
@@ -132,7 +132,7 @@ describe("TerminalSwitchAgentButton", () => {
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 
-	it("shows terminal progress immediately while the synchronous request is pending", async () => {
+	it("shows terminal progress while keeping the dialog locked during admission", async () => {
 		postMock.mockReturnValue(new Promise(() => {}));
 		renderControl();
 
@@ -140,11 +140,28 @@ describe("TerminalSwitchAgentButton", () => {
 		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Switch" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
+		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
+		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Switching to Codex…" })).toHaveAttribute(
 			"aria-busy",
 			"true",
 		);
+	});
+
+	it("keeps the dialog open when the daemon does not accept the switch", async () => {
+		postMock.mockResolvedValue({
+			data: { switch: switchRecord() },
+			error: undefined,
+			response: { status: 200 },
+		});
+		renderControl();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
+		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Switch" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Failed to switch agent (200)");
+		expect(screen.getByRole("dialog", { name: "Switch agent" })).toBeInTheDocument();
 	});
 
 	it("restores durable progress and keeps it inspectable after the source exits", async () => {
@@ -243,7 +260,7 @@ describe("TerminalSwitchAgentButton", () => {
 			.mockResolvedValueOnce({
 				data: { switch: switchRecord({ id: "switch-2" }) },
 				error: undefined,
-				response: { status: 200 },
+				response: { status: 202 },
 			});
 		renderControl();
 

@@ -51,6 +51,8 @@ export function useSwitchAgentState(sessionId: string) {
 	}
 
 	return {
+		// This state describes only the POST admission request. Durable progress
+		// comes from the active session summary and switch-history query.
 		error:
 			!pending &&
 			latest?.status === "error" &&
@@ -96,13 +98,13 @@ export function useSwitchAgent() {
 					body,
 				},
 			);
-			if (error) {
+			if (error || response.status !== 202 || !data?.switch) {
 				const fallback = response
 					? `Failed to switch agent (${response.status})`
 					: "Failed to switch agent";
 				throw new Error(apiErrorMessage(error, fallback));
 			}
-			return data?.switch;
+			return data.switch;
 		},
 		onSuccess: (agentSwitch, variables) => {
 			if (!agentSwitch) return;
@@ -111,9 +113,8 @@ export function useSwitchAgent() {
 				(current = []) => [agentSwitch, ...current.filter((entry) => entry.id !== agentSwitch.id)],
 			);
 		},
-		// A post-stop failure can legitimately leave the selected target as the
-		// current (exited or delivery-unconfirmed) owner. Always refresh the
-		// session projection, even when the mutation surfaces an error.
+		// Refresh both durable observers after the admission request settles.
+		// The mutation itself does not represent post-admission switch progress.
 		onSettled: async (_data, _error, variables) => {
 			await Promise.all([
 				queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
