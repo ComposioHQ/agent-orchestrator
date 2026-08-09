@@ -307,23 +307,25 @@ func (c *conversation) readTurns(ctx context.Context) ([]providerTurn, error) {
 // Fork branches this conversation into a second provider conversation, so an
 // alternative approach can be tried without destroying the original.
 //
-// The whole history is copied: ChatForker names no turn, and a fork that silently
-// truncated would be a rollback wearing the wrong name.
-func (c *conversation) Fork(ctx context.Context) (string, error) {
+// A nil anchor copies the whole history; a provider turn id copies through that
+// turn inclusively. In both cases, the original thread remains unchanged.
+func (c *conversation) Fork(ctx context.Context, lastProviderTurnID *string) (string, error) {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 
-	var resp struct {
-		Thread struct {
-			ID string `json:"id"`
-		} `json:"thread"`
+	params := codexproto.ThreadForkParams{ThreadID: c.threadID}
+	if lastProviderTurnID != nil {
+		anchor := strings.TrimSpace(*lastProviderTurnID)
+		if anchor == "" {
+			return "", errors.New("fork anchor must not be blank")
+		}
+		params.LastTurnID = &anchor
 	}
 	// cwd is deliberately absent so the fork inherits the source thread's working
 	// directory. A fork pointed at a different tree would remember editing files
 	// that are not there.
-	if err := c.conn.request(ctx, "thread/fork", map[string]any{
-		"threadId": c.threadID,
-	}, &resp); err != nil {
+	var resp codexproto.ThreadForkResponse
+	if err := c.conn.request(ctx, codexproto.MethodThreadFork, params, &resp); err != nil {
 		return "", asRefusal(fmt.Errorf("thread/fork: %w", err))
 	}
 	if resp.Thread.ID == "" {

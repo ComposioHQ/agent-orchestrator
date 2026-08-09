@@ -125,7 +125,7 @@ func (s *Service) ForkConversation(ctx context.Context, id domain.SessionID) (st
 	if !ok {
 		return "", ErrForkUnsupported
 	}
-	forked, err := forker.Fork(ctx)
+	forked, err := forker.Fork(ctx, nil)
 	if err != nil {
 		return "", classify(fmt.Errorf("fork conversation for %s: %w", id, err))
 	}

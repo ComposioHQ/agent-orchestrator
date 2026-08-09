@@ -45,7 +45,7 @@ func (h *historyRecorder) Rollback(_ context.Context, providerTurnID string) err
 	return nil
 }
 
-func (h *historyRecorder) Fork(context.Context) (string, error) {
+func (h *historyRecorder) Fork(context.Context, *string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.forkErr != nil {
