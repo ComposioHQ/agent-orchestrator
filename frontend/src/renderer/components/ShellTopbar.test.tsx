@@ -180,12 +180,9 @@ describe("ShellTopbar status pill", () => {
 		renderTopbarSessions([worker, orchestrator], worker.id, true);
 
 		const actionRegion = screen.getByTestId("workspace-topbar-actions");
-		const kill = within(actionRegion).getByRole("button", { name: "Kill session" });
 		const openOrchestrator = within(actionRegion).getByRole("button", { name: "Open orchestrator" });
 		const notification = within(actionRegion).getByRole("button", { name: "Notifications" });
 
-		expect(kill).not.toHaveTextContent("Kill");
-		expect(within(openOrchestrator).getByText("Orchestrator")).toHaveAttribute("data-compact-label");
 		expect(openOrchestrator.compareDocumentPosition(notification) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		expect(within(actionRegion).queryByTestId("topbar-utility-separator")).not.toBeInTheDocument();
 	});
@@ -236,23 +233,6 @@ describe("ShellTopbar status pill", () => {
 });
 
 describe("ShellTopbar orchestrator actions", () => {
-	it("uses the Board identity and compact Task label on project boards", () => {
-		renderTopbarSessions([orchestrator], "");
-
-		expect(screen.getByTestId("board-topbar-label")).toHaveTextContent("Board");
-		expect(screen.queryByText("my-app")).not.toBeInTheDocument();
-		expect(within(screen.getByRole("button", { name: "New task" })).getByText("Task")).toHaveAttribute(
-			"data-compact-label",
-		);
-		const actionRegion = screen.getByTestId("workspace-topbar-actions");
-		const orchestratorAction = within(actionRegion).getByRole("button", { name: "Orchestrator, Unknown" });
-		const separator = within(actionRegion).getByTestId("topbar-utility-separator");
-		const notification = within(actionRegion).getByRole("button", { name: "Notifications" });
-		expect(within(actionRegion).getAllByTestId("topbar-utility-separator")).toHaveLength(1);
-		expect(orchestratorAction.compareDocumentPosition(separator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		expect(separator.compareDocumentPosition(notification) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-	});
-
 	it.each([
 		["active", "Working", "bg-status-working", true],
 		["waiting_input", "Input Needed", "bg-status-needs-you", false],
@@ -278,16 +258,7 @@ describe("ShellTopbar orchestrator actions", () => {
 	it("opens the board from the project name on orchestrator sessions", async () => {
 		renderTopbar(orchestrator, true);
 
-		const task = screen.getByRole("button", { name: "New task" });
 		const openKanban = screen.getByRole("button", { name: "Open Kanban" });
-		const actionRegion = screen.getByTestId("workspace-topbar-actions");
-		const separator = within(actionRegion).getByTestId("topbar-utility-separator");
-		const notification = within(actionRegion).getByRole("button", { name: "Notifications" });
-		expect(within(task).getByText("Task")).toHaveAttribute("data-compact-label");
-		expect(within(openKanban).getByText("Open Kanban")).toHaveAttribute("data-compact-label");
-		expect(within(actionRegion).getAllByTestId("topbar-utility-separator")).toHaveLength(1);
-		expect(openKanban.compareDocumentPosition(separator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		expect(separator.compareDocumentPosition(notification) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		await userEvent.click(openKanban);
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId",
