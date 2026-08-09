@@ -244,6 +244,13 @@ describe("ShellTopbar orchestrator actions", () => {
 		expect(within(screen.getByRole("button", { name: "New task" })).getByText("Task")).toHaveAttribute(
 			"data-compact-label",
 		);
+		const actionRegion = screen.getByTestId("workspace-topbar-actions");
+		const orchestratorAction = within(actionRegion).getByRole("button", { name: "Orchestrator, Unknown" });
+		const separator = within(actionRegion).getByTestId("topbar-utility-separator");
+		const notification = within(actionRegion).getByRole("button", { name: "Notifications" });
+		expect(within(actionRegion).getAllByTestId("topbar-utility-separator")).toHaveLength(1);
+		expect(orchestratorAction.compareDocumentPosition(separator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(separator.compareDocumentPosition(notification) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
 	it.each([
@@ -273,8 +280,14 @@ describe("ShellTopbar orchestrator actions", () => {
 
 		const task = screen.getByRole("button", { name: "New task" });
 		const openKanban = screen.getByRole("button", { name: "Open Kanban" });
+		const actionRegion = screen.getByTestId("workspace-topbar-actions");
+		const separator = within(actionRegion).getByTestId("topbar-utility-separator");
+		const notification = within(actionRegion).getByRole("button", { name: "Notifications" });
 		expect(within(task).getByText("Task")).toHaveAttribute("data-compact-label");
 		expect(within(openKanban).getByText("Open Kanban")).toHaveAttribute("data-compact-label");
+		expect(within(actionRegion).getAllByTestId("topbar-utility-separator")).toHaveLength(1);
+		expect(openKanban.compareDocumentPosition(separator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(separator.compareDocumentPosition(notification) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		await userEvent.click(openKanban);
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId",

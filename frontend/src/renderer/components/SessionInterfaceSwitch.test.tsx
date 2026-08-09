@@ -64,4 +64,19 @@ describe("SessionInterfaceSwitchButton", () => {
 		fireEvent.click(button);
 		expect(onClick).toHaveBeenCalledOnce();
 	});
+
+	it("keeps the pending switch disabled with a spinner and target-aware explanation", () => {
+		const onClick = vi.fn();
+		render(<SessionInterfaceSwitchButton target="chat" supported pending onClick={onClick} />);
+
+		const button = screen.getByRole("button", { name: "Switch to chat UI" });
+		const icon = button.querySelector("svg");
+		expect(button).toBeDisabled();
+		expect(button).toHaveTextContent(/^$/);
+		expect(button).toHaveAttribute("title", "Switch to chat UI using this agent's native conversation");
+		expect(icon).toHaveClass("animate-spin");
+		expect(icon).not.toHaveClass("lucide-message-square", "lucide-square-terminal");
+		fireEvent.click(button);
+		expect(onClick).not.toHaveBeenCalled();
+	});
 });
