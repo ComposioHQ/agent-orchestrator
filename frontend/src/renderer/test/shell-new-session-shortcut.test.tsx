@@ -426,9 +426,17 @@ describe("shell sidebar hover preview", () => {
 		expect(sidebar).toHaveAttribute("data-overlay", "true");
 		expect(useUiStore.getState().isSidebarOpen).toBe(false);
 
-		fireEvent.pointerMove(window, { clientX: 500, clientY: 300 });
-		await waitFor(() => expect(provider).toHaveAttribute("data-open", "false"));
-		expect(useUiStore.getState().isSidebarOpen).toBe(false);
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerMove(window, { clientX: 500, clientY: 300 });
+			act(() => vi.advanceTimersByTime(79));
+			expect(provider).toHaveAttribute("data-open", "true");
+			act(() => vi.advanceTimersByTime(1));
+			expect(provider).toHaveAttribute("data-open", "false");
+			expect(useUiStore.getState().isSidebarOpen).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("pins the sidebar open when the titlebar toggle is clicked", async () => {

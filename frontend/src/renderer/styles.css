@@ -430,6 +430,8 @@
 }
 
 @utility center-panel-surface {
+	container-name: center-panel workspace-topbar;
+	container-type: inline-size;
 	display: flex;
 	min-height: 0;
 	flex: 1 1 0%;
@@ -488,6 +490,14 @@
 	border: none;
 	border-bottom: 1px solid var(--color-border-strong);
 	border-radius: 0;
+}
+
+/* Session chrome is portaled into this host inside the resizable terminal
+ * panel. Give it the shared topbar container name so responsive actions follow
+ * the terminal width rather than the wider terminal + inspector surface. */
+.workspace-topbar-container {
+	container-name: workspace-topbar;
+	container-type: inline-size;
 }
 
 /* When the sidebar is off-canvas, clear only the fixed navigation cluster.
@@ -1869,6 +1879,104 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		animation: none;
 		opacity: 1;
 		transform: translate(-6px, -50%);
+	}
+}
+
+/* Compact workspace actions share one responsive contract across session,
+ * orchestrator, and Kanban surfaces. Boards use the center panel; session
+ * actions use the nearer terminal-panel host so inspector resizing is included. */
+.workspace-topbar-actions {
+	display: flex;
+	min-width: 0;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.workspace-topbar__utility-separator {
+	width: 1px;
+	height: calc(var(--size-topbar-control) - var(--space-3));
+	flex: 0 0 1px;
+	background: color-mix(in srgb, var(--color-text-topbar) 18%, transparent);
+}
+
+.workspace-topbar-actions .topbar-control {
+	-webkit-app-region: no-drag;
+	height: var(--size-topbar-control);
+	min-width: var(--size-topbar-control);
+	flex: 0 0 auto;
+	justify-content: center;
+	border-radius: var(--radius-topbar-control);
+	font-size: var(--font-size-sm-md);
+	transition:
+		background-color var(--duration-fast) ease,
+		border-color var(--duration-fast) ease,
+		color var(--duration-fast) ease,
+		filter var(--duration-fast) ease,
+		gap var(--duration-normal) ease,
+		padding-inline var(--duration-normal) ease;
+}
+
+.workspace-topbar-actions .topbar-control--labeled,
+.workspace-topbar-actions .topbar-control--feature {
+	padding-inline: var(--space-2_5);
+}
+
+.workspace-topbar-actions [data-compact-label] {
+	display: inline-block;
+	max-width: 12rem;
+	overflow: hidden;
+	opacity: 1;
+	transform: translateX(0);
+	white-space: nowrap;
+	transition:
+		max-width var(--duration-normal) ease,
+		opacity var(--duration-fast) ease,
+		transform var(--duration-normal) ease;
+}
+
+.workspace-topbar-actions .topbar-control--feature {
+	border-color: color-mix(in srgb, var(--color-accent) 24%, var(--color-border-topbar));
+	background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-topbar-raised));
+	color: color-mix(in srgb, var(--color-accent) 58%, var(--color-text-topbar));
+}
+
+.workspace-topbar-actions .topbar-control--feature:hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border-topbar-strong));
+	background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg-topbar-raised));
+	color: var(--color-text-topbar);
+}
+
+@container workspace-topbar (max-width: 759px) {
+	.workspace-topbar-actions [data-priority="secondary"] [data-compact-label] {
+		max-width: 0;
+		opacity: 0;
+		transform: translateX(-2px);
+	}
+
+	.workspace-topbar-actions [data-priority="secondary"].topbar-control {
+		gap: 0;
+		padding-inline: 0;
+	}
+}
+
+@container workspace-topbar (max-width: 639px) {
+	.workspace-topbar-actions [data-priority] [data-compact-label] {
+		max-width: 0;
+		opacity: 0;
+		transform: translateX(-2px);
+	}
+
+	.workspace-topbar-actions [data-priority].topbar-control {
+		gap: 0;
+		padding-inline: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.workspace-topbar-actions .topbar-control,
+	.workspace-topbar-actions [data-compact-label] {
+		transition: none;
 	}
 }
 

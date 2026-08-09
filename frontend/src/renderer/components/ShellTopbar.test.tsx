@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
+import { TooltipProvider } from "./ui/tooltip";
 
 const { navigateMock, onKilledMock, paramsMock, postMock, spawnMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
@@ -114,7 +115,9 @@ function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string, e
 	const queryClient = new QueryClient();
 	const topbar = () => (
 		<QueryClientProvider client={queryClient}>
-			<ShellTopbar embedded={embedded} />
+			<TooltipProvider>
+				<ShellTopbar embedded={embedded} />
+			</TooltipProvider>
 		</QueryClientProvider>
 	);
 	const result = render(topbar());
@@ -170,7 +173,22 @@ describe("ShellTopbar status pill", () => {
 		expect(screen.queryByText("ao/sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("Working")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Kill session" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Open orchestrator" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Spawn Orchestrator" })).toBeInTheDocument();
+	});
+
+	it("keeps compact worker actions ahead of notifications in the terminal top bar", () => {
+		renderTopbarSessions([worker, orchestrator], worker.id, true);
+
+		const actionRegion = screen.getByTestId("workspace-topbar-actions");
+		const kill = within(actionRegion).getByRole("button", { name: "Kill session" });
+		const openOrchestrator = within(actionRegion).getByRole("button", { name: "Open orchestrator" });
+		const notification = within(actionRegion).getByRole("button", { name: "Notifications" });
+		const separator = within(actionRegion).getByTestId("topbar-utility-separator");
+
+		expect(kill).not.toHaveTextContent("Kill");
+		expect(within(openOrchestrator).getByText("Orchestrator")).toHaveAttribute("data-compact-label");
+		expect(openOrchestrator.compareDocumentPosition(separator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(separator.compareDocumentPosition(notification) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
 	it.each([
@@ -219,6 +237,16 @@ describe("ShellTopbar status pill", () => {
 });
 
 describe("ShellTopbar orchestrator actions", () => {
+	it("uses the Board identity and compact Task label on project boards", () => {
+		renderTopbarSessions([orchestrator], "");
+
+		expect(screen.getByTestId("board-topbar-label")).toHaveTextContent("Board");
+		expect(screen.queryByText("my-app")).not.toBeInTheDocument();
+		expect(within(screen.getByRole("button", { name: "New task" })).getByText("Task")).toHaveAttribute(
+			"data-compact-label",
+		);
+	});
+
 	it.each([
 		["active", "Working", "bg-status-working", true],
 		["waiting_input", "Input Needed", "bg-status-needs-you", false],
@@ -244,19 +272,24 @@ describe("ShellTopbar orchestrator actions", () => {
 	it("opens the board from the project name on orchestrator sessions", async () => {
 		renderTopbar(orchestrator, true);
 
-		expect(screen.queryByText("Kanban")).not.toBeInTheDocument();
-		await userEvent.click(screen.getByRole("button", { name: "Open Kanban" }));
+		const task = screen.getByRole("button", { name: "New task" });
+		const openKanban = screen.getByRole("button", { name: "Open Kanban" });
+		expect(within(task).getByText("Task")).toHaveAttribute("data-compact-label");
+		expect(within(openKanban).getByText("Open Kanban")).toHaveAttribute("data-compact-label");
+		await userEvent.click(openKanban);
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId",
 			params: { projectId: "proj-1" },
 		});
 	});
 
-	it("opens the board from the project-name crumb on the full orchestrator topbar", async () => {
+	it("opens the board from the labeled action on the full orchestrator topbar", async () => {
 		renderTopbar(orchestrator);
 
 		expect(screen.getByRole("button", { name: "New task" })).toHaveClass("bg-raised");
-		await userEvent.click(screen.getByRole("button", { name: "Open Kanban" }));
+		const openKanban = screen.getByText("Open Kanban").closest("button");
+		expect(openKanban).not.toBeNull();
+		await userEvent.click(openKanban!);
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId",
 			params: { projectId: "proj-1" },
@@ -280,11 +313,13 @@ describe("ShellTopbar orchestrator actions", () => {
 		paramsMock.sessionId = "sess-1";
 		render(
 			<QueryClientProvider client={new QueryClient()}>
-				<ShellTopbar />
+				<TooltipProvider>
+					<ShellTopbar />
+				</TooltipProvider>
 			</QueryClientProvider>,
 		);
 
-		await userEvent.click(screen.getByRole("button", { name: "Open orchestrator" }));
+		await userEvent.click(screen.getByRole("button", { name: "Spawn Orchestrator" }));
 
 		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
 		expect(navigateMock).not.toHaveBeenCalled();

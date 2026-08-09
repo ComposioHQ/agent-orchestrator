@@ -249,6 +249,35 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("keeps the translucent full-height preview chrome mounted through its exit", () => {
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
+		const onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler;
+		const renderPreview = (open: boolean, isOverlay: boolean) => (
+			<QueryClientProvider client={new QueryClient()}>
+				<SidebarProvider onOpenChange={() => undefined} open={open}>
+					<Sidebar
+						isOverlay={isOverlay}
+						onCreateProject={onCreateProject}
+						onInitializeProject={onInitializeProject}
+						onRemoveProject={onRemoveProject}
+						workspaces={[]}
+					/>
+				</SidebarProvider>
+			</QueryClientProvider>
+		);
+		const view = render(renderPreview(true, true));
+		const sidebar = document.querySelector('[data-slot="sidebar-container"]');
+
+		expect(sidebar).toHaveClass("top-0", "h-svh!", "opacity-[0.97]");
+
+		view.rerender(renderPreview(false, false));
+		expect(sidebar).toHaveClass("top-0", "h-svh!", "opacity-[0.97]");
+
+		view.rerender(renderPreview(true, false));
+		expect(sidebar).not.toHaveClass("opacity-[0.97]");
+	});
+
 	it("suppresses focus chrome without removing keyboard focusability", () => {
 		renderSidebar();
 

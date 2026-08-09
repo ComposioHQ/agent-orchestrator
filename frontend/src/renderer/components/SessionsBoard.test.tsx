@@ -132,7 +132,7 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByText(/reload agents/i)).not.toBeInTheDocument();
 	});
 
-	it("shows the project name in the in-panel board chrome when actions live in the panel", () => {
+	it("shows the Board identity and compact actions in the in-panel board chrome", () => {
 		boardActionsInPanelMock.mockReturnValue(true);
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -162,8 +162,11 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		expect(screen.getByText("solkit-ui")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "New task" })).toBeInTheDocument();
+		expect(screen.getByTestId("board-topbar-label")).toHaveTextContent("Board");
+		expect(screen.queryByText("solkit-ui")).not.toBeInTheDocument();
+		expect(within(screen.getByRole("button", { name: "New task" })).getByText("Task")).toHaveAttribute(
+			"data-compact-label",
+		);
 	});
 
 	it.each([
@@ -202,6 +205,7 @@ describe("SessionsBoard", () => {
 
 		const button = screen.getByRole("button", { name: `Orchestrator, ${label}` });
 		const indicator = button.querySelector("span.size-dot-sm") as HTMLElement;
+		expect(within(button).getByText("Orchestrator")).toHaveAttribute("data-compact-label");
 		expect(indicator).toHaveAttribute("aria-hidden", "true");
 		expect(indicator).toHaveClass(tone);
 		expect(indicator).toHaveClass(pulses ? "animate-status-pulse" : "size-dot-sm");
