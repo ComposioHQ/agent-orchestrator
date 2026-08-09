@@ -24,6 +24,7 @@ type Plugin struct {
 	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
+	runCommand     primeCommandRunner
 }
 
 // New returns a ready-to-register Prime Agent adapter.
@@ -34,6 +35,7 @@ func New() *Plugin {
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentBinaryResolver = (*Plugin)(nil)
+var _ ports.AgentNativeSessionTerminator = (*Plugin)(nil)
 var _ ports.ActiveTurnSteerer = (*Plugin)(nil)
 var _ ports.SubmitActivitySignaler = (*Plugin)(nil)
 var _ ports.BlockedActivitySignaler = (*Plugin)(nil)
