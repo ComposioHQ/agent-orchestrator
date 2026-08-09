@@ -265,7 +265,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		}
 	}
 	if signal.NativeSessionID != "" && mainPath == "" &&
-		(session.Harness == domain.HarnessCodex || finalizing && !existsForDiscovery) {
+		(session.Harness != domain.HarnessClaudeCode || finalizing && !existsForDiscovery) {
 		mainPath, err = c.discoverPath(ctx, session.Harness, signal.NativeSessionID)
 		if err != nil {
 			return err
@@ -578,8 +578,10 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 		if err := c.registerDiscoveredClaudeSubagents(ctx, binding, path, now, false); err != nil {
 			return err
 		}
-	} else if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
-		return err
+	} else if session.Harness == domain.HarnessCodex {
+		if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
+			return err
+		}
 	}
 	if state == domain.UsageBindingFinalizing {
 		return c.settleFinalizingBinding(ctx, binding.ID, now)
@@ -827,8 +829,10 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 		if err := c.registerDiscoveredClaudeSubagents(ctx, binding, path, now, false); err != nil {
 			return err
 		}
-	} else if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
-		return err
+	} else if binding.Harness == domain.HarnessCodex {
+		if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
+			return err
+		}
 	}
 	lastErrorCode := ""
 	if binding.Harness == domain.HarnessCodex &&
@@ -1654,6 +1658,12 @@ func validateSourceAttribution(
 			filepath.Base(resolved) != "agent-"+subagentID+".jsonl" {
 			return rejected()
 		}
+	case domain.UsageSourceCopilotShutdown:
+		if binding.Harness != domain.HarnessCopilot || nativeSessionID != binding.NativeRootID ||
+			filepath.Base(filepath.Dir(resolved)) != binding.NativeRootID ||
+			filepath.Base(resolved) != "events.jsonl" {
+			return rejected()
+		}
 	default:
 		return rejected()
 	}
@@ -1721,6 +1731,8 @@ func (c *Collector) discoverPath(ctx context.Context, harness domain.AgentHarnes
 		patterns = []string{filepath.Join(c.roots.ClaudeProjects, "*", nativeID+".jsonl")}
 	case domain.HarnessCodex:
 		return c.discoverCodexPath(ctx, nativeID, "")
+	case domain.HarnessCopilot:
+		patterns = []string{filepath.Join(c.roots.CopilotSessions, nativeID, "events.jsonl")}
 	}
 	type candidate struct {
 		path string
