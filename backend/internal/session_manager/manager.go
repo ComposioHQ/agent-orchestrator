@@ -2422,7 +2422,7 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 	// draft from a pending permission dialog and never Enter into the latter).
 	// Only claude-code and its hook-delegators (grok/continueagent/devin)
 	// satisfy both; every other harness opts out via EmitsBlockedActivity —
-	// see ports.ActivitySignaler.
+	// see ports.BlockedActivitySignaler.
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		// Confirmation is best-effort and never fails the send (the message
@@ -2474,10 +2474,11 @@ USER MESSAGE:
 }
 
 // harnessNudgeSafe reports whether the session's harness is safe to nudge with
-// an Enter-only re-send (see ports.ActivitySignaler): it must emit BOTH a
-// prompt-submit signal (else the loop wastes its budget never observing active)
-// and a blocked signal (else an Enter meant to resubmit a draft could answer a
-// permission dialog the harness cannot report).
+// an Enter-only re-send (see ports.SubmitActivitySignaler and
+// ports.BlockedActivitySignaler): it must emit BOTH a prompt-submit signal
+// (else the loop wastes its budget never observing active) and a blocked
+// signal (else an Enter meant to resubmit a draft could answer a permission
+// dialog the harness cannot report).
 func (m *Manager) harnessNudgeSafe(harness domain.AgentHarness) bool {
 	if m.agents == nil {
 		return false
@@ -2486,8 +2487,12 @@ func (m *Manager) harnessNudgeSafe(harness domain.AgentHarness) bool {
 	if !ok {
 		return false
 	}
-	s, ok := agent.(ports.ActivitySignaler)
-	return ok && s.EmitsSubmitActivity() && s.EmitsBlockedActivity()
+	sub, ok := agent.(ports.SubmitActivitySignaler)
+	if !ok || !sub.EmitsSubmitActivity() {
+		return false
+	}
+	blk, ok := agent.(ports.BlockedActivitySignaler)
+	return ok && blk.EmitsBlockedActivity()
 }
 
 // waitOutcome is one poll round's verdict on whether confirmActive should
@@ -2719,7 +2724,8 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 		// Resolved before this point and persisted here. There is no UPDATE
 		// statement that can change it afterwards.
-		Mode: domain.NormalizeSessionMode(cfg.RequestedMode),
+		Mode:             domain.NormalizeSessionMode(cfg.RequestedMode),
+		AutoInjectReview: true,
 	}
 }
 

@@ -89,7 +89,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
 reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation,
-    browser_capability_verifier, model
+    browser_capability_verifier, auto_inject_review, model
 FROM sessions WHERE id = ?
 `
 
@@ -130,6 +130,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.ProviderConversationID,
 		&i.ControllerGeneration,
 		&i.BrowserCapabilityVerifier,
+		&i.AutoInjectReview,
 		&i.Model,
 	)
 	return i, err
@@ -143,12 +144,12 @@ INSERT INTO sessions (
     runtime_launch_id, agent_session_id, prompt,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation, browser_capability_verifier,
     session_mode, provider_conversation_id, controller_generation,
-    model, created_at, updated_at, is_pinned, pinned_at
+    model, created_at, updated_at, is_pinned, pinned_at, auto_inject_review
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?
+    ?, ?, ?, ?, ?
 )
 `
 
@@ -187,6 +188,7 @@ type InsertSessionParams struct {
 	UpdatedAt                 time.Time
 	IsPinned                  bool
 	PinnedAt                  sql.NullTime
+	AutoInjectReview          bool
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -225,6 +227,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.UpdatedAt,
 		arg.IsPinned,
 		arg.PinnedAt,
+		arg.AutoInjectReview,
 	)
 	return err
 }
@@ -238,7 +241,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
 reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation,
-    browser_capability_verifier, model
+    browser_capability_verifier, auto_inject_review, model
 FROM sessions ORDER BY project_id, num
 `
 
@@ -285,6 +288,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.ProviderConversationID,
 			&i.ControllerGeneration,
 			&i.BrowserCapabilityVerifier,
+			&i.AutoInjectReview,
 			&i.Model,
 		); err != nil {
 			return nil, err
@@ -309,7 +313,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
 reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation,
-    browser_capability_verifier, model
+    browser_capability_verifier, auto_inject_review, model
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -356,6 +360,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.ProviderConversationID,
 			&i.ControllerGeneration,
 			&i.BrowserCapabilityVerifier,
+			&i.AutoInjectReview,
 			&i.Model,
 		); err != nil {
 			return nil, err
@@ -422,6 +427,24 @@ func (q *Queries) SessionIsSeed(ctx context.Context, id domain.SessionID) (bool,
 	var is_seed bool
 	err := row.Scan(&is_seed)
 	return is_seed, err
+}
+
+const setSessionAutoInjectReview = `-- name: SetSessionAutoInjectReview :execrows
+UPDATE sessions SET auto_inject_review = ?, updated_at = ? WHERE id = ?
+`
+
+type SetSessionAutoInjectReviewParams struct {
+	AutoInjectReview bool
+	UpdatedAt        time.Time
+	ID               domain.SessionID
+}
+
+func (q *Queries) SetSessionAutoInjectReview(ctx context.Context, arg SetSessionAutoInjectReviewParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSessionAutoInjectReview, arg.AutoInjectReview, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setSessionPinned = `-- name: SetSessionPinned :execrows
@@ -512,9 +535,9 @@ UPDATE sessions SET
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
-cleanup_generation = ?, browser_capability_verifier = ?,
+    cleanup_generation = ?, browser_capability_verifier = ?,
     provider_conversation_id = ?, controller_generation = ?, model = ?, updated_at = ?,
-    is_pinned = ?, pinned_at = ?
+    is_pinned = ?, pinned_at = ?, auto_inject_review = ?
 WHERE id = ?
 `
 
@@ -548,6 +571,7 @@ type UpdateSessionParams struct {
 	UpdatedAt                 time.Time
 	IsPinned                  bool
 	PinnedAt                  sql.NullTime
+	AutoInjectReview          bool
 	ID                        domain.SessionID
 }
 
@@ -582,6 +606,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.UpdatedAt,
 		arg.IsPinned,
 		arg.PinnedAt,
+		arg.AutoInjectReview,
 		arg.ID,
 	)
 	return err

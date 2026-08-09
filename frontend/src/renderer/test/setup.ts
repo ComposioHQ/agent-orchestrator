@@ -104,6 +104,7 @@ if (typeof window !== "undefined") {
 			getBootstrap: async () => null,
 		},
 		browser: {
+			nativeCompositionEnabled: true,
 			ensure: async (sessionId: string) => ({
 				viewId: `test:${sessionId}`,
 				url: "",
@@ -113,8 +114,7 @@ if (typeof window !== "undefined") {
 				isLoading: false,
 			}),
 			setBounds: () => undefined,
-			capture: async () => null,
-			requestMirror: async () => false,
+			setOverlayOpen: () => undefined,
 			navigate: async ({ viewId }: { viewId: string }) => ({
 				viewId,
 				url: "",

@@ -70,6 +70,7 @@ const session = (prs: PullRequestFacts[], overrides: Partial<WorkspaceSession> =
 	branch: "feat/ns",
 	status: "review_pending",
 	updatedAt: "2026-06-15T00:00:00Z",
+	autoInjectReview: true,
 	prs,
 	...overrides,
 });
@@ -210,6 +211,7 @@ const approvedReview = {
 	prUrl: "https://example.com/pr/3",
 	targetSha: "abc123",
 	createdAt: "2026-06-16T10:06:00Z",
+	autoInjectReview: true,
 };
 
 const failedReview = {
@@ -1282,6 +1284,20 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getByText("Changes requested")).toBeInTheDocument();
 	});
 
+	it("hides agent review PR rows while a triggered review is still running without a verdict", async () => {
+		const running = {
+			...reviewState(3, "running", "sha-1"),
+			latestRun: { ...approvedReview, id: "run-live", harness: "codex", status: "running", verdict: "" },
+		};
+		mockCommonGets([], "reviewer-pane", [running]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await screen.findByText("Review in progress · codex");
+
+		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reviews")).not.toBeInTheDocument();
+	});
+
 	it("shows eligible and up-to-date open PR review rows", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [
 			reviewState(3, "needs_review", "abc123"),
@@ -1303,6 +1319,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
 	});
@@ -1465,8 +1482,8 @@ describe("SessionInspector summary reviews", () => {
 											reviewerId: "maya",
 											count: 2,
 											links: [
-												{ file: "a.ts", line: 3 },
-												{ file: "a.ts", line: 9 },
+												{ file: "a.ts", line: 3, autoInjectReview: true },
+												{ file: "a.ts", line: 9, autoInjectReview: true },
 											],
 										},
 									],
@@ -1523,6 +1540,7 @@ describe("SessionInspector summary reviews", () => {
 											submittedAt: "2026-06-16T11:00:00Z",
 											body: "Looks **ready**.\n\n1. Ship it",
 											reviewUrl: "https://example.com/pr/3#pullrequestreview-456",
+											autoInjectReview: true,
 										},
 									],
 									unresolvedBy: [],
@@ -1542,6 +1560,86 @@ describe("SessionInspector summary reviews", () => {
 		expect(within(summary).getByText("ready").tagName).toBe("STRONG");
 		expect(within(summary).getByText("Ship it").tagName).toBe("LI");
 		expect(summary).not.toHaveTextContent("**ready**");
+	});
+
+	it("marks SCM reviews and individual comments using their stored injection decision", async () => {
+		const previous = getMock.getMockImplementation()!;
+		getMock.mockImplementation(async (path: string, opts?: unknown) => {
+			if (path === "/api/v1/sessions/{sessionId}/pr") {
+				return {
+					data: {
+						prs: [
+							prSummary(3, "open", {
+								review: {
+									decision: "changes_requested",
+									hasUnresolvedHumanComments: true,
+									reviews: [
+										{
+											reviewerId: "maya",
+											verdict: "changes_requested",
+											submittedAt: "2026-06-16T11:00:00Z",
+											autoInjectReview: true,
+										},
+									],
+									unresolvedBy: [
+										{
+											reviewerId: "maya",
+											count: 2,
+											links: [
+												{ file: "a.ts", line: 3, autoInjectReview: true },
+												{ file: "a.ts", line: 9, autoInjectReview: false },
+											],
+										},
+									],
+								},
+							}),
+						],
+					},
+				};
+			}
+			return previous(path, opts);
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		expect(await screen.findByText("Not injected")).toBeInTheDocument();
+		expect(screen.getByText("On GitHub")).toBeInTheDocument();
+	});
+
+	it("marks an AO review using its stored injection decision", async () => {
+		mockCommonGets(
+			[],
+			"reviewer-pane",
+			[
+				{
+					...reviewState(3, "up_to_date", "abc123"),
+					latestRun: { ...approvedReview, autoInjectReview: false },
+				},
+			],
+		);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		expect(await screen.findByText("Not injected")).toBeInTheDocument();
+		expect(screen.getByText("AO review")).toBeInTheDocument();
+	});
+
+	it("persists the automatic review injection toggle", async () => {
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		const toggle = screen.getByRole("switch", { name: "Automatically send review feedback" });
+		expect(toggle).toBeChecked();
+		await userEvent.click(toggle);
+
+		await waitFor(() =>
+			expect(patchMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/auto-inject-review", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { autoInjectReview: false },
+			}),
+		);
 	});
 
 	it("persists the chosen reviewer for the session and uses it for the run", async () => {

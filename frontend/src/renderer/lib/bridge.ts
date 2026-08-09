@@ -62,6 +62,7 @@ export const aoBridge: AoBridge =
 			getBootstrap: async () => null,
 		},
 		browser: {
+			nativeCompositionEnabled: false,
 			ensure: async (sessionId: string) => ({
 				viewId: `preview:${sessionId}`,
 				url: "",
@@ -71,6 +72,7 @@ export const aoBridge: AoBridge =
 				isLoading: false,
 			}),
 			setBounds: () => undefined,
+			setOverlayOpen: () => undefined,
 			navigate: async ({ viewId, url }) => ({
 				viewId,
 				url,
@@ -128,8 +130,6 @@ export const aoBridge: AoBridge =
 				activeTabId: "",
 			}),
 			destroy: () => undefined,
-			capture: async () => null,
-			requestMirror: async () => false,
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
 			onTabsState: () => () => undefined,

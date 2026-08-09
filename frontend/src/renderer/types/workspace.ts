@@ -87,6 +87,7 @@ export type AgentProvider =
 	| "kilocode"
 	| "vibe"
 	| "pi"
+	| "kimchi"
 	| "autohand"
 	| "fake";
 
@@ -149,6 +150,8 @@ export type WorkspaceSession = {
 	isTerminated?: boolean;
 	/** User preference to tear down this session when its PR set completes through a merge. */
 	terminateOnPrMerge?: boolean;
+	/** Whether SCM review feedback is automatically injected into the worker. */
+	autoInjectReview?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
@@ -377,6 +380,7 @@ export function toAgentProvider(provider?: string): AgentProvider {
 		case "kilocode":
 		case "vibe":
 		case "pi":
+		case "kimchi":
 		case "autohand":
 		case "fake":
 			return provider;
