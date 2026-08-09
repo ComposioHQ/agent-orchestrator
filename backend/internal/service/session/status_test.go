@@ -48,6 +48,23 @@ func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 	}{
 		{"terminated", statusRec(domain.ActivityExited, true), nil, false, domain.StatusTerminated},
 		{"merged-pr", statusRec(domain.ActivityIdle, true), statusPR(domain.PRFacts{Merged: true}), false, domain.StatusMerged},
+		// A terminated session whose only PR is merged still reports merged: no
+		// open PR remains, so the merged short-circuit applies as before.
+		{"terminated-only-pr-merged", statusRec(domain.ActivityExited, true), statusPR(domain.PRFacts{Merged: true}), false, domain.StatusMerged},
+		// A terminated session that still owns an open PR (e.g. a stack where only
+		// the bottom PR merged) did not complete: the merged short-circuit must not
+		// fire while an open PR remains, matching the invariant that merged only
+		// wins once no open PR is left.
+		{
+			"terminated-with-open-pr-stays-terminated",
+			statusRec(domain.ActivityExited, true),
+			[]domain.PRFacts{{URL: "a", Merged: true}, {URL: "b", SourceBranch: "ao/b", TargetBranch: "main"}},
+			false,
+			domain.StatusTerminated,
+		},
+		// A terminated session with no PRs at all stays terminated (sanity: the
+		// no-PR case must not regress).
+		{"terminated-no-prs", statusRec(domain.ActivityExited, true), nil, false, domain.StatusTerminated},
 		{"needs-input", statusRec(domain.ActivityWaitingInput, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusNeedsInput},
 		{"needs-input-blocked", statusRec(domain.ActivityBlocked, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusNeedsInput},
 		{"exited", statusRec(domain.ActivityExited, false), statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), false, domain.StatusExited},

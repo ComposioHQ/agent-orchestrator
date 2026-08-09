@@ -26,7 +26,7 @@ const noSignalGrace = 90 * time.Second
 // until the parent does. Merged/closed PRs only matter once no open PR remains.
 func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time, signalCapable bool) domain.SessionStatus {
 	if rec.IsTerminated {
-		if anyMerged(prs) {
+		if len(openPRs(prs)) == 0 && anyMerged(prs) {
 			return domain.StatusMerged
 		}
 		return domain.StatusTerminated
