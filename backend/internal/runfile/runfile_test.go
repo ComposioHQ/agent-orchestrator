@@ -126,11 +126,15 @@ func stubReadFile(t *testing.T, results []error, payload []byte) *int {
 	return calls
 }
 
-// sharingViolation stands in for the transient Windows ERROR_SHARING_VIOLATION
-// ("The process cannot access the file because it is being used by another
-// process") this retry exists for; the loop is deliberately unconditional on
-// error identity, so any non-ErrNotExist error drives it.
-var errSharingViolation = errors.New("The process cannot access the file because it is being used by another process")
+// sharingViolationErr stands in for the transient Windows
+// ERROR_SHARING_VIOLATION ("The process cannot access the file because it is
+// being used by another process") this retry exists for; the loop is
+// deliberately unconditional on error identity, so any non-ErrNotExist error
+// drives it. Constructed per call — a package-level sentinel var trips
+// staticcheck ST1005 (capitalized error string).
+func sharingViolationErr() error {
+	return errors.New("The process cannot access the file because it is being used by another process")
+}
 
 const testInfoJSON = `{"pid": 4242, "port": 3001}` + "\n"
 
@@ -138,7 +142,7 @@ const testInfoJSON = `{"pid": 4242, "port": 3001}` + "\n"
 // and then succeeds (the antivirus/teardown window after the daemon writes
 // running.json) must ride out the failure and return the file.
 func TestReadRetriesTransientWindowsSharingViolation(t *testing.T) {
-	calls := stubReadFile(t, []error{errSharingViolation, errSharingViolation, nil}, []byte(testInfoJSON))
+	calls := stubReadFile(t, []error{sharingViolationErr(), sharingViolationErr(), nil}, []byte(testInfoJSON))
 
 	got, err := Read(filepath.Join(t.TempDir(), "running.json"))
 	if err != nil {
@@ -155,7 +159,7 @@ func TestReadRetriesTransientWindowsSharingViolation(t *testing.T) {
 // TestReadGivesUpAfterBudget: a genuinely wedged file still surfaces the last
 // error after the bounded budget instead of hanging forever.
 func TestReadGivesUpAfterBudget(t *testing.T) {
-	calls := stubReadFile(t, []error{errSharingViolation}, nil)
+	calls := stubReadFile(t, []error{sharingViolationErr()}, nil)
 
 	_, err := Read(filepath.Join(t.TempDir(), "running.json"))
 	if err == nil {
@@ -169,7 +173,7 @@ func TestReadGivesUpAfterBudget(t *testing.T) {
 // TestReadSkipsRetryOffWindows: the retry is gated to the platform whose
 // handle semantics need it; elsewhere a read error is real and immediate.
 func TestReadSkipsRetryOffWindows(t *testing.T) {
-	calls := stubReadFile(t, []error{errSharingViolation}, nil)
+	calls := stubReadFile(t, []error{sharingViolationErr()}, nil)
 	readRetryEnabled = false // stand in for a non-Windows GOOS
 
 	_, err := Read(filepath.Join(t.TempDir(), "running.json"))
