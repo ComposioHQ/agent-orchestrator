@@ -3,6 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import { Platform } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { OnboardingGate } from "../lib/OnboardingGate";
+import { TelemetryManager } from "../lib/TelemetryManager";
 import { PushManager } from "../lib/PushManager";
 import { AppProvider } from "../lib/store";
 import { ThemeProvider, useTheme, useThemeState } from "../lib/ThemeProvider";
@@ -65,6 +66,7 @@ function Shell() {
 		<>
 			{/* Light content on a dark app, dark content on a light one. */}
 			<StatusBar style={scheme === "dark" ? "light" : "dark"} />
+			<TelemetryManager />
 			<PushManager />
 			<OnboardingGate />
 			<Stack
@@ -77,7 +79,9 @@ function Shell() {
 				}}
 			>
 				<Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-				<Stack.Screen name="session/[id]" options={{ title: "Terminal", headerBackTitle: "Back" }} />
+				<Stack.Screen name="session/[id]" options={{ title: "Session", headerBackTitle: "Back" }} />
+				<Stack.Screen name="shell/[handleId]" options={{ title: "Worktree shell", headerBackTitle: "Chat" }} />
+				<Stack.Screen name="preview/[id]" options={{ title: "Preview", headerBackTitle: "Chat" }} />
 				<Stack.Screen name="spawn" options={{ presentation: "modal", title: "New agent" }} />
 				{/* Reachable from Settings and from the board's bell, so naming either one
 				    in the back label would be wrong half the time. "minimal" drops the

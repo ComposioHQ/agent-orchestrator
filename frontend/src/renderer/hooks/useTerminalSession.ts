@@ -60,6 +60,8 @@ export type TerminalSessionState =
 export type UseTerminalSessionOptions = {
 	/** Gates auto-reattach: when false, a dropped socket waits instead of retrying. */
 	daemonReady: boolean;
+	/** Refuse user bytes without detaching while a controller handoff owns input. */
+	inputDisabled?: boolean;
 	/** Coalesce and cover the initial replay. Disable for non-retained reviewer panes. */
 	coverInitialReplay?: boolean;
 	/**
@@ -69,12 +71,6 @@ export type UseTerminalSessionOptions = {
 	isVisible?: boolean;
 	/** Test seam: build the mux client. Defaults to a fresh socket against the current API base. */
 	createMux?: () => TerminalMux;
-	/**
-	 * Observe decoded pane output (post-write). Callers use it to scan the stream
-	 * for signals like printed URLs; it must be cheap and side-effect-light since
-	 * it runs on every output chunk. Omit to skip decoding entirely.
-	 */
-	onOutput?: (text: string) => void;
 	/**
 	 * Attach to a standalone shell terminal (POST /api/v1/shell-terminals)
 	 * instead of a session's pane. When set it wins over `session`, which
@@ -259,10 +255,8 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	const teardownMux = useCallback(() => {
 		const r = runtime.current;
 		// Land anything still buffered before the attachment goes away. Dropping
-		// it would lose output that had already arrived — invisible on screen
-		// (the next attach clears and replays), but the onOutput watcher would
-		// never see it, so a URL printed in that window would never badge the
-		// Browser tab. No-ops when the gate is closed or already superseded.
+		// it would lose output that had already arrived. No-ops when the gate is
+		// closed or already superseded.
 		r.flushReplay?.(true);
 		r.flushReplay = null;
 		r.flushSteadyWrite?.();
@@ -363,13 +357,6 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		const mux = (optionsRef.current.createMux ?? defaultCreateMux)();
 		r.mux = mux;
 
-		// Streaming decoder so a multi-byte sequence split across chunks decodes
-		// correctly for onOutput. Only built when a caller is listening.
-		const outputDecoder = optionsRef.current.onOutput ? new TextDecoder() : null;
-
-		const emitOutput = (bytes: Uint8Array) => {
-			if (outputDecoder) optionsRef.current.onOutput?.(outputDecoder.decode(bytes, { stream: true }));
-		};
 		let pendingReplayWrites = 0;
 		let replayRevealDeadlineReached = false;
 		const postReplayWriteQueue: Uint8Array[] = [];
@@ -540,9 +527,6 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				replay.set(chunk, offset);
 				offset += chunk.length;
 			}
-			// Observers (the URL watcher) must still see the replay text, and see
-			// it once, in order — decode the joined buffer, not the pieces.
-			emitOutput(replay);
 			if (preserveBeforeTeardown) {
 				terminal.write(replay);
 				preservePendingReplayWrites();
@@ -611,11 +595,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 						r.replayTailQuietTimer = null;
 					}
 					postReplayWriteQueue.push(bytes);
-					emitOutput(bytes);
 					drainPostReplayWrites();
 					return;
 				}
-				emitOutput(bytes);
 				r.steadyWriteChunks.push(bytes);
 				r.steadyWriteBytes += bytes.length;
 				if (r.steadyWriteBytes >= STEADY_WRITE_MAX_BYTES) {
@@ -659,8 +641,8 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				r.inputReady = false;
 				// Land whatever was buffered before the notice, and lift the cover:
 				// a pane that exits mid-replay must never be left behind it.
-			flushReplay(false, true);
-			flushSteadyWrite();
+				flushReplay(false, true);
+				flushSteadyWrite();
 				terminal.writeln("\r\n\x1b[2m[process exited]\x1b[0m");
 				transition("exited");
 				// Preserve xterm scrollback, but release the attachment: an exited
@@ -672,8 +654,8 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				if (!isCurrentAttachment(generation, handle, mux)) return;
 				clearOpenTimer(generation);
 				r.inputReady = false;
-			flushReplay(false, true);
-			flushSteadyWrite();
+				flushReplay(false, true);
+				flushSteadyWrite();
 				terminal.writeln(`\r\n\x1b[2m[terminal error] ${message}\x1b[0m`);
 				setError(message);
 				transition("error");
@@ -706,6 +688,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			if (
 				!isCurrentAttachment(generation, handle, mux) ||
 				!r.inputReady ||
+				optionsRef.current.inputDisabled ||
 				optionsRef.current.isVisible === false
 			) {
 				return;

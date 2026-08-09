@@ -18,6 +18,14 @@ ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
 - Renderer exceptions, reduced to error name and coarse context
 - Daemon operational events: CLI invocation, session spawn/failure, waiting-input
   transitions, HTTP 5xx, and daemon panics
+- Code review outcomes: `ao.review.triggered`, `ao.review.submitted`,
+  `ao.review.cancelled`, and `ao.review.trigger_failed`. These carry the reviewer
+  `harness`, the `verdict` (`approved` / `changes_requested`), how long the pass
+  took, whether the review reached the provider, and a coarse `error_kind` on
+  failure. The review body is never sent: it is reviewer prose about a user's
+  source code. The PR URL and target SHA are also withheld, because both identify
+  the repository. `ao.review.submitted` fires only on the real running-to-complete
+  transition, so a reviewer retrying a submit cannot double-count a verdict
 - Desktop update outcomes: `ao.renderer.update_failed`,
   `ao.renderer.update_downloaded`, and `ao.renderer.update_unsupported`. These
   carry a coarse `error_category`, the `phase` (`check` or `download`), whether
@@ -34,7 +42,31 @@ ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
   silent-failure case these exist to diagnose. Owning it in main also makes
   `phase` and `to_version` authoritative, since only main knows which operation
   was running and what it was fetching
+- Agent inventory: `ao.renderer.agents_available`, reported once per app launch
+  with `installed_count`, `authorized_count`, `supported_count`, and a sorted list
+  of authorized agent ids. Agent ids are a fixed vocabulary from AO's own
+  registry, never user input. This exists because `ao.session.spawned` only shows
+  which harness *ran*, so an install with six authorized agents that always picks
+  one was indistinguishable from an install that only had that one
 - AO version context (`app_version` / `ao_version`), platform, and build mode
+- Mobile app product events (`client = "mobile"` / `"mobile-web"`), all under the
+  `ao.v2.*` namespace and carrying `telemetry_schema_version = 2`:
+  `ao.v2.app.active` (once per UTC day), `ao.v2.mobile_app.paired`
+  (`method`, `from_onboarding`), `ao.v2.mobile_app.connected` (`trigger`,
+  emitted only on the not-open-to-open transition, never per poll tick),
+  `ao.v2.mobile_app.onboarding_started` / `_completed` / `_skipped`,
+  `ao.v2.mobile_app.notification_opened` (`target`, `cold_start`), and
+  `ao.v2.mobile_app.feature_used` (`feature`, `outcome`). Every event carries
+  `$process_person_profile: false` (anonymous rate), and the client is built with
+  `personProfiles: "never"`, `enableSessionReplay: false`, and
+  `captureAppLifecycleEvents: false`. There is no screen recording, no touch or
+  screen autocapture, and no free-text property: the allowlist in
+  `packages/mobile/lib/telemetry/events.ts` drops any unregistered key, so session
+  titles, project names, terminal output, and the connection password cannot
+  leave the device. Identity is posthog-react-native's persisted anonymous
+  install id, device-based and never IP. Errors are out of scope here and go to
+  Sentry, not PostHog. A dev client (`npm start`) constructs no client and sends
+  nothing.
 
 PostHog session recording is disabled in the client via
 `disable_session_recording`, so the project-side replay toggle cannot turn it on.

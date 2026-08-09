@@ -23,7 +23,6 @@ const {
 	terminalError,
 	terminalState,
 	replaySettled,
-	terminalOutputHandlers,
 	terminalSessionOptions,
 	xtermMounts,
 	xtermUnmounts,
@@ -36,7 +35,6 @@ const {
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
-		terminalOutputHandlers: new Map<string, (text: string) => void>(),
 		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean }>,
 		xtermMounts: { value: 0 },
 		xtermUnmounts: { value: 0 },
@@ -88,11 +86,10 @@ vi.mock("./XtermTerminal", () => ({
 
 vi.mock("../hooks/useTerminalSession", () => ({
 	useTerminalSession: (
-		session: WorkspaceSession | undefined,
-		options: { coverInitialReplay?: boolean; onOutput?: (text: string) => void },
+		_session: WorkspaceSession | undefined,
+		options: { coverInitialReplay?: boolean },
 	) => {
 		terminalSessionOptions.push(options);
-		if (session?.id && options.onOutput) terminalOutputHandlers.set(session.id, options.onOutput);
 		return {
 			attach: attachMock,
 			state: terminalState.value,
@@ -130,7 +127,6 @@ beforeEach(() => {
 	terminalState.value = "idle";
 	replaySettled.value = true;
 	terminalLinkHandler = undefined;
-	terminalOutputHandlers.clear();
 	terminalSessionOptions.length = 0;
 	attachMock.mockClear();
 	prepareForActivationMock.mockReset();
@@ -222,6 +218,16 @@ function activeXterm(): HTMLElement {
 }
 
 describe("TerminalPane empty states", () => {
+	it("uses the full top, right, and bottom extent for the terminal grid", () => {
+		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+		try {
+			expect(screen.getByTestId("xterm").parentElement).toHaveClass("pl-2");
+			expect(screen.getByTestId("xterm").parentElement).not.toHaveClass("pt-2", "pr-2", "pb-2", "p-2");
+		} finally {
+			view.restore();
+		}
+	});
+
 	it("shows a no-selection message when no session is selected", () => {
 		const view = renderPane();
 		try {
@@ -590,30 +596,6 @@ describe("terminal restore", () => {
 	});
 });
 
-describe("terminal output notifications", () => {
-	it("badges a parked session even when its persisted inspector view is Browser", async () => {
-		const sessionA = { ...worker, id: "sess-a", terminalHandleId: "handle-a" };
-		const sessionB = { ...worker, id: "sess-b", terminalHandleId: "handle-b" };
-		useUiStore.getState().setInspectorOpen(sessionA.id, true);
-		useUiStore.getState().setInspectorView(sessionA.id, "browser");
-		const view = renderCachedPane({ session: sessionA, sessions: [sessionA, sessionB] });
-		try {
-			await waitFor(() => expect(terminalOutputHandlers.get(sessionA.id)).toBeTypeOf("function"));
-			view.show(sessionB);
-			await waitFor(() =>
-				expect(document.querySelector(`[data-terminal-cache-key^="session:${sessionA.id}:worker|"]`)).toHaveAttribute(
-					"aria-hidden",
-					"true",
-				),
-			);
-			act(() => terminalOutputHandlers.get(sessionA.id)?.("https://example.com/background\n"));
-			expect(useUiStore.getState().inspectorSessions[sessionA.id]?.browserUnseen).toBe(true);
-		} finally {
-			view.restore();
-		}
-	});
-});
-
 describe("providerScrollsByKeyboard", () => {
 	// opencode, its fork kilocode, and grok use TUIs that scroll their own transcripts
 	// by keyboard and ignore SGR wheel reports, so all must opt into the
@@ -622,6 +604,7 @@ describe("providerScrollsByKeyboard", () => {
 		expect(providerScrollsByKeyboard("opencode")).toBe(true);
 		expect(providerScrollsByKeyboard("kilocode")).toBe(true);
 		expect(providerScrollsByKeyboard("grok")).toBe(true);
+		expect(providerScrollsByKeyboard("muse")).toBe(true);
 	});
 
 	it("is false for mouse-report/native-scroll providers", () => {
@@ -744,7 +727,7 @@ describe("terminal link preview", () => {
 		try {
 			act(() => terminalLinkHandler?.("http://localhost:3000"));
 			await waitFor(() =>
-				expect(warning).toHaveBeenCalledWith("Unable to open terminal link in Browser preview", error),
+				expect(warning).toHaveBeenCalledWith("Unable to open link in Browser preview", error),
 			);
 			expect(invalidate).not.toHaveBeenCalled();
 		} finally {
