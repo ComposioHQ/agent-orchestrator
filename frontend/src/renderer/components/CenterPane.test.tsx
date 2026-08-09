@@ -26,6 +26,14 @@ const agentSwitchMocks = vi.hoisted(() => ({
 	},
 }));
 
+const terminalPaneMocks = vi.hoisted(() => ({
+	props: [] as Array<{
+		focusRequested?: boolean;
+		inputDisabled?: boolean;
+		terminalTarget?: { kind: string };
+	}>,
+}));
+
 vi.mock("../hooks/useAgentSwitches", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../hooks/useAgentSwitches")>();
 	return {
@@ -74,9 +82,21 @@ vi.mock("../lib/bridge", () => ({
 
 // The terminal body pulls in xterm/SSE machinery irrelevant to the header under test.
 vi.mock("./TerminalPane", () => ({
-	TerminalPane: ({ focusRequested }: { focusRequested?: boolean }) => (
-		<div data-focus-requested={focusRequested ? "true" : "false"}>terminal body</div>
-	),
+	TerminalPane: (props: {
+		focusRequested?: boolean;
+		inputDisabled?: boolean;
+		terminalTarget?: { kind: string };
+	}) => {
+		terminalPaneMocks.props.push(props);
+		return (
+			<div
+				data-focus-requested={props.focusRequested ? "true" : "false"}
+				data-input-disabled={props.inputDisabled ? "true" : "false"}
+			>
+				terminal body
+			</div>
+		);
+	},
 }));
 
 const worker = {
@@ -92,6 +112,21 @@ const worker = {
 	activity: { state: "active", lastActivityAt: "2026-06-10T00:00:00Z" },
 	prs: [],
 } satisfies WorkspaceSession;
+
+function switchRecord(overrides: Partial<AgentSwitch> = {}): AgentSwitch {
+	return {
+		agentHandoffStatus: "not_attempted",
+		fromHarness: "claude-code",
+		id: "switch-1",
+		requestedAt: "2026-06-10T00:00:00Z",
+		semanticHandoffIncluded: true,
+		sessionId: worker.id,
+		state: "preparing_handoff",
+		targetHarness: "codex",
+		updatedAt: "2026-06-10T00:00:01Z",
+		...overrides,
+	};
+}
 
 function renderCenterPane(props: Partial<ComponentProps<typeof CenterPane>> = {}) {
 	return render(
@@ -112,6 +147,7 @@ beforeEach(() => {
 	agentSwitchMocks.mutation.error = null;
 	agentSwitchMocks.mutation.input = undefined;
 	agentSwitchMocks.mutation.isPending = false;
+	terminalPaneMocks.props.length = 0;
 });
 
 describe("CenterPane toolbar session label", () => {
@@ -131,7 +167,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
 	});
 
-	it("locks only the terminal and shows the provider transfer as soon as a switch request starts", () => {
+	it("uses mutation input only while switch admission is still pending", () => {
 		agentSwitchMocks.mutation.input = {
 			idempotencyKey: "switch-request-1",
 			note: "",
@@ -148,66 +184,223 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
 		expect(within(overlay).getByText("Claude Code")).toBeInTheDocument();
 		expect(within(overlay).getByText("Codex")).toBeInTheDocument();
-		expect(document.activeElement).toBe(screen.getByTestId("agent-switch-terminal-overlay"));
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "true");
 	});
 
-	it("reopens terminal input when the source handoff needs a permission decision", () => {
-		agentSwitchMocks.switches.push({
-			agentHandoffStatus: "requested",
-			fromHarness: "claude-code",
-			id: "switch-2",
-			requestedAt: "2026-06-10T00:00:00Z",
-			semanticHandoffIncluded: true,
-			sessionId: worker.id,
-			state: "preparing_handoff",
-			targetHarness: "codex",
-			updatedAt: "2026-06-10T00:00:01Z",
-		});
+	it.each([
+		["preparing_handoff", "Preparing handoff"],
+		["stopping_source", "Stopping source agent"],
+		["starting_target", "Starting target agent"],
+		["target_ready", "Target ready"],
+		["delivering_context", "Delivering context"],
+	] as const)("renders the shared title and description for %s", (state, description) => {
+		const activeSwitch = switchRecord({ state });
+		agentSwitchMocks.switches.push(activeSwitch);
+
+		renderCenterPane({ session: { ...worker, activeAgentSwitch: activeSwitch } });
+
+		const status = screen.getByRole("status", { name: "Switching from Claude Code to Codex" });
+		expect(within(status).getByText("Switching from Claude Code to Codex")).toBeInTheDocument();
+		expect(within(status).getByText(description)).toBeInTheDocument();
+	});
+
+	it("renders the shared waiting stage while the source handoff is requested", () => {
+		const activeSwitch = switchRecord({ agentHandoffStatus: "requested" });
+		agentSwitchMocks.switches.push(activeSwitch);
+
+		renderCenterPane({ session: { ...worker, activeAgentSwitch: activeSwitch } });
+
+		const status = screen.getByRole("status", { name: "Switching from Claude Code to Codex" });
+		expect(within(status).getByText("Preparing handoff")).toBeInTheDocument();
+		expect(within(status).getByText("Stopping source agent").closest("li")).toHaveAttribute(
+			"aria-current",
+			"step",
+		);
+	});
+
+	it("uses the matching history row to enrich the active session summary", () => {
+		const summary = switchRecord({ state: "starting_target" });
+		agentSwitchMocks.switches.push({ ...summary, state: "target_ready" });
+
+		renderCenterPane({ session: { ...worker, activeAgentSwitch: summary } });
+
+		expect(screen.getByRole("status")).toHaveTextContent("Target ready");
+	});
+
+	it("gates both DOM and byte input only for the worker during ordinary progress", () => {
+		const activeSwitch = switchRecord({ state: "starting_target" });
+		agentSwitchMocks.switches.push(activeSwitch);
+
+		renderCenterPane({ session: { ...worker, activeAgentSwitch: activeSwitch } });
+
+		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "true");
+		expect(screen.getByTestId("agent-switch-terminal-overlay")).toHaveFocus();
+	});
+
+	it("keeps an auxiliary shell interactive and offers the existing worker-selection action", async () => {
+		const [shell] = makeShells(1);
+		const activeSwitch = switchRecord({ state: "starting_target" });
+		const onSelectSessionTerminal = vi.fn();
+		agentSwitchMocks.switches.push(activeSwitch);
 
 		renderCenterPane({
-			session: {
-				...worker,
-				activity: { state: "waiting_input", lastActivityAt: "2026-06-10T00:00:02Z" },
-			},
+			onSelectSessionTerminal,
+			session: { ...worker, activeAgentSwitch: activeSwitch },
+			shellTerminals: [shell],
+			terminalTarget: { generation: shell.createdAt, kind: "shell", handleId: shell.handleId, title: shell.title },
 		});
 
 		expect(screen.getByTestId("terminal-interaction-surface")).not.toHaveAttribute("inert");
-		expect(screen.getByText("terminal body")).toHaveAttribute("data-focus-requested", "true");
-		expect(
-			screen.getByText(
-				"The source agent requires a permission decision. Review the terminal prompt to continue the handoff.",
-			),
-		).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Cancel switch" })).not.toBeInTheDocument();
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "false");
+		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Back to agent terminal" }));
+		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
 	});
 
-	it("keeps input locked but replaces transfer animation with a recovery warning", () => {
-		agentSwitchMocks.switches.push({
-			agentHandoffStatus: "unavailable",
-			errorCode: "target_start_unconfirmed",
-			fromHarness: "claude-code",
-			id: "switch-recovery",
-			requestedAt: "2026-06-10T00:00:00Z",
-			semanticHandoffIncluded: true,
-			sessionId: worker.id,
-			state: "starting_target",
-			targetHarness: "codex",
-			updatedAt: "2026-06-10T00:00:01Z",
+	it("opens and focuses only source worker input once, then relocks on stage change", () => {
+		const [shell] = makeShells(1);
+		const requestedSwitch = switchRecord({ agentHandoffStatus: "requested" });
+		const onSelectSessionTerminal = vi.fn();
+		agentSwitchMocks.switches.push(requestedSwitch);
+		const sourceSession = {
+			...worker,
+			activeAgentSwitch: requestedSwitch,
+			activity: { state: "waiting_input", lastActivityAt: "2026-06-10T00:00:02Z" },
+		} satisfies WorkspaceSession;
+		const view = renderCenterPane({
+			onSelectSessionTerminal,
+			session: sourceSession,
+			shellTerminals: [shell],
+			terminalTarget: { generation: shell.createdAt, kind: "shell", handleId: shell.handleId, title: shell.title },
 		});
+
+		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane
+					daemonReady
+					onSelectSessionTerminal={onSelectSessionTerminal}
+					session={sourceSession}
+					shellTerminals={[shell]}
+					terminalTarget={{ kind: "worker" }}
+					theme="dark"
+				/>
+			</TooltipProvider>,
+		);
+		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+		expect(screen.getByTestId("terminal-interaction-surface")).not.toHaveAttribute("inert");
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "false");
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-focus-requested", "true");
+		expect(screen.getByTestId("agent-switch-terminal-overlay")).toHaveClass("agent-switch-source-input-strip");
+
+		const startingSwitch: AgentSwitch = {
+			...requestedSwitch,
+			agentHandoffStatus: "received",
+			state: "starting_target",
+		};
+		agentSwitchMocks.switches.splice(0, 1, startingSwitch);
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane
+					daemonReady
+					onSelectSessionTerminal={onSelectSessionTerminal}
+					session={{ ...worker, activeAgentSwitch: startingSwitch }}
+					terminalTarget={{ kind: "worker" }}
+					theme="dark"
+				/>
+			</TooltipProvider>,
+		);
+		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "true");
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-focus-requested", "false");
+	});
+
+	it.each([
+		["recovery", switchRecord({ errorCode: "target_start_unconfirmed", state: "starting_target" })],
+		["failure", switchRecord({ errorCode: "target_binary_missing", state: "failed" })],
+	] as const)("renders %s as a static one-time alert without busy animation", (_name, terminalSwitch) => {
+		const activeSwitch = switchRecord({ id: terminalSwitch.id, state: "starting_target" });
+		agentSwitchMocks.switches.push(activeSwitch);
+		const view = renderCenterPane({ session: { ...worker, activeAgentSwitch: activeSwitch } });
+
+		agentSwitchMocks.switches.splice(0, 1, terminalSwitch);
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane daemonReady session={worker} theme="dark" />
+			</TooltipProvider>,
+		);
+
+		const status = screen.getByRole("status");
+		expect(status).not.toHaveAttribute("aria-busy");
+		expect(status.querySelector(".agent-switch-transfer-pulse")).not.toBeInTheDocument();
+		expect(screen.getByRole("alert")).toBeInTheDocument();
+	});
+
+	it("keeps completion covered until target settlement, then focuses once and shows transient success", () => {
+		vi.useFakeTimers();
+		const activeSwitch = switchRecord({ state: "delivering_context" });
+		const completedSwitch: AgentSwitch = { ...activeSwitch, state: "completed" };
+		const onSelectSessionTerminal = vi.fn();
+		agentSwitchMocks.switches.push(activeSwitch);
+		const view = renderCenterPane({ session: { ...worker, activeAgentSwitch: activeSwitch } });
+
+		agentSwitchMocks.switches.splice(0, 1, completedSwitch);
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane daemonReady onSelectSessionTerminal={onSelectSessionTerminal} session={worker} theme="dark" />
+			</TooltipProvider>,
+		);
+		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
+		expect(screen.getByRole("status")).toHaveTextContent("Completed");
+
+		const settledSession = { ...worker, provider: "codex", terminalHandleId: "target-terminal" } satisfies WorkspaceSession;
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane daemonReady onSelectSessionTerminal={onSelectSessionTerminal} session={settledSession} theme="dark" />
+			</TooltipProvider>,
+		);
+		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-focus-requested", "true");
+		expect(screen.getByRole("status")).toHaveTextContent("Completed");
+
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane daemonReady onSelectSessionTerminal={onSelectSessionTerminal} session={settledSession} theme="dark" />
+			</TooltipProvider>,
+		);
+		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+		act(() => vi.advanceTimersByTime(3_100));
+		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
+		vi.useRealTimers();
+	});
+
+	it("never flashes success for a cold historical completion", () => {
+		agentSwitchMocks.switches.push(switchRecord({ state: "completed" }));
 
 		renderCenterPane({
-			session: {
-				...worker,
-				activity: { state: "exited", lastActivityAt: "2026-06-10T00:00:02Z" },
-				status: "exited",
-			},
+			session: { ...worker, provider: "codex", terminalHandleId: "target-terminal" },
 		});
 
-		const overlay = screen.getByRole("alert", { name: "Agent switch needs recovery" });
+		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
+	});
+
+	it("does not replay a cold historical failure", () => {
+		agentSwitchMocks.switches.push(switchRecord({ state: "failed" }));
+
+		renderCenterPane({ session: worker });
+
+		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+	});
+
+	it("keeps a cold latest completion covered while the target terminal is unsettled", () => {
+		agentSwitchMocks.switches.push(switchRecord({ state: "completed" }));
+
+		renderCenterPane({ session: worker });
+
 		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
-		expect(screen.getByTestId("agent-switch-terminal-overlay")).not.toHaveClass("cursor-wait");
-		expect(within(overlay).getByText("Target startup could not be confirmed")).toBeInTheDocument();
-		expect(overlay.querySelector(".agent-switch-transfer-pulse")).not.toBeInTheDocument();
+		expect(screen.getByRole("status")).toHaveTextContent("Completed");
 	});
 
 	it("renders only this session's own tab, never a sibling session", () => {

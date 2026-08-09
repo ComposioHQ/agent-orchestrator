@@ -1370,6 +1370,27 @@ textarea,
 	animation: agent-switch-transfer 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+.agent-switch-progress-step:not(:last-child)::before {
+	position: absolute;
+	top: 0.21875rem;
+	left: calc(50% + 0.25rem);
+	width: calc(100% - 0.5rem);
+	height: 1px;
+	background: var(--color-border-strong);
+	content: "";
+}
+
+.agent-switch-progress-step.is-complete::before,
+.agent-switch-progress-step.is-complete .agent-switch-progress-dot,
+.agent-switch-progress-step.is-current .agent-switch-progress-dot {
+	border-color: var(--color-accent);
+	background: var(--color-accent);
+}
+
+.agent-switch-progress-step.is-current .agent-switch-progress-dot {
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
 @keyframes agent-switch-transfer {
 	0% {
 		left: -2.5rem;
@@ -1392,6 +1413,18 @@ textarea,
 		left: calc(50% - 1.25rem);
 		opacity: 0.85;
 		animation: none;
+	}
+
+	.agent-switch-toolbar-spinner {
+		animation: none;
+	}
+
+	.agent-switch-attention-card,
+	.agent-switch-progress-dot,
+	.agent-switch-progress-step,
+	.agent-switch-shell-strip,
+	.agent-switch-source-input-strip {
+		transition: none;
 	}
 }
 

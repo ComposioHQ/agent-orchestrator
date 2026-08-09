@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentSwitch } from "../hooks/useAgentSwitches";
+import { agentSwitchesQueryKey, type AgentSwitch } from "../hooks/useAgentSwitches";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import type { WorkspaceSession } from "../types/workspace";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
@@ -181,13 +181,15 @@ describe("TerminalSwitchAgentButton", () => {
 	});
 
 	it("restores durable progress and keeps it inspectable after the source exits", async () => {
+		const activeSwitch = switchRecord();
 		getMock.mockResolvedValue({
-			data: { switches: [switchRecord()] },
+			data: { switches: [{ ...activeSwitch, state: "target_ready" }] },
 			error: undefined,
 			response: { status: 200 },
 		});
 		renderControl({
 			...worker,
+			activeAgentSwitch: activeSwitch,
 			activity: { state: "exited", lastActivityAt: "2026-06-10T00:00:02Z" },
 			status: "exited",
 		});
@@ -195,18 +197,35 @@ describe("TerminalSwitchAgentButton", () => {
 		const button = await screen.findByRole("button", { name: "Switching to Codex…" });
 		await userEvent.click(button);
 		expect(within(screen.getByRole("dialog")).getByRole("status")).toHaveTextContent(
-			"Switching from Claude Code to CodexStarting target agent",
+			"Switching from Claude Code to CodexTarget ready",
 		);
 	});
 
-	it("shows a static recovery warning when target startup is unconfirmed", async () => {
+	it("uses the shared compact presentation for an active switch", async () => {
+		const activeSwitch = switchRecord({ state: "delivering_context" });
 		getMock.mockResolvedValue({
-			data: { switches: [switchRecord({ errorCode: "target_start_unconfirmed" })] },
+			data: { switches: [activeSwitch] },
+			error: undefined,
+			response: { status: 200 },
+		});
+
+		renderControl({ ...worker, activeAgentSwitch: activeSwitch });
+
+		const button = await screen.findByRole("button", { name: "Switching to Codex…" });
+		expect(button).toHaveAttribute("aria-busy", "true");
+		expect(button.querySelector(".lucide-loader-circle")).toBeInTheDocument();
+	});
+
+	it("shows a static recovery warning when target startup is unconfirmed", async () => {
+		const recoverySwitch = switchRecord({ errorCode: "target_start_unconfirmed" });
+		getMock.mockResolvedValue({
+			data: { switches: [recoverySwitch] },
 			error: undefined,
 			response: { status: 200 },
 		});
 		renderControl({
 			...worker,
+			activeAgentSwitch: recoverySwitch,
 			activity: { state: "exited", lastActivityAt: "2026-06-10T00:00:02Z" },
 			status: "exited",
 		});
@@ -218,6 +237,28 @@ describe("TerminalSwitchAgentButton", () => {
 		expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent(
 			"AO could not confirm whether the target agent started. Terminal input remains locked to prevent two agents from owning the session.",
 		);
+	});
+
+	it("changes an observed terminal failure to a static warning treatment", async () => {
+		const activeSwitch = switchRecord({ state: "starting_target" });
+		getMock.mockResolvedValue({
+			data: { switches: [activeSwitch] },
+			error: undefined,
+			response: { status: 200 },
+		});
+		const { queryClient, rerenderControl } = renderControl({ ...worker, activeAgentSwitch: activeSwitch });
+		await screen.findByRole("button", { name: "Switching to Codex…" });
+
+		act(() => {
+			queryClient.setQueryData(agentSwitchesQueryKey(worker.id), [
+				{ ...activeSwitch, errorCode: "target_binary_missing", state: "failed" },
+			]);
+		});
+		rerenderControl(worker);
+
+		const button = screen.getByRole("button", { name: "Failed" });
+		expect(button).not.toHaveAttribute("aria-busy");
+		expect(button.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
 	});
 
 	it.each([
