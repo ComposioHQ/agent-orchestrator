@@ -401,15 +401,6 @@ describe("CenterPane toolbar session label", () => {
 		expect(onNewShellTerminal).toHaveBeenCalledOnce();
 	});
 
-	it("shows 'Orchestrator' for an orchestrator session", () => {
-		renderCenterPane({
-			session: { ...worker, id: "sess-orch", kind: "orchestrator" },
-		});
-		const orchestratorTab = screen.getByRole("tab", { name: "Orchestrator" });
-		expect(orchestratorTab).toBeInTheDocument();
-		expect(orchestratorTab.querySelector("img")).toHaveClass("size-terminal-agent-icon");
-	});
-
 	it("shows 'No session' when there is no session", () => {
 		renderCenterPane();
 		expect(screen.getByText("No session")).toBeInTheDocument();

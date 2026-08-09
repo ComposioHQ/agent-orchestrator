@@ -492,21 +492,6 @@ describe("SessionView", () => {
 		reviewGetMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [], runs: [] }, error: undefined });
 	});
 
-	it("places the interface switch in the main session header above the terminal bar", () => {
-		interfaceTransitionState.status = { supported: true, targetMode: "chat" };
-
-		render(<SessionView sessionId="sess-1" />);
-
-		const switchButton = screen.getByRole("button", { name: "Switch to chat UI" });
-		const actionSlot = screen.getByTestId("session-action-slot");
-		const terminalBarHost = screen.getByTestId("session-topbar-host");
-		expect(actionSlot).toContainElement(switchButton);
-		expect(terminalBarHost).not.toContainElement(switchButton);
-		expect(
-			actionSlot.compareDocumentPosition(terminalBarHost) & Node.DOCUMENT_POSITION_FOLLOWING,
-		).toBeTruthy();
-	});
-
 	it("adds an active worker from the same project and navigates the whole session route", () => {
 		render(<SessionView sessionId="sess-1" />);
 

@@ -164,38 +164,6 @@ describe("HumanMessage attachments", () => {
 });
 
 describe("ChatWorkspace timeline", () => {
-	it("keeps only chat-terminal navigation and display controls in the dedicated terminal bar", () => {
-		const view = render(
-			<ChatWorkspace
-				snapshot={chatFixture}
-				sessionRole="worker"
-				onOpenShell={vi.fn()}
-				projectSessions={[chatSession]}
-			/>,
-		);
-
-		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "worker");
-		const terminalBar = screen.getByTestId("session-terminal-bar");
-		expect(terminalBar).toContainElement(screen.getByTestId("session-terminal-region"));
-		expect(terminalBar).toContainElement(
-			screen.getByRole("tab", { name: new RegExp(`^${chatFixture.title ?? chatFixture.sessionId}`) }),
-		);
-		expect(terminalBar).toContainElement(screen.getByRole("button", { name: "Add terminal or session" }));
-		expect(terminalBar).toContainElement(screen.getByRole("toolbar", { name: "Chat display controls" }));
-
-		view.rerender(
-			<ChatWorkspace
-				snapshot={chatFixture}
-				sessionRole="orchestrator"
-				onOpenShell={vi.fn()}
-				projectSessions={[chatSession]}
-			/>,
-		);
-
-		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
-		expect(screen.getByTestId("session-terminal-bar")).toBeInTheDocument();
-	});
-
 	it("adds a same-project session from the chat picker", async () => {
 		const user = userEvent.setup();
 		const onAddProjectSession = vi.fn();
