@@ -2,6 +2,7 @@ import { ChevronDown, RefreshCw, Search } from "lucide-react";
 import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AgentModelCatalog } from "../../hooks/useAgentModelsQuery";
+import { useSuppressStrayFocusRing } from "../../hooks/useSuppressStrayFocusRing";
 import { cn } from "../../lib/utils";
 import {
 	DropdownMenu,
@@ -76,9 +77,11 @@ export function AgentModelCombobox({
 	renderTrigger?: (label: string) => ReactNode;
 	/** Persists explicit model choices for this agent and pins them below defaults. */
 	recentScope?: string;
-	/** Flat "no override" + plain model names — no search, groups, badges, or
-	 *  refresh action. For contexts where the menu should read like a simple
-	 *  choice, not a model-management surface. */
+	/** Flat "no override" + plain model names — no groups, badges, or refresh
+	 *  action. Search still shows once the catalog passes MODEL_SEARCH_THRESHOLD,
+	 *  same as non-compact mode; only the grouping/decoration is stripped. For
+	 *  contexts where the menu should read like a simple choice, not a
+	 *  model-management surface. */
 	compact?: boolean;
 	"aria-label": string;
 }) {
@@ -136,6 +139,7 @@ export function AgentModelCombobox({
 		observer.observe(element);
 		return () => observer.disconnect();
 	}, [groups.length, menuOpen, normalizedSearch, showCustomSearchAction, updateScrollCue, visibleModels.length]);
+	const onCloseAutoFocus = useSuppressStrayFocusRing(menuOpen);
 	const selectModel = (modelID: string) => {
 		if (recentScope) {
 			const next = rememberRecentModel(recentScope, modelID);
@@ -173,10 +177,7 @@ export function AgentModelCombobox({
 			</DropdownMenuTrigger>
 			<DropdownMenuContent
 				align={menuAlign}
-				// Radix refocuses the trigger on close; Chromium's :focus-visible
-				// heuristic treats that async re-focus as keyboard-style even after a
-				// mouse click, leaving a stray focus ring. Skip the refocus.
-				onCloseAutoFocus={(event) => event.preventDefault()}
+				onCloseAutoFocus={onCloseAutoFocus}
 				className="settings-menu-surface max-h-select-menu-max! w-[min(22rem,calc(100vw-2rem))] overflow-hidden! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu"
 			>
 				{showSearch && (
