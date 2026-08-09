@@ -807,24 +807,31 @@ func (q *Queries) ResolveConversationApproval(ctx context.Context, arg ResolveCo
 }
 
 const selectConversationActivities = `-- name: SelectConversationActivities :many
-SELECT id, conversation_id, turn_id, sequence, revision, kind, status, summary, detail_json, request_id, provider_item_id, created_at, updated_at, command_output, command_output_truncated, streamed_text, streamed_text_truncated, branch_id FROM conversation_activities
-WHERE conversation_activities.conversation_id = ?
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = ?1
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_activities.id, conversation_activities.conversation_id, conversation_activities.turn_id, conversation_activities.sequence, conversation_activities.revision, conversation_activities.kind, conversation_activities.status, conversation_activities.summary, conversation_activities.detail_json, conversation_activities.request_id, conversation_activities.provider_item_id, conversation_activities.created_at, conversation_activities.updated_at, conversation_activities.command_output, conversation_activities.command_output_truncated, conversation_activities.streamed_text, conversation_activities.streamed_text_truncated, conversation_activities.branch_id FROM conversation_activities
+JOIN active_path AS path ON path.branch_id = conversation_activities.branch_id
+WHERE conversation_activities.conversation_id = ?1
+  AND (path.max_sequence IS NULL OR conversation_activities.sequence <= path.max_sequence)
   AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
-      WHERE discarded.conversation_id = ? AND discarded.rolled_back_at IS NOT NULL
+      WHERE discarded.conversation_id = ?1 AND discarded.rolled_back_at IS NOT NULL
   ))
 ORDER BY conversation_activities.sequence
 `
 
-type SelectConversationActivitiesParams struct {
-	ConversationID   string
-	ConversationID_2 string
-}
-
 // Activities the agent still remembers, filtered the same way messages are and for
 // the same reason. See SelectConversationMessages.
-func (q *Queries) SelectConversationActivities(ctx context.Context, arg SelectConversationActivitiesParams) ([]ConversationActivity, error) {
-	rows, err := q.db.QueryContext(ctx, selectConversationActivities, arg.ConversationID, arg.ConversationID_2)
+func (q *Queries) SelectConversationActivities(ctx context.Context, conversationID string) ([]ConversationActivity, error) {
+	rows, err := q.db.QueryContext(ctx, selectConversationActivities, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -866,9 +873,21 @@ func (q *Queries) SelectConversationActivities(ctx context.Context, arg SelectCo
 }
 
 const selectConversationActivitiesPage = `-- name: SelectConversationActivitiesPage :many
-SELECT id, conversation_id, turn_id, sequence, revision, kind, status, summary, detail_json, request_id, provider_item_id, created_at, updated_at, command_output, command_output_truncated, streamed_text, streamed_text_truncated, branch_id FROM conversation_activities
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = ?1
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_activities.id, conversation_activities.conversation_id, conversation_activities.turn_id, conversation_activities.sequence, conversation_activities.revision, conversation_activities.kind, conversation_activities.status, conversation_activities.summary, conversation_activities.detail_json, conversation_activities.request_id, conversation_activities.provider_item_id, conversation_activities.created_at, conversation_activities.updated_at, conversation_activities.command_output, conversation_activities.command_output_truncated, conversation_activities.streamed_text, conversation_activities.streamed_text_truncated, conversation_activities.branch_id FROM conversation_activities
+JOIN active_path AS path ON path.branch_id = conversation_activities.branch_id
 WHERE conversation_activities.conversation_id = ?1
   AND conversation_activities.sequence < ?2
+  AND (path.max_sequence IS NULL OR conversation_activities.sequence <= path.max_sequence)
   AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
       WHERE discarded.conversation_id = ?1
@@ -1306,19 +1325,26 @@ func (q *Queries) SelectConversationMessageByProviderItem(ctx context.Context, a
 }
 
 const selectConversationMessages = `-- name: SelectConversationMessages :many
-SELECT id, conversation_id, turn_id, sequence, revision, role, origin, text, streaming, provider_item_id, client_message_id, created_at, updated_at, delivery_content_json, branch_id FROM conversation_messages
-WHERE conversation_messages.conversation_id = ?
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = ?1
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_messages.id, conversation_messages.conversation_id, conversation_messages.turn_id, conversation_messages.sequence, conversation_messages.revision, conversation_messages.role, conversation_messages.origin, conversation_messages.text, conversation_messages.streaming, conversation_messages.provider_item_id, conversation_messages.client_message_id, conversation_messages.created_at, conversation_messages.updated_at, conversation_messages.delivery_content_json, conversation_messages.branch_id FROM conversation_messages
+JOIN active_path AS path ON path.branch_id = conversation_messages.branch_id
+WHERE conversation_messages.conversation_id = ?1
+  AND (path.max_sequence IS NULL OR conversation_messages.sequence <= path.max_sequence)
   AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
-      WHERE discarded.conversation_id = ? AND discarded.rolled_back_at IS NOT NULL
+      WHERE discarded.conversation_id = ?1 AND discarded.rolled_back_at IS NOT NULL
   ))
 ORDER BY conversation_messages.sequence
 `
-
-type SelectConversationMessagesParams struct {
-	ConversationID   string
-	ConversationID_2 string
-}
 
 // Prose the agent still remembers. Rows belonging to a rolled-back turn are left
 // out: rollback discarded them provider-side, and showing a person a message the
@@ -1329,8 +1355,8 @@ type SelectConversationMessagesParams struct {
 // the discarded range would be a guess dressed up as a fact.
 // NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
 // offset, so a multi-byte character here silently corrupts later queries.
-func (q *Queries) SelectConversationMessages(ctx context.Context, arg SelectConversationMessagesParams) ([]ConversationMessage, error) {
-	rows, err := q.db.QueryContext(ctx, selectConversationMessages, arg.ConversationID, arg.ConversationID_2)
+func (q *Queries) SelectConversationMessages(ctx context.Context, conversationID string) ([]ConversationMessage, error) {
+	rows, err := q.db.QueryContext(ctx, selectConversationMessages, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1369,9 +1395,21 @@ func (q *Queries) SelectConversationMessages(ctx context.Context, arg SelectConv
 }
 
 const selectConversationMessagesPage = `-- name: SelectConversationMessagesPage :many
-SELECT id, conversation_id, turn_id, sequence, revision, role, origin, text, streaming, provider_item_id, client_message_id, created_at, updated_at, delivery_content_json, branch_id FROM conversation_messages
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = ?1
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_messages.id, conversation_messages.conversation_id, conversation_messages.turn_id, conversation_messages.sequence, conversation_messages.revision, conversation_messages.role, conversation_messages.origin, conversation_messages.text, conversation_messages.streaming, conversation_messages.provider_item_id, conversation_messages.client_message_id, conversation_messages.created_at, conversation_messages.updated_at, conversation_messages.delivery_content_json, conversation_messages.branch_id FROM conversation_messages
+JOIN active_path AS path ON path.branch_id = conversation_messages.branch_id
 WHERE conversation_messages.conversation_id = ?1
   AND conversation_messages.sequence < ?2
+  AND (path.max_sequence IS NULL OR conversation_messages.sequence <= path.max_sequence)
   AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
       WHERE discarded.conversation_id = ?1
@@ -1427,20 +1465,32 @@ func (q *Queries) SelectConversationMessagesPage(ctx context.Context, arg Select
 }
 
 const selectConversationProviderEvents = `-- name: SelectConversationProviderEvents :many
-SELECT id, conversation_id, session_id, provider_event_id, method, payload_json, received_at, branch_id FROM conversation_provider_events
-WHERE conversation_id = ? AND id > ?
-ORDER BY id
-LIMIT ?
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = ?1
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_provider_events.id, conversation_provider_events.conversation_id, conversation_provider_events.session_id, conversation_provider_events.provider_event_id, conversation_provider_events.method, conversation_provider_events.payload_json, conversation_provider_events.received_at, conversation_provider_events.branch_id FROM conversation_provider_events
+JOIN active_path AS path ON path.branch_id = conversation_provider_events.branch_id
+WHERE conversation_provider_events.conversation_id = ?1
+  AND conversation_provider_events.id > ?2
+ORDER BY conversation_provider_events.id
+LIMIT ?3
 `
 
 type SelectConversationProviderEventsParams struct {
 	ConversationID string
 	ID             int64
-	Limit          int64
+	PageLimit      int64
 }
 
 func (q *Queries) SelectConversationProviderEvents(ctx context.Context, arg SelectConversationProviderEventsParams) ([]ConversationProviderEvent, error) {
-	rows, err := q.db.QueryContext(ctx, selectConversationProviderEvents, arg.ConversationID, arg.ID, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, selectConversationProviderEvents, arg.ConversationID, arg.ID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -1533,9 +1583,29 @@ func (q *Queries) SelectConversationTurnByProviderID(ctx context.Context, arg Se
 }
 
 const selectConversationTurns = `-- name: SelectConversationTurns :many
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id FROM conversation_turns
-WHERE conversation_id = ?
-ORDER BY requested_at, rowid
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = ?1
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id FROM conversation_turns
+JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
+WHERE conversation_turns.conversation_id = ?1
+  AND (path.max_sequence IS NULL OR EXISTS (
+      SELECT 1 FROM conversation_messages AS lineage_message
+      WHERE lineage_message.turn_id = conversation_turns.id
+        AND lineage_message.sequence <= path.max_sequence
+      UNION ALL
+      SELECT 1 FROM conversation_activities AS lineage_activity
+      WHERE lineage_activity.turn_id = conversation_turns.id
+        AND lineage_activity.sequence <= path.max_sequence
+  ))
+ORDER BY conversation_turns.requested_at, conversation_turns.rowid
 `
 
 // Turns are read in full, rolled-back ones included. They carry rolled_back_at, so
@@ -1582,11 +1652,31 @@ func (q *Queries) SelectConversationTurns(ctx context.Context, conversationID st
 }
 
 const selectConversationTurnsPage = `-- name: SelectConversationTurnsPage :many
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id FROM conversation_turns
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = ?1
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id FROM conversation_turns
+JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
 WHERE conversation_turns.conversation_id = ?1
+  AND (path.max_sequence IS NULL OR EXISTS (
+      SELECT 1 FROM conversation_messages AS lineage_message
+      WHERE lineage_message.turn_id = conversation_turns.id
+        AND lineage_message.sequence <= path.max_sequence
+      UNION ALL
+      SELECT 1 FROM conversation_activities AS lineage_activity
+      WHERE lineage_activity.turn_id = conversation_turns.id
+        AND lineage_activity.sequence <= path.max_sequence
+  ))
   AND (
-    state IN ('queued', 'running')
-    OR id IN (
+    conversation_turns.state IN ('queued', 'running')
+    OR conversation_turns.id IN (
       SELECT turn_id FROM conversation_messages
       WHERE conversation_messages.conversation_id = ?1
         AND turn_id IS NOT NULL
@@ -1600,7 +1690,7 @@ WHERE conversation_turns.conversation_id = ?1
         AND conversation_activities.sequence < ?3
     )
   )
-ORDER BY requested_at, rowid
+ORDER BY conversation_turns.requested_at, conversation_turns.rowid
 `
 
 type SelectConversationTurnsPageParams struct {

@@ -202,6 +202,17 @@ type ConversationBranch struct {
 	CreatedAt              time.Time `json:"createdAt"`
 }
 
+// ConversationBranchPoint describes the sibling continuations available at one
+// human prompt. Position is one-based; previous and next deliberately do not
+// wrap so a client can disable the corresponding edge control.
+type ConversationBranchPoint struct {
+	TurnID           string `json:"turnId"`
+	Position         int    `json:"position"`
+	Total            int    `json:"total"`
+	PreviousBranchID string `json:"previousBranchId,omitempty"`
+	NextBranchID     string `json:"nextBranchId,omitempty"`
+}
+
 // ConversationEditAnchor is the immutable source material needed to fork
 // immediately before one human prompt. The sequence cutoff applies uniformly to
 // every branch-owned timeline table.

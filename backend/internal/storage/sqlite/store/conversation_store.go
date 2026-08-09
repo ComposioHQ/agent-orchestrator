@@ -1585,6 +1585,7 @@ type ConversationSnapshot struct {
 	Turns          []domain.ConversationTurn
 	Messages       []domain.ConversationMessage
 	Activities     []domain.ConversationActivity
+	BranchPoints   []domain.ConversationBranchPoint
 	OldestSequence int64
 	HasMoreBefore  bool
 }
@@ -1665,6 +1666,7 @@ func (s *Store) LoadConversationSnapshotPage(
 
 	snapshot := ConversationSnapshot{
 		Conversation:   conversationToDomain(conv),
+		BranchPoints:   s.conversationBranchPoints(ctx, conversationID),
 		OldestSequence: oldest,
 		HasMoreBefore:  hasMore,
 	}
@@ -1707,24 +1709,19 @@ func (s *Store) LoadConversationSnapshot(
 	// Messages and activities exclude anything attached to a rolled-back turn: the
 	// agent has forgotten those, and a timeline that still showed them would be
 	// describing a conversation the agent is not in.
-	messageRows, err := s.qr.SelectConversationMessages(ctx,
-		gen.SelectConversationMessagesParams{
-			ConversationID:   conversationID,
-			ConversationID_2: conversationID,
-		})
+	messageRows, err := s.qr.SelectConversationMessages(ctx, conversationID)
 	if err != nil {
 		return ConversationSnapshot{}, fmt.Errorf("select messages: %w", err)
 	}
-	activityRows, err := s.qr.SelectConversationActivities(ctx,
-		gen.SelectConversationActivitiesParams{
-			ConversationID:   conversationID,
-			ConversationID_2: conversationID,
-		})
+	activityRows, err := s.qr.SelectConversationActivities(ctx, conversationID)
 	if err != nil {
 		return ConversationSnapshot{}, fmt.Errorf("select activities: %w", err)
 	}
 
-	snapshot := ConversationSnapshot{Conversation: conversationToDomain(conv)}
+	snapshot := ConversationSnapshot{
+		Conversation: conversationToDomain(conv),
+		BranchPoints: s.conversationBranchPoints(ctx, conversationID),
+	}
 	for _, row := range turnRows {
 		snapshot.Turns = append(snapshot.Turns, turnToDomain(row))
 	}
@@ -1735,6 +1732,61 @@ func (s *Store) LoadConversationSnapshot(
 		snapshot.Activities = append(snapshot.Activities, activityToDomain(row))
 	}
 	return snapshot, nil
+}
+
+// conversationBranchPoints builds prompt-local sibling navigation from durable
+// branch rows. Reads cannot fail merely because navigation metadata does, so a
+// branch-list error leaves the timeline intact and returns no points.
+func (s *Store) conversationBranchPoints(
+	ctx context.Context,
+	conversationID string,
+) []domain.ConversationBranchPoint {
+	branches, err := s.ConversationBranches(ctx, conversationID)
+	if err != nil {
+		return nil
+	}
+	type groupKey struct {
+		sourceBranchID string
+		replacedTurnID string
+	}
+	type member struct {
+		branchID string
+		turnID   string
+	}
+	groups := make(map[groupKey][]member)
+	order := make([]groupKey, 0)
+	for _, branch := range branches {
+		if branch.ParentBranchID == "" || branch.ReplacedTurnID == "" {
+			continue
+		}
+		key := groupKey{sourceBranchID: branch.ParentBranchID, replacedTurnID: branch.ReplacedTurnID}
+		if _, exists := groups[key]; !exists {
+			order = append(order, key)
+			groups[key] = []member{{branchID: key.sourceBranchID, turnID: key.replacedTurnID}}
+		}
+		groups[key] = append(groups[key], member{branchID: branch.ID, turnID: branch.ReplacementTurnID})
+	}
+
+	points := make([]domain.ConversationBranchPoint, 0, len(branches))
+	for _, key := range order {
+		members := groups[key]
+		for index, current := range members {
+			if current.turnID == "" {
+				continue
+			}
+			point := domain.ConversationBranchPoint{
+				TurnID: current.turnID, Position: index + 1, Total: len(members),
+			}
+			if index > 0 {
+				point.PreviousBranchID = members[index-1].branchID
+			}
+			if index+1 < len(members) {
+				point.NextBranchID = members[index+1].branchID
+			}
+			points = append(points, point)
+		}
+	}
+	return points
 }
 
 /* ---- helpers ---------------------------------------------------------- */
@@ -1998,7 +2050,7 @@ func (s *Store) ProviderEventsSince(
 		gen.SelectConversationProviderEventsParams{
 			ConversationID: conversationID,
 			ID:             afterID,
-			Limit:          limit,
+			PageLimit:      limit,
 		})
 	if err != nil {
 		return nil, fmt.Errorf("select provider events for %s: %w", conversationID, err)

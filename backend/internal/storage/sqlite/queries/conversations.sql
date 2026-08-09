@@ -338,18 +338,58 @@ SELECT * FROM conversation_turns WHERE id = ? LIMIT 1;
 -- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
 -- offset, so a multi-byte character here silently corrupts later queries.
 -- name: SelectConversationTurns :many
-SELECT * FROM conversation_turns
-WHERE conversation_id = ?
-ORDER BY requested_at, rowid;
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_turns.* FROM conversation_turns
+JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
+WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
+  AND (path.max_sequence IS NULL OR EXISTS (
+      SELECT 1 FROM conversation_messages AS lineage_message
+      WHERE lineage_message.turn_id = conversation_turns.id
+        AND lineage_message.sequence <= path.max_sequence
+      UNION ALL
+      SELECT 1 FROM conversation_activities AS lineage_activity
+      WHERE lineage_activity.turn_id = conversation_turns.id
+        AND lineage_activity.sequence <= path.max_sequence
+  ))
+ORDER BY conversation_turns.requested_at, conversation_turns.rowid;
 
 -- Turns represented by one bounded timeline page. Active turns are included
 -- even before their first item arrives, so the live-turn controls never vanish.
 -- name: SelectConversationTurnsPage :many
-SELECT * FROM conversation_turns
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_turns.* FROM conversation_turns
+JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
 WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
+  AND (path.max_sequence IS NULL OR EXISTS (
+      SELECT 1 FROM conversation_messages AS lineage_message
+      WHERE lineage_message.turn_id = conversation_turns.id
+        AND lineage_message.sequence <= path.max_sequence
+      UNION ALL
+      SELECT 1 FROM conversation_activities AS lineage_activity
+      WHERE lineage_activity.turn_id = conversation_turns.id
+        AND lineage_activity.sequence <= path.max_sequence
+  ))
   AND (
-    state IN ('queued', 'running')
-    OR id IN (
+    conversation_turns.state IN ('queued', 'running')
+    OR conversation_turns.id IN (
       SELECT turn_id FROM conversation_messages
       WHERE conversation_messages.conversation_id = sqlc.arg(conversation_id)
         AND turn_id IS NOT NULL
@@ -363,7 +403,7 @@ WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
         AND conversation_activities.sequence < sqlc.arg(before_sequence)
     )
   )
-ORDER BY requested_at, rowid;
+ORDER BY conversation_turns.requested_at, conversation_turns.rowid;
 
 -- Everything from the named turn to the end of the conversation, which is the range
 -- an undo discards. Inclusive of the named turn: the state a person wants back is
@@ -528,18 +568,42 @@ LIMIT 1;
 -- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
 -- offset, so a multi-byte character here silently corrupts later queries.
 -- name: SelectConversationMessages :many
-SELECT * FROM conversation_messages
-WHERE conversation_messages.conversation_id = ?
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_messages.* FROM conversation_messages
+JOIN active_path AS path ON path.branch_id = conversation_messages.branch_id
+WHERE conversation_messages.conversation_id = sqlc.arg(conversation_id)
+  AND (path.max_sequence IS NULL OR conversation_messages.sequence <= path.max_sequence)
   AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
-      WHERE discarded.conversation_id = ? AND discarded.rolled_back_at IS NOT NULL
+      WHERE discarded.conversation_id = sqlc.arg(conversation_id) AND discarded.rolled_back_at IS NOT NULL
   ))
 ORDER BY conversation_messages.sequence;
 
 -- name: SelectConversationMessagesPage :many
-SELECT * FROM conversation_messages
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_messages.* FROM conversation_messages
+JOIN active_path AS path ON path.branch_id = conversation_messages.branch_id
 WHERE conversation_messages.conversation_id = sqlc.arg(conversation_id)
   AND conversation_messages.sequence < sqlc.arg(before_sequence)
+  AND (path.max_sequence IS NULL OR conversation_messages.sequence <= path.max_sequence)
   AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
       WHERE discarded.conversation_id = sqlc.arg(conversation_id)
@@ -659,18 +723,42 @@ LIMIT 1;
 -- Activities the agent still remembers, filtered the same way messages are and for
 -- the same reason. See SelectConversationMessages.
 -- name: SelectConversationActivities :many
-SELECT * FROM conversation_activities
-WHERE conversation_activities.conversation_id = ?
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_activities.* FROM conversation_activities
+JOIN active_path AS path ON path.branch_id = conversation_activities.branch_id
+WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
+  AND (path.max_sequence IS NULL OR conversation_activities.sequence <= path.max_sequence)
   AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
-      WHERE discarded.conversation_id = ? AND discarded.rolled_back_at IS NOT NULL
+      WHERE discarded.conversation_id = sqlc.arg(conversation_id) AND discarded.rolled_back_at IS NOT NULL
   ))
 ORDER BY conversation_activities.sequence;
 
 -- name: SelectConversationActivitiesPage :many
-SELECT * FROM conversation_activities
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_activities.* FROM conversation_activities
+JOIN active_path AS path ON path.branch_id = conversation_activities.branch_id
 WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
   AND conversation_activities.sequence < sqlc.arg(before_sequence)
+  AND (path.max_sequence IS NULL OR conversation_activities.sequence <= path.max_sequence)
   AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
       WHERE discarded.conversation_id = sqlc.arg(conversation_id)
@@ -704,7 +792,19 @@ INSERT OR IGNORE INTO conversation_provider_events (
 ) VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: SelectConversationProviderEvents :many
-SELECT * FROM conversation_provider_events
-WHERE conversation_id = ? AND id > ?
-ORDER BY id
-LIMIT ?;
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_provider_events.* FROM conversation_provider_events
+JOIN active_path AS path ON path.branch_id = conversation_provider_events.branch_id
+WHERE conversation_provider_events.conversation_id = sqlc.arg(conversation_id)
+  AND conversation_provider_events.id > sqlc.arg(id)
+ORDER BY conversation_provider_events.id
+LIMIT sqlc.arg(page_limit);

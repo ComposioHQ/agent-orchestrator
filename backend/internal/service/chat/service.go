@@ -548,6 +548,7 @@ type Snapshot struct {
 	Turns          []domain.ConversationTurn
 	Messages       []domain.ConversationMessage
 	Activities     []domain.ConversationActivity
+	BranchPoints   []domain.ConversationBranchPoint
 	OldestSequence int64
 	HasMoreBefore  bool
 	// Usage and RateLimits are current state carried on the snapshot the client
@@ -587,6 +588,7 @@ type ConversationRows struct {
 	Turns          []domain.ConversationTurn
 	Messages       []domain.ConversationMessage
 	Activities     []domain.ConversationActivity
+	BranchPoints   []domain.ConversationBranchPoint
 	OldestSequence int64
 	HasMoreBefore  bool
 }
@@ -640,6 +642,7 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 		Turns:        rows.Turns,
 		Messages:     rows.Messages,
 		Activities:   rows.Activities,
+		BranchPoints: rows.BranchPoints,
 		Capabilities: caps,
 		Usage:        rows.Conversation.Usage,
 		RateLimits:   rows.Conversation.RateLimits,
@@ -689,6 +692,7 @@ func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeS
 		Turns:          rows.Turns,
 		Messages:       rows.Messages,
 		Activities:     rows.Activities,
+		BranchPoints:   rows.BranchPoints,
 		OldestSequence: rows.OldestSequence,
 		HasMoreBefore:  rows.HasMoreBefore,
 		Capabilities:   caps,

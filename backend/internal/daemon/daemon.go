@@ -211,6 +211,7 @@ func Run() error {
 				Turns:        rows.Turns,
 				Messages:     rows.Messages,
 				Activities:   rows.Activities,
+				BranchPoints: rows.BranchPoints,
 			}, nil
 		}),
 		PageReader: chatsvc.SnapshotPageReaderFunc(func(ctx context.Context, conversationID string, beforeSequence, limit int64) (chatsvc.ConversationRows, error) {
@@ -223,6 +224,7 @@ func Run() error {
 				Turns:          rows.Turns,
 				Messages:       rows.Messages,
 				Activities:     rows.Activities,
+				BranchPoints:   rows.BranchPoints,
 				OldestSequence: rows.OldestSequence,
 				HasMoreBefore:  rows.HasMoreBefore,
 			}, nil

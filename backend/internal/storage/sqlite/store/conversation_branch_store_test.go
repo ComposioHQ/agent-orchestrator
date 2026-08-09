@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -291,5 +292,215 @@ func TestConversationEditAnchorRejectsMissingOrNonHumanTurn(t *testing.T) {
 	s, _, conversation := seededChatConversation(t)
 	if _, err := s.ConversationEditAnchor(ctx, conversation.ID, "missing"); !errors.Is(err, store.ErrConversationTurnNotFound) {
 		t.Fatalf("missing edit anchor error = %v", err)
+	}
+}
+
+func appendBranchPrompt(
+	t *testing.T,
+	s *sqlite.Store,
+	session domain.SessionRecord,
+	conversation domain.ConversationRecord,
+	generation, suffix, text string,
+) {
+	t.Helper()
+	created, err := s.AppendUserMessage(context.Background(), conversation.ID, session.ID, generation,
+		domain.ConversationMessage{
+			ID: "message-" + suffix, Origin: domain.MessageOriginHuman, Text: text,
+			ClientMessageID: "client-" + suffix,
+		}, "turn-"+suffix, testNow)
+	if err != nil || !created {
+		t.Fatalf("AppendUserMessage %s: created=%v err=%v", suffix, created, err)
+	}
+}
+
+func activateTestBranch(
+	t *testing.T,
+	s *sqlite.Store,
+	session domain.SessionRecord,
+	conversation domain.ConversationRecord,
+	branchID, providerID, generation string,
+) {
+	t.Helper()
+	if err := s.ActivateConversationBranch(context.Background(), session.ID, conversation.ID,
+		branchID, providerID, generation, testNow); err != nil {
+		t.Fatalf("ActivateConversationBranch %s: %v", branchID, err)
+	}
+}
+
+func assertMessageTexts(t *testing.T, messages []domain.ConversationMessage, want []string) {
+	t.Helper()
+	got := make([]string, 0, len(messages))
+	for _, message := range messages {
+		got = append(got, message.Text)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("message texts = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("message texts = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestConversationBranchSnapshotFollowsOnlyActiveLineage(t *testing.T) {
+	ctx := context.Background()
+	s, session, conversation := seededChatConversation(t)
+	rootID := conversation.ActiveBranchID
+	appendBranchPrompt(t, s, session, conversation, "generation-root", "a", "A")
+	appendBranchPrompt(t, s, session, conversation, "generation-root", "b", "B")
+	appendBranchPrompt(t, s, session, conversation, "generation-root", "c", "C")
+
+	child := domain.ConversationBranch{
+		ID: "branch-child", ConversationID: conversation.ID, SessionID: session.ID,
+		ProviderConversationID: "thread-child", ParentBranchID: rootID,
+		ForkAfterTurnID: "turn-a", ReplacedTurnID: "turn-b", ForkAfterSequence: 1,
+	}
+	if err := s.CreateConversationBranch(ctx, child, testNow.Add(time.Minute)); err != nil {
+		t.Fatalf("CreateConversationBranch child: %v", err)
+	}
+	activateTestBranch(t, s, session, conversation, child.ID, child.ProviderConversationID, "generation-child")
+	appendBranchPrompt(t, s, session, conversation, "generation-child", "b-edited", "B edited")
+	appendBranchPrompt(t, s, session, conversation, "generation-child", "c-edited", "C edited")
+
+	childSnapshot, err := s.LoadConversationSnapshot(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot child: %v", err)
+	}
+	assertMessageTexts(t, childSnapshot.Messages, []string{"A", "B edited", "C edited"})
+
+	activateTestBranch(t, s, session, conversation, rootID, "thread-root", "generation-root-2")
+	rootSnapshot, err := s.LoadConversationSnapshot(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot root: %v", err)
+	}
+	assertMessageTexts(t, rootSnapshot.Messages, []string{"A", "B", "C"})
+}
+
+func TestConversationBranchSnapshotSupportsNestedLineage(t *testing.T) {
+	ctx := context.Background()
+	s, session, conversation := seededChatConversation(t)
+	rootID := conversation.ActiveBranchID
+	appendBranchPrompt(t, s, session, conversation, "generation-root", "a", "A")
+	appendBranchPrompt(t, s, session, conversation, "generation-root", "b", "B")
+
+	child := domain.ConversationBranch{
+		ID: "branch-child", ConversationID: conversation.ID, SessionID: session.ID,
+		ProviderConversationID: "thread-child", ParentBranchID: rootID,
+		ForkAfterTurnID: "turn-a", ReplacedTurnID: "turn-b", ForkAfterSequence: 1,
+	}
+	if err := s.CreateConversationBranch(ctx, child, testNow.Add(time.Minute)); err != nil {
+		t.Fatalf("CreateConversationBranch child: %v", err)
+	}
+	activateTestBranch(t, s, session, conversation, child.ID, child.ProviderConversationID, "generation-child")
+	appendBranchPrompt(t, s, session, conversation, "generation-child", "b-edited", "B edited")
+	appendBranchPrompt(t, s, session, conversation, "generation-child", "c-edited", "C edited")
+
+	nested := domain.ConversationBranch{
+		ID: "branch-nested", ConversationID: conversation.ID, SessionID: session.ID,
+		ProviderConversationID: "thread-nested", ParentBranchID: child.ID,
+		ForkAfterTurnID: "turn-b-edited", ReplacedTurnID: "turn-c-edited", ForkAfterSequence: 3,
+	}
+	if err := s.CreateConversationBranch(ctx, nested, testNow.Add(2*time.Minute)); err != nil {
+		t.Fatalf("CreateConversationBranch nested: %v", err)
+	}
+	activateTestBranch(t, s, session, conversation, nested.ID, nested.ProviderConversationID, "generation-nested")
+	appendBranchPrompt(t, s, session, conversation, "generation-nested", "c-nested", "C nested")
+
+	snapshot, err := s.LoadConversationSnapshot(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot nested: %v", err)
+	}
+	assertMessageTexts(t, snapshot.Messages, []string{"A", "B edited", "C nested"})
+}
+
+func TestConversationBranchPageDoesNotLeakSiblingAtBoundary(t *testing.T) {
+	ctx := context.Background()
+	s, session, conversation := seededChatConversation(t)
+	rootID := conversation.ActiveBranchID
+	appendBranchPrompt(t, s, session, conversation, "generation-root", "a", "A")
+	appendBranchPrompt(t, s, session, conversation, "generation-root", "b", "B")
+	appendBranchPrompt(t, s, session, conversation, "generation-root", "c", "C")
+	child := domain.ConversationBranch{
+		ID: "branch-child", ConversationID: conversation.ID, SessionID: session.ID,
+		ProviderConversationID: "thread-child", ParentBranchID: rootID,
+		ForkAfterTurnID: "turn-a", ReplacedTurnID: "turn-b", ForkAfterSequence: 1,
+	}
+	if err := s.CreateConversationBranch(ctx, child, testNow.Add(time.Minute)); err != nil {
+		t.Fatalf("CreateConversationBranch child: %v", err)
+	}
+	activateTestBranch(t, s, session, conversation, child.ID, child.ProviderConversationID, "generation-child")
+	appendBranchPrompt(t, s, session, conversation, "generation-child", "b-edited", "B edited")
+	appendBranchPrompt(t, s, session, conversation, "generation-child", "c-edited", "C edited")
+
+	page, err := s.LoadConversationSnapshotPage(ctx, conversation.ID, 0, 2)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshotPage: %v", err)
+	}
+	assertMessageTexts(t, page.Messages, []string{"B edited", "C edited"})
+	older, err := s.LoadConversationSnapshotPage(ctx, conversation.ID, page.OldestSequence, 2)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshotPage older: %v", err)
+	}
+	assertMessageTexts(t, older.Messages, []string{"A"})
+}
+
+func TestConversationBranchPointDescribesSiblingNavigation(t *testing.T) {
+	ctx := context.Background()
+	s, session, conversation := seededChatConversation(t)
+	rootID := conversation.ActiveBranchID
+	appendBranchPrompt(t, s, session, conversation, "generation-root", "a", "A")
+	appendBranchPrompt(t, s, session, conversation, "generation-root", "b", "B")
+
+	for index, branchID := range []string{"branch-child-1", "branch-child-2"} {
+		providerID := "thread-child-" + fmt.Sprint(index+1)
+		branch := domain.ConversationBranch{
+			ID: branchID, ConversationID: conversation.ID, SessionID: session.ID,
+			ProviderConversationID: providerID, ParentBranchID: rootID,
+			ForkAfterTurnID: "turn-a", ReplacedTurnID: "turn-b", ForkAfterSequence: 1,
+		}
+		if err := s.CreateConversationBranch(ctx, branch, testNow.Add(time.Duration(index+1)*time.Minute)); err != nil {
+			t.Fatalf("CreateConversationBranch %s: %v", branchID, err)
+		}
+		activateTestBranch(t, s, session, conversation, branchID, providerID, "generation-"+branchID)
+		replacement := "replacement-" + fmt.Sprint(index+1)
+		appendBranchPrompt(t, s, session, conversation, "generation-"+branchID, replacement, "B edited")
+		if err := s.UpdateConversationBranchReplacement(ctx, branchID, "turn-"+replacement); err != nil {
+			t.Fatalf("UpdateConversationBranchReplacement %s: %v", branchID, err)
+		}
+	}
+
+	snapshot, err := s.LoadConversationSnapshot(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	var point *domain.ConversationBranchPoint
+	for i := range snapshot.BranchPoints {
+		if snapshot.BranchPoints[i].TurnID == "turn-replacement-2" {
+			point = &snapshot.BranchPoints[i]
+			break
+		}
+	}
+	if point == nil {
+		t.Fatalf("branch points = %+v", snapshot.BranchPoints)
+	}
+	if point.Position != 3 || point.Total != 3 || point.PreviousBranchID != "branch-child-1" || point.NextBranchID != "" {
+		t.Fatalf("active child branch point = %+v", *point)
+	}
+
+	activateTestBranch(t, s, session, conversation, rootID, "thread-root", "generation-root-2")
+	snapshot, err = s.LoadConversationSnapshot(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot root: %v", err)
+	}
+	point = nil
+	for i := range snapshot.BranchPoints {
+		if snapshot.BranchPoints[i].TurnID == "turn-b" {
+			point = &snapshot.BranchPoints[i]
+			break
+		}
+	}
+	if point == nil || point.Position != 1 || point.Total != 3 || point.PreviousBranchID != "" || point.NextBranchID != "branch-child-1" {
+		t.Fatalf("root branch point = %+v, all = %+v", point, snapshot.BranchPoints)
 	}
 }
