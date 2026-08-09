@@ -132,6 +132,22 @@ describe("TerminalSwitchAgentButton", () => {
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 
+	it("closes after accepted admission without waiting for durable observer invalidations", async () => {
+		postMock.mockResolvedValue({
+			data: { switch: switchRecord() },
+			error: undefined,
+			response: { status: 202 },
+		});
+		const { queryClient } = renderControl();
+		vi.spyOn(queryClient, "invalidateQueries").mockReturnValue(new Promise(() => {}));
+
+		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
+		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Switch" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+	});
+
 	it("shows terminal progress while keeping the dialog locked during admission", async () => {
 		postMock.mockReturnValue(new Promise(() => {}));
 		renderControl();

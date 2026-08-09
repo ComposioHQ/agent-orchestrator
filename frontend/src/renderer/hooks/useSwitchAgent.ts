@@ -115,11 +115,9 @@ export function useSwitchAgent() {
 		},
 		// Refresh both durable observers after the admission request settles.
 		// The mutation itself does not represent post-admission switch progress.
-		onSettled: async (_data, _error, variables) => {
-			await Promise.all([
-				queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
-				queryClient.invalidateQueries({ queryKey: agentSwitchesQueryKey(variables.session.id) }),
-			]);
+		onSettled: (_data, _error, variables) => {
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			void queryClient.invalidateQueries({ queryKey: agentSwitchesQueryKey(variables.session.id) });
 		},
 	});
 }

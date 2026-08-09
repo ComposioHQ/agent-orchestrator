@@ -83,7 +83,7 @@ export function SwitchAgentDialog({
 		detailedSessionSwitch ?? session.activeAgentSwitch ?? recoveryHistorySwitch ?? activeHistorySwitch;
 	const terminalHistory = switches.filter(isTerminalAgentSwitch).slice(0, 5);
 	const checkingStatus = switchesQuery.isPending && !durableSwitch;
-	const admissionPending = switchMutation.isPending && !durableSwitch;
+	const admissionPending = switchMutation.isPending;
 	const durablePresentation = durableSwitch
 		? deriveAgentSwitchPresentation({
 				agentSwitch: durableSwitch,
@@ -320,7 +320,7 @@ export function SwitchAgentDialog({
 									: t("confirm.cancel")}
 							</button>
 						</DialogClose>
-						{!durablePresentation && !checkingStatus ? (
+						{admissionPending || (!durablePresentation && !checkingStatus) ? (
 							<button
 								className="settings-footer-button settings-footer-button-primary"
 								disabled={admissionPending}

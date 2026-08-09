@@ -136,6 +136,26 @@ describe("SwitchAgentDialog", () => {
 		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
 	});
 
+	it("keeps raw admission pending non-dismissible when a durable row appears", async () => {
+		switchMocks.state.input = {
+			idempotencyKey: "idempotency-1",
+			note: "keep context",
+			session: worker,
+			targetHarness: "codex",
+		};
+		switchMocks.state.isPending = true;
+
+		renderDialog({ ...worker, activeAgentSwitch: switchRecord() });
+		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
+
+		expect(within(dialog).getByRole("status")).toHaveTextContent("Starting target agent");
+		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
+		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeDisabled();
+		expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
+		await userEvent.keyboard("{Escape}");
+		expect(screen.getByRole("dialog", { name: "Switch agent" })).toBeInTheDocument();
+	});
+
 	it("keeps admission failures inline for correction", () => {
 		switchMocks.state.error = "target agent is unavailable";
 
