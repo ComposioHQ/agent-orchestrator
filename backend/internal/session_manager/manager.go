@@ -1134,6 +1134,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		workspaceProjectRows = rows
 		workspaceProject = true
 	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return false, fmt.Errorf("kill %s: native session: %w", id, err)
+	}
 
 	// Exactly one controller exists, so exactly one gets torn down. A chat
 	// session has no runtime handle; its controller owns an app-server child
@@ -1246,6 +1249,9 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
 		}
 		handle := runtimeHandle(rec.Metadata)
+		if err := m.terminateNativeSession(ctx, rec); err != nil {
+			return fmt.Errorf("retire replacement %s: native session: %w", id, err)
+		}
 		if handle.ID != "" {
 			if err := m.runtime.Destroy(ctx, handle); err != nil {
 				return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
@@ -1285,6 +1291,9 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		staleWorkspace = true
 		m.logger.Warn("retire replacement: stale workspace; skipping preserve", "sessionID", id, "path", ws.Path, "error", err)
 	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return fmt.Errorf("retire replacement %s: native session: %w", id, err)
+	}
 	handle := runtimeHandle(rec.Metadata)
 	if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
@@ -1316,6 +1325,30 @@ func (m *Manager) stopPreviewBestEffort(ctx context.Context, id domain.SessionID
 	}
 }
 
+func (m *Manager) terminateNativeSession(ctx context.Context, rec domain.SessionRecord) error {
+	if domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeTUI || strings.TrimSpace(rec.Metadata.AgentSessionID) == "" {
+		return nil
+	}
+	if m.agents == nil {
+		return fmt.Errorf("%w: %s", ErrUnknownHarness, rec.Harness)
+	}
+	agent, ok := m.agents.Agent(rec.Harness)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrUnknownHarness, rec.Harness)
+	}
+	terminator, ok := agent.(ports.AgentNativeSessionTerminator)
+	if !ok {
+		return nil
+	}
+	return terminator.TerminateNativeSession(ctx, ports.SessionRef{
+		ID:            string(rec.ID),
+		WorkspacePath: rec.Metadata.WorkspacePath,
+		Metadata: map[string]string{
+			ports.MetadataKeyAgentSessionID: rec.Metadata.AgentSessionID,
+		},
+	})
+}
+
 func (m *Manager) destroyBrowserBestEffort(ctx context.Context, id domain.SessionID) {
 	if m.browser == nil {
 		return
@@ -1337,6 +1370,9 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 			staleRepos[row.RepoName] = true
 			m.logger.Warn("retire replacement: stale workspace repo; skipping preserve", "sessionID", rec.ID, "repo", row.RepoName, "path", row.Path, "error", err)
 		}
+	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return fmt.Errorf("retire replacement %s: native session: %w", rec.ID, err)
 	}
 	handle := runtimeHandle(rec.Metadata)
 	if handle.ID != "" {
@@ -1752,6 +1788,9 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	// not user intent to cancel review history.
 	if err := m.teardownReviewerTerminal(ctx, rec.ID); err != nil {
 		return fmt.Errorf("save %s: teardown reviewer: %w", rec.ID, err)
+	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return fmt.Errorf("save %s: native session: %w", rec.ID, err)
 	}
 
 	// 4. Mark terminal via the LCM (same path Kill uses).
@@ -2224,6 +2263,9 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 	}
 	if err := m.teardownReviewerTerminal(ctx, rec.ID); err != nil {
 		return fmt.Errorf("save %s: teardown reviewer: %w", rec.ID, err)
+	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return fmt.Errorf("save %s: native session: %w", rec.ID, err)
 	}
 	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
 		return fmt.Errorf("save %s: mark terminated: %w", rec.ID, err)
