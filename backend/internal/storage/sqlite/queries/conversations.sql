@@ -6,8 +6,11 @@
 -- concurrent writers cannot mint the same position.
 
 -- name: InsertConversation :exec
-INSERT INTO conversations (id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, 0, ?, ?);
+INSERT INTO conversations (
+    id, scope, project_id, session_id, current_session_id, latest_sequence,
+    active_branch_id, created_at, updated_at
+)
+VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?);
 
 -- name: SelectConversationBySession :one
 SELECT * FROM conversations WHERE current_session_id = ? LIMIT 1;
@@ -21,6 +24,101 @@ WHERE id = ? AND scope = 'project';
 
 -- name: SelectConversationByID :one
 SELECT * FROM conversations WHERE id = ? LIMIT 1;
+
+-- name: InsertConversationBranch :exec
+INSERT INTO conversation_branches (
+    id, conversation_id, session_id, provider_conversation_id,
+    parent_branch_id, fork_after_turn_id, replaced_turn_id,
+    replacement_turn_id, fork_after_sequence, created_at
+) VALUES (
+    sqlc.arg(id), sqlc.arg(conversation_id), sqlc.narg(session_id),
+    sqlc.arg(provider_conversation_id), sqlc.narg(parent_branch_id),
+    sqlc.narg(fork_after_turn_id), sqlc.narg(replaced_turn_id),
+    sqlc.narg(replacement_turn_id), sqlc.arg(fork_after_sequence), sqlc.arg(created_at)
+);
+
+-- name: SelectConversationBranch :one
+SELECT b.*, b.id = c.active_branch_id AS active
+FROM conversation_branches AS b
+JOIN conversations AS c ON c.id = b.conversation_id
+WHERE b.conversation_id = sqlc.arg(conversation_id)
+  AND b.id = sqlc.arg(branch_id)
+LIMIT 1;
+
+-- name: SelectConversationBranches :many
+SELECT b.*, b.id = c.active_branch_id AS active
+FROM conversation_branches AS b
+JOIN conversations AS c ON c.id = b.conversation_id
+WHERE b.conversation_id = ?
+ORDER BY b.created_at, b.id;
+
+-- The selected human prompt must belong to the active lineage. Its immutable
+-- sequence determines one ancestry boundary for turns, messages, activities and
+-- provider events. The previous provider turn is the fork target; it is empty for
+-- the first prompt, which tells the service to start a fresh provider thread.
+-- name: SelectConversationEditAnchor :one
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+), selected_message AS (
+    SELECT message.conversation_id,
+           message.turn_id,
+           message.sequence,
+           message.delivery_content_json
+    FROM conversation_messages AS message
+    JOIN active_path AS path ON path.branch_id = message.branch_id
+    WHERE message.conversation_id = sqlc.arg(conversation_id)
+      AND message.turn_id = sqlc.arg(replaced_turn_id)
+      AND message.role = 'user'
+      AND message.origin = 'human'
+      AND (path.max_sequence IS NULL OR message.sequence <= path.max_sequence)
+    LIMIT 1
+)
+SELECT selected_message.conversation_id,
+       conversation.active_branch_id AS source_branch_id,
+       selected_message.turn_id AS replaced_turn_id,
+       CAST(COALESCE((
+           SELECT previous_turn.provider_turn_id
+           FROM conversation_messages AS previous_message
+           JOIN conversation_turns AS previous_turn
+             ON previous_turn.id = previous_message.turn_id
+           JOIN active_path AS previous_path
+             ON previous_path.branch_id = previous_message.branch_id
+           WHERE previous_message.conversation_id = selected_message.conversation_id
+             AND previous_message.role = 'user'
+             AND previous_message.sequence < selected_message.sequence
+             AND previous_turn.provider_turn_id <> ''
+             AND previous_turn.rolled_back_at IS NULL
+             AND (previous_path.max_sequence IS NULL
+                  OR previous_message.sequence <= previous_path.max_sequence)
+           ORDER BY previous_message.sequence DESC
+           LIMIT 1
+       ), '') AS TEXT) AS previous_provider_turn_id,
+       selected_message.sequence - 1 AS fork_after_sequence,
+       selected_message.delivery_content_json AS original_delivery_content_json
+FROM selected_message
+JOIN conversations AS conversation ON conversation.id = selected_message.conversation_id;
+
+-- name: UpdateConversationBranchReplacement :execrows
+UPDATE conversation_branches
+SET replacement_turn_id = sqlc.arg(replacement_turn_id)
+WHERE conversation_branches.id = sqlc.arg(branch_id)
+  AND conversation_branches.conversation_id = (
+      SELECT conversation_turns.conversation_id
+      FROM conversation_turns
+      WHERE conversation_turns.id = sqlc.arg(replacement_turn_id)
+  );
+
+-- name: ActivateConversationBranch :execrows
+UPDATE conversations
+SET active_branch_id = ?, updated_at = ?
+WHERE id = ?;
 
 -- The next turn's provider choices. Written only when the user picks something,
 -- so NULL keeps meaning "use whatever the conversation was started with".

@@ -106,6 +106,7 @@ type Conversation struct {
 	McpServersJson             sql.NullString
 	UsageCost                  sql.NullFloat64
 	UsageCurrency              sql.NullString
+	ActiveBranchID             string
 }
 
 type ConversationActivity struct {
@@ -126,6 +127,20 @@ type ConversationActivity struct {
 	CommandOutputTruncated int64
 	StreamedText           string
 	StreamedTextTruncated  int64
+	BranchID               string
+}
+
+type ConversationBranch struct {
+	ID                     string
+	ConversationID         string
+	SessionID              sql.NullString
+	ProviderConversationID string
+	ParentBranchID         sql.NullString
+	ForkAfterTurnID        sql.NullString
+	ReplacedTurnID         sql.NullString
+	ReplacementTurnID      sql.NullString
+	ForkAfterSequence      int64
+	CreatedAt              time.Time
 }
 
 type ConversationMessage struct {
@@ -143,6 +158,7 @@ type ConversationMessage struct {
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	DeliveryContentJson string
+	BranchID            string
 }
 
 type ConversationProviderEvent struct {
@@ -153,6 +169,7 @@ type ConversationProviderEvent struct {
 	Method          string
 	PayloadJson     string
 	ReceivedAt      time.Time
+	BranchID        string
 }
 
 type ConversationTurn struct {
@@ -169,6 +186,7 @@ type ConversationTurn struct {
 	DiffJson             string
 	RolledBackAt         sql.NullTime
 	PlanJson             string
+	BranchID             string
 }
 
 type ModelUsageEvent struct {

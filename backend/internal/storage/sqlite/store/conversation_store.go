@@ -77,26 +77,263 @@ func (s *Store) CreateConversation(
 	if scope == domain.ConversationScopeSession {
 		ownerSession = &session
 	}
-	if err := s.qw.InsertConversation(ctx, gen.InsertConversationParams{
-		ID:               id,
-		Scope:            scope,
-		ProjectID:        project,
-		SessionID:        ownerSession,
-		CurrentSessionID: &session,
-		CreatedAt:        now,
-		UpdatedAt:        now,
-	}); err != nil {
+	rootBranchID := id + ":root"
+	err := s.inTx(ctx, "insert conversation", func(q *gen.Queries) error {
+		owner, getErr := q.GetSession(ctx, session)
+		if getErr != nil {
+			return fmt.Errorf("select controller session %s: %w", session, getErr)
+		}
+		if insertErr := q.InsertConversation(ctx, gen.InsertConversationParams{
+			ID:               id,
+			Scope:            scope,
+			ProjectID:        project,
+			SessionID:        ownerSession,
+			CurrentSessionID: &session,
+			ActiveBranchID:   rootBranchID,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}); insertErr != nil {
+			return insertErr
+		}
+		return q.InsertConversationBranch(ctx, gen.InsertConversationBranchParams{
+			ID:                     rootBranchID,
+			ConversationID:         id,
+			SessionID:              nullableString(string(session)),
+			ProviderConversationID: owner.ProviderConversationID,
+			ForkAfterSequence:      0,
+			CreatedAt:              now,
+		})
+	})
+	if err != nil {
 		return domain.ConversationRecord{}, fmt.Errorf("insert conversation %s: %w", id, err)
 	}
 
 	return domain.ConversationRecord{
-		ID:        id,
-		Scope:     scope,
-		ProjectID: project,
-		SessionID: session,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:             id,
+		Scope:          scope,
+		ProjectID:      project,
+		SessionID:      session,
+		ActiveBranchID: rootBranchID,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}, nil
+}
+
+// CreateConversationBranch records a provider-thread child without changing the
+// active controller. Activation is a separate transaction after the replacement
+// provider controller is ready.
+func (s *Store) CreateConversationBranch(
+	ctx context.Context,
+	branch domain.ConversationBranch,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	return s.inTx(ctx, "insert conversation branch", func(q *gen.Queries) error {
+		conversation, err := q.SelectConversationByID(ctx, branch.ConversationID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: conversation %s", domain.ErrNoConversationBranch, branch.ConversationID)
+		}
+		if err != nil {
+			return fmt.Errorf("select conversation %s: %w", branch.ConversationID, err)
+		}
+		if branch.SessionID == "" && conversation.CurrentSessionID != nil {
+			branch.SessionID = *conversation.CurrentSessionID
+		}
+		if branch.ParentBranchID != "" {
+			if _, err := q.SelectConversationBranch(ctx, gen.SelectConversationBranchParams{
+				ConversationID: branch.ConversationID,
+				BranchID:       branch.ParentBranchID,
+			}); err != nil {
+				return fmt.Errorf("parent branch %s is not in conversation %s: %w",
+					branch.ParentBranchID, branch.ConversationID, err)
+			}
+		}
+		for label, turnID := range map[string]string{
+			"fork-after":  branch.ForkAfterTurnID,
+			"replaced":    branch.ReplacedTurnID,
+			"replacement": branch.ReplacementTurnID,
+		} {
+			if turnID == "" {
+				continue
+			}
+			turn, turnErr := q.SelectConversationTurnByID(ctx, turnID)
+			if turnErr != nil || turn.ConversationID != branch.ConversationID {
+				if turnErr == nil {
+					turnErr = ErrConversationTurnNotFound
+				}
+				return fmt.Errorf("%s turn %s is not in conversation %s: %w",
+					label, turnID, branch.ConversationID, turnErr)
+			}
+		}
+		if now.IsZero() {
+			now = branch.CreatedAt
+		}
+		if err := q.InsertConversationBranch(ctx, gen.InsertConversationBranchParams{
+			ID:                     branch.ID,
+			ConversationID:         branch.ConversationID,
+			SessionID:              nullableString(string(branch.SessionID)),
+			ProviderConversationID: branch.ProviderConversationID,
+			ParentBranchID:         nullableString(branch.ParentBranchID),
+			ForkAfterTurnID:        nullableString(branch.ForkAfterTurnID),
+			ReplacedTurnID:         nullableString(branch.ReplacedTurnID),
+			ReplacementTurnID:      nullableString(branch.ReplacementTurnID),
+			ForkAfterSequence:      branch.ForkAfterSequence,
+			CreatedAt:              now,
+		}); err != nil {
+			return fmt.Errorf("insert conversation branch %s: %w", branch.ID, err)
+		}
+		return nil
+	})
+}
+
+// ConversationBranch reads one branch and reports whether it is active.
+func (s *Store) ConversationBranch(
+	ctx context.Context,
+	conversationID, branchID string,
+) (domain.ConversationBranch, error) {
+	row, err := s.qr.SelectConversationBranch(ctx, gen.SelectConversationBranchParams{
+		ConversationID: conversationID,
+		BranchID:       branchID,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ConversationBranch{}, fmt.Errorf("%w: %s", domain.ErrNoConversationBranch, branchID)
+	}
+	if err != nil {
+		return domain.ConversationBranch{}, fmt.Errorf("select conversation branch %s: %w", branchID, err)
+	}
+	return conversationBranchToDomain(row), nil
+}
+
+// ConversationBranches lists every durable sibling and descendant in creation
+// order. Only the current head is marked active.
+func (s *Store) ConversationBranches(
+	ctx context.Context,
+	conversationID string,
+) ([]domain.ConversationBranch, error) {
+	rows, err := s.qr.SelectConversationBranches(ctx, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("select conversation branches for %s: %w", conversationID, err)
+	}
+	branches := make([]domain.ConversationBranch, 0, len(rows))
+	for _, row := range rows {
+		branches = append(branches, conversationBranchListToDomain(row))
+	}
+	return branches, nil
+}
+
+// ConversationEditAnchor resolves the active-lineage fork point and preserves
+// the original structured delivery content for the replacement send.
+func (s *Store) ConversationEditAnchor(
+	ctx context.Context,
+	conversationID, replacedTurnID string,
+) (domain.ConversationEditAnchor, error) {
+	row, err := s.qr.SelectConversationEditAnchor(ctx, gen.SelectConversationEditAnchorParams{
+		ConversationID: conversationID,
+		ReplacedTurnID: nullableString(replacedTurnID),
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ConversationEditAnchor{}, fmt.Errorf("%w: %s", ErrConversationTurnNotFound, replacedTurnID)
+	}
+	if err != nil {
+		return domain.ConversationEditAnchor{}, fmt.Errorf("select conversation edit anchor %s: %w", replacedTurnID, err)
+	}
+	return domain.ConversationEditAnchor{
+		ConversationID:              row.ConversationID,
+		SourceBranchID:              row.SourceBranchID,
+		ReplacedTurnID:              row.ReplacedTurnID.String,
+		PreviousProviderTurnID:      row.PreviousProviderTurnID,
+		ForkAfterSequence:           row.ForkAfterSequence,
+		OriginalDeliveryContentJSON: row.OriginalDeliveryContentJson,
+	}, nil
+}
+
+// UpdateConversationBranchReplacement attaches the first turn created on a
+// child branch to the source prompt it replaces.
+func (s *Store) UpdateConversationBranchReplacement(
+	ctx context.Context,
+	branchID, replacementTurnID string,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateConversationBranchReplacement(ctx,
+		gen.UpdateConversationBranchReplacementParams{
+			ReplacementTurnID: nullableString(replacementTurnID),
+			BranchID:          branchID,
+		})
+	if err != nil {
+		return fmt.Errorf("update conversation branch %s replacement: %w", branchID, err)
+	}
+	if rows != 1 {
+		return fmt.Errorf("%w: %s", domain.ErrNoConversationBranch, branchID)
+	}
+	return nil
+}
+
+// ActivateConversationBranch moves the durable conversation head and the Chat
+// controller's provider handle/generation together. If the session is not a live
+// Chat session, the conversation update is rolled back.
+func (s *Store) ActivateConversationBranch(
+	ctx context.Context,
+	sessionID domain.SessionID,
+	conversationID, branchID, providerConversationID, generation string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	return s.inTx(ctx, "activate conversation branch", func(q *gen.Queries) error {
+		conversation, err := q.SelectConversationByID(ctx, conversationID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: conversation %s", domain.ErrNoConversationBranch, conversationID)
+		}
+		if err != nil {
+			return fmt.Errorf("select conversation %s: %w", conversationID, err)
+		}
+		if conversation.CurrentSessionID == nil || *conversation.CurrentSessionID != sessionID {
+			return fmt.Errorf("conversation %s is not controlled by session %s", conversationID, sessionID)
+		}
+		branch, err := q.SelectConversationBranch(ctx, gen.SelectConversationBranchParams{
+			ConversationID: conversationID,
+			BranchID:       branchID,
+		})
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %s", domain.ErrNoConversationBranch, branchID)
+		}
+		if err != nil {
+			return fmt.Errorf("select conversation branch %s: %w", branchID, err)
+		}
+		if branch.ProviderConversationID != providerConversationID {
+			return fmt.Errorf("activate conversation branch %s: provider conversation %q does not match stored %q",
+				branchID, providerConversationID, branch.ProviderConversationID)
+		}
+		conversationRows, err := q.ActivateConversationBranch(ctx, gen.ActivateConversationBranchParams{
+			ActiveBranchID: branchID,
+			UpdatedAt:      now,
+			ID:             conversationID,
+		})
+		if err != nil {
+			return fmt.Errorf("move conversation head: %w", err)
+		}
+		if conversationRows != 1 {
+			return fmt.Errorf("move conversation head: conversation %s not found", conversationID)
+		}
+		sessionRows, err := q.ActivateConversationBranchSession(ctx,
+			gen.ActivateConversationBranchSessionParams{
+				ProviderConversationID: providerConversationID,
+				ControllerGeneration:   generation,
+				UpdatedAt:              now,
+				ID:                     sessionID,
+			})
+		if err != nil {
+			return fmt.Errorf("move session controller: %w", err)
+		}
+		if sessionRows != 1 {
+			return fmt.Errorf("move session controller: live chat session %s not found", sessionID)
+		}
+		return nil
+	})
 }
 
 // ConversationForSession looks up a session's conversation.
@@ -1525,6 +1762,7 @@ func conversationToDomain(row gen.Conversation) domain.ConversationRecord {
 		ID:             row.ID,
 		Scope:          row.Scope,
 		ProjectID:      row.ProjectID,
+		ActiveBranchID: row.ActiveBranchID,
 		LatestSequence: row.LatestSequence,
 		Settings: domain.ConversationSettings{
 			Model:           row.Model.String,
@@ -1552,6 +1790,38 @@ func conversationToDomain(row gen.Conversation) domain.ConversationRecord {
 		rec.MCPServers = *servers
 	}
 	return rec
+}
+
+func conversationBranchToDomain(row gen.SelectConversationBranchRow) domain.ConversationBranch {
+	return domain.ConversationBranch{
+		ID:                     row.ID,
+		ConversationID:         row.ConversationID,
+		SessionID:              domain.SessionID(row.SessionID.String),
+		ProviderConversationID: row.ProviderConversationID,
+		ParentBranchID:         row.ParentBranchID.String,
+		ForkAfterTurnID:        row.ForkAfterTurnID.String,
+		ReplacedTurnID:         row.ReplacedTurnID.String,
+		ReplacementTurnID:      row.ReplacementTurnID.String,
+		ForkAfterSequence:      row.ForkAfterSequence,
+		Active:                 row.Active,
+		CreatedAt:              row.CreatedAt,
+	}
+}
+
+func conversationBranchListToDomain(row gen.SelectConversationBranchesRow) domain.ConversationBranch {
+	return domain.ConversationBranch{
+		ID:                     row.ID,
+		ConversationID:         row.ConversationID,
+		SessionID:              domain.SessionID(row.SessionID.String),
+		ProviderConversationID: row.ProviderConversationID,
+		ParentBranchID:         row.ParentBranchID.String,
+		ForkAfterTurnID:        row.ForkAfterTurnID.String,
+		ReplacedTurnID:         row.ReplacedTurnID.String,
+		ReplacementTurnID:      row.ReplacementTurnID.String,
+		ForkAfterSequence:      row.ForkAfterSequence,
+		Active:                 row.Active,
+		CreatedAt:              row.CreatedAt,
+	}
 }
 
 // decodeJSONColumn reads one of the conversation's latest-wins JSON columns.

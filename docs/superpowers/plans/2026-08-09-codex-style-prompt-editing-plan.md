@@ -19,7 +19,7 @@
 - The bottom composer draft remains untouched.
 - Escape cancels; Command/Ctrl+Enter sends; Enter inserts a newline.
 - The primary action is Send with the composer's arrow treatment, never Save.
-- Add SQLite migration `0080`; never modify old migrations or hand-edit sqlc output.
+- Add the next available SQLite migration (`0086` after syncing with main); never modify old migrations or hand-edit sqlc output.
 - Run `npm run api` after DTO changes and commit both generated API artifacts.
 
 ---
@@ -127,7 +127,7 @@ git commit -m "feat(chat): support targeted conversation forks"
 ### Task 2: Durable conversation-branch ledger
 
 **Files:**
-- Create: `backend/internal/storage/sqlite/migrations/0080_conversation_branches.sql`
+- Create: `backend/internal/storage/sqlite/migrations/0086_conversation_branches.sql`
 - Modify: `backend/internal/domain/conversation.go`
 - Modify: `backend/internal/storage/sqlite/queries/conversations.sql`
 - Modify: `backend/internal/storage/sqlite/queries/sessions.sql`
@@ -175,7 +175,7 @@ func TestActivateConversationBranchMovesProviderAndGenerationTogether(t *testing
 }
 ```
 
-In `migrate_conversation_branches_test.go`, migrate to 79, seed a Chat conversation with turns/messages/activities/provider events, migrate to 80, and verify one root branch is backfilled with the session's provider conversation ID and every existing timeline row is tagged with it. Add version 80 and its exact filename to `shippedMigrations` in `migrate_burned_versions_test.go`.
+In `migrate_conversation_branches_test.go`, migrate to 79, seed a Chat conversation with turns/messages/activities/provider events, migrate to 86, and verify one root branch is backfilled with the session's provider conversation ID and every existing timeline row is tagged with it. Add version 86 and its exact filename to `shippedMigrations` in `migrate_burned_versions_test.go`.
 
 - [ ] **Step 2: Run the test and confirm missing types**
 
@@ -186,7 +186,7 @@ go test ./internal/storage/sqlite/store -run ConversationBranch -count=1
 
 Expected: compile failure.
 
-- [ ] **Step 3: Add migration 0080**
+- [ ] **Step 3: Add migration 0086**
 
 Create the branch table and additive branch columns:
 
@@ -288,7 +288,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add backend/internal/storage/sqlite/migrations/0080_conversation_branches.sql backend/internal/domain/conversation.go backend/internal/storage/sqlite/queries/conversations.sql backend/internal/storage/sqlite/queries/sessions.sql backend/internal/storage/sqlite/store/conversation_store.go backend/internal/storage/sqlite/store/conversation_branch_store_test.go backend/internal/storage/sqlite/migrate_burned_versions_test.go backend/internal/storage/sqlite/migrate_conversation_branches_test.go backend/internal/storage/sqlite/gen
+git add backend/internal/storage/sqlite/migrations/0086_conversation_branches.sql backend/internal/domain/conversation.go backend/internal/storage/sqlite/queries/conversations.sql backend/internal/storage/sqlite/queries/sessions.sql backend/internal/storage/sqlite/store/conversation_store.go backend/internal/storage/sqlite/store/conversation_branch_store_test.go backend/internal/storage/sqlite/migrate_burned_versions_test.go backend/internal/storage/sqlite/migrate_conversation_branches_test.go backend/internal/storage/sqlite/gen
 git commit -m "feat(chat): persist conversation branches"
 ```
 
