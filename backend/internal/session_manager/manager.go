@@ -338,6 +338,12 @@ type Manager struct {
 	// switchDeliveryAckWait bounds the target generation's prompt-submit hook.
 	// Timeout is an explicit failed/ambiguous delivery, never implicit success.
 	switchDeliveryAckWait time.Duration
+	// backgroundContext owns asynchronous agent-switch execution independently
+	// of the admitting request. The daemon cancels it before waiting for workers.
+	backgroundContext        context.Context
+	agentSwitchWorkers       sync.WaitGroup
+	agentSwitchWorkerMu      sync.Mutex
+	agentSwitchWorkersClosed bool
 
 	transitionMu sync.Mutex
 	transitions  map[domain.SessionID]*interfaceTransitionRun
@@ -554,6 +560,9 @@ type Deps struct {
 	Executable func() (string, error)
 	// NewLaunchID overrides supervised-process generation for deterministic tests.
 	NewLaunchID func() string
+	// BackgroundContext owns work admitted by request-scoped methods. Nil keeps
+	// focused tests and embedders compatible by defaulting to Background.
+	BackgroundContext context.Context
 	// Logger receives spawn-time diagnostics (e.g. when the session PATH
 	// cannot be pinned to the daemon binary). Nil defaults to slog.Default().
 	Logger *slog.Logger
@@ -579,6 +588,7 @@ func New(d Deps) *Manager {
 		lookPath:                     d.LookPath,
 		executable:                   d.Executable,
 		newLaunchID:                  d.NewLaunchID,
+		backgroundContext:            d.BackgroundContext,
 		agentOperations:              make(map[domain.SessionID]agentOperationKind),
 		switchDecisionInput:          make(map[domain.SessionID]domain.AgentSwitchID),
 		retainedSwitches:             make(map[domain.SessionID]struct{}),
@@ -611,6 +621,9 @@ func New(d Deps) *Manager {
 		// write (rename, activity) — all of which use time.Now().UTC(). A local
 		// default produced mixed-timezone timestamps in `ao session get`.
 		m.clock = func() time.Time { return time.Now().UTC() }
+	}
+	if m.backgroundContext == nil {
+		m.backgroundContext = context.Background()
 	}
 	if m.lookPath == nil {
 		m.lookPath = exec.LookPath

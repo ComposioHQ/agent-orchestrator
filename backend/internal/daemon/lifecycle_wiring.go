@@ -122,6 +122,7 @@ func (l *lifecycleStack) Stop() {
 type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
+	WaitAgentSwitchWorkers(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
@@ -197,6 +198,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Browser:             browserLifecycle,
 		BrowserCapabilities: browserCapabilities,
 		DataDir:             cfg.DataDir,
+		BackgroundContext:   ctx,
 		Logger:              log,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)

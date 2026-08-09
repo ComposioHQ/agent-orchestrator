@@ -132,6 +132,27 @@ func TestAgentOperationAndInputLeaseAreScopedPerSession(t *testing.T) {
 	m.endAgentOperation("worker-2", agentOperationRestore)
 }
 
+func TestWaitAgentSwitchWorkersClosesWorkerRegistrationBeforeWaiting(t *testing.T) {
+	m := newInputLeaseTestManager()
+	m.agentSwitchWorkers.Add(1)
+	waitCtx, cancelWait := context.WithCancel(context.Background())
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- m.WaitAgentSwitchWorkers(waitCtx)
+	}()
+
+	eventuallySessionInput(t, time.Second, func() bool {
+		m.agentSwitchWorkerMu.Lock()
+		defer m.agentSwitchWorkerMu.Unlock()
+		return m.agentSwitchWorkersClosed
+	})
+	cancelWait()
+	if err := <-waitDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("WaitAgentSwitchWorkers error = %v, want context.Canceled", err)
+	}
+	m.agentSwitchWorkers.Done()
+}
+
 func eventuallySessionInput(t *testing.T, timeout time.Duration, fn func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

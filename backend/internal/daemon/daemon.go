@@ -476,6 +476,11 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	switchStopCtx, switchCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	if err := sessMgr.WaitAgentSwitchWorkers(switchStopCtx); err != nil {
+		log.Error("agent switch worker shutdown", "err", err)
+	}
+	switchCancel()
 	managedPreview.Close()
 	<-previewDone
 	// Close chat controllers before the lifecycle stack: each owns an app-server
