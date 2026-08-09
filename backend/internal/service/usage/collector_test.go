@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1684,6 +1685,66 @@ func TestDiscoverCodexPathRequiresConfiguredRoots(t *testing.T) {
 	if got != "" {
 		t.Fatalf("unconfigured Codex roots discovered %q", got)
 	}
+}
+
+// TestDefaultSourceRootsIncludesFileBackedAgents catches launching the daemon
+// without watching a provider's actual durable usage directory.
+func TestDefaultSourceRootsIncludesFileBackedAgents(t *testing.T) {
+	home := t.TempDir()
+	dataDir := filepath.Join(home, ".ao", "data")
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+
+	got, err := DefaultSourceRoots(context.Background(), dataDir)
+	mustNoError(t, err)
+	want := SourceRoots{
+		ClaudeProjects:  filepath.Join(home, ".claude", "projects"),
+		CodexSessions:   filepath.Join(home, ".codex", "sessions"),
+		CodexArchived:   filepath.Join(home, ".codex", "archived_sessions"),
+		CopilotSessions: filepath.Join(home, ".copilot", "session-state"),
+		KimiHome:        filepath.Join(dataDir, "kimi"),
+		PiSessions:      filepath.Join(home, ".pi", "agent", "sessions"),
+		QwenUsage:       filepath.Join(home, ".qwen", "usage"),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("roots = %+v, want %+v", got, want)
+	}
+}
+
+func TestValidateSourcePathAcceptsOnlyMatchingProviderRoot(t *testing.T) {
+	root := t.TempDir()
+	files := map[domain.AgentHarness]string{
+		domain.HarnessCopilot: filepath.Join(root, "copilot", "native", "events.jsonl"),
+		domain.HarnessKimi:    filepath.Join(root, "kimi", "sessions", "native", "agents", "main", "wire.jsonl"),
+		domain.HarnessPi:      filepath.Join(root, "pi", "worktree", "session.jsonl"),
+		domain.HarnessQwen:    filepath.Join(root, "qwen", "token-usage-2026-08.jsonl"),
+	}
+	for _, path := range files {
+		writeUsageFixture(t, path, "{}\n")
+	}
+	collector := NewCollector(collectorTestStore(t), SourceRoots{
+		CopilotSessions: filepath.Join(root, "copilot"),
+		KimiHome:        filepath.Join(root, "kimi"),
+		PiSessions:      filepath.Join(root, "pi"),
+		QwenUsage:       filepath.Join(root, "qwen"),
+	}, nil)
+
+	for harness, path := range files {
+		if _, _, _, err := collector.validateSourcePath(context.Background(), harness, path); err != nil {
+			t.Errorf("validate %s path: %v", harness, err)
+		}
+		if _, _, _, err := collector.validateSourcePath(context.Background(), harness, files[differentHarness(harness)]); err == nil {
+			t.Errorf("%s accepted another provider's root", harness)
+		}
+	}
+}
+
+func differentHarness(harness domain.AgentHarness) domain.AgentHarness {
+	if harness == domain.HarnessCopilot {
+		return domain.HarnessKimi
+	}
+	return domain.HarnessCopilot
 }
 
 func TestDiscoverClaudePathRejectsGlobMetadata(t *testing.T) {
