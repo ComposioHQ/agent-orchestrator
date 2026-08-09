@@ -57,14 +57,18 @@ type HookSignal struct {
 // SourceRoots are the provider-owned directories from which AO may read usage
 // transcripts.
 type SourceRoots struct {
-	ClaudeProjects string
-	CodexSessions  string
-	CodexArchived  string
+	ClaudeProjects  string
+	CodexSessions   string
+	CodexArchived   string
+	CopilotSessions string
+	KimiHome        string
+	PiSessions      string
+	QwenUsage       string
 }
 
-// DefaultSourceRoots resolves the native Claude Code and Codex transcript
-// directories for the current user.
-func DefaultSourceRoots(ctx context.Context) (SourceRoots, error) {
+// DefaultSourceRoots resolves the native transcript and usage directories for
+// the current user. dataDir is AO's already-resolved durable data directory.
+func DefaultSourceRoots(ctx context.Context, dataDir string) (SourceRoots, error) {
 	if err := ctx.Err(); err != nil {
 		return SourceRoots{}, err
 	}
@@ -76,10 +80,21 @@ func DefaultSourceRoots(ctx context.Context) (SourceRoots, error) {
 	if codexHome == "" {
 		codexHome = filepath.Join(home, ".codex")
 	}
+	piHome := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR"))
+	if piHome == "" {
+		piHome = filepath.Join(home, ".pi", "agent")
+	}
+	if strings.TrimSpace(dataDir) == "" {
+		dataDir = filepath.Join(home, ".ao", "data")
+	}
 	return SourceRoots{
-		ClaudeProjects: filepath.Join(home, ".claude", "projects"),
-		CodexSessions:  filepath.Join(codexHome, "sessions"),
-		CodexArchived:  filepath.Join(codexHome, "archived_sessions"),
+		ClaudeProjects:  filepath.Join(home, ".claude", "projects"),
+		CodexSessions:   filepath.Join(codexHome, "sessions"),
+		CodexArchived:   filepath.Join(codexHome, "archived_sessions"),
+		CopilotSessions: filepath.Join(home, ".copilot", "session-state"),
+		KimiHome:        filepath.Join(dataDir, "kimi"),
+		PiSessions:      filepath.Join(piHome, "sessions"),
+		QwenUsage:       filepath.Join(home, ".qwen", "usage"),
 	}, nil
 }
 
@@ -331,9 +346,9 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	}
 
 	if mainArtifact != nil {
-		kind := domain.UsageSourceClaudeMain
-		if session.Harness == domain.HarnessCodex {
-			kind = domain.UsageSourceCodexRollout
+		kind, supported := sourceKindForHarness(session.Harness)
+		if !supported {
+			return nil
 		}
 		changed, err := c.registerHookSource(
 			ctx,
@@ -552,9 +567,9 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 		return nil
 	}
 
-	kind := domain.UsageSourceClaudeMain
-	if session.Harness == domain.HarnessCodex {
-		kind = domain.UsageSourceCodexRollout
+	kind, supported := sourceKindForHarness(session.Harness)
+	if !supported {
+		return nil
 	}
 	if _, err := c.registerSource(ctx, binding, kind, nativeID, "", path, now, false); err != nil {
 		return err
@@ -801,9 +816,9 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 		targetState = domain.UsageBindingActive
 	}
 
-	kind := domain.UsageSourceClaudeMain
-	if binding.Harness == domain.HarnessCodex {
-		kind = domain.UsageSourceCodexRollout
+	kind, supported := sourceKindForHarness(binding.Harness)
+	if !supported {
+		return nil
 	}
 	if _, err := c.registerSource(ctx, binding, kind, binding.NativeRootID, "", path, now, false); err != nil {
 		return err
@@ -1651,6 +1666,14 @@ func (c *Collector) allowedRoots(harness domain.AgentHarness) []string {
 		return []string{c.roots.ClaudeProjects}
 	case domain.HarnessCodex:
 		return []string{c.roots.CodexSessions, c.roots.CodexArchived}
+	case domain.HarnessCopilot:
+		return []string{c.roots.CopilotSessions}
+	case domain.HarnessKimi:
+		return []string{c.roots.KimiHome}
+	case domain.HarnessPi:
+		return []string{c.roots.PiSessions}
+	case domain.HarnessQwen:
+		return []string{c.roots.QwenUsage}
 	default:
 		return nil
 	}
