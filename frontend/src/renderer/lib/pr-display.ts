@@ -226,6 +226,7 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 		deletions: 0,
 		changedFiles: 0,
 		ci: {
+			autoInjectCI: true,
 			state: toCIState(pr.ci),
 			failingChecks: [],
 		},

@@ -189,6 +189,17 @@ func (f *fakeStore) SetSessionAutoInjectReview(_ context.Context, id domain.Sess
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionAutoInjectCI(_ context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.AutoInjectCI = autoInject
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) SetSessionReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
 	r, ok := f.sessions[id]
 	if !ok {
@@ -383,6 +394,25 @@ func TestSessionSetAutoInjectReviewPersistsPolicy(t *testing.T) {
 
 func TestSessionSetAutoInjectReviewUnknownSession(t *testing.T) {
 	if _, err := (&Service{store: newFakeStore()}).SetAutoInjectReview(context.Background(), "ghost-1", false); err == nil {
+		t.Fatal("expected missing session error")
+	}
+}
+
+func TestSessionSetAutoInjectCIPersistsDefault(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, AutoInjectCI: true}
+
+	sess, err := (&Service{store: st}).SetAutoInjectCI(context.Background(), "mer-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.AutoInjectCI || st.sessions["mer-1"].AutoInjectCI {
+		t.Fatalf("auto-inject CI default was not disabled: returned=%+v stored=%+v", sess, st.sessions["mer-1"])
+	}
+}
+
+func TestSessionSetAutoInjectCIUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).SetAutoInjectCI(context.Background(), "ghost-1", false); err == nil {
 		t.Fatal("expected missing session error")
 	}
 }
@@ -2548,6 +2578,27 @@ func TestListPRSummariesSuppressesFailingChecksUnlessCIFailing(t *testing.T) {
 	}
 	if got[0].CI.State != domain.CIPassing || len(got[0].CI.FailingChecks) != 0 {
 		t.Fatalf("ci summary = %+v", got[0].CI)
+	}
+}
+
+func TestListPRSummariesExposesPerPRAutoInjectCIPolicy(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
+		{URL: "enabled", SessionID: "mer-1", CI: domain.CIFailing, AutoInjectCI: true},
+		{URL: "disabled", SessionID: "mer-1", CI: domain.CIFailing, AutoInjectCI: false},
+	}}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byURL := map[string]PRSummary{}
+	for _, pr := range got {
+		byURL[pr.URL] = pr
+	}
+	if !byURL["enabled"].CI.AutoInjectCI || byURL["disabled"].CI.AutoInjectCI {
+		t.Fatalf("CI policies = enabled:%v disabled:%v", byURL["enabled"].CI.AutoInjectCI, byURL["disabled"].CI.AutoInjectCI)
 	}
 }
 

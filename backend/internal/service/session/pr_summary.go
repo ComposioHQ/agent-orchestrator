@@ -151,6 +151,7 @@ func summarizeCI(pr domain.PullRequest, checks []domain.PullRequestCheck) PRCISu
 			URL:        ch.URL,
 		})
 	}
+	out.AutoInjectCI = pr.AutoInjectCI
 	return out
 }
 

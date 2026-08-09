@@ -431,6 +431,20 @@ type SetSessionAutoInjectReviewResponse struct {
 	Session          SessionView      `json:"session"`
 }
 
+// SetSessionAutoInjectCIRequest updates the default automatic CI delivery
+// policy captured by PRs created after the change.
+type SetSessionAutoInjectCIRequest struct {
+	AutoInjectCI bool `json:"autoInjectCI"`
+}
+
+// SetSessionAutoInjectCIResponse confirms the persisted session default.
+type SetSessionAutoInjectCIResponse struct {
+	OK           bool             `json:"ok"`
+	SessionID    domain.SessionID `json:"sessionId"`
+	AutoInjectCI bool             `json:"autoInjectCI"`
+	Session      SessionView      `json:"session"`
+}
+
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
 type RestoreSessionResponse struct {
 	OK          bool                       `json:"ok"`
@@ -612,6 +626,7 @@ type SessionPRSummary struct {
 type SessionPRCISummary struct {
 	State         domain.CIState          `json:"state" enum:"unknown,pending,passing,failing"`
 	FailingChecks []SessionPRFailingCheck `json:"failingChecks"`
+	AutoInjectCI  bool                    `json:"autoInjectCI"`
 }
 
 // SessionPRFailingCheck is one failed or cancelled CI check for a PR.
@@ -720,7 +735,7 @@ func newSessionPRCISummary(in sessionsvc.PRCISummary) SessionPRCISummary {
 	for _, ch := range in.FailingChecks {
 		checks = append(checks, SessionPRFailingCheck{Name: ch.Name, Status: ch.Status, Conclusion: ch.Conclusion, URL: ch.URL})
 	}
-	return SessionPRCISummary{State: in.State, FailingChecks: checks}
+	return SessionPRCISummary{State: in.State, FailingChecks: checks, AutoInjectCI: in.AutoInjectCI}
 }
 
 func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSummary {

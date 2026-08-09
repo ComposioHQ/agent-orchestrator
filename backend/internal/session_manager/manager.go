@@ -2889,6 +2889,7 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		// statement that can change it afterwards.
 		Mode:             domain.NormalizeSessionMode(cfg.RequestedMode),
 		AutoInjectReview: true,
+		AutoInjectCI:     true,
 	}
 }
 

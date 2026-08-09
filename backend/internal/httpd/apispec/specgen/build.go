@@ -218,6 +218,8 @@ var schemaNames = map[string]string{
 	"ControllersSetSessionMergePolicyResponse":            "SetSessionMergePolicyResponse",
 	"ControllersSetSessionAutoInjectReviewRequest":        "SetSessionAutoInjectReviewRequest",
 	"ControllersSetSessionAutoInjectReviewResponse":       "SetSessionAutoInjectReviewResponse",
+	"ControllersSetSessionAutoInjectCIRequest":            "SetSessionAutoInjectCIRequest",
+	"ControllersSetSessionAutoInjectCIResponse":           "SetSessionAutoInjectCIResponse",
 	"ControllersRenameSessionRequest":                     "RenameSessionRequest",
 	"ControllersSetSessionReviewerRequest":                "SetSessionReviewerRequest",
 	"ControllersRenameSessionResponse":                    "RenameSessionResponse",
@@ -1480,6 +1482,19 @@ func sessionOperations() []operation {
 			reqBody:    controllers.SetSessionAutoInjectReviewRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SetSessionAutoInjectReviewResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}/auto-inject-ci", id: "setSessionAutoInjectCI", tag: "sessions",
+			summary:    "Set the automatic CI-failure injection default for new session PRs",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetSessionAutoInjectCIRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SetSessionAutoInjectCIResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},

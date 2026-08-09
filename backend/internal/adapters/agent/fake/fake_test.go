@@ -231,6 +231,10 @@ func (s *lifecycleStore) ListPRsBySession(_ context.Context, _ domain.SessionID)
 	return nil, nil
 }
 
+func (s *lifecycleStore) GetPR(_ context.Context, prURL string) (domain.PullRequest, bool, error) {
+	return domain.PullRequest{URL: prURL, AutoInjectCI: true}, true, nil
+}
+
 func (s *lifecycleStore) ListPRReviews(_ context.Context, _ string) ([]domain.PullRequestReview, error) {
 	return nil, nil
 }

@@ -397,6 +397,7 @@ func genPRParams(r domain.PullRequest) gen.UpsertPRParams {
 		ObservedAt:               nullTime(r.ObservedAt),
 		CIObservedAt:             nullTime(r.CIObservedAt),
 		ReviewObservedAt:         nullTime(r.ReviewObservedAt),
+		ID:                       r.SessionID,
 	}
 }
 
@@ -414,6 +415,7 @@ func genLegacyPRParams(r domain.PullRequest) gen.UpsertLegacyPRParams {
 		IsDraft:        boolInt(r.Draft),
 		IsMerged:       boolInt(r.Merged),
 		IsClosed:       boolInt(r.Closed),
+		ID:             r.SessionID,
 	}
 }
 
@@ -494,6 +496,7 @@ func prRowFromGen(p gen.PR) domain.PullRequest {
 		ObservedAt:               timeFromNull(p.ObservedAt),
 		CIObservedAt:             timeFromNull(p.CIObservedAt),
 		ReviewObservedAt:         timeFromNull(p.ReviewObservedAt),
+		AutoInjectCI:             p.AutoInjectCI,
 	}
 }
 

@@ -70,6 +70,7 @@ const session = (prs: PullRequestFacts[], overrides: Partial<WorkspaceSession> =
 	status: "review_pending",
 	updatedAt: "2026-06-15T00:00:00Z",
 	autoInjectReview: true,
+	autoInjectCI: true,
 	prs,
 	...overrides,
 });
@@ -100,7 +101,7 @@ const prSummary = (
 		additions: 4,
 		deletions: 1,
 		changedFiles: 2,
-		ci: { state: "passing", failingChecks: [] },
+		ci: { autoInjectCI: true, state: "passing", failingChecks: [] },
 		review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 		mergeability: { state: "mergeable", reasons: [], prUrl: url, conflictFiles: [] },
 		updatedAt: "2026-06-15T12:00:00Z",
@@ -390,6 +391,53 @@ describe("SessionInspector PR section", () => {
 		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
 	});
 
+	it("persists the CI injection default before a PR exists", async () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const toggle = screen.getByRole("switch", { name: "Automatically send CI failures" });
+		expect(toggle).toBeChecked();
+		await userEvent.click(toggle);
+
+		expect(toggle).not.toBeChecked();
+		await waitFor(() =>
+			expect(patchMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/auto-inject-ci", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { autoInjectCI: false },
+			}),
+		);
+	});
+
+	it("restores the CI injection toggle and shows the API error when saving fails", async () => {
+		patchMock.mockResolvedValueOnce({ error: new Error("CI policy unavailable"), response: { status: 500 } });
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const toggle = screen.getByRole("switch", { name: "Automatically send CI failures" });
+		await userEvent.click(toggle);
+
+		expect(await screen.findByText("CI policy unavailable")).toBeInTheDocument();
+		expect(toggle).toBeChecked();
+	});
+
+	it("shows that failing CI was not injected while preserving the failing checks", () => {
+		const failingPR = prSummary(7, "open", {
+			ci: {
+				autoInjectCI: false,
+				state: "failing",
+				failingChecks: [
+					{ name: "unit", status: "failed", conclusion: "failure", url: "https://ci.example/unit" },
+				],
+			},
+			mergeability: { state: "blocked", reasons: ["required checks failing"], prUrl: "https://example.com/pr/7" },
+		});
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />, undefined, (client) => {
+			client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [failingPR]);
+		});
+
+		const card = prSection("Pull request").getByText("PR #7").closest("article") as HTMLElement;
+		expect(within(card).getByText("CI failures not injected")).toBeInTheDocument();
+		expect(within(card).getByRole("link", { name: "unit" })).toHaveAttribute("href", "https://ci.example/unit");
+	});
+
 	it("links each PR to its url", () => {
 		renderWithQuery(<SessionInspector session={session([pr(41, "open"), pr(42, "draft")])} />);
 		const links = [
@@ -480,7 +528,7 @@ describe("SessionInspector completion controls", () => {
 		renderWithQuery(<SessionInspector session={session([], { kind: "orchestrator" })} />);
 
 		expect(screen.queryByText("Completion")).not.toBeInTheDocument();
-		expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+		expect(screen.queryByRole("switch", { name: "Terminate session when pull requests merge" })).not.toBeInTheDocument();
 	});
 });
 
