@@ -1,7 +1,6 @@
 import { Plus, Terminal, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
-import { getAgentActivityView } from "../lib/session-presentation";
 import { isMacPlatform } from "../lib/platform";
 import { cn } from "../lib/utils";
 import type { WorkspaceSession } from "../types/workspace";
@@ -66,7 +65,6 @@ function SessionTerminalTab({
 	session: WorkspaceSession;
 }) {
 	const { t } = useTranslation();
-	const activity = getAgentActivityView(session.activity, t);
 	const label = session.kind === "orchestrator" ? t("shell.orchestrator") : session.title;
 
 	return (
@@ -81,7 +79,7 @@ function SessionTerminalTab({
 		>
 			<button
 				aria-current={isActive}
-				aria-label={`${label} · ${activity.label}`}
+				aria-label={label}
 				aria-selected={isActive}
 				className={cn(
 					"inline-flex min-w-flex-min max-w-shell-tab-max flex-1 items-center gap-1.5 text-control font-medium leading-none transition-colors",
@@ -93,19 +91,8 @@ function SessionTerminalTab({
 				title={label}
 				type="button"
 			>
-				<AgentAvatar className="size-icon-base" decorative provider={session.provider} />
+				<AgentAvatar className="size-icon-sm" decorative provider={session.provider} />
 				<span className="truncate">{label}</span>
-				<span
-					aria-hidden="true"
-					className="inline-flex shrink-0 self-center items-center"
-					style={{ color: activity.tone }}
-					title={activity.label}
-				>
-					<span
-						className={cn("size-1.5 rounded-full", activity.breathe && "animate-status-pulse")}
-						style={{ background: activity.tone }}
-					/>
-				</span>
 			</button>
 			{isCloseable && onClose ? (
 				<button

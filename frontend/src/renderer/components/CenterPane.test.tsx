@@ -224,9 +224,9 @@ describe("CenterPane toolbar session label", () => {
 		);
 		expect(sessionTab.parentElement).not.toHaveClass("session-primary-tab");
 		expect(sessionTab.parentElement).not.toHaveClass("rounded-md");
-		expect(sessionTab).toHaveAccessibleName("do the thing · Working");
-		expect(sessionTab.querySelector('[title="Working"]')).toBeInTheDocument();
-		expect(sessionTab.parentElement?.querySelector('img[aria-hidden="true"]')).toBeInTheDocument();
+		expect(sessionTab).toHaveAccessibleName("do the thing");
+		expect(sessionTab.querySelector('[title="Working"]')).not.toBeInTheDocument();
+		expect(sessionTab.parentElement?.querySelector('img[aria-hidden="true"]')).toHaveClass("size-icon-sm");
 		expect(screen.queryByRole("tab", { name: "review the change" })).not.toBeInTheDocument();
 	});
 
@@ -260,8 +260,7 @@ describe("CenterPane toolbar session label", () => {
 		const auxiliaryTab = screen.getByRole("tab", { name: shell.title });
 		expect(auxiliaryTab.parentElement?.querySelector("img")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: `Close terminal ${shell.title}` })).toBeInTheDocument();
-		expect(mainTab.querySelector('[title="Working"]')).toHaveClass("self-center");
-		expect(mainTab.querySelector('[title="Working"]')).not.toHaveClass("-translate-y-px");
+		expect(mainTab.querySelector('[title="Working"]')).not.toBeInTheDocument();
 		expect(within(mainContainer as HTMLElement).getByTestId("terminal-switch-agent")).toBeInTheDocument();
 	});
 
@@ -374,6 +373,15 @@ describe("CenterPane toolbar session label", () => {
 		expect(onSelectProjectSession).toHaveBeenCalledWith(secondWorker);
 		fireEvent.click(screen.getByRole("button", { name: "Close session tab review the change" }));
 		expect(onCloseProjectSession).toHaveBeenCalledWith(secondWorker);
+	});
+
+	it("keeps agent status out of terminal cards and uses a smaller agent icon", () => {
+		renderCenterPane({ session: worker, projectSessions: [worker] });
+
+		const tab = screen.getByRole("tab", { name: /^do the thing/ });
+		expect(tab).toHaveAccessibleName("do the thing");
+		expect(tab.querySelector("img")).toHaveClass("size-icon-sm");
+		expect(tab.querySelector(".rounded-full")).not.toBeInTheDocument();
 	});
 
 	it("opens a picker with separate new-terminal and same-project session actions", async () => {

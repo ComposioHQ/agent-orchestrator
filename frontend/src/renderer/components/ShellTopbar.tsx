@@ -188,7 +188,11 @@ export function ShellTopbar({
 	return (
 		<LayoutGroup id="shell-topbar">
 		<motion.header
-			className={embedded ? "contents" : topbarHeaderClass}
+			className={
+				embedded
+					? "contents"
+					: cn(topbarHeaderClass, isSessionRoute && !isOrchestrator && isInspectorOpen && "pr-2.5")
+			}
 			style={embedded ? undefined : { ...dragStyle, paddingLeft }}
 		>
 			{!embedded ? (
@@ -200,7 +204,7 @@ export function ShellTopbar({
 							) : (
 								<span className={cn(topbarProjectLabelClass, "max-w-content-max truncate")}>{session.title}</span>
 							)}
-							<span aria-hidden="true" className="h-4 w-px shrink-0 bg-border-strong" />
+							<span aria-hidden="true" className="workspace-topbar__identity-separator" />
 							<SessionStatusPill session={session} />
 						</div>
 					) : (isProjectBoardRoute && boardActionsInPanel) ||
@@ -284,6 +288,11 @@ export function ShellTopbar({
 						{isOrchestrator ? (
 							<>
 								<ProjectTerminationFeedback projectId={projectId} />
+								{sessionAction ? (
+									<div className="inline-flex shrink-0 items-center" style={noDragStyle}>
+										{sessionAction}
+									</div>
+								) : null}
 								<Tooltip>
 									<TooltipTrigger asChild>
 										<span className="inline-flex" style={noDragStyle}>
@@ -302,11 +311,6 @@ export function ShellTopbar({
 									</TooltipTrigger>
 									<TooltipContent side="bottom">{t("shell.newTask")}</TooltipContent>
 								</Tooltip>
-								{sessionAction ? (
-									<div className="inline-flex shrink-0 items-center" style={noDragStyle}>
-										{sessionAction}
-									</div>
-								) : null}
 								<Tooltip>
 									<TooltipTrigger asChild>
 										<TopbarButton

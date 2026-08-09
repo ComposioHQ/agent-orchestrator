@@ -187,6 +187,7 @@ describe("ShellTopbar status pill", () => {
 		const switchInterface = screen.getByRole("button", { name: "Switch interface" });
 		expect(identity).toHaveTextContent("do the thing");
 		expect(identity).toHaveTextContent("Working");
+		expect(identity.querySelector(".workspace-topbar__identity-separator")).toBeInTheDocument();
 		expect(identity).not.toContainElement(switchInterface);
 		expect(screen.queryByTestId("session-identity-card")).not.toBeInTheDocument();
 		expect(kill.compareDocumentPosition(switchInterface) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -208,7 +209,7 @@ describe("ShellTopbar status pill", () => {
 		expect(identity).not.toHaveTextContent("Orchestrator");
 		expect(identity.querySelector(".lucide-folder")).toBeInTheDocument();
 		expect(identity).not.toContainElement(switchInterface);
-		expect(task.compareDocumentPosition(switchInterface) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(switchInterface.compareDocumentPosition(task) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
 	it("renders only session actions when embedded in the terminal bar", () => {
@@ -221,13 +222,15 @@ describe("ShellTopbar status pill", () => {
 	});
 
 	it("leaves notifications and their separator to the open inspector", () => {
-		renderTopbarSessions([worker, orchestrator], worker.id, true);
+		renderTopbarSessions([worker, orchestrator], worker.id);
 
 		const actionRegion = screen.getByTestId("workspace-topbar-actions");
+		const header = actionRegion.closest("header");
 
 		expect(within(actionRegion).getByRole("button", { name: "Open orchestrator" })).toBeInTheDocument();
 		expect(within(actionRegion).queryByRole("button", { name: "Notifications" })).not.toBeInTheDocument();
 		expect(within(actionRegion).queryByTestId("topbar-utility-separator")).not.toBeInTheDocument();
+		expect(header).toHaveClass("pr-2.5");
 	});
 
 	it.each([

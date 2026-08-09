@@ -1900,6 +1900,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	background: color-mix(in srgb, var(--color-text-topbar) 18%, transparent);
 }
 
+.workspace-topbar__identity-separator {
+	width: 1px;
+	height: var(--space-4);
+	flex: 0 0 1px;
+	background: color-mix(in srgb, var(--color-text-topbar) 32%, transparent);
+}
+
 .workspace-topbar-actions .topbar-control {
 	-webkit-app-region: no-drag;
 	height: var(--size-topbar-control);

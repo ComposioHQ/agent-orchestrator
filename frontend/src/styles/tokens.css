@@ -277,12 +277,12 @@
 	--size-table-head: var(--space-10);
 	/* Reverb's route-level workspace bar and pane-level secondary rows. Keep
 	   the old names as compatibility aliases while route mounts migrate. */
-	--size-topbar-primary: 40px;
+	--size-topbar-primary: 38px;
 	--size-topbar-secondary: 36px;
 	--size-topbar-control: 28px;
 	--size-toolbar: var(--size-topbar-primary);
 	/* ShellTopbar (.dashboard-app-header) on Win/Linux — the full-width bar
-	   the sidebar hangs below. Distinct from --size-toolbar (40px) because
+	   the sidebar hangs below. Distinct from --size-toolbar (38px) because
 	   the shell header is taller (56px) to accommodate the project crumb. */
 	--size-shell-topbar: 56px;
 	/* Windows custom title bar (.window-titlebar) — keep in sync with TITLEBAR_HEIGHT in main.ts. */
