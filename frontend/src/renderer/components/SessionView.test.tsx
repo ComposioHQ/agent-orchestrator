@@ -4,6 +4,7 @@ import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@t
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
 import { SessionTopbarProvider } from "./SessionTopbarPortal";
+import { TooltipProvider } from "./ui/tooltip";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
@@ -424,7 +425,9 @@ function render(ui: ReactNode) {
 		...rtlRender(ui, {
 			wrapper: ({ children }) => (
 				<QueryClientProvider client={client}>
-					<SessionTopbarProvider>{children}</SessionTopbarProvider>
+					<TooltipProvider>
+						<SessionTopbarProvider>{children}</SessionTopbarProvider>
+					</TooltipProvider>
 				</QueryClientProvider>
 			),
 		}),
