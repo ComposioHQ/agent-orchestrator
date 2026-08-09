@@ -93,7 +93,9 @@ const NAV_ROW_CLASS =
 
 // Search + Pinned/Projects section chrome: same type, icon, and row size.
 const SECTION_ROW_CLASS =
-	"flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-md [&_svg]:shrink-0";
+	"flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-passive [&_svg]:size-icon-md [&_svg]:shrink-0";
+// Hover fill only for collapsible section headers (Pinned). Projects is a static label.
+const SECTION_ROW_INTERACTIVE_CLASS = "transition-colors hover:bg-interactive-hover hover:text-foreground";
 
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
@@ -346,7 +348,7 @@ export function Sidebar({
 					</div>
 				)}
 
-				{/* Projects — always open; + sits inside the same hover pill. */}
+				{/* Projects — always open; only the trailing "+" is interactive. */}
 				<div className="sidebar-expanded-chrome flex shrink-0 pb-1.5 group-data-[collapsible=icon]:hidden">
 					<SectionDisclosure
 						icon={<FolderOpen strokeWidth={1.75} aria-hidden="true" />}
@@ -1095,9 +1097,9 @@ function SectionDisclosure({
 	open?: boolean;
 	onToggle?: () => void;
 	className?: string;
-	/** Optional trailing control (e.g. Projects "+") — stays inside the hover pill. */
+	/** Optional trailing control (e.g. Projects "+") — its own button, not the row. */
 	trailing?: ReactNode;
-	/** When false, render a static label row with no chevron or toggle. */
+	/** When false, render a static label row with no chevron, toggle, or hover fill. */
 	collapsible?: boolean;
 }) {
 	const labelRow = (
@@ -1127,7 +1129,7 @@ function SectionDisclosure({
 
 	if (trailing) {
 		return (
-			<div className={cn(SECTION_ROW_CLASS, "pr-1", className)}>
+			<div className={cn(SECTION_ROW_CLASS, SECTION_ROW_INTERACTIVE_CLASS, "pr-1", className)}>
 				<button
 					aria-expanded={open}
 					aria-label={label}
@@ -1146,7 +1148,7 @@ function SectionDisclosure({
 		<button
 			aria-expanded={open}
 			aria-label={label}
-			className={cn(SECTION_ROW_CLASS, "text-left", className)}
+			className={cn(SECTION_ROW_CLASS, SECTION_ROW_INTERACTIVE_CLASS, "text-left", className)}
 			onClick={onToggle}
 			type="button"
 		>
@@ -1211,8 +1213,7 @@ function CreateProjectButton({
 						<button
 							aria-label={t("shell.newProject")}
 							className={cn(
-								// No own hover fill — lives inside the Projects section hover pill.
-								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:text-foreground",
+								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground",
 								hideTrigger && "hidden",
 							)}
 							disabled={disabled}
