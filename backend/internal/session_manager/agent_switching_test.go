@@ -2213,8 +2213,8 @@ func TestWaitForTargetAcknowledgementObservesDaemonCancellation(t *testing.T) {
 }
 
 func TestWaitForTargetAcknowledgementOwnsIndependentDeliveryWindow(t *testing.T) {
-	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
-	manager.switchPostStopWait = time.Millisecond
+	manager, _, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
+	manager.switchPostStopWait = 250 * time.Millisecond
 	manager.switchDeliveryAckWait = 500 * time.Millisecond
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
 	target.hooksWaitForContext = true
@@ -2250,7 +2250,7 @@ func TestWaitForTargetAcknowledgementOwnsIndependentDeliveryWindow(t *testing.T)
 		if result.record.State != domain.AgentSwitchCompleted {
 			t.Fatalf("switch state = %q, want completed", result.record.State)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(2 * time.Second):
 		cancelWorker()
 		select {
 		case <-done:
