@@ -323,7 +323,6 @@ export function Sidebar({
 				{pinnedSessions.length > 0 && (
 					<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
 						<SectionDisclosure
-							icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
 							label={t("shell.pinned")}
 							open={pinnedOpen}
 							onToggle={() => setPinnedOpen((v) => !v)}
@@ -351,7 +350,6 @@ export function Sidebar({
 				{/* Projects — always open; only the trailing "+" is interactive. */}
 				<div className="sidebar-expanded-chrome flex shrink-0 pb-1.5 group-data-[collapsible=icon]:hidden">
 					<SectionDisclosure
-						icon={<FolderOpen strokeWidth={1.75} aria-hidden="true" />}
 						label={t("shell.projects")}
 						collapsible={false}
 						trailing={
@@ -1092,7 +1090,7 @@ function SectionDisclosure({
 	trailing,
 	collapsible = true,
 }: {
-	icon: ReactNode;
+	icon?: ReactNode;
 	label: string;
 	open?: boolean;
 	onToggle?: () => void;
