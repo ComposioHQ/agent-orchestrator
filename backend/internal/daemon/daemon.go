@@ -245,7 +245,7 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	sessMgr.SetTerminalInputGate(termMgr)
-	lifecycleMessenger.Bind(sessMgr)
+	lifecycleMessenger.Bind(sessionLifecycleMessenger{sessMgr})
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
 	lcStack.LCM.SetSessionInputLease(sessMgr)
 	lcStack.LCM.SetSessionOperationGate(sessMgr)

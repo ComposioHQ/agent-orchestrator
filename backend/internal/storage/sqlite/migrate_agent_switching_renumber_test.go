@@ -12,11 +12,10 @@ import (
 
 func TestMigrateRepairsLegacyAgentSwitchSchemas(t *testing.T) {
 	tests := []struct {
-		name           string
-		migrateTo      int64
-		switchPath     string
-		handoffPath    string
-		expectBurned84 bool
+		name        string
+		migrateTo   int64
+		switchPath  string
+		handoffPath string
 	}{
 		{
 			name:        "versions 0080 and 0081",
@@ -31,11 +30,10 @@ func TestMigrateRepairsLegacyAgentSwitchSchemas(t *testing.T) {
 			handoffPath: "migrations/0082_finalized_agent_handoff.sql",
 		},
 		{
-			name:           "pre-consolidation versions 0083 and 0084",
-			migrateTo:      82,
-			switchPath:     "migrations/0083_agent_switching.sql",
-			handoffPath:    "migrations/0084_finalized_agent_handoff.sql",
-			expectBurned84: true,
+			name:        "pre-consolidation versions 0083 and 0084",
+			migrateTo:   82,
+			switchPath:  "migrations/0083_agent_switching.sql",
+			handoffPath: "migrations/0084_finalized_agent_handoff.sql",
 		},
 		{
 			name:       "pre-consolidation base without final handoff migration",
@@ -48,7 +46,7 @@ func TestMigrateRepairsLegacyAgentSwitchSchemas(t *testing.T) {
 			db := openAgentSwitchMigrationTestDB(t)
 			upTo(t, db, tt.migrateTo)
 			applyLegacyAgentSwitchMigrations(t, db, tt.switchPath, tt.handoffPath)
-			assertAgentSwitchMigrationHistoryRepaired(t, db, tt.expectBurned84)
+			assertAgentSwitchMigrationHistoryRepaired(t, db)
 		})
 	}
 }
@@ -81,11 +79,25 @@ func applyLegacyAgentSwitchMigrations(t *testing.T, db *sql.DB, switchPath, hand
 	legacyAgentSwitchMigration = strings.ReplaceAll(legacyAgentSwitchMigration, `    final_handoff_path         TEXT NOT NULL DEFAULT '',
     final_handoff_hash         TEXT NOT NULL DEFAULT '',
 `, "")
+	legacyAgentSwitchMigration = strings.ReplaceAll(
+		legacyAgentSwitchMigration,
+		"    OR OLD.auto_inject_review <> NEW.auto_inject_review\n",
+		"",
+	)
+	legacyAgentSwitchMigration = strings.ReplaceAll(
+		legacyAgentSwitchMigration,
+		`            'mode', NEW.session_mode,
+            'autoInjectReview', json(CASE WHEN NEW.auto_inject_review THEN 'true' ELSE 'false' END)
+`,
+		`            'mode', NEW.session_mode
+`,
+	)
 	if legacyAgentSwitchMigration == string(agentSwitchMigration) ||
 		strings.Contains(legacyAgentSwitchMigration, "source_transcript_status") ||
 		strings.Contains(legacyAgentSwitchMigration, "semantic_handoff_included") ||
 		strings.Contains(legacyAgentSwitchMigration, "final_handoff_path") ||
-		strings.Contains(legacyAgentSwitchMigration, "final_handoff_hash") {
+		strings.Contains(legacyAgentSwitchMigration, "final_handoff_hash") ||
+		strings.Contains(legacyAgentSwitchMigration, "auto_inject_review") {
 		t.Fatal("pre-consolidation fixture did not remove the consolidated agent-switch columns")
 	}
 	legacyFS := fstest.MapFS{
@@ -104,12 +116,12 @@ func applyLegacyAgentSwitchMigrations(t *testing.T, db *sql.DB, switchPath, hand
 	}
 }
 
-func assertAgentSwitchMigrationHistoryRepaired(t *testing.T, db *sql.DB, expectBurned84 bool) {
+func assertAgentSwitchMigrationHistoryRepaired(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if err := migrate(db); err != nil {
 		t.Fatalf("migrate legacy agent-switch database: %v", err)
 	}
-	for _, version := range []int64{80, 81, 82, 83, 85} {
+	for _, version := range []int64{80, 81, 82, 83, 84, 85} {
 		var applied int
 		if err := db.QueryRow(`
 SELECT COALESCE((
@@ -122,22 +134,15 @@ SELECT COALESCE((
 			t.Fatalf("migration %d applied = %d, want 1", version, applied)
 		}
 	}
-	var applied84 int
-	if err := db.QueryRow(`
-SELECT COALESCE((
-    SELECT is_applied FROM goose_db_version
-    WHERE version_id = 84 ORDER BY id DESC LIMIT 1
-), 0)`).Scan(&applied84); err != nil {
-		t.Fatalf("read migration 84: %v", err)
-	}
-	if (applied84 == 1) != expectBurned84 {
-		t.Fatalf("migration 84 applied = %d, want retained=%v", applied84, expectBurned84)
-	}
 	if got, err := reviewHasSessionHarnessUnique(db); err != nil || !got {
 		t.Fatalf("review per-harness shape = %v, err = %v", got, err)
 	}
 	for table, column := range map[string]string{
-		"sessions":                         "browser_capability_verifier",
+		"sessions.browser_verifier":        "browser_capability_verifier",
+		"sessions.auto_inject_review":      "auto_inject_review",
+		"review_run.auto_inject_review":    "auto_inject_review",
+		"pr_reviews.auto_inject_review":    "auto_inject_review",
+		"pr_comment.auto_inject_review":    "auto_inject_review",
 		"agent_switches.final_path":        "final_handoff_path",
 		"agent_switches.final_hash":        "final_handoff_hash",
 		"agent_switches.transcript_status": "source_transcript_status",

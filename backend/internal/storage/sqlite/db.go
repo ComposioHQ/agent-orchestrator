@@ -537,9 +537,9 @@ SELECT COALESCE((
 // repairRenumberedAgentSwitchMigrationHistory preserves databases opened by
 // earlier revisions of this feature branch. Agent switching first occupied
 // 0080/0081, later 0081/0082, and briefly 0083/0084; main now owns 0080
-// through 0083. Remap the physically present switching schema to the
-// consolidated 0085 and release
-// only the main migration numbers whose schema effects are still absent.
+// through 0084. Remap the physically present switching schema to the
+// consolidated 0085, then release only the main migration numbers whose
+// schema effects are still absent.
 func repairRenumberedAgentSwitchMigrationHistory(db *sql.DB) error {
 	var gooseTable, agentSwitchTable int
 	if err := db.QueryRow(
@@ -564,7 +564,7 @@ func repairRenumberedAgentSwitchMigrationHistory(db *sql.DB) error {
 		return err
 	}
 
-	var browserVerifierColumn, primeHarnessShape, reconciledKimchiPrimeHarnessShape int
+	var browserVerifierColumn, primeHarnessShape, reconciledKimchiPrimeHarnessShape, autoInjectReviewColumn int
 	if err := db.QueryRow(
 		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'browser_capability_verifier'`,
 	).Scan(&browserVerifierColumn); err != nil {
@@ -585,6 +585,11 @@ WHERE type = 'table'
   AND name = 'sessions'
   AND instr(COALESCE(sql, ''), '''kimchi''') > 0
   AND instr(COALESCE(sql, ''), '''prime-agent''') > 0`).Scan(&reconciledKimchiPrimeHarnessShape); err != nil {
+		return err
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'auto_inject_review'`,
+	).Scan(&autoInjectReviewColumn); err != nil {
 		return err
 	}
 
@@ -639,6 +644,7 @@ SELECT COALESCE((
 		81: browserVerifierColumn != 0,
 		82: primeHarnessShape != 0,
 		83: reconciledKimchiPrimeHarnessShape != 0,
+		84: autoInjectReviewColumn != 0,
 	} {
 		if mainEffectPresent {
 			continue

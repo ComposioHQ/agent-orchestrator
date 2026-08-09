@@ -87,6 +87,7 @@ var shippedMigrations = map[int64]string{
 	81: "0081_browser_capability_verifier.sql",
 	82: "0082_allow_prime_agent_harness.sql",
 	83: "0083_reconcile_kimchi_prime_agent_harnesses.sql",
+	84: "0084_add_session_auto_inject_review.sql",
 	85: "0085_agent_switching.sql",
 }
 
@@ -96,8 +97,6 @@ var shippedMigrations = map[int64]string{
 // new file claiming one would be skipped silently there.
 //
 //   - 22 shipped in a nightly (#2412) and was deleted by the revert.
-//   - 84 was used by pre-merge agent-switching builds before its schema was
-//     consolidated into 0085. Keep it reserved for those development DBs.
 //
 // Beware of the adjacent hazard this cannot catch: at least one field profile
 // has versions 40 through 51 recorded as applied by a foreign build
@@ -105,7 +104,7 @@ var shippedMigrations = map[int64]string{
 // Any such migration whose schema the generated queries depend on must add a
 // schemaRepairs entry in db.go.
 func burnedVersion(v int64) bool {
-	return v == 22 || v == 84
+	return v == 22
 }
 
 // TestMigrationVersionLedger enforces the append-only migration ledger: every
@@ -253,7 +252,7 @@ INSERT INTO projects (
 		t.Fatalf("repeat migrate on repaired schema: %v", err)
 	}
 	for table, want := range map[string][]string{
-		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness", "browser_capability_verifier"},
+		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness", "browser_capability_verifier", "auto_inject_review"},
 		"notifications": {"resolved_at"},
 	} {
 		for _, column := range want {

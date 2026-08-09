@@ -623,6 +623,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/auto-inject-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Set the auto-inject review setting for a session */
+        patch: operations["setSessionAutoInjectReview"];
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation": {
         parameters: {
             query?: never;
@@ -1511,6 +1528,10 @@ export interface components {
         AgentSwitchResponse: {
             switch: components["schemas"]["AgentSwitch"];
         };
+        AttachmentInput: {
+            data: string;
+            mimeType?: string;
+        };
         BrowserCommandRequest: {
             action: string;
             args?: {
@@ -1576,6 +1597,7 @@ export interface components {
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
+            autoInjectReview: boolean;
             branch?: string;
             /** Format: date-time */
             createdAt: string;
@@ -1605,10 +1627,6 @@ export interface components {
             terminateOnPrMerge: boolean;
             /** Format: date-time */
             updatedAt: string;
-        };
-        ControllersSpawnAttachmentInput: {
-            data: string;
-            mimeType?: string;
         };
         ConversationAccountPayload: {
             authMode?: string;
@@ -1834,7 +1852,7 @@ export interface components {
         DelegateTaskRequest: {
             /** @enum {string} */
             agent?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "kimchi" | "prime-agent" | "autohand" | "fake";
-            attachments?: components["schemas"]["ControllersSpawnAttachmentInput"][];
+            attachments?: components["schemas"]["AttachmentInput"][];
             brief: string;
             /** @enum {string} */
             mode?: "tui" | "chat";
@@ -2182,6 +2200,7 @@ export interface components {
             sessionId: string;
         };
         ReviewRun: {
+            autoInjectReview: boolean;
             batchId: string;
             body: string;
             /** Format: date-time */
@@ -2230,6 +2249,7 @@ export interface components {
             turnId?: string;
         };
         SendSessionMessageRequest: {
+            attachment?: components["schemas"]["AttachmentInput"];
             message: string;
         };
         SendSessionMessageResponse: {
@@ -2304,11 +2324,13 @@ export interface components {
             state: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
         };
         SessionPRReviewCommentLink: {
+            autoInjectReview: boolean;
             file?: string;
             line?: number;
             url?: string;
         };
         SessionPRReviewEntry: {
+            autoInjectReview: boolean;
             body?: string;
             isBot?: boolean;
             reviewUrl?: string;
@@ -2439,6 +2461,15 @@ export interface components {
             ok: boolean;
             reviewSessionId: string;
         };
+        SetSessionAutoInjectReviewRequest: {
+            autoInjectReview: boolean;
+        };
+        SetSessionAutoInjectReviewResponse: {
+            autoInjectReview: boolean;
+            ok: boolean;
+            session: components["schemas"]["ControllersSessionView"];
+            sessionId: string;
+        };
         SetSessionMergePolicyRequest: {
             terminateOnPrMerge: boolean;
         };
@@ -2483,7 +2514,7 @@ export interface components {
             orchestrator: components["schemas"]["OrchestratorResponse"];
         };
         SpawnSessionRequest: {
-            attachments?: components["schemas"]["ControllersSpawnAttachmentInput"][];
+            attachments?: components["schemas"]["AttachmentInput"][];
             branch?: string;
             displayName?: string;
             /** @enum {string} */
@@ -2502,7 +2533,7 @@ export interface components {
             systemPromptBytes: number;
         };
         StageSessionAttachmentsRequest: {
-            attachments: components["schemas"]["ControllersSpawnAttachmentInput"][];
+            attachments: components["schemas"]["AttachmentInput"][];
         };
         StageSessionAttachmentsResponse: {
             paths: string[];
@@ -4862,6 +4893,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setSessionAutoInjectReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetSessionAutoInjectReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetSessionAutoInjectReviewResponse"];
                 };
             };
             /** @description Not Found */

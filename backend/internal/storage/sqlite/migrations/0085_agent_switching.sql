@@ -16,7 +16,7 @@ ALTER TABLE sessions ADD COLUMN native_transcript_path TEXT NOT NULL DEFAULT '';
 -- +goose StatementEnd
 
 -- Agent ownership changes are session read-model invalidations just like
--- activity and lifecycle changes. Preserve the 0078 payload and guards while
+-- activity and lifecycle changes. Preserve the 0084 payload and guards while
 -- adding the ownership facts introduced/used by agent switching.
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS sessions_cdc_update;
@@ -36,6 +36,7 @@ WHEN OLD.activity_state <> NEW.activity_state
     OR (OLD.pinned_at IS NULL AND NEW.pinned_at IS NOT NULL)
     OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
     OR OLD.session_mode <> NEW.session_mode
+    OR OLD.auto_inject_review <> NEW.auto_inject_review
     OR OLD.harness <> NEW.harness
     OR OLD.runtime_launch_id <> NEW.runtime_launch_id
     OR OLD.agent_session_id <> NEW.agent_session_id
@@ -51,7 +52,8 @@ BEGIN
             'previewUrl', NEW.preview_url,
             'previewRevision', NEW.preview_revision,
             'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END),
-            'mode', NEW.session_mode
+            'mode', NEW.session_mode,
+            'autoInjectReview', json(CASE WHEN NEW.auto_inject_review THEN 'true' ELSE 'false' END)
         ),
         NEW.updated_at);
 END;
@@ -292,6 +294,7 @@ WHEN OLD.activity_state <> NEW.activity_state
     OR (OLD.pinned_at IS NULL AND NEW.pinned_at IS NOT NULL)
     OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
     OR OLD.session_mode <> NEW.session_mode
+    OR OLD.auto_inject_review <> NEW.auto_inject_review
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     VALUES (NEW.project_id, NEW.id, 'session_updated',
@@ -303,7 +306,8 @@ BEGIN
             'previewUrl', NEW.preview_url,
             'previewRevision', NEW.preview_revision,
             'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END),
-            'mode', NEW.session_mode
+            'mode', NEW.session_mode,
+            'autoInjectReview', json(CASE WHEN NEW.auto_inject_review THEN 'true' ELSE 'false' END)
         ),
         NEW.updated_at);
 END;
