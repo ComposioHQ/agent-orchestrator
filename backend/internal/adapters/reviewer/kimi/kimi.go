@@ -18,7 +18,7 @@ import (
 const skillsDirectoryName = "kimi-reviewer-skills"
 
 // HostTrustWarning describes the authority retained by Kimi's interactive
-// terminal. Explore mode limits Kimi to read-only tools by default, but AO deliberately
+// terminal. Plan mode limits Kimi to read-only tools, but AO deliberately
 // does not replace the TUI with print/headless mode or place it in a sandbox.
 const HostTrustWarning = "experimental host-trusted reviewer: Kimi has no OS isolation; terminal users can invoke shell mode, change Plan mode, open an external editor, or alter configuration"
 
@@ -61,7 +61,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	// Preflight builds the permanent interactive command before request-scoped
 	// prompt paths exist.
 	if strings.TrimSpace(inv.TaskPromptRoot) == "" {
-		return ports.ReviewCommandSpec{Argv: []string{binary, "--explore"}}, nil
+		return ports.ReviewCommandSpec{Argv: []string{binary, "--plan"}}, nil
 	}
 	if strings.TrimSpace(inv.SystemPromptFile) == "" {
 		return ports.ReviewCommandSpec{}, errors.New("kimi reviewer: system prompt file is required")
@@ -76,7 +76,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 		strings.TrimSpace(inv.Prompt),
 	)
 	return ports.ReviewCommandSpec{
-		Argv:           []string{binary, "--explore", "--skills-dir", skillsDir},
+		Argv:           []string{binary, "--plan", "--skills-dir", skillsDir},
 		InitialMessage: message,
 	}, nil
 }
