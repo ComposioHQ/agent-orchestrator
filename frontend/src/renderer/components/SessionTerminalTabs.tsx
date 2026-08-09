@@ -1,4 +1,5 @@
 import { Plus, Terminal, X } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { isMacPlatform } from "../lib/platform";
@@ -28,6 +29,7 @@ type SessionTerminalTabsProps = {
 	onCloseProjectSession?: (session: WorkspaceSession) => void;
 	onSelectProjectSession?: (session: WorkspaceSession) => void;
 	projectSessions: WorkspaceSession[];
+	renderSessionAction?: (session: WorkspaceSession) => ReactNode;
 };
 
 export function SessionTerminalTabs({
@@ -36,12 +38,14 @@ export function SessionTerminalTabs({
 	onCloseProjectSession,
 	onSelectProjectSession,
 	projectSessions,
+	renderSessionAction,
 }: SessionTerminalTabsProps) {
 	const ownerSessionId = projectSessions[0]?.id;
 
 	return projectSessions.map((session) => (
 		<SessionTerminalTab
 			key={session.id}
+			action={renderSessionAction?.(session)}
 			isActive={isSessionSurfaceActive && session.id === activeSessionId}
 			isCloseable={session.id !== ownerSessionId}
 			onClose={onCloseProjectSession ? () => onCloseProjectSession(session) : undefined}
@@ -52,12 +56,14 @@ export function SessionTerminalTabs({
 }
 
 function SessionTerminalTab({
+	action,
 	isActive,
 	isCloseable,
 	onClose,
 	onSelect,
 	session,
 }: {
+	action?: ReactNode;
 	isActive: boolean;
 	isCloseable: boolean;
 	onClose?: () => void;
@@ -94,6 +100,7 @@ function SessionTerminalTab({
 				<AgentAvatar className="size-terminal-agent-icon" decorative provider={session.provider} />
 				<span className="truncate">{label}</span>
 			</button>
+			{action}
 			{isCloseable && onClose ? (
 				<button
 					aria-label={t("terminal.closeSessionTab", { label })}

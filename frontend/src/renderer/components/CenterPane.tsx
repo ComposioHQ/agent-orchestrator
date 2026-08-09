@@ -25,7 +25,6 @@ import { AgentAvatar } from "./AgentAvatar";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 import { SessionTerminalBar } from "./SessionTerminalBar";
-import { SessionTopbarPortal } from "./SessionTopbarPortal";
 import { SessionTerminalPicker, SessionTerminalTabs } from "./SessionTerminalTabs";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { Button } from "./ui/button";
@@ -299,6 +298,11 @@ export function CenterPane({
 									onCloseProjectSession={onCloseProjectSession}
 									onSelectProjectSession={onSelectProjectSession ?? (() => onSelectSessionTerminal?.())}
 									projectSessions={visibleProjectSessions}
+									renderSessionAction={(candidate) =>
+										candidate.id === session.id ? (
+											<TerminalSwitchAgentButton key={candidate.id} session={candidate} />
+										) : null
+									}
 								/>
 							) : (
 								<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
