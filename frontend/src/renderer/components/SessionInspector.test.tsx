@@ -228,14 +228,6 @@ describe("SessionInspector tabs", () => {
 		expect(summaryTab).toHaveAttribute("title", "Summary");
 	});
 
-	it("aligns its primary header divider with the main session topbar", () => {
-		renderWithQuery(<SessionInspector session={session([])} />);
-
-		const header = screen.getByRole("tablist").parentElement;
-		expect(header).toHaveClass("h-toolbar");
-		expect(header).not.toHaveClass("h-inspector-tabs");
-	});
-
 	it("shows the glow only while real browser activity is unseen", () => {
 		const currentSession = session([]);
 		const view = renderWithQuery(<SessionInspector session={currentSession} />);

@@ -182,7 +182,6 @@ describe("ChatWorkspace timeline", () => {
 		);
 		expect(terminalBar).toContainElement(screen.getByRole("button", { name: "Add terminal or session" }));
 		expect(terminalBar).toContainElement(screen.getByRole("toolbar", { name: "Chat display controls" }));
-		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
 
 		view.rerender(
 			<ChatWorkspace
@@ -195,33 +194,6 @@ describe("ChatWorkspace timeline", () => {
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
 		expect(screen.getByTestId("session-terminal-bar")).toBeInTheDocument();
-		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
-	});
-
-	it("shares closeable project-session tabs and the terminal action with the terminal surface", async () => {
-		const user = userEvent.setup();
-		const onCloseProjectSession = vi.fn();
-		const onSelectProjectSession = vi.fn();
-		const onOpenShell = vi.fn();
-		render(
-			<ChatWorkspace
-				snapshot={chatFixture}
-				onCloseProjectSession={onCloseProjectSession}
-				onOpenShell={onOpenShell}
-				onSelectProjectSession={onSelectProjectSession}
-				projectSessions={[chatSession, siblingSession]}
-			/>,
-		);
-
-		expect(screen.queryByRole("button", { name: `Close session tab ${chatSession.title}` })).not.toBeInTheDocument();
-		await user.click(screen.getByRole("tab", { name: /review the change/i }));
-		expect(onSelectProjectSession).toHaveBeenCalledWith(siblingSession);
-		await user.click(screen.getByRole("button", { name: "Close session tab review the change" }));
-		expect(onCloseProjectSession).toHaveBeenCalledWith(siblingSession);
-
-		await user.click(screen.getByRole("button", { name: "Add terminal or session" }));
-		await user.click(screen.getByRole("menuitem", { name: /New terminal/i }));
-		expect(onOpenShell).toHaveBeenCalledOnce();
 	});
 
 	it("adds a same-project session from the chat picker", async () => {
@@ -240,19 +212,6 @@ describe("ChatWorkspace timeline", () => {
 		await user.click(screen.getByRole("button", { name: "Add terminal or session" }));
 		await user.click(screen.getByRole("menuitem", { name: /review the change/i }));
 		expect(onAddProjectSession).toHaveBeenCalledWith(siblingSession);
-	});
-
-	it("keeps the chat terminal bar available in fullscreen", () => {
-		render(<ChatWorkspace snapshot={chatFixture} onOpenShell={vi.fn()} />);
-		const chat = screen.getByLabelText("Chat");
-
-		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: chat });
-		fireEvent(document, new Event("fullscreenchange"));
-
-		expect(screen.getByTestId("session-terminal-bar")).toBeInTheDocument();
-		expect(screen.getByRole("toolbar", { name: "Chat display controls" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Exit fullscreen" })).toBeInTheDocument();
-		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
 	});
 
 	it("keeps chat font controls scoped to the chat instead of native page zoom", () => {

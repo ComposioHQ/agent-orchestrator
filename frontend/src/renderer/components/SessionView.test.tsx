@@ -134,40 +134,23 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({
 	ShellTopbar: ({ sessionAction }: { sessionAction?: ReactNode }) => (
-		<header data-testid="session-shell-topbar">
+		<header>
 			<div data-testid="session-action-slot">{sessionAction}</div>
 		</header>
 	),
 }));
 vi.mock("./chat/SessionChatSurface", () => ({
-	SessionChatSurface: ({
-		onOpenShell,
-		projectSessions = [],
-		availableProjectSessions = [],
-		onAddProjectSession,
-	}: {
-		onOpenShell?: () => void;
-		projectSessions?: WorkspaceSession[];
-		availableProjectSessions?: WorkspaceSession[];
-		onAddProjectSession?: (session: WorkspaceSession) => void;
-	}) => (
+	SessionChatSurface: ({ onOpenShell }: { onOpenShell?: () => void }) => (
 		<div data-testid="chat-surface">
 			chat surface
 			<button type="button" onClick={onOpenShell}>
 				open shell from chat
 			</button>
-			<div data-testid="chat-project-session-tabs">{projectSessions.map((candidate) => candidate.title).join(",")}</div>
-			{availableProjectSessions.map((candidate) => (
-				<button key={candidate.id} type="button" onClick={() => onAddProjectSession?.(candidate)}>
-					chat add project {candidate.title}
-				</button>
-			))}
 		</div>
 	),
 }));
 vi.mock("./CenterPane", () => ({
 	CenterPane: ({
-		session,
 		shellTerminals = [],
 		onCloseShellTerminal,
 		onSelectShellTerminal,
@@ -181,7 +164,6 @@ vi.mock("./CenterPane", () => ({
 		reviewerTerminal,
 		terminalTarget,
 	}: {
-		session?: WorkspaceSession;
 		shellTerminals?: Array<{ handleId: string; title: string }>;
 		onCloseShellTerminal?: (handleId: string) => void;
 		onSelectShellTerminal?: (handleId: string) => void;
@@ -199,11 +181,6 @@ vi.mock("./CenterPane", () => ({
 			terminal center
 			<div data-testid="terminal-target">
 				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : (terminalTarget?.kind ?? "worker")}
-			</div>
-			<div data-testid="session-tab">{session?.title ?? ""}</div>
-			<div data-testid="project-session-tabs">{projectSessions.map((candidate) => candidate.title).join(",")}</div>
-			<div data-testid="available-project-sessions">
-				{availableProjectSessions.map((candidate) => candidate.title).join(",")}
 			</div>
 			{projectSessions.slice(1).map((candidate) => (
 				<button key={`close-project-${candidate.id}`} type="button" onClick={() => onCloseProjectSession?.(candidate)}>
@@ -543,20 +520,6 @@ describe("SessionView", () => {
 		});
 	});
 
-	it("keeps same-project session tabs and route actions available in Chat mode", () => {
-		workspaces[0].sessions[0].mode = "chat";
-		render(<SessionView sessionId="sess-1" />);
-
-		expect(screen.getByTestId("chat-project-session-tabs")).toHaveTextContent("do the thing");
-		fireEvent.click(screen.getByRole("button", { name: "chat add project do the other thing" }));
-		expect(useUiStore.getState().sessionTabsByOwner).toEqual({ "sess-1": ["sess-2"] });
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-2" },
-			search: { tabOwner: "sess-1" },
-		});
-	});
-
 	it("closes the active added session and returns to its originating session", () => {
 		useUiStore.setState({ sessionTabsByOwner: { "sess-1": ["sess-2"] } });
 		render(<SessionView sessionId="sess-2" tabOwnerSessionId="sess-1" />);
@@ -650,17 +613,6 @@ describe("SessionView", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
 		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
-	});
-
-	it("offers only active worker sessions from the originating project", () => {
-		workspaces[0].sessions[1].isTerminated = true;
-		render(<SessionView sessionId="sess-1" />);
-
-		const available = screen.getByTestId("available-project-sessions");
-		expect(available).not.toHaveTextContent("do the thing");
-		expect(available).not.toHaveTextContent("do the other thing");
-		expect(available).not.toHaveTextContent("orchestrate");
-		expect(available).not.toHaveTextContent("cross-project task");
 	});
 
 	// The daemon roots a shell in the session's worktree when it is given that

@@ -800,6 +800,7 @@
 	"termination.confirmAria": "是，终止会话",
 	"termination.dialog": "终止会话？",
 	"termination.dialogNamed": "终止 {{title}}？",
+	"terminal.addTerminalOrSession": "添加终端或会话",
 	"terminal.agent": "代理",
 	"terminal.backToAgent": "返回代理终端",
 	"terminal.clear": "清空",

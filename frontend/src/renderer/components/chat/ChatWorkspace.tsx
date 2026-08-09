@@ -643,7 +643,7 @@ function ChatHeader({
 			];
 	return (
 		<SessionTerminalBar fullscreen={isFullscreen}>
-				<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
+				<div className="session-topbar-surface flex min-w-0 flex-1">
 					<div
 						className="flex min-w-0 shrink items-center pr-1.5"
 						data-testid="session-terminal-region"

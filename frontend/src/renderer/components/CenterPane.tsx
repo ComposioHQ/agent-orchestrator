@@ -260,7 +260,7 @@ export function CenterPane({
 
 	const terminalTopbar = (
 		<SessionTerminalBar fullscreen={isFullscreen}>
-			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
+			<div className="session-topbar-surface flex min-w-0 flex-1">
 				<div
 					className={cn(
 						"flex min-w-0 shrink items-center pr-1.5",

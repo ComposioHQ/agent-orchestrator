@@ -824,6 +824,7 @@
 	"termination.confirmAria": "Sim, encerrar sessão",
 	"termination.dialog": "Encerrar sessão?",
 	"termination.dialogNamed": "Encerrar {{title}}?",
+	"terminal.addTerminalOrSession": "Adicionar terminal ou sessão",
 	"terminal.agent": "agente",
 	"terminal.backToAgent": "Voltar ao terminal do agente",
 	"terminal.clear": "Limpar",

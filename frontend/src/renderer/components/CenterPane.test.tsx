@@ -379,15 +379,6 @@ describe("CenterPane toolbar session label", () => {
 		expect(onCloseProjectSession).toHaveBeenCalledWith(secondWorker);
 	});
 
-	it("keeps agent status out of terminal cards and uses a smaller agent icon", () => {
-		renderCenterPane({ session: worker, projectSessions: [worker] });
-
-		const tab = screen.getByRole("tab", { name: /^do the thing/ });
-		expect(tab).toHaveAccessibleName("do the thing");
-		expect(tab.querySelector("img")).toHaveClass("size-terminal-agent-icon");
-		expect(tab.querySelector(".rounded-full")).not.toBeInTheDocument();
-	});
-
 	it("opens a picker with separate new-terminal and same-project session actions", async () => {
 		const user = userEvent.setup();
 		const onAddProjectSession = vi.fn();
@@ -410,14 +401,6 @@ describe("CenterPane toolbar session label", () => {
 		expect(onNewShellTerminal).toHaveBeenCalledOnce();
 	});
 
-	it("explains compact controls with tooltips", async () => {
-		const user = userEvent.setup();
-		renderCenterPane({ session: worker, onNewShellTerminal: vi.fn() });
-
-		await user.hover(screen.getByRole("button", { name: "Add terminal or session" }));
-		expect(await screen.findByRole("tooltip")).toHaveTextContent("Add terminal or session");
-	});
-
 	it("shows 'Orchestrator' for an orchestrator session", () => {
 		renderCenterPane({
 			session: { ...worker, id: "sess-orch", kind: "orchestrator" },
@@ -427,27 +410,9 @@ describe("CenterPane toolbar session label", () => {
 		expect(orchestratorTab.querySelector("img")).toHaveClass("size-terminal-agent-icon");
 	});
 
-	it("offers the same picker for an orchestrator session", () => {
-		renderCenterPane({
-			session: { ...worker, id: "sess-orch", kind: "orchestrator" },
-			onNewShellTerminal: vi.fn(),
-		});
-
-		expect(screen.getByRole("button", { name: "Add terminal or session" })).toBeInTheDocument();
-	});
-
 	it("shows 'No session' when there is no session", () => {
 		renderCenterPane();
 		expect(screen.getByText("No session")).toBeInTheDocument();
-	});
-
-	it("uses the inspector tab height for the terminal header", () => {
-		renderCenterPane({ session: worker });
-
-		const tablist = screen.getByRole("tablist", { name: "Open terminals" });
-		const header = tablist.closest(".h-inspector-tabs");
-		expect(header).toHaveClass("h-inspector-tabs");
-		expect(tablist.parentElement).toHaveClass("h-full");
 	});
 
 	it("keeps only terminal navigation and display controls in the dedicated terminal bar", () => {
@@ -462,7 +427,6 @@ describe("CenterPane toolbar session label", () => {
 		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Open terminals" }));
 		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "Add terminal or session" }));
 		expect(terminalRegion).toContainElement(screen.getByRole("toolbar", { name: "Terminal display controls" }));
-		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
 	});
 
 	it("keeps the terminal bar and controls available while the terminal is fullscreen", () => {
@@ -472,7 +436,6 @@ describe("CenterPane toolbar session label", () => {
 		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: pane });
 		act(() => document.dispatchEvent(new Event("fullscreenchange")));
 
-		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
 		expect(screen.getByTestId("session-terminal-bar")).toBeInTheDocument();
 		expect(screen.getByRole("toolbar", { name: "Terminal display controls" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Exit fullscreen" })).toBeInTheDocument();

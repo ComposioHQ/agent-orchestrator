@@ -127,6 +127,7 @@ export function SessionTerminalPicker({
 	const openSessionIds = new Set(openProjectSessionIds);
 	const sessionsToAdd = availableProjectSessions.filter((session) => !openSessionIds.has(session.id));
 	const disabled = (!onNewTerminal || newTerminalDisabled) && sessionsToAdd.length === 0;
+	const pickerLabel = t("terminal.addTerminalOrSession");
 	return (
 		<DropdownMenu modal={false}>
 			<TooltipProvider>
@@ -134,7 +135,7 @@ export function SessionTerminalPicker({
 					<TooltipTrigger asChild>
 						<DropdownMenuTrigger asChild>
 							<Button
-								aria-label="Add terminal or session"
+								aria-label={pickerLabel}
 								className="shrink-0 text-muted-foreground"
 								disabled={disabled}
 								size="icon-sm"
@@ -145,7 +146,7 @@ export function SessionTerminalPicker({
 							</Button>
 						</DropdownMenuTrigger>
 					</TooltipTrigger>
-					<TooltipContent>Add terminal or session</TooltipContent>
+					<TooltipContent>{pickerLabel}</TooltipContent>
 				</Tooltip>
 			</TooltipProvider>
 			<DropdownMenuContent align="start" className="w-64">
