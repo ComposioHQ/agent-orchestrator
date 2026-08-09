@@ -133,9 +133,11 @@ function notificationQueryResult(
 		isFetchNextPageError: boolean;
 		isFetchingNextPage: boolean;
 		isLoading: boolean;
+		unreadCount: number;
 	}> = {},
 ) {
-	const hasNextPage = overrides.hasNextPage ?? false;
+	const { unreadCount = unreadNotifications.length, ...queryOverrides } = overrides;
+	const hasNextPage = queryOverrides.hasNextPage ?? false;
 	const notifications = status === "unread" ? unreadNotifications : status === "all" ? allNotifications : [];
 	return {
 		data: {
@@ -144,7 +146,7 @@ function notificationQueryResult(
 				{
 					notifications,
 					nextCursor: hasNextPage ? "older" : undefined,
-					unreadCount: unreadNotifications.length,
+					unreadCount,
 					unresolvedCount: 2,
 				},
 			],
@@ -155,7 +157,7 @@ function notificationQueryResult(
 		isFetchNextPageError: false,
 		isFetchingNextPage: false,
 		isLoading: false,
-		...overrides,
+		...queryOverrides,
 	};
 }
 
@@ -249,15 +251,37 @@ describe("NotificationCenter", () => {
 	it("opens once on click without a hover/focus remount and dismisses outside", async () => {
 		renderNotificationCenter();
 		const trigger = screen.getByRole("button", { name: /unread notifications/ });
+		expect(trigger.querySelector("svg")).toHaveClass("size-icon-lg");
+		expect(screen.getByText("2")).toHaveClass(
+			"right-px",
+			"top-px",
+			"h-3",
+			"min-w-3",
+			"text-[7px]",
+			"bg-accent",
+			"text-accent-foreground",
+		);
 		fireEvent.mouseEnter(trigger);
 		fireEvent.focus(trigger);
 		expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
 
 		await clickOpen();
 
+		expect(screen.getByRole("dialog", { name: "Notifications" })).toHaveClass("notification-popover");
 		expect(screen.queryByText(/last 7 days/i)).not.toBeInTheDocument();
 		fireEvent.pointerDown(document.body);
 		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument());
+	});
+
+	it("keeps a three-digit unread count inside the compact badge", () => {
+		notificationQueryMock.mockImplementation((status: NotificationListStatus) =>
+			notificationQueryResult(status, { unreadCount: 101 }),
+		);
+		renderNotificationCenter();
+
+		const badge = screen.getByText("99+");
+		expect(badge).toHaveClass("right-px", "top-px", "h-3", "min-w-3", "text-[7px]");
+		expect(badge).not.toHaveClass("-right-0.5", "-top-0.5", "min-w-4", "text-[9px]");
 	});
 
 	it("supports tab navigation inside the panel and restores focus to the bell", async () => {

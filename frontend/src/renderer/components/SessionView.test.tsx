@@ -277,14 +277,19 @@ vi.mock("./SessionInspector", () => ({
 		filesView,
 		onOpenFiles,
 		onToggleBrowserPopOut,
+		onToggleVisibility,
 		view,
 	}: {
 		filesView?: ReactNode;
 		onOpenFiles?: () => void;
 		onToggleBrowserPopOut?: () => void;
+		onToggleVisibility?: () => void;
 		view?: string;
 	}) => (
 		<div>
+			<button type="button" onClick={onToggleVisibility}>
+				close inspector
+			</button>
 			<button type="button" data-view={view} onClick={onToggleBrowserPopOut}>
 				pop browser
 			</button>
@@ -318,8 +323,21 @@ vi.mock("../hooks/useShellTerminals", () => ({
 // fake imperative handle per panel instead.
 vi.mock("./ui/resizable", () => ({
 	ResizablePanelGroup: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
-	ResizableHandle: ({ elementRef }: { elementRef?: Ref<HTMLDivElement | null> }) => (
+	ResizableHandle: ({
+		"aria-hidden": ariaHidden,
+		className,
+		disabled,
+		elementRef,
+	}: {
+		"aria-hidden"?: boolean;
+		className?: string;
+		disabled?: boolean;
+		elementRef?: Ref<HTMLDivElement | null>;
+	}) => (
 		<div
+			aria-hidden={ariaHidden}
+			className={className}
+			data-disabled={disabled ? "true" : undefined}
 			data-separator="inactive"
 			data-testid="resize-handle"
 			ref={(el) => {
@@ -784,24 +802,21 @@ describe("SessionView", () => {
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
 	// (numbers were percentages in the older API the shadcn examples use).
 	// defaultSize={28}/maxSize={45} clamped the inspector rail to a 45px sliver.
-	// Every size must be an explicit percentage string.
-	it("sizes the terminal/inspector split in percentages, not pixels", () => {
+	// Every size must carry an explicit unit. The fixed 360px inspector width is
+	// the first width where every destination can show both icon and label.
+	it("gives the terminal and inspector constraints explicit, bounded units", () => {
 		render(<SessionView sessionId="sess-1" />);
 
-		for (const panelId of ["terminal", "inspector"]) {
-			const sizes = panelSizes(panelId);
-			expect(sizes.length).toBeGreaterThan(0);
-			for (const size of sizes) {
-				expect(size, `${panelId} size ${String(size)} must be a percentage string`).toMatch(/^\d+(\.\d+)?%$/);
-			}
-		}
+		expect(panelSizes("terminal")).toEqual(["72%", "50%"]);
+		expect(panelSizes("inspector")).toEqual(["360px", "360px", "50%"]);
+		expect(screen.getByTestId("panel-inspector")).toHaveClass("session-inspector-panel");
 	});
 
 	it("opens the Summary inspector alongside the terminal by default", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(panelSizes("inspector")[0]).toBe("30%");
+		expect(panelSizes("inspector")[0]).toBe("360px");
 		// Open panels are non-collapsible so a drag clamps at minSize instead of
 		// snapping the rail away; only the closed panel is collapsible.
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("data-collapsible");
@@ -823,7 +838,7 @@ describe("SessionView", () => {
 	it("mounts the inspector open by default", () => {
 		render(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toMatch(/^[1-9]\d*(\.\d+)?%$/);
+		expect(panelSizes("inspector")[0]).toBe("360px");
 		const pane = screen.getByTestId("panel-inspector");
 		expect(pane).not.toHaveAttribute("inert");
 		expect(pane).toHaveAttribute("aria-hidden", "false");
@@ -838,6 +853,10 @@ describe("SessionView", () => {
 		const pane = screen.getByTestId("panel-inspector");
 		expect(pane).toHaveAttribute("inert");
 		expect(pane).toHaveAttribute("aria-hidden", "true");
+		const separator = screen.getByTestId("resize-handle");
+		expect(separator).toHaveAttribute("data-disabled", "true");
+		expect(separator).toHaveAttribute("aria-hidden", "true");
+		expect(separator).toHaveClass("w-0", "pointer-events-none", "after:hidden");
 		// Collapsed panels stay collapsible so the 0% size is a valid rrp state
 		// (and the separator can drag the rail back open).
 		expect(pane).toHaveAttribute("data-collapsible", "true");
@@ -880,7 +899,7 @@ describe("SessionView", () => {
 		// Opening resizes to the persisted split rather than expand(): the open
 		// panel re-registers as non-collapsible, and rrp's expand() no-ops on a
 		// non-collapsible panel.
-		expect(handle.resize).toHaveBeenCalledWith("30%");
+		expect(handle.resize).toHaveBeenCalledWith("360px");
 		expect(handle.collapse).not.toHaveBeenCalled();
 	});
 
@@ -895,11 +914,22 @@ describe("SessionView", () => {
 
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(handle.resize).toHaveBeenCalledWith("30%");
+		expect(handle.resize).toHaveBeenCalledWith("360px");
 
 		// Plain ⌘B belongs to the sidebar — the inspector must not react.
 		fireEvent.keyDown(window, { key: "b", metaKey: true });
 		expect(inspectorOpen("sess-1")).toBe(true);
+	});
+
+	it("wires the inspector header close control to the session panel state", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+		const handle = panels.get("inspector")!.handle;
+
+		fireEvent.click(screen.getByRole("button", { name: "close inspector" }));
+
+		expect(inspectorOpen("sess-1")).toBe(false);
+		expect(handle.collapse).toHaveBeenCalledTimes(1);
 	});
 
 	it("persists drag resizes and never closes the store from a drag", () => {
@@ -912,14 +942,14 @@ describe("SessionView", () => {
 		// Dragging persists the width.
 		act(() => entry.onResize?.({ asPercentage: 31.5, inPixels: 400 }));
 		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(window.localStorage.getItem("ao.inspector.split")).toBe("31.5");
+		expect(window.localStorage.getItem("ao.inspector.widthPx")).toBe("400");
 
 		// A drag can never auto-collapse the rail: even if a 0-size frame arrives
 		// mid-drag, the store stays open — collapse belongs to the explicit
 		// controls (topbar button / ⌘⇧B) only.
 		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
 		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(window.localStorage.getItem("ao.inspector.split")).toBe("31.5");
+		expect(window.localStorage.getItem("ao.inspector.widthPx")).toBe("400");
 	});
 
 	it("reopens the store when a drag pulls the collapsed rail back open", () => {
@@ -931,7 +961,7 @@ describe("SessionView", () => {
 		act(() => entry.onResize?.({ asPercentage: 25, inPixels: 320 }));
 
 		expect(useUiStore.getState().inspectorSessions["sess-1"]).toMatchObject({ isOpen: true });
-		expect(window.localStorage.getItem("ao.inspector.split")).toBe("25");
+		expect(window.localStorage.getItem("ao.inspector.widthPx")).toBe("320");
 	});
 
 	// Regression: rrp v4 reports observed DOM sizes, so the flex-grow
@@ -953,14 +983,28 @@ describe("SessionView", () => {
 		act(() => useUiStore.getState().toggleInspector("sess-1"));
 		act(() => entry.onResize?.({ asPercentage: 12.4, inPixels: 160 }));
 		expect(inspectorOpen("sess-1")).toBe(false);
-		expect(window.localStorage.getItem("ao.inspector.split")).toBeNull();
+		expect(window.localStorage.getItem("ao.inspector.widthPx")).toBeNull();
 	});
 
-	it("restores the persisted split width", () => {
+	it("restores the persisted inspector width in pixels", () => {
+		window.localStorage.setItem("ao.inspector.widthPx", "400");
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+		expect(panelSizes("inspector")[0]).toBe("400px");
+	});
+
+	it("clamps a persisted inspector width to the expanded minimum", () => {
+		window.localStorage.setItem("ao.inspector.widthPx", "240");
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+		expect(panelSizes("inspector")[0]).toBe("360px");
+	});
+
+	it("ignores the legacy percentage width and uses the uniform default", () => {
 		window.localStorage.setItem("ao.inspector.split", "40");
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		expect(panelSizes("inspector")[0]).toBe("40%");
+		expect(panelSizes("inspector")[0]).toBe("360px");
 	});
 
 	// Regression: rrp only derives a panel's constraints one commit after it
@@ -978,7 +1022,9 @@ describe("SessionView", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		rerender(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toMatch(/^[1-9]\d*(\.\d+)?%$/);
+		expect(panelSizes("inspector")[0]).toBe("360px");
+		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("aria-hidden", "false");
+		expect(document.querySelector(".session-inspector-motion")).toHaveAttribute("data-motion-state", "open");
 		const handle = panels.get("inspector")!.handle;
 		expect(handle.expand).not.toHaveBeenCalled();
 		expect(handle.collapse).not.toHaveBeenCalled();
@@ -1002,7 +1048,7 @@ describe("SessionView", () => {
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 
 		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(handle.resize).toHaveBeenCalledWith("30%");
+		expect(handle.resize).toHaveBeenCalledWith("360px");
 	});
 
 	it("renders no inspector panel or handle for orchestrator sessions", () => {
@@ -1131,7 +1177,7 @@ describe("SessionView", () => {
 		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
 		expect(browserUnseen("sess-1")).toBe(false);
 		expect(browserViewOptions.current).toMatchObject({ active: true });
-		expect(handle.resize).toHaveBeenCalledWith("30%");
+		expect(handle.resize).toHaveBeenCalledWith("360px");
 	});
 
 	it("auto-opens first content, then glows for later preview work after the user leaves Browser", () => {
@@ -1141,7 +1187,7 @@ describe("SessionView", () => {
 
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toBe("30%");
+		expect(panelSizes("inspector")[0]).toBe("360px");
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 

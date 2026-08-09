@@ -304,18 +304,14 @@ describe("ShellTopbar orchestrator actions", () => {
 });
 
 describe("ShellTopbar inspector state", () => {
-	it("treats missing worker inspector state as open", async () => {
+	it("leaves closing to the inspector header while the worker rail is open", () => {
 		renderTopbarSessions([worker], "sess-1");
 
-		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
-		expect(toggle).toHaveAttribute("aria-pressed", "true");
-
-		await userEvent.click(toggle);
-
-		expect(useUiStore.getState().inspectorSessions["sess-1"]).toEqual({ isOpen: false, view: "summary" });
+		expect(screen.queryByRole("button", { name: "Close inspector panel" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open inspector panel" })).not.toBeInTheDocument();
 	});
 
-	it("routes aria-pressed to the current worker session", () => {
+	it("shows the reopen control only for the current collapsed worker", () => {
 		useUiStore.setState({
 			inspectorSessions: {
 				"sess-1": { isOpen: true, view: "summary" },
@@ -324,7 +320,8 @@ describe("ShellTopbar inspector state", () => {
 		});
 		const view = renderTopbarSessions([worker, secondWorker], "sess-1");
 
-		expect(screen.getByRole("button", { name: "Close inspector panel" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.queryByRole("button", { name: "Close inspector panel" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open inspector panel" })).not.toBeInTheDocument();
 
 		paramsMock.sessionId = "sess-2";
 		view.rerenderTopbar();

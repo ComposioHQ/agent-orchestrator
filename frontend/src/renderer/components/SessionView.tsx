@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
@@ -39,19 +39,24 @@ import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/te
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 
-const INSPECTOR_MIN_PERCENT = 30;
-const INSPECTOR_MAX_PERCENT = 45;
-const inspectorSplitStorageKey = "ao.inspector.split";
+const INSPECTOR_DEFAULT_PX = 360;
+const INSPECTOR_DEFAULT_SIZE = `${INSPECTOR_DEFAULT_PX}px`;
+const INSPECTOR_MIN_PX = 360;
+const INSPECTOR_MIN_SIZE = `${INSPECTOR_MIN_PX}px`;
+const INSPECTOR_MAX_PERCENT = 50;
+const INSPECTOR_COLLAPSED_SIZE = "0%";
+const INSPECTOR_MOTION_MS = 240;
+const inspectorWidthStorageKey = "ao.inspector.widthPx";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewerTerminalTarget = { handleId: string; harness: string };
 
-function initialSplitPercent(): number {
-	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
+function initialInspectorSize(): string {
+	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorWidthStorageKey);
 	const parsed = raw === null ? Number.NaN : Number(raw);
-	if (!Number.isFinite(parsed)) return INSPECTOR_MIN_PERCENT;
-	return Math.min(INSPECTOR_MAX_PERCENT, Math.max(INSPECTOR_MIN_PERCENT, parsed));
+	if (!Number.isFinite(parsed)) return INSPECTOR_DEFAULT_SIZE;
+	return `${Math.max(INSPECTOR_MIN_PX, Math.round(parsed))}px`;
 }
 
 function previewRevealKey(previewUrl?: string, previewRevision?: number): string {
@@ -92,9 +97,9 @@ type SessionViewProps = {
 // The panel is `collapsible` only while closed: rrp snaps a collapsible panel
 // to 0% when a drag crosses minSize, so an always-collapsible inspector let a
 // drag vanish the rail. While open the panel is non-collapsible and a drag
-// hard-stops at INSPECTOR_MIN_PERCENT; only the explicit controls collapse it.
+// hard-stops at INSPECTOR_MIN_SIZE; only the explicit controls collapse it.
 // Content keeps a stable min-width inside the clipped panel so nothing reflows
-// mid-animation; split width persists.
+// mid-animation; the persisted pixel width is clamped by the panel constraints.
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
 	const workspaceQuery = useWorkspaceQuery();
@@ -111,6 +116,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
+	const [inspectorMotionState, setInspectorMotionState] = useState<"closed" | "closing" | "open" | "opening">(
+		isInspectorOpen ? "open" : "closed",
+	);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPopOutState, setBrowserPopOutState] = useState({ sessionId, poppedOut: false });
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
@@ -532,9 +540,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	if (!hasInspector) {
 		inspectorDefaultSizeRef.current = null;
 	} else if (inspectorDefaultSizeRef.current === null) {
-		inspectorDefaultSizeRef.current = isInspectorOpen ? `${initialSplitPercent()}%` : "0%";
+		inspectorDefaultSizeRef.current = isInspectorOpen ? initialInspectorSize() : INSPECTOR_COLLAPSED_SIZE;
 	}
-	const inspectorDefaultSize = inspectorDefaultSizeRef.current ?? "0%";
+	const inspectorDefaultSize = inspectorDefaultSizeRef.current ?? INSPECTOR_COLLAPSED_SIZE;
 
 	useEffect(() => {
 		if (!hasInspector) return;
@@ -547,26 +555,32 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [hasInspector, sessionId, toggleInspector]);
 
-	// Drive the collapsible panel from the store so the topbar button, ⌘⇧B, and
-	// drag-to-reopen all stay in sync. When the inspector panel mounts into
+	// Drive the collapsible panel from the store so the inspector controls and
+	// ⌘⇧B stay in sync. When the inspector panel mounts into
 	// the already-live group (orchestrator/loading → worker), rrp only derives
 	// the new panel's constraints in the next commit. This effect intentionally
 	// runs before the readiness effect below, so mount and StrictMode's effect
 	// replay remain imperative-free; later store changes can safely drive the
 	// registered panel.
 	const inspectorImperativeReadyRef = useRef(false);
+	useLayoutEffect(() => {
+		if (!hasInspector) {
+			setInspectorMotionState("closed");
+			return;
+		}
+		if (!inspectorImperativeReadyRef.current) {
+			setInspectorMotionState(isInspectorOpen ? "open" : "closed");
+		}
+	}, [hasInspector, isInspectorOpen]);
 	useEffect(() => {
 		if (!hasInspector || !inspectorImperativeReadyRef.current) return;
 		const panel = inspectorRef.current;
 		if (!panel) return;
 		if (isInspectorOpen) {
-			// resize(), not expand(): by the time this effect runs the panel has
-			// re-registered as non-collapsible (open panels refuse drag-collapse),
-			// and rrp's expand() no-ops on a non-collapsible panel. resize() also
-			// restores the persisted split regardless of what "most recent size"
-			// rrp remembers, which is 0 when the panel mounted collapsed.
-			panel.resize(`${initialSplitPercent()}%`);
-			return;
+			setInspectorMotionState("opening");
+			panel.resize(initialInspectorSize());
+			const frame = window.requestAnimationFrame(() => setInspectorMotionState("open"));
+			return () => window.cancelAnimationFrame(frame);
 		}
 		// Closing flips `collapsible` back on in this same commit, but rrp only
 		// re-derives the group's constraints in the follow-up commit its
@@ -574,9 +588,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		// open panel's non-collapsible constraints and no-ops. Repeat it on the
 		// next frame, when the fresh constraints have landed; collapse() is
 		// idempotent, so the double call is safe wherever the derivation lands.
+		setInspectorMotionState("closing");
 		panel.collapse();
 		const frame = window.requestAnimationFrame(() => panel.collapse());
-		return () => window.cancelAnimationFrame(frame);
+		const timer = window.setTimeout(() => setInspectorMotionState("closed"), INSPECTOR_MOTION_MS);
+		return () => {
+			window.clearTimeout(timer);
+			window.cancelAnimationFrame(frame);
+		};
 	}, [hasInspector, isInspectorOpen]);
 	useEffect(() => {
 		if (!hasInspector || !inspectorRef.current) {
@@ -589,8 +608,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		};
 	}, [hasInspector]);
 
-	// Persist drags and mirror a drag-reopen (dragging the separator of a
-	// collapsed inspector past the snap point) back into the store. Dragging an
+	// Persist drags while the inspector is open. Dragging an
 	// open inspector can never collapse it — the panel is non-collapsible while
 	// open, so rrp clamps the drag at minSize instead of snapping to 0%.
 	// Read the store imperatively to avoid a stale closure.
@@ -611,13 +629,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const handleInspectorResize = useCallback(
 		(size: PanelSize) => {
 			if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
-			if (size.asPercentage <= 0) return;
-			window.localStorage?.setItem(inspectorSplitStorageKey, String(size.asPercentage));
+			if (size.inPixels <= 0) return;
+			window.localStorage?.setItem(inspectorWidthStorageKey, String(Math.round(size.inPixels)));
 			const currentOpen = useUiStore.getState().inspectorSessions[sessionId]?.isOpen ?? true;
 			if (!currentOpen) toggleInspector(sessionId);
 		},
 		[sessionId, toggleInspector],
 	);
+	const inspectorPanelVisible = inspectorMotionState !== "closed";
 
 	if (!session && !workspaceQuery.isLoading) {
 		return (
@@ -629,12 +648,22 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
-			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
+			<ResizablePanelGroup
+				className="session-split min-h-0 flex-1"
+				id="session-workspace"
+				orientation="horizontal"
+				style={{ "--session-inspector-max-width": `${INSPECTOR_MAX_PERCENT}%` } as CSSProperties}
+			>
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				{/* RRP's inner panel defaults to overflow:auto. Nothing scrolls at pane level,
 				    so clip the chat rail's active marker instead of creating a horizontal scrollbar. */}
-				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%" style={{ overflow: "hidden" }}>
+				<ResizablePanel
+					defaultSize="72%"
+					id="terminal"
+					minSize={`${100 - INSPECTOR_MAX_PERCENT}%`}
+					style={{ overflow: "hidden" }}
+				>
 					<div className="relative h-full min-h-0">
 						{/* The committed mode owns the agent surface. Auxiliary shell and
 						    reviewer targets remain terminal surfaces in either mode. */}
@@ -680,24 +709,33 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				{hasInspector ? (
 					<>
 						<ResizableHandle
-							className="w-1.75 cursor-col-resize touch-none bg-transparent after:w-px after:bg-border-strong hover:after:bg-border focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:after:bg-border data-[separator=active]:after:bg-border"
+							aria-hidden={!inspectorPanelVisible}
+							className={cn(
+								"w-1.75 cursor-col-resize touch-none bg-transparent transition-[width] duration-200 ease-out after:w-px after:bg-border-strong hover:after:bg-border focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:after:bg-border data-[separator=active]:after:bg-border",
+								!inspectorPanelVisible && "pointer-events-none w-0 after:hidden",
+							)}
+							disabled={!isInspectorOpen}
 							elementRef={inspectorSeparatorRef}
 						/>
 						<ResizablePanel
-							aria-hidden={!isInspectorOpen}
+							aria-hidden={!inspectorPanelVisible}
+							className="session-inspector-panel"
 							collapsible={!isInspectorOpen}
 							defaultSize={inspectorDefaultSize}
 							id="inspector"
 							inert={!isInspectorOpen}
 							maxSize={`${INSPECTOR_MAX_PERCENT}%`}
-							minSize={`${INSPECTOR_MIN_PERCENT}%`}
+							minSize={INSPECTOR_MIN_SIZE}
 							onResize={handleInspectorResize}
 							panelRef={inspectorRef}
 							style={{ overflow: "hidden" }}
 						>
-							{/* Stable content width while the panel animates (yyork pattern):
+							{/* Stable content width while the panel animates:
                   the pane clips instead of reflowing the inspector mid-collapse. */}
-							<div className="h-full min-w-inspector-min">
+							<div
+								className="session-inspector-motion h-full min-w-inspector-min"
+								data-motion-state={inspectorMotionState}
+							>
 								<SessionInspector
 									browserAnnotationQueue={browserAnnotationQueue}
 									browserPoppedOut={browserPoppedOut}
@@ -706,10 +744,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 											<SessionFilesView onToggleMaximized={handleToggleFilesPopOut} sessionId={session.id} />
 										) : null
 									}
-									isInspectorVisible={isInspectorOpen}
+									isInspectorVisible={inspectorPanelVisible}
 									onOpenFiles={handleOpenFiles}
 									onOpenReviewerTerminal={selectReviewerTerminal}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
+									onToggleVisibility={() => toggleInspector(sessionId)}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}
 									browserView={browserView}
