@@ -428,6 +428,9 @@ func (fakeAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) (
 func (fakeAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionInfo, bool, error) {
 	return ports.SessionInfo{}, false, nil
 }
+func (fakeAgent) Transcript(context.Context, ports.SessionRef) ([]ports.TranscriptMessage, bool, error) {
+	return nil, false, nil
+}
 
 type launchArgvAgent struct {
 	fakeAgent

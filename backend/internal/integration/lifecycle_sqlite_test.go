@@ -78,6 +78,9 @@ func (stubAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) (
 func (stubAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionInfo, bool, error) {
 	return ports.SessionInfo{}, false, nil
 }
+func (stubAgent) Transcript(context.Context, ports.SessionRef) ([]ports.TranscriptMessage, bool, error) {
+	return nil, false, nil
+}
 
 // stubAgents resolves every harness to the same stubAgent.
 type stubAgents struct{}

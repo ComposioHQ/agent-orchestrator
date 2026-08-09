@@ -236,6 +236,12 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	info, ok := agentbase.StandardSessionInfo(session)
 	return info, ok, nil
 }
+// Transcript reads the agent's native transcript and returns a normalized
+// list of user/assistant turns. This stub returns no transcript; adapters with
+// native transcript storage override it to read from their own session files.
+func (p *Plugin) Transcript(_ context.Context, _ ports.SessionRef) ([]ports.TranscriptMessage, bool, error) {
+	return nil, false, nil
+}
 
 // ResolveGrokBinary finds the `grok` binary (xAI Grok Build CLI).
 func ResolveGrokBinary(ctx context.Context) (string, error) {

@@ -38,6 +38,9 @@ func (a *captureAgent) GetRestoreCommand(context.Context, ports.RestoreConfig) (
 func (a *captureAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionInfo, bool, error) {
 	return ports.SessionInfo{}, false, nil
 }
+func (a *captureAgent) Transcript(_ context.Context, _ ports.SessionRef) ([]ports.TranscriptMessage, bool, error) {
+	return nil, false, nil
+}
 
 func TestReviewCommandPreservesAgentAndAppliesReadOnlyPolicy(t *testing.T) {
 	agent := &captureAgent{argv: []string{
