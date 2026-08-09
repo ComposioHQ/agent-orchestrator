@@ -132,7 +132,7 @@ func TestAgentOperationAndInputLeaseAreScopedPerSession(t *testing.T) {
 	m.endAgentOperation("worker-2", agentOperationRestore)
 }
 
-func TestWaitAgentSwitchWorkersClosesWorkerRegistrationBeforeWaiting(t *testing.T) {
+func TestWaitAgentSwitchWorkersClosesAttemptRegistrationBeforeWaiting(t *testing.T) {
 	m := newInputLeaseTestManager()
 	m.agentSwitchWorkers.Add(1)
 	waitCtx, cancelWait := context.WithCancel(context.Background())

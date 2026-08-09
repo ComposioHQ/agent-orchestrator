@@ -97,6 +97,18 @@ func (m *Manager) switchStore() (ports.AgentSwitchStore, error) {
 // execution. A successful return means the preparing_handoff row and input
 // fence are durable; completion remains observable through the switch record.
 func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg SwitchAgentConfig) (domain.AgentSwitch, error) {
+	// Register before admission so shutdown cannot pass its dependency barrier
+	// while this call is between durable creation and worker/refusal handling.
+	if err := m.beginAgentSwitchAttempt(); err != nil {
+		return domain.AgentSwitch{}, err
+	}
+	attemptOwned := true
+	defer func() {
+		if attemptOwned {
+			m.agentSwitchWorkers.Done()
+		}
+	}()
+
 	record, admitted, err := m.admitAgentSwitch(ctx, id, cfg)
 	if err != nil {
 		return record, err
@@ -107,6 +119,8 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	if err := m.startAgentSwitchWorker(admitted); err != nil {
 		return record, err
 	}
+	// The worker now owns the slot registered above and calls Done on exit.
+	attemptOwned = false
 	return record, nil
 }
 
@@ -432,7 +446,11 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 
 	// The source is now conclusively gone and the durable saga owns recovery.
 	// Finish target creation and delivery on a bounded daemon-owned context.
-	postStopCtx, cancelPostStop := context.WithTimeout(workerCtx, switchPostStopWait)
+	postStopWait := m.switchPostStopWait
+	if postStopWait <= 0 {
+		postStopWait = switchPostStopWait
+	}
+	postStopCtx, cancelPostStop := context.WithTimeout(workerCtx, postStopWait)
 	defer cancelPostStop()
 	ctx = postStopCtx
 
@@ -688,7 +706,6 @@ func (m *Manager) startAgentSwitchWorker(admitted *admittedAgentSwitch) error {
 		}
 		return errAgentSwitchWorkersClosed
 	}
-	m.agentSwitchWorkers.Add(1)
 	m.agentSwitchWorkerMu.Unlock()
 
 	m.logger.Info("agent switch accepted",
@@ -742,8 +759,18 @@ func (m *Manager) startAgentSwitchWorker(admitted *admittedAgentSwitch) error {
 	return nil
 }
 
-// WaitAgentSwitchWorkers closes worker admission and waits for every accepted
-// agent switch to observe daemon cancellation and settle its durable state.
+func (m *Manager) beginAgentSwitchAttempt() error {
+	m.agentSwitchWorkerMu.Lock()
+	defer m.agentSwitchWorkerMu.Unlock()
+	if m.agentSwitchWorkersClosed {
+		return errAgentSwitchWorkersClosed
+	}
+	m.agentSwitchWorkers.Add(1)
+	return nil
+}
+
+// WaitAgentSwitchWorkers closes attempt admission and waits for every in-flight
+// admission, refused-launch settlement, and accepted worker to finish.
 func (m *Manager) WaitAgentSwitchWorkers(ctx context.Context) error {
 	m.agentSwitchWorkerMu.Lock()
 	m.agentSwitchWorkersClosed = true

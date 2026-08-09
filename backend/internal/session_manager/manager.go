@@ -335,6 +335,9 @@ type Manager struct {
 	// switchTargetStartWait bounds proof that the newly-created supervised
 	// provider generation is actually alive before durable ownership transfers.
 	switchTargetStartWait time.Duration
+	// switchPostStopWait bounds aggregate target setup after source ownership is
+	// conclusively stopped. Tests shorten it to exercise phase-budget isolation.
+	switchPostStopWait time.Duration
 	// switchDeliveryAckWait bounds the target generation's prompt-submit hook.
 	// Timeout is an explicit failed/ambiguous delivery, never implicit success.
 	switchDeliveryAckWait time.Duration
@@ -597,6 +600,7 @@ func New(d Deps) *Manager {
 		handoffWait:                  60 * time.Second,
 		switchPermissionDecisionWait: 2 * time.Minute,
 		switchTargetStartWait:        3 * time.Second,
+		switchPostStopWait:           switchPostStopWait,
 		// Provider startup, including slow MCP initialization, can delay the
 		// prompt-submit hook even though the continuation is correctly buffered.
 		// Keep the acknowledgement wait below the CLI's seven-minute switch timeout

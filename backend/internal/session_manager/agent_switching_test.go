@@ -37,6 +37,8 @@ type switchTestStore struct {
 	requestHandoffNoop            bool
 	failTransitionErr             error
 	getSwitchErrOnceWhenRequested error
+	createSwitchCommitted         chan struct{}
+	createSwitchRelease           chan struct{}
 }
 
 type switchDeliveryDeadlineStore struct {
@@ -45,6 +47,18 @@ type switchDeliveryDeadlineStore struct {
 
 func (switchDeliveryDeadlineStore) GetAgentSwitch(context.Context, domain.AgentSwitchID) (domain.AgentSwitch, bool, error) {
 	return domain.AgentSwitch{}, false, context.DeadlineExceeded
+}
+
+type switchContextAwareDeliveryStore struct {
+	ports.AgentSwitchStore
+}
+
+func (s switchContextAwareDeliveryStore) GetAgentSwitch(ctx context.Context, id domain.AgentSwitchID) (domain.AgentSwitch, bool, error) {
+	record, found, err := s.AgentSwitchStore.GetAgentSwitch(ctx, id)
+	if err == nil && found && record.State == domain.AgentSwitchDelivering && ctx.Err() != nil {
+		return domain.AgentSwitch{}, false, ctx.Err()
+	}
+	return record, found, err
 }
 
 func newSwitchTestStore() *switchTestStore {
@@ -108,6 +122,15 @@ func (s *switchTestStore) CreateAgentSwitch(_ context.Context, rec domain.AgentS
 		}
 	}
 	s.switches[rec.ID] = rec
+	if s.createSwitchCommitted != nil {
+		select {
+		case s.createSwitchCommitted <- struct{}{}:
+		default:
+		}
+	}
+	if s.createSwitchRelease != nil {
+		<-s.createSwitchRelease
+	}
 	if s.createSwitchAfterCommitErr != nil {
 		return domain.AgentSwitch{}, false, s.createSwitchAfterCommitErr
 	}
@@ -366,6 +389,8 @@ type switchTestAgent struct {
 	preflightStarted    chan struct{}
 	preflightRelease    chan struct{}
 	preflightCalls      int
+	hooksWaitForContext bool
+	hooksContextExpired chan struct{}
 }
 
 type switchReleaseLCM struct {
@@ -435,8 +460,14 @@ func (a *switchTestAgent) NativeSessionConfigDir(context.Context, map[string]str
 	return a.configDir, nil
 }
 
-func (a *switchTestAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error {
+func (a *switchTestAgent) GetAgentHooks(ctx context.Context, _ ports.WorkspaceHookConfig) error {
 	a.hookCalls++
+	if a.hooksWaitForContext {
+		<-ctx.Done()
+		if a.hooksContextExpired != nil {
+			close(a.hooksContextExpired)
+		}
+	}
 	if a.onHooks != nil {
 		a.onHooks()
 	}
@@ -614,18 +645,68 @@ func waitForSwitchWorkers(t *testing.T, manager *Manager) {
 	}
 }
 
+type switchAgentCallResult struct {
+	record domain.AgentSwitch
+	err    error
+}
+
+func callSwitchAgent(manager *Manager, ctx context.Context, id domain.SessionID, cfg SwitchAgentConfig) <-chan switchAgentCallResult {
+	result := make(chan switchAgentCallResult, 1)
+	go func() {
+		defer close(result)
+		record, err := manager.SwitchAgent(ctx, id, cfg)
+		result <- switchAgentCallResult{record: record, err: err}
+	}()
+	return result
+}
+
+func awaitSwitchAgentCall(t *testing.T, result <-chan switchAgentCallResult) switchAgentCallResult {
+	t.Helper()
+	select {
+	case got := <-result:
+		return got
+	case <-time.After(time.Second):
+		t.Fatal("SwitchAgent did not return after durable admission")
+		return switchAgentCallResult{}
+	}
+}
+
+func blockTargetPreflight(t *testing.T, target *switchTestAgent) func() {
+	t.Helper()
+	target.preflightStarted = make(chan struct{}, 1)
+	target.preflightRelease = make(chan struct{})
+	var releaseOnce sync.Once
+	return func() { releaseOnce.Do(func() { close(target.preflightRelease) }) }
+}
+
+func cleanupBlockedSwitchCall(t *testing.T, manager *Manager, release func(), result <-chan switchAgentCallResult) {
+	t.Helper()
+	t.Cleanup(func() {
+		release()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = manager.WaitAgentSwitchWorkers(ctx)
+		select {
+		case <-result:
+		case <-time.After(time.Second):
+		}
+	})
+}
+
 func TestSwitchAgentReturnsAfterDurableAdmission(t *testing.T) {
 	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
-	target.preflightStarted = make(chan struct{}, 1)
-	target.preflightRelease = make(chan struct{})
+	releasePreflight := blockTargetPreflight(t, target)
 
-	sw, err := manager.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{
+	call := callSwitchAgent(manager, context.Background(), "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "async-admission",
 	})
-	if err != nil {
-		t.Fatal(err)
+	cleanupBlockedSwitchCall(t, manager, releasePreflight, call)
+	got := awaitSwitchAgentCall(t, call)
+	if got.err != nil {
+		t.Fatal(got.err)
 	}
+	sw := got.record
 	if sw.State != domain.AgentSwitchPreparingHandoff {
 		t.Fatalf("admitted switch state = %q, want preparing_handoff", sw.State)
 	}
@@ -638,26 +719,29 @@ func TestSwitchAgentReturnsAfterDurableAdmission(t *testing.T) {
 	}
 
 	awaitSwitchTestSignal(t, target.preflightStarted, "target preflight")
-	close(target.preflightRelease)
+	releasePreflight()
 	waitForSwitchWorkers(t, manager)
 }
 
 func TestSwitchAgentRequestCancellationDoesNotCancelWorker(t *testing.T) {
 	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
-	target.preflightStarted = make(chan struct{}, 1)
-	target.preflightRelease = make(chan struct{})
+	releasePreflight := blockTargetPreflight(t, target)
 	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	defer cancelRequest()
 
-	sw, err := manager.SwitchAgent(requestCtx, "proj-1", SwitchAgentConfig{
+	call := callSwitchAgent(manager, requestCtx, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "request-cancelled-after-admission",
 	})
-	if err != nil {
-		t.Fatal(err)
+	cleanupBlockedSwitchCall(t, manager, releasePreflight, call)
+	got := awaitSwitchAgentCall(t, call)
+	if got.err != nil {
+		t.Fatal(got.err)
 	}
+	sw := got.record
 	cancelRequest()
 	awaitSwitchTestSignal(t, target.preflightStarted, "target preflight")
-	close(target.preflightRelease)
+	releasePreflight()
 	waitForSwitchWorkers(t, manager)
 
 	completed, found, err := store.GetAgentSwitch(context.Background(), sw.ID)
@@ -672,43 +756,49 @@ func TestSwitchAgentRequestCancellationDoesNotCancelWorker(t *testing.T) {
 func TestSwitchAgentIdempotentReplayStartsOneWorker(t *testing.T) {
 	manager, _, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
-	target.preflightStarted = make(chan struct{}, 1)
-	target.preflightRelease = make(chan struct{})
+	releasePreflight := blockTargetPreflight(t, target)
 	cfg := SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "same-async-request"}
 
-	first, err := manager.SwitchAgent(context.Background(), "proj-1", cfg)
-	if err != nil {
-		t.Fatal(err)
+	firstCall := callSwitchAgent(manager, context.Background(), "proj-1", cfg)
+	cleanupBlockedSwitchCall(t, manager, releasePreflight, firstCall)
+	firstResult := awaitSwitchAgentCall(t, firstCall)
+	if firstResult.err != nil {
+		t.Fatal(firstResult.err)
 	}
+	first := firstResult.record
 	awaitSwitchTestSignal(t, target.preflightStarted, "target preflight")
-	replay, err := manager.SwitchAgent(context.Background(), "proj-1", cfg)
-	if err != nil {
-		t.Fatal(err)
+	replayResult := awaitSwitchAgentCall(t, callSwitchAgent(manager, context.Background(), "proj-1", cfg))
+	if replayResult.err != nil {
+		t.Fatal(replayResult.err)
 	}
+	replay := replayResult.record
 	if replay.ID != first.ID {
 		t.Fatalf("idempotent replay id = %q, want %q", replay.ID, first.ID)
 	}
 	if calls := target.preflightCallCount(); calls != 1 {
 		t.Fatalf("target preflight calls = %d, want 1", calls)
 	}
-	close(target.preflightRelease)
+	releasePreflight()
 	waitForSwitchWorkers(t, manager)
 }
 
 func TestWaitAgentSwitchWorkersObservesDaemonCancellation(t *testing.T) {
 	daemonCtx, cancelDaemon := context.WithCancel(context.Background())
+	defer cancelDaemon()
 	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
 	manager.backgroundContext = daemonCtx
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
-	target.preflightStarted = make(chan struct{}, 1)
-	target.preflightRelease = make(chan struct{})
+	releasePreflight := blockTargetPreflight(t, target)
 
-	sw, err := manager.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{
+	call := callSwitchAgent(manager, context.Background(), "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "daemon-cancellation",
 	})
-	if err != nil {
-		t.Fatal(err)
+	cleanupBlockedSwitchCall(t, manager, releasePreflight, call)
+	got := awaitSwitchAgentCall(t, call)
+	if got.err != nil {
+		t.Fatal(got.err)
 	}
+	sw := got.record
 	awaitSwitchTestSignal(t, target.preflightStarted, "target preflight")
 	cancelDaemon()
 	waitForSwitchWorkers(t, manager)
@@ -736,17 +826,41 @@ func TestSwitchAgentWorkerLaunchRefusalSettlesOrRetainsPreStopGate(t *testing.T)
 		t.Run(tt.name, func(t *testing.T) {
 			manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
 			store.failTransitionErr = tt.settleErr
-			if err := manager.WaitAgentSwitchWorkers(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			store.createSwitchCommitted = make(chan struct{}, 1)
+			store.createSwitchRelease = make(chan struct{})
+			var releaseOnce sync.Once
+			releaseAdmission := func() { releaseOnce.Do(func() { close(store.createSwitchRelease) }) }
+			t.Cleanup(releaseAdmission)
 
-			sw, err := manager.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{
+			call := callSwitchAgent(manager, context.Background(), "proj-1", SwitchAgentConfig{
 				TargetHarness: domain.HarnessCodex, IdempotencyKey: "worker-launch-refused",
 			})
-			if !errors.Is(err, errAgentSwitchWorkersClosed) {
-				t.Fatalf("SwitchAgent error = %v, want worker-registration closure", err)
+			awaitSwitchTestSignal(t, store.createSwitchCommitted, "durable switch admission")
+
+			waitCtx, cancelWait := context.WithTimeout(context.Background(), time.Second)
+			defer cancelWait()
+			waitDone := make(chan error, 1)
+			go func() { waitDone <- manager.WaitAgentSwitchWorkers(waitCtx) }()
+			eventuallySessionInput(t, time.Second, func() bool {
+				manager.agentSwitchWorkerMu.Lock()
+				defer manager.agentSwitchWorkerMu.Unlock()
+				return manager.agentSwitchWorkersClosed
+			})
+			select {
+			case err := <-waitDone:
+				t.Fatalf("shutdown barrier returned before admission settled: %v", err)
+			default:
 			}
-			settled, found, reloadErr := store.GetAgentSwitch(context.Background(), sw.ID)
+
+			releaseAdmission()
+			got := awaitSwitchAgentCall(t, call)
+			if !errors.Is(got.err, errAgentSwitchWorkersClosed) {
+				t.Fatalf("SwitchAgent error = %v, want worker-registration closure", got.err)
+			}
+			if err := <-waitDone; err != nil {
+				t.Fatalf("WaitAgentSwitchWorkers: %v", err)
+			}
+			settled, found, reloadErr := store.GetAgentSwitch(context.Background(), got.record.ID)
 			if reloadErr != nil || !found {
 				t.Fatalf("reload refused switch = (%+v, %v, %v)", settled, found, reloadErr)
 			}
@@ -2083,6 +2197,59 @@ func TestWaitForTargetAcknowledgementObservesDaemonCancellation(t *testing.T) {
 	_, err := manager.waitForTargetAcknowledgement(parent, store, sw)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("waitForTargetAcknowledgement error = %v, want context.Canceled", err)
+	}
+}
+
+func TestWaitForTargetAcknowledgementOwnsIndependentDeliveryWindow(t *testing.T) {
+	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
+	manager.switchPostStopWait = time.Millisecond
+	manager.switchDeliveryAckWait = 500 * time.Millisecond
+	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
+	target.hooksWaitForContext = true
+	target.hooksContextExpired = make(chan struct{})
+
+	workerCtx, cancelWorker := context.WithCancel(context.Background())
+	defer cancelWorker()
+	record, admitted, err := manager.admitAgentSwitch(workerCtx, "proj-1", SwitchAgentConfig{
+		TargetHarness: domain.HarnessCodex, IdempotencyKey: "independent-delivery-window",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admitted == nil {
+		t.Fatal("new switch admission returned no execution carrier")
+	}
+	admitted.store = switchContextAwareDeliveryStore{AgentSwitchStore: admitted.store}
+
+	type executionResult struct {
+		record domain.AgentSwitch
+		err    error
+	}
+	done := make(chan executionResult, 1)
+	go func() {
+		result, executeErr := manager.executeAgentSwitch(workerCtx, admitted)
+		done <- executionResult{record: result, err: executeErr}
+	}()
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatalf("executeAgentSwitch after post-stop expiry: %v", result.err)
+		}
+		if result.record.State != domain.AgentSwitchCompleted {
+			t.Fatalf("switch state = %q, want completed", result.record.State)
+		}
+	case <-time.After(time.Second):
+		cancelWorker()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+		t.Fatal("executeAgentSwitch did not preserve the independent delivery window")
+	}
+	select {
+	case <-target.hooksContextExpired:
+	default:
+		t.Fatalf("post-stop child context did not expire for switch %q", record.ID)
 	}
 }
 
