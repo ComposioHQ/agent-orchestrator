@@ -134,9 +134,13 @@ func (p *Provider) CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, he
 		previous.PageETags = make([]string, pageCount)
 		previous.PageETags[0] = resp.ETag
 	} else {
+		// total_count is present in every page representation, so page growth or
+		// shrinkage changes each stored page's ETag; all 304s imply a stable count.
 		pageCount = min(len(previous.PageETags), githubCheckRunsMaxPages)
 	}
 
+	// A missing page ETag is retained as an empty validator: that page is fetched
+	// unconditionally and keeps the guard changed, favoring freshness over 304 savings.
 	pageETags := make([]string, 0, pageCount)
 	changed := !composite
 	for page := 1; page <= pageCount; page++ {
