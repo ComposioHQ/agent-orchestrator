@@ -27,6 +27,7 @@ func (s *Service) withIssueContext(ctx context.Context, cfg ports.SpawnConfig, p
 	}
 	issue, err := s.tracker.Get(ctx, id)
 	if err != nil {
+		//nolint:nilerr // tracker fetch failure falls back to spawn with no issue context (TestSpawnIssueContextFetchFailureFallsBack)
 		return cfg, nil
 	}
 	if issue.State.IsTerminal() {
