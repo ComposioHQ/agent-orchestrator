@@ -98,6 +98,13 @@ describe("ShellTerminalTab rename", () => {
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveAttribute("aria-selected", "true");
 	});
 
+	it("keeps Pin and Close visible at rest for a connected terminal card", () => {
+		renderTab({ appearance: "connected", isActive: false, isPinned: false, onPinnedChange: vi.fn() });
+
+		expect(screen.getByRole("button", { name: "Pin tab" })).toHaveClass("opacity-100");
+		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass("opacity-100");
+	});
+
 	it("uses a compact fixed width and shrinks its title around the sibling close affordance", () => {
 		renderTab({ appearance: "connected", isActive: false });
 

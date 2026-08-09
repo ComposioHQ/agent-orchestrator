@@ -12,7 +12,6 @@ import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
 import { agentLabel } from "../lib/agent-options";
-import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
 import { aoBridge } from "../lib/bridge";
 import { handleTerminalTabListKeyDown } from "../lib/terminal-tabs";
 import {
@@ -23,7 +22,7 @@ import {
 	type TerminalTabKey,
 } from "../lib/terminal-tab-state";
 import { cn } from "../lib/utils";
-import { useUiStore, type Theme } from "../stores/ui-store";
+import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
@@ -65,8 +64,6 @@ type CenterPaneProps = {
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
 const WHEEL_ZOOM_THRESHOLD = 80;
 const WHEEL_ZOOM_RESET_MS = 250;
-const isMac = isMacPlatform();
-const isLinux = isLinuxPlatform();
 function clampTerminalFontSize(size: number): number {
 	return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, size));
 }
@@ -108,7 +105,6 @@ export function CenterPane({
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [terminalBounds, setTerminalBounds] = useState({ leftInset: 0, rightInset: 0, width: 0 });
-	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
 	const tabOverflowWatch = `${session?.id ?? ""}|${shellTerminals.map((terminal) => terminal.handleId).join("|")}`;
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
 	const agentSwitchesQuery = useAgentSwitches(session?.id ?? "");
@@ -275,11 +271,7 @@ export function CenterPane({
 		<SessionTerminalBar fullscreen={isFullscreen}>
 			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
 				<div
-					className={cn(
-						"flex min-w-0 shrink items-center pr-1.5",
-						!isFullscreen && !isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
-						!isFullscreen && !isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
-					)}
+					className="flex min-w-0 shrink items-center pr-1.5"
 					data-testid="session-terminal-region"
 					style={{
 						width: terminalBounds.width > 0 ? terminalBounds.width : "100%",

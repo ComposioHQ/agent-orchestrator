@@ -3,6 +3,7 @@ import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSwitch } from "../hooks/useAgentSwitches";
 import type { SwitchAgentInput } from "../hooks/useSwitchAgent";
+import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession } from "../types/workspace";
 import { CenterPane } from "./CenterPane";
 import { TooltipProvider } from "./ui/tooltip";
@@ -34,6 +35,20 @@ vi.mock("../hooks/useAgentSwitches", async (importOriginal) => {
 
 vi.mock("../hooks/useSwitchAgent", () => ({
 	useSwitchAgentState: () => agentSwitchMocks.mutation,
+}));
+
+vi.mock("./TerminalSwitchAgentButton", () => ({
+	TerminalSwitchAgentButton: ({ session }: { session: WorkspaceSession }) => (
+		<button aria-label="Switch agent" data-testid="terminal-switch-agent" type="button">
+			{session.provider}
+		</button>
+	),
+}));
+
+vi.mock("../lib/platform", () => ({
+	isLinuxPlatform: () => false,
+	isMacPlatform: () => true,
+	isWindowsPlatform: () => false,
 }));
 
 vi.mock("../lib/bridge", () => ({
@@ -102,6 +117,7 @@ beforeEach(() => {
 	agentSwitchMocks.mutation.error = null;
 	agentSwitchMocks.mutation.input = undefined;
 	agentSwitchMocks.mutation.isPending = false;
+	useUiStore.setState({ isSidebarOpen: true });
 });
 
 describe("CenterPane toolbar session label", () => {
@@ -112,6 +128,16 @@ describe("CenterPane toolbar session label", () => {
 			workingDir: "/tmp/ws",
 			createdAt: "2026-07-22T00:00:00Z",
 		}));
+
+	it("keeps the terminal strip flush left when the sidebar is collapsed", () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		renderCenterPane({ session: worker });
+
+		expect(screen.getByTestId("session-terminal-region")).not.toHaveClass(
+			"session-topbar-titlebar-clearance-mac",
+			"session-topbar-titlebar-clearance-linux",
+		);
+	});
 
 	it("shows the session display name for a worker", () => {
 		renderCenterPane({ session: worker });

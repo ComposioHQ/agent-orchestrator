@@ -501,23 +501,6 @@
 	container-type: inline-size;
 }
 
-/* When the sidebar is off-canvas, clear only the fixed navigation cluster.
- * Native macOS fullscreen removes the traffic lights, so the cluster moves to
- * the compact panel inset instead of retaining the windowed 79px reserve. */
-.session-topbar-titlebar-clearance-mac {
-	padding-left: var(--size-titlebar-content-offset);
-}
-
-.native-fullscreen .session-topbar-titlebar-clearance-mac {
-	padding-left: calc(
-		var(--space-2) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
-	);
-}
-
-.session-topbar-titlebar-clearance-linux {
-	padding-left: var(--size-titlebar-content-offset-linux);
-}
-
 .center-panel-shell.center-panel-shell--session {
 	/* No padding override: session pages use the same inset as other pages now
 	 * that SessionTopbarHost lives inside the surface. Class is kept for

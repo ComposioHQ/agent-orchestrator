@@ -174,48 +174,54 @@ export function ShellTerminalTab({
 				</button>
 			)}
 			<span className={cn("inline-flex shrink-0 items-center gap-0.5", appearance === "connected" && "ml-2")}>
-			{onPinnedChange ? (
+				{onPinnedChange ? (
+					<button
+						aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab")}
+						aria-pressed={isPinned}
+						data-terminal-tab-action
+						className={cn(
+							"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm transition-[width,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+							isPinned
+								? "w-control-sm text-foreground opacity-100"
+								: appearance === "connected"
+									? "w-control-sm text-passive opacity-100"
+									: "w-control-sm text-passive opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+						)}
+						onClick={(event) => {
+							event.stopPropagation();
+							onPinnedChange(!isPinned);
+						}}
+						onDoubleClick={(event) => event.stopPropagation()}
+						onContextMenu={(event) => event.stopPropagation()}
+						type="button"
+					>
+						<Pin aria-hidden="true" className="size-icon-sm" />
+					</button>
+				) : null}
 				<button
-					aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab")}
-					aria-pressed={isPinned}
+					aria-label={t("terminal.closeNamed", { title: shell.title })}
 					data-terminal-tab-action
 					className={cn(
-						"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm transition-[width,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-						isPinned ? "w-control-sm text-foreground opacity-100" : "w-control-sm text-passive opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+						"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+						appearance === "connected"
+							? onPinnedChange
+								? "w-control-sm opacity-100"
+								: isActive
+									? "ml-1 w-control-sm opacity-100"
+									: "ml-0 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-sm group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-sm group-focus-within:opacity-100"
+							: "w-control-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
 					)}
 					onClick={(event) => {
 						event.stopPropagation();
-						onPinnedChange(!isPinned);
+						onClose();
 					}}
 					onDoubleClick={(event) => event.stopPropagation()}
 					onContextMenu={(event) => event.stopPropagation()}
+					title={t("terminal.close")}
 					type="button"
 				>
-					<Pin aria-hidden="true" className="size-icon-sm" />
+					<X aria-hidden="true" className="size-icon-sm" />
 				</button>
-			) : null}
-			<button
-				aria-label={t("terminal.closeNamed", { title: shell.title })}
-				data-terminal-tab-action
-				className={cn(
-					"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-					appearance === "connected" && !onPinnedChange
-						? isActive
-							? "ml-1 w-control-sm opacity-100"
-							: "ml-0 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-sm group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-sm group-focus-within:opacity-100"
-						: "w-control-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-				)}
-				onClick={(event) => {
-					event.stopPropagation();
-					onClose();
-				}}
-				onDoubleClick={(event) => event.stopPropagation()}
-				onContextMenu={(event) => event.stopPropagation()}
-				title={t("terminal.close")}
-				type="button"
-			>
-				<X aria-hidden="true" className="size-icon-sm" />
-			</button>
 			</span>
 		</span>
 	);
