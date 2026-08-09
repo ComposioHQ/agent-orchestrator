@@ -212,4 +212,3 @@ unchanged, and that stop failure preserves the worktree.
 Verification runs the focused Prime adapter, model-catalog, Session Manager, and
 hook tests first, followed by backend `go test ./...`, repository lint, and
 frontend typecheck because the model picker consumes the normalized catalog.
-
