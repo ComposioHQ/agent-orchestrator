@@ -226,7 +226,11 @@ describe("CenterPane toolbar session label", () => {
 		expect(sessionTab.parentElement).not.toHaveClass("rounded-md");
 		expect(sessionTab).toHaveAccessibleName("do the thing");
 		expect(sessionTab.querySelector('[title="Working"]')).not.toBeInTheDocument();
-		expect(sessionTab.parentElement?.querySelector('img[aria-hidden="true"]')).toHaveClass("size-icon-xs");
+		expect(sessionTab).toHaveClass("justify-center");
+		expect(sessionTab.parentElement).toHaveClass("justify-center");
+		expect(sessionTab.parentElement?.querySelector('img[aria-hidden="true"]')).toHaveClass(
+			"size-terminal-agent-icon",
+		);
 		expect(screen.queryByRole("tab", { name: "review the change" })).not.toBeInTheDocument();
 	});
 
@@ -380,7 +384,7 @@ describe("CenterPane toolbar session label", () => {
 
 		const tab = screen.getByRole("tab", { name: /^do the thing/ });
 		expect(tab).toHaveAccessibleName("do the thing");
-		expect(tab.querySelector("img")).toHaveClass("size-icon-xs");
+		expect(tab.querySelector("img")).toHaveClass("size-terminal-agent-icon");
 		expect(tab.querySelector(".rounded-full")).not.toBeInTheDocument();
 	});
 
@@ -398,7 +402,7 @@ describe("CenterPane toolbar session label", () => {
 
 		await user.click(screen.getByRole("button", { name: "Add terminal or session" }));
 		const sessionItem = screen.getByRole("menuitem", { name: /review the change/i });
-		expect(sessionItem.querySelector("img")).toHaveClass("size-icon-xs");
+		expect(sessionItem.querySelector("img")).toHaveClass("size-terminal-agent-icon");
 		await user.click(sessionItem);
 		expect(onAddProjectSession).toHaveBeenCalledWith(secondWorker);
 		await user.click(screen.getByRole("button", { name: "Add terminal or session" }));
@@ -420,7 +424,7 @@ describe("CenterPane toolbar session label", () => {
 		});
 		const orchestratorTab = screen.getByRole("tab", { name: "Orchestrator" });
 		expect(orchestratorTab).toBeInTheDocument();
-		expect(orchestratorTab.querySelector("img")).toHaveClass("size-icon-xs");
+		expect(orchestratorTab.querySelector("img")).toHaveClass("size-terminal-agent-icon");
 	});
 
 	it("offers the same picker for an orchestrator session", () => {

@@ -153,6 +153,7 @@
 	/* Icon chrome — size-icon-* utilities */
 	--size-icon-2xs: var(--size-icon-2xs);
 	--size-icon-xs: var(--size-icon-xs);
+	--size-terminal-agent-icon: var(--size-terminal-agent-icon);
 	--size-icon-sm: var(--size-icon-sm);
 	--size-icon-md: var(--size-icon-md);
 	--size-icon-base: var(--size-icon-base);
@@ -533,8 +534,8 @@
 }
 
 .center-panel-shell--mac .center-panel-titlebar {
-	height: var(--size-traffic-light-clearance);
-	min-height: var(--size-traffic-light-clearance);
+	height: var(--size-toolbar);
+	min-height: var(--size-toolbar);
 }
 
 /* Sidebar chrome clearance: size tokens only — set by data-topbar-offset on the

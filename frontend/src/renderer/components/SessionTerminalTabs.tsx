@@ -71,7 +71,7 @@ function SessionTerminalTab({
 		<span
 			data-terminal-role="primary"
 			className={cn(
-				"group relative inline-flex min-w-shell-tab-min self-stretch items-center border-r border-border bg-surface px-3 text-foreground transition-colors",
+				"group relative inline-flex min-w-shell-tab-min self-stretch items-center justify-center border-r border-border bg-surface px-3 text-foreground transition-colors",
 				isActive
 					? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 					: "text-muted-foreground hover:bg-raised hover:text-foreground",
@@ -82,7 +82,7 @@ function SessionTerminalTab({
 				aria-label={label}
 				aria-selected={isActive}
 				className={cn(
-					"inline-flex min-w-flex-min max-w-shell-tab-max flex-1 items-center gap-1.5 text-control font-medium leading-none transition-colors",
+					"inline-flex min-w-flex-min max-w-shell-tab-max flex-1 items-center justify-center gap-1.5 text-control font-medium leading-none transition-colors",
 					isActive ? "text-foreground" : "text-passive group-hover:text-foreground",
 				)}
 				onClick={onSelect}
@@ -91,7 +91,7 @@ function SessionTerminalTab({
 				title={label}
 				type="button"
 			>
-				<AgentAvatar className="size-icon-xs" decorative provider={session.provider} />
+				<AgentAvatar className="size-terminal-agent-icon" decorative provider={session.provider} />
 				<span className="truncate">{label}</span>
 			</button>
 			{isCloseable && onClose ? (
@@ -164,7 +164,7 @@ export function SessionTerminalPicker({
 						<DropdownMenuLabel>{t("command.group.sessions")}</DropdownMenuLabel>
 						{sessionsToAdd.map((session) => (
 							<DropdownMenuItem key={session.id} onSelect={() => onAddProjectSession?.(session)}>
-								<AgentAvatar className="size-icon-xs" decorative provider={session.provider} />
+								<AgentAvatar className="size-terminal-agent-icon" decorative provider={session.provider} />
 								<span className="truncate">{session.title}</span>
 							</DropdownMenuItem>
 						))}
