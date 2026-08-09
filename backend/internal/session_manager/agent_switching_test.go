@@ -39,6 +39,14 @@ type switchTestStore struct {
 	getSwitchErrOnceWhenRequested error
 }
 
+type switchDeliveryDeadlineStore struct {
+	ports.AgentSwitchStore
+}
+
+func (switchDeliveryDeadlineStore) GetAgentSwitch(context.Context, domain.AgentSwitchID) (domain.AgentSwitch, bool, error) {
+	return domain.AgentSwitch{}, false, context.DeadlineExceeded
+}
+
 func newSwitchTestStore() *switchTestStore {
 	return &switchTestStore{fakeStore: newFakeStore(), native: map[domain.AgentNativeSessionID]domain.AgentNativeSession{}, switches: map[domain.AgentSwitchID]domain.AgentSwitch{}}
 }
@@ -1855,6 +1863,67 @@ func TestSwitchAgentPermissionDecisionTimeoutUsesFallback(t *testing.T) {
 		t.Fatal("terminal input remained closed after permission timeout fallback completed")
 	}
 	release()
+}
+
+func TestWaitForTargetAcknowledgementOwnsIndependentDeliveryWindow(t *testing.T) {
+	manager := New(Deps{})
+	manager.switchDeliveryAckWait = 500 * time.Millisecond
+	store := newSwitchTestStore()
+	now := time.Now().UTC()
+	sw := domain.AgentSwitch{
+		ID:                 "switch-independent-delivery-window",
+		SessionID:          "proj-1",
+		State:              domain.AgentSwitchDelivering,
+		TargetGenerationID: "target-generation",
+		RequestedAt:        now,
+		UpdatedAt:          now,
+	}
+	store.switches[sw.ID] = sw
+
+	// Model the aggregate post-stop setup budget expiring after target
+	// activation. Delivery must still own its complete, separately bounded
+	// acknowledgement window.
+	parent, cancelParent := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancelParent()
+	ackResult := make(chan error, 1)
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		acknowledged, err := store.AcknowledgeAgentSwitchTarget(
+			context.Background(), sw.ID, sw.SessionID, sw.TargetGenerationID, time.Now().UTC(),
+		)
+		if err == nil && !acknowledged {
+			err = errors.New("target acknowledgement was rejected")
+		}
+		ackResult <- err
+	}()
+
+	got, err := manager.waitForTargetAcknowledgement(parent, store, sw)
+	if ackErr := <-ackResult; ackErr != nil {
+		t.Fatal(ackErr)
+	}
+	if err != nil {
+		t.Fatalf("waitForTargetAcknowledgement returned before its delivery window: %v", err)
+	}
+	if got.TargetAcknowledgedAt == nil {
+		t.Fatal("target acknowledgement was not observed")
+	}
+}
+
+func TestWaitForTargetAcknowledgementClassifiesInternalDeadlineAsUnconfirmed(t *testing.T) {
+	manager := New(Deps{})
+	manager.switchDeliveryAckWait = 500 * time.Millisecond
+	store := switchDeliveryDeadlineStore{AgentSwitchStore: newSwitchTestStore()}
+	sw := domain.AgentSwitch{
+		ID:                 "switch-delivery-deadline",
+		SessionID:          "proj-1",
+		State:              domain.AgentSwitchDelivering,
+		TargetGenerationID: "target-generation",
+	}
+
+	_, err := manager.waitForTargetAcknowledgement(context.Background(), store, sw)
+	if !errors.Is(err, ErrSwitchDeliveryUnconfirmed) {
+		t.Fatalf("delivery deadline error = %v, want ErrSwitchDeliveryUnconfirmed", err)
+	}
 }
 
 func TestSwitchDeliveryAcknowledgementWindowCoversSlowTargetStartup(t *testing.T) {

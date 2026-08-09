@@ -597,7 +597,10 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	if err != nil {
 		return result, fmt.Errorf("switch agent %s: confirm continuation: %w", id, err)
 	}
-	if err := m.advanceAgentSwitch(ctx, store, &result, domain.AgentSwitchCompleted, nil); err != nil {
+	completionCtx, cancelCompletion := switchDurableContext(ctx)
+	result, err = m.completeAcknowledgedAgentSwitch(completionCtx, store, result)
+	cancelCompletion()
+	if err != nil {
 		return result, fmt.Errorf("switch agent %s: complete: %w", id, err)
 	}
 	return result, nil
@@ -2003,11 +2006,19 @@ func (m *Manager) exactGenerationPreWrite(
 	}
 }
 
-func (m *Manager) waitForTargetAcknowledgement(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch) (domain.AgentSwitch, error) {
+func (m *Manager) waitForTargetAcknowledgement(parent context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch) (domain.AgentSwitch, error) {
 	wait := m.switchDeliveryAckWait
 	if wait <= 0 {
 		wait = switchPollInterval
 	}
+	// Delivery begins only after target ownership is durable and launch hooks
+	// are released. Give that phase its own detached budget: post-stop setup may
+	// have consumed its aggregate deadline, and caller cancellation must not
+	// turn a correctly buffered continuation into a false delivery failure. The
+	// small outer margin bounds store calls without racing the acknowledgement
+	// timer itself.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), wait+switchDurableBoundaryWait)
+	defer cancel()
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	ticker := time.NewTicker(switchPollInterval)
@@ -2015,6 +2026,9 @@ func (m *Manager) waitForTargetAcknowledgement(ctx context.Context, store ports.
 	for {
 		current, err := requireAgentSwitch(ctx, store, sw.ID)
 		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return sw, errors.Join(ErrSwitchDeliveryUnconfirmed, err, ctx.Err())
+			}
 			return sw, err
 		}
 		sw = current
