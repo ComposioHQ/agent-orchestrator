@@ -15,7 +15,10 @@ export type AgentSwitchPresentation = {
 	compactLabelKey: MessageKey;
 	titleKey: MessageKey;
 	descriptionKey: MessageKey;
-	values: Record<string, string>;
+	values: {
+		source: string;
+		target: string;
+	};
 	tone: "working" | "success" | "warning" | "danger";
 	animate: boolean;
 	lockAgentTerminal: boolean;

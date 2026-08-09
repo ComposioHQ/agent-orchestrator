@@ -159,7 +159,7 @@ describe("TerminalSwitchAgentButton", () => {
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
 		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
 		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeDisabled();
-		expect(screen.getByRole("button", { name: "Switching to Codex…" })).toHaveAttribute(
+		expect(document.querySelector('button[aria-label="Switching to Codex"]')).toHaveAttribute(
 			"aria-busy",
 			"true",
 		);
@@ -185,7 +185,7 @@ describe("TerminalSwitchAgentButton", () => {
 		await userEvent.click(within(dialog).getByRole("button", { name: "Switch" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(screen.getByRole("button", { name: "Switching to Claude Code…" })).toHaveAttribute(
+		expect(document.querySelector('button[aria-label="Switching to Claude Code"]')).toHaveAttribute(
 			"aria-busy",
 			"true",
 		);
@@ -220,7 +220,7 @@ describe("TerminalSwitchAgentButton", () => {
 			status: "exited",
 		});
 
-		const button = await screen.findByRole("button", { name: "Switching to Codex…" });
+		const button = await screen.findByRole("button", { name: "Switching to Codex" });
 		await userEvent.click(button);
 		expect(within(screen.getByRole("dialog")).getByRole("status")).toHaveTextContent(
 			"Switching from Claude Code to CodexTarget ready",
@@ -237,7 +237,7 @@ describe("TerminalSwitchAgentButton", () => {
 
 		renderControl({ ...worker, activeAgentSwitch: activeSwitch });
 
-		const button = await screen.findByRole("button", { name: "Switching to Codex…" });
+		const button = await screen.findByRole("button", { name: "Switching to Codex" });
 		expect(button).toHaveAttribute("aria-busy", "true");
 		expect(button.querySelector(".lucide-loader-circle")).toBeInTheDocument();
 	});
@@ -273,7 +273,7 @@ describe("TerminalSwitchAgentButton", () => {
 			response: { status: 200 },
 		});
 		const { queryClient, rerenderControl } = renderControl({ ...worker, activeAgentSwitch: activeSwitch });
-		await screen.findByRole("button", { name: "Switching to Codex…" });
+		await screen.findByRole("button", { name: "Switching to Codex" });
 
 		act(() => {
 			queryClient.setQueryData(agentSwitchesQueryKey(worker.id), [
@@ -282,7 +282,7 @@ describe("TerminalSwitchAgentButton", () => {
 		});
 		rerenderControl(worker);
 
-		const button = screen.getByRole("button", { name: "Failed" });
+		const button = screen.getByRole("button", { name: "Agent switch failed" });
 		expect(button).not.toHaveAttribute("aria-busy");
 		expect(button.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
 	});

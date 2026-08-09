@@ -187,7 +187,7 @@ export type WorkspaceSession = {
 	/** Raw agent lifecycle activity from the daemon. */
 	activity?: SessionActivity;
 	/** Redacted nonterminal switch projection from the daemon's session read model. */
-	activeAgentSwitch?: AgentSwitchSummary;
+	activeAgentSwitch?: AgentSwitchSummary<string>;
 	/**
 	 * Live preview target set by the daemon (via `ao preview`) and streamed over
 	 * CDC. When non-empty, the browser panel opens and navigates here.

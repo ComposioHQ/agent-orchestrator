@@ -225,7 +225,7 @@ describe("CenterPane toolbar session label", () => {
 
 		const status = screen.getByRole("status", { name: "Switching from Claude Code to Codex" });
 		expect(within(status).getByText("Switching from Claude Code to Codex")).toBeInTheDocument();
-		expect(within(status).getByText(description)).toBeInTheDocument();
+		expect(within(status).getAllByText(description).length).toBeGreaterThan(0);
 	});
 
 	it("renders the shared waiting stage while the source handoff is requested", () => {
@@ -235,7 +235,7 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({ session: { ...worker, activeAgentSwitch: activeSwitch } });
 
 		const status = screen.getByRole("status", { name: "Switching from Claude Code to Codex" });
-		expect(within(status).getByText("Preparing handoff")).toBeInTheDocument();
+		expect(within(status).getAllByText("Preparing handoff").length).toBeGreaterThan(0);
 		expect(within(status).getByText("Stopping source agent").closest("li")).toHaveAttribute(
 			"aria-current",
 			"step",

@@ -868,6 +868,11 @@ function SessionCard({
 					: "var(--color-status-merged)"
 		: undefined;
 	const showLiveActivity = switchPresentation?.tone === "working" || (session.status === "working" && activity.state === "active");
+	const activityIndicatorClassName = switchPresentation?.tone === "working"
+		? "bg-status-working animate-status-pulse"
+		: showLiveActivity
+			? activity.indicatorClassName
+			: "bg-current";
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -973,7 +978,7 @@ function SessionCard({
 							aria-hidden="true"
 							className={cn(
 								"size-dot-sm shrink-0 rounded-full",
-								showLiveActivity ? activity.indicatorClassName : "bg-current",
+								activityIndicatorClassName,
 							)}
 						/>
 						{switchLabel ?? badge.label}
