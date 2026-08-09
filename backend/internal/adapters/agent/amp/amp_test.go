@@ -267,7 +267,12 @@ func TestGetAgentHooksInstallsSystemPromptPlugin(t *testing.T) {
 	for _, want := range []string{
 		ampPluginSentinel,
 		strconv.Quote(promptFile),
+		"session.start",
 		"agent.start",
+		"agent.end",
+		"thread.state.subscribe",
+		`"hooks", "amp", hookName`,
+		`"thread-state"`,
 		"display: false",
 		"readFile(systemPromptFile",
 	} {
@@ -385,18 +390,18 @@ func TestGetAgentHooksUsesInlineSystemPromptWithoutFile(t *testing.T) {
 	}
 }
 
-func TestSessionInfoNoOp(t *testing.T) {
+func TestSessionInfoReadsHookMetadata(t *testing.T) {
 	info, ok, err := (&Plugin{}).SessionInfo(context.Background(), ports.SessionRef{
 		Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "T-abc123"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok {
-		t.Fatalf("ok=true with info %#v, want no-op false", info)
+	if !ok {
+		t.Fatal("ok=false, want hook-derived session info")
 	}
-	if !reflect.DeepEqual(info, ports.SessionInfo{}) {
-		t.Fatalf("info = %#v, want zero", info)
+	if info.AgentSessionID != "T-abc123" {
+		t.Fatalf("AgentSessionID = %q, want T-abc123", info.AgentSessionID)
 	}
 }
 
