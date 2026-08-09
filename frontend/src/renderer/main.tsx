@@ -1,4 +1,3 @@
-import { scan } from "react-scan";
 import "./lib/apply-initial-theme";
 import React from "react";
 import { createRoot } from "react-dom/client";
@@ -19,7 +18,6 @@ import { useLocaleStore } from "./stores/locale-store";
 import { installRenderProfileBridge } from "./lib/render-profiler";
 
 if (import.meta.env.DEV) {
-	scan({ enabled: true });
 	installRenderProfileBridge(window);
 }
 
