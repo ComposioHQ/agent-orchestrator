@@ -806,6 +806,8 @@
 	"terminal.close": "关闭终端",
 	"terminal.closeNamed": "关闭终端 {{title}}",
 	"terminal.closeSessionTab": "关闭会话标签页 {{label}}",
+	"terminal.pinTab": "固定标签页",
+	"terminal.unpinTab": "取消固定标签页",
 	"terminal.connectionFailed": "连接失败",
 	"terminal.decreaseFontSize": "减小终端字体大小",
 	"terminal.controlsAria": "终端显示控件",

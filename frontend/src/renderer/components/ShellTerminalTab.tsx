@@ -1,4 +1,4 @@
-import { SquareTerminal, X } from "lucide-react";
+import { Pin, SquareTerminal, X } from "lucide-react";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useTruncatedText } from "../hooks/useTruncatedText";
@@ -11,6 +11,8 @@ type ShellTerminalTabProps = {
 	isActive: boolean;
 	onSelect: () => void;
 	onClose: () => void;
+	isPinned?: boolean;
+	onPinnedChange?: (pinned: boolean) => void;
 	/** Visually connects the active tab to a terminal pane directly below it. */
 	appearance?: "pill" | "connected";
 	/** Commit a new tab title. Omitted where rename is not wired. */
@@ -33,6 +35,8 @@ export function ShellTerminalTab({
 	isActive,
 	onSelect,
 	onClose,
+	isPinned,
+	onPinnedChange,
 	appearance = "pill",
 	onRename,
 }: ShellTerminalTabProps) {
@@ -146,6 +150,7 @@ export function ShellTerminalTab({
 			) : (
 				<button
 					ref={ref}
+					aria-label={shell.title}
 					aria-current={isActive}
 					aria-selected={isActive}
 					className={cn(
@@ -168,11 +173,33 @@ export function ShellTerminalTab({
 					{shell.title}
 				</button>
 			)}
+			<span className={cn("inline-flex shrink-0 items-center gap-0.5", appearance === "connected" && "ml-2")}>
+			{onPinnedChange ? (
+				<button
+					aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab")}
+					aria-pressed={isPinned}
+					data-terminal-tab-action
+					className={cn(
+						"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm transition-[width,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+						isPinned ? "w-control-sm text-foreground opacity-100" : "w-control-sm text-passive opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+					)}
+					onClick={(event) => {
+						event.stopPropagation();
+						onPinnedChange(!isPinned);
+					}}
+					onDoubleClick={(event) => event.stopPropagation()}
+					onContextMenu={(event) => event.stopPropagation()}
+					type="button"
+				>
+					<Pin aria-hidden="true" className="size-icon-sm" />
+				</button>
+			) : null}
 			<button
 				aria-label={t("terminal.closeNamed", { title: shell.title })}
+				data-terminal-tab-action
 				className={cn(
 					"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-					appearance === "connected"
+					appearance === "connected" && !onPinnedChange
 						? isActive
 							? "ml-1 w-control-sm opacity-100"
 							: "ml-0 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-sm group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-sm group-focus-within:opacity-100"
@@ -189,6 +216,7 @@ export function ShellTerminalTab({
 			>
 				<X aria-hidden="true" className="size-icon-sm" />
 			</button>
+			</span>
 		</span>
 	);
 }

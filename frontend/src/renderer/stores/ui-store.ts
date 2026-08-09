@@ -1,6 +1,18 @@
 import { create } from "zustand";
 import type { TerminalTarget } from "../types/terminal";
 import {
+	activateTerminalTab as activateTerminalTabLayout,
+	addTerminalTab as addTerminalTabLayout,
+	closeTerminalTab as closeTerminalTabLayout,
+	emptyTerminalBarLayout,
+	reorderTerminalTabs as reorderTerminalTabLayout,
+	setTerminalTabPinned as setTerminalTabPinnedLayout,
+	type ReorderableTerminalTabKey,
+	type TerminalBarLayout,
+	type TerminalTabGroup,
+	type TerminalTabKey,
+} from "../lib/terminal-tab-state";
+import {
 	applyDocumentTheme,
 	applyDocumentThemeStyle,
 	readStoredThemePreference,
@@ -47,6 +59,8 @@ type UiState = {
 	workbenchTab: WorkbenchTab;
 	isSidebarOpen: boolean;
 	inspectorSessions: Record<string, InspectorSessionState>;
+	/** In-memory ordering, pins, and activation history for each originating session's terminal bar. */
+	terminalBarsByOwner: Record<string, TerminalBarLayout>;
 	isCommandPaletteOpen: boolean;
 	settingsModal: SettingsModal | null;
 	themePreference: ThemePreference;
@@ -93,6 +107,19 @@ type UiState = {
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
+	addTerminalTab: (ownerSessionId: string, key: TerminalTabKey) => void;
+	activateTerminalTab: (ownerSessionId: string, key: TerminalTabKey) => void;
+	setTerminalTabPinned: (ownerSessionId: string, key: ReorderableTerminalTabKey, pinned: boolean) => void;
+	reorderTerminalTabs: (
+		ownerSessionId: string,
+		group: TerminalTabGroup,
+		keys: readonly ReorderableTerminalTabKey[],
+	) => void;
+	closeTerminalTab: (
+		ownerSessionId: string,
+		key: ReorderableTerminalTabKey,
+		availableKeys: readonly TerminalTabKey[],
+	) => TerminalTabKey | undefined;
 	markInspectorPreviewSeen: (sessionId: string, previewKey: string) => void;
 	setBrowserContentRevealed: (sessionId: string, revealed: boolean) => void;
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
@@ -135,6 +162,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	inspectorSessions: {},
+	terminalBarsByOwner: {},
 	isCommandPaletteOpen: false,
 	settingsModal: null,
 	themePreference: initialThemePreference,
@@ -216,6 +244,68 @@ export const useUiStore = create<UiState>((set, get) => ({
 				},
 			};
 		}),
+	addTerminalTab: (ownerSessionId, key) =>
+		set((state) => ({
+			terminalBarsByOwner: {
+				...state.terminalBarsByOwner,
+				[ownerSessionId]: addTerminalTabLayout(
+					state.terminalBarsByOwner[ownerSessionId] ?? emptyTerminalBarLayout(),
+					key,
+					`session:${ownerSessionId}`,
+				),
+			},
+		})),
+	activateTerminalTab: (ownerSessionId, key) =>
+		set((state) => ({
+			terminalBarsByOwner: {
+				...state.terminalBarsByOwner,
+				[ownerSessionId]: activateTerminalTabLayout(
+					state.terminalBarsByOwner[ownerSessionId] ?? emptyTerminalBarLayout(),
+					key,
+				),
+			},
+		})),
+	setTerminalTabPinned: (ownerSessionId, key, pinned) =>
+		set((state) => ({
+			terminalBarsByOwner: {
+				...state.terminalBarsByOwner,
+				[ownerSessionId]: setTerminalTabPinnedLayout(
+					state.terminalBarsByOwner[ownerSessionId] ?? emptyTerminalBarLayout(),
+					key,
+					pinned,
+				),
+			},
+		})),
+	reorderTerminalTabs: (ownerSessionId, group, keys) =>
+		set((state) => ({
+			terminalBarsByOwner: {
+				...state.terminalBarsByOwner,
+				[ownerSessionId]: reorderTerminalTabLayout(
+					state.terminalBarsByOwner[ownerSessionId] ?? emptyTerminalBarLayout(),
+					group,
+					keys,
+				),
+			},
+		})),
+	closeTerminalTab: (ownerSessionId, key, availableKeys) => {
+		let nextActiveKey: TerminalTabKey | undefined;
+		set((state) => {
+			const result = closeTerminalTabLayout(
+				state.terminalBarsByOwner[ownerSessionId] ?? emptyTerminalBarLayout(),
+				key,
+				availableKeys,
+				`session:${ownerSessionId}`,
+			);
+			nextActiveKey = result.nextActiveKey;
+			return {
+				terminalBarsByOwner: {
+					...state.terminalBarsByOwner,
+					[ownerSessionId]: result.layout,
+				},
+			};
+		});
+		return nextActiveKey;
+	},
 	markInspectorPreviewSeen: (sessionId, previewKey) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);

@@ -15,15 +15,25 @@ import { agentLabel } from "../lib/agent-options";
 import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
 import { aoBridge } from "../lib/bridge";
 import { handleTerminalTabListKeyDown } from "../lib/terminal-tabs";
+import {
+	emptyTerminalBarLayout,
+	type ReorderableTerminalTabKey,
+	type TerminalBarLayout,
+	type TerminalTabGroup,
+	type TerminalTabKey,
+} from "../lib/terminal-tab-state";
 import { cn } from "../lib/utils";
 import { useUiStore, type Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
-import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 import { SessionTerminalBar } from "./SessionTerminalBar";
-import { SessionTerminalTab } from "./SessionTerminalTabs";
+import { NewTerminalButton } from "./SessionTerminalTabs";
+import { TerminalTabStrip } from "./TerminalTabStrip";
+import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
+import { Button } from "./ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
@@ -40,6 +50,14 @@ type CenterPaneProps = {
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	/** Session actions rendered at the right edge of the shared topbar row. */
 	topbarActions?: ReactNode;
+	/** Opens a new shell tab in this session's worktree (the button at the end of the tab bar). */
+	onNewShellTerminal?: () => void;
+	terminalBarLayout?: TerminalBarLayout;
+	activeTerminalTabKey?: TerminalTabKey;
+	onSelectTerminalTab?: (key: TerminalTabKey) => void;
+	onCloseTerminalTab?: (key: ReorderableTerminalTabKey) => void;
+	onPinTerminalTab?: (key: ReorderableTerminalTabKey, pinned: boolean) => void;
+	onReorderTerminalTabs?: (group: TerminalTabGroup, keys: ReorderableTerminalTabKey[]) => void;
 	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
 	agentInputDisabled?: boolean;
 };
@@ -74,6 +92,13 @@ export function CenterPane({
 	onCloseShellTerminal,
 	onRenameShellTerminal,
 	topbarActions,
+	onNewShellTerminal,
+	terminalBarLayout = emptyTerminalBarLayout(),
+	activeTerminalTabKey,
+	onSelectTerminalTab,
+	onCloseTerminalTab,
+	onPinTerminalTab,
+	onReorderTerminalTabs,
 	agentInputDisabled = false,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
@@ -114,6 +139,13 @@ export function CenterPane({
 			: target.kind === "reviewer"
 				? `${t("terminal.reviewer")} · ${target.harness}`
 				: sessionTabLabel;
+	const resolvedActiveTabKey =
+		activeTerminalTabKey ??
+		(target.kind === "shell"
+			? (`shell:${target.handleId}` as const)
+			: target.kind === "reviewer"
+				? (`reviewer:${target.handleId}` as const)
+				: (`session:${session?.id ?? ""}` as const));
 	const selectAdjacentTab = useCallback(
 		(direction: -1 | 1) => {
 			const activeIndex =
@@ -274,34 +306,30 @@ export function CenterPane({
 							role="tablist"
 						>
 							{session ? (
-								<SessionTerminalTab
-									isActive={target.kind === "worker"}
-									onSelect={onSelectSessionTerminal}
-									session={session}
+								<TerminalTabStrip
+									activeKey={resolvedActiveTabKey}
+									layout={terminalBarLayout}
+									onClose={(key) => {
+										if (onCloseTerminalTab) return onCloseTerminalTab(key);
+										onCloseShellTerminal?.(key.slice("shell:".length));
+									}}
+									onPinnedChange={(key, pinned) => onPinTerminalTab?.(key, pinned)}
+									onRenameShell={onRenameShellTerminal}
+									onReorder={(group, keys) => onReorderTerminalTabs?.(group, keys)}
+									onSelect={(key) => {
+										if (onSelectTerminalTab) return onSelectTerminalTab(key);
+										if (key.startsWith("shell:")) return onSelectShellTerminal?.(key.slice("shell:".length));
+										if (key.startsWith("reviewer:") && reviewerTerminal) return onSelectReviewerTerminal?.(reviewerTerminal);
+										onSelectSessionTerminal?.();
+									}}
+									ownerSession={session}
+									renderSessionAction={() => <TerminalSwitchAgentButton session={session} />}
+									reviewerTerminal={reviewerTerminal ? { ...reviewerTerminal, label: t("terminal.reviewer") } : undefined}
+									shellTerminals={shellTerminals}
 								/>
 							) : (
 								<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
 							)}
-							{reviewerTerminal ? (
-								<SessionPaneTab
-									icon={<AgentAvatar provider={reviewerTerminal.harness} className="size-icon-base" decorative />}
-									isActive={target.kind === "reviewer"}
-									label={t("terminal.reviewer")}
-									onSelect={() => onSelectReviewerTerminal?.(reviewerTerminal)}
-									title={reviewerTerminal.harness}
-								/>
-							) : null}
-							{shellTerminals.map((shell) => (
-								<ShellTerminalTab
-									key={shell.handleId}
-									appearance="connected"
-									isActive={target.kind === "shell" && target.handleId === shell.handleId}
-									onClose={() => onCloseShellTerminal?.(shell.handleId)}
-									onRename={onRenameShellTerminal ? (title) => onRenameShellTerminal(shell.handleId, title) : undefined}
-									onSelect={() => onSelectShellTerminal?.(shell.handleId)}
-									shell={shell}
-								/>
-							))}
 						</div>
 						{tabsOverflow.canScrollRight ? (
 							<button

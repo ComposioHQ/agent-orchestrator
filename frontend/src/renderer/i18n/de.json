@@ -819,6 +819,8 @@
 	"terminal.close": "Terminal schließen",
 	"terminal.closeNamed": "Terminal {{title}} schließen",
 	"terminal.closeSessionTab": "Sitzungs-Tab {{label}} schließen",
+	"terminal.pinTab": "Tab anheften",
+	"terminal.unpinTab": "Tab lösen",
 	"terminal.connectionFailed": "Verbindung fehlgeschlagen",
 	"terminal.decreaseFontSize": "Terminal-Schriftgröße verkleinern",
 	"terminal.controlsAria": "Terminal-Anzeigesteuerung",

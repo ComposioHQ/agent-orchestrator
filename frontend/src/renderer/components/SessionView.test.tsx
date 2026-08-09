@@ -455,6 +455,7 @@ describe("SessionView", () => {
 		useUiStore.setState({
 			activeShellTerminalHandleId: null,
 			inspectorSessions: {},
+			terminalBarsByOwner: {},
 			visibleTerminalKindBySession: {},
 		});
 		panels.clear();
@@ -463,16 +464,15 @@ describe("SessionView", () => {
 		browserViewState.url = "";
 		browserViewState.agentBrowserActive = false;
 		shellTerminalsState.data = [];
-	openShellTerminalMock.mockReset();
-	closeShellTerminalMock.mockReset();
-	interfaceTransitionMock.start.mockReset();
+		openShellTerminalMock.mockReset();
+		closeShellTerminalMock.mockReset();
+		interfaceTransitionMock.start.mockReset();
 		interfaceTransitionMock.resetStartError.mockReset();
 		interfaceTransitionMock.cancel.mockReset();
 		interfaceTransitionState.status = undefined;
 		reviewGetMock.mockReset();
 		reviewGetMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [], runs: [] }, error: undefined });
 	});
-
 	// Regression: shell terminals are an app-wide list, so without a per-session
 	// filter a shell opened in another session would show up as a tab in this
 	// session's strip. Only this session's shells (not another session's, and no
@@ -676,7 +676,7 @@ describe("SessionView", () => {
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "chat", policy: "drain" });
 	});
 
-	it("walks backward through auxiliary terminals before returning to the permanent terminal", () => {
+	it("returns to the most recently used terminal when the active shell closes", () => {
 		shellTerminalsState.data = [
 			{
 				handleId: "sh-a",
@@ -695,6 +695,7 @@ describe("SessionView", () => {
 		];
 		const view = render(<SessionView sessionId="sess-1" />);
 
+		fireEvent.click(screen.getByRole("button", { name: "select first shell" }));
 		fireEvent.click(screen.getByRole("button", { name: "select second shell" }));
 		expect(screen.getByTestId("terminal-target")).toHaveTextContent("sh-b");
 
@@ -1006,38 +1007,32 @@ describe("SessionView", () => {
 		expect(panelSizes("inspector")[0]).toBe("360px");
 	});
 
-	// Regression: rrp only derives a panel's constraints one commit after it
-	// registers into a live group. Driving the imperative API in the commit
-	// where the inspector mounts (orchestrator → worker navigation; SessionView
-	// itself stays mounted) threw "Panel constraints not found for Panel
-	// inspector" and unwound the route to the error boundary. The panel must
-	// mount already in sync via defaultSize instead.
-	it("mounts the inspector in sync when navigating from an orchestrator session, without the imperative API", () => {
+	it("animates the inspector from zero when navigating from an orchestrator session", async () => {
 		const { rerender } = render(<SessionView sessionId="sess-orch" />);
 		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
 
-		// Already-open worker state — the panel that mounts later must pick this
-		// up from defaultSize alone.
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		rerender(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toBe("360px");
+		expect(panelSizes("inspector")[0]).toBe("0%");
 		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("aria-hidden", "false");
-		expect(document.querySelector(".session-inspector-motion")).toHaveAttribute("data-motion-state", "open");
 		const handle = panels.get("inspector")!.handle;
 		expect(handle.expand).not.toHaveBeenCalled();
 		expect(handle.collapse).not.toHaveBeenCalled();
-		expect(handle.resize).not.toHaveBeenCalled();
+		await waitFor(() => expect(handle.resize).toHaveBeenCalledWith("360px"));
 	});
 
-	it("expands on the first toggle after a closed worker inspector remounts", () => {
+	it("retains a closed worker inspector through its orchestrator transition, then remounts collapsed", async () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
 		const handle = panels.get("inspector")!.handle;
 
 		act(() => useUiStore.getState().setInspectorOpen("sess-2", false));
 		rerender(<SessionView sessionId="sess-orch" />);
-		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
+		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("aria-hidden", "true");
+		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("inert");
+		await waitFor(() => expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument());
+		handle.collapse.mockClear();
 
 		act(() => useUiStore.getState().setInspectorOpen("sess-2", false));
 		rerender(<SessionView sessionId="sess-2" />);

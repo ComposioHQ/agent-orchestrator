@@ -37,6 +37,11 @@ import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { hidesShellTopbar } from "../lib/platform";
 import { useShell } from "../lib/shell-context";
+import {
+	emptyTerminalBarLayout,
+	type ReorderableTerminalTabKey,
+	type TerminalTabKey,
+} from "../lib/terminal-tab-state";
 import { cn } from "../lib/utils";
 import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
@@ -87,6 +92,7 @@ type SessionViewProps = {
 	sessionId: string;
 };
 
+const emptyTerminalBar = emptyTerminalBarLayout();
 // The session detail screen: terminal + git rail. On Win/Linux the shell owns
 // ShellTopbar above this view; when the platform hides the shell topbar
 // (macOS), the same topbar mounts here so the outer panel stays full-height.
@@ -132,8 +138,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [dismissedTransitionID, setDismissedTransitionID] = useState("");
 	const isNativeFullScreen = useWindowFullScreen();
 
-	const allSessions = workspaces.flatMap((workspace) => workspace.sessions);
-	const session = allSessions.find((candidate) => candidate.id === sessionId);
+	const session = workspaces.flatMap((workspace) => workspace.sessions).find((candidate) => candidate.id === sessionId);
+	const ownerSessionId = sessionId;
+	const terminalBarLayout = useUiStore((state) => state.terminalBarsByOwner[ownerSessionId] ?? emptyTerminalBar);
+	const addTerminalTab = useUiStore((state) => state.addTerminalTab);
+	const activateTerminalTab = useUiStore((state) => state.activateTerminalTab);
+	const closeTerminalTab = useUiStore((state) => state.closeTerminalTab);
+	const setTerminalTabPinned = useUiStore((state) => state.setTerminalTabPinned);
+	const reorderTerminalTabs = useUiStore((state) => state.reorderTerminalTabs);
 	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
@@ -182,6 +194,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			{ projectId: session?.workspaceId, sessionId },
 			{
 				onSuccess: (shell) => {
+					addTerminalTab(ownerSessionId, `shell:${shell.handleId}`);
+					activateTerminalTab(ownerSessionId, `shell:${shell.handleId}`);
 					setActiveShellTerminal(shell.handleId);
 					setTerminalTarget({
 						generation: shell.createdAt,
@@ -193,12 +207,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				},
 			},
 		);
-	}, [openShellTerminal, session?.workspaceId, sessionId, setActiveShellTerminal]);
+	}, [activateTerminalTab, addTerminalTab, openShellTerminal, ownerSessionId, session?.workspaceId, sessionId, setActiveShellTerminal]);
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
 			const shell = shellTerminals.find((s) => s.handleId === handleId);
 			if (!shell) return;
+			activateTerminalTab(ownerSessionId, `shell:${shell.handleId}`);
 			setActiveShellTerminal(shell.handleId);
 			setTerminalTarget({
 				generation: shell.createdAt,
@@ -208,55 +223,21 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				title: shell.title,
 			});
 		},
-		[sessionId, shellTerminals, setActiveShellTerminal],
-	);
-
-	const closeShellTerminalByHandle = useCallback(
-		(handleId: string) => {
-			if (terminalTarget.kind === "shell" && terminalTarget.handleId === handleId) {
-				const closingIndex = shellTerminals.findIndex((shell) => shell.handleId === handleId);
-				// Match browser-tab ergonomics: closing the selected auxiliary terminal
-				// reveals its nearest predecessor, then the next tab when the first one
-				// closes. The permanent agent terminal is only the final fallback.
-				const nextShell = shellTerminals[closingIndex - 1] ?? shellTerminals[closingIndex + 1];
-				if (nextShell) {
-					setActiveShellTerminal(nextShell.handleId);
-					setTerminalTarget({
-						generation: nextShell.createdAt,
-						kind: "shell",
-						handleId: nextShell.handleId,
-						sessionId,
-						title: nextShell.title,
-					});
-				} else {
-					setActiveShellTerminal(null);
-					setTerminalTarget({ kind: "worker" });
-				}
-			} else if (activeShellTerminalHandleId === handleId) {
-				setActiveShellTerminal(null);
-			}
-			closeShellTerminal.mutate(handleId);
-		},
-		[
-			activeShellTerminalHandleId,
-			closeShellTerminal,
-			setActiveShellTerminal,
-			sessionId,
-			shellTerminals,
-			terminalTarget,
-		],
+		[activateTerminalTab, ownerSessionId, shellTerminals, setActiveShellTerminal],
 	);
 
 	// Selecting the session's own pane also drops the active shell, so the effect
 	// above does not immediately pull the view back to that shell.
 	const selectSessionTerminal = useCallback(() => {
+		activateTerminalTab(ownerSessionId, `session:${sessionId}`);
 		setActiveShellTerminal(null);
 		setTerminalTarget({ kind: "worker" });
-	}, [setActiveShellTerminal]);
+	}, [activateTerminalTab, ownerSessionId, sessionId, setActiveShellTerminal]);
 	const selectReviewerTerminal = useCallback((target: ReviewerTerminalTarget) => {
+		activateTerminalTab(ownerSessionId, `reviewer:${target.handleId}`);
 		setActiveShellTerminal(null);
 		setTerminalTarget({ kind: "reviewer", handleId: target.handleId, harness: target.harness, sessionId });
-	}, [sessionId, setActiveShellTerminal]);
+	}, [activateTerminalTab, ownerSessionId, sessionId, setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
 	// and ⌘T / Ctrl+T work everywhere); this view only follows the result. When a new
@@ -304,6 +285,31 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrators get the full workspace width; only workers need the inspector rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
+	const [inspectorMounted, setInspectorMounted] = useState(hasInspector);
+	const [inspectorRenderSession, setInspectorRenderSession] = useState(session);
+	const inspectorOpenFromCollapsedRef = useRef(false);
+	useLayoutEffect(() => {
+		if (!hasInspector) return;
+		if (!inspectorMounted) inspectorOpenFromCollapsedRef.current = true;
+		setInspectorRenderSession(session);
+		setInspectorMounted(true);
+	}, [hasInspector, inspectorMounted, session]);
+	useEffect(() => {
+		if (hasInspector || !inspectorMounted) return;
+		setInspectorMotionState("closing");
+		const panel = inspectorRef.current;
+		panel?.collapse();
+		const frame = window.requestAnimationFrame(() => panel?.collapse());
+		const timer = window.setTimeout(() => {
+			setInspectorMotionState("closed");
+			setInspectorMounted(false);
+			setInspectorRenderSession(undefined);
+		}, INSPECTOR_MOTION_MS);
+		return () => {
+			window.cancelAnimationFrame(frame);
+			window.clearTimeout(timer);
+		};
+	}, [hasInspector, inspectorMounted]);
 	const activeInterfaceTransition = interfaceTransitionIsActive(interfaceSwitch.transition);
 	const chatControllerTransitioning = Boolean(
 		interfaceSwitch.transition?.targetMode === "chat" &&
@@ -448,6 +454,68 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		: terminalTargetBelongsToSession(terminalTarget, sessionId)
 			? terminalTarget
 			: ({ kind: "worker" } satisfies TerminalTarget);
+	const activeTerminalTabKey: TerminalTabKey =
+		routedTerminalTarget.kind === "shell"
+			? `shell:${routedTerminalTarget.handleId}`
+			: routedTerminalTarget.kind === "reviewer"
+				? `reviewer:${routedTerminalTarget.handleId}`
+				: `session:${sessionId}`;
+	const availableTerminalTabKeys: TerminalTabKey[] = [
+		`session:${sessionId}`,
+		...shellTerminals.map((shell) => `shell:${shell.handleId}` as const),
+		...(reviewerTerminal ? ([`reviewer:${reviewerTerminal.handleId}`] as const) : []),
+	];
+	const availableTerminalTabSignature = availableTerminalTabKeys.join("|");
+
+	// Daemon-discovered shells join the in-memory bar once per availability
+	// change. Nothing is persisted across an app restart.
+	useEffect(() => {
+		for (const key of availableTerminalTabKeys) addTerminalTab(ownerSessionId, key);
+		// The signature is the stable dependency; the array is intentionally rebuilt
+		// from live daemon data on each render.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [addTerminalTab, availableTerminalTabSignature, ownerSessionId]);
+	useEffect(() => {
+		addTerminalTab(ownerSessionId, activeTerminalTabKey);
+		activateTerminalTab(ownerSessionId, activeTerminalTabKey);
+	}, [activateTerminalTab, activeTerminalTabKey, addTerminalTab, ownerSessionId]);
+
+	const selectTerminalTab = useCallback(
+		(key: TerminalTabKey) => {
+			if (key.startsWith("session:")) {
+				selectSessionTerminal();
+				return;
+			}
+			if (key.startsWith("shell:")) {
+				selectShellTerminal(key.slice("shell:".length));
+				return;
+			}
+			if (reviewerTerminal?.handleId === key.slice("reviewer:".length)) {
+				selectReviewerTerminal(reviewerTerminal);
+			}
+		},
+		[reviewerTerminal, selectReviewerTerminal, selectSessionTerminal, selectShellTerminal],
+	);
+	const closeTerminalTabByKey = useCallback(
+		(key: ReorderableTerminalTabKey) => {
+			const wasActive = key === activeTerminalTabKey;
+			const nextKey = closeTerminalTab(ownerSessionId, key, availableTerminalTabKeys);
+			closeShellTerminal.mutate(key.slice("shell:".length));
+			if (wasActive && nextKey) selectTerminalTab(nextKey);
+		},
+		[
+			activeTerminalTabKey,
+			availableTerminalTabSignature,
+			closeShellTerminal,
+			closeTerminalTab,
+			ownerSessionId,
+			selectTerminalTab,
+		],
+	);
+	const closeShellTerminalByHandle = useCallback(
+		(handleId: string) => closeTerminalTabByKey(`shell:${handleId}`),
+		[closeTerminalTabByKey],
+	);
 	const showChatSurface = session?.mode === "chat" && routedTerminalTarget.kind === "worker";
 
 	// The pane shows one terminal at a time, so selecting a shell or the reviewer
@@ -580,10 +648,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// without an imperative fix-up in the mount commit. Afterwards the
 	// imperative API owns the size, so this must never track live open state.
 	const inspectorDefaultSizeRef = useRef<string | null>(null);
-	if (!hasInspector) {
+	if (!inspectorMounted) {
 		inspectorDefaultSizeRef.current = null;
 	} else if (inspectorDefaultSizeRef.current === null) {
-		inspectorDefaultSizeRef.current = isInspectorOpen ? initialInspectorSize() : INSPECTOR_COLLAPSED_SIZE;
+		inspectorDefaultSizeRef.current =
+			isInspectorOpen && !inspectorOpenFromCollapsedRef.current
+				? initialInspectorSize()
+				: INSPECTOR_COLLAPSED_SIZE;
 	}
 	const inspectorDefaultSize = inspectorDefaultSizeRef.current ?? INSPECTOR_COLLAPSED_SIZE;
 
@@ -607,14 +678,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// registered panel.
 	const inspectorImperativeReadyRef = useRef(false);
 	useLayoutEffect(() => {
-		if (!hasInspector) {
+		if (!inspectorMounted) {
 			setInspectorMotionState("closed");
 			return;
 		}
+		if (!hasInspector) return;
 		if (!inspectorImperativeReadyRef.current) {
-			setInspectorMotionState(isInspectorOpen ? "open" : "closed");
+			setInspectorMotionState(
+				isInspectorOpen && !inspectorOpenFromCollapsedRef.current ? "open" : "closed",
+			);
 		}
-	}, [hasInspector, isInspectorOpen]);
+	}, [hasInspector, inspectorMounted, isInspectorOpen]);
 	useEffect(() => {
 		if (!hasInspector || !inspectorImperativeReadyRef.current) return;
 		const panel = inspectorRef.current;
@@ -641,7 +715,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		};
 	}, [hasInspector, isInspectorOpen]);
 	useEffect(() => {
-		if (!hasInspector || !inspectorRef.current) {
+		if (!inspectorMounted || !inspectorRef.current) {
 			inspectorImperativeReadyRef.current = false;
 			return;
 		}
@@ -649,7 +723,22 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		return () => {
 			inspectorImperativeReadyRef.current = false;
 		};
-	}, [hasInspector]);
+	}, [inspectorMounted]);
+	useEffect(() => {
+		if (!inspectorMounted || !hasInspector || !isInspectorOpen || !inspectorRef.current) return undefined;
+		if (!inspectorOpenFromCollapsedRef.current) return undefined;
+		inspectorOpenFromCollapsedRef.current = false;
+		setInspectorMotionState("opening");
+		let openFrame = 0;
+		const frame = window.requestAnimationFrame(() => {
+			inspectorRef.current?.resize(initialInspectorSize());
+			openFrame = window.requestAnimationFrame(() => setInspectorMotionState("open"));
+		});
+		return () => {
+			window.cancelAnimationFrame(frame);
+			window.cancelAnimationFrame(openFrame);
+		};
+	}, [hasInspector, inspectorMounted, isInspectorOpen]);
 
 	// Persist drags while the inspector is open. Dragging an
 	// open inspector can never collapse it — the panel is non-collapsible while
@@ -680,6 +769,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		[sessionId, toggleInspector],
 	);
 	const inspectorPanelVisible = inspectorMotionState !== "closed";
+	const inspectorInteractive = hasInspector && isInspectorOpen && inspectorPanelVisible;
 
 	if (!session && !workspaceQuery.isLoading) {
 		return (
@@ -717,8 +807,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							    reviewer targets remain terminal surfaces in either mode. */}
 							{showChatSurface ? (
 								<SessionChatSurface
+									activeTerminalTabKey={activeTerminalTabKey}
 									session={session}
 									headerActions={sessionHeaderActions}
+									terminalBarLayout={terminalBarLayout}
+									onCloseTerminalTab={closeTerminalTabByKey}
+									onPinTerminalTab={(key, pinned) => setTerminalTabPinned(ownerSessionId, key, pinned)}
+									onReorderTerminalTabs={(group, keys) => reorderTerminalTabs(ownerSessionId, group, keys)}
+									onSelectTerminalTab={selectTerminalTab}
+									reviewerTerminal={reviewerTerminal}
+									shellTerminals={shellTerminals}
+									onRenameShellTerminal={renameShellTerminalByHandle}
 									controllerTransitioning={chatControllerTransitioning}
 									onOpenShell={addShellTerminal}
 									openingShell={openShellTerminal.isPending}
@@ -728,19 +827,25 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								/>
 							) : (
 								<CenterPane
+									activeTerminalTabKey={activeTerminalTabKey}
 									agentInputDisabled={
 										(interfaceSwitch.starting || activeInterfaceTransition) && session?.mode === "tui"
 									}
 									daemonReady={daemonStatus.state === "ready"}
+									onCloseTerminalTab={closeTerminalTabByKey}
 									onCloseShellTerminal={closeShellTerminalByHandle}
 									onRenameShellTerminal={renameShellTerminalByHandle}
 									onSelectSessionTerminal={selectSessionTerminal}
 									onSelectReviewerTerminal={selectReviewerTerminal}
 									onSelectShellTerminal={selectShellTerminal}
+									onSelectTerminalTab={selectTerminalTab}
+									onPinTerminalTab={(key, pinned) => setTerminalTabPinned(ownerSessionId, key, pinned)}
+									onReorderTerminalTabs={(group, keys) => reorderTerminalTabs(ownerSessionId, group, keys)}
 									reviewerTerminal={reviewerTerminal}
 									session={session}
 									shellTerminals={shellTerminals}
 									terminalTarget={routedTerminalTarget}
+									terminalBarLayout={terminalBarLayout}
 									theme={theme}
 									topbarActions={sessionHeaderActions}
 								/>
@@ -754,24 +859,24 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						</div>
 					</div>
 				</ResizablePanel>
-				{hasInspector ? (
+				{inspectorMounted ? (
 					<>
 						<ResizableHandle
-							aria-hidden={!inspectorPanelVisible}
+							aria-hidden={!inspectorInteractive}
 							className={cn(
 								"w-1.75 cursor-col-resize touch-none bg-transparent transition-[width] duration-200 ease-out after:w-px after:bg-border-strong hover:after:bg-border focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:after:bg-border data-[separator=active]:after:bg-border",
 								!inspectorPanelVisible && "pointer-events-none w-0 after:hidden",
 							)}
-							disabled={!isInspectorOpen}
+							disabled={!inspectorInteractive}
 							elementRef={inspectorSeparatorRef}
 						/>
 						<ResizablePanel
-							aria-hidden={!inspectorPanelVisible}
+							aria-hidden={!inspectorInteractive}
 							className="session-inspector-panel"
-							collapsible={!isInspectorOpen}
+							collapsible={!inspectorInteractive}
 							defaultSize={inspectorDefaultSize}
 							id="inspector"
-							inert={!isInspectorOpen}
+							inert={!inspectorInteractive}
 							maxSize={`${INSPECTOR_MAX_PERCENT}%`}
 							minSize={INSPECTOR_MIN_SIZE}
 							onResize={handleInspectorResize}
@@ -788,8 +893,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									browserAnnotationQueue={browserAnnotationQueue}
 									browserPoppedOut={browserPoppedOut}
 									filesView={
-										session ? (
-											<SessionFilesView onToggleMaximized={handleToggleFilesPopOut} sessionId={session.id} />
+										inspectorRenderSession ? (
+											<SessionFilesView onToggleMaximized={handleToggleFilesPopOut} sessionId={inspectorRenderSession.id} />
 										) : null
 									}
 									isInspectorVisible={inspectorPanelVisible}
@@ -801,7 +906,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}
 									browserView={browserView}
-									session={session}
+									session={inspectorRenderSession}
 								/>
 							</div>
 						</ResizablePanel>

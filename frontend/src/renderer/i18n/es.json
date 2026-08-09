@@ -830,6 +830,8 @@
 	"terminal.close": "Cerrar terminal",
 	"terminal.closeNamed": "Cerrar terminal {{title}}",
 	"terminal.closeSessionTab": "Cerrar pestaña de sesión {{label}}",
+	"terminal.pinTab": "Fijar pestaña",
+	"terminal.unpinTab": "Desfijar pestaña",
 	"terminal.connectionFailed": "conexión fallida",
 	"terminal.decreaseFontSize": "Reducir tamaño de fuente del terminal",
 	"terminal.controlsAria": "Controles de visualización del terminal",
