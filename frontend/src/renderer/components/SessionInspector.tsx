@@ -1798,7 +1798,7 @@ function ReviewPanel({
 			? t("inspector.review.cancelling")
 			: t("inspector.review.cancel")
 		: runAction;
-	const killDisabled = isKilling || isTriggering || isSwitchingReviewer || !hasReviewerSession;
+	const killDisabled = autoReviewEnabled || isKilling || isTriggering || isSwitchingReviewer || !hasReviewerSession;
 
 	return (
 		<div className="mb-2.5 flex flex-col">

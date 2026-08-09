@@ -1346,6 +1346,7 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		expect(screen.getByRole("button", { name: "Stop review" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Kill review session" })).toBeDisabled();
 		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run review" })).not.toBeInTheDocument();
 	});
