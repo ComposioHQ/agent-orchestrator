@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -87,6 +88,7 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 		{agent: "aider", mode: ports.ModelSelectionCatalog},
 		{agent: "autohand", mode: ports.ModelSelectionCatalog},
 		{agent: "kimchi", mode: ports.ModelSelectionCatalog},
+		{agent: "prime-agent", mode: ports.ModelSelectionCatalog},
 		{agent: "qwen", mode: ports.ModelSelectionText},
 		{agent: "continue", mode: ports.ModelSelectionText},
 		{agent: "crush", mode: ports.ModelSelectionText},
@@ -98,6 +100,34 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 				t.Fatalf("Base(%q) = %#v", tc.agent, got)
 			}
 		})
+	}
+}
+
+func TestPrimeAgentDiscoveryUsesDocumentedModelCommand(t *testing.T) {
+	spec := commandSpecs["prime-agent"]
+	want := []string{"model", "list"}
+	if !reflect.DeepEqual(spec.args, want) {
+		t.Fatalf("prime-agent discovery args = %q, want %q", spec.args, want)
+	}
+	if spec.parser == nil {
+		t.Fatal("prime-agent parser is nil")
+	}
+}
+
+func TestParsePrimeAgentModelsBuildsProviderQualifiedIDs(t *testing.T) {
+	got, err := parsePiModels([]byte(`provider   model                 context  max-out  thinking  images
+anthropic  claude-opus-4-8       200K     64K      yes       yes
+openai     gpt-5.6-sol           400K     128K     yes       yes
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.AgentModelInfo{
+		{ID: "anthropic/claude-opus-4-8", Label: "claude-opus-4-8", Provider: "anthropic"},
+		{ID: "openai/gpt-5.6-sol", Label: "gpt-5.6-sol", Provider: "openai"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("models = %#v, want %#v", got, want)
 	}
 }
 

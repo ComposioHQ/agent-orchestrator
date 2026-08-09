@@ -42,19 +42,20 @@ type commandSpec struct {
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[[:alpha:]]`)
 
 var commandSpecs = map[string]commandSpec{
-	"aider":    {args: []string{"--no-check-update", "--no-git", "--no-gitignore", "--no-analytics", "--list-models", "."}, parser: parseIDLines},
-	"autohand": {args: []string{"models", "list"}, parser: parseIDLines},
-	"opencode": {args: []string{"--pure", "models"}, parser: parseIDLines},
-	"grok":     {args: []string{"models"}, parser: parseGrokModels},
-	"cursor":   {args: []string{"models"}, parser: parseCursorModels},
-	"agy":      {args: []string{"models"}, parser: parseIDLines},
-	"kilocode": {args: []string{"models"}, parser: parseIDLines},
-	"pi":       {args: []string{"--list-models"}, parser: parsePiModels},
-	"kimchi":   {args: []string{"--list-models"}, parser: parsePiModels},
-	"kimi":     {args: []string{"provider", "list", "--json"}, parser: parseJSONModels},
-	"auggie":   {args: []string{"models", "list", "--json"}, parser: parseJSONModels},
-	"devin":    {args: []string{"models", "list", "--format", "json"}, parser: parseJSONModels},
-	"kiro":     {args: []string{"chat", "--list-models", "--format", "json"}, parser: parseJSONModels},
+	"aider":       {args: []string{"--no-check-update", "--no-git", "--no-gitignore", "--no-analytics", "--list-models", "."}, parser: parseIDLines},
+	"autohand":    {args: []string{"models", "list"}, parser: parseIDLines},
+	"opencode":    {args: []string{"--pure", "models"}, parser: parseIDLines},
+	"grok":        {args: []string{"models"}, parser: parseGrokModels},
+	"cursor":      {args: []string{"models"}, parser: parseCursorModels},
+	"agy":         {args: []string{"models"}, parser: parseIDLines},
+	"kilocode":    {args: []string{"models"}, parser: parseIDLines},
+	"pi":          {args: []string{"--list-models"}, parser: parsePiModels},
+	"kimchi":      {args: []string{"--list-models"}, parser: parsePiModels},
+	"prime-agent": {args: []string{"model", "list"}, parser: parsePiModels},
+	"kimi":        {args: []string{"provider", "list", "--json"}, parser: parseJSONModels},
+	"auggie":      {args: []string{"models", "list", "--json"}, parser: parseJSONModels},
+	"devin":       {args: []string{"models", "list", "--format", "json"}, parser: parseJSONModels},
+	"kiro":        {args: []string{"chat", "--list-models", "--format", "json"}, parser: parseJSONModels},
 }
 
 // Base returns the picker behavior AO can provide without executing a CLI.
