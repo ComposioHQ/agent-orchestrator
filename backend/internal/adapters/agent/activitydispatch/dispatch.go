@@ -18,6 +18,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kimchi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/muse"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/primeagent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/vibe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -39,6 +40,7 @@ var Derivers = map[string]DeriveFunc{
 	"agy":         agy.DeriveActivityState,
 	"kimchi":      kimchi.DeriveActivityState,
 	"opencode":    opencode.DeriveActivityState,
+	"prime-agent": primeagent.DeriveActivityState,
 	"goose":       activitystate.StandardDeriveActivityState,
 	"devin":       activitystate.StandardDeriveActivityState,
 	"cursor":      activitystate.StandardDeriveActivityState,

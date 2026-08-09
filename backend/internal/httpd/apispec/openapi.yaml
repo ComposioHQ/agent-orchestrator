@@ -5227,6 +5227,7 @@ components:
           - vibe
           - pi
           - kimchi
+          - prime-agent
           - autohand
           - fake
           type: string
@@ -6916,6 +6917,7 @@ components:
           - vibe
           - pi
           - kimchi
+          - prime-agent
           - autohand
           type: string
         issueId:

@@ -84,6 +84,9 @@ var shippedMigrations = map[int64]string{
 	78: "0078_session_interface_transitions.sql",
 	79: "0079_session_interface_transition_delivery.sql",
 	80: "0080_review_per_harness.sql",
+	81: "0081_browser_capability_verifier.sql",
+	82: "0082_allow_prime_agent_harness.sql",
+	83: "0083_reconcile_kimchi_prime_agent_harnesses.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -247,7 +250,7 @@ INSERT INTO projects (
 		t.Fatalf("repeat migrate on repaired schema: %v", err)
 	}
 	for table, want := range map[string][]string{
-		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness"},
+		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness", "browser_capability_verifier"},
 		"notifications": {"resolved_at"},
 	} {
 		for _, column := range want {

@@ -188,7 +188,6 @@ func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
 	).Scan(&schema); err != nil {
 		t.Fatalf("read sessions schema: %v", err)
 	}
-
 	harnesses := domain.AllHarnesses
 
 	for _, h := range harnesses {
@@ -330,6 +329,76 @@ WHERE type = 'table' AND name = 'sessions'`,
 		if !strings.Contains(schema, harness) {
 			t.Fatalf("sessions.harness CHECK is missing %s after migration 0054:\n%s", harness, schema)
 		}
+	}
+}
+
+// TestMigrateRepairsKimchiConstraintWithPrimeAgentAndLegacyQM reproduces the
+// shared dev profile: the Kimchi migration is recorded as applied, while a
+// later checkout widened the physical constraint for Prime Agent and legacy QM
+// without retaining Kimchi. Startup must converge the known constraint without
+// dropping either existing harness or rejecting existing Prime Agent rows.
+func TestMigrateRepairsKimchiConstraintWithPrimeAgentAndLegacyQM(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 80)
+
+	const primeAgentQMConstraint = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'prime-agent', 'fake'))`
+	if _, err := db.Exec(`PRAGMA writable_schema = ON`); err != nil {
+		t.Fatalf("enable writable_schema: %v", err)
+	}
+	if _, err := db.Exec(
+		`UPDATE sqlite_master
+SET sql = replace(sql, ?, ?)
+WHERE type = 'table' AND name = 'sessions'`,
+		sessionsHarnessCheckWithMuseKimchi,
+		primeAgentQMConstraint,
+	); err != nil {
+		t.Fatalf("seed prime-agent qm harness constraint: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA writable_schema = RESET`); err != nil {
+		t.Fatalf("reparse prime-agent qm harness constraint: %v", err)
+	}
+
+	if _, err := db.Exec(`
+INSERT INTO projects (id, path, registered_at, config)
+VALUES ('agent-orchestrator', '/repo/agent-orchestrator', ?, '{}');
+INSERT INTO sessions (id, project_id, num, harness, activity_last_at, created_at, updated_at)
+VALUES ('agent-orchestrator-1', 'agent-orchestrator', 1, 'prime-agent', ?, ?, ?);
+`, time.Unix(100, 0).UTC(), time.Unix(101, 0).UTC(), time.Unix(101, 0).UTC(), time.Unix(101, 0).UTC()); err != nil {
+		t.Fatalf("seed prime-agent session: %v", err)
+	}
+	for _, version := range []int{81, 82, 83} {
+		if _, err := db.Exec(
+			`INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`, version,
+		); err != nil {
+			t.Fatalf("seed migration %d: %v", version, err)
+		}
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate prime-agent qm profile: %v", err)
+	}
+	var schema string
+	if err := db.QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='sessions'",
+	).Scan(&schema); err != nil {
+		t.Fatalf("read sessions schema: %v", err)
+	}
+	for _, harness := range []string{"'muse'", "'qm'", "'kimchi'", "'prime-agent'"} {
+		if !strings.Contains(schema, harness) {
+			t.Fatalf("sessions.harness CHECK is missing %s after repair:\n%s", harness, schema)
+		}
+	}
+	var primeAgentSessions int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE harness = 'prime-agent'`).Scan(&primeAgentSessions); err != nil {
+		t.Fatalf("count prime-agent sessions: %v", err)
+	}
+	if primeAgentSessions != 1 {
+		t.Fatalf("prime-agent session count = %d, want 1", primeAgentSessions)
 	}
 }
 

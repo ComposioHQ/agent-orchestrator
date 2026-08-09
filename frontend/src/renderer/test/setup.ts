@@ -104,6 +104,7 @@ if (typeof window !== "undefined") {
 			getBootstrap: async () => null,
 		},
 		browser: {
+			nativeCompositionEnabled: true,
 			ensure: async (sessionId: string) => ({
 				viewId: `test:${sessionId}`,
 				url: "",
@@ -113,8 +114,7 @@ if (typeof window !== "undefined") {
 				isLoading: false,
 			}),
 			setBounds: () => undefined,
-			capture: async () => "",
-			requestMirror: async () => false,
+			setOverlayOpen: () => undefined,
 			navigate: async ({ viewId }: { viewId: string }) => ({
 				viewId,
 				url: "",
@@ -166,11 +166,17 @@ if (typeof window !== "undefined") {
 			getTabs: async (viewId: string) => ({ viewId, activeTabId: "t1", tabs: [] }),
 			selectTab: async ({ viewId, tabId }) => ({ viewId, activeTabId: tabId, tabs: [] }),
 			closeTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
+			devtools: async ({ viewId, operation }) => ({
+				viewId,
+				open: operation !== "close",
+				activeTabId: "",
+			}),
 			destroy: () => undefined,
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
 			onTabsState: () => () => undefined,
 			onAgentActivity: () => () => undefined,
+			onDevToolsState: () => () => undefined,
 			onAnnotationSubmit: () => () => undefined,
 			onAnnotationCancel: () => () => undefined,
 		},
