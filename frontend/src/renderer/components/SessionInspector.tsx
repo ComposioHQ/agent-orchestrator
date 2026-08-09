@@ -1851,7 +1851,7 @@ function ReviewPanel({
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
-							triggerClassName="review-run-agent-select h-control-md w-36 min-w-24 max-w-36 shrink-0 text-xs"
+							triggerClassName="review-run-agent-select ml-auto h-control-md w-36 min-w-24 max-w-36 shrink-0 text-xs"
 							value={reviewerOverride}
 						/>
 					</div>
