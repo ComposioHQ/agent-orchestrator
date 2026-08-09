@@ -233,6 +233,10 @@ func (s *lifecycleStore) ListPRComments(_ context.Context, _ string) ([]domain.P
 	return nil, nil
 }
 
+func (s *lifecycleStore) GetProject(_ context.Context, _ string) (domain.ProjectRecord, bool, error) {
+	return domain.ProjectRecord{}, false, nil
+}
+
 func (s *lifecycleStore) GetPRLastNudgeSignature(_ context.Context, _ string) (string, error) {
 	return "", nil
 }
