@@ -14,20 +14,24 @@ import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 // hooks report activity purely through which callback fired.
 //
 //   - session-start / user-prompt-submit → active
-//   - stop                               → idle
+//   - stop / interrupt                   → idle
 //   - permission-request                 → waiting_input
 //
 // permission-request maps to waiting_input, not blocked: none of the sharing
 // adapters install the pre/post-tool-use trio, so a blocked state could never
 // be cleared before the turn ends. waiting_input still suppresses automated
 // nudges (NeedsInput) while leaving user-initiated sends deliverable.
+//
+// interrupt covers agents such as Kimi that emit a distinct hook when the user
+// aborts the current turn (e.g. Ctrl-C/Esc); mapping it to idle lets AO reflect
+// the cancellation without waiting for the process to exit.
 func StandardDeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
 	switch event {
 	case "session-start":
 		return domain.ActivityActive, true
 	case "user-prompt-submit":
 		return domain.ActivityActive, true
-	case "stop":
+	case "stop", "interrupt":
 		return domain.ActivityIdle, true
 	case "permission-request":
 		return domain.ActivityWaitingInput, true

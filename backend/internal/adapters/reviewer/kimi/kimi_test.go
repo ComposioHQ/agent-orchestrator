@@ -54,7 +54,7 @@ func TestReviewCommandPreflightValidationAndCancel(t *testing.T) {
 		t.Fatal("expected relative binary rejection")
 	}
 	cancel, err := r.ReviewCancel(context.Background())
-	if err != nil || cancel.Mode != ports.ReviewCancelInterrupt || cancel.Interrupts != 1 {
+	if err != nil || cancel.Mode != ports.ReviewCancelInput || cancel.Input != "\x1b" {
 		t.Fatalf("cancel = %#v, %v", cancel, err)
 	}
 }

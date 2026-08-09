@@ -3,6 +3,7 @@ package kimi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -351,7 +352,17 @@ timeout = 7
 		`command = "ao hooks kimi permission-request"`,
 		`event = "Stop"`,
 		`command = "ao hooks kimi stop"`,
+		`event = "Interrupt"`,
+		`command = "ao hooks kimi interrupt"`,
 		kimiHooksSentinelEnd,
+		kimiPermissionRulesSentinelStart,
+		`pattern = "ReadFile"`,
+		`pattern = "ReadMediaFile"`,
+		`pattern = "Glob"`,
+		`pattern = "Grep"`,
+		`pattern = "SearchWeb"`,
+		`pattern = "FetchURL"`,
+		kimiPermissionRulesSentinelEnd,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("config missing %q:\n%s", want, text)
@@ -508,6 +519,9 @@ func TestGetAgentHooksReseedsAOManagedConfigWithoutAuth(t *testing.T) {
 	if strings.Count(text, kimiHooksSentinelStart) != 1 {
 		t.Fatalf("managed hook block duplicated:\n%s", text)
 	}
+	if strings.Count(text, kimiPermissionRulesSentinelStart) != 1 {
+		t.Fatalf("managed permission rules block duplicated:\n%s", text)
+	}
 }
 
 func TestGetAgentHooksRewritesManagedKimiConfigBlock(t *testing.T) {
@@ -547,7 +561,36 @@ func TestGetAgentHooksRewritesManagedKimiConfigBlock(t *testing.T) {
 		t.Fatalf("stale managed block preserved:\n%s", text)
 	}
 	if strings.Count(text, kimiHooksSentinelStart) != 1 {
-		t.Fatalf("managed block duplicated:\n%s", text)
+		t.Fatalf("managed hook block duplicated:\n%s", text)
+	}
+	if strings.Count(text, kimiPermissionRulesSentinelStart) != 1 {
+		t.Fatalf("managed permission rules block duplicated:\n%s", text)
+	}
+}
+
+func TestGetAgentHooksAddsReadOnlyPermissionRules(t *testing.T) {
+	workspace := t.TempDir()
+	kimiHome := t.TempDir()
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{"KIMI_CODE_HOME": kimiHome},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(kimiHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	text := string(data)
+	for _, tool := range []string{"ReadFile", "ReadMediaFile", "Glob", "Grep", "SearchWeb", "FetchURL"} {
+		want := fmt.Sprintf(`pattern = %q`, tool)
+		if !strings.Contains(text, want) {
+			t.Fatalf("config missing read-only allow rule for %s:\n%s", tool, text)
+		}
+	}
+	if strings.Count(text, kimiPermissionRulesSentinelStart) != 1 {
+		t.Fatalf("managed permission rules block duplicated:\n%s", text)
 	}
 }
 

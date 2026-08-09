@@ -20,6 +20,9 @@ const (
 
 	kimiHooksSentinelStart = "# managed by agent-orchestrator: kimi hooks"
 	kimiHooksSentinelEnd   = "# /managed by agent-orchestrator: kimi hooks"
+
+	kimiPermissionRulesSentinelStart = "# managed by agent-orchestrator: kimi read-only permission rules"
+	kimiPermissionRulesSentinelEnd   = "# /managed by agent-orchestrator: kimi read-only permission rules"
 )
 
 // GetAgentHooks installs AO's standing system prompt through Kimi's
@@ -91,6 +94,7 @@ func installKimiConfigHooks(cfg ports.WorkspaceHookConfig) error {
 		data = seeded
 	}
 	body := mergeKimiHooksConfig(string(data))
+	body = mergeKimiPermissionRules(body)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create Kimi config dir: %w", err)
 	}
@@ -177,7 +181,11 @@ func kimiConfigCanSeed(existing []byte) bool {
 	if text == "" {
 		return true
 	}
-	return strings.TrimSpace(removeKimiManagedHooks(text)) == ""
+	return strings.TrimSpace(removeKimiManagedBlocks(text)) == ""
+}
+
+func removeKimiManagedBlocks(existing string) string {
+	return removeKimiManagedHooks(removeKimiManagedPermissionRules(existing))
 }
 
 func removeKimiManagedHooks(existing string) string {
@@ -235,7 +243,46 @@ func kimiHooksConfigBlock() string {
 		kimiHookEntry("UserPromptSubmit", "", "ao hooks kimi user-prompt-submit") +
 		kimiHookEntry("PermissionRequest", "", "ao hooks kimi permission-request") +
 		kimiHookEntry("Stop", "", "ao hooks kimi stop") +
+		kimiHookEntry("Interrupt", "", "ao hooks kimi interrupt") +
 		kimiHooksSentinelEnd + "\n"
+}
+
+func removeKimiManagedPermissionRules(existing string) string {
+	start := strings.Index(existing, kimiPermissionRulesSentinelStart)
+	if start < 0 {
+		return existing
+	}
+	afterStart := existing[start+len(kimiPermissionRulesSentinelStart):]
+	endRel := strings.Index(afterStart, kimiPermissionRulesSentinelEnd)
+	if endRel < 0 {
+		return strings.TrimRight(existing[:start], "\n")
+	}
+	end := start + len(kimiPermissionRulesSentinelStart) + endRel + len(kimiPermissionRulesSentinelEnd)
+	return existing[:start] + existing[end:]
+}
+
+func mergeKimiPermissionRules(existing string) string {
+	cleaned := removeKimiManagedPermissionRules(existing)
+	block := kimiPermissionRulesBlock()
+	return joinKimiConfigParts("", block, cleaned)
+}
+
+func kimiPermissionRulesBlock() string {
+	return kimiPermissionRulesSentinelStart + "\n\n" +
+		kimiPermissionRuleEntry("ReadFile") +
+		kimiPermissionRuleEntry("ReadMediaFile") +
+		kimiPermissionRuleEntry("Glob") +
+		kimiPermissionRuleEntry("Grep") +
+		kimiPermissionRuleEntry("SearchWeb") +
+		kimiPermissionRuleEntry("FetchURL") +
+		kimiPermissionRulesSentinelEnd + "\n"
+}
+
+func kimiPermissionRuleEntry(tool string) string {
+	return "[[permission.rules]]\n" +
+		"decision = \"allow\"\n" +
+		"scope = \"user\"\n" +
+		"pattern = " + quoteTOMLString(tool) + "\n\n"
 }
 
 func kimiHookEntry(event, matcher, command string) string {

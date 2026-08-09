@@ -96,11 +96,12 @@ func (*Reviewer) ReviewMessage(ctx context.Context, inv ports.ReviewInvocation) 
 	return inv.Prompt, nil
 }
 
-// ReviewCancel uses Kimi's documented single Ctrl-C active-operation
-// interrupt. An idle session requires another confirmation before exiting.
+// ReviewCancel sends Escape to abort Kimi's active turn while keeping the
+// interactive TUI alive. Ctrl-C exits the CLI when the input box is empty, so
+// it is not used for cancelling a review run.
 func (*Reviewer) ReviewCancel(ctx context.Context) (ports.ReviewCancelSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ReviewCancelSpec{}, err
 	}
-	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 1}, nil
+	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInput, Input: "\x1b"}, nil
 }
