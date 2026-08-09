@@ -95,3 +95,51 @@ func TestSummaryReaderGetReturnsUnavailableMetricsWithoutEvents(t *testing.T) {
 		t.Fatalf("empty usage = %+v", got)
 	}
 }
+
+// TestSummaryReaderGetAppliesHarnessMetricCoverage catches treating a metric
+// the native source never reports as a real zero. Native zeroes for supported
+// metrics must remain distinguishable from unavailable metrics.
+func TestSummaryReaderGetAppliesHarnessMetricCoverage(t *testing.T) {
+	zero := int64(0)
+	store := &usageSummaryStoreStub{
+		found:   true,
+		session: domain.SessionRecord{ID: "coverage", Harness: domain.HarnessQwen},
+		models: []domain.UsageModelAggregate{
+			{
+				Harness: domain.HarnessQwen, ModelID: "qwen3-coder",
+				Tokens: domain.UsageTokenMetrics{
+					InputTokens: 10, UncachedInputTokens: 4, CacheReadTokens: 6,
+					OutputTokens: 2, ReasoningTokens: &zero,
+				},
+				ReasoningEventCount: 1,
+			},
+			{
+				Harness: domain.HarnessKimi, ModelID: "kimi-for-coding",
+				Tokens: domain.UsageTokenMetrics{
+					InputTokens: 8, UncachedInputTokens: 3, CacheReadTokens: 4,
+					CacheWriteTokens: 1, OutputTokens: 2,
+				},
+			},
+		},
+	}
+
+	got, err := NewSummaryReader(store).Get(context.Background(), "coverage")
+	mustNoError(t, err)
+	if len(got.Harnesses) != 2 {
+		t.Fatalf("harnesses = %+v", got.Harnesses)
+	}
+	qwen := got.Harnesses[0].Totals
+	if qwen.CacheWriteTokens != nil {
+		t.Fatalf("qwen cache write = %v, want unavailable", *qwen.CacheWriteTokens)
+	}
+	if qwen.ReasoningTokens == nil || *qwen.ReasoningTokens != 0 {
+		t.Fatalf("qwen reasoning = %v, want reported zero", qwen.ReasoningTokens)
+	}
+	kimi := got.Harnesses[1].Totals
+	if kimi.CacheWriteTokens == nil || *kimi.CacheWriteTokens != 1 {
+		t.Fatalf("kimi cache write = %v, want 1", kimi.CacheWriteTokens)
+	}
+	if kimi.ReasoningTokens != nil {
+		t.Fatalf("kimi reasoning = %v, want unavailable", *kimi.ReasoningTokens)
+	}
+}
