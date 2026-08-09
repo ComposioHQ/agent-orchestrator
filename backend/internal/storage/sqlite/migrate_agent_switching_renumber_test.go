@@ -65,7 +65,7 @@ func openAgentSwitchMigrationTestDB(t *testing.T) *sql.DB {
 
 func applyLegacyAgentSwitchMigrations(t *testing.T, db *sql.DB, switchPath, handoffPath string) {
 	t.Helper()
-	agentSwitchMigration, err := migrationsFS.ReadFile("migrations/0083_agent_switching.sql")
+	agentSwitchMigration, err := migrationsFS.ReadFile("migrations/0085_agent_switching.sql")
 	if err != nil {
 		t.Fatalf("read agent-switch migration: %v", err)
 	}
@@ -109,7 +109,7 @@ func assertAgentSwitchMigrationHistoryRepaired(t *testing.T, db *sql.DB, expectB
 	if err := migrate(db); err != nil {
 		t.Fatalf("migrate legacy agent-switch database: %v", err)
 	}
-	for _, version := range []int64{80, 81, 82, 83} {
+	for _, version := range []int64{80, 81, 82, 83, 85} {
 		var applied int
 		if err := db.QueryRow(`
 SELECT COALESCE((
@@ -154,17 +154,18 @@ SELECT COALESCE((
 			t.Fatalf("%s.%s count = %d, want 1", table, column, count)
 		}
 	}
-	var primeHarnessShape int
+	var reconciledHarnessShape int
 	if err := db.QueryRow(`
 SELECT COUNT(*)
 FROM sqlite_master
 WHERE type = 'table'
   AND name = 'sessions'
-  AND instr(COALESCE(sql, ''), '''prime-agent''') > 0`).Scan(&primeHarnessShape); err != nil {
-		t.Fatalf("read Prime Agent session shape: %v", err)
+  AND instr(COALESCE(sql, ''), '''kimchi''') > 0
+  AND instr(COALESCE(sql, ''), '''prime-agent''') > 0`).Scan(&reconciledHarnessShape); err != nil {
+		t.Fatalf("read reconciled Kimchi/Prime Agent session shape: %v", err)
 	}
-	if primeHarnessShape != 1 {
-		t.Fatalf("Prime Agent session shape = %d, want 1", primeHarnessShape)
+	if reconciledHarnessShape != 1 {
+		t.Fatalf("reconciled Kimchi/Prime Agent session shape = %d, want 1", reconciledHarnessShape)
 	}
 
 	if err := migrate(db); err != nil {

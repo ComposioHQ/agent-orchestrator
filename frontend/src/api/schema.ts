@@ -1596,7 +1596,7 @@ export interface components {
             projectId: string;
             prs: components["schemas"]["SessionPRFacts"][];
             /** @enum {string} */
-            reviewerHarness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
+            reviewerHarness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
             /** @enum {string} */
             scmStatus?: "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged";
             /** @enum {string} */
@@ -1833,7 +1833,7 @@ export interface components {
         };
         DelegateTaskRequest: {
             /** @enum {string} */
-            agent?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "prime-agent" | "autohand" | "fake";
+            agent?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "kimchi" | "prime-agent" | "autohand" | "fake";
             attachments?: components["schemas"]["ControllersSpawnAttachmentInput"][];
             brief: string;
             /** @enum {string} */
@@ -2454,7 +2454,7 @@ export interface components {
         };
         SetSessionReviewerRequest: {
             /** @enum {string} */
-            harness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
+            harness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
         };
         SettingsResponse: {
             chatHarnesses: string[];
@@ -2487,7 +2487,7 @@ export interface components {
             branch?: string;
             displayName?: string;
             /** @enum {string} */
-            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "prime-agent" | "autohand";
+            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "kimchi" | "prime-agent" | "autohand";
             issueId?: string;
             /** @enum {string} */
             kind?: "worker" | "orchestrator";
@@ -2579,7 +2579,7 @@ export interface components {
         };
         TriggerReviewRequest: {
             /** @enum {string} */
-            harness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
+            harness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
         };
         TriggerReviewResponse: {
             /** @description True when a new review pass was started; false when an existing run for the same commit was reused. */

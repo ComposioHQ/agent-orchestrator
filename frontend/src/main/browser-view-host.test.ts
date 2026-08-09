@@ -12,14 +12,13 @@ import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
 type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number } }, ...args: unknown[]) => unknown;
 
-type DisplayHandler = (request: unknown, callback: (streams: { video?: unknown }) => void) => void;
-
 function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").AgentBrowserRuntime) {
 	let currentURL = "";
-	let displayHandler: DisplayHandler | null = null;
 	const webContentsListeners = new Map<string, (...args: never[]) => void>();
 	const debuggerListeners = new Map<string, (...args: never[]) => void>();
 	let debuggerAttached = false;
+	const openDevTools = vi.fn();
+	const closeDevTools = vi.fn();
 	const debuggerSendCommand = vi.fn(async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
 		if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
 		return {};
@@ -31,12 +30,6 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		mainFrame: { frameToken: "preview-frame" },
 		canGoBack: () => false,
 		canGoForward: () => false,
-		capturePage: vi.fn(async () => ({
-			isEmpty: () => false,
-			toJPEG: () => Buffer.from("snapshot"),
-			toPNG: () => Buffer.from("png-snapshot"),
-			getSize: () => ({ width: 640, height: 480 }),
-		})),
 		debugger: {
 			attach: vi.fn(() => {
 				debuggerAttached = true;
@@ -67,6 +60,8 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		setWindowOpenHandler: () => undefined,
 		stop: () => undefined,
 		close: vi.fn(),
+		openDevTools,
+		closeDevTools,
 		session: {
 			setPermissionCheckHandler,
 			setPermissionRequestHandler,
@@ -77,21 +72,6 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		setBounds: vi.fn(),
 		setBorderRadius: vi.fn(),
 		setVisible: vi.fn(),
-	};
-	let devtoolsClosed: (() => void) | undefined;
-	const devtoolsWindow = {
-		webContents: {
-			loadURL: vi.fn(async (_url: string) => undefined),
-			focus: vi.fn(),
-			on: vi.fn(),
-		},
-		show: vi.fn(),
-		focus: vi.fn(),
-		close: vi.fn(),
-		isDestroyed: () => false,
-		on: vi.fn((event: string, listener: () => void) => {
-			if (event === "closed") devtoolsClosed = listener;
-		}),
 	};
 	const runtime =
 		agentBrowserRuntime ??
@@ -124,10 +104,6 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 				height: 480,
 				untrustedExternalContent: true as const,
 			})),
-			devtoolsEndpoint: vi.fn(
-				async (_sessionId: string, targetId: string) =>
-					`ws://127.0.0.1:1234/?target=${targetId}&client=devtools`,
-			),
 			closeSession: vi.fn(async () => undefined),
 			dispose: vi.fn(async () => undefined),
 		} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime);
@@ -136,22 +112,17 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	const sent: Array<{ channel: string; payload: unknown }> = [];
 	const shellFocus = vi.fn();
 	const shellSend = vi.fn((channel: string, payload?: unknown) => sent.push({ channel, payload }));
+	const mainContentView = { addChildView: vi.fn(), removeChildView: vi.fn() };
 	const host = createBrowserViewHost({
 		mainWindow: {
-			contentView: { addChildView: () => undefined, removeChildView: () => undefined },
+			contentView: mainContentView,
 			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
 			webContents: {
 				id: 1,
 				focus: shellFocus,
 				send: shellSend,
-				session: {
-					setDisplayMediaRequestHandler: (handler: DisplayHandler | null) => {
-						displayHandler = handler;
-					},
-				},
 			},
 		} as never,
-		createDevToolsWindow: () => devtoolsWindow,
 		ipcMain: {
 			handle: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
 			on: (channel: string, fn: EventHandler) => eventHandlers.set(channel, fn),
@@ -197,13 +168,11 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		return event;
 	};
 	return {
-		devtoolsClosed: () => devtoolsClosed?.(),
-		devtoolsWindow,
 		emit,
 		emitBeforeInput,
-		getDisplayHandler: () => displayHandler,
 		host,
 		invoke,
+		mainContentView,
 		rendererFrame,
 		send,
 		sent,
@@ -211,6 +180,8 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		setPermissionRequestHandler,
 		shellFocus,
 		shellSend,
+		openDevTools,
+		closeDevTools,
 		view,
 		webContents,
 		webContentsListeners,
@@ -252,12 +223,6 @@ function setupTabHost() {
 			mainFrame: {},
 			canGoBack: () => false,
 			canGoForward: () => false,
-			capturePage: vi.fn(async () => ({
-				isEmpty: () => false,
-				toJPEG: () => Buffer.from("snapshot"),
-				toPNG: () => Buffer.from("snapshot"),
-				getSize: () => ({ width: 640, height: 480 }),
-			})),
 			clearHistory: () => undefined,
 			debugger: {
 				attach: () => {
@@ -338,9 +303,6 @@ function setupTabHost() {
 			return {};
 		}),
 		screenshot: vi.fn(async () => ({ data: "", width: 0, height: 0, untrustedExternalContent: true as const })),
-		devtoolsEndpoint: vi.fn(
-			async (_sessionId: string, targetId: string) => `ws://127.0.0.1:1234/?target=${targetId}`,
-		),
 		closeSession: vi.fn(async () => undefined),
 		dispose: vi.fn(async () => undefined),
 	} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;
@@ -405,72 +367,62 @@ describe("new-session shortcut forwarding", () => {
 	});
 });
 
-describe("shared Chromium DevTools host", () => {
-	it("opens the official DevTools frontend in a detached window", async () => {
-		const { invoke, sent, devtoolsClosed, devtoolsWindow } = setupHost();
+describe("native Chromium DevTools host", () => {
+	it("uses Chromium's native DevTools surface without embedding a second preview", async () => {
+		const { emit, invoke, mainContentView, openDevTools, closeDevTools, view } = setupHost();
+		const nav = await invoke("browser:ensure", "sess-1");
+		const viewId = (nav as BrowserNavState).viewId;
+		await invoke("browser:navigate", { viewId, url: "http://localhost:3000/" });
+		emit("browser:setBounds", 1, { viewId, rect: { x: 20, y: 30, width: 700, height: 500 }, visible: true });
+
+		const opened = await invoke("browser:devtools", { viewId, operation: "open" });
+		expect(opened).toMatchObject({ open: true, placement: "right" });
+		expect(openDevTools).toHaveBeenCalledWith({ mode: "right", activate: true });
+		expect(mainContentView.addChildView).toHaveBeenCalledTimes(1);
+		expect(mainContentView.addChildView).toHaveBeenCalledWith(view);
+
+		const bottom = await invoke("browser:devtools", {
+			viewId,
+			operation: "setPlacement",
+			placement: "bottom",
+		});
+		expect(bottom).toMatchObject({ placement: "bottom" });
+		expect(closeDevTools).toHaveBeenCalledOnce();
+		expect(openDevTools).toHaveBeenLastCalledWith({ mode: "bottom", activate: false });
+
+		await invoke("browser:devtools", { viewId, operation: "setPlacement", placement: "undocked" });
+		expect(openDevTools).toHaveBeenLastCalledWith({ mode: "undocked", activate: true });
+	});
+
+	it("reflects a manual native DevTools close in the browser toolbar state", async () => {
+		const { invoke, sent, webContentsListeners } = setupHost();
 		const nav = await invoke("browser:ensure", "sess-1");
 		const viewId = (nav as BrowserNavState).viewId;
 
-		const opened = await invoke("browser:devtools", {
+		await invoke("browser:devtools", { viewId, operation: "open" });
+		expect(sent.filter((entry) => entry.channel === "browser:devtoolsState").at(-1)?.payload).toMatchObject({
 			viewId,
-			operation: "open",
+			open: true,
 		});
-		expect(opened).toMatchObject({ viewId, open: true, activeTabId: "t1" });
-		const loadedURL = devtoolsWindow.webContents.loadURL.mock.calls[0]?.[0] as string;
-		expect(loadedURL).toContain("devtools://devtools/bundled/inspector.html");
-		expect(new URL(loadedURL).searchParams.has("targetType")).toBe(false);
-		// Chromium gates both docking and the Device Mode toolbar/preview on the
-		// presence of can_dock. It must be omitted rather than set to "false",
-		// because Chromium treats any non-empty query value as enabled.
-		expect(new URL(loadedURL).searchParams.has("can_dock")).toBe(false);
-		expect(new URL(loadedURL).searchParams.get("ws")).toBe("127.0.0.1:1234/?target=t1&client=devtools");
-		expect(loadedURL).not.toContain("ws%3A%2F%2F");
-		expect(devtoolsWindow.show).toHaveBeenCalled();
-		expect(devtoolsWindow.focus).toHaveBeenCalled();
-		expect(sent.some((entry) => entry.channel === "browser:devtoolsState")).toBe(true);
 
-		// A user closing the detached window updates AO's state without another
-		// browser-toolbar interaction. The fake emits Electron's `closed` event.
-		devtoolsClosed();
+		// The first close event after a placement change belongs to our own
+		// close/reopen cycle, not to a user clicking the DevTools window's X.
+		await invoke("browser:devtools", { viewId, operation: "setPlacement", placement: "bottom" });
+		webContentsListeners.get("devtools-closed")?.();
+		expect(sent.filter((entry) => entry.channel === "browser:devtoolsState").at(-1)?.payload).toMatchObject({
+			viewId,
+			open: true,
+		});
+
+		// A subsequent close is the user's actual close and must immediately
+		// switch the renderer button back to "Open DevTools".
+		webContentsListeners.get("devtools-closed")?.();
 		expect(sent.filter((entry) => entry.channel === "browser:devtoolsState").at(-1)?.payload).toMatchObject({
 			viewId,
 			open: false,
 		});
-
-		// Opening after a normal close creates a fresh detached window again.
-		const afterUserClose = await invoke("browser:devtools", { viewId, operation: "open" });
-		expect(afterUserClose).toMatchObject({ viewId, open: true });
-		const closed = await invoke("browser:devtools", { viewId, operation: "close" });
-		expect(closed).toMatchObject({ viewId, open: false });
-		expect(devtoolsWindow.close).toHaveBeenCalled();
 	});
 
-	it("settles rapid tab retargeting on the latest active tab", async () => {
-		const { devtoolsWindow, host, invoke } = setupHost();
-		const nav = await invoke("browser:ensure", "sess-1");
-		const viewId = (nav as BrowserNavState).viewId;
-		await host.execute("sess-1", "tab-new");
-		await host.execute("sess-1", "tab-select", { tabId: "t1" });
-		await invoke("browser:devtools", { viewId, operation: "open" });
-
-		let releaseSecondLoad: (() => void) | undefined;
-		devtoolsWindow.webContents.loadURL.mockImplementation((url: string) => {
-			if (!url.includes("target%3Dt2") && !url.includes("target=t2")) return Promise.resolve(undefined);
-			return new Promise<undefined>((resolve) => {
-				releaseSecondLoad = () => resolve(undefined);
-			});
-		});
-
-		await invoke("browser:selectTab", { viewId, tabId: "t2" });
-		await vi.waitFor(() => expect(releaseSecondLoad).toBeDefined());
-		await invoke("browser:selectTab", { viewId, tabId: "t1" });
-		releaseSecondLoad?.();
-
-		await vi.waitFor(() => {
-			const loadedURL = devtoolsWindow.webContents.loadURL.mock.calls.at(-1)?.[0] as string;
-			expect(new URL(loadedURL).searchParams.get("ws")).toContain("target=t1");
-		});
-	});
 });
 
 describe("normalizeBrowserURL", () => {
@@ -538,7 +490,7 @@ describe("browser:clear", () => {
 	});
 });
 
-describe("browser:capture", () => {
+describe("native browser visibility", () => {
 	it("shows AO's empty state while keeping an initialized blank target alive", async () => {
 		const { emit, invoke, view } = setupHost();
 		await invoke("browser:ensure", "sess-1");
@@ -555,26 +507,8 @@ describe("browser:capture", () => {
 		expect(view.setVisible).toHaveBeenLastCalledWith(true);
 	});
 
-	it("returns the current page as a data URL", async () => {
-		const { invoke } = setupHost();
-		await invoke("browser:ensure", "sess-1");
-
-		const snapshot = await invoke("browser:capture", "1:sess-1");
-
-		expect(snapshot).toEqual({
-			dataUrl: `data:image/jpeg;base64,${Buffer.from("snapshot").toString("base64")}`,
-			pixelWidth: 640,
-			pixelHeight: 480,
-			nativeBounds: { x: -10_000, y: -10_000, width: 1280, height: 720 },
-			cssLeft: 0,
-			cssTop: 0,
-			cssWidth: 1280,
-			cssHeight: 720,
-		});
-	});
-
-	it("returns rounded native geometry in renderer CSS pixels across page zoom", async () => {
-		const { emit, invoke } = setupHost();
+	it("keeps rounded native geometry across page zoom", async () => {
+		const { emit, invoke, view } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
 		emit("browser:setBounds", 1.25, {
@@ -583,27 +517,7 @@ describe("browser:capture", () => {
 			visible: true,
 		});
 
-		const snapshot = await invoke("browser:capture", "1:sess-1");
-
-		expect(snapshot).toEqual(
-			expect.objectContaining({
-				pixelWidth: 640,
-				pixelHeight: 480,
-				nativeBounds: { x: 125, y: 25, width: 399, height: 299 },
-				cssLeft: -0.25,
-				cssTop: -0.25,
-				cssWidth: 319.2,
-				cssHeight: 239.2,
-			}),
-		);
-	});
-
-	it("returns null for an unknown view", async () => {
-		const { invoke } = setupHost();
-
-		const snapshot = await invoke("browser:capture", "1:missing");
-
-		expect(snapshot).toBeNull();
+		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 125, y: 25, width: 399, height: 299 });
 	});
 });
 
@@ -1074,94 +988,6 @@ describe("agent browser network capture", () => {
 	});
 });
 
-describe("browser:requestMirror", () => {
-	it("grants the display-media request from the frame that armed the mirror", async () => {
-		const { getDisplayHandler, invoke, rendererFrame, webContents } = setupHost();
-		await invoke("browser:ensure", "sess-1");
-
-		const granted = await invoke("browser:requestMirror", "1:sess-1");
-		expect(granted).toBe(true);
-
-		const streams: Array<{ video?: unknown }> = [];
-		getDisplayHandler()!({ frame: rendererFrame }, (result) => streams.push(result));
-		expect(streams).toEqual([{ video: webContents.mainFrame }]);
-	});
-
-	it("denies display-media requests from a different frame", async () => {
-		const { getDisplayHandler, invoke } = setupHost();
-		await invoke("browser:ensure", "sess-1");
-		await invoke("browser:requestMirror", "1:sess-1");
-
-		const streams: Array<{ video?: unknown }> = [];
-		getDisplayHandler()!({ frame: { processId: 9, routingId: 3 } }, (result) => streams.push(result));
-		expect(streams).toEqual([{}]);
-	});
-
-	it("denies display-media requests with no pending mirror", async () => {
-		const { getDisplayHandler, invoke, rendererFrame } = setupHost();
-		await invoke("browser:ensure", "sess-1");
-
-		const streams: Array<{ video?: unknown }> = [];
-		getDisplayHandler()!({ frame: rendererFrame }, (result) => streams.push(result));
-		expect(streams).toEqual([{}]);
-	});
-
-	it("rejects mirror requests for views the renderer does not own", async () => {
-		const { invoke } = setupHost();
-		await invoke("browser:ensure", "sess-1");
-
-		const granted = await invoke("browser:requestMirror", "7:sess-1");
-		expect(granted).toBe(false);
-	});
-
-	it("expires a mirror grant that is never consumed", async () => {
-		vi.useFakeTimers();
-		try {
-			const { getDisplayHandler, invoke, rendererFrame } = setupHost();
-			await invoke("browser:ensure", "sess-1");
-			await invoke("browser:requestMirror", "1:sess-1");
-
-			vi.advanceTimersByTime(6000);
-
-			const streams: Array<{ video?: unknown }> = [];
-			getDisplayHandler()!({ frame: rendererFrame }, (result) => streams.push(result));
-			expect(streams).toEqual([{}]);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it("denies capture of views the renderer does not own", async () => {
-		const { invoke } = setupHost();
-		await invoke("browser:ensure", "sess-1");
-
-		const snapshot = await invoke("browser:capture", "7:sess-1");
-		expect(snapshot).toBeNull();
-	});
-});
-
-describe("browser:setBounds parked", () => {
-	it("moves the blank view offscreen at full size while keeping the native view hidden", async () => {
-		const { emit, invoke, view } = setupHost();
-		await invoke("browser:ensure", "sess-1");
-		view.setBorderRadius.mockClear();
-
-		emit("browser:setBounds", 1, {
-			viewId: "1:sess-1",
-			rect: { x: 12, y: 34, width: 320, height: 240 },
-			visible: true,
-			parked: true,
-		});
-
-		expect(view.setBounds).toHaveBeenLastCalledWith({ x: -10_000, y: 0, width: 320, height: 240 });
-		expect(view.setBorderRadius).toHaveBeenLastCalledWith(8);
-		expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(
-			view.setBorderRadius.mock.invocationCallOrder.at(-1)!,
-		);
-		expect(view.setVisible).toHaveBeenLastCalledWith(false);
-	});
-});
-
 describe("browser:setBounds", () => {
 	it("converts page-zoomed renderer slot bounds before positioning the native view", async () => {
 		const { emit, invoke, view } = setupHost();
@@ -1484,7 +1310,6 @@ describe("dispose after the window is destroyed", () => {
 				height: 1,
 				untrustedExternalContent: true as const,
 			})),
-			devtoolsEndpoint: vi.fn(async () => "ws://127.0.0.1:1/fixture"),
 			closeSession: vi.fn(async () => undefined),
 			dispose: vi.fn(() => runtimeDispose),
 		} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;

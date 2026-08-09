@@ -1,4 +1,4 @@
--- Durable provider-native session registry and agent-switch saga.
+-- Migration 0085: durable provider-native session registry and agent-switch saga.
 --
 -- The registry is operational resume state and deliberately remains separate
 -- from usage telemetry. A single AO session may retain several conversations

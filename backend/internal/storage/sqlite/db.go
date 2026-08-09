@@ -536,8 +536,9 @@ SELECT COALESCE((
 
 // repairRenumberedAgentSwitchMigrationHistory preserves databases opened by
 // earlier revisions of this feature branch. Agent switching first occupied
-// 0080/0081 and later 0081/0082; main now owns 0080 through 0082. Remap the
-// physically present switching schema to the consolidated 0083 and release
+// 0080/0081, later 0081/0082, and briefly 0083/0084; main now owns 0080
+// through 0083. Remap the physically present switching schema to the
+// consolidated 0085 and release
 // only the main migration numbers whose schema effects are still absent.
 func repairRenumberedAgentSwitchMigrationHistory(db *sql.DB) error {
 	var gooseTable, agentSwitchTable int
@@ -563,7 +564,7 @@ func repairRenumberedAgentSwitchMigrationHistory(db *sql.DB) error {
 		return err
 	}
 
-	var browserVerifierColumn, primeHarnessShape int
+	var browserVerifierColumn, primeHarnessShape, reconciledKimchiPrimeHarnessShape int
 	if err := db.QueryRow(
 		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'browser_capability_verifier'`,
 	).Scan(&browserVerifierColumn); err != nil {
@@ -577,6 +578,15 @@ WHERE type = 'table'
   AND instr(COALESCE(sql, ''), '''prime-agent''') > 0`).Scan(&primeHarnessShape); err != nil {
 		return err
 	}
+	if err := db.QueryRow(`
+SELECT COUNT(*)
+FROM sqlite_master
+WHERE type = 'table'
+  AND name = 'sessions'
+  AND instr(COALESCE(sql, ''), '''kimchi''') > 0
+  AND instr(COALESCE(sql, ''), '''prime-agent''') > 0`).Scan(&reconciledKimchiPrimeHarnessShape); err != nil {
+		return err
+	}
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -586,7 +596,7 @@ WHERE type = 'table'
 
 	// Earlier feature builds split finalized-handoff storage into 0084, while
 	// still earlier builds only had the base switching table. Repair either
-	// shape before recording the now-consolidated 0083 as applied. The status is
+	// shape before recording the now-consolidated 0085 as applied. The status is
 	// deliberately not inferred from retained paths: old rows remain unknown.
 	for _, column := range []struct {
 		name string
@@ -610,16 +620,16 @@ WHERE type = 'table'
 		}
 	}
 
-	var applied83 int
+	var applied85 int
 	if err := tx.QueryRow(`
 SELECT COALESCE((
     SELECT is_applied FROM goose_db_version
-	WHERE version_id = 83 ORDER BY id DESC LIMIT 1
-), 0)`).Scan(&applied83); err != nil {
+	WHERE version_id = 85 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied85); err != nil {
 		return err
 	}
-	if applied83 == 0 {
-		if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (83, 1)`); err != nil {
+	if applied85 == 0 {
+		if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (85, 1)`); err != nil {
 			return err
 		}
 	}
@@ -628,6 +638,7 @@ SELECT COALESCE((
 		80: reviewUpgraded,
 		81: browserVerifierColumn != 0,
 		82: primeHarnessShape != 0,
+		83: reconciledKimchiPrimeHarnessShape != 0,
 	} {
 		if mainEffectPresent {
 			continue
@@ -780,10 +791,17 @@ func reconcileSchema(db *sql.DB) error {
 }
 
 const (
-	sessionsHarnessCheckWithoutMuse   = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
-	sessionsHarnessCheckWithMuse      = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
-	sessionsHarnessCheckWithoutMuseQM = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
-	sessionsHarnessCheckWithMuseQM    = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithoutMuse                = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuse                   = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithoutMuseQM              = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMuseQM                 = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMuseKimchi             = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuseQMKimchi           = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMusePrimeAgent         = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'prime-agent', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuseQMPrimeAgent       = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'prime-agent', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMuseQMLegacyPrimeAgent = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'prime-agent', 'fake'))`
+	sessionsHarnessCheckWithMuseKimchiPrimeAgent   = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'prime-agent', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuseQMKimchiPrimeAgent = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'prime-agent', 'autohand', 'qm', 'fake'))`
 )
 
 func reconcileHarnessConstraint(db *sql.DB) error {
@@ -793,27 +811,53 @@ func reconcileHarnessConstraint(db *sql.DB) error {
 	).Scan(&schema); err != nil {
 		return fmt.Errorf("schema verification: inspect sessions harness constraint: %w", err)
 	}
-	if strings.Contains(schema, "'muse'") {
+	needsMuse := !strings.Contains(schema, "'muse'")
+	needsKimchi := !strings.Contains(schema, "'kimchi'")
+	needsPrimeAgent := !strings.Contains(schema, "'prime-agent'")
+	if !needsMuse && !needsKimchi && !needsPrimeAgent {
 		return nil
 	}
 	if _, err := db.Exec(`PRAGMA writable_schema = ON`); err != nil {
 		return fmt.Errorf("schema repair: enable writable_schema for sessions harness constraint: %w", err)
 	}
-	for _, replacement := range []struct {
+	type replacement struct {
 		old string
 		new string
-	}{
-		{sessionsHarnessCheckWithoutMuse, sessionsHarnessCheckWithMuse},
-		{sessionsHarnessCheckWithoutMuseQM, sessionsHarnessCheckWithMuseQM},
-	} {
+	}
+	var repairs []replacement
+	if needsMuse {
+		repairs = append(repairs,
+			replacement{sessionsHarnessCheckWithoutMuse, sessionsHarnessCheckWithMuse},
+			replacement{sessionsHarnessCheckWithoutMuseQM, sessionsHarnessCheckWithMuseQM},
+		)
+	}
+	if needsKimchi {
+		// After the Muse repair (if any), the constraint will be in one of
+		// these known states — each gets Kimchi inserted in the same
+		// position as migration 0054 does.
+		repairs = append(repairs,
+			replacement{sessionsHarnessCheckWithMuse, sessionsHarnessCheckWithMuseKimchi},
+			replacement{sessionsHarnessCheckWithMuseQM, sessionsHarnessCheckWithMuseQMKimchi},
+			replacement{sessionsHarnessCheckWithMusePrimeAgent, sessionsHarnessCheckWithMuseKimchiPrimeAgent},
+			replacement{sessionsHarnessCheckWithMuseQMPrimeAgent, sessionsHarnessCheckWithMuseQMKimchiPrimeAgent},
+			replacement{sessionsHarnessCheckWithMuseQMLegacyPrimeAgent, sessionsHarnessCheckWithMuseQMKimchiPrimeAgent},
+		)
+	}
+	if needsPrimeAgent {
+		repairs = append(repairs,
+			replacement{sessionsHarnessCheckWithMuseKimchi, sessionsHarnessCheckWithMuseKimchiPrimeAgent},
+			replacement{sessionsHarnessCheckWithMuseQMKimchi, sessionsHarnessCheckWithMuseQMKimchiPrimeAgent},
+		)
+	}
+	for _, r := range repairs {
 		if _, err := db.Exec(
 			`UPDATE sqlite_master
 SET sql = replace(sql, ?, ?)
 WHERE type = 'table' AND name = 'sessions'`,
-			replacement.old,
-			replacement.new,
+			r.old,
+			r.new,
 		); err != nil {
-			return fmt.Errorf("schema repair: widen sessions harness constraint for Muse: %w", err)
+			return fmt.Errorf("schema repair: widen sessions harness constraint: %w", err)
 		}
 	}
 	if _, err := db.Exec(`PRAGMA writable_schema = RESET`); err != nil {
@@ -826,6 +870,12 @@ WHERE type = 'table' AND name = 'sessions'`,
 	}
 	if !strings.Contains(schema, "'muse'") {
 		return fmt.Errorf("schema repair: sessions harness constraint is missing Muse and did not match known pre-Muse schema")
+	}
+	if !strings.Contains(schema, "'kimchi'") {
+		return fmt.Errorf("schema repair: sessions harness constraint is missing Kimchi and did not match known pre-Kimchi schema")
+	}
+	if !strings.Contains(schema, "'prime-agent'") {
+		return fmt.Errorf("schema repair: sessions harness constraint is missing Prime Agent and did not match known pre-Prime-Agent schema")
 	}
 	return nil
 }
