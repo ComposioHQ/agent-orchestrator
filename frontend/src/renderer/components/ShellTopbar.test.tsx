@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -95,11 +96,16 @@ function sessionWith(overrides: Partial<WorkspaceSession> = {}): WorkspaceSessio
 	};
 }
 
-function renderTopbar(session: WorkspaceSession, embedded = false) {
-	return renderTopbarSessions([session], session.id, embedded);
+function renderTopbar(session: WorkspaceSession, embedded = false, sessionIdentityAction?: ReactNode) {
+	return renderTopbarSessions([session], session.id, embedded, sessionIdentityAction);
 }
 
-function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string, embedded = false) {
+function renderTopbarSessions(
+	sessions: WorkspaceSession[],
+	sessionId: string,
+	embedded = false,
+	sessionIdentityAction?: ReactNode,
+) {
 	const data: WorkspaceSummary[] = [
 		{
 			id: sessions[0].workspaceId,
@@ -116,7 +122,7 @@ function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string, e
 	const topbar = () => (
 		<QueryClientProvider client={queryClient}>
 			<TooltipProvider>
-				<ShellTopbar embedded={embedded} />
+				<ShellTopbar embedded={embedded} sessionIdentityAction={sessionIdentityAction} />
 			</TooltipProvider>
 		</QueryClientProvider>
 	);
@@ -167,6 +173,38 @@ beforeEach(() => {
 });
 
 describe("ShellTopbar status pill", () => {
+	it("groups the worker identity and interface action in one compact session card", () => {
+		renderTopbar(
+			sessionWith(),
+			false,
+			<button type="button" aria-label="Switch interface">
+				Switch interface
+			</button>,
+		);
+
+		const card = screen.getByTestId("session-identity-card");
+		expect(card).toHaveTextContent("do the thing");
+		expect(card).toContainElement(screen.getByRole("button", { name: "Switch interface" }));
+		expect(card.querySelector('img[aria-hidden="true"]')).toBeInTheDocument();
+		expect(card).not.toHaveTextContent("ao/sess-1");
+	});
+
+	it("uses the same session-card contract for the orchestrator", () => {
+		renderTopbar(
+			orchestrator,
+			false,
+			<button type="button" aria-label="Switch interface">
+				Switch interface
+			</button>,
+		);
+
+		const card = screen.getByTestId("session-identity-card");
+		expect(card).toHaveTextContent("Orchestrator");
+		expect(card).toContainElement(screen.getByRole("button", { name: "Switch interface" }));
+		expect(card.querySelector("svg")).toBeInTheDocument();
+		expect(within(card).queryByRole("button", { name: "Open Kanban" })).not.toBeInTheDocument();
+	});
+
 	it("renders only session actions when embedded in the terminal bar", () => {
 		renderTopbar(sessionWith(), true);
 

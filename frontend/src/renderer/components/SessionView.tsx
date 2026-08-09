@@ -11,7 +11,6 @@ import { NotificationCenter } from "./NotificationCenter";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import {
-	SessionInterfaceActionGroup,
 	SessionInterfaceSwitchButton,
 	SessionInterfaceSwitchDialog,
 	SessionInterfaceTransitionNotice,
@@ -365,12 +364,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			}}
 		/>
 	) : null;
-	const sessionHeaderActions = (
-		<SessionInterfaceActionGroup>
-			{interfaceSwitchAction}
-			<ShellTopbar embedded />
-		</SessionInterfaceActionGroup>
-	);
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
 	const browserSlotVisible = Boolean(
@@ -695,6 +688,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					style={{ overflow: "hidden" }}
 				>
 					<div className="relative flex h-full min-h-0 flex-col">
+						<ShellTopbar sessionIdentityAction={interfaceSwitchAction} />
 						<SessionTopbarHost
 							className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
 							data-testid="session-topbar-host"
@@ -705,7 +699,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							{showChatSurface ? (
 								<SessionChatSurface
 									session={session}
-									headerActions={sessionHeaderActions}
 									controllerTransitioning={chatControllerTransitioning}
 									onOpenShell={addShellTerminal}
 									openingShell={openShellTerminal.isPending}
@@ -730,7 +723,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									shellTerminals={shellTerminals}
 									terminalTarget={routedTerminalTarget}
 									theme={theme}
-									topbarActions={sessionHeaderActions}
 								/>
 							)}
 							{interfaceSwitch.transition?.id !== dismissedTransitionID ? (

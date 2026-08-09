@@ -132,7 +132,13 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 // The terminal and inspector body pull in xterm/SSE machinery irrelevant to
 // the split under test. (ShellTopbar is shell-owned on Win/Linux; when the
 // platform hides the shell topbar, SessionView mounts it in-panel.)
-vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
+vi.mock("./ShellTopbar", () => ({
+	ShellTopbar: ({ sessionIdentityAction }: { sessionIdentityAction?: ReactNode }) => (
+		<header data-testid="session-shell-topbar">
+			<div data-testid="session-identity-card">{sessionIdentityAction}</div>
+		</header>
+	),
+}));
 vi.mock("./chat/SessionChatSurface", () => ({
 	SessionChatSurface: ({ onOpenShell, headerActions }: { onOpenShell?: () => void; headerActions?: ReactNode }) => (
 		<div data-testid="chat-surface">
@@ -472,6 +478,21 @@ describe("SessionView", () => {
 		interfaceTransitionState.status = undefined;
 		reviewGetMock.mockReset();
 		reviewGetMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [], runs: [] }, error: undefined });
+	});
+
+	it("places the interface switch in the main session header above the terminal bar", () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "chat" };
+
+		render(<SessionView sessionId="sess-1" />);
+
+		const switchButton = screen.getByRole("button", { name: "Switch to chat UI" });
+		const identityCard = screen.getByTestId("session-identity-card");
+		const terminalBarHost = screen.getByTestId("session-topbar-host");
+		expect(identityCard).toContainElement(switchButton);
+		expect(terminalBarHost).not.toContainElement(switchButton);
+		expect(
+			identityCard.compareDocumentPosition(terminalBarHost) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session

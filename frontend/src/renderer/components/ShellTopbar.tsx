@@ -1,8 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightOpen, Plus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { LayoutDashboard, PanelRightOpen, Plus, Trash2 } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
@@ -32,6 +32,7 @@ import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { AgentAvatar } from "./AgentAvatar";
 
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
@@ -57,7 +58,13 @@ const PADDING_DEFAULT = 18; // 1.125rem
 const PADDING_CLEARANCE = 170;
 const PADDING_CLEARANCE_FULLSCREEN = 112;
 
-export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
+export function ShellTopbar({
+	embedded = false,
+	sessionIdentityAction,
+}: {
+	embedded?: boolean;
+	sessionIdentityAction?: ReactNode;
+} = {}) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -187,30 +194,18 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 		>
 			{!embedded ? (
 				<div className="flex min-w-0 items-center gap-3">
-				{isSessionRoute && isOrchestrator ? (
-					<div className="inline-flex min-w-0 items-center gap-2">
-						<div className="inline-flex min-w-0 items-center gap-1.5">
-							<ProjectBoardLabelButton label={projectLabel} onOpen={openBoard} style={noDragStyle} />
-								<span aria-hidden="true" className="text-xs leading-none text-passive">
-									·
-								</span>
-								<span className="inline-flex h-control-sm items-center gap-1 rounded-md border border-border bg-surface px-2 text-micro font-semibold leading-none tracking-wide-sm text-muted-foreground">
-									<OrchestratorIcon className="size-3 shrink-0" aria-hidden="true" />
-									{t("shell.orchestrator")}
-								</span>
-							</div>
-						</div>
-					) : isSessionRoute ? (
-						<div className="flex min-w-0 items-center gap-3">
-							{session?.branch ? (
-								<div className="inline-flex min-w-0 items-center gap-1 font-mono text-2xs leading-none text-passive">
-									<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
-									<span className="truncate">{session.branch}</span>
-								</div>
+					{isSessionRoute && session ? (
+						<div className="flex min-w-0 items-center gap-2">
+							{isOrchestrator ? (
+								<ProjectBoardLabelButton label={projectLabel} onOpen={openBoard} style={noDragStyle} />
 							) : null}
-							{session ? <SessionStatusPill session={session} /> : null}
+							<SessionIdentityCard
+								action={sessionIdentityAction}
+								isOrchestrator={isOrchestrator}
+								session={session}
+							/>
 						</div>
-				) : (isProjectBoardRoute && boardActionsInPanel) ||
+					) : (isProjectBoardRoute && boardActionsInPanel) ||
 				  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
 					<div
 						className="inline-flex min-w-0 items-center gap-1.5"
@@ -406,6 +401,36 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 	);
 }
 
+function SessionIdentityCard({
+	action,
+	isOrchestrator,
+	session,
+}: {
+	action?: ReactNode;
+	isOrchestrator: boolean;
+	session: WorkspaceSession;
+}) {
+	const { t } = useTranslation();
+	return (
+		<div
+			className="inline-flex h-control-lg min-w-0 max-w-content-max items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-micro font-semibold leading-none text-foreground"
+			data-testid="session-identity-card"
+		>
+			{isOrchestrator ? (
+				<OrchestratorIcon aria-hidden="true" className="size-icon-xs shrink-0 text-muted-foreground" />
+			) : (
+				<AgentAvatar className="size-icon-xs shrink-0" decorative provider={session.provider} />
+			)}
+			<span className="max-w-content-max truncate">
+				{isOrchestrator ? t("shell.orchestrator") : session.title}
+			</span>
+			<span aria-hidden="true" className="h-4 w-px shrink-0 bg-border-strong" />
+			<SessionStatusPill session={session} />
+			{action ? <div className="flex shrink-0 items-center">{action}</div> : null}
+		</div>
+	);
+}
+
 const projectBoardLabelTransition = { type: "spring" as const, stiffness: 400, damping: 40 };
 
 /** Project name → board. Outer `<button>` owns the click so Motion's shared-layout spring cannot swallow the first pointer event (#3682). */
@@ -522,6 +547,6 @@ function SessionStatusPill({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
 	const { label, tone, breathe } = getAgentActivityView(session.activity, t);
 	return (
-		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-3.5 py-2 text-sm" />
+		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-2 py-1 text-micro" />
 	);
 }
