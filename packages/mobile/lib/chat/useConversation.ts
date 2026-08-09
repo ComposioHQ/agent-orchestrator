@@ -235,7 +235,12 @@ export function useMobileConversation(
 	}, [refresh]);
 
 	const runAction = useCallback(
-		async <T,>(kind: ConversationAction, action: () => Promise<T>, resetHistoricalPages = false): Promise<T> => {
+		async <T,>(
+			kind: ConversationAction,
+			action: () => Promise<T>,
+			resetHistoricalPages = false,
+			onError?: () => void,
+		): Promise<T> => {
 			setPendingActions((old) => old.includes(kind) ? old : [...old, kind]);
 			setActionError(undefined);
 			setActionErrors((old) => ({ ...old, [kind]: undefined }));
@@ -250,6 +255,7 @@ export function useMobileConversation(
 				setActionError(message);
 				setActionErrors((old) => ({ ...old, [kind]: message }));
 				setActionCodes((old) => ({ ...old, [kind]: conversationErrorCode(cause) }));
+				if (onError) onError();
 				throw new Error(message);
 			} finally {
 				setPendingActions((old) => old.filter((candidate) => candidate !== kind));
@@ -324,7 +330,12 @@ export function useMobileConversation(
 		retrySend,
 		discardSend: (id) => setPendingSends((old) => old.filter((item) => item.id !== id)),
 		steer: (text) => runAction("steer", () => requireConfig(cfg, (c) => steerConversation(c, sessionId, text, clientMessageId()))),
-		interrupt: () => runAction("interrupt", () => requireConfig(cfg, (c) => interruptConversation(c, sessionId))),
+		interrupt: () => runAction(
+			"interrupt",
+			() => requireConfig(cfg, (c) => interruptConversation(c, sessionId)),
+			false,
+			() => { void refresh(); },
+		),
 		resolveApproval: (requestId, decisionId) =>
 			runAction("approval", () => requireConfig(cfg, (c) => resolveApproval(c, sessionId, requestId, decisionId))),
 		resolveInput: (requestId, action, content) =>

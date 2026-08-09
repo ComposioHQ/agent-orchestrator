@@ -1034,27 +1034,48 @@ const turnAckWait = 3 * time.Second
 // the next message instead of stopping would be the opposite of what the button
 // says. The cutoff is recorded before the provider call, so a completion that
 // races back cannot drain the queue the interrupt was about to cancel.
+//
+// Two recovery paths exist for when memory and SQLite disagree:
+//
+//   - The provider says ErrChatNoActiveTurn for a turn memory still tracks. A
+//     prior tx.Commit failure rolled back the SettleTurn write while memory was
+//     already cleared (before the fix that moved clearing to afterProject), or
+//     the turn completed between awaitAcknowledgedTurn and the provider call.
+//     reconcileDurableTurn settles the durable row, clears memory, cancels the
+//     queue, and reports idle — the full Interrupt contract without a second
+//     provider send.
+//   - Memory says nothing is running but SQLite has a turn in 'running'. This
+//     is the dispatch race: BindTurnToProvider wrote 'running' before
+//     pendingTurnID was set, and Stop arrived in that window. Taking sendMu
+//     before the disk fallback ensures dispatch() has finished (and set
+//     pendingTurnID) before we decide to reconcile — if dispatch completed
+//     while we waited, the normal interrupt path runs instead. The durable
+//     turn is reconciled only if memory is still empty after the lock.
 func (c *Controller) Interrupt(ctx context.Context) error {
 	turn, ok := c.awaitAcknowledgedTurn(ctx)
 	if !ok {
-		// Memory says nothing is running, but check SQLite — a prior
-		// SettleTurn failure may have left a turn in 'running' state
-		// while the in-memory pendingTurnID was already cleared.
-		_, providerTurnID, running, err := c.store.GetRunningTurn(ctx, c.conversation.ID)
-		if err != nil {
-			return fmt.Errorf("check running turn: %w", err)
+		// Take sendMu so dispatch() cannot be mid-flight. If dispatch was
+		// running, it finishes first, sets pendingTurnID, and we go through
+		// the normal interrupt path instead of the disk fallback.
+		c.sendMu.Lock()
+		defer c.sendMu.Unlock()
+
+		c.mu.Lock()
+		pending := c.pendingTurnID
+		c.mu.Unlock()
+		if pending != "" {
+			// dispatch finished while we waited — interrupt normally.
+			turn = pending
+		} else {
+			_, providerTurnID, running, err := c.store.GetRunningTurn(ctx, c.conversation.ID)
+			if err != nil {
+				return fmt.Errorf("check running turn: %w", err)
+			}
+			if !running {
+				return ErrNoActiveTurn
+			}
+			return c.reconcileDurableTurn(ctx, providerTurnID)
 		}
-		if !running {
-			return ErrNoActiveTurn
-		}
-		// The turn is stale from the controller's perspective — the provider
-		// already emitted a completion event that failed to project. Settle
-		// it as interrupted so the UI unblocks, matching the user's intent.
-		if err := c.store.SettleTurn(ctx, c.conversation.ID, providerTurnID,
-			domain.TurnStateInterrupted, "reconciled by interrupt (stale running turn)", c.now()); err != nil {
-			return fmt.Errorf("reconcile stale running turn: %w", err)
-		}
-		return nil
 	}
 
 	c.mu.Lock()
@@ -1062,16 +1083,60 @@ func (c *Controller) Interrupt(ctx context.Context) error {
 	c.mu.Unlock()
 
 	if err := c.conv.Interrupt(ctx, turn); err != nil {
+		if errors.Is(err, ports.ErrChatNoActiveTurn) {
+			// The provider already finished this turn, but AO's memory and/or
+			// SQLite may still show it as running. Reconcile the durable state
+			// and cancel the queue rather than surfacing a bare ErrNoActiveTurn
+			// that leaves the user stuck on "Working".
+			c.mu.Lock()
+			c.cancelQueuedAt = time.Time{}
+			c.mu.Unlock()
+			return c.reconcileDurableTurn(ctx, turn)
+		}
 		// The interrupt did not happen, so the queue it was going to cancel is
 		// still the user's to send.
 		c.mu.Lock()
 		c.cancelQueuedAt = time.Time{}
 		c.mu.Unlock()
-		if errors.Is(err, ports.ErrChatNoActiveTurn) {
-			return ErrNoActiveTurn
-		}
 		return fmt.Errorf("interrupt turn %s: %w", turn, err)
 	}
+	return nil
+}
+
+// reconcileDurableTurn settles a turn that the controller can no longer cancel
+// through the normal path but SQLite still considers running. It attempts a
+// best-effort provider interrupt, settles the durable row as interrupted, clears
+// in-memory turn state, cancels queued turns, and reports idle — the full
+// Interrupt contract in one place so both recovery paths (ErrChatNoActiveTurn
+// from the provider and the dispatch-race disk fallback) share the same
+// behavior.
+func (c *Controller) reconcileDurableTurn(ctx context.Context, providerTurnID string) error {
+	if err := c.conv.Interrupt(ctx, providerTurnID); err != nil {
+		if !errors.Is(err, ports.ErrChatNoActiveTurn) {
+			c.log.Warn("provider interrupt during reconciliation failed",
+				"session", c.sessionID, "turn", providerTurnID, "error", err)
+		}
+	}
+
+	if err := c.store.SettleTurn(ctx, c.conversation.ID, providerTurnID,
+		domain.TurnStateInterrupted, "reconciled by interrupt", c.now()); err != nil {
+		return fmt.Errorf("reconcile durable turn: %w", err)
+	}
+
+	now := c.now()
+	c.mu.Lock()
+	c.cancelQueuedAt = now
+	c.pendingTurnID = ""
+	c.ackedTurnID = ""
+	c.state = ports.ChatControllerReady
+	c.mu.Unlock()
+
+	if err := c.store.CancelQueuedTurns(ctx, c.conversation.ID, now, now); err != nil {
+		c.log.Error("failed to cancel queued turns during reconciliation",
+			"session", c.sessionID, "error", err)
+	}
+
+	c.reportActivity(ctx, domain.ActivityIdle, "chat.interrupt.reconciled", now)
 	return nil
 }
 
@@ -1212,6 +1277,8 @@ func (c *Controller) project() {
 	}
 
 	c.mu.Lock()
+	c.pendingTurnID = ""
+	c.ackedTurnID = ""
 	c.state = ports.ChatControllerStopped
 	c.mu.Unlock()
 
@@ -1338,15 +1405,6 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 			ctx, c.conversation.ID, event.ProviderTurnID, state, message, now); err != nil {
 			return err
 		}
-		c.mu.Lock()
-		if c.pendingTurnID == event.ProviderTurnID {
-			c.pendingTurnID = ""
-		}
-		if c.ackedTurnID == event.ProviderTurnID {
-			c.ackedTurnID = ""
-		}
-		c.state = ports.ChatControllerReady
-		c.mu.Unlock()
 		return nil
 
 	case ports.ChatEventMessageDelta:
@@ -1677,6 +1735,19 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent) {
 	case ports.ChatEventTurnStarted:
 		c.reportActivity(ctx, domain.ActivityActive, "chat.turn.started", now)
 	case ports.ChatEventTurnCompleted:
+		// In-memory state is cleared after the SQLite transaction commits, not
+		// inside it. A commit failure that rolls back the SettleTurn write must
+		// not leave memory thinking the turn is done — that split-brain is what
+		// made Stop return CHAT_NO_ACTIVE_TURN while the UI showed "Working".
+		c.mu.Lock()
+		if c.pendingTurnID == event.ProviderTurnID {
+			c.pendingTurnID = ""
+		}
+		if c.ackedTurnID == event.ProviderTurnID {
+			c.ackedTurnID = ""
+		}
+		c.state = ports.ChatControllerReady
+		c.mu.Unlock()
 		c.reportActivity(ctx, domain.ActivityIdle, "chat.turn.completed", now)
 		// The settled turn is committed before another queued turn can dispatch.
 		c.drain(ctx)
