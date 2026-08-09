@@ -96,6 +96,12 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     callHookSync("user-prompt-submit", { session_id: sessionID(ctx), prompt: event.prompt });
   });
+  // agent_end is the completion event in Pi 0.80.x. Newer releases may retry,
+  // compact, or queue follow-up work after it; a subsequent start immediately
+  // reactivates AO, while agent_settled below confirms the final idle state.
+  pi.on("agent_end", async (_event, ctx) => {
+    callHookSync("stop", { session_id: sessionID(ctx) });
+  });
   pi.on("agent_settled", async (_event, ctx) => {
     callHookSync("stop", { session_id: sessionID(ctx) });
   });

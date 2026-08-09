@@ -23,7 +23,7 @@ Extend the existing managed `.amp/plugins/ao-system-prompt.ts` plugin. It will r
 
 ### Pi
 
-Install one managed TypeScript extension at `.pi/extensions/ao-activity.ts` and pass it explicitly with `--extension` for launches and restores. Explicit loading avoids relying on Pi's project-local extension trust decision. The extension reports `session_start`, `before_agent_start`, `agent_settled`, and `session_shutdown` with `ctx.sessionManager.getSessionId()` as `session_id`.
+Install one managed TypeScript extension at `.pi/extensions/ao-activity.ts` and pass it explicitly with `--extension` for launches and restores. Explicit loading avoids relying on Pi's project-local extension trust decision. The extension reports `session_start`, `before_agent_start`, `agent_end`, `agent_settled`, and `session_shutdown` with `ctx.sessionManager.getSessionId()` as `session_id`. `agent_end` keeps Pi 0.80.x compatible; newer releases also confirm the final idle transition with `agent_settled`.
 
 ### Auggie
 
@@ -39,7 +39,7 @@ Merge AO hook groups into `.augment/settings.local.json` using the shared matche
 | Amp | thread `awaiting-approval` or `error` | `thread-state` | `waiting_input` |
 | Pi | `session_start` | `session-start` | `idle` |
 | Pi | `before_agent_start` | `user-prompt-submit` | `active` |
-| Pi | `agent_settled` | `stop` | `idle` |
+| Pi | `agent_end` / `agent_settled` | `stop` | `idle` |
 | Pi | `session_shutdown` | `session-end` | `exited` |
 | Auggie | `SessionStart`, `PreToolUse`, `PostToolUse` | `session-start`, `pre-tool-use`, `post-tool-use` | `active` |
 | Auggie | `Stop` with `end_turn` or `interrupted` | `stop` | `idle` |

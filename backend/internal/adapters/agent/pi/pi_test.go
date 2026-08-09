@@ -335,6 +335,7 @@ func TestGetAgentHooksInstallsManagedActivityExtension(t *testing.T) {
 		"agent-orchestrator: managed pi activity extension",
 		`pi.on("session_start"`,
 		`pi.on("before_agent_start"`,
+		`pi.on("agent_end"`,
 		`pi.on("agent_settled"`,
 		`pi.on("session_shutdown"`,
 		`"hooks", "pi", hookName`,

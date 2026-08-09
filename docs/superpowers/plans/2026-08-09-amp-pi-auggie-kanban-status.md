@@ -73,7 +73,7 @@ Run: `cd backend && go test ./internal/adapters/agent/amp`
 - Create: `backend/internal/adapters/agent/pi/activity_test.go`
 
 **Interfaces:**
-- Consumes: Pi `session_start`, `before_agent_start`, `agent_settled`, and `session_shutdown` extension events.
+- Consumes: Pi `session_start`, `before_agent_start`, `agent_end`, `agent_settled`, and `session_shutdown` extension events.
 - Produces: `.pi/extensions/ao-activity.ts`, explicit `--extension <path>` launch/restore arguments, and `pi.DeriveActivityState`.
 
 - [ ] **Step 1: Add failing Pi hook-installation, launch, restore, session-info, and derivation tests**
