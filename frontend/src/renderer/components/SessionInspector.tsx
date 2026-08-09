@@ -1802,7 +1802,7 @@ function ReviewPanel({
 
 	return (
 		<div className="mb-2.5 flex flex-col">
-				<Section surface title={t("inspector.review.run")}>
+				<Section surface title={t("inspector.review.controls")}>
 					{error ? (
 						<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
 							{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
@@ -1836,20 +1836,11 @@ function ReviewPanel({
 						</Tooltip>
 					</TooltipProvider>
 				) : null}
-				<div className="mb-2 flex items-center justify-between gap-3">
-					<label className="text-xs font-medium text-foreground" htmlFor={`auto-review-${session.id}`}>
-						{t("inspector.autoReview")}
-					</label>
-					<Switch
-						aria-label={t("inspector.autoReview")}
-						checked={autoReviewEnabled}
-						disabled={isAutoReviewSaving}
-						id={`auto-review-${session.id}`}
-						onCheckedChange={onAutoReviewChange}
-					/>
-				</div>
-				<div className="review-run-controls-container min-w-0">
-					<div className="review-run-controls flex min-w-0 items-center gap-1.5">
+				<div className="review-run-controls-container min-w-0 divide-y divide-border/70">
+					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2">
+						<span className="min-w-0 text-xs font-medium text-foreground">
+							{t("inspector.selectReviewerAgent")}
+						</span>
 						<ReviewerSelect
 							ariaLabel={t("inspector.selectReviewerAgent")}
 							authorized={agentCatalog?.authorized}
@@ -1860,10 +1851,25 @@ function ReviewPanel({
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
-							triggerClassName="review-run-agent-select h-control-md w-36 min-w-24 max-w-36 shrink text-xs"
+							triggerClassName="review-run-agent-select h-control-md w-36 min-w-24 max-w-36 shrink-0 text-xs"
 							value={reviewerOverride}
 						/>
-						<div className="review-run-actions ml-auto flex shrink-0 items-center gap-1.5">
+					</div>
+					<div className="flex min-h-10 items-center justify-between gap-3 py-2">
+						<label className="text-xs font-medium text-foreground" htmlFor={`auto-review-${session.id}`}>
+							{t("inspector.autoReview")}
+						</label>
+						<Switch
+							aria-label={t("inspector.autoReview")}
+							checked={autoReviewEnabled}
+							disabled={isAutoReviewSaving}
+							id={`auto-review-${session.id}`}
+							onCheckedChange={onAutoReviewChange}
+						/>
+					</div>
+					<div className="flex min-h-10 items-center justify-between gap-3 py-2">
+						<span className="text-xs font-medium text-foreground">{t("inspector.review.session")}</span>
+						<div className="flex shrink-0 items-center gap-1.5">
 							<Button
 								aria-label={primaryReviewActionLabel}
 								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
@@ -1879,21 +1885,21 @@ function ReviewPanel({
 							</Button>
 							{hasReviewerSession ? (
 								<Button
-									aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
-									className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
-									disabled={killDisabled}
-									onClick={onKill}
-									size="sm"
-									title={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
-									type="button"
-									variant="ghost"
-								>
-									<Trash2 aria-hidden="true" />
-								</Button>
+								aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+								className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
+								disabled={killDisabled}
+								onClick={onKill}
+								size="sm"
+								title={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+								type="button"
+								variant="ghost"
+							>
+								<Trash2 aria-hidden="true" />
+							</Button>
 							) : null}
 						</div>
 					</div>
-				</div>
+					</div>
 				{reviewRunning ? (
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
 						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
