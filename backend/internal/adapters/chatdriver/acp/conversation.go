@@ -121,6 +121,7 @@ func newConversation(proc *process, log *slog.Logger) *conversation {
 		log:            log,
 		pending:        make(map[string]*parkedPermission),
 		pendingInputs:  make(map[string]*parkedInput),
+		capabilities:   make(ports.ChatCapabilities),
 		messages:       make(map[string]string),
 		thoughts:       make(map[string]string),
 		nestedMessages: make(map[string]nestedMessageState),
@@ -224,7 +225,16 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 			if _, err := c.conn.SetSessionMode(ctx, acpsdk.SetSessionModeRequest{
 				SessionId: acpsdk.SessionId(sessionID), ModeId: acpsdk.SessionModeId(mode),
 			}); err != nil {
-				return fmt.Errorf("set ACP session mode %q: %w", mode, err)
+				// An agent that does not implement session/set_mode (JSON-RPC
+				// -32601) cannot have its permission mode changed at runtime.
+				// The launch-time mode (if any) remains in effect, so this is
+				// a degraded capability, not a fatal error.
+				if !isACPMethodNotFound(err) {
+					return fmt.Errorf("set ACP session mode %q: %w", mode, err)
+				}
+				if c.log != nil {
+					c.log.Debug("ACP agent does not support session/set_mode; skipping", "mode", mode, "error", err)
+				}
 			}
 		}
 	}
@@ -240,6 +250,12 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 				},
 			})
 			if err != nil {
+				if isACPMethodNotFound(err) {
+					if c.log != nil {
+						c.log.Debug("ACP agent does not support session/set_config_option; skipping", "option", option.ID, "error", err)
+					}
+					continue
+				}
 				return fmt.Errorf("set ACP session option %q: %w", option.ID, err)
 			}
 			c.replaceConfigOptions(resp.ConfigOptions)
