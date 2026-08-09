@@ -65,14 +65,14 @@ func New() *Plugin {
 
 // EmitsSubmitActivity signals that Claude Code fires a user-prompt-submit hook
 // under AO's launch, so Activity.State can flip to active after a prompt is
-// accepted. See ports.ActivitySignaler.
+// accepted. See ports.SubmitActivitySignaler.
 func (p *Plugin) EmitsSubmitActivity() bool { return true }
 
 // EmitsBlockedActivity signals that Claude Code fires both pre- and post-tool
 // hooks, so Activity.State can flip to blocked mid-turn on a permission dialog
 // and the guarded send loop can clear it once the tool completes. Only
 // claude-code (and its hook-delegators) carry this trio; see
-// ports.ActivitySignaler.
+// ports.BlockedActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return true }
 
 var _ adapters.Adapter = (*Plugin)(nil)
@@ -249,6 +249,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 7)
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	appendToolFlags(&cmd, cfg.AllowedTools, cfg.DisallowedTools)
 	systemPrompt, err := resolveRestoreSystemPrompt(cfg)
 	if err != nil {
 		return nil, false, err
@@ -476,6 +477,12 @@ func claudeConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 // always resolves to the same Claude session.
 func claudeSessionUUID(aoSessionID string) string {
 	return uuid.NewSHA1(claudeSessionNamespace, []byte(aoSessionID)).String()
+}
+
+// SessionUUID maps an AO session id onto the native Claude Code session UUID
+// used by --session-id and --resume.
+func SessionUUID(aoSessionID string) string {
+	return claudeSessionUUID(aoSessionID)
 }
 
 // resolveSystemPrompt returns the system prompt text to append, preferring
