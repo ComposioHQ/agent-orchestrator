@@ -68,7 +68,7 @@ describe("deriveAgentSwitchPresentation", () => {
 			tone: "working",
 		});
 		expect(presentation).toMatchObject({
-			compactLabelKey: "switchAgent.inProgress",
+			compactLabelKey: "switchAgent.compact.switching",
 			descriptionKey,
 			titleKey: "switchAgent.progressTitle",
 		});
@@ -111,7 +111,7 @@ describe("deriveAgentSwitchPresentation", () => {
 			tone: "warning",
 		});
 		expect(presentation).toMatchObject({
-			compactLabelKey: "switchAgent.recovery.action",
+			compactLabelKey: "switchAgent.recovery.compact",
 			descriptionKey: "switchAgent.recovery.description",
 			titleKey: "switchAgent.recovery.title",
 		});
@@ -174,7 +174,7 @@ describe("deriveAgentSwitchPresentation", () => {
 			tone: "success",
 		});
 		expect(presentation).toMatchObject({
-			compactLabelKey: "switchAgent.state.completed",
+			compactLabelKey: "switchAgent.success.compact",
 			descriptionKey: "switchAgent.state.completed",
 			titleKey: "switchAgent.progressTitle",
 		});
@@ -197,7 +197,7 @@ describe("deriveAgentSwitchPresentation", () => {
 			tone: "danger",
 		});
 		expect(presentation).toMatchObject({
-			compactLabelKey: "switchAgent.state.failed",
+			compactLabelKey: "switchAgent.failure.compact",
 			descriptionKey,
 			titleKey: "switchAgent.state.failed",
 		});
@@ -217,7 +217,7 @@ describe("deriveAgentSwitchPresentation", () => {
 			tone: "working",
 		});
 		expect(presentation).toMatchObject({
-			compactLabelKey: "switchAgent.checkingStatus",
+			compactLabelKey: "switchAgent.refreshOnly.compact",
 			descriptionKey: "switchAgent.checkingStatus",
 			titleKey: "switchAgent.checkingStatus",
 		});

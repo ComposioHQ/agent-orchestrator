@@ -94,6 +94,23 @@ const session: WorkspaceSession = {
 	prs: [],
 };
 
+function activeAgentSwitch(
+	overrides: Partial<NonNullable<WorkspaceSession["activeAgentSwitch"]>> = {},
+): NonNullable<WorkspaceSession["activeAgentSwitch"]> {
+	return {
+		agentHandoffStatus: "available",
+		fromHarness: "claude-code",
+		id: "switch-1",
+		requestedAt: "2026-06-30T00:00:00Z",
+		semanticHandoffIncluded: true,
+		sessionId: session.id,
+		state: "starting_target",
+		targetHarness: "codex",
+		updatedAt: "2026-06-30T00:00:01Z",
+		...overrides,
+	};
+}
+
 function sidebarPR(overrides: Partial<WorkspaceSession["prs"][number]> = {}): WorkspaceSession["prs"][number] {
 	return {
 		url: "https://github.com/acme/project-one/pull/7",
@@ -1261,6 +1278,44 @@ describe("Sidebar", () => {
 		expect(idleDraftDot).toHaveClass("bg-status-idle");
 		expect(idleActivityDot).not.toHaveClass("animate-status-pulse");
 		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
+	});
+
+	it.each([
+		["ordinary progress", activeAgentSwitch(), "Switching to Codex", "bg-status-working", true],
+		[
+			"source input",
+			activeAgentSwitch({ state: "preparing_handoff", agentHandoffStatus: "requested" }),
+			"Source agent needs input",
+			"bg-status-needs-you",
+			false,
+		],
+		[
+			"recovery",
+			activeAgentSwitch({ errorCode: "target_start_unconfirmed" }),
+			"Agent switch needs recovery",
+			"bg-status-needs-you",
+			false,
+		],
+	] as const)("shows %s before exited activity", (_case, switchSummary, label, tone, pulses) => {
+		renderSidebar({
+			workspaces: [{
+				...workspace,
+				sessions: [{
+					...session,
+					status: "exited",
+					activity: { state: switchSummary.agentHandoffStatus === "requested" ? "waiting_input" : "exited", lastActivityAt: "2026-06-30T00:00:00Z" },
+					activeAgentSwitch: switchSummary,
+				}],
+			}],
+		});
+
+		const row = screen.getByLabelText("Open fix login");
+		expect(within(row).getByText(label)).toBeInTheDocument();
+		expect(within(row).queryByText("Exited")).not.toBeInTheDocument();
+		const dot = row.querySelector<HTMLElement>("[data-session-status]");
+		expect(dot).toHaveClass(tone);
+		expect(dot).toHaveClass(pulses ? "animate-status-pulse" : tone);
+		if (!pulses) expect(dot).not.toHaveClass("animate-status-pulse");
 	});
 
 	it("shows sessions on load and hides them once collapsed", async () => {

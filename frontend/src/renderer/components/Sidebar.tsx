@@ -26,6 +26,7 @@ import {
 	workerSessions,
 } from "../types/workspace";
 import { getAgentActivityView } from "../lib/session-presentation";
+import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -149,10 +150,20 @@ function useSelection() {
 // state is presented on cards and board lanes instead of repainting this dot.
 function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 	const activity = getAgentActivityView(session.activity);
+	const agentSwitch = deriveSessionAgentSwitchPresentation(session);
+	const indicatorClassName = agentSwitch
+		? agentSwitch.tone === "working"
+			? "bg-status-working animate-status-pulse"
+			: agentSwitch.tone === "warning"
+				? "bg-status-needs-you"
+				: agentSwitch.tone === "danger"
+					? "bg-status-exited"
+					: "bg-status-merged"
+		: activity.indicatorClassName;
 	return (
 		<span
 			aria-hidden="true"
-			className={cn("size-2 shrink-0 rounded-full", activity.indicatorClassName)}
+			className={cn("size-2 shrink-0 rounded-full", indicatorClassName)}
 			data-session-status=""
 		/>
 	);
@@ -853,6 +864,10 @@ function SessionRow({
 	onOpen: () => void;
 }) {
 	const { t } = useTranslation();
+	const switchPresentation = deriveSessionAgentSwitchPresentation(session);
+	const switchLabel = switchPresentation
+		? t(switchPresentation.compactLabelKey, switchPresentation.values)
+		: undefined;
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
 	// Escape must not be swallowed by the blur-to-save path: the keydown handler
@@ -936,15 +951,20 @@ function SessionRow({
 						type="button"
 					>
 						<SessionStatusDot session={session} />
-						<span className="min-w-0 flex-1">
+						<span className="flex min-w-0 flex-1 items-center gap-1.5">
 							<span
 								className={cn(
-									"block truncate transition-colors",
+									"min-w-0 flex-1 truncate transition-colors",
 									active ? "text-foreground" : "text-muted-foreground group-hover/session-row:text-foreground",
 								)}
 							>
 								{session.title}
 							</span>
+							{switchLabel ? (
+								<span className="max-w-28 shrink-0 truncate text-2xs text-muted-foreground">
+									{switchLabel}
+								</span>
+							) : null}
 						</span>
 					</button>
 				</div>{/* end scale wrapper */}

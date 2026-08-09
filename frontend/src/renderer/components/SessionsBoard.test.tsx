@@ -367,6 +367,49 @@ describe("SessionsBoard", () => {
 		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
 	});
 
+	it.each([
+		["ordinary progress", {}, "Switching to Codex", "text-status-working", true],
+		[
+			"source input",
+			{ state: "preparing_handoff", agentHandoffStatus: "requested" },
+			"Source agent needs input",
+			"text-status-needs-you",
+			false,
+		],
+		[
+			"recovery",
+			{ errorCode: "target_start_unconfirmed" },
+			"Agent switch needs recovery",
+			"text-status-needs-you",
+			false,
+		],
+	] as const)("shows %s before an exited card status", (_case, overrides, label, tone, pulses) => {
+		const switchOverrides = overrides as Partial<NonNullable<WorkspaceSession["activeAgentSwitch"]>>;
+		const worker = boardSession({
+			id: "s-switching",
+			title: "switching worker",
+			status: "exited",
+			activity: {
+				state: switchOverrides.agentHandoffStatus === "requested" ? "waiting_input" : "exited",
+				lastActivityAt: "2026-01-01T00:00:00Z",
+			},
+		});
+		worker.activeAgentSwitch = activeAgentSwitch(worker.id, switchOverrides);
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([worker])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const card = screen.getByText("switching worker").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const status = within(card).getByText(label).closest("span") as HTMLElement;
+		expect(status).toHaveClass(tone);
+		expect(status.querySelector("span")).toHaveClass(pulses ? "animate-status-pulse" : "bg-current");
+		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
+	});
+
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -1261,6 +1304,24 @@ function boardSession(
 		branch: `ao/${overrides.id}`,
 		updatedAt: "2026-01-01T00:00:00Z",
 		prs: [],
+		...overrides,
+	};
+}
+
+function activeAgentSwitch(
+	sessionId: string,
+	overrides: Partial<NonNullable<WorkspaceSession["activeAgentSwitch"]>> = {},
+): NonNullable<WorkspaceSession["activeAgentSwitch"]> {
+	return {
+		agentHandoffStatus: "available",
+		fromHarness: "claude-code",
+		id: `switch-${sessionId}`,
+		requestedAt: "2026-01-01T00:00:00Z",
+		semanticHandoffIncluded: true,
+		sessionId,
+		state: "starting_target",
+		targetHarness: "codex",
+		updatedAt: "2026-01-01T00:00:01Z",
 		...overrides,
 	};
 }

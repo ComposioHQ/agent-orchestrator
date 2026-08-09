@@ -1,6 +1,6 @@
 import { agentSwitchErrorLabelKeys, type AgentSwitchErrorCode } from "../i18n/key-maps";
 import type { MessageKey } from "../i18n/messages";
-import type { AgentSwitchSummary } from "../types/workspace";
+import type { AgentSwitchSummary, WorkspaceSession } from "../types/workspace";
 import { agentLabel } from "./agent-options";
 
 export type AgentSwitchPresentation = {
@@ -61,7 +61,7 @@ export function deriveAgentSwitchPresentation({
 		return {
 			stage: "needs_attention",
 			outcome: "recovery",
-			compactLabelKey: "switchAgent.recovery.action",
+			compactLabelKey: "switchAgent.recovery.compact",
 			titleKey: "switchAgent.recovery.title",
 			descriptionKey: "switchAgent.recovery.description",
 			values,
@@ -76,7 +76,7 @@ export function deriveAgentSwitchPresentation({
 		return {
 			stage: "needs_attention",
 			outcome: "failure",
-			compactLabelKey: "switchAgent.state.failed",
+			compactLabelKey: "switchAgent.failure.compact",
 			titleKey: "switchAgent.state.failed",
 			descriptionKey: failureDescriptionKey(agentSwitch.errorCode),
 			values,
@@ -95,7 +95,7 @@ export function deriveAgentSwitchPresentation({
 		return {
 			stage: settled ? null : "confirming_takeover",
 			outcome: settled ? "success" : "in_progress",
-			compactLabelKey: settled ? "switchAgent.state.completed" : "switchAgent.inProgress",
+			compactLabelKey: settled ? "switchAgent.success.compact" : "switchAgent.compact.switching",
 			titleKey: "switchAgent.progressTitle",
 			descriptionKey: "switchAgent.state.completed",
 			values,
@@ -111,7 +111,7 @@ export function deriveAgentSwitchPresentation({
 		return {
 			stage: "waiting_for_source",
 			outcome: "in_progress",
-			compactLabelKey: "switchAgent.inProgress",
+			compactLabelKey: allowSourceInput ? "switchAgent.sourceInput.compact" : "switchAgent.compact.switching",
 			titleKey: "switchAgent.progressTitle",
 			descriptionKey: allowSourceInput
 				? "switchAgent.permissionRequired"
@@ -144,7 +144,7 @@ export function deriveAgentSwitchPresentation({
 		return {
 			stage,
 			outcome: "in_progress",
-			compactLabelKey: "switchAgent.inProgress",
+			compactLabelKey: "switchAgent.compact.switching",
 			titleKey: "switchAgent.progressTitle",
 			descriptionKey: inProgressDescriptions[agentSwitch.state] ?? "switchAgent.checkingStatus",
 			values,
@@ -158,7 +158,7 @@ export function deriveAgentSwitchPresentation({
 	return {
 		stage: "preparing",
 		outcome: "in_progress",
-		compactLabelKey: "switchAgent.checkingStatus",
+		compactLabelKey: "switchAgent.refreshOnly.compact",
 		titleKey: "switchAgent.checkingStatus",
 		descriptionKey: "switchAgent.checkingStatus",
 		values,
@@ -167,4 +167,17 @@ export function deriveAgentSwitchPresentation({
 		lockAgentTerminal: true,
 		allowSourceInput: false,
 	};
+}
+
+export function deriveSessionAgentSwitchPresentation(
+	session: WorkspaceSession,
+): AgentSwitchPresentation | undefined {
+	if (!session.activeAgentSwitch) return undefined;
+	return deriveAgentSwitchPresentation({
+		agentSwitch: session.activeAgentSwitch,
+		activityState: session.activity?.state,
+		currentHarness: session.provider,
+		isTerminated: Boolean(session.isTerminated),
+		terminalHandleId: session.terminalHandleId,
+	});
 }
