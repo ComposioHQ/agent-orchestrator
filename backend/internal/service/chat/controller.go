@@ -33,6 +33,11 @@ type Store interface {
 	CreateConversation(ctx context.Context, id string, scope domain.ConversationScope, project domain.ProjectID, session domain.SessionID, now time.Time) (domain.ConversationRecord, error)
 	ConversationForSession(ctx context.Context, session domain.SessionID) (domain.ConversationRecord, error)
 	ClaimChatControllerGeneration(ctx context.Context, session domain.SessionID, generation string, now time.Time) error
+	ConversationBranch(ctx context.Context, conversationID, branchID string) (domain.ConversationBranch, error)
+	ConversationEditAnchor(ctx context.Context, conversationID, replacedTurnID string) (domain.ConversationEditAnchor, error)
+	CreateAndActivateConversationBranch(ctx context.Context, sessionID domain.SessionID, branch domain.ConversationBranch, generation string, now time.Time) error
+	ActivateConversationBranch(ctx context.Context, sessionID domain.SessionID, conversationID, branchID, providerConversationID, generation string, now time.Time) error
+	UpdateConversationBranchReplacement(ctx context.Context, branchID, replacementTurnID string) error
 
 	AdoptProviderTurn(ctx context.Context, conversationID string, session domain.SessionID, generation, turnID, providerTurnID string, now time.Time) error
 	AppendImportedUserMessage(ctx context.Context, conversationID, providerTurnID string, msg domain.ConversationMessage, now time.Time) error
@@ -912,6 +917,32 @@ func (c *Controller) BeginHandoff(
 		case <-ticker.C:
 		}
 	}
+}
+
+// BeginIdleBranchHandoff installs a persistent intake fence only when the
+// controller is already quiescent. Unlike an interface handoff it never drains
+// or interrupts accepted work: branch changes are refused until the user stops
+// the active turn and the durable queue is empty.
+func (c *Controller) BeginIdleBranchHandoff(ctx context.Context) error {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.handoff {
+		return ErrControllerHandoff
+	}
+	if c.pendingTurnID != "" {
+		return ErrTurnRunning
+	}
+	if _, err := c.store.NextQueuedTurn(ctx, c.conversation.ID); err == nil {
+		return ErrTurnRunning
+	} else if !errors.Is(err, domain.ErrNoQueuedTurn) {
+		return fmt.Errorf("check queue before branch handoff: %w", err)
+	}
+	c.handoff = true
+	c.handoffDrain = false
+	return nil
 }
 
 // AbortHandoff reopens source intake when a drain is cancelled before the source

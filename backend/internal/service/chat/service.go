@@ -42,10 +42,11 @@ type Service struct {
 	newID      IDFactory
 	now        Clock
 
-	mu          sync.RWMutex
-	controllers map[domain.SessionID]*Controller
-	gateMu      sync.Mutex
-	gates       map[domain.SessionID]controllerGate
+	mu           sync.RWMutex
+	controllers  map[domain.SessionID]*Controller
+	startConfigs map[domain.SessionID]StartConfig
+	gateMu       sync.Mutex
+	gates        map[domain.SessionID]controllerGate
 }
 
 // controllerGate serializes start/stop for one session without making provider
@@ -90,17 +91,18 @@ func New(opts Options) *Service {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Service{
-		store:       opts.Store,
-		reader:      opts.Reader,
-		pageReader:  opts.PageReader,
-		sessions:    opts.Sessions,
-		drivers:     opts.Drivers,
-		activity:    opts.Activity,
-		log:         log,
-		newID:       opts.NewID,
-		now:         now,
-		controllers: make(map[domain.SessionID]*Controller),
-		gates:       make(map[domain.SessionID]controllerGate),
+		store:        opts.Store,
+		reader:       opts.Reader,
+		pageReader:   opts.PageReader,
+		sessions:     opts.Sessions,
+		drivers:      opts.Drivers,
+		activity:     opts.Activity,
+		log:          log,
+		newID:        opts.NewID,
+		now:          now,
+		controllers:  make(map[domain.SessionID]*Controller),
+		startConfigs: make(map[domain.SessionID]StartConfig),
+		gates:        make(map[domain.SessionID]controllerGate),
 	}
 }
 
@@ -153,6 +155,29 @@ func notifyControllerReady(cfg StartConfig, controller *Controller) error {
 		return fmt.Errorf("commit chat controller: %w", err)
 	}
 	return nil
+}
+
+func cloneStartConfig(cfg StartConfig) StartConfig {
+	copy := cfg
+	copy.Env = make(map[string]string, len(cfg.Env))
+	for key, value := range cfg.Env {
+		copy.Env[key] = value
+	}
+	copy.AdditionalDirectories = append([]string(nil), cfg.AdditionalDirectories...)
+	copy.MCPServers = make([]ports.ChatMCPServerConfig, len(cfg.MCPServers))
+	for index, server := range cfg.MCPServers {
+		server.Args = append([]string(nil), server.Args...)
+		server.Env = make(map[string]string, len(cfg.MCPServers[index].Env))
+		for key, value := range cfg.MCPServers[index].Env {
+			server.Env[key] = value
+		}
+		server.Headers = make(map[string]string, len(cfg.MCPServers[index].Headers))
+		for key, value := range cfg.MCPServers[index].Headers {
+			server.Headers[key] = value
+		}
+		copy.MCPServers[index] = server
+	}
+	return copy
 }
 
 // settleOrphanedWork closes out anything a previous controller left behind.
@@ -340,6 +365,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 	s.mu.Lock()
 	s.controllers[cfg.SessionID] = controller
+	s.startConfigs[cfg.SessionID] = cloneStartConfig(cfg)
 	controller.start()
 	s.mu.Unlock()
 
@@ -501,6 +527,9 @@ func (s *Service) Stop(ctx context.Context, id domain.SessionID) error {
 	controller, ok := s.controllers[id]
 	s.mu.RUnlock()
 	if !ok {
+		s.mu.Lock()
+		delete(s.startConfigs, id)
+		s.mu.Unlock()
 		return nil
 	}
 	err := controller.Close(ctx)
@@ -515,6 +544,7 @@ func (s *Service) Stop(ctx context.Context, id domain.SessionID) error {
 		if current, found := s.controllers[id]; found && current == controller {
 			delete(s.controllers, id)
 		}
+		delete(s.startConfigs, id)
 		s.mu.Unlock()
 	default:
 	}
@@ -528,6 +558,7 @@ func (s *Service) StopAll(ctx context.Context) {
 	for id, controller := range s.controllers {
 		controllers = append(controllers, controller)
 		delete(s.controllers, id)
+		delete(s.startConfigs, id)
 	}
 	s.mu.Unlock()
 
