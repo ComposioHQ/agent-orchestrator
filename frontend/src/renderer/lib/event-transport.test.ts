@@ -50,7 +50,7 @@ class EventSourceStub {
 		this.handlers.set(type, listener);
 	}
 	emit(type: string, data: string) {
-		this.handlers.get(type)?.({ data } as unknown as Event);
+		this.handlers.get(type)?.({ data, type } as unknown as Event);
 	}
 	close() {
 		this.closed = true;
@@ -172,6 +172,58 @@ describe("createEventTransport", () => {
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
 				queryKey: ["session-scm-summary"],
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("invalidates the interface transition query on session_updated CDC", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].emit(
+				"session_updated",
+				JSON.stringify({
+					seq: 1,
+					projectId: "proj-1",
+					sessionId: "sess-1",
+					type: "session_updated",
+					payload: { id: "sess-1", sessionId: "sess-1" },
+					createdAt: "2026-08-09T12:00:00Z",
+				}),
+			);
+
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["session-interface-transition", "sess-1"],
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not invalidate the interface transition query on non-session events", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].emit(
+				"pr_created",
+				JSON.stringify({
+					seq: 1,
+					projectId: "proj-1",
+					sessionId: "sess-1",
+					type: "pr_created",
+					payload: { id: "sess-1" },
+					createdAt: "2026-08-09T12:00:00Z",
+				}),
+			);
+
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
+				queryKey: ["session-interface-transition", "sess-1"],
 			});
 		} finally {
 			vi.useRealTimers();

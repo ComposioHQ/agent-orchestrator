@@ -1402,3 +1402,88 @@ func TestUpsertSessionWorktreeEmptyStateDefaultsToActive(t *testing.T) {
 		t.Fatalf("State = %q, want %q", got.State, "active")
 	}
 }
+
+// Migration 0085 added agent_session_id and provider_conversation_id to the
+// sessions_cdc_update WHEN guard. A write to either column must emit exactly
+// one session_updated event; an unrelated metadata write must not.
+func TestSessionAgentSessionIDFiresCDCEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "cdc")
+	r, _ := s.CreateSession(ctx, sampleRecord("cdc"))
+
+	base, _ := s.LatestSeq(ctx)
+	r.Metadata.AgentSessionID = "native-thread-1"
+	r.UpdatedAt = r.UpdatedAt.Add(time.Minute)
+	if err := s.UpdateSession(ctx, r); err != nil {
+		t.Fatalf("update agent_session_id: %v", err)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	for _, e := range evs {
+		if string(e.Type) == "session_updated" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("session_updated events = %d, want 1 after agent_session_id write", count)
+	}
+}
+
+func TestSessionProviderConversationIDFiresCDCEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "cdc2")
+	r, _ := s.CreateSession(ctx, sampleRecord("cdc2"))
+
+	base, _ := s.LatestSeq(ctx)
+	r.Metadata.ProviderConversationID = "provider-conv-1"
+	r.UpdatedAt = r.UpdatedAt.Add(time.Minute)
+	if err := s.UpdateSession(ctx, r); err != nil {
+		t.Fatalf("update provider_conversation_id: %v", err)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	for _, e := range evs {
+		if string(e.Type) == "session_updated" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("session_updated events = %d, want 1 after provider_conversation_id write", count)
+	}
+}
+
+// An unrelated metadata write must not emit a session_updated event — the
+// CDC guard must not fire for columns outside its WHEN clause.
+func TestSessionUnrelatedMetadataSuppressesCDCEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "cdc3")
+	r, _ := s.CreateSession(ctx, sampleRecord("cdc3"))
+
+	base, _ := s.LatestSeq(ctx)
+	// Update with the same values so no guard column changes.
+	r.UpdatedAt = r.UpdatedAt.Add(time.Minute)
+	if err := s.UpdateSession(ctx, r); err != nil {
+		t.Fatalf("update no-op: %v", err)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range evs {
+		if string(e.Type) == "session_updated" {
+			t.Fatalf("session_updated emitted for unrelated metadata write: %+v", e)
+		}
+	}
+}
