@@ -91,7 +91,7 @@ function SessionTerminalTab({
 				title={label}
 				type="button"
 			>
-				<AgentAvatar className="size-icon-sm" decorative provider={session.provider} />
+				<AgentAvatar className="size-icon-xs" decorative provider={session.provider} />
 				<span className="truncate">{label}</span>
 			</button>
 			{isCloseable && onClose ? (
@@ -164,7 +164,7 @@ export function SessionTerminalPicker({
 						<DropdownMenuLabel>{t("command.group.sessions")}</DropdownMenuLabel>
 						{sessionsToAdd.map((session) => (
 							<DropdownMenuItem key={session.id} onSelect={() => onAddProjectSession?.(session)}>
-								<AgentAvatar className="size-icon-base" decorative provider={session.provider} />
+								<AgentAvatar className="size-icon-xs" decorative provider={session.provider} />
 								<span className="truncate">{session.title}</span>
 							</DropdownMenuItem>
 						))}
