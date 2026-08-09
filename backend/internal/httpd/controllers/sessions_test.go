@@ -224,6 +224,16 @@ func (f *fakeSessionService) SetReviewerHarness(_ context.Context, id domain.Ses
 	return s, nil
 }
 
+func (f *fakeSessionService) SetAutoReview(_ context.Context, id domain.SessionID, enabled bool) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.AutoReviewEnabled = enabled
+	f.sessions[id] = s
+	return s, nil
+}
+
 func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error) {
 	s := f.sessions[id]
 	s.IsTerminated = false
@@ -611,6 +621,18 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 	if !svc.sessions["ao-2"].TerminateOnPRMerge {
 		t.Fatalf("session merge policy not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/sessions/ao-2/auto-review", `{"enabled":true}`)
+	if status != http.StatusOK {
+		t.Fatalf("auto review = %d, want 200; body=%s", status, body)
+	}
+	var autoReview struct {
+		Session domain.Session `json:"session"`
+	}
+	mustJSON(t, body, &autoReview)
+	if !autoReview.Session.AutoReviewEnabled || !svc.sessions["ao-2"].AutoReviewEnabled {
+		t.Fatalf("auto review response=%+v stored=%+v", autoReview, svc.sessions["ao-2"])
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/pin", "")

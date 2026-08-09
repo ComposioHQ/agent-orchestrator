@@ -112,6 +112,8 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "ReviewerHarness"
+          - column: "sessions.auto_review_enabled"
+            go_type: "bool"
           - column: "sessions.activity_state"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

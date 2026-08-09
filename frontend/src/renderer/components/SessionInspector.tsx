@@ -1185,6 +1185,18 @@ function ReviewsSection({
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
+	const saveAutoReview = useMutation({
+		mutationFn: async (enabled: boolean) => {
+			const { error } = await apiClient.PUT("/api/v1/sessions/{sessionId}/auto-review", {
+				params: { path: { sessionId: session.id } },
+				body: { enabled },
+			});
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.reviewRequestFailed")));
+		},
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
 	const triggerReview = useMutation({
 		mutationFn: async () => {
 			// No override sends no body at all, leaving the default path on the wire
@@ -1241,6 +1253,7 @@ function ReviewsSection({
 		},
 	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
+	const autoReviewEnabled = session.autoReviewEnabled === true;
 	const scmSummary = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
 	const githubReviews = prSummaries.filter(
@@ -1255,14 +1268,17 @@ function ReviewsSection({
 			{/* Running a review is an action; reading them is a list. The action stays
 			    on top, then one list carrying both sources keyed by PR. */}
 			<ReviewPanel
+				autoReviewEnabled={autoReviewEnabled}
 				config={projectConfigQuery.data}
-				error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error ?? killReview.error ?? saveReviewer.error}
+				error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error ?? killReview.error ?? saveReviewer.error ?? saveAutoReview.error}
 				isLoading={reviewsQuery.isLoading}
 				isCancelling={cancelReview.isPending}
+				isAutoReviewSaving={saveAutoReview.isPending}
 				isKilling={killReview.isPending}
 				isSwitchingReviewer={saveReviewer.isPending}
 				isTriggering={triggerReview.isPending}
 				onCancel={() => cancelReview.mutate()}
+				onAutoReviewChange={(enabled) => saveAutoReview.mutate(enabled)}
 				onKill={() => killReview.mutate()}
 				onTrigger={() => triggerReview.mutate()}
 				reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
@@ -1502,6 +1518,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 							sessionId: session.id,
 							status: "delivered",
 							targetSha,
+							triggerSource: "manual" as const,
 							verdict: pr.review === "approved" ? "approved" : "changes_requested",
 						}
 					: undefined;
@@ -1517,6 +1534,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 				sessionId: session.id,
 				status: "complete",
 				targetSha,
+				triggerSource: "manual" as const,
 				verdict: "",
 				...over,
 			});
@@ -1577,6 +1595,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 			sessionId: session.id,
 			status: "delivered",
 			targetSha: state.targetSha,
+			triggerSource: "manual" as const,
 		};
 		return [
 			{
@@ -1618,6 +1637,7 @@ function mockReviewTitle(prNumber: number): string {
 }
 
 function ReviewPanel({
+	autoReviewEnabled,
 	session,
 	config,
 	reviewStates,
@@ -1625,6 +1645,7 @@ function ReviewPanel({
 	isLoading,
 	isTriggering,
 	isCancelling,
+	isAutoReviewSaving,
 	isKilling,
 	isSwitchingReviewer,
 	error,
@@ -1634,8 +1655,10 @@ function ReviewPanel({
 	onReviewerOverrideChange,
 	onTrigger,
 	onCancel,
+	onAutoReviewChange,
 	onKill,
 }: {
+	autoReviewEnabled: boolean;
 	session: WorkspaceSession;
 	config?: ProjectConfig;
 	reviewStates: PRReviewState[];
@@ -1652,6 +1675,8 @@ function ReviewPanel({
 	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
 	onTrigger: () => void;
 	onCancel: () => void;
+	onAutoReviewChange: (enabled: boolean) => void;
+	isAutoReviewSaving: boolean;
 	onKill: () => void;
 }) {
 	const { t } = useTranslation();
@@ -1728,6 +1753,18 @@ function ReviewPanel({
 						</Tooltip>
 					</TooltipProvider>
 				) : null}
+				<div className="mb-2 flex items-center justify-between gap-3">
+					<label className="text-xs font-medium text-foreground" htmlFor={`auto-review-${session.id}`}>
+						{t("inspector.autoReview")}
+					</label>
+					<Switch
+						aria-label={t("inspector.autoReview")}
+						checked={autoReviewEnabled}
+						disabled={isAutoReviewSaving}
+						id={`auto-review-${session.id}`}
+						onCheckedChange={onAutoReviewChange}
+					/>
+				</div>
 				<div className="review-run-controls-container min-w-0">
 					<div className="review-run-controls flex min-w-0 items-center gap-1.5">
 						<ReviewerSelect
@@ -1736,7 +1773,7 @@ function ReviewPanel({
 							defaultHarness={harness}
 							defaultOptionLabel={harness ? `${projectDefaultLabel} (${harness})` : projectDefaultLabel}
 							defaultTriggerLabel={harness || projectDefaultLabel}
-							disabled={reviewRunning || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
+							disabled={reviewRunning || autoReviewEnabled || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
@@ -1747,7 +1784,7 @@ function ReviewPanel({
 							<Button
 								aria-label={primaryReviewActionLabel}
 								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
-								disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled}
+								disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled || autoReviewEnabled}
 								onClick={reviewRunning ? onCancel : onTrigger}
 								size="sm"
 								title={primaryReviewActionLabel}
@@ -2034,14 +2071,7 @@ function runsByPRFrom(openReviewStates: PRReviewState[], runs: ReviewRunFacts[])
 }
 
 function reviewRunHasOutcome(run: ReviewRunFacts | undefined): boolean {
-	return Boolean(
-		run &&
-			(run.verdict?.trim() ||
-				run.status === "complete" ||
-				run.status === "delivered" ||
-				run.status === "failed" ||
-				run.status === "cancelled"),
-	);
+	return Boolean(run?.verdict?.trim());
 }
 
 /** The PRs AO has an agent review outcome for. */

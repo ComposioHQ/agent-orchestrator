@@ -1642,6 +1642,57 @@ paths:
       summary: Write images into a running session's worktree and return their paths
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/auto-review:
+    put:
+      operationId: setSessionAutoReview
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSetSessionAutoReviewRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Enable or disable automatic review for a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/conversation:
     get:
       operationId: getSessionConversation
@@ -4493,6 +4544,8 @@ components:
       properties:
         activity:
           $ref: '#/components/schemas/DomainActivity'
+        autoReviewEnabled:
+          type: boolean
         branch:
           type: string
         createdAt:
@@ -4599,6 +4652,7 @@ components:
       - id
       - projectId
       - kind
+      - autoReviewEnabled
       - mode
       - activity
       - isTerminated
@@ -4608,6 +4662,13 @@ components:
       - isPinned
       - status
       - prs
+      type: object
+    ControllersSetSessionAutoReviewRequest:
+      properties:
+        enabled:
+          type: boolean
+      required:
+      - enabled
       type: object
     ControllersSpawnAttachmentInput:
       properties:
@@ -5334,11 +5395,6 @@ components:
       - state
       - lastActivityAt
       type: object
-    DomainAutoReviewConfig:
-      properties:
-        enabled:
-          type: boolean
-      type: object
     DomainReviewerConfig:
       properties:
         harness:
@@ -5854,8 +5910,6 @@ components:
           type: string
         agentRulesFile:
           type: string
-        autoReview:
-          $ref: '#/components/schemas/DomainAutoReviewConfig'
         containerReap:
           $ref: '#/components/schemas/ContainerReapConfig'
         defaultBranch:

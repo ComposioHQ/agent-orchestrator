@@ -238,6 +238,7 @@ type PRReview struct {
 	IsBot       int64
 	SubmittedAt time.Time
 	Body        string
+	TargetSha   string
 }
 
 type PRReviewThread struct {
@@ -288,6 +289,7 @@ type ReviewRun struct {
 	GithubReviewID string
 	DeliveredAt    sql.NullTime
 	BatchID        string
+	TriggerSource  domain.ReviewTriggerSource
 }
 
 type Session struct {
@@ -320,10 +322,11 @@ type Session struct {
 	ReviewerHarness           domain.ReviewerHarness
 	IsPinned                  bool
 	PinnedAt                  sql.NullTime
-	BrowserCapabilityVerifier string
 	SessionMode               domain.SessionMode
 	ProviderConversationID    string
 	ControllerGeneration      string
+	BrowserCapabilityVerifier string
+	AutoReviewEnabled         bool
 }
 
 type SessionCleanupFact struct {

@@ -278,6 +278,11 @@ type SetSessionReviewerRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
 }
 
+// SetSessionAutoReviewRequest configures daemon-side review automation.
+type SetSessionAutoReviewRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
 // An empty url asks the daemon to autodetect a static entry point in the
 // session workspace; a non-empty url is used verbatim as the preview target.

@@ -85,6 +85,9 @@ var shippedMigrations = map[int64]string{
 	80: "0080_review_per_harness.sql",
 	81: "0081_browser_capability_verifier.sql",
 	82: "0082_allow_prime_agent_harness.sql",
+	83: "0083_session_auto_review.sql",
+	84: "0084_pr_reviews_target_sha.sql",
+	85: "0085_review_run_trigger_source.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

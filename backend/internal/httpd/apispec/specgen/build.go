@@ -1438,6 +1438,19 @@ func sessionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPut, path: "/api/v1/sessions/{sessionId}/auto-review", id: "setSessionAutoReview", tag: "sessions",
+			summary:    "Enable or disable automatic review for a session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetSessionAutoReviewRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/cleanup", id: "cleanupSessions", tag: "sessions",
 			summary:    "Clean up terminated session workspaces",
 			pathParams: []any{controllers.CleanupSessionsQuery{}},

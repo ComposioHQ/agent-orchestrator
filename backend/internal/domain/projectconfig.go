@@ -50,10 +50,6 @@ type ProjectConfig struct {
 	// triggered. It is configured independently of the Worker override; an empty
 	// list falls back to claude-code (see ResolveReviewerHarness).
 	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
-	// AutoReview controls daemon-side automatic review scheduling. Manual review
-	// remains available regardless of this setting.
-	AutoReview AutoReviewConfig `json:"autoReview,omitempty"`
-
 	// TrackerIntake controls issue-driven worker spawning. It is opt-in and
 	// read-only toward the tracker in v1: matching issues spawn sessions, but the
 	// tracker is not commented on or transitioned.
@@ -66,11 +62,6 @@ type ProjectConfig struct {
 	// opt-out travels with the container at `docker run` time rather than
 	// drifting out of sync with a project-config list.
 	ContainerReap ContainerReapConfig `json:"containerReap,omitempty"`
-}
-
-// AutoReviewConfig controls project-level automatic review scheduling.
-type AutoReviewConfig struct {
-	Enabled bool `json:"enabled,omitempty"`
 }
 
 // ContainerReapConfig is the project-level opt-out for #2652's Docker

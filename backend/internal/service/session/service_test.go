@@ -188,6 +188,17 @@ func (f *fakeStore) SetSessionReviewerHarness(_ context.Context, id domain.Sessi
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionAutoReview(_ context.Context, id domain.SessionID, enabled bool, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.AutoReviewEnabled = enabled
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
 	pr, ok := f.pr[id]
 	return pr, ok, nil
@@ -378,6 +389,22 @@ func TestSessionSetReviewerHarnessRejectsUnknownHarness(t *testing.T) {
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
 	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "unknown"); err == nil {
 		t.Fatal("expected invalid harness error")
+	}
+}
+
+func TestSessionSetAutoReviewPersistsToggle(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	svc := &Service{store: st}
+
+	for _, enabled := range []bool{true, false} {
+		sess, err := svc.SetAutoReview(context.Background(), "mer-1", enabled)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sess.AutoReviewEnabled != enabled || st.sessions["mer-1"].AutoReviewEnabled != enabled {
+			t.Fatalf("auto review=%v, want %v", sess.AutoReviewEnabled, enabled)
+		}
 	}
 }
 

@@ -589,6 +589,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/auto-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Enable or disable automatic review for a session */
+        put: operations["setSessionAutoReview"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation": {
         parameters: {
             query?: never;
@@ -1501,6 +1518,7 @@ export interface components {
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
+            autoReviewEnabled: boolean;
             branch?: string;
             /** Format: date-time */
             createdAt: string;
@@ -1530,6 +1548,9 @@ export interface components {
             terminateOnPrMerge: boolean;
             /** Format: date-time */
             updatedAt: string;
+        };
+        ControllersSetSessionAutoReviewRequest: {
+            enabled: boolean;
         };
         ControllersSpawnAttachmentInput: {
             data: string;
@@ -1799,9 +1820,6 @@ export interface components {
             lastActivityAt: string;
             state: string;
         };
-        DomainAutoReviewConfig: {
-            enabled?: boolean;
-        };
         DomainReviewerConfig: {
             harness: string;
         };
@@ -2001,7 +2019,6 @@ export interface components {
             agentConfig?: components["schemas"]["AgentConfig"];
             agentRules?: string;
             agentRulesFile?: string;
-            autoReview?: components["schemas"]["DomainAutoReviewConfig"];
             containerReap?: components["schemas"]["ContainerReapConfig"];
             defaultBranch?: string;
             env?: {
@@ -4634,6 +4651,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StageSessionAttachmentsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setSessionAutoReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersSetSessionAutoReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
                 };
             };
             /** @description Bad Request */

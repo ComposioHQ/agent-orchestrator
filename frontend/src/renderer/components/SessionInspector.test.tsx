@@ -1250,7 +1250,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 	});
 
-	it("shows whether auto-review is enabled for the project", async () => {
+	it("configures session auto-review and disables manual controls", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/agents") {
 				const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
@@ -1270,7 +1270,7 @@ describe("SessionInspector summary reviews", () => {
 							path: "/repo",
 							repo: "my-app",
 							defaultBranch: "main",
-							config: { reviewers: [{ harness: "codex" }], autoReview: { enabled: true } },
+							config: { reviewers: [{ harness: "codex" }] },
 						},
 					},
 				};
@@ -1278,13 +1278,37 @@ describe("SessionInspector summary reviews", () => {
 			return { data: undefined };
 		});
 
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")], { autoReviewEnabled: true })} />);
+		await openReviewsSection();
+
+		expect(screen.getByRole("button", { name: "Run review" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Select reviewer agent" })).toBeDisabled();
+		const toggle = screen.getByRole("switch", { name: "Auto review" });
+		expect(toggle).toBeChecked();
+		await userEvent.click(toggle);
+		await waitFor(() =>
+			expect(putMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/auto-review", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { enabled: false },
+			}),
+		);
+		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
+	});
+
+	it("enables auto-review for the current session", async () => {
+		mockCommonGets([], "", [reviewState(3, "needs_review")]);
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		const autoReviewStatus = await screen.findByText("Auto-review on");
-		expect(autoReviewStatus).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Run review" })).toBeEnabled();
-		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
+		const toggle = screen.getByRole("switch", { name: "Auto review" });
+		expect(toggle).not.toBeChecked();
+		await userEvent.click(toggle);
+		await waitFor(() =>
+			expect(putMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/auto-review", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { enabled: true },
+			}),
+		);
 	});
 
 	it("shows reviewing status and cancel action while auto-review is running", async () => {
@@ -1308,7 +1332,7 @@ describe("SessionInspector summary reviews", () => {
 							path: "/repo",
 							repo: "my-app",
 							defaultBranch: "main",
-							config: { reviewers: [{ harness: "codex" }], autoReview: { enabled: true } },
+							config: { reviewers: [{ harness: "codex" }] },
 						},
 					},
 				};
@@ -1316,12 +1340,10 @@ describe("SessionInspector summary reviews", () => {
 			return { data: undefined };
 		});
 
-		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")], { autoReviewEnabled: true })} />);
 		await openReviewsSection();
 
-		expect(await screen.findByText("#3 · Reviewing...")).toBeInTheDocument();
-		expect(screen.getAllByText("Reviewing...").length).toBeGreaterThan(0);
-		expect(screen.getByRole("button", { name: "Cancel review" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Stop review" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run review" })).not.toBeInTheDocument();
 	});
@@ -1822,7 +1844,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
 	});
 
-	it("shows cancelled review runs without marking them failed", async () => {
+	it("does not list a cancelled run as a reviewed outcome", async () => {
 		mockCommonGets([], "reviewer-pane", [
 			{ ...reviewState(3, "needs_review", "abc123"), latestRun: { ...failedReview, status: "cancelled" } },
 		]);
@@ -1830,7 +1852,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findAllByText("Cancelled")).toHaveLength(1);
+		expect(screen.queryByText("Cancelled")).not.toBeInTheDocument();
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 		expect(screen.queryByText("reviewer crashed")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
@@ -1854,7 +1876,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 
-	it("shows failed latest runs as failed and still allows rerun", async () => {
+	it("does not list a failed run without a verdict and still allows rerun", async () => {
 		mockCommonGets([failedReview], "reviewer-pane", [
 			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedReview },
 		]);
@@ -1862,7 +1884,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findAllByText("Failed")).not.toHaveLength(0);
+		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
 

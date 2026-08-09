@@ -76,6 +76,7 @@ type SessionService interface {
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error)
 	SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error)
+	SetAutoReview(ctx context.Context, id domain.SessionID, enabled bool) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	DelegateTask(ctx context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error)
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
@@ -149,6 +150,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Patch("/sessions/{sessionId}", c.rename)
 	r.Patch("/sessions/{sessionId}/merge-policy", c.setMergePolicy)
 	r.Put("/sessions/{sessionId}/reviewer", c.setReviewer)
+	r.Put("/sessions/{sessionId}/auto-review", c.setAutoReview)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/resume-agent", c.resumeAgent)
 	r.Get("/sessions/{sessionId}/interface-transition", c.interfaceTransitionStatus)
@@ -919,6 +921,24 @@ func (c *SessionsController) setReviewer(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	sess, err := c.Svc.SetReviewerHarness(r.Context(), sessionID(r), in.Harness)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
+}
+
+func (c *SessionsController) setAutoReview(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PUT", "/api/v1/sessions/{sessionId}/auto-review")
+		return
+	}
+	var in SetSessionAutoReviewRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	sess, err := c.Svc.SetAutoReview(r.Context(), sessionID(r), in.Enabled)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

@@ -17,7 +17,7 @@ const (
 	// automatic review may start.
 	DefaultIdleThreshold = time.Minute
 	// DefaultSweepInterval is the cadence for reevaluating live sessions.
-	DefaultSweepInterval = 30 * time.Second
+	DefaultSweepInterval = time.Minute
 )
 
 // Store provides the durable session, project, PR, and review facts used by
@@ -89,15 +89,19 @@ func (c *Coordinator) EvaluateSession(ctx context.Context, id domain.SessionID) 
 		}
 		return Result{}, err
 	}
+	if reason := sessionGate(session, c.clock(), c.idleThreshold); reason != "" {
+		return Result{Reason: reason}, nil
+	}
 	project, ok, err := c.store.GetProject(ctx, string(session.ProjectID))
 	if err != nil || !ok {
 		if err == nil {
-			return Result{Reason: "project_not_found"}, nil
+			return Result{Reason: "missing_reviewer_harness"}, nil
 		}
 		return Result{}, err
 	}
-	if reason := sessionGate(session, project.Config, c.clock(), c.idleThreshold); reason != "" {
-		return Result{Reason: reason}, nil
+	harness := effectiveReviewerHarness(session, project.Config)
+	if harness == "" {
+		return Result{Reason: "missing_reviewer_harness"}, nil
 	}
 	prs, err := c.store.ListPRsBySession(ctx, id)
 	if err != nil {
@@ -107,10 +111,6 @@ func (c *Coordinator) EvaluateSession(ctx context.Context, id domain.SessionID) 
 	if err != nil {
 		return Result{}, err
 	}
-	harness := session.ReviewerHarness
-	if harness == "" {
-		harness = project.Config.ResolveReviewerHarness(session.Harness)
-	}
 	harnessRuns := make([]domain.ReviewRun, 0, len(runs))
 	for _, run := range runs {
 		if run.Harness == harness || run.Harness == "" {
@@ -118,34 +118,99 @@ func (c *Coordinator) EvaluateSession(ctx context.Context, id domain.SessionID) 
 		}
 	}
 	states := reviewcore.Plan(prs, harnessRuns)
+	if len(states) == 0 {
+		return Result{Reason: "no_pr"}, nil
+	}
 	eligible := false
+	reason := "planner_ineligible"
 	for _, state := range states {
-		if state.Status == reviewcore.ReviewStateNeedsReview && !changesRequestedForHead(runs, state.PRURL, state.TargetSHA) {
+		switch state.Status {
+		case reviewcore.ReviewStateRunning:
+			reason = "review_running"
+		case reviewcore.ReviewStateUpToDate:
+			reason = "already_approved"
+		case reviewcore.ReviewStateChangesRequested:
+			reason = "changes_requested_same_sha"
+		case reviewcore.ReviewStateIneligible:
+			reason = ineligibleReason(prs, state.PRURL)
+		case reviewcore.ReviewStateNeedsReview:
+			if blocked := existingHeadReason(harnessRuns, state.PRURL, state.TargetSHA); blocked != "" {
+				reason = blocked
+				continue
+			}
 			eligible = true
-			break
 		}
 	}
 	if !eligible {
-		return Result{Reason: "no_review_due"}, nil
+		return Result{Reason: reason}, nil
 	}
 	result, err := c.reviews.TriggerAuto(ctx, id, harness)
 	if err != nil {
 		return Result{}, fmt.Errorf("trigger auto review for %s: %w", id, err)
 	}
-	return Result{Triggered: result.Created, Reason: "triggered"}, nil
+	if !result.Created {
+		return Result{Reason: "review_running"}, nil
+	}
+	return Result{Triggered: true, Reason: "triggered"}, nil
 }
 
-func changesRequestedForHead(runs []domain.ReviewRun, prURL, targetSHA string) bool {
+func existingHeadReason(runs []domain.ReviewRun, prURL, targetSHA string) string {
 	for _, run := range runs {
-		if run.PRURL == prURL && run.TargetSHA == targetSHA && run.Verdict == domain.VerdictChangesRequested {
-			return true
+		if run.PRURL != prURL || run.TargetSHA != targetSHA {
+			continue
+		}
+		if run.Status == domain.ReviewRunRunning {
+			return "review_running"
+		}
+		if run.Status == domain.ReviewRunCancelled {
+			return "cancelled_same_sha"
+		}
+		if run.Verdict == domain.VerdictApproved {
+			return "already_approved"
+		}
+		if run.Verdict == domain.VerdictChangesRequested {
+			return "changes_requested_same_sha"
 		}
 	}
-	return false
+	return ""
 }
 
-func sessionGate(session domain.SessionRecord, config domain.ProjectConfig, now time.Time, threshold time.Duration) string {
-	if !config.AutoReview.Enabled {
+func effectiveReviewerHarness(session domain.SessionRecord, config domain.ProjectConfig) domain.ReviewerHarness {
+	if session.ReviewerHarness.IsKnown() {
+		return session.ReviewerHarness
+	}
+	if len(config.Reviewers) > 0 && config.Reviewers[0].Harness.IsKnown() {
+		return config.Reviewers[0].Harness
+	}
+	if worker := domain.ReviewerHarness(session.Harness); worker.IsKnown() {
+		return worker
+	}
+	return ""
+}
+
+func ineligibleReason(prs []domain.PullRequest, url string) string {
+	for _, pr := range prs {
+		if pr.URL != url {
+			continue
+		}
+		switch {
+		case pr.Draft:
+			return "draft_pr"
+		case pr.Merged:
+			return "merged_pr"
+		case pr.Closed:
+			return "closed_pr"
+		case pr.HeadSHA == "":
+			return "missing_head_sha"
+		default:
+			return "planner_ineligible"
+		}
+	}
+	return "planner_ineligible"
+}
+
+func sessionGate(session domain.SessionRecord, now time.Time, threshold time.Duration) string {
+	if !session.AutoReviewEnabled {
 		return "disabled"
 	}
 	if session.Kind != domain.KindWorker {
@@ -158,7 +223,7 @@ func sessionGate(session domain.SessionRecord, config domain.ProjectConfig, now 
 		return "not_idle"
 	}
 	if session.Activity.LastActivityAt.IsZero() || now.Sub(session.Activity.LastActivityAt) < threshold {
-		return "idle_threshold"
+		return "idle_threshold_not_met"
 	}
 	return ""
 }
@@ -170,6 +235,9 @@ func (c *Coordinator) Sweep(ctx context.Context) error {
 		return err
 	}
 	for _, session := range sessions {
+		if reason := sessionGate(session, c.clock(), c.idleThreshold); reason != "" {
+			continue
+		}
 		if _, err := c.EvaluateSession(ctx, session.ID); err != nil {
 			c.logger.Error("auto-review: evaluate session failed", "session_id", session.ID, "err", err)
 		}

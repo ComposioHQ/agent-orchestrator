@@ -188,11 +188,19 @@ type RestoreReviewerResult struct {
 // one session cannot change what any other session in the project runs. The
 // harness-change path below already handles the swap by respawning the pane.
 func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override domain.ReviewerHarness) (TriggerResult, error) {
+	return e.TriggerWithSource(ctx, workerID, override, domain.ReviewTriggerManual)
+}
+
+// TriggerWithSource starts a review and records who initiated the pass.
+func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID, override domain.ReviewerHarness, source domain.ReviewTriggerSource) (TriggerResult, error) {
 	if workerID == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
 	if override != "" && !override.IsKnown() {
 		return TriggerResult{}, fmt.Errorf("%w: unknown reviewer harness %q", ErrInvalid, override)
+	}
+	if source != domain.ReviewTriggerManual && source != domain.ReviewTriggerAuto {
+		return TriggerResult{}, fmt.Errorf("%w: unknown review trigger source %q", ErrInvalid, source)
 	}
 
 	// Serialise concurrent triggers for this worker so the idempotency check
@@ -274,7 +282,10 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 		// another agent is precisely a request for a second opinion on this commit,
 		// so refusing it makes the reviewer choice inert exactly when it is most
 		// useful. Ineligible PRs stay excluded: nothing can review those.
-		eligible := reviewState.Status == ReviewStateNeedsReview || reviewState.Status == ReviewStateChangesRequested
+		eligible := reviewState.Status == ReviewStateNeedsReview || (source == domain.ReviewTriggerManual && reviewState.Status == ReviewStateChangesRequested)
+		if source == domain.ReviewTriggerAuto && autoReviewHeadBlocked(runs, reviewState.PRURL, reviewState.TargetSHA, harness) {
+			eligible = false
+		}
 		if !eligible && !secondOpinionWanted(reviewState, override, harness) {
 			continue
 		}
@@ -285,16 +296,17 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 			batchID = e.newID()
 		}
 		run := domain.ReviewRun{
-			ID:        e.newID(),
-			ReviewID:  reviewRow.ID,
-			SessionID: workerID,
-			BatchID:   batchID,
-			Harness:   harness,
-			PRURL:     reviewState.PRURL,
-			TargetSHA: reviewState.TargetSHA,
-			Status:    domain.ReviewRunRunning,
-			Verdict:   domain.VerdictNone,
-			CreatedAt: now,
+			ID:            e.newID(),
+			ReviewID:      reviewRow.ID,
+			SessionID:     workerID,
+			BatchID:       batchID,
+			Harness:       harness,
+			TriggerSource: source,
+			PRURL:         reviewState.PRURL,
+			TargetSHA:     reviewState.TargetSHA,
+			Status:        domain.ReviewRunRunning,
+			Verdict:       domain.VerdictNone,
+			CreatedAt:     now,
 		}
 		if err := e.store.InsertReviewRun(ctx, run); err != nil {
 			if errors.Is(err, domain.ErrDuplicateReviewRun) {
@@ -555,6 +567,18 @@ func (e *Engine) TeardownReviewerTerminal(ctx stdctx.Context, workerID domain.Se
 		}
 	}
 	return nil
+}
+
+func autoReviewHeadBlocked(runs []domain.ReviewRun, prURL, targetSHA string, harness domain.ReviewerHarness) bool {
+	for _, run := range runs {
+		if run.PRURL != prURL || run.TargetSHA != targetSHA || (run.Harness != harness && run.Harness != "") {
+			continue
+		}
+		if run.Status == domain.ReviewRunRunning || run.Status == domain.ReviewRunCancelled || run.Verdict == domain.VerdictApproved || run.Verdict == domain.VerdictChangesRequested {
+			return true
+		}
+	}
+	return false
 }
 
 func reviewRunsForHarness(runs []domain.ReviewRun, harness domain.ReviewerHarness) []domain.ReviewRun {

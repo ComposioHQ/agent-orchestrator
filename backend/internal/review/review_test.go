@@ -1277,6 +1277,23 @@ func TestTriggerRetriesAfterCancelledRunForSameCommit(t *testing.T) {
 	}
 }
 
+func TestAutoTriggerWaitsForNewCommitAfterCancelledRun(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-cancelled", ReviewID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunCancelled}},
+	}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.TriggerWithSource(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.ReviewTriggerAuto)
+	if err != nil {
+		t.Fatalf("TriggerWithSource: %v", err)
+	}
+	if res.Created || len(store.runs) != 1 || launcher.spawned || launcher.notified {
+		t.Fatalf("cancelled auto-review reran unchanged head: result=%+v launcher=%+v runs=%+v", res, launcher, store.runs)
+	}
+}
+
 func TestTriggerCreatesRunsForMultipleEligiblePRsWithOneReviewer(t *testing.T) {
 	store := &fakeStore{}
 	launcher := &fakeLauncher{handle: "review-mer-1"}
