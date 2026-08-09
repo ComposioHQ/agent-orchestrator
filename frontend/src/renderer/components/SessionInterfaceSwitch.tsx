@@ -19,6 +19,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "./ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 function targetLabel(target: SessionInterfaceMode): string {
 	return target === "chat" ? "chat UI" : "terminal UI";
@@ -106,29 +107,37 @@ export function SessionInterfaceSwitchButton({
 	}
 
 	const label = `Switch to ${targetLabel(target)}`;
+	const tooltipLabel = supported ? `${label} using this agent's native conversation` : disabledReason || label;
 	const TargetIcon = target === "chat" ? MessageSquare : SquareTerminal;
 	return (
-		<Button
-			type="button"
-			size="icon-sm"
-			variant="ghost"
-			className={cn(
-				"text-muted-foreground",
-				supported && "hover:text-foreground",
-				!supported && "opacity-50",
-				className,
-			)}
-			disabled={!supported || pending}
-			onClick={onClick}
-			title={supported ? `${label} using this agent's native conversation` : disabledReason}
-			aria-label={label}
-		>
-			{pending ? (
-				<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
-			) : (
-				<TargetIcon aria-hidden="true" className="size-3.5" />
-			)}
-		</Button>
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<span className="inline-flex">
+					<Button
+						type="button"
+						size="icon-sm"
+						variant="ghost"
+						className={cn(
+							"text-muted-foreground",
+							supported && "hover:text-foreground",
+							!supported && "opacity-50",
+							className,
+						)}
+						disabled={!supported || pending}
+						onClick={onClick}
+						title={tooltipLabel}
+						aria-label={label}
+					>
+						{pending ? (
+							<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+						) : (
+							<TargetIcon aria-hidden="true" className="size-3.5" />
+						)}
+					</Button>
+				</span>
+			</TooltipTrigger>
+			<TooltipContent side="bottom">{tooltipLabel}</TooltipContent>
+		</Tooltip>
 	);
 }
 

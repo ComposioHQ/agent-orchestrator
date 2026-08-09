@@ -141,11 +141,13 @@ function renderKill(session: WorkspaceSession = worker, orchestratorId?: string)
 	});
 	const killButton = (currentSession: WorkspaceSession, currentOrchestratorId?: string) => (
 		<QueryClientProvider client={queryClient}>
-			<TopbarKillButton
-				session={currentSession}
-				orchestratorId={currentOrchestratorId}
-				onKilled={onKilledMock}
-			/>
+			<TooltipProvider delayDuration={0}>
+				<TopbarKillButton
+					session={currentSession}
+					orchestratorId={currentOrchestratorId}
+					onKilled={onKilledMock}
+				/>
+			</TooltipProvider>
 		</QueryClientProvider>
 	);
 	const result = render(killButton(session, orchestratorId));
@@ -433,6 +435,13 @@ describe("ShellTopbar inspector state", () => {
 });
 
 describe("TopbarKillButton", () => {
+	it("explains the terminate action on hover", async () => {
+		renderKill();
+
+		await userEvent.hover(screen.getByRole("button", { name: "Kill session" }));
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("Kill session");
+	});
+
 	it("opens a compact confirmation card below the kill control", async () => {
 		renderKill();
 
