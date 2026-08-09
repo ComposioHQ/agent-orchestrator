@@ -73,7 +73,7 @@ type SessionRecord struct {
 	Harness   AgentHarness `json:"harness,omitempty"`
 	// ReviewerHarness is this session's preferred reviewer. Empty delegates to
 	// the project configuration.
-	ReviewerHarness ReviewerHarness `json:"reviewerHarness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	ReviewerHarness ReviewerHarness `json:"reviewerHarness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
 	DisplayName     string          `json:"displayName,omitempty"`
 	// Mode is the session's currently committed conversation controller. Every
 	// send, restore, kill, and reaper decision dispatches from it. Only the
@@ -92,6 +92,7 @@ type SessionRecord struct {
 	// TerminateOnPRMerge is a user-controlled lifecycle policy. When enabled,
 	// completing the session's PR set through a merge tears down the session.
 	TerminateOnPRMerge bool            `json:"terminateOnPrMerge"`
+	AutoInjectReview   bool            `json:"autoInjectReview"`
 	Metadata           SessionMetadata `json:"-"`
 	// CleanupGeneration is a monotonic counter bumped each time the session is
 	// un-terminated (spawn/restore). The terminal-resource reconciler stamps its

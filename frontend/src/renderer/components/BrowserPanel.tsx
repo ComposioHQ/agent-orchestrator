@@ -5,6 +5,7 @@ import {
 	ArrowRight,
 	Bug,
 	Check,
+	Dock,
 	Globe2,
 	Layers3,
 	Maximize2,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
+import type { BrowserDevToolsPlacement } from "../../main/browser-view-host";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
@@ -230,7 +232,6 @@ export function BrowserPanelView({
 	const {
 		viewId,
 		navState,
-		mirrorFrame,
 		slotRef,
 		navigate,
 		goBack,
@@ -245,9 +246,7 @@ export function BrowserPanelView({
 		devtoolsState = { viewId: "", open: false, activeTabId: "" },
 		openDevTools = async () => undefined,
 		closeDevTools = async () => undefined,
-		prepareForOverlay,
-		visualTransition,
-		finishOverlay,
+		setDevToolsPlacement = async () => undefined,
 		annotationMode,
 		setAnnotationMode,
 	} = browserView;
@@ -260,8 +259,34 @@ export function BrowserPanelView({
 	const canPopOut = poppedOut || Boolean(navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
+	const nativeCompositionEnabled = Boolean(window.ao?.browser?.nativeCompositionEnabled);
 	const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
-	const tabsMenuWarmupRef = useRef<Promise<void> | null>(null);
+	const [devtoolsPlacementMenuOpen, setDevtoolsPlacementMenuOpen] = useState(false);
+	const devtoolsPlacement = devtoolsState.placement ?? "right";
+	const devtoolsPlacementLabels: Record<BrowserDevToolsPlacement, string> = {
+		right: t("browser.devtoolsRight"),
+		bottom: t("browser.devtoolsBottom"),
+		left: t("browser.devtoolsLeft"),
+		undocked: t("browser.devtoolsUndocked"),
+	};
+
+	const handleOpenDevTools = useCallback(async () => {
+		if (nativeCompositionEnabled) {
+			const saved = window.localStorage?.getItem("ao.browser.devtoolsPlacement") as BrowserDevToolsPlacement | null;
+			if (saved === "right" || saved === "bottom" || saved === "left" || saved === "undocked") {
+				await setDevToolsPlacement(saved);
+			}
+		}
+		await openDevTools();
+	}, [nativeCompositionEnabled, openDevTools, setDevToolsPlacement]);
+
+	const handleDevToolsPlacement = useCallback(
+		(placement: BrowserDevToolsPlacement) => {
+			window.localStorage?.setItem("ao.browser.devtoolsPlacement", placement);
+			void setDevToolsPlacement(placement);
+		},
+		[setDevToolsPlacement],
+	);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
@@ -307,37 +332,20 @@ export function BrowserPanelView({
 		}
 	};
 
-	const prepareTabsMenuFrame = useCallback(() => {
-		if (!tabsMenuWarmupRef.current) {
-			tabsMenuWarmupRef.current = prepareForOverlay().finally(() => {
-				tabsMenuWarmupRef.current = null;
-			});
-		}
-		return tabsMenuWarmupRef.current;
-	}, [prepareForOverlay]);
-
-	const warmTabsMenuFrame = useCallback(() => {
-		void prepareTabsMenuFrame();
-	}, [prepareTabsMenuFrame]);
-	// Radix restores focus to the trigger when the menu closes. Preparing on
-	// focus would start a new capture after cleanup; keyboard opens prepare below.
-
-	const openTabsMenu = useCallback(async () => {
+	const openTabsMenu = useCallback(() => {
 		if (tabs.length === 0) return;
-		await prepareTabsMenuFrame();
 		setTabsMenuOpen(true);
-	}, [prepareTabsMenuFrame, tabs.length]);
+	}, [tabs.length]);
 
 	const handleTabsMenuOpenChange = useCallback(
 		(next: boolean) => {
 			if (!next) {
 				setTabsMenuOpen(false);
-				finishOverlay();
 				return;
 			}
-			void openTabsMenu();
+			openTabsMenu();
 		},
-		[finishOverlay, openTabsMenu],
+		[openTabsMenu],
 	);
 
 	const handleSelectTab = useCallback(
@@ -346,25 +354,23 @@ export function BrowserPanelView({
 			try {
 				await selectTab(tabId);
 			} catch {
-				// The existing tab remains active; overlay cleanup still runs below.
-			} finally {
-				finishOverlay();
+				// The existing tab remains active.
 			}
 		},
-		[finishOverlay, selectTab],
+		[selectTab],
 	);
 
 	const handleTabsTriggerPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
 		if (tabsMenuOpen || tabs.length === 0) return;
 		event.preventDefault();
-		void openTabsMenu();
+		openTabsMenu();
 	};
 
 	const handleTabsTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
 		if (tabsMenuOpen || tabs.length === 0) return;
 		if (event.key !== "Enter" && event.key !== " " && event.key !== "ArrowDown") return;
 		event.preventDefault();
-		void openTabsMenu();
+		openTabsMenu();
 	};
 
 	const annotationStatusLabel =
@@ -387,6 +393,7 @@ export function BrowserPanelView({
 				"browser-panel flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background",
 				poppedOut && "browser-panel--popped-out",
 			)}
+			data-browser-native-page={navState.url ? "live" : "empty"}
 			data-testid="browser-panel"
 			role="tabpanel"
 		>
@@ -488,7 +495,6 @@ export function BrowserPanelView({
 							disabled={tabs.length === 0}
 							onKeyDown={handleTabsTriggerKeyDown}
 							onPointerDown={handleTabsTriggerPointerDown}
-							onPointerEnter={warmTabsMenuFrame}
 							size="sm"
 							title={t("browser.tabsTitle", { count: tabs.length })}
 							type="button"
@@ -542,7 +548,7 @@ export function BrowserPanelView({
 					aria-label={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
 					className={cn(devtoolsState.open && "bg-accent-weak text-accent")}
 					disabled={!canUseDevTools}
-					onClick={() => void (devtoolsState.open ? closeDevTools() : openDevTools())}
+					onClick={() => void (devtoolsState.open ? closeDevTools() : handleOpenDevTools())}
 					size="icon-sm"
 					title={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
 					type="button"
@@ -550,6 +556,44 @@ export function BrowserPanelView({
 				>
 					<Bug aria-hidden="true" className="size-icon-base" />
 				</Button>
+				{nativeCompositionEnabled && devtoolsState.open ? (
+					<DropdownMenu
+						modal={false}
+						onOpenChange={setDevtoolsPlacementMenuOpen}
+						open={devtoolsPlacementMenuOpen}
+					>
+						<DropdownMenuTrigger asChild>
+							<Button
+								aria-label={t("browser.devtoolsPlacement")}
+								className="browser-panel__devtools-placement"
+								size="icon-sm"
+								type="button"
+								title={t("browser.devtoolsPlacement")}
+								variant="ghost"
+							>
+								<Dock aria-hidden="true" className="size-icon-base" />
+							</Button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent
+							align="end"
+							className="w-44"
+							data-browser-native-overlay="true"
+							sideOffset={8}
+						>
+							<DropdownMenuLabel>{t("browser.dockDevTools")}</DropdownMenuLabel>
+							{(["right", "bottom", "left", "undocked"] as BrowserDevToolsPlacement[]).map((placement) => (
+								<DropdownMenuItem
+									key={placement}
+									data-testid={`browser-devtools-placement-${placement}`}
+									onSelect={() => handleDevToolsPlacement(placement)}
+								>
+									<span>{devtoolsPlacementLabels[placement]}</span>
+									{placement === devtoolsPlacement ? <Check aria-hidden="true" className="ml-auto" /> : null}
+								</DropdownMenuItem>
+							))}
+						</DropdownMenuContent>
+					</DropdownMenu>
+				) : null}
 				<Button
 					aria-label={poppedOut ? t("browser.returnToPanel") : t("browser.popOut")}
 					disabled={!canPopOut}
@@ -574,30 +618,6 @@ export function BrowserPanelView({
 				data-testid="browser-viewport"
 			>
 				<div className="browser-panel__slot absolute inset-0 min-h-px min-w-px" ref={slotRef} />
-				{mirrorFrame ? (
-					<img
-						alt=""
-						className="absolute left-0 top-0 max-w-none"
-						data-testid="browser-mirror-frame"
-						src={mirrorFrame.dataUrl}
-						style={{
-							height: mirrorFrame.cssHeight,
-							left: mirrorFrame.cssLeft,
-							objectFit: "fill",
-							objectPosition: "top left",
-							top: mirrorFrame.cssTop,
-							width: mirrorFrame.cssWidth,
-						}}
-					/>
-				) : null}
-				{visualTransition ? (
-					<img
-						alt=""
-						className="browser-panel__transition-frame"
-						data-testid="browser-transition-frame"
-						src={visualTransition.snapshotUrl}
-					/>
-				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 				{navState.url === "" ? (
 					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">

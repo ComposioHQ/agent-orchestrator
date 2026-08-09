@@ -26,28 +26,16 @@ const hookState = vi.hoisted(() => ({
 	goForward: vi.fn(),
 	reload: vi.fn(),
 	stop: vi.fn(),
-	mirrorFrame: null as {
-		dataUrl: string;
-		pixelWidth: number;
-		pixelHeight: number;
-		nativeBounds: { x: number; y: number; width: number; height: number };
-		cssLeft: number;
-		cssTop: number;
-		cssWidth: number;
-		cssHeight: number;
-	} | null,
 	selectTab: vi.fn(),
 	closeTab: vi.fn(),
 	openDevTools: vi.fn(),
 	closeDevTools: vi.fn(),
-	devtoolsState: { viewId: "42:sess-1", open: false, activeTabId: "t1" },
-	prepareForOverlay: vi.fn(async () => undefined),
-	finishOverlay: vi.fn(),
+	setDevToolsPlacement: vi.fn(),
+	devtoolsState: { viewId: "42:sess-1", open: false, activeTabId: "t1", placement: "undocked" },
 	setAnnotationMode: vi.fn(),
 	tabs: [{ id: "t1", url: "", title: "", active: true }],
 	activeTabId: "t1",
 	tabNotice: "",
-	visualTransition: null as { kind: "tab-switch" | "popout"; snapshotUrl: string } | null,
 	previewUrl: undefined as string | undefined,
 	navState: {
 		viewId: "42:sess-1",
@@ -65,7 +53,6 @@ vi.mock("../hooks/useBrowserView", () => ({
 		return {
 			viewId: "42:sess-1",
 			navState: hookState.navState,
-			mirrorFrame: hookState.mirrorFrame,
 			slotRef: vi.fn(),
 			navigate: hookState.navigate,
 			goBack: hookState.goBack,
@@ -75,14 +62,12 @@ vi.mock("../hooks/useBrowserView", () => ({
 			tabs: hookState.tabs,
 			activeTabId: hookState.activeTabId,
 			tabNotice: hookState.tabNotice,
-			visualTransition: hookState.visualTransition,
 			selectTab: hookState.selectTab,
 			closeTab: hookState.closeTab,
 			devtoolsState: hookState.devtoolsState,
 			openDevTools: hookState.openDevTools,
 			closeDevTools: hookState.closeDevTools,
-			prepareForOverlay: hookState.prepareForOverlay,
-			finishOverlay: hookState.finishOverlay,
+			setDevToolsPlacement: hookState.setDevToolsPlacement,
 			annotationMode: false,
 			setAnnotationMode: hookState.setAnnotationMode,
 		};
@@ -160,19 +145,19 @@ describe("BrowserPanel", () => {
 	const annotationCancelListeners = new Set<(payload: BrowserAnnotationCancelPayload) => void>();
 
 	beforeEach(() => {
+		window.localStorage.clear();
 		hookState.navigate.mockReset();
 		hookState.goBack.mockReset();
 		hookState.goForward.mockReset();
 		hookState.reload.mockReset();
 		hookState.stop.mockReset();
-		hookState.mirrorFrame = null;
 		hookState.selectTab.mockReset();
 		hookState.closeTab.mockReset();
 		hookState.openDevTools.mockReset();
 		hookState.closeDevTools.mockReset();
-		hookState.devtoolsState = { viewId: "42:sess-1", open: false, activeTabId: "t1" };
-		hookState.prepareForOverlay.mockReset();
-		hookState.finishOverlay.mockReset();
+		hookState.setDevToolsPlacement.mockReset();
+		window.ao!.browser.nativeCompositionEnabled = false;
+		hookState.devtoolsState = { viewId: "42:sess-1", open: false, activeTabId: "t1", placement: "undocked" };
 		hookState.setAnnotationMode.mockReset();
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
 		postMock.mockReset();
@@ -195,7 +180,6 @@ describe("BrowserPanel", () => {
 		hookState.tabs = [{ id: "t1", url: "", title: "", active: true }];
 		hookState.activeTabId = "t1";
 		hookState.tabNotice = "";
-		hookState.visualTransition = null;
 		hookState.navState = {
 			viewId: "42:sess-1",
 			url: "",
@@ -276,7 +260,6 @@ describe("BrowserPanel", () => {
 		expect(screen.getByText("Second app").closest('[role="menuitem"]')?.querySelector("svg")).toHaveClass("text-foreground");
 		await userEvent.click(screen.getByText("First app"));
 		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t1"));
-		expect(hookState.finishOverlay).toHaveBeenCalledTimes(1);
 		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 
 		await userEvent.click(tabsButton);
@@ -298,46 +281,56 @@ describe("BrowserPanel", () => {
 		expect(screen.queryByText("Agent", { exact: true })).not.toBeInTheDocument();
 	});
 
-	it("renders a rounded native mirror viewport without edge-cropping", () => {
-		hookState.navState = {
-			...hookState.navState,
-			url: "http://localhost:5173/",
-		};
-		hookState.mirrorFrame = {
-			dataUrl: "data:image/jpeg;base64,snapshot",
-			pixelWidth: 798,
-			pixelHeight: 598,
-			nativeBounds: { x: 125, y: 25, width: 399, height: 299 },
-			cssLeft: -0.25,
-			cssTop: -0.25,
-			cssWidth: 319.2,
-			cssHeight: 239.2,
-		};
-
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		const frame = screen.getByTestId("browser-mirror-frame");
-		expect(frame).toHaveStyle({
-			height: "239.2px",
-			left: "-0.25px",
-			objectFit: "fill",
-			objectPosition: "top left",
-			top: "-0.25px",
-			width: "319.2px",
-		});
-		expect(frame).not.toHaveClass("object-cover");
-	});
-
 	it("opens DevTools from a direct toolbar control", async () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		await userEvent.click(screen.getByRole("button", { name: "Open DevTools" }));
 		expect(hookState.openDevTools).toHaveBeenCalledOnce();
 
-		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1" };
+		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1", placement: "undocked" };
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		await userEvent.click(screen.getByRole("button", { name: "Close DevTools" }));
 		expect(hookState.closeDevTools).toHaveBeenCalledOnce();
+	});
+
+	it("offers AO-owned placement controls for the native DevTools surface", async () => {
+		window.ao!.browser.nativeCompositionEnabled = true;
+		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1", placement: "right" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "DevTools placement" }));
+		await userEvent.click(await screen.findByTestId("browser-devtools-placement-bottom"));
+
+		expect(hookState.setDevToolsPlacement).toHaveBeenCalledWith("bottom");
+	});
+
+	it("restores the saved native placement before opening DevTools", async () => {
+		window.ao!.browser.nativeCompositionEnabled = true;
+		window.localStorage.setItem("ao.browser.devtoolsPlacement", "left");
+		const calls: string[] = [];
+		hookState.setDevToolsPlacement.mockImplementation(async () => {
+			calls.push("placement");
+		});
+		hookState.openDevTools.mockImplementation(async () => {
+			calls.push("open");
+		});
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Open DevTools" }));
+
+		expect(hookState.setDevToolsPlacement).toHaveBeenCalledWith("left");
+		expect(calls).toEqual(["placement", "open"]);
+	});
+
+	it("marks blank native panels as opaque and loaded panels as live", () => {
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+		expect(screen.getByTestId("browser-panel")).toHaveAttribute("data-browser-native-page", "empty");
+
+		hookState.navState = { ...hookState.navState, url: "http://localhost:3000/" };
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getByTestId("browser-panel")).toHaveAttribute("data-browser-native-page", "live");
 	});
 
 	it("releases the tabs overlay when tab selection fails", async () => {
@@ -351,7 +344,7 @@ describe("BrowserPanel", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
 		await userEvent.click(screen.getByText("Second app"));
 
-		await waitFor(() => expect(hookState.finishOverlay).toHaveBeenCalled());
+		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t2"));
 		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 	});
 
@@ -364,12 +357,9 @@ describe("BrowserPanel", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
 		expect(await screen.findByRole("menu")).toBeInTheDocument();
-		hookState.finishOverlay.mockClear();
-
 		await userEvent.keyboard("{Escape}");
 
-		await waitFor(() => expect(hookState.finishOverlay).toHaveBeenCalledTimes(1));
-		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+		await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
 	});
 
 	it("surfaces a popup-created tab without adding a full tab strip", () => {
@@ -444,7 +434,7 @@ describe("BrowserPanel", () => {
 		expect(icon).not.toHaveClass("-translate-y-1/2");
 	});
 
-	it("warms the browser tabs menu before opening it above the native browser", async () => {
+	it("opens the browser tabs menu directly above the live native browser", async () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		hookState.tabs = [
 			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
@@ -454,7 +444,6 @@ describe("BrowserPanel", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: /browser tabs/i }));
 
-		expect(hookState.prepareForOverlay).toHaveBeenCalled();
 		expect(await screen.findByRole("menu")).not.toHaveAttribute("data-ao-browser-native-overlay");
 		expect(screen.getByText("First app").closest('[role="menuitem"]')).toHaveClass("cursor-pointer");
 		expect(screen.getByRole("menuitem", { name: "Close tab First app" })).toHaveClass("cursor-pointer");
