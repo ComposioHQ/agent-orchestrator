@@ -251,6 +251,38 @@ func (r *recordingActivity) snapshot() []ports.ActivitySignal {
 	return append([]ports.ActivitySignal(nil), r.signals...)
 }
 
+func hasActivitySignal(signals []ports.ActivitySignal, state domain.ActivityState, event string) bool {
+	for _, s := range signals {
+		if s.State == state && s.Event == event {
+			return true
+		}
+	}
+	return false
+}
+
+// awaitSnapshot polls until pred holds, for tests that build their own service
+// rather than using the harness.
+func awaitSnapshotFromStore(t *testing.T, st *sqlite.Store, conversationID string,
+	pred func(store.ConversationSnapshot) bool) store.ConversationSnapshot {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var last store.ConversationSnapshot
+	for time.Now().Before(deadline) {
+		snapshot, err := st.LoadConversationSnapshot(context.Background(), conversationID)
+		if err != nil {
+			t.Fatalf("load snapshot: %v", err)
+		}
+		last = snapshot
+		if pred(snapshot) {
+			return snapshot
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("snapshot never satisfied the condition; last had %d messages, %d activities, %d turns",
+		len(last.Messages), len(last.Activities), len(last.Turns))
+	return last
+}
+
 func productionCaps() ports.ChatCapabilities {
 	return ports.ChatCapabilities{
 		ports.ChatCapabilityStreaming: true,
@@ -1539,10 +1571,10 @@ func TestInterruptWaitsForTheProviderToAcknowledgeTheTurn(t *testing.T) {
 	}
 }
 
-// A provider that refuses because the turn is genuinely gone must reach the client
-// as the same typed "nothing to interrupt" answer AO produces itself — not as a
-// protocol error that renders as an internal failure.
-func TestProviderRefusalBecomesTheTypedNoActiveTurnError(t *testing.T) {
+// A provider that refuses because the turn is genuinely gone must reconcile the
+// durable turn as interrupted instead of surfacing a bare ErrNoActiveTurn that
+// leaves the user stuck on "Working". The queue behind it is cancelled too.
+func TestProviderRefusalReconcilesTheTurnAsInterrupted(t *testing.T) {
 	conv := newInterruptRecorder() // never marks anything active
 	h := newHarnessWithConversation(t, conv)
 	ctx := context.Background()
@@ -1550,10 +1582,29 @@ func TestProviderRefusalBecomesTheTypedNoActiveTurnError(t *testing.T) {
 	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "go", ClientMessageID: "c1"}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
 
-	err := h.svc.Interrupt(ctx, testSession)
-	if !errorsIs(err, chatsvc.ErrNoActiveTurn) {
-		t.Fatalf("err = %v, want ErrNoActiveTurn", err)
+	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateInterrupted
+	})
+	if snapshot.Turns[0].State != domain.TurnStateInterrupted {
+		t.Fatalf("turn state = %q, want %q", snapshot.Turns[0].State, domain.TurnStateInterrupted)
+	}
+
+	if got := conv.attemptCount(); got != 2 {
+		t.Errorf("provider interrupt attempts = %d, want 2 (initial + reconciliation)", got)
+	}
+
+	// Reconciliation must report idle so the session lifecycle reflects the stop.
+	if !hasActivitySignal(h.activity.snapshot(), domain.ActivityIdle, "chat.interrupt.reconciled") {
+		t.Errorf("no idle activity signal emitted after reconciliation; signals = %v",
+			h.activity.snapshot())
 	}
 }
 
@@ -2043,5 +2094,259 @@ func TestInterruptReturnsNoActiveTurnWhenNoRunningTurnAnywhere(t *testing.T) {
 	err := h.svc.Interrupt(ctx, testSession)
 	if !errorsIs(err, chatsvc.ErrNoActiveTurn) {
 		t.Fatalf("err = %v, want ErrNoActiveTurn", err)
+	}
+}
+
+// When the provider refuses to cancel a turn that SQLite still shows as running,
+// the reconciliation must also cancel any turns queued behind it. Stop is the
+// user's brake — a brake that releases the next message would be the opposite.
+func TestProviderRefusalReconciliationCancelsQueuedTurns(t *testing.T) {
+	conv := newInterruptRecorder() // never marks anything active
+	h := newHarnessWithConversation(t, conv)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "c1",
+	}); err != nil {
+		t.Fatalf("Send running: %v", err)
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "queued", ClientMessageID: "c2",
+	}); err != nil {
+		t.Fatalf("Send queued: %v", err)
+	}
+
+	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return states["running"].Terminal() && states["queued"].Terminal()
+	})
+	states := turnStateByText(t, snapshot)
+	if states["queued"] != domain.TurnStateInterrupted {
+		t.Errorf("queued turn = %q; want %q (cancelled, not dispatched)",
+			states["queued"], domain.TurnStateInterrupted)
+	}
+	if got := h.conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v; reconciliation must not release the queue", got)
+	}
+}
+
+// The dispatch race: BindTurnToProvider writes state='running' to SQLite before
+// pendingTurnID is set in memory. If Stop arrives in that window, memory says
+// nothing is running, so Interrupt falls through to the disk fallback and must
+// reconcile the turn. This test simulates that race by creating a running turn
+// directly in the store and calling Interrupt with empty memory.
+func TestInterruptReconcilesDispatchRaceTurn(t *testing.T) {
+	conv := newInterruptRecorder() // refuses all interrupts
+	h := newHarnessWithConversation(t, conv)
+	ctx := context.Background()
+
+	// Simulate the race window: a turn is running in SQLite (BindTurnToProvider
+	// already wrote 'running') but the controller never set pendingTurnID.
+	const providerTurnID = "race-turn"
+	if err := h.st.AdoptProviderTurn(ctx, h.ctrl.ConversationID(), testSession,
+		h.ctrl.Generation(), "race-turn-id", providerTurnID, h.now()); err != nil {
+		t.Fatalf("AdoptProviderTurn: %v", err)
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+
+	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateInterrupted
+	})
+
+	if got := conv.attemptCount(); got != 1 {
+		t.Errorf("provider interrupt attempts = %d, want 1 (best-effort cancel during reconciliation)", got)
+	}
+
+	// Reconciliation must report idle so the session lifecycle reflects the stop.
+	if !hasActivitySignal(h.activity.snapshot(), domain.ActivityIdle, "chat.interrupt.reconciled") {
+		t.Errorf("no idle activity signal emitted after reconciliation; signals = %v",
+			h.activity.snapshot())
+	}
+}
+
+// Memory state (pendingTurnID, ackedTurnID, controller state) must be cleared
+// after the SQLite transaction commits, not inside it. A turn that completes
+// normally must leave the controller ready for the next send without a stale
+// pendingTurnID lingering.
+func TestTurnCompletionClearsMemoryAfterCommit(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "hello", ClientMessageID: "c1",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+
+	// Complete the turn. afterProject runs after the commit and clears memory.
+	h.conv.emit(ports.ChatEvent{
+		Kind:           ports.ChatEventTurnCompleted,
+		ProviderTurnID: "provider-turn-1",
+		TurnState:      domain.TurnStateCompleted,
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateCompleted
+	})
+
+	// The controller must not be busy — a subsequent send must succeed,
+	// proving pendingTurnID was cleared in afterProject after the commit.
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "next", ClientMessageID: "c2",
+	}); err != nil {
+		t.Fatalf("Send after completion: %v", err)
+	}
+}
+
+// failingProjectStore wraps a real store and injects a failure into
+// ProjectProviderEvent when the method matches a target event kind. This
+// simulates a tx.Commit failure without needing to corrupt SQLite.
+type failingProjectStore struct {
+	chatsvc.Store
+	failMethod string
+}
+
+func (s *failingProjectStore) ProjectProviderEvent(
+	ctx context.Context, conversationID string, session domain.SessionID,
+	generation, providerEventID, method, payloadJSON string, now time.Time,
+	project func(context.Context) error,
+) (bool, error) {
+	if method == s.failMethod {
+		return false, errors.New("injected projection failure")
+	}
+	return s.Store.ProjectProviderEvent(ctx, conversationID, session, generation,
+		providerEventID, method, payloadJSON, now, project)
+}
+
+// The exact #3749 scenario: SettleTurn fails inside the projection transaction
+// (pendingTurnID stays set because afterProject never runs), then Interrupt
+// calls the provider which returns ErrChatNoActiveTurn (the turn already
+// completed on the provider side). reconcileDurableTurn must settle the
+// durable row as interrupted, cancel the queue, clear memory, and report idle
+// — the full Interrupt contract without a second successful provider send.
+func TestProjectionFailureAndProviderRefusalReconcilesDurableTurn(t *testing.T) {
+	conv := newInterruptRecorder() // never marks anything active → always refuses
+	st := openStore(t)
+
+	var counterMu sync.Mutex
+	counter := 0
+	newID := func() string {
+		counterMu.Lock()
+		defer counterMu.Unlock()
+		counter++
+		return fmt.Sprintf("id-%03d", counter)
+	}
+
+	// Fail projection for turn/completed so afterProject never runs and
+	// pendingTurnID stays set — simulating the tx.Commit failure.
+	failingStore := &failingProjectStore{
+		Store:      st,
+		failMethod: string(ports.ChatEventTurnCompleted),
+	}
+	activity := &recordingActivity{}
+	clock := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
+	svc := chatsvc.New(chatsvc.Options{
+		Store:    failingStore,
+		Sessions: st,
+		Drivers:  fakeRegistry{driver: fakeDriver{conv: conv}},
+		Activity: activity,
+		Log:      slog.New(slog.DiscardHandler),
+		NewID:    newID,
+		Now:      func() time.Time { return clock },
+	})
+
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID:     testSession,
+		ProjectID:     testProject,
+		Harness:       domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	ctx := context.Background()
+
+	// Send the running turn.
+	if _, err := svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "c1",
+	}); err != nil {
+		t.Fatalf("Send running: %v", err)
+	}
+	conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+
+	// Wait for the turn to be running on disk.
+	awaitSnapshotFromStore(t, st, ctrl.ConversationID(), func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+
+	// Queue a second prompt behind the running turn.
+	if _, err := svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "queued", ClientMessageID: "c2",
+	}); err != nil {
+		t.Fatalf("Send queued: %v", err)
+	}
+
+	// Emit turn completion — projection fails (simulating tx.Commit failure),
+	// so afterProject never runs and pendingTurnID stays set.
+	conv.emit(ports.ChatEvent{
+		Kind:           ports.ChatEventTurnCompleted,
+		ProviderTurnID: "provider-turn-1",
+		TurnState:      domain.TurnStateCompleted,
+	})
+	time.Sleep(100 * time.Millisecond)
+
+	// Now press Stop. pendingTurnID is still set (projection failed), so
+	// awaitAcknowledgedTurn returns ok=true. The provider refuses with
+	// ErrChatNoActiveTurn. reconcileDurableTurn must settle the durable row,
+	// cancel the queue, and report idle.
+	if err := svc.Interrupt(ctx, testSession); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+
+	// The running turn must be interrupted on disk.
+	snapshot := awaitSnapshotFromStore(t, st, ctrl.ConversationID(), func(s store.ConversationSnapshot) bool {
+		if len(s.Turns) < 2 {
+			return false
+		}
+		states := turnStateByText(t, s)
+		return states["running"].Terminal() && states["queued"].Terminal()
+	})
+	states := turnStateByText(t, snapshot)
+	if states["running"] != domain.TurnStateInterrupted {
+		t.Errorf("running turn = %q, want %q", states["running"], domain.TurnStateInterrupted)
+	}
+	if states["queued"] != domain.TurnStateInterrupted {
+		t.Errorf("queued turn = %q, want %q (cancelled, not dispatched)",
+			states["queued"], domain.TurnStateInterrupted)
+	}
+
+	// No extra provider send beyond the initial dispatch + interrupt attempts.
+	if got := conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v; reconciliation must not release the queue", got)
+	}
+
+	// An idle signal must be emitted.
+	if !hasActivitySignal(activity.snapshot(), domain.ActivityIdle, "chat.interrupt.reconciled") {
+		t.Errorf("no idle activity signal emitted after reconciliation; signals = %v",
+			activity.snapshot())
 	}
 }
