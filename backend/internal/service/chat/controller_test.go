@@ -2001,3 +2001,47 @@ func TestProviderStartedTurnIsAdoptedSoItsItemsCorrelate(t *testing.T) {
 		}
 	}
 }
+
+// A SettleTurn failure during ChatEventTurnCompleted projection leaves SQLite
+// with state='running' while the in-memory pendingTurnID is already cleared.
+// The user sees "Working" (SQLite) but "Stop turn" returns CHAT_NO_ACTIVE_TURN
+// (memory). Interrupt must reconcile by settling the stale running turn as
+// interrupted instead of refusing.
+func TestInterruptReconcilesStaleRunningTurnOnDisk(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// Simulate the desync: create a running turn directly in the store,
+	// bypassing the controller so its pendingTurnID stays empty.
+	const providerTurnID = "stale-running-turn"
+	if err := h.st.AdoptProviderTurn(ctx, h.ctrl.ConversationID(), testSession,
+		"stale-generation", "stale-turn-id", providerTurnID, h.now()); err != nil {
+		t.Fatalf("AdoptProviderTurn: %v", err)
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+
+	// Interrupt should recover the stale turn, not return ErrNoActiveTurn.
+	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+
+	// The turn must now be interrupted on disk so the UI unblocks.
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateInterrupted
+	})
+}
+
+// When memory is empty AND SQLite has no running turn, Interrupt must still
+// return ErrNoActiveTurn — the disk fallback must not produce a false positive.
+func TestInterruptReturnsNoActiveTurnWhenNoRunningTurnAnywhere(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// No message sent, no turn in flight: nothing to interrupt.
+	err := h.svc.Interrupt(ctx, testSession)
+	if !errorsIs(err, chatsvc.ErrNoActiveTurn) {
+		t.Fatalf("err = %v, want ErrNoActiveTurn", err)
+	}
+}

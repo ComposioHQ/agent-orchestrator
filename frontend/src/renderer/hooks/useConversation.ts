@@ -214,6 +214,9 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (error) throw error;
 		},
 		onSuccess: invalidate,
+		onError: () => {
+			invalidate();
+		},
 	});
 
 	const resume = useMutation({
