@@ -745,6 +745,29 @@ func TestEnsureWorkspaceTrustedCreatesMissingConfig(t *testing.T) {
 	}
 }
 
+func TestEnsureWorkspaceTrustedRefusesZeroByteConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".claude.json")
+	// Simulate catching some other writer mid-truncate: the file exists
+	// but reads back as zero bytes.
+	if err := os.WriteFile(cfgPath, []byte{}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ensureWorkspaceTrusted(cfgPath, "/some/worktree")
+	if err == nil {
+		t.Fatal("expected error for zero-byte config, got nil")
+	}
+
+	data, readErr := os.ReadFile(cfgPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(data) != 0 {
+		t.Fatalf("zero-byte config must not be overwritten; got %d bytes: %s", len(data), data)
+	}
+}
+
 func readJSON(t *testing.T, path string) map[string]any {
 	t.Helper()
 	data, err := os.ReadFile(path)
