@@ -244,9 +244,9 @@ git commit -m "refactor(frontend): align chat terminal bar"
 
 - [ ] **Step 6: Run repository-level frontend verification**
 
-From `frontend/`, run `npm run typecheck`, `npm test`, and `npm run build`.
+From `frontend/`, run `npm run typecheck`, `npm test`, and `npm run package`.
 
-Expected: typecheck and build exit 0; all frontend tests pass with only pre-existing skips.
+Expected: typecheck and Electron Forge packaging exit 0; all frontend tests pass with only pre-existing skips.
 
 - [ ] **Step 7: Check patch hygiene and base ownership**
 
