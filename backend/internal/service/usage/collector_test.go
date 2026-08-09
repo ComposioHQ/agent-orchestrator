@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1724,6 +1725,242 @@ func TestCollectorRejectsCopilotSourceForDifferentNativeSession(t *testing.T) {
 	binding := domain.UsageBindingRecord{Harness: domain.HarnessCopilot, NativeRootID: "bound-native"}
 	if err := validateSourceAttribution(binding, domain.UsageSourceCopilotShutdown, "bound-native", "", canonicalUsagePath(t, path), ""); err == nil {
 		t.Fatal("accepted Copilot events file from a different native session")
+	}
+}
+
+func TestCollectorDiscoversKimiWireSourcesFromSessionIndex(t *testing.T) {
+	const nativeID = "kimi-session-1"
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessKimi, nativeID, false)
+	home := t.TempDir()
+	sessionDir := filepath.Join(home, "sessions", nativeID)
+	mainPath := filepath.Join(sessionDir, "agents", "main", "wire.jsonl")
+	childPath := filepath.Join(sessionDir, "agents", "researcher", "wire.jsonl")
+	writeUsageFixture(t, mainPath, "{}\n")
+	writeUsageFixture(t, childPath, "{}\n")
+	writeUsageFixture(t, filepath.Join(home, "session_index.jsonl"),
+		fmt.Sprintf(`{"sessionId":%q,"sessionDir":%q,"workDir":"/repo"}`+"\n", nativeID, sessionDir))
+	collector := NewCollector(store, SourceRoots{KimiHome: home}, nil)
+
+	mustNoError(t, collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Harness: domain.HarnessKimi, Event: "session-start", NativeSessionID: nativeID,
+	}))
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 2 {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+	gotSubagents := []string{sources[0].SubagentID, sources[1].SubagentID}
+	slices.Sort(gotSubagents)
+	if !reflect.DeepEqual(gotSubagents, []string{"", "researcher"}) {
+		t.Fatalf("subagent IDs = %v", gotSubagents)
+	}
+}
+
+func TestCollectorKimiIndexRejectsDeletedAndEscapingSessions(t *testing.T) {
+	const nativeID = "kimi-session-1"
+	tests := []struct {
+		name    string
+		records func(home string) string
+	}{
+		{
+			name: "last record deletes session",
+			records: func(home string) string {
+				dir := filepath.Join(home, "sessions", nativeID)
+				return fmt.Sprintf(`{"sessionId":%q,"sessionDir":%q}`+"\n"+`{"sessionId":%q,"deleted":true}`+"\n", nativeID, dir, nativeID)
+			},
+		},
+		{
+			name: "session directory escapes root",
+			records: func(home string) string {
+				dir := filepath.Join(filepath.Dir(home), nativeID)
+				return fmt.Sprintf(`{"sessionId":%q,"sessionDir":%q}`+"\n", nativeID, dir)
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			escapingDir := filepath.Join(filepath.Dir(home), nativeID)
+			t.Cleanup(func() { _ = os.RemoveAll(escapingDir) })
+			writeUsageFixture(t, filepath.Join(home, "sessions", nativeID, "agents", "main", "wire.jsonl"), "{}\n")
+			writeUsageFixture(t, filepath.Join(escapingDir, "agents", "main", "wire.jsonl"), "{}\n")
+			writeUsageFixture(t, filepath.Join(home, "session_index.jsonl"), tc.records(home))
+			collector := NewCollector(collectorTestStore(t), SourceRoots{KimiHome: home}, nil)
+			path, err := collector.discoverPath(context.Background(), domain.HarnessKimi, nativeID)
+			mustNoError(t, err)
+			if path != "" {
+				t.Fatalf("discovered rejected session path %q", path)
+			}
+		})
+	}
+}
+
+func TestCollectorDiscoversPiSessionByHeaderID(t *testing.T) {
+	const nativeID = "pi-session-1"
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessPi, nativeID, false)
+	root := t.TempDir()
+	path := filepath.Join(root, "project", "2026-08-09_"+nativeID+".jsonl")
+	writeUsageFixture(t, path, `{"type":"session","id":"`+nativeID+`","cwd":"/repo","version":3}`+"\n")
+	collector := NewCollector(store, SourceRoots{PiSessions: root}, nil)
+
+	mustNoError(t, collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Harness: domain.HarnessPi, Event: "session-start", NativeSessionID: nativeID,
+	}))
+	bindings, _ := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if len(bindings) != 1 {
+		t.Fatalf("bindings = %+v", bindings)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 || sources[0].Kind != domain.UsageSourcePiSession {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+}
+
+func TestCollectorReconcilePiPathMatchesExactlyOneLivePiWorkspace(t *testing.T) {
+	const nativeID = "pi-session-from-header"
+	store := collectorTestStore(t)
+	matchingWorkspace := t.TempDir()
+	otherWorkspace := t.TempDir()
+	matching := collectorTestSession(t, store, domain.HarnessPi, "", false)
+	matching.Metadata.WorkspacePath = matchingWorkspace
+	mustNoError(t, store.UpdateSession(context.Background(), matching))
+	other := collectorTestSession(t, store, domain.HarnessPi, "", false)
+	other.Metadata.WorkspacePath = otherWorkspace
+	mustNoError(t, store.UpdateSession(context.Background(), other))
+	root := t.TempDir()
+	path := filepath.Join(root, "project", "session.jsonl")
+	writeUsageFixture(t, path, fmt.Sprintf(`{"type":"session","id":%q,"cwd":%q,"version":3}`+"\n", nativeID, matchingWorkspace))
+
+	collector := NewCollector(store, SourceRoots{PiSessions: root}, nil)
+	mustNoError(t, collector.ReconcilePath(context.Background(), path))
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), matching.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].NativeRootID != nativeID {
+		t.Fatalf("matching bindings=%+v err=%v", bindings, err)
+	}
+	otherBindings, err := store.ListUsageBindingsForSession(context.Background(), other.ID)
+	if err != nil || len(otherBindings) != 0 {
+		t.Fatalf("other bindings=%+v err=%v", otherBindings, err)
+	}
+}
+
+func TestCollectorReconcilePiPathIgnoresAmbiguousOrNonPiWorkspace(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		harnesses []domain.AgentHarness
+	}{
+		{name: "ambiguous", harnesses: []domain.AgentHarness{domain.HarnessPi, domain.HarnessPi}},
+		{name: "non-pi", harnesses: []domain.AgentHarness{domain.HarnessQwen}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := collectorTestStore(t)
+			workspace := t.TempDir()
+			var sessions []domain.SessionRecord
+			for _, harness := range tc.harnesses {
+				session := collectorTestSession(t, store, harness, "", false)
+				session.Metadata.WorkspacePath = workspace
+				mustNoError(t, store.UpdateSession(context.Background(), session))
+				sessions = append(sessions, session)
+			}
+			root := t.TempDir()
+			path := filepath.Join(root, "project", "session.jsonl")
+			writeUsageFixture(t, path, fmt.Sprintf(`{"type":"session","id":"pi-native","cwd":%q,"version":3}`+"\n", workspace))
+			collector := NewCollector(store, SourceRoots{PiSessions: root}, nil)
+			mustNoError(t, collector.ReconcilePath(context.Background(), path))
+			for _, session := range sessions {
+				bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+				if err != nil || len(bindings) != 0 {
+					t.Fatalf("session %s bindings=%+v err=%v", session.ID, bindings, err)
+				}
+			}
+		})
+	}
+}
+
+func TestCollectorBackfillFindsPiSessionWithoutCapturedNativeID(t *testing.T) {
+	store := collectorTestStore(t)
+	workspace := t.TempDir()
+	session := collectorTestSession(t, store, domain.HarnessPi, "", false)
+	session.Metadata.WorkspacePath = workspace
+	mustNoError(t, store.UpdateSession(context.Background(), session))
+	root := t.TempDir()
+	path := filepath.Join(root, "project", "existing.jsonl")
+	writeUsageFixture(t, path, fmt.Sprintf(`{"type":"session","id":"pi-existing","cwd":%q,"version":3}`+"\n", workspace))
+	collector := NewCollector(store, SourceRoots{PiSessions: root}, nil)
+
+	mustNoError(t, collector.BackfillActive(context.Background()))
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].NativeRootID != "pi-existing" {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+}
+
+func TestCollectorDiscoversQwenSharedMonthlyUsage(t *testing.T) {
+	const nativeID = "qwen-session-1"
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessQwen, nativeID, false)
+	root := t.TempDir()
+	path := filepath.Join(root, "token-usage-2026-08.jsonl")
+	writeUsageFixture(t, path, `{"schemaVersion":1,"id":"turn-1","sessionId":"`+nativeID+`","model":"qwen3","inputTokens":1,"outputTokens":1,"cachedTokens":0,"thoughtsTokens":0,"totalTokens":2}`+"\n")
+	collector := NewCollector(store, SourceRoots{QwenUsage: root}, nil)
+
+	mustNoError(t, collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Harness: domain.HarnessQwen, Event: "session-start", NativeSessionID: nativeID,
+	}))
+	bindings, _ := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if len(bindings) != 1 {
+		t.Fatalf("bindings = %+v", bindings)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 || sources[0].Kind != domain.UsageSourceQwenMonthly {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+}
+
+func TestCollectorQwenRegistersNewestMonthAndLaterRollover(t *testing.T) {
+	const nativeID = "qwen-session-1"
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessQwen, nativeID, false)
+	root := t.TempDir()
+	june := filepath.Join(root, "token-usage-2026-06.jsonl")
+	july := filepath.Join(root, "token-usage-2026-07.jsonl")
+	writeUsageFixture(t, june, "{}\n")
+	writeUsageFixture(t, july, "{}\n")
+	future := time.Now().Add(24 * time.Hour)
+	mustNoError(t, os.Chtimes(june, future, future))
+	collector := NewCollector(store, SourceRoots{QwenUsage: root}, nil)
+
+	mustNoError(t, collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Harness: domain.HarnessQwen, Event: "session-start", NativeSessionID: nativeID,
+	}))
+	bindings, _ := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 || sources[0].ArtifactPath != canonicalUsagePath(t, july) {
+		t.Fatalf("initial sources=%+v err=%v", sources, err)
+	}
+
+	august := filepath.Join(root, "token-usage-2026-08.jsonl")
+	writeUsageFixture(t, august, "{}\n")
+	mustNoError(t, collector.ReconcileSources(context.Background(), -1))
+	sources, err = store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 2 {
+		t.Fatalf("rollover sources=%+v err=%v", sources, err)
+	}
+	gotPaths := []string{sources[0].ArtifactPath, sources[1].ArtifactPath}
+	slices.Sort(gotPaths)
+	wantPaths := []string{canonicalUsagePath(t, july), canonicalUsagePath(t, august)}
+	slices.Sort(wantPaths)
+	if !reflect.DeepEqual(gotPaths, wantPaths) {
+		t.Fatalf("paths=%v want=%v", gotPaths, wantPaths)
+	}
+	for _, source := range sources {
+		if source.State != domain.UsageSourceActive && source.State != domain.UsageSourcePending {
+			t.Fatalf("source state=%s, want active or newly pending", source.State)
+		}
 	}
 }
 
