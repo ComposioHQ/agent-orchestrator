@@ -62,7 +62,7 @@ export function TerminalSwitchAgentButton({ session }: TerminalSwitchAgentButton
 						aria-busy={switching ? true : undefined}
 						aria-label={label}
 						className={cn(
-							"ml-1 grid size-6 shrink-0 place-items-center rounded-full border border-border/70 bg-background/45 text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+							"ml-2 grid size-6 shrink-0 place-items-center rounded-full border border-border/70 bg-background/45 text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
 							recoverySwitch && "border-warning/50 text-warning hover:border-warning/70 hover:text-warning",
 						)}
 						onClick={() => setOpen(true)}
