@@ -22,7 +22,7 @@ func TestReviewCommandUsesPlanModeAndEmptySkillsDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	skillsDir := filepath.Join(root, skillsDirectoryName)
-	want := []string{"/opt/kimi", "--plan", "--skills-dir", skillsDir}
+	want := []string{"/opt/kimi", "--plan", "--auto", "--skills-dir", skillsDir}
 	if !slices.Equal(spec.Argv, want) {
 		t.Fatalf("argv = %#v, want %#v", spec.Argv, want)
 	}
@@ -43,7 +43,7 @@ func TestReviewCommandUsesPlanModeAndEmptySkillsDirectory(t *testing.T) {
 func TestReviewCommandPreflightValidationAndCancel(t *testing.T) {
 	r := &Reviewer{resolveBinary: func(context.Context) (string, error) { return "/opt/kimi", nil }}
 	spec, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{})
-	if err != nil || !slices.Equal(spec.Argv, []string{"/opt/kimi", "--plan"}) {
+	if err != nil || !slices.Equal(spec.Argv, []string{"/opt/kimi", "--plan", "--auto"}) {
 		t.Fatalf("spec = %#v, %v", spec, err)
 	}
 	if _, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{TaskPromptRoot: t.TempDir()}); err == nil {

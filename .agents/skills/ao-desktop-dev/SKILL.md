@@ -1,28 +1,27 @@
 ---
 name: ao-desktop-dev
-description: Launch, restart, or troubleshoot the real AO Electron desktop app from this repository; snapshot the current AO SQLite database into an isolated dev data directory before local runs; combine PR branches for local UI review; and diagnose stale Electron processes, port conflicts, or preload bridge mismatches. Use whenever asked to run, open, show, or visually verify AO frontend changes in the actual desktop app rather than ao preview, dev:web, or mock data.
+description: Launch, restart, or troubleshoot the real AO Electron desktop app from this repository; run a checkout against isolated or real local AO data; combine PR branches for local UI review; and diagnose stale Electron processes, port conflicts, or preload bridge mismatches. Use whenever asked to run, open, show, or visually verify AO frontend changes in the actual desktop app rather than ao preview, dev:web, or mock data.
 ---
 
 # AO Desktop Dev
 
-Run the Electron application from the current checkout and verify it in the native window. Keep the dev daemon, renderer, Electron preload, database clone, and selected data mode explicit so the user never reviews a mock, stale build, or live database by accident.
+Run the Electron application from the current checkout and verify it in the native window. Keep the dev daemon, renderer, Electron preload, and selected data mode explicit so the user never reviews a mock or stale build by accident.
 
 ## Choose the data mode
 
-Use cloned-data mode unless the user explicitly requests another mode.
+Ask only when the request does not make the desired data source clear.
 
-- Use **cloned-data mode** by default. Before every launch, take a consistent SQLite snapshot of the current AO database into `~/.ao/dev/data`, then point the dev daemon there. Electron uses port `3002`, `~/.ao/dev/running.json`, `~/.ao/dev/data`, and `~/.ao/dev/electron`.
-- Use **fresh-empty mode** only when the user explicitly asks for an empty environment or destructive testing. Point `AO_DATA_DIR` at a newly created temporary directory; do not erase the cloned dev data.
+- Use **isolated mode** by default for implementation and destructive testing. Electron uses port `3002`, `~/.ao/dev/running.json`, `~/.ao/dev/data`, and `~/.ao/dev/electron`.
 - Use **real-data mode** only when the user explicitly asks to see this machine's actual AO projects or sessions. Start the checkout's dev daemon on the isolated dev port/run file while pointing `AO_DATA_DIR` at the real AO data directory. This is a separate daemon process using real data; do not describe it as the installed app's daemon.
 - Never try to attach an unpackaged Electron app directly to a packaged daemon from another checkout. The supervisor intentionally rejects daemon identity mismatches.
-- A database clone protects the source SQLite file only. Registered worktree paths, running processes, GitHub operations, and other external resources can still be real. Warn before exercising flows that mutate them. In real-data mode, warn before any action that creates, terminates, renames, or otherwise mutates sessions.
+- Warn before actions in real-data mode that create, terminate, rename, or otherwise mutate sessions. Merely opening and inspecting the UI is expected.
 
 ## Preflight
 
 1. Work from the repository root and inspect `git status --short --branch`.
 2. Read `frontend/package.json`, `frontend/src/main.ts`, and `frontend/forge.config.ts` when the launch behavior may have changed. Treat source as authoritative over this skill.
 3. Confirm Node/npm and the Go version required by `backend/go.mod` are available. Run `npm ci` in `frontend/` only when dependencies are absent or inconsistent; do not reinstall on every launch.
-4. Check for an existing dev instance from this exact checkout before starting another. Do not kill by process name alone, and never terminate every Electron process. Stop the exact dev app and daemon before refreshing the clone.
+4. Check for an existing dev instance from this exact checkout before starting another. Do not kill by process name alone, and never terminate every Electron process.
 
 On macOS/Linux, inspect checkout-scoped processes and listeners with finite commands:
 
@@ -33,56 +32,26 @@ lsof -nP -iTCP:3002 -sTCP:LISTEN
 
 Use the full command paths and start times to distinguish this checkout from other AO worktrees. On Windows, use `Get-CimInstance Win32_Process` and `Get-NetTCPConnection`; preserve the same exact-target rule.
 
-## Clone the database before launch
-
-In cloned-data mode, refresh the dev database before every local launch. Resolve the source data directory before overriding `AO_DATA_DIR`: in an AO worker session, use its inherited `AO_DATA_DIR`; otherwise use the absolute path corresponding to `~/.ao/data`.
-
-Run the bundled clone script from the repository root:
-
-```bash
-python3 .agents/skills/ao-desktop-dev/scripts/clone_db.py \
-  --source-data-dir "${AO_DATA_DIR:-$HOME/.ao/data}" \
-  --target-data-dir "$HOME/.ao/dev/data"
-```
-
-PowerShell:
-
-```powershell
-$sourceAoData = if ($env:AO_DATA_DIR) { $env:AO_DATA_DIR } else { Join-Path $HOME ".ao/data" }
-python .agents/skills/ao-desktop-dev/scripts/clone_db.py `
-  --source-data-dir $sourceAoData `
-  --target-data-dir (Join-Path $HOME ".ao/dev/data")
-```
-
-The script uses SQLite's online backup API, so it captures committed WAL state without copying `-wal` or `-shm` files. It builds the snapshot in a temporary sibling directory, verifies it, moves any previous dev data to a timestamped recoverable backup, and atomically installs the new clone. Never use `cp`, `Copy-Item`, or Finder to clone a live `ao.db`.
-
-Stop if the source database is missing, the source and destination resolve to the same database, or the snapshot fails integrity validation. Report the source, target, and previous-clone backup paths without exposing other environment variables.
-
 ## Launch the app
 
 Run Electron Forge in a foreground interactive process so its output and restart input remain available. Do not append `&`, use a detached shell, or start a browser preview instead.
 
-### Cloned-data mode
+### Isolated mode
 
 On macOS/Linux:
 
 ```bash
 cd frontend
-env -u AO_RUN_FILE -u AO_PORT AO_DATA_DIR="$HOME/.ao/dev/data" npm run dev
+env -u AO_DATA_DIR -u AO_RUN_FILE -u AO_PORT npm run dev
 ```
 
 On PowerShell:
 
 ```powershell
 Set-Location frontend
-$env:AO_DATA_DIR = Join-Path $HOME ".ao/dev/data"
-Remove-Item Env:AO_RUN_FILE, Env:AO_PORT -ErrorAction SilentlyContinue
+Remove-Item Env:AO_DATA_DIR, Env:AO_RUN_FILE, Env:AO_PORT -ErrorAction SilentlyContinue
 npm run dev
 ```
-
-### Fresh-empty mode
-
-Create a new temporary directory and pass its absolute path as `AO_DATA_DIR`. Do not reuse or delete `~/.ao/dev/data`; it is the latest recoverable database clone.
 
 ### Real-data mode
 
@@ -159,8 +128,7 @@ Once one PR merges, prefer rebasing the remaining PR onto current `main`; the no
 - `npm run dev:web` is useful for browser-only renderer work but does not provide Electron APIs or native chrome.
 - Renderer URLs can move from `5173` when a port is occupied. Trust Forge's printed URL rather than assuming one.
 - Multiple dev instances share `~/.ao/dev/electron`; avoid running them concurrently because Chromium profile state can collide.
-- Never launch with an inherited source `AO_DATA_DIR` accidentally. Clone from it first, then explicitly set `AO_DATA_DIR` to the dev clone for the launch.
-- A copied `ao.db` file without SQLite backup semantics may omit committed WAL data or pair the database with stale shared-memory files. Always use the bundled clone script.
+- An inherited `AO_DATA_DIR` changes dev mode from isolated data to real data. Always choose and report the mode instead of inheriting it accidentally.
 - Repeated `/healthz/` 404 entries from external probes can be noisy; readiness is determined by Electron's daemon status and successful API traffic, not by log volume.
 
 ## Completion report
@@ -168,8 +136,7 @@ Once one PR merges, prefer rebasing the remaining PR onto current `main`; the no
 Report:
 
 - checkout and branch being displayed;
-- cloned-data, fresh-empty, or real-data mode and the non-sensitive data/run-file paths;
-- cloned-data source, target, and previous-clone backup paths;
+- isolated or real-data mode and the non-sensitive data/run-file paths;
 - renderer and daemon addresses actually reported;
 - whether Electron was restarted for main/preload changes;
 - user flows exercised in the native window;

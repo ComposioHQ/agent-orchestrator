@@ -1,4 +1,4 @@
 interface:
   display_name: "AO Desktop Dev"
-  short_description: "Run AO Electron against a safe local DB clone"
-  default_prompt: "Use $ao-desktop-dev to clone the current AO database, launch this checkout’s Electron app against the dev copy, and verify the requested flow."
+  short_description: "Run the real AO Electron app from a checkout"
+  default_prompt: "Use $ao-desktop-dev to launch this checkout’s Electron app against real local AO data and verify the requested UI."
