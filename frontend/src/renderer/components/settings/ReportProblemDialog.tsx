@@ -83,9 +83,11 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 	const titleId = useId();
 	const detailsId = useId();
 	const titleRef = useRef<HTMLInputElement>(null);
+	const detailsRef = useRef<HTMLTextAreaElement>(null);
 	const [selectedOutput, setSelectedOutput] = useState<ReportProblemOutput>("github");
-	const [summary, setSummary] = useState("");
-	const [details, setDetails] = useState("");
+	const summaryRef = useRef("");
+	const detailsValueRef = useRef("");
+	const [canSubmit, setCanSubmit] = useState(false);
 	const [copiedOutput, setCopiedOutput] = useState<ReportProblemOutput | null>(null);
 	const [copyError, setCopyError] = useState<string | null>(null);
 	const [diagnostics, setDiagnostics] = useState<ReportProblemDiagnostics>(DEFAULT_DIAGNOSTICS);
@@ -94,8 +96,9 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 
 	useEffect(() => {
 		if (!open) {
-			setSummary("");
-			setDetails("");
+			summaryRef.current = "";
+			detailsValueRef.current = "";
+			setCanSubmit(false);
 			setSelectedOutput("github");
 			setCopiedOutput(null);
 			setCopyError(null);
@@ -113,20 +116,25 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 		};
 	}, [open]);
 
-	const input = { summary, details };
-	const draft = formatReportProblemDraft(input, diagnostics, selectedOutput);
 	const destination = destinations.find((option) => option.value === selectedOutput) ?? destinations[0];
-	const canSubmit = summary.trim().length > 0 && details.trim().length > 0;
 
 	const clearStatus = () => {
 		setCopiedOutput(null);
 		setCopyError(null);
+	};
+	const updateCanSubmit = () => {
+		setCanSubmit((current) => {
+			const next = summaryRef.current.trim().length > 0 && detailsValueRef.current.trim().length > 0;
+			return current === next ? current : next;
+		});
 	};
 
 	const copyDraft = async () => {
 		if (!canSubmit) return;
 		setCopyError(null);
 		const output = selectedOutput;
+		const input = { summary: summaryRef.current, details: detailsValueRef.current };
+		const draft = formatReportProblemDraft(input, diagnostics, output);
 		try {
 			await aoBridge.clipboard.writeText(draft);
 			const destinationUrl = reportProblemDestinationUrl(input, diagnostics, output);
@@ -134,8 +142,11 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 				await aoBridge.app.openExternal(destinationUrl);
 			}
 			setCopiedOutput(output);
-			setSummary("");
-			setDetails("");
+			summaryRef.current = "";
+			detailsValueRef.current = "";
+			if (titleRef.current) titleRef.current.value = "";
+			if (detailsRef.current) detailsRef.current.value = "";
+			setCanSubmit(false);
 			setSelectedOutput("github");
 			// Only which destination was chosen. The summary, details, and the
 			// diagnostics block are the user's own words and machine state, and
@@ -193,9 +204,9 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 							ref={titleRef}
 							id={titleId}
 							className="settings-field-control h-(--size-settings-action-height)"
-							value={summary}
 							onChange={(event) => {
-								setSummary(event.target.value);
+								summaryRef.current = event.target.value;
+								updateCanSubmit();
 								clearStatus();
 							}}
 							placeholder={t("report.titlePlaceholder")}
@@ -208,10 +219,11 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 						</label>
 						<textarea
 							id={detailsId}
+							ref={detailsRef}
 							className="settings-field-control min-h-(--size-textarea-min) resize-y py-2.5"
-							value={details}
 							onChange={(event) => {
-								setDetails(event.target.value);
+								detailsValueRef.current = event.target.value;
+								updateCanSubmit();
 								clearStatus();
 							}}
 							placeholder={t("report.detailsPlaceholder")}

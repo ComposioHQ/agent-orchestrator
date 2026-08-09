@@ -62,6 +62,8 @@ import {
 import { File } from "lucide-react";
 import type { ChatSkill } from "../../types/conversation";
 
+const EMPTY_SUGGESTION_DRAFT = { text: "", caret: 0 };
+
 /**
  * Tell the agent to open the attached files. Mirrors the wording spawn uses for a task
  * brief, so the same instruction reaches the agent whether a file was attached at
@@ -130,8 +132,8 @@ export function ChatComposer({
 	/** A failed send, approval, interrupt, or settings mutation. */
 	commandError?: string;
 }) {
-	const [text, setText] = useState("");
-	const [caret, setCaret] = useState(0);
+	const [suggestionDraft, setSuggestionDraft] = useState(EMPTY_SUGGESTION_DRAFT);
+	const [hasText, setHasText] = useState(false);
 	/**
 	 * The trigger position the user dismissed with Escape. Held so the menu stays
 	 * shut for the completion they rejected, while a new `/` or `@` still opens one.
@@ -151,6 +153,7 @@ export function ChatComposer({
 	const [delivery, setDelivery] = useState<"steer" | "queue">("queue");
 
 	const textarea = useRef<HTMLTextAreaElement>(null);
+	const textRef = useRef("");
 	const filePicker = useRef<HTMLInputElement>(null);
 	/** Where the caret should land once React has committed the new text. */
 	const pendingCaret = useRef<number | null>(null);
@@ -177,7 +180,10 @@ export function ChatComposer({
 	const fileAttachments = useFileAttachments();
 	const canAttach = Boolean(onStageAttachments);
 
-	const trigger = useMemo(() => findActiveTrigger(text, caret), [text, caret]);
+	const trigger = useMemo(
+		() => findActiveTrigger(suggestionDraft.text, suggestionDraft.caret),
+		[suggestionDraft],
+	);
 
 	const suggestions: Suggestion[] = useMemo(() => {
 		if (!trigger || trigger.start === dismissedAt) return [];
@@ -197,7 +203,7 @@ export function ChatComposer({
 	// with it: a steer with nothing in flight is refused, so it must never be what
 	// Enter is still pointing at.
 	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
-	const canSend = (text.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
+	const canSend = (hasText || staged) && !busy && !disabled && !steerPending;
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
 
@@ -207,18 +213,35 @@ export function ChatComposer({
 		if (!canSteer) setDelivery("queue");
 	}, [canSteer]);
 
-	/**
-	 * Write text and caret back into the field.
-	 *
-	 * The caret is applied after the render rather than alongside it: setting it
-	 * before React has written the new value would place it against the old string,
-	 * and the controlled re-render would then drop it to the end of the new one.
-	 */
-	const applyText = useCallback((next: string, nextCaret: number) => {
-		pendingCaret.current = nextCaret;
-		setText(next);
-		setCaret(nextCaret);
+	const syncDraft = useCallback((nextText: string, nextCaret: number) => {
+		textRef.current = nextText;
+		setHasText((current) => {
+			const next = nextText.trim().length > 0;
+			return current === next ? current : next;
+		});
+		const nextTrigger = findActiveTrigger(nextText, nextCaret);
+		setSuggestionDraft((current) => {
+			const currentTrigger = findActiveTrigger(current.text, current.caret);
+			if (!nextTrigger && !currentTrigger) return current;
+			if (nextTrigger && current.text === nextText && current.caret === nextCaret) return current;
+			return nextTrigger ? { text: nextText, caret: nextCaret } : EMPTY_SUGGESTION_DRAFT;
+		});
 	}, []);
+
+	/**
+	 * Write text and caret back into the field. Ordinary typing leaves the
+	 * textarea DOM-backed; React only needs to reconcile a draft while a
+	 * completion is active or the send state changes.
+	 */
+	const applyText = useCallback(
+		(next: string, nextCaret: number) => {
+			pendingCaret.current = nextCaret;
+			if (textarea.current) textarea.current.value = next;
+			syncDraft(next, nextCaret);
+			resizeTextarea();
+		},
+		[resizeTextarea, syncDraft],
+	);
 
 	useEffect(() => {
 		if (draftSeedText === undefined) return;
@@ -230,7 +253,7 @@ export function ChatComposer({
 
 	useLayoutEffect(() => {
 		resizeTextarea();
-	}, [resizeTextarea, text]);
+	}, [resizeTextarea, suggestionDraft]);
 
 	useEffect(() => {
 		const node = textarea.current;
@@ -255,17 +278,17 @@ export function ChatComposer({
 		if (!node) return;
 		node.setSelectionRange(target, target);
 		node.focus();
-	}, [text]);
+	}, [suggestionDraft]);
 
 	const pick = useCallback(
 		(value: string) => {
 			if (!trigger) return;
-			const next = applySuggestion(text, trigger, value);
+			const next = applySuggestion(suggestionDraft.text, trigger, value);
 			applyText(next.text, next.caret);
 			setHighlighted(0);
 			setDismissedAt(null);
 		},
-		[applyText, text, trigger],
+		[applyText, suggestionDraft.text, trigger],
 	);
 
 	async function submit(event?: FormEvent) {
@@ -273,7 +296,7 @@ export function ChatComposer({
 		if (!canSend) return;
 		setSendError(null);
 
-		const body = text.trim();
+		const body = textRef.current.trim();
 
 		// Steering keeps the text in the box until the provider has taken it. The turn
 		// is already running, so a refusal is a real possibility — and a refusal that
@@ -379,8 +402,8 @@ export function ChatComposer({
 	function onChange(event: ChangeEvent<HTMLTextAreaElement>) {
 		const value = event.target.value;
 		const nextCaret = event.target.selectionStart ?? value.length;
-		setText(value);
-		setCaret(nextCaret);
+		resizeTextarea();
+		syncDraft(value, nextCaret);
 		setHighlighted(0);
 		// A dismissal covers one trigger. It is released as soon as that trigger is no
 		// longer the one under the caret, so a fresh `/` or `@` opens a menu again
@@ -393,7 +416,7 @@ export function ChatComposer({
 
 	/** Caret moves that are not edits: arrow keys, clicks, selection changes. */
 	function onSelectionChange(event: { currentTarget: HTMLTextAreaElement }) {
-		setCaret(event.currentTarget.selectionStart ?? 0);
+		syncDraft(event.currentTarget.value, event.currentTarget.selectionStart ?? 0);
 	}
 
 	function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
@@ -483,7 +506,6 @@ export function ChatComposer({
 
 			<textarea
 				ref={textarea}
-				value={text}
 				onChange={onChange}
 				onKeyDown={onKeyDown}
 				onSelect={onSelectionChange}

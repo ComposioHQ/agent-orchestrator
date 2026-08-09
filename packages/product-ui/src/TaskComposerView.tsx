@@ -3,6 +3,7 @@ import {
 	type DragEvent,
 	type FormEvent,
 	type ReactNode,
+	type Ref,
 	useId,
 	useRef,
 	useState,
@@ -103,6 +104,8 @@ export type TaskComposerViewProps = {
 	model: Omit<TaskComposerModelControl, "id">;
 	onPromptChange: (value: string) => void;
 	prompt: string;
+	promptMode?: "controlled" | "uncontrolled";
+	promptRef?: Ref<HTMLTextAreaElement>;
 	renderAgentControl: (control: TaskComposerAgentControl) => ReactNode;
 	renderModelControl: (control: TaskComposerModelControl) => ReactNode;
 	submission: TaskComposerSubmission;
@@ -117,6 +120,8 @@ export function TaskComposerView({
 	model,
 	onPromptChange,
 	prompt,
+	promptMode = "controlled",
+	promptRef,
 	renderAgentControl,
 	renderModelControl,
 	submission,
@@ -171,9 +176,11 @@ export function TaskComposerView({
 			<textarea
 				id={promptId}
 				autoFocus={autoFocusPrompt}
+				ref={promptRef}
 				className="min-h-(--size-composer-prompt-min) w-full resize-none bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive"
 				placeholder={labels.taskPlaceholder}
-				value={prompt}
+				value={promptMode === "controlled" ? prompt : undefined}
+				defaultValue={promptMode === "uncontrolled" ? prompt : undefined}
 				onChange={(event) => onPromptChange(event.target.value)}
 				onPaste={handlePaste}
 				onKeyDown={(event) => {

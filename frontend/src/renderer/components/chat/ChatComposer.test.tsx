@@ -1,3 +1,4 @@
+import { Profiler } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -29,6 +30,21 @@ const textFile = (name = "notes.txt") => new File(["hello"], name, { type: "text
 /* ---- the keyboard contract the composer already had ---------------------- */
 
 describe("send keys", () => {
+	it("does not rerender the composer for every ordinary message character", async () => {
+		const onRender = vi.fn();
+		render(
+			<Profiler id="chat-composer" onRender={onRender}>
+				<ChatComposer onSend={vi.fn()} />
+			</Profiler>,
+		);
+
+		const field = screen.getByLabelText("Message the agent") as HTMLTextAreaElement;
+		onRender.mockClear();
+		await userEvent.type(field, "Please investigate the timeout in the worker startup path");
+
+		expect(onRender.mock.calls.length).toBeLessThan(3);
+	});
+
 	it("grows with the draft, then scrolls after the seven-line cap", () => {
 		const { field } = renderComposer();
 		let scrollHeight = 112;

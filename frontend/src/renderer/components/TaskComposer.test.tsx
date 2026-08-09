@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { Profiler, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -88,6 +88,25 @@ afterEach(() => {
 });
 
 describe("TaskComposer", () => {
+	it("does not rerender the composer for every ordinary prompt character", async () => {
+		const onRender = vi.fn();
+		render(
+			<Wrap>
+				<Profiler id="task-composer" onRender={onRender}>
+					<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+				</Profiler>
+			</Wrap>,
+		);
+
+		await waitFor(() => expect(h.get).toHaveBeenCalled());
+		onRender.mockClear();
+		await userEvent.type(task(), "Investigate the delayed worker startup");
+
+		// The query-backed agent controls can settle while typing in this test,
+		// but the count must stay far below one commit per character.
+		expect(onRender.mock.calls.length).toBeLessThan(6);
+	});
+
 	it("starts a promptless worker when the task is empty", async () => {
 		const onCreated = vi.fn();
 		h.post.mockResolvedValueOnce({ data: { workerId: "sess-empty" } });

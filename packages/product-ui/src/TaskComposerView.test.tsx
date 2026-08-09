@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import {
 	TaskComposerView,
@@ -88,6 +89,26 @@ describe("TaskComposerView", () => {
 		fireEvent.change(screen.getByRole("textbox", { name: "Model" }), { target: { value: "gpt-5.1" } });
 		expect(props.model.onModelChange).toHaveBeenCalledWith("gpt-5.1");
 		expect(screen.getByRole("group", { name: "Runs with" })).toHaveClass("composer-run-controls");
+	});
+
+	it("supports a DOM-backed prompt without requiring controlled updates", () => {
+		const promptRef = createRef<HTMLTextAreaElement>();
+		const onPromptChange = vi.fn();
+		render(
+			<TaskComposerView
+				{...viewProps({
+					onPromptChange,
+					promptMode: "uncontrolled",
+					promptRef,
+				})}
+			/>,
+		);
+
+		const prompt = screen.getByRole("textbox", { name: "Task" });
+		fireEvent.change(prompt, { target: { value: "Investigate the failure" } });
+
+		expect(onPromptChange).toHaveBeenCalledWith("Investigate the failure");
+		expect(promptRef.current).toHaveValue("Investigate the failure");
 	});
 
 	it("submits on the button or unmodified Enter and respects project availability", () => {
