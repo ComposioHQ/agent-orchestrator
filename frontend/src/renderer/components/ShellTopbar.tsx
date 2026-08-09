@@ -323,24 +323,24 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 										: t("shell.orchestrator")}
 							</TopbarButton>
 						)}
-						{/* The inspector header owns closing; the shell only restores a fully
-						    collapsed worker rail. Orchestrators have no inspector. */}
-						{!isOrchestrator && !isInspectorOpen ? (
-							<TopbarButton
-								aria-label={t("shell.openInspector")}
-								aria-pressed="false"
-								onClick={handleToggleInspector}
-								style={noDragStyle}
-								title={t("shell.openInspectorTitle")}
-								variant="icon"
-							>
-								<PanelRightOpen className="size-icon-lg" aria-hidden="true" />
-							</TopbarButton>
-						) : null}
 					</>
 				) : null}
-				{/* The bell always trails the actions row, on every platform. */}
+				{/* Notifications trail the primary actions but stay left of the inspector toggle. */}
 				<NotificationCenter style={noDragStyle} />
+				{/* The inspector header owns closing; the shell only restores a fully
+				    collapsed worker rail. Keep this final so it remains at the far right. */}
+				{isSessionRoute && !isOrchestrator && !isInspectorOpen ? (
+					<TopbarButton
+						aria-label={t("shell.openInspector")}
+						aria-pressed="false"
+						onClick={handleToggleInspector}
+						style={noDragStyle}
+						title={t("shell.openInspectorTitle")}
+						variant="icon"
+					>
+						<PanelRightOpen className="size-icon-lg" aria-hidden="true" />
+					</TopbarButton>
+				) : null}
 			</div>
 		</motion.header>
 	</LayoutGroup>
