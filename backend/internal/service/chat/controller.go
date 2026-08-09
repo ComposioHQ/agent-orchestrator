@@ -33,6 +33,7 @@ type Store interface {
 	CreateConversation(ctx context.Context, id string, scope domain.ConversationScope, project domain.ProjectID, session domain.SessionID, now time.Time) (domain.ConversationRecord, error)
 	ConversationForSession(ctx context.Context, session domain.SessionID) (domain.ConversationRecord, error)
 	ClaimChatControllerGeneration(ctx context.Context, session domain.SessionID, generation string, now time.Time) error
+	GetRunningTurn(ctx context.Context, conversationID string) (id, providerTurnID string, ok bool, err error)
 
 	AdoptProviderTurn(ctx context.Context, conversationID string, session domain.SessionID, generation, turnID, providerTurnID string, now time.Time) error
 	AppendImportedUserMessage(ctx context.Context, conversationID, providerTurnID string, msg domain.ConversationMessage, now time.Time) error
@@ -1036,7 +1037,24 @@ const turnAckWait = 3 * time.Second
 func (c *Controller) Interrupt(ctx context.Context) error {
 	turn, ok := c.awaitAcknowledgedTurn(ctx)
 	if !ok {
-		return ErrNoActiveTurn
+		// Memory says nothing is running, but check SQLite — a prior
+		// SettleTurn failure may have left a turn in 'running' state
+		// while the in-memory pendingTurnID was already cleared.
+		_, providerTurnID, running, err := c.store.GetRunningTurn(ctx, c.conversation.ID)
+		if err != nil {
+			return fmt.Errorf("check running turn: %w", err)
+		}
+		if !running {
+			return ErrNoActiveTurn
+		}
+		// The turn is stale from the controller's perspective — the provider
+		// already emitted a completion event that failed to project. Settle
+		// it as interrupted so the UI unblocks, matching the user's intent.
+		if err := c.store.SettleTurn(ctx, c.conversation.ID, providerTurnID,
+			domain.TurnStateInterrupted, "reconciled by interrupt (stale running turn)", c.now()); err != nil {
+			return fmt.Errorf("reconcile stale running turn: %w", err)
+		}
+		return nil
 	}
 
 	c.mu.Lock()
@@ -1308,6 +1326,18 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 			}, now)
 
 	case ports.ChatEventTurnCompleted:
+		message := ""
+		if event.Err != nil {
+			message = event.Err.Error()
+		}
+		state := event.TurnState
+		if state == "" {
+			state = domain.TurnStateFailed
+		}
+		if err := c.store.SettleTurn(
+			ctx, c.conversation.ID, event.ProviderTurnID, state, message, now); err != nil {
+			return err
+		}
 		c.mu.Lock()
 		if c.pendingTurnID == event.ProviderTurnID {
 			c.pendingTurnID = ""
@@ -1317,19 +1347,6 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		}
 		c.state = ports.ChatControllerReady
 		c.mu.Unlock()
-		message := ""
-		if event.Err != nil {
-			message = event.Err.Error()
-		}
-		state := event.TurnState
-		if state == "" {
-			// A completion with no status is not evidence of success.
-			state = domain.TurnStateFailed
-		}
-		if err := c.store.SettleTurn(
-			ctx, c.conversation.ID, event.ProviderTurnID, state, message, now); err != nil {
-			return err
-		}
 		return nil
 
 	case ports.ChatEventMessageDelta:

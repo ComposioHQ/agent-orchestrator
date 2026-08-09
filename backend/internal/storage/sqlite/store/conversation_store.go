@@ -383,6 +383,20 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 	return nil
 }
 
+// GetRunningTurn returns the most recent running turn for a conversation, if any.
+// Used by Interrupt() to recover from a desync where in-memory state lost track
+// of a turn that SQLite still shows as running.
+func (s *Store) GetRunningTurn(ctx context.Context, conversationID string) (id, providerTurnID string, ok bool, err error) {
+	row, err := s.conversationReader(ctx).GetRunningTurnForConversation(ctx, conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("get running turn for %s: %w", conversationID, err)
+	}
+	return row.ID, row.ProviderTurnID, true, nil
+}
+
 // SetConversationSettings records the provider choices for the next turn.
 //
 // An empty field is stored as NULL rather than as an empty string, so "the user

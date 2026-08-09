@@ -389,6 +389,25 @@ func (q *Queries) FailRolledBackConversationApprovals(ctx context.Context, arg F
 	return err
 }
 
+const getRunningTurnForConversation = `-- name: GetRunningTurnForConversation :one
+SELECT id, provider_turn_id FROM conversation_turns
+WHERE conversation_id = ? AND state = 'running'
+ORDER BY started_at DESC
+LIMIT 1
+`
+
+type GetRunningTurnForConversationRow struct {
+	ID             string
+	ProviderTurnID string
+}
+
+func (q *Queries) GetRunningTurnForConversation(ctx context.Context, conversationID string) (GetRunningTurnForConversationRow, error) {
+	row := q.db.QueryRowContext(ctx, getRunningTurnForConversation, conversationID)
+	var i GetRunningTurnForConversationRow
+	err := row.Scan(&i.ID, &i.ProviderTurnID)
+	return i, err
+}
+
 const insertConversation = `-- name: InsertConversation :exec
 
 INSERT INTO conversations (id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at)

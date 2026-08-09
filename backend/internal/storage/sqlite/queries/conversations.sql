@@ -208,7 +208,11 @@ SET state = 'failed',
     error_message = 'controller ended before the turn completed',
     completed_at = ?
 WHERE handled_by_session_id = ? AND state IN ('queued', 'running');
-
+-- name: GetRunningTurnForConversation :one
+SELECT id, provider_turn_id FROM conversation_turns
+WHERE conversation_id = ? AND state = 'running'
+ORDER BY started_at DESC
+LIMIT 1;
 -- Overwrite the turn's changed-file summary. The provider re-sends the whole diff
 -- on every update, so the latest payload is the complete answer and there is
 -- nothing to merge with what was there before.
