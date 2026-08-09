@@ -63,11 +63,11 @@ type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewRunFacts = components["schemas"]["ReviewRun"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
-export type InspectorView = "summary" | "reviews" | "browser" | "files";
+export type InspectorView = "summary" | "browser" | "files";
 
 const VIEW_DEFS: {
 	id: InspectorView;
-	labelKey: "inspector.summary" | "inspector.reviews" | "inspector.browser" | "inspector.files";
+	labelKey: "inspector.summary" | "inspector.browser" | "inspector.files";
 	icon: ReactNode;
 }[] = [
 	{
@@ -81,15 +81,6 @@ const VIEW_DEFS: {
 				<circle cx="4" cy="7" r="1" />
 				<circle cx="4" cy="12" r="1" />
 				<circle cx="4" cy="17" r="1" />
-			</svg>
-		),
-	},
-	{
-		id: "reviews",
-		labelKey: "inspector.reviews",
-		icon: (
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-				<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
 			</svg>
 		),
 	},
@@ -155,7 +146,7 @@ function VerdictBadge({ label, tone }: { label: string; tone: "neutral" | "runni
 }
 
 /**
- * Tabbed inspector rail beside the terminal (Summary · Reviews · Browser · Files).
+ * Tabbed inspector rail beside the terminal (Summary · Browser · Files).
  */
 export function SessionInspector({
 	session,
@@ -282,11 +273,8 @@ export function SessionInspector({
 				)}
 				inert={!isInspectorVisible}
 			>
-				{view === "summary" ? <SummaryView session={session} /> : null}
-				{view === "reviews" ? (
-					<div role="tabpanel">
-						<ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
-					</div>
+				{view === "summary" ? (
+					<SummaryView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
 				) : null}
 				{view === "browser" ? (
 					<BrowserView
@@ -339,7 +327,13 @@ function Section({
 	);
 }
 
-function SummaryView({ session }: { session: WorkspaceSession }) {
+function SummaryView({
+	session,
+	onOpenReviewerTerminal,
+}: {
+	session: WorkspaceSession;
+	onOpenReviewerTerminal?: OpenReviewerTerminal;
+}) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
@@ -360,6 +354,8 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 					)}
 				</div>
 			</Section>
+
+			{hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
 
 			{showCompletion ? <CompletionControls session={session} /> : null}
 

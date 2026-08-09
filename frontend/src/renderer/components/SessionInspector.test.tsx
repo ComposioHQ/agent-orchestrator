@@ -859,10 +859,11 @@ describe("SessionInspector Activity section", () => {
 });
 
 describe("SessionInspector tabs", () => {
-	it("exposes Summary, Reviews, Browser, and Files as inspector tabs", () => {
+	it("keeps reviews inside Summary instead of exposing a separate tab", () => {
 		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
 		const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
-		expect(tabs).toEqual(["Summary", "Reviews", "Browser", "Files"]);
+		expect(tabs).toEqual(["Summary", "Browser", "Files"]);
+		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
 	});
 
 	it("does not render the overview card in the summary", () => {
@@ -875,11 +876,10 @@ describe("SessionInspector tabs", () => {
 	});
 });
 
-describe("SessionInspector reviews", () => {
-	// PR rows start collapsed, so opening Reviews shows only their titles.
+describe("SessionInspector summary reviews", () => {
+	// PR rows start collapsed, so opening Summary shows only their titles.
 	// Reveal every row, since these tests are about what a review says.
 	const openReviewsSection = async () => {
-		await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
 		// Rows arrive with the reviews query, so wait for them before expanding.
 		const rows = await screen.findAllByTestId("review-pr-row").catch(() => []);
 		for (const row of rows) {
@@ -985,11 +985,10 @@ describe("SessionInspector reviews", () => {
 		mockCommonGets([], "reviewer-pane", [running]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
 		await screen.findByText("Review in progress · codex");
 
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
-		expect(within(screen.getByRole("tabpanel")).queryByText("Reviews")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reviews")).not.toBeInTheDocument();
 	});
 
 	it("shows eligible and up-to-date open PR review rows", async () => {
@@ -1586,10 +1585,11 @@ describe("SessionInspector reviews", () => {
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
 
-	it("keeps the Reviews tab available before the session has a PR", async () => {
+	it("does not expose the Reviews tab when the session has no PRs", async () => {
 		mockCommonGets();
 		renderWithQuery(<SessionInspector session={session([])} />);
 
-		expect(await screen.findByRole("tab", { name: /Reviews/ })).toBeInTheDocument();
+		await screen.findByRole("tab", { name: /Summary/ });
+		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
 	});
 });
