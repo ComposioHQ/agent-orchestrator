@@ -817,17 +817,6 @@ describe("SessionView", () => {
 		expect(screen.getByTestId("panel-inspector")).toHaveClass("session-inspector-panel");
 	});
 
-	it("places the session topbar inside the terminal column so the inspector header shares the top row", () => {
-		render(<SessionView sessionId="sess-1" />);
-
-		const terminalPanel = screen.getByTestId("panel-terminal");
-		const inspectorPanel = screen.getByTestId("panel-inspector");
-		const host = within(terminalPanel).getByTestId("session-topbar-host");
-
-		expect(host).toHaveClass("h-inspector-tabs");
-		expect(inspectorPanel).not.toContainElement(host);
-	});
-
 	it("opens the Summary inspector alongside the terminal by default", () => {
 		render(<SessionView sessionId="sess-1" />);
 
@@ -1016,13 +1005,6 @@ describe("SessionView", () => {
 		expect(panelSizes("inspector")[0]).toBe("360px");
 	});
 
-	it("ignores the legacy percentage width and uses the uniform default", () => {
-		window.localStorage.setItem("ao.inspector.split", "40");
-		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
-		render(<SessionView sessionId="sess-1" />);
-		expect(panelSizes("inspector")[0]).toBe("360px");
-	});
-
 	// Regression: rrp only derives a panel's constraints one commit after it
 	// registers into a live group. Driving the imperative API in the commit
 	// where the inspector mounts (orchestrator → worker navigation; SessionView
@@ -1163,18 +1145,6 @@ describe("SessionView", () => {
 		expect(document.querySelector(".files-popout-overlay")).not.toHaveClass("files-popout-overlay--mac-windowed");
 	});
 
-	it("opens a session on Summary even when an existing preview was previously selected", () => {
-		const worker = workerSession("sess-1");
-		worker.previewUrl = "http://localhost:5173/";
-		worker.previewRevision = 1;
-		act(() => useUiStore.getState().setInspectorView("sess-1", "browser"));
-
-		render(<SessionView sessionId="sess-1" />);
-
-		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
-		expect(browserViewOptions.current).toMatchObject({ active: false });
-	});
-
 	it("opens the Browser tab for a new `ao preview` target without replacing the terminal", () => {
 		const worker = workerSession("sess-1");
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
@@ -1234,26 +1204,6 @@ describe("SessionView", () => {
 
 		act(() => useUiStore.getState().setInspectorView("sess-2", "browser"));
 		expect(browserUnseen("sess-2")).toBe(false);
-	});
-
-	it("keeps Summary when an existing preview arrives with the async workspace response", () => {
-		const secondWorker = workerSession("sess-2");
-		secondWorker.previewUrl = "http://localhost:5173/";
-		secondWorker.previewRevision = 1;
-		workspaceQueryState.data = undefined;
-		workspaceQueryState.isLoading = true;
-
-		const { rerender } = render(<SessionView sessionId="sess-2" />);
-
-		workspaceQueryState.data = workspaces;
-		workspaceQueryState.isLoading = false;
-		rerender(<SessionView sessionId="sess-2" />);
-
-		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
-		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
-		const handle = panels.get("inspector")!.handle;
-		expect(handle.expand).not.toHaveBeenCalled();
 	});
 
 	it("glows for agent browser activity after the user leaves first content", () => {

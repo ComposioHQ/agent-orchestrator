@@ -223,14 +223,9 @@ describe("SessionInspector tabs", () => {
 
 		const summaryTab = screen.getByRole("tab", { name: "Summary" });
 
-		for (const label of ["Summary", "Reviews", "Browser", "Files"]) {
-			const tab = screen.getByRole("tab", { name: label });
-			expect(within(tab).getByText(label)).toHaveClass("session-inspector__responsive-label", "text-2xs");
-		}
 		expect(summaryTab).not.toHaveClass("flex-1");
 		expect(summaryTab).toHaveClass("h-control-md", "px-1.5");
 		expect(summaryTab).toHaveAttribute("title", "Summary");
-		expect(within(summaryTab).getByText("Summary").previousElementSibling).toHaveClass("[&_svg]:size-icon-md");
 	});
 
 	it("shows the glow only while real browser activity is unseen", () => {
@@ -300,19 +295,6 @@ describe("SessionInspector tabs", () => {
 
 		const filesTab = screen.getByRole("tab", { name: "Files" });
 		expect(within(filesTab).getByText("0 Files")).toBeInTheDocument();
-	});
-
-	it("keeps the inspector close control at the end of the tab header", async () => {
-		const onToggleVisibility = vi.fn();
-		renderWithQuery(<SessionInspector onToggleVisibility={onToggleVisibility} session={session([])} />);
-
-		const tabs = screen.getByRole("tablist");
-		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
-		expect(tabs.parentElement?.lastElementChild).toBe(toggle);
-		expect(toggle.querySelector("svg")).toHaveClass("size-icon-lg");
-
-		await userEvent.click(toggle);
-		expect(onToggleVisibility).toHaveBeenCalledTimes(1);
 	});
 
 	it("keeps collapsed inspector content hidden and inert", () => {

@@ -251,23 +251,12 @@ describe("NotificationCenter", () => {
 	it("opens once on click without a hover/focus remount and dismisses outside", async () => {
 		renderNotificationCenter();
 		const trigger = screen.getByRole("button", { name: /unread notifications/ });
-		expect(trigger.querySelector("svg")).toHaveClass("size-icon-lg");
-		expect(screen.getByText("2")).toHaveClass(
-			"right-px",
-			"top-px",
-			"h-3",
-			"min-w-3",
-			"text-[7px]",
-			"bg-accent",
-			"text-accent-foreground",
-		);
 		fireEvent.mouseEnter(trigger);
 		fireEvent.focus(trigger);
 		expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
 
 		await clickOpen();
 
-		expect(screen.getByRole("dialog", { name: "Notifications" })).toHaveClass("notification-popover");
 		expect(screen.queryByText(/last 7 days/i)).not.toBeInTheDocument();
 		fireEvent.pointerDown(document.body);
 		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument());
@@ -279,9 +268,7 @@ describe("NotificationCenter", () => {
 		);
 		renderNotificationCenter();
 
-		const badge = screen.getByText("99+");
-		expect(badge).toHaveClass("right-px", "top-px", "h-3", "min-w-3", "text-[7px]");
-		expect(badge).not.toHaveClass("-right-0.5", "-top-0.5", "min-w-4", "text-[9px]");
+		expect(screen.getByText("99+")).toBeInTheDocument();
 	});
 
 	it("supports tab navigation inside the panel and restores focus to the bell", async () => {

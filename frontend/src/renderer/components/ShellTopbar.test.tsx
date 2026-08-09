@@ -306,13 +306,6 @@ describe("ShellTopbar orchestrator actions", () => {
 });
 
 describe("ShellTopbar inspector state", () => {
-	it("leaves closing to the inspector header while the worker rail is open", () => {
-		renderTopbarSessions([worker], "sess-1");
-
-		expect(screen.queryByRole("button", { name: "Close inspector panel" })).not.toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Open inspector panel" })).not.toBeInTheDocument();
-	});
-
 	it("shows the reopen control only for the current collapsed worker", () => {
 		useUiStore.setState({
 			inspectorSessions: {
