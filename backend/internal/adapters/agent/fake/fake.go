@@ -150,6 +150,7 @@ func (p *Plugin) ResolveBinary(ctx context.Context) (string, error) {
 	}
 	return path, nil
 }
+
 // Transcript reads the agent's native transcript and returns a normalized
 // list of user/assistant turns. This stub returns no transcript; adapters with
 // native transcript storage override it to read from their own session files.

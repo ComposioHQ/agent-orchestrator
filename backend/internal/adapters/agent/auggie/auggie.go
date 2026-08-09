@@ -150,6 +150,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
 }
+
 // Transcript reads the agent's native transcript and returns a normalized
 // list of user/assistant turns. This stub returns no transcript; adapters with
 // native transcript storage override it to read from their own session files.
