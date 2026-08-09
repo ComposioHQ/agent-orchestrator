@@ -9,7 +9,10 @@ import { workspaceQueryKey } from "../../hooks/useWorkspaceQuery";
 
 const LINK = "http://localhost:5173";
 
-const { postMock } = vi.hoisted(() => ({ postMock: vi.fn() }));
+const { postMock, workspacePropsMock } = vi.hoisted(() => ({
+	postMock: vi.fn(),
+	workspacePropsMock: { current: undefined as Record<string, unknown> | undefined },
+}));
 
 vi.mock("../../lib/api-client", () => ({
 	apiClient: { POST: postMock },
@@ -34,11 +37,14 @@ vi.mock("../../hooks/useConversation", () => ({
 }));
 
 vi.mock("./ChatWorkspace", () => ({
-	ChatWorkspace: ({ onLinkOpen }: { onLinkOpen?: (url: string) => void }) => (
-		<button type="button" onClick={() => onLinkOpen?.(LINK)}>
-			Open chat link
-		</button>
-	),
+	ChatWorkspace: (props: { onLinkOpen?: (url: string) => void }) => {
+		workspacePropsMock.current = props;
+		return (
+			<button type="button" onClick={() => props.onLinkOpen?.(LINK)}>
+				Open chat link
+			</button>
+		);
+	},
 }));
 
 import { SessionChatSurface } from "./SessionChatSurface";
@@ -56,16 +62,47 @@ const session = {
 	prs: [],
 } satisfies WorkspaceSession;
 
+const siblingSession = { ...session, id: "sess-2", title: "other chat worker" } satisfies WorkspaceSession;
+
 function Wrapper({ client, children }: { client: QueryClient; children: ReactNode }) {
 	return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
 beforeEach(() => {
 	postMock.mockReset().mockResolvedValue({ data: {}, error: undefined });
+	workspacePropsMock.current = undefined;
 	useUiStore.setState({ inspectorSessions: {} });
 });
 
 describe("SessionChatSurface link routing", () => {
+	it("forwards project-session tabs and route actions to the shared chat header", () => {
+		const onAddProjectSession = vi.fn();
+		const onCloseProjectSession = vi.fn();
+		const onSelectProjectSession = vi.fn();
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					projectSessions={[session, siblingSession]}
+					availableProjectSessions={[siblingSession]}
+					onAddProjectSession={onAddProjectSession}
+					onCloseProjectSession={onCloseProjectSession}
+					onSelectProjectSession={onSelectProjectSession}
+				/>
+			</Wrapper>,
+		);
+
+		expect(workspacePropsMock.current).toMatchObject({
+			projectSessions: [session, siblingSession],
+			availableProjectSessions: [siblingSession],
+			onAddProjectSession,
+			onCloseProjectSession,
+			onSelectProjectSession,
+		});
+	});
+
 	it("opens a plain Chat link in the active worker AO Browser", async () => {
 		const user = userEvent.setup();
 		const queryClient = new QueryClient({

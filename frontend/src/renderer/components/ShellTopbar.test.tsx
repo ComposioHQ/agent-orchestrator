@@ -96,15 +96,15 @@ function sessionWith(overrides: Partial<WorkspaceSession> = {}): WorkspaceSessio
 	};
 }
 
-function renderTopbar(session: WorkspaceSession, embedded = false, sessionIdentityAction?: ReactNode) {
-	return renderTopbarSessions([session], session.id, embedded, sessionIdentityAction);
+function renderTopbar(session: WorkspaceSession, embedded = false, sessionAction?: ReactNode) {
+	return renderTopbarSessions([session], session.id, embedded, sessionAction);
 }
 
 function renderTopbarSessions(
 	sessions: WorkspaceSession[],
 	sessionId: string,
 	embedded = false,
-	sessionIdentityAction?: ReactNode,
+	sessionAction?: ReactNode,
 ) {
 	const data: WorkspaceSummary[] = [
 		{
@@ -122,7 +122,7 @@ function renderTopbarSessions(
 	const topbar = () => (
 		<QueryClientProvider client={queryClient}>
 			<TooltipProvider>
-				<ShellTopbar embedded={embedded} sessionIdentityAction={sessionIdentityAction} />
+				<ShellTopbar embedded={embedded} sessionAction={sessionAction} />
 			</TooltipProvider>
 		</QueryClientProvider>
 	);
@@ -173,7 +173,7 @@ beforeEach(() => {
 });
 
 describe("ShellTopbar status pill", () => {
-	it("groups the worker identity and interface action in one compact session card", () => {
+	it("shows a flat worker identity and places the interface action beside Kill", () => {
 		renderTopbar(
 			sessionWith(),
 			false,
@@ -182,14 +182,17 @@ describe("ShellTopbar status pill", () => {
 			</button>,
 		);
 
-		const card = screen.getByTestId("session-identity-card");
-		expect(card).toHaveTextContent("do the thing");
-		expect(card).toContainElement(screen.getByRole("button", { name: "Switch interface" }));
-		expect(card.querySelector('img[aria-hidden="true"]')).toHaveClass("size-icon-xs!");
-		expect(card).not.toHaveTextContent("ao/sess-1");
+		const identity = screen.getByTestId("session-topbar-identity");
+		const kill = screen.getByRole("button", { name: "Kill session" });
+		const switchInterface = screen.getByRole("button", { name: "Switch interface" });
+		expect(identity).toHaveTextContent("do the thing");
+		expect(identity).toHaveTextContent("Working");
+		expect(identity).not.toContainElement(switchInterface);
+		expect(screen.queryByTestId("session-identity-card")).not.toBeInTheDocument();
+		expect(kill.compareDocumentPosition(switchInterface) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
-	it("uses the same session-card contract for the orchestrator", () => {
+	it("shows project identity for the orchestrator and places the interface action beside Task", () => {
 		renderTopbar(
 			orchestrator,
 			false,
@@ -198,11 +201,14 @@ describe("ShellTopbar status pill", () => {
 			</button>,
 		);
 
-		const card = screen.getByTestId("session-identity-card");
-		expect(card).toHaveTextContent("Orchestrator");
-		expect(card).toContainElement(screen.getByRole("button", { name: "Switch interface" }));
-		expect(card.querySelector("svg")).toBeInTheDocument();
-		expect(within(card).queryByRole("button", { name: "Open Kanban" })).not.toBeInTheDocument();
+		const identity = screen.getByTestId("session-topbar-identity");
+		const task = screen.getByRole("button", { name: "New task" });
+		const switchInterface = screen.getByRole("button", { name: "Switch interface" });
+		expect(identity).toHaveTextContent("my-app");
+		expect(identity).not.toHaveTextContent("Orchestrator");
+		expect(identity.querySelector(".lucide-folder")).toBeInTheDocument();
+		expect(identity).not.toContainElement(switchInterface);
+		expect(task.compareDocumentPosition(switchInterface) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
 	it("renders only session actions when embedded in the terminal bar", () => {

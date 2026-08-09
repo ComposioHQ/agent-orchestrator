@@ -24,12 +24,22 @@ import type { WorkspaceSession } from "../../types/workspace";
 
 export function SessionChatSurface({
 	session,
+	projectSessions,
+	availableProjectSessions,
+	onAddProjectSession,
+	onCloseProjectSession,
+	onSelectProjectSession,
 	onOpenShell,
 	openingShell,
 	shellError,
 	controllerTransitioning,
 }: {
 	session: WorkspaceSession;
+	projectSessions?: WorkspaceSession[];
+	availableProjectSessions?: WorkspaceSession[];
+	onAddProjectSession?: (session: WorkspaceSession) => void;
+	onCloseProjectSession?: (session: WorkspaceSession) => void;
+	onSelectProjectSession?: (session: WorkspaceSession) => void;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
@@ -104,6 +114,11 @@ export function SessionChatSurface({
 	return (
 		<ChatWorkspace
 			snapshot={snapshot}
+			projectSessions={projectSessions}
+			availableProjectSessions={availableProjectSessions}
+			onAddProjectSession={onAddProjectSession}
+			onCloseProjectSession={onCloseProjectSession}
+			onSelectProjectSession={onSelectProjectSession}
 			onLinkOpen={openLinkInBrowser}
 			sessionTitle={session.title}
 			sessionRole={session.kind}

@@ -133,19 +133,35 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 // the split under test. (ShellTopbar is shell-owned on Win/Linux; when the
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({
-	ShellTopbar: ({ sessionIdentityAction }: { sessionIdentityAction?: ReactNode }) => (
+	ShellTopbar: ({ sessionAction }: { sessionAction?: ReactNode }) => (
 		<header data-testid="session-shell-topbar">
-			<div data-testid="session-identity-card">{sessionIdentityAction}</div>
+			<div data-testid="session-action-slot">{sessionAction}</div>
 		</header>
 	),
 }));
 vi.mock("./chat/SessionChatSurface", () => ({
-	SessionChatSurface: ({ onOpenShell }: { onOpenShell?: () => void }) => (
+	SessionChatSurface: ({
+		onOpenShell,
+		projectSessions = [],
+		availableProjectSessions = [],
+		onAddProjectSession,
+	}: {
+		onOpenShell?: () => void;
+		projectSessions?: WorkspaceSession[];
+		availableProjectSessions?: WorkspaceSession[];
+		onAddProjectSession?: (session: WorkspaceSession) => void;
+	}) => (
 		<div data-testid="chat-surface">
 			chat surface
 			<button type="button" onClick={onOpenShell}>
 				open shell from chat
 			</button>
+			<div data-testid="chat-project-session-tabs">{projectSessions.map((candidate) => candidate.title).join(",")}</div>
+			{availableProjectSessions.map((candidate) => (
+				<button key={candidate.id} type="button" onClick={() => onAddProjectSession?.(candidate)}>
+					chat add project {candidate.title}
+				</button>
+			))}
 		</div>
 	),
 }));
@@ -158,6 +174,10 @@ vi.mock("./CenterPane", () => ({
 		onSelectSessionTerminal,
 		onSelectReviewerTerminal,
 		onNewShellTerminal,
+		projectSessions = [],
+		availableProjectSessions = [],
+		onAddProjectSession,
+		onCloseProjectSession,
 		reviewerTerminal,
 		terminalTarget,
 	}: {
@@ -168,6 +188,10 @@ vi.mock("./CenterPane", () => ({
 		onSelectSessionTerminal?: () => void;
 		onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		onNewShellTerminal?: () => void;
+		projectSessions?: WorkspaceSession[];
+		availableProjectSessions?: WorkspaceSession[];
+		onAddProjectSession?: (session: WorkspaceSession) => void;
+		onCloseProjectSession?: (session: WorkspaceSession) => void;
 		reviewerTerminal?: { handleId: string; harness: string };
 		terminalTarget?: { kind: string; handleId?: string };
 	}) => (
@@ -177,6 +201,20 @@ vi.mock("./CenterPane", () => ({
 				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : (terminalTarget?.kind ?? "worker")}
 			</div>
 			<div data-testid="session-tab">{session?.title ?? ""}</div>
+			<div data-testid="project-session-tabs">{projectSessions.map((candidate) => candidate.title).join(",")}</div>
+			<div data-testid="available-project-sessions">
+				{availableProjectSessions.map((candidate) => candidate.title).join(",")}
+			</div>
+			{projectSessions.slice(1).map((candidate) => (
+				<button key={`close-project-${candidate.id}`} type="button" onClick={() => onCloseProjectSession?.(candidate)}>
+					close project {candidate.title}
+				</button>
+			))}
+			{availableProjectSessions.map((candidate) => (
+				<button key={`add-project-${candidate.id}`} type="button" onClick={() => onAddProjectSession?.(candidate)}>
+					add project {candidate.title}
+				</button>
+			))}
 			<div data-testid="reviewer-harness">{reviewerTerminal?.harness ?? ""}</div>
 			{reviewerTerminal ? (
 				<button type="button" onClick={() => onSelectReviewerTerminal?.(reviewerTerminal)}>
@@ -457,6 +495,7 @@ describe("SessionView", () => {
 		useUiStore.setState({
 			activeShellTerminalHandleId: null,
 			inspectorSessions: {},
+			sessionTabsByOwner: {},
 			visibleTerminalKindBySession: {},
 		});
 		panels.clear();
@@ -482,13 +521,54 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		const switchButton = screen.getByRole("button", { name: "Switch to chat UI" });
-		const identityCard = screen.getByTestId("session-identity-card");
+		const actionSlot = screen.getByTestId("session-action-slot");
 		const terminalBarHost = screen.getByTestId("session-topbar-host");
-		expect(identityCard).toContainElement(switchButton);
+		expect(actionSlot).toContainElement(switchButton);
 		expect(terminalBarHost).not.toContainElement(switchButton);
 		expect(
-			identityCard.compareDocumentPosition(terminalBarHost) & Node.DOCUMENT_POSITION_FOLLOWING,
+			actionSlot.compareDocumentPosition(terminalBarHost) & Node.DOCUMENT_POSITION_FOLLOWING,
 		).toBeTruthy();
+	});
+
+	it("adds an active worker from the same project and navigates the whole session route", () => {
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "add project do the other thing" }));
+
+		expect(useUiStore.getState().sessionTabsByOwner).toEqual({ "sess-1": ["sess-2"] });
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-2" },
+			search: { tabOwner: "sess-1" },
+		});
+	});
+
+	it("keeps same-project session tabs and route actions available in Chat mode", () => {
+		workspaces[0].sessions[0].mode = "chat";
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(screen.getByTestId("chat-project-session-tabs")).toHaveTextContent("do the thing");
+		fireEvent.click(screen.getByRole("button", { name: "chat add project do the other thing" }));
+		expect(useUiStore.getState().sessionTabsByOwner).toEqual({ "sess-1": ["sess-2"] });
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-2" },
+			search: { tabOwner: "sess-1" },
+		});
+	});
+
+	it("closes the active added session and returns to its originating session", () => {
+		useUiStore.setState({ sessionTabsByOwner: { "sess-1": ["sess-2"] } });
+		render(<SessionView sessionId="sess-2" tabOwnerSessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "close project do the other thing" }));
+
+		expect(useUiStore.getState().sessionTabsByOwner).toEqual({});
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-1" },
+			search: {},
+		});
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session
@@ -572,14 +652,15 @@ describe("SessionView", () => {
 		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
 	});
 
-	// The strip only ever shows the session on screen — pinning another session's
-	// terminal as a tab (and the cross-project picker that did it) is gone (#3208).
-	it("shows only the session on screen in the tab strip", () => {
+	it("offers only active worker sessions from the originating project", () => {
+		workspaces[0].sessions[1].isTerminated = true;
 		render(<SessionView sessionId="sess-1" />);
 
-		expect(screen.getByTestId("session-tab")).toHaveTextContent("do the thing");
-		expect(screen.getByTestId("session-tab")).not.toHaveTextContent("do the other thing");
-		expect(screen.queryByRole("button", { name: /^Add / })).not.toBeInTheDocument();
+		const available = screen.getByTestId("available-project-sessions");
+		expect(available).not.toHaveTextContent("do the thing");
+		expect(available).not.toHaveTextContent("do the other thing");
+		expect(available).not.toHaveTextContent("orchestrate");
+		expect(available).not.toHaveTextContent("cross-project task");
 	});
 
 	// The daemon roots a shell in the session's worktree when it is given that

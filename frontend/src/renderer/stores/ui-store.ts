@@ -47,6 +47,8 @@ type UiState = {
 	workbenchTab: WorkbenchTab;
 	isSidebarOpen: boolean;
 	inspectorSessions: Record<string, InspectorSessionState>;
+	/** Extra same-project session tabs attached to each originating session for this app run. */
+	sessionTabsByOwner: Record<string, string[]>;
 	isCommandPaletteOpen: boolean;
 	settingsModal: SettingsModal | null;
 	themePreference: ThemePreference;
@@ -93,6 +95,8 @@ type UiState = {
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
+	addSessionTab: (ownerSessionId: string, sessionId: string) => void;
+	removeSessionTab: (ownerSessionId: string, sessionId: string) => void;
 	markInspectorPreviewSeen: (sessionId: string, previewKey: string) => void;
 	setBrowserContentRevealed: (sessionId: string, revealed: boolean) => void;
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
@@ -135,6 +139,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	inspectorSessions: {},
+	sessionTabsByOwner: {},
 	isCommandPaletteOpen: false,
 	settingsModal: null,
 	themePreference: initialThemePreference,
@@ -215,6 +220,27 @@ export const useUiStore = create<UiState>((set, get) => ({
 					[sessionId]: { ...current, view, browserUnseen },
 				},
 			};
+		}),
+	addSessionTab: (ownerSessionId, sessionId) =>
+		set((state) => {
+			const current = state.sessionTabsByOwner[ownerSessionId] ?? [];
+			if (sessionId === ownerSessionId || current.includes(sessionId)) return state;
+			return {
+				sessionTabsByOwner: {
+					...state.sessionTabsByOwner,
+					[ownerSessionId]: [...current, sessionId],
+				},
+			};
+		}),
+	removeSessionTab: (ownerSessionId, sessionId) =>
+		set((state) => {
+			const current = state.sessionTabsByOwner[ownerSessionId] ?? [];
+			if (!current.includes(sessionId)) return state;
+			const remaining = current.filter((candidate) => candidate !== sessionId);
+			const sessionTabsByOwner = { ...state.sessionTabsByOwner };
+			if (remaining.length > 0) sessionTabsByOwner[ownerSessionId] = remaining;
+			else delete sessionTabsByOwner[ownerSessionId];
+			return { sessionTabsByOwner };
 		}),
 	markInspectorPreviewSeen: (sessionId, previewKey) =>
 		set((state) => {

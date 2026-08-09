@@ -2,19 +2,19 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Separate the currently routed session's identity and interface action from its terminal navigation by introducing a dedicated terminal row below the main session top bar.
+**Goal:** Keep route identity and interface actions in a flat main top bar while introducing a dedicated terminal row that can open same-project session tabs and standalone terminals.
 
-**Architecture:** `SessionView` remains the owner of the routed session, selected terminal target, interface transition, and terminal mutations. It renders a route-level `ShellTopbar` containing a compact session identity card and the interface switch, followed by the existing portal host for a terminal-only row. `CenterPane` and `ChatWorkspace` continue owning their respective terminal font/fullscreen state, but use a shared `SessionTerminalBar` frame and no longer receive session-level header actions.
+**Architecture:** `SessionView` remains the owner of the routed session, originating terminal-tab layout, selected terminal target, interface transition, and terminal mutations. It renders a flat route-level `ShellTopbar`, followed by the existing portal host for a terminal-only row. `CenterPane` and `ChatWorkspace` continue owning their respective terminal font/fullscreen state and use a shared `SessionTerminalBar` frame; same-project session tabs navigate the route so the sidebar, main top bar, inspector, and terminal selection remain synchronized.
 
 **Tech Stack:** React 19, TypeScript, TanStack Router, Vitest, Testing Library, Motion React, Lucide React, Tailwind CSS utilities.
 
 ## Global Constraints
 
 - Base the stacked PR on `codex/topbar-left-sidebar-polish` (draft PR #3783), not `main`.
-- The terminal row is private to the currently routed session; do not add cross-session or cross-project tabs, pickers, routes, or persisted session-tab state.
+- The terminal row may add active sessions from the originating session's project only; never list or retain cross-project sessions.
 - Preserve the current agent/reviewer/shell selection logic and existing shell create, close, rename, keyboard-cycle, font-size, wheel-zoom, and fullscreen behavior.
-- Move only the interface switch into the session identity card. Keep Kill, Orchestrator, Task, Kanban, Notifications, and inspector controls in the existing right-hand app-topbar action region.
-- Do not add drag-and-drop, pinning, persisted ordering, or backend/API changes.
+- Keep the interface switch in the right-hand app-topbar action region: beside Kill for workers and beside Task for orchestrators. Keep Orchestrator, Kanban, Notifications, and inspector controls in their existing action region.
+- Do not add drag-and-drop, pinning, persisted ordering, cross-project tabs, or backend/API changes.
 - Keep terminal controls available in terminal fullscreen without duplicating the main session header.
 - Keep `design-qa.md` untouched and unstaged.
 
@@ -263,3 +263,112 @@ Expected: only this feature's frontend files and plan are changed; `design-qa.md
 - [ ] **Step 8: Push and open the stacked draft PR**
 
 Push `codex/session-terminal-bar` and create a draft PR with base `codex/topbar-left-sidebar-polish`. The PR body must state that drag/drop, pinning, persisted ordering, and cross-session tabs are deliberately deferred.
+
+### Task 4: Flatten session identity and align the inspector header
+
+**Files:**
+- Modify: `frontend/src/renderer/components/ShellTopbar.tsx`
+- Modify: `frontend/src/renderer/components/SessionView.tsx`
+- Modify: `frontend/src/renderer/components/SessionInspector.tsx`
+- Test: `frontend/src/renderer/components/ShellTopbar.test.tsx`
+- Test: `frontend/src/renderer/components/SessionView.test.tsx`
+- Test: `frontend/src/renderer/components/SessionInspector.test.tsx`
+
+**Interfaces:**
+- Consumes: the routed `WorkspaceSession`, current project label, `SessionStatusPill`, and `SessionInterfaceSwitchButton`.
+- Produces: `ShellTopbar({ sessionAction?: ReactNode })`; workers render `session title | activity`, orchestrators render `folder project | activity`, and the provided interface action joins the right-hand action cluster.
+
+- [ ] **Step 1: Write failing flat-identity and action-placement tests**
+
+Update `ShellTopbar.test.tsx` so the worker case expects the session title and status directly in the lead, no `session-identity-card`, and the supplied interface action immediately after Kill. Add an orchestrator case that expects a folder-marked project label, no `Orchestrator` identity copy, and the supplied interface action immediately after Task.
+
+- [ ] **Step 2: Run the top-bar test and verify RED**
+
+Run `npm test -- src/renderer/components/ShellTopbar.test.tsx` from `frontend/`.
+
+Expected: FAIL because the current code still renders `SessionIdentityCard` and places the interface action inside it.
+
+- [ ] **Step 3: Implement the flat identity and relocate the switch**
+
+Replace `sessionIdentityAction` with `sessionAction`. Remove `SessionIdentityCard`. Render a small vertical separator between the worker title/project label and `SessionStatusPill`. Add a `Folder` icon to the orchestrator project-board label and insert `sessionAction` beside Kill for workers and beside Task for orchestrators.
+
+- [ ] **Step 4: Write the failing shared-height regression test**
+
+In `SessionInspector.test.tsx`, assert the inspector header uses `h-toolbar` so its divider aligns with `ShellTopbar`'s primary row. Update `SessionView.test.tsx` to assert the interface switch is passed as `sessionAction` and the secondary terminal host remains `h-inspector-tabs`.
+
+- [ ] **Step 5: Run the inspector/session tests and verify RED**
+
+Run `npm test -- src/renderer/components/SessionInspector.test.tsx src/renderer/components/SessionView.test.tsx` from `frontend/`.
+
+Expected: FAIL because the inspector header still uses the 36px `h-inspector-tabs` token while the primary header uses the 40px `h-toolbar` token.
+
+- [ ] **Step 6: Align the primary header dividers**
+
+Change only the inspector's primary top row from `h-inspector-tabs` to `h-toolbar`; leave `SessionTerminalBar` and `SessionTopbarHost` on the 36px secondary-row token.
+
+- [ ] **Step 7: Run focused tests and commit**
+
+Run `npm test -- src/renderer/components/ShellTopbar.test.tsx src/renderer/components/SessionInspector.test.tsx src/renderer/components/SessionView.test.tsx` and commit the green change with `fix(frontend): flatten session topbar identity`.
+
+### Task 5: Same-project session tabs and terminal picker
+
+**Files:**
+- Modify: `frontend/src/renderer/stores/ui-store.ts`
+- Modify: `frontend/src/renderer/stores/ui-store.test.ts`
+- Modify: `frontend/src/renderer/routes/_shell.projects.$projectId_.sessions.$sessionId.tsx`
+- Modify: `frontend/src/renderer/routes/_shell.sessions.$sessionId.tsx`
+- Modify: `frontend/src/renderer/components/SessionView.tsx`
+- Modify: `frontend/src/renderer/components/CenterPane.tsx`
+- Modify: `frontend/src/renderer/components/chat/SessionChatSurface.tsx`
+- Modify: `frontend/src/renderer/components/chat/ChatWorkspace.tsx`
+- Test: matching component and route tests.
+
+**Interfaces:**
+- Consumes: all workspace sessions, the routed session, and the existing shell-terminal mutation callbacks.
+- Produces: ephemeral `sessionTabsByOwner`, `addSessionTab(ownerSessionId, sessionId)`, `removeSessionTab(ownerSessionId, sessionId)`, and shared terminal-tab/picker props used by TUI and Chat rows.
+
+- [ ] **Step 1: Write failing store tests**
+
+Add tests proving `addSessionTab` ignores the owner and duplicates, preserves insertion order, and `removeSessionTab` removes only the requested added session. The state is in-memory only and must not write `ao.sessionTabs` to local storage.
+
+- [ ] **Step 2: Run the store tests and verify RED**
+
+Run `npm test -- src/renderer/stores/ui-store.test.ts` from `frontend/`.
+
+Expected: FAIL because the store has no session-tab state or actions.
+
+- [ ] **Step 3: Implement ephemeral owner-tab state**
+
+Add `sessionTabsByOwner`, `addSessionTab`, and `removeSessionTab` to `UiState` and its Zustand initializer without any storage key, parser, or persistence side effect.
+
+- [ ] **Step 4: Write failing navigation and close tests**
+
+Update route validation and `SessionView.test.tsx` to prove: opening an available same-project session appends it and navigates with `tabOwner`; selecting an open tab navigates the whole route; closing the active added tab removes it and returns to the owner; terminated, orchestrator, cross-project, and already-open sessions are absent or disabled in the picker.
+
+- [ ] **Step 5: Run SessionView tests and verify RED**
+
+Run `npm test -- src/renderer/components/SessionView.test.tsx` from `frontend/`.
+
+Expected: FAIL because `SessionView` currently derives a single routed session and the routes do not accept `tabOwner` search state.
+
+- [ ] **Step 6: Implement owner-preserving route navigation**
+
+Add optional `tabOwner` validation to both session routes and pass it to `SessionView`. Derive the owner plus its active same-project worker sessions from `sessionTabsByOwner`; route selection with `{ tabOwner: ownerSessionId }` for added tabs and clear search when returning to the owner.
+
+- [ ] **Step 7: Write failing TUI and Chat picker tests**
+
+In `CenterPane.test.tsx` and `ChatWorkspace.test.tsx`, assert the plus trigger opens a menu with a separate New terminal action and same-project session entries. Assert added session tabs render a close button, the owner has none, and selecting/closing invokes the supplied route callbacks. These assertions must exercise the real dropdown and tab controls rather than mock markers.
+
+- [ ] **Step 8: Run the component tests and verify RED**
+
+Run `npm test -- src/renderer/components/CenterPane.test.tsx src/renderer/components/chat/ChatWorkspace.test.tsx src/renderer/components/chat/SessionChatSurface.test.tsx` from `frontend/`.
+
+Expected: FAIL because both terminal rows currently render one primary session tab and the plus button creates a shell immediately.
+
+- [ ] **Step 9: Implement shared project-session tab controls**
+
+Extract the session-tab/picker chrome into a focused shared component used by both `CenterPane` and `ChatWorkspace`. It renders the owner and added session tabs, a close action only on added tabs, a plus dropdown whose first action creates a standalone terminal, and active same-project worker session choices. Keep shell tabs, reviewer tabs, display controls, and terminal fullscreen behavior unchanged.
+
+- [ ] **Step 10: Run focused and full verification, then commit**
+
+Run all changed component/store/route tests, `npm run typecheck`, full `npm test`, and `npm run package` from `frontend/`. Commit the green change with `feat(frontend): add same-project session terminal tabs`, then push the existing branch and update draft PR #3784.

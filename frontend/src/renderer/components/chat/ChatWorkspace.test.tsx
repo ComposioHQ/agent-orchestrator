@@ -12,10 +12,31 @@ import {
 	chatFixtureThreadError,
 } from "../../lib/chat-fixture";
 import type { ConversationMessage, ConversationSnapshot } from "../../types/conversation";
+import type { WorkspaceSession } from "../../types/workspace";
 import { setApiBaseUrl } from "../../lib/api-client";
 
 const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
+
+const chatSession = {
+	id: chatFixture.sessionId,
+	workspaceId: "proj-1",
+	workspaceName: "my-app",
+	title: chatFixture.title ?? chatFixture.sessionId,
+	provider: "codex",
+	kind: "worker",
+	status: "working",
+	updatedAt: "2026-08-08T00:00:00Z",
+	activity: { state: "active", lastActivityAt: "2026-08-08T00:00:00Z" },
+	prs: [],
+} satisfies WorkspaceSession;
+
+const siblingSession = {
+	...chatSession,
+	id: "ao-15",
+	title: "review the change",
+	provider: "claude-code",
+} satisfies WorkspaceSession;
 
 vi.mock("../../lib/bridge", () => ({
 	aoBridge: {
@@ -144,21 +165,81 @@ describe("HumanMessage attachments", () => {
 
 describe("ChatWorkspace timeline", () => {
 	it("keeps only chat-terminal navigation and display controls in the dedicated terminal bar", () => {
-		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" onOpenShell={vi.fn()} />);
+		const view = render(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				sessionRole="worker"
+				onOpenShell={vi.fn()}
+				projectSessions={[chatSession]}
+			/>,
+		);
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "worker");
 		const terminalBar = screen.getByTestId("session-terminal-bar");
 		expect(terminalBar).toContainElement(screen.getByTestId("session-terminal-region"));
-		expect(terminalBar).toContainElement(screen.getByRole("tab", { name: chatFixture.title }));
-		expect(terminalBar).toContainElement(screen.getByRole("button", { name: "New terminal" }));
+		expect(terminalBar).toContainElement(
+			screen.getByRole("tab", { name: new RegExp(`^${chatFixture.title ?? chatFixture.sessionId}`) }),
+		);
+		expect(terminalBar).toContainElement(screen.getByRole("button", { name: "Add terminal or session" }));
 		expect(terminalBar).toContainElement(screen.getByRole("toolbar", { name: "Chat display controls" }));
 		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
 
-		view.rerender(<ChatWorkspace snapshot={chatFixture} sessionRole="orchestrator" onOpenShell={vi.fn()} />);
+		view.rerender(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				sessionRole="orchestrator"
+				onOpenShell={vi.fn()}
+				projectSessions={[chatSession]}
+			/>,
+		);
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
 		expect(screen.getByTestId("session-terminal-bar")).toBeInTheDocument();
 		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
+	});
+
+	it("shares closeable project-session tabs and the terminal action with the terminal surface", async () => {
+		const user = userEvent.setup();
+		const onCloseProjectSession = vi.fn();
+		const onSelectProjectSession = vi.fn();
+		const onOpenShell = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				onCloseProjectSession={onCloseProjectSession}
+				onOpenShell={onOpenShell}
+				onSelectProjectSession={onSelectProjectSession}
+				projectSessions={[chatSession, siblingSession]}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: `Close session tab ${chatSession.title}` })).not.toBeInTheDocument();
+		await user.click(screen.getByRole("tab", { name: /review the change/i }));
+		expect(onSelectProjectSession).toHaveBeenCalledWith(siblingSession);
+		await user.click(screen.getByRole("button", { name: "Close session tab review the change" }));
+		expect(onCloseProjectSession).toHaveBeenCalledWith(siblingSession);
+
+		await user.click(screen.getByRole("button", { name: "Add terminal or session" }));
+		await user.click(screen.getByRole("menuitem", { name: /New terminal/i }));
+		expect(onOpenShell).toHaveBeenCalledOnce();
+	});
+
+	it("adds a same-project session from the chat picker", async () => {
+		const user = userEvent.setup();
+		const onAddProjectSession = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				availableProjectSessions={[siblingSession]}
+				onAddProjectSession={onAddProjectSession}
+				onOpenShell={vi.fn()}
+				projectSessions={[chatSession]}
+			/>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "Add terminal or session" }));
+		await user.click(screen.getByRole("menuitem", { name: /review the change/i }));
+		expect(onAddProjectSession).toHaveBeenCalledWith(siblingSession);
 	});
 
 	it("keeps the chat terminal bar available in fullscreen", () => {

@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { LayoutDashboard, PanelRightOpen, Plus, Trash2 } from "lucide-react";
+import { Folder, LayoutDashboard, PanelRightOpen, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
@@ -32,7 +32,6 @@ import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
-import { AgentAvatar } from "./AgentAvatar";
 
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
@@ -60,10 +59,10 @@ const PADDING_CLEARANCE_FULLSCREEN = 112;
 
 export function ShellTopbar({
 	embedded = false,
-	sessionIdentityAction,
+	sessionAction,
 }: {
 	embedded?: boolean;
-	sessionIdentityAction?: ReactNode;
+	sessionAction?: ReactNode;
 } = {}) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -195,15 +194,14 @@ export function ShellTopbar({
 			{!embedded ? (
 				<div className="flex min-w-0 items-center gap-3">
 					{isSessionRoute && session ? (
-						<div className="flex min-w-0 items-center gap-2">
+						<div className="flex min-w-0 items-center gap-2.5" data-testid="session-topbar-identity">
 							{isOrchestrator ? (
-								<ProjectBoardLabelButton label={projectLabel} onOpen={openBoard} style={noDragStyle} />
-							) : null}
-							<SessionIdentityCard
-								action={sessionIdentityAction}
-								isOrchestrator={isOrchestrator}
-								session={session}
-							/>
+								<ProjectBoardLabelButton label={projectLabel} onOpen={openBoard} showFolder style={noDragStyle} />
+							) : (
+								<span className={cn(topbarProjectLabelClass, "max-w-content-max truncate")}>{session.title}</span>
+							)}
+							<span aria-hidden="true" className="h-4 w-px shrink-0 bg-border-strong" />
+							<SessionStatusPill session={session} />
 						</div>
 					) : (isProjectBoardRoute && boardActionsInPanel) ||
 				  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
@@ -304,6 +302,11 @@ export function ShellTopbar({
 									</TooltipTrigger>
 									<TooltipContent side="bottom">{t("shell.newTask")}</TooltipContent>
 								</Tooltip>
+								{sessionAction ? (
+									<div className="inline-flex shrink-0 items-center" style={noDragStyle}>
+										{sessionAction}
+									</div>
+								) : null}
 								<Tooltip>
 									<TooltipTrigger asChild>
 										<TopbarButton
@@ -340,6 +343,11 @@ export function ShellTopbar({
 									void navigate({ to: "/projects/$projectId", params: { projectId: workspaceId } });
 								}}
 							/>
+						) : null}
+						{!isOrchestrator && sessionAction ? (
+							<div className="inline-flex shrink-0 items-center" style={noDragStyle}>
+								{sessionAction}
+							</div>
 						) : null}
 						{!isOrchestrator ? (
 							<Tooltip>
@@ -401,36 +409,6 @@ export function ShellTopbar({
 	);
 }
 
-function SessionIdentityCard({
-	action,
-	isOrchestrator,
-	session,
-}: {
-	action?: ReactNode;
-	isOrchestrator: boolean;
-	session: WorkspaceSession;
-}) {
-	const { t } = useTranslation();
-	return (
-		<div
-			className="inline-flex h-control-lg min-w-0 max-w-content-max items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-micro font-semibold leading-none text-foreground"
-			data-testid="session-identity-card"
-		>
-			{isOrchestrator ? (
-				<OrchestratorIcon aria-hidden="true" className="size-icon-xs shrink-0 text-muted-foreground" />
-			) : (
-				<AgentAvatar className="size-icon-xs! shrink-0" decorative provider={session.provider} />
-			)}
-			<span className="max-w-content-max truncate">
-				{isOrchestrator ? t("shell.orchestrator") : session.title}
-			</span>
-			<span aria-hidden="true" className="h-4 w-px shrink-0 bg-border-strong" />
-			<SessionStatusPill session={session} />
-			{action ? <div className="flex shrink-0 items-center">{action}</div> : null}
-		</div>
-	);
-}
-
 const projectBoardLabelTransition = { type: "spring" as const, stiffness: 400, damping: 40 };
 
 /** Project name → board. Outer `<button>` owns the click so Motion's shared-layout spring cannot swallow the first pointer event (#3682). */
@@ -439,11 +417,13 @@ function ProjectBoardLabelButton({
 	onOpen,
 	style,
 	className,
+	showFolder = false,
 }: {
 	label: string;
 	onOpen: () => void;
 	style?: React.CSSProperties;
 	className?: string;
+	showFolder?: boolean;
 }) {
 	const { t } = useTranslation();
 	return (
@@ -457,10 +437,11 @@ function ProjectBoardLabelButton({
 			<motion.span
 				layoutId="topbar-project-label"
 				layout="position"
-				className={topbarProjectLabelClass}
+				className={cn(topbarProjectLabelClass, "inline-flex items-center gap-1.5")}
 				transition={projectBoardLabelTransition}
 			>
-				{label}
+				{showFolder ? <Folder aria-hidden="true" className="size-icon-md shrink-0 text-muted-foreground" /> : null}
+				<span className="truncate">{label}</span>
 			</motion.span>
 		</button>
 	);

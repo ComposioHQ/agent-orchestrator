@@ -42,11 +42,11 @@ import {
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
-import type { SessionKind } from "../../types/workspace";
-import { AgentAvatar } from "../AgentAvatar";
+import type { SessionKind, WorkspaceSession } from "../../types/workspace";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SessionTerminalBar } from "../SessionTerminalBar";
+import { SessionTerminalPicker, SessionTerminalTabs } from "../SessionTerminalTabs";
 import {
 	ActivityRow,
 	ApprovalCard,
@@ -135,6 +135,11 @@ export interface ChatWorkspaceProps {
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
+	projectSessions?: WorkspaceSession[];
+	availableProjectSessions?: WorkspaceSession[];
+	onAddProjectSession?: (session: WorkspaceSession) => void;
+	onCloseProjectSession?: (session: WorkspaceSession) => void;
+	onSelectProjectSession?: (session: WorkspaceSession) => void;
 	/** Open an HTTP(S) link in this session's AO Browser panel. */
 	onLinkOpen?: (url: string) => void;
 	/** A send or decision is in flight. */
@@ -212,6 +217,11 @@ export function ChatWorkspace({
 	onOpenShell,
 	openingShell,
 	shellError,
+	projectSessions,
+	availableProjectSessions,
+	onAddProjectSession,
+	onCloseProjectSession,
+	onSelectProjectSession,
 	onLinkOpen,
 	busy,
 	models,
@@ -330,6 +340,11 @@ export function ChatWorkspace({
 			<ChatHeader
 				snapshot={snapshot}
 				sessionTitle={sessionTitle}
+				projectSessions={projectSessions}
+				availableProjectSessions={availableProjectSessions}
+				onAddProjectSession={onAddProjectSession}
+				onCloseProjectSession={onCloseProjectSession}
+				onSelectProjectSession={onSelectProjectSession}
 				onOpenShell={onOpenShell}
 				openingShell={openingShell}
 				shellError={shellError}
@@ -579,6 +594,11 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 function ChatHeader({
 	snapshot,
 	sessionTitle,
+	projectSessions,
+	availableProjectSessions,
+	onAddProjectSession,
+	onCloseProjectSession,
+	onSelectProjectSession,
 	onOpenShell,
 	openingShell,
 	shellError,
@@ -591,6 +611,11 @@ function ChatHeader({
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
+	projectSessions?: WorkspaceSession[];
+	availableProjectSessions?: WorkspaceSession[];
+	onAddProjectSession?: (session: WorkspaceSession) => void;
+	onCloseProjectSession?: (session: WorkspaceSession) => void;
+	onSelectProjectSession?: (session: WorkspaceSession) => void;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
@@ -602,6 +627,20 @@ function ChatHeader({
 	topbarBounds: TopbarBounds;
 }) {
 	const label = sessionTitle || snapshot.title || snapshot.sessionId;
+	const visibleProjectSessions = projectSessions?.length
+		? projectSessions
+		: [
+				{
+					id: snapshot.sessionId,
+					workspaceId: "",
+					workspaceName: "",
+					title: label,
+					provider: snapshot.harness as WorkspaceSession["provider"],
+					status: "unknown" as const,
+					updatedAt: "",
+					prs: [],
+				},
+			];
 	return (
 		<SessionTerminalBar fullscreen={isFullscreen}>
 				<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
@@ -616,41 +655,22 @@ function ChatHeader({
 								className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
 								role="tablist"
 							>
-								<span
-									data-terminal-role="primary"
-									className="group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border bg-overlay px-3 text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-								>
-									<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
-									<button
-										aria-current
-										aria-label={label}
-										aria-selected
-										className="inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none text-foreground transition-colors"
-										role="tab"
-										tabIndex={0}
-										title={label}
-										type="button"
-									>
-										<span className="truncate">{label}</span>
-									</button>
-								</span>
+								<SessionTerminalTabs
+									activeSessionId={snapshot.sessionId}
+									isSessionSurfaceActive
+									onCloseProjectSession={onCloseProjectSession}
+									onSelectProjectSession={onSelectProjectSession}
+									projectSessions={visibleProjectSessions}
+								/>
 							</div>
-							<Button
-								aria-label="New terminal"
-								className="shrink-0 text-muted-foreground"
-								disabled={!onOpenShell || openingShell}
-								onClick={onOpenShell}
-								size="icon-sm"
-								title={shellError || "New terminal"}
-								type="button"
-								variant="outline"
-							>
-								{openingShell ? (
-									<Loader2 aria-hidden="true" className="size-icon-md animate-spin" />
-								) : (
-									<Plus aria-hidden="true" className="size-icon-md" />
-								)}
-							</Button>
+							<SessionTerminalPicker
+								availableProjectSessions={availableProjectSessions ?? []}
+								newTerminalDisabled={Boolean(openingShell)}
+								newTerminalError={shellError}
+								onAddProjectSession={onAddProjectSession}
+								onNewTerminal={onOpenShell}
+								openProjectSessionIds={visibleProjectSessions.map((session) => session.id)}
+							/>
 						</div>
 						<div
 							aria-label="Chat display controls"

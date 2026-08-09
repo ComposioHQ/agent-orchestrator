@@ -26,12 +26,18 @@ import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 import { SessionTerminalBar } from "./SessionTerminalBar";
 import { SessionTopbarPortal } from "./SessionTopbarPortal";
+import { SessionTerminalPicker, SessionTerminalTabs } from "./SessionTerminalTabs";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
+	projectSessions?: WorkspaceSession[];
+	availableProjectSessions?: WorkspaceSession[];
+	onAddProjectSession?: (session: WorkspaceSession) => void;
+	onCloseProjectSession?: (session: WorkspaceSession) => void;
+	onSelectProjectSession?: (session: WorkspaceSession) => void;
 	theme: Theme;
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
@@ -70,6 +76,11 @@ function initialTerminalFontSize(): number {
 
 export function CenterPane({
 	session,
+	projectSessions,
+	availableProjectSessions,
+	onAddProjectSession,
+	onCloseProjectSession,
+	onSelectProjectSession,
 	theme,
 	daemonReady,
 	terminalTarget,
@@ -121,6 +132,7 @@ export function CenterPane({
 			: target.kind === "reviewer"
 				? `${t("terminal.reviewer")} · ${target.harness}`
 				: sessionTabLabel;
+	const visibleProjectSessions = session ? (projectSessions?.length ? projectSessions : [session]) : [];
 	const selectAdjacentTab = useCallback(
 		(direction: -1 | 1) => {
 			const activeIndex =
@@ -281,11 +293,12 @@ export function CenterPane({
 							role="tablist"
 						>
 							{session ? (
-								<SessionPaneTab
-									isActive={target.kind === "worker"}
-									label={sessionTabLabel}
-									onSelect={onSelectSessionTerminal}
-									session={session}
+								<SessionTerminalTabs
+									activeSessionId={session.id}
+									isSessionSurfaceActive={target.kind === "worker"}
+									onCloseProjectSession={onCloseProjectSession}
+									onSelectProjectSession={onSelectProjectSession ?? (() => onSelectSessionTerminal?.())}
+									projectSessions={visibleProjectSessions}
 								/>
 							) : (
 								<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
@@ -311,6 +324,14 @@ export function CenterPane({
 								/>
 							))}
 						</div>
+						{session ? (
+							<SessionTerminalPicker
+								availableProjectSessions={availableProjectSessions ?? []}
+								onAddProjectSession={onAddProjectSession}
+								onNewTerminal={onNewShellTerminal}
+								openProjectSessionIds={visibleProjectSessions.map((projectSession) => projectSession.id)}
+							/>
+						) : null}
 						{tabsOverflow.canScrollRight ? (
 							<button
 								aria-label={t("terminal.scrollTabsRight")}
@@ -322,7 +343,7 @@ export function CenterPane({
 								<ChevronRight aria-hidden="true" className="size-icon-md" />
 							</button>
 						) : null}
-						{!session || !isOrchestratorSession(session) ? (
+						{!session ? (
 							<Tooltip>
 								<TooltipTrigger asChild>
 									<Button
