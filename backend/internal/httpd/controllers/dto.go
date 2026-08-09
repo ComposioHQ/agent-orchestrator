@@ -148,8 +148,9 @@ type SessionView struct {
 	// unchanged) so the desktop browser panel can re-navigate / refresh on a
 	// repeated preview of the same target. Pulled from the json:"-" domain
 	// Metadata.
-	PreviewRevision int64            `json:"previewRevision,omitempty"`
-	PRs             []SessionPRFacts `json:"prs"`
+	PreviewRevision   int64            `json:"previewRevision,omitempty"`
+	PRs               []SessionPRFacts `json:"prs"`
+	ActiveAgentSwitch *AgentSwitchView `json:"activeAgentSwitch,omitempty"`
 }
 
 // ListSessionsResponse is the body of GET /api/v1/sessions.

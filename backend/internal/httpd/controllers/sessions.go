@@ -171,6 +171,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Put("/sessions/{sessionId}/reviewer", c.setReviewer)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/resume-agent", c.resumeAgent)
+	r.Post("/sessions/{sessionId}/switch-agent", c.switchAgent)
 	r.Get("/sessions/{sessionId}/agent-switches", c.listAgentSwitches)
 	r.Post("/sessions/{sessionId}/agent-switches/{switchId}/handoff", c.submitAgentHandoff)
 	r.Get("/sessions/{sessionId}/interface-transition", c.interfaceTransitionStatus)
@@ -186,12 +187,6 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/orchestrators", c.spawnOrchestrator)
 	r.Post("/orchestrators/delegate", c.delegateTask)
 	r.Get("/orchestrators/{id}", c.getOrchestrator)
-}
-
-// RegisterSwitchAgent mounts the synchronous switch workflow separately so
-// the API layer can give it a larger bounded timeout than ordinary REST calls.
-func (c *SessionsController) RegisterSwitchAgent(r chi.Router) {
-	r.Post("/sessions/{sessionId}/switch-agent", c.switchAgent)
 }
 
 // RegisterStreams mounts long-lived session streams outside the REST timeout
@@ -1075,7 +1070,7 @@ func (c *SessionsController) switchAgent(w http.ResponseWriter, r *http.Request)
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, AgentSwitchResponse{Switch: agentSwitchView(switchRecord)})
+	envelope.WriteJSON(w, http.StatusAccepted, AgentSwitchResponse{Switch: agentSwitchView(switchRecord)})
 }
 
 func (c *SessionsController) listAgentSwitches(w http.ResponseWriter, r *http.Request) {
@@ -1643,13 +1638,18 @@ func previewFileURL(r *http.Request, id domain.SessionID, entry string) (string,
 }
 
 func sessionView(s domain.Session) SessionView {
-	return SessionView{
+	view := SessionView{
 		Session:         s,
 		Branch:          s.Metadata.Branch,
 		PreviewURL:      s.Metadata.PreviewURL,
 		PreviewRevision: s.Metadata.PreviewRevision,
 		PRs:             sessionPRFacts(s.PRs),
 	}
+	if s.ActiveAgentSwitch != nil {
+		active := agentSwitchView(*s.ActiveAgentSwitch)
+		view.ActiveAgentSwitch = &active
+	}
+	return view
 }
 
 func agentSwitchView(s domain.AgentSwitch) AgentSwitchView {

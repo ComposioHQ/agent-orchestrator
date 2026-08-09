@@ -33,6 +33,51 @@ func advanceAgentSwitchFixtureWithMutation(ctx context.Context, t *testing.T, s 
 	}
 }
 
+func TestListActiveAgentSwitchesExcludesTerminalRows(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	makeSwitch := func(projectID string, switchID domain.AgentSwitchID) domain.AgentSwitch {
+		t.Helper()
+		seedProject(t, s, projectID)
+		session, err := s.CreateSession(ctx, sampleRecord(projectID))
+		if err != nil {
+			t.Fatalf("create %s session: %v", projectID, err)
+		}
+		rec := domain.AgentSwitch{
+			ID: switchID, SessionID: session.ID, IdempotencyKey: string(switchID),
+			RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+			FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+			State: domain.AgentSwitchPreparingHandoff, TargetStartMode: domain.AgentSwitchTargetStartPending,
+			AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: domain.AgentGenerationID("generation-" + projectID),
+			RequestedAt: now, UpdatedAt: now,
+		}
+		stored, created, err := s.CreateAgentSwitch(ctx, rec)
+		if err != nil || !created {
+			t.Fatalf("create %s switch: created=%v err=%v", projectID, created, err)
+		}
+		return stored
+	}
+
+	active := makeSwitch("active-switch", "switch-active")
+	failed := makeSwitch("terminal-switch", "switch-failed")
+	failed.State = domain.AgentSwitchFailed
+	failed.ErrorCode = domain.AgentSwitchErrorSwitchFailed
+	failed.UpdatedAt = now.Add(time.Second)
+	if updated, err := s.UpdateAgentSwitch(ctx, failed, domain.AgentSwitchPreparingHandoff, failed.SourceGenerationID, ""); err != nil || !updated {
+		t.Fatalf("fail terminal switch: updated=%v err=%v", updated, err)
+	}
+
+	got, err := s.ListActiveAgentSwitches(ctx)
+	if err != nil {
+		t.Fatalf("list active agent switches: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != active.ID {
+		t.Fatalf("active switches = %+v, want only %s", got, active.ID)
+	}
+}
+
 func TestAgentNativeSessionsRetainMultipleConversationsNewestFirst(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

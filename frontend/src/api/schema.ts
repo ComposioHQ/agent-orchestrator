@@ -1596,6 +1596,7 @@ export interface components {
             disabled?: boolean;
         };
         ControllersSessionView: {
+            activeAgentSwitch?: components["schemas"]["AgentSwitch"];
             activity: components["schemas"]["DomainActivity"];
             autoInjectReview: boolean;
             branch?: string;
@@ -7651,8 +7652,8 @@ export interface operations {
             };
         };
         responses: {
-            /** @description OK */
-            200: {
+            /** @description Accepted */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };

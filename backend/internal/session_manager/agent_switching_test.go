@@ -171,6 +171,18 @@ func (s *switchTestStore) GetActiveAgentSwitch(_ context.Context, sessionID doma
 	return domain.AgentSwitch{}, false, nil
 }
 
+func (s *switchTestStore) ListActiveAgentSwitches(_ context.Context) ([]domain.AgentSwitch, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]domain.AgentSwitch, 0)
+	for _, rec := range s.switches {
+		if !rec.State.Terminal() {
+			out = append(out, rec)
+		}
+	}
+	return out, nil
+}
+
 func (s *switchTestStore) ListAgentSwitches(_ context.Context, sessionID domain.SessionID) ([]domain.AgentSwitch, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

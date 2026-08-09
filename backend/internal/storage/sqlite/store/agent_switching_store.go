@@ -209,6 +209,19 @@ func (s *Store) GetActiveAgentSwitch(ctx context.Context, sessionID domain.Sessi
 	return agentSwitchFromGen(row), true, nil
 }
 
+// ListActiveAgentSwitches returns every non-terminal switch saga, newest first.
+func (s *Store) ListActiveAgentSwitches(ctx context.Context) ([]domain.AgentSwitch, error) {
+	rows, err := s.qr.ListActiveAgentSwitches(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list active agent switches: %w", err)
+	}
+	out := make([]domain.AgentSwitch, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, agentSwitchFromGen(row))
+	}
+	return out, nil
+}
+
 // ListAgentSwitches returns a session's switch history, newest first.
 func (s *Store) ListAgentSwitches(ctx context.Context, sessionID domain.SessionID) ([]domain.AgentSwitch, error) {
 	rows, err := s.qr.ListAgentSwitches(ctx, sessionID)

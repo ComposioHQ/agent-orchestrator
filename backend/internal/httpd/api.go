@@ -2,7 +2,6 @@ package httpd
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -17,12 +16,6 @@ import (
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 )
-
-// The synchronous switch budget covers one 60s optional source handoff, a
-// separate 2m human permission-decision window, target process/readiness checks,
-// composer confirmation retries, and the final 150s generation acknowledgement,
-// with headroom for teardown and durable writes.
-const minimumSwitchAgentRequestTimeout = 6 * time.Minute
 
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
@@ -116,11 +109,6 @@ func (a *API) Register(root chi.Router) {
 	if timeout <= 0 {
 		timeout = config.DefaultRequestTimeout
 	}
-	switchAgentTimeout := timeout
-	if switchAgentTimeout < minimumSwitchAgentRequestTimeout {
-		switchAgentTimeout = minimumSwitchAgentRequestTimeout
-	}
-
 	root.Route("/api/v1", func(r chi.Router) {
 		// Serve the OpenAPI document from the same origin as the routes it describes.
 		r.Get("/openapi.yaml", apispec.ServeYAML)
@@ -142,13 +130,6 @@ func (a *API) Register(root chi.Router) {
 			a.dev.Register(r)
 			a.browser.Register(r)
 			// Sibling REST controllers plug in here.
-		})
-		// Agent switching synchronously collects a handoff, starts the target,
-		// waits for provider readiness, and confirms delivery. Give that bounded
-		// workflow enough time to complete without extending every REST route.
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.Timeout(switchAgentTimeout))
-			a.sessions.RegisterSwitchAgent(r)
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
 		a.notifications.RegisterStream(r)

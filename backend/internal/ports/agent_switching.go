@@ -22,6 +22,7 @@ type AgentSwitchStore interface {
 	GetAgentSwitch(ctx context.Context, id domain.AgentSwitchID) (domain.AgentSwitch, bool, error)
 	GetAgentSwitchByIdempotencyKey(ctx context.Context, sessionID domain.SessionID, idempotencyKey string) (domain.AgentSwitch, bool, error)
 	GetActiveAgentSwitch(ctx context.Context, sessionID domain.SessionID) (domain.AgentSwitch, bool, error)
+	ListActiveAgentSwitches(ctx context.Context) ([]domain.AgentSwitch, error)
 	ListAgentSwitches(ctx context.Context, sessionID domain.SessionID) ([]domain.AgentSwitch, error)
 	UpdateAgentSwitch(ctx context.Context, rec domain.AgentSwitch, expectedState domain.AgentSwitchState, expectedSourceGenerationID, expectedTargetGenerationID domain.AgentGenerationID) (bool, error)
 	FailAgentSwitchIfUnacknowledged(ctx context.Context, rec domain.AgentSwitch) (bool, error)

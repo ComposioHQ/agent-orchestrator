@@ -1496,7 +1496,7 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			reqBody:    controllers.SwitchAgentRequest{},
 			resps: []respUnit{
-				{http.StatusOK, controllers.AgentSwitchResponse{}},
+				{http.StatusAccepted, controllers.AgentSwitchResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},

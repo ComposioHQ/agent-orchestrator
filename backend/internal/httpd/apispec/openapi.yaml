@@ -3923,12 +3923,12 @@ paths:
               $ref: '#/components/schemas/SwitchAgentRequest'
         required: true
       responses:
-        "200":
+        "202":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentSwitchResponse'
-          description: OK
+          description: Accepted
         "400":
           content:
             application/json:
@@ -4793,6 +4793,8 @@ components:
       type: object
     ControllersSessionView:
       properties:
+        activeAgentSwitch:
+          $ref: '#/components/schemas/AgentSwitch'
         activity:
           $ref: '#/components/schemas/DomainActivity'
         autoInjectReview:

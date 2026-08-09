@@ -273,7 +273,7 @@ func (f *fakeSessionService) SwitchAgent(_ context.Context, id domain.SessionID,
 		ID: "switch-1", SessionID: id, IdempotencyKey: "private-retry-key", RequestFingerprint: "v1:private-fingerprint",
 		FromHarness: domain.HarnessClaudeCode, TargetHarness: cfg.TargetHarness,
 		TargetNativeSessionRef: &targetRef,
-		TargetStartMode:        domain.AgentSwitchTargetStartFresh, State: domain.AgentSwitchCompleted,
+		TargetStartMode:        domain.AgentSwitchTargetStartFresh, State: domain.AgentSwitchPreparingHandoff,
 		AgentHandoffStatus:      domain.AgentHandoffReceived,
 		SemanticHandoffIncluded: true,
 		AgentHandoffPath:        "/private/ao/handoff.json", AgentHandoffHash: "private-hash",
@@ -503,8 +503,8 @@ func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
 		"note":" continue the review ",
 		"idempotencyKey":"retry-1"
 	}`)
-	if status != http.StatusOK {
-		t.Fatalf("switch agent = %d, want 200; body=%s", status, body)
+	if status != http.StatusAccepted {
+		t.Fatalf("switch agent = %d, want 202; body=%s", status, body)
 	}
 	assertAgentSwitchResponseRedacted(t, body)
 	var switched controllers.AgentSwitchResponse
@@ -555,6 +555,57 @@ func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
 		t.Fatalf("recorded handoff = %#v", handoff)
 	}
 
+}
+
+func TestSessionsAPIReturnsAcceptedSwitch(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/switch-agent", `{"targetHarness":"codex"}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("switch agent = %d, want 202; body=%s", status, body)
+	}
+	var response controllers.AgentSwitchResponse
+	mustJSON(t, body, &response)
+	if response.Switch.ID != "switch-1" {
+		t.Fatalf("accepted switch = %+v", response.Switch)
+	}
+}
+
+func TestSessionsAPIActiveSwitchProjectionRedactsPrivateFacts(t *testing.T) {
+	svc := newFakeSessionService()
+	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	targetRef := domain.AgentNativeSessionID("native-target")
+	session := svc.sessions["ao-1"]
+	session.ActiveAgentSwitch = &domain.AgentSwitch{
+		ID: "switch-active", SessionID: "ao-1", IdempotencyKey: "private-key",
+		RequestFingerprint: "v1:private-fingerprint", FromHarness: domain.HarnessClaudeCode,
+		TargetHarness: domain.HarnessCodex, TargetNativeSessionRef: &targetRef,
+		TargetStartMode: domain.AgentSwitchTargetStartFresh, State: domain.AgentSwitchStartingTarget,
+		AgentHandoffStatus: domain.AgentHandoffReceived, SemanticHandoffIncluded: true,
+		SourceTranscriptStatus: domain.AgentSwitchSourceTranscriptAvailable,
+		AgentHandoffPath:       "/private/agent-handoff.json", AgentHandoffHash: "private-agent-hash",
+		FinalHandoffPath: "/private/final-handoff.json", FinalHandoffHash: "private-final-hash",
+		SourceGenerationID: "private-source-generation", TargetGenerationID: "private-target-generation",
+		TargetRuntimeHandleID: "private-runtime-handle", TargetAcknowledgedAt: &now,
+		RequestedAt: now, UpdatedAt: now,
+	}
+	svc.sessions["ao-1"] = session
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1", "")
+	if status != http.StatusOK {
+		t.Fatalf("get session = %d, want 200; body=%s", status, body)
+	}
+	assertAgentSwitchResponseRedacted(t, body)
+	var response struct {
+		Session struct {
+			ActiveAgentSwitch *controllers.AgentSwitchView `json:"activeAgentSwitch"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &response)
+	if response.Session.ActiveAgentSwitch == nil || response.Session.ActiveAgentSwitch.ID != "switch-active" || response.Session.ActiveAgentSwitch.State != domain.AgentSwitchStartingTarget {
+		t.Fatalf("active switch projection = %+v", response.Session.ActiveAgentSwitch)
+	}
 }
 
 func assertAgentSwitchResponseRedacted(t *testing.T, body []byte) {
