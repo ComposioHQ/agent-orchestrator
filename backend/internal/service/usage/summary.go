@@ -56,12 +56,18 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 
 func usageTotals(models []domain.UsageModelAggregate) domain.UsageMetricTotals {
 	var input, uncached, cacheRead, cacheWrite, output, reasoning, reasoningEvents int64
+	var uncachedAvailable, cacheReadAvailable, cacheWriteAvailable, reasoningAvailable bool
 	for _, model := range models {
+		coverage := MetricCoverage(model.Harness)
 		input += model.Tokens.InputTokens
 		uncached += model.Tokens.UncachedInputTokens
 		cacheRead += model.Tokens.CacheReadTokens
 		cacheWrite += model.Tokens.CacheWriteTokens
 		output += model.Tokens.OutputTokens
+		uncachedAvailable = uncachedAvailable || coverage.UncachedInput
+		cacheReadAvailable = cacheReadAvailable || coverage.CacheRead
+		cacheWriteAvailable = cacheWriteAvailable || coverage.CacheWrite
+		reasoningAvailable = reasoningAvailable || coverage.Reasoning
 		if model.Tokens.ReasoningTokens != nil {
 			reasoning += *model.Tokens.ReasoningTokens
 		}
@@ -71,10 +77,18 @@ func usageTotals(models []domain.UsageModelAggregate) domain.UsageMetricTotals {
 		return domain.UsageMetricTotals{}
 	}
 	totals := domain.UsageMetricTotals{
-		InputTokens: &input, UncachedInputTokens: &uncached, CacheReadTokens: &cacheRead,
-		CacheWriteTokens: &cacheWrite, OutputTokens: &output,
+		InputTokens: &input, OutputTokens: &output,
 	}
-	if reasoningEvents > 0 {
+	if uncachedAvailable {
+		totals.UncachedInputTokens = &uncached
+	}
+	if cacheReadAvailable {
+		totals.CacheReadTokens = &cacheRead
+	}
+	if cacheWriteAvailable {
+		totals.CacheWriteTokens = &cacheWrite
+	}
+	if reasoningAvailable && reasoningEvents > 0 {
 		totals.ReasoningTokens = &reasoning
 	}
 	return totals
