@@ -1740,6 +1740,45 @@ func TestValidateSourcePathAcceptsOnlyMatchingProviderRoot(t *testing.T) {
 	}
 }
 
+// TestCollectorDiscoversCopilotShutdownSource catches accepting the native
+// Copilot hook ID without binding its per-session events file.
+func TestCollectorDiscoversCopilotShutdownSource(t *testing.T) {
+	const nativeID = "11111111-1111-4111-8111-111111111111"
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCopilot, nativeID, false)
+	root := filepath.Join(t.TempDir(), "session-state")
+	path := filepath.Join(root, nativeID, "events.jsonl")
+	writeUsageFixture(t, path, `{"type":"session.shutdown","data":{"modelMetrics":{}}}`+"\n")
+	collector := NewCollector(store, SourceRoots{CopilotSessions: root}, nil)
+
+	mustNoError(t, collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Harness:         domain.HarnessCopilot,
+		Event:           "session-start",
+		NativeSessionID: nativeID,
+	}))
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("bindings = %+v, err=%v", bindings, err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("sources = %+v, err=%v", sources, err)
+	}
+	if sources[0].Kind != domain.UsageSourceCopilotShutdown || sources[0].ArtifactPath != canonicalUsagePath(t, path) {
+		t.Fatalf("source = %+v", sources[0])
+	}
+}
+
+func TestCollectorRejectsCopilotSourceForDifferentNativeSession(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "session-state")
+	path := filepath.Join(root, "other-native", "events.jsonl")
+	writeUsageFixture(t, path, "{}\n")
+	binding := domain.UsageBindingRecord{Harness: domain.HarnessCopilot, NativeRootID: "bound-native"}
+	if err := validateSourceAttribution(binding, domain.UsageSourceCopilotShutdown, "bound-native", "", canonicalUsagePath(t, path), ""); err == nil {
+		t.Fatal("accepted Copilot events file from a different native session")
+	}
+}
+
 func differentHarness(harness domain.AgentHarness) domain.AgentHarness {
 	if harness == domain.HarnessCopilot {
 		return domain.HarnessKimi
