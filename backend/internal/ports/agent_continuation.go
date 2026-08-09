@@ -2,21 +2,6 @@ package ports
 
 import "context"
 
-// StandingInstructionMode describes how an adapter applies AO-authored
-// standing instructions to a provider-native conversation. Switching requires
-// a non-unsupported mode: the continuation protocol is authority-bearing and
-// must be re-applied on both fresh launch and native resume.
-type StandingInstructionMode string
-
-const (
-	// StandingInstructionsUnsupported means the adapter has no verified native
-	// mechanism for applying AO standing instructions.
-	StandingInstructionsUnsupported StandingInstructionMode = "unsupported"
-	// StandingInstructionsCommand means the adapter passes standing
-	// instructions through invocation config or command-line flags.
-	StandingInstructionsCommand StandingInstructionMode = "command"
-)
-
 // FreshNativeSessionIDMode describes who chooses a new provider conversation's
 // native identity.
 type FreshNativeSessionIDMode string
@@ -30,19 +15,18 @@ const (
 	FreshNativeSessionIDCallerAssigned FreshNativeSessionIDMode = "caller_assigned"
 )
 
-// ContinuationCapabilities is the static provider behavior AO needs before it
-// attempts to activate an agent as part of a session switch. Runtime evidence
+// ContinuationCapabilities is the static fresh-conversation behavior AO needs
+// before it activates an agent as part of a session switch. Runtime evidence
 // such as whether one particular native session still exists is reported by
 // AgentNativeSessionProber instead.
 type ContinuationCapabilities struct {
-	StandingInstructions StandingInstructionMode
 	FreshNativeSessionID FreshNativeSessionIDMode
 }
 
 // AgentContinuationCapabilityProvider is implemented by adapters whose
-// continuation behavior has been verified. Its absence is intentionally
-// treated as unsupported rather than assuming a provider accepts instructions
-// or caller-selected native ids.
+// fresh native-session behavior has been verified. Its absence is
+// intentionally treated as unsupported rather than assuming a provider
+// accepts caller-selected native ids.
 type AgentContinuationCapabilityProvider interface {
 	ContinuationCapabilities() ContinuationCapabilities
 }

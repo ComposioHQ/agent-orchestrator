@@ -26,22 +26,13 @@ const agentSwitchMocks = vi.hoisted(() => ({
 	},
 }));
 
-vi.mock("../hooks/useAgentSwitches", () => ({
-	findActiveAgentSwitch: (switches: AgentSwitch[]) =>
-		switches.find(
-			(agentSwitch) =>
-				agentSwitch.state !== "completed" &&
-				agentSwitch.state !== "failed" &&
-				agentSwitch.errorCode !== "target_start_unconfirmed",
-		),
-	findRecoveryRequiredAgentSwitch: (switches: AgentSwitch[]) =>
-		switches.find(
-			(agentSwitch) =>
-				agentSwitch.state === "starting_target" &&
-				agentSwitch.errorCode === "target_start_unconfirmed",
-		),
-	useAgentSwitches: () => ({ data: agentSwitchMocks.switches, refetch: agentSwitchMocks.refetch }),
-}));
+vi.mock("../hooks/useAgentSwitches", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../hooks/useAgentSwitches")>();
+	return {
+		...actual,
+		useAgentSwitches: () => ({ data: agentSwitchMocks.switches, refetch: agentSwitchMocks.refetch }),
+	};
+});
 
 vi.mock("../hooks/useSwitchAgent", () => ({
 	useSwitchAgentState: () => agentSwitchMocks.mutation,

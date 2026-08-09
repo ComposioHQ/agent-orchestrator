@@ -642,7 +642,6 @@
 	"switchAgent.state.startingTarget": "Démarrage de l’agent cible",
 	"switchAgent.state.stoppingSource": "Arrêt de l’agent source",
 	"switchAgent.state.targetReady": "Agent cible prêt",
-	"switchAgent.state.deliveryUnconfirmed": "Livraison non confirmée",
 	"switchAgent.switching": "Changement en cours…",
 	"switchAgent.targetLabel": "Agent cible",
 	"switchAgent.title": "Changer d’agent",

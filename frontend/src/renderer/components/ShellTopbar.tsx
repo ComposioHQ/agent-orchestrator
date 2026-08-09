@@ -1,13 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import {
-	GitBranch,
-	PanelRightClose,
-	PanelRightOpen,
-	Plus,
-	Trash2,
-} from "lucide-react";
+import { GitBranch, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
@@ -298,7 +292,7 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 						    moved here from the inspector's Summary "Danger zone". */}
 						{!isOrchestrator && session && sessionIsActive(session) ? (
 							<TopbarKillButton
-								key={`kill-session:${session.id}`}
+								key={session.id}
 								session={session}
 								orchestratorId={orchestrator?.id}
 								onKilled={(workspaceId, orchestratorId) => {

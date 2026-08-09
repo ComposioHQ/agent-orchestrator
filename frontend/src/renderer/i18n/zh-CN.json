@@ -644,7 +644,6 @@
 	"switchAgent.state.startingTarget": "正在启动目标代理",
 	"switchAgent.state.stoppingSource": "正在停止源代理",
 	"switchAgent.state.targetReady": "目标代理已就绪",
-	"switchAgent.state.deliveryUnconfirmed": "交付未确认",
 	"switchAgent.switching": "正在切换…",
 	"switchAgent.targetLabel": "目标代理",
 	"switchAgent.title": "切换代理",

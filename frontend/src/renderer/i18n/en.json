@@ -648,7 +648,6 @@
 	"switchAgent.state.startingTarget": "Starting target agent",
 	"switchAgent.state.stoppingSource": "Stopping source agent",
 	"switchAgent.state.targetReady": "Target ready",
-	"switchAgent.state.deliveryUnconfirmed": "Delivery unconfirmed",
 	"switchAgent.switching": "Switching…",
 	"switchAgent.targetLabel": "Target agent",
 	"switchAgent.title": "Switch agent",

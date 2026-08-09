@@ -59,82 +59,72 @@ func remainingRequestBudget(ctx context.Context) time.Duration {
 	return time.Until(deadline)
 }
 
-func TestSwitchAgentRouteOutlivesGenericRequestTimeout(t *testing.T) {
-	const (
-		genericTimeout = 20 * time.Millisecond
-		switchDelay    = 75 * time.Millisecond
-	)
+func TestSwitchAgentRouteTimeouts(t *testing.T) {
+	tests := []struct {
+		name                string
+		configuredTimeout   time.Duration
+		switchDelay         time.Duration
+		checkGenericTimeout bool
+		minimumSwitchBudget time.Duration
+	}{
+		{
+			name:                "outlives generic request timeout",
+			configuredTimeout:   20 * time.Millisecond,
+			switchDelay:         75 * time.Millisecond,
+			checkGenericTimeout: true,
+			minimumSwitchBudget: minimumSwitchAgentRequestTimeout,
+		},
+		{
+			name:                "preserves longer configured timeout",
+			configuredTimeout:   8 * time.Minute,
+			minimumSwitchBudget: 8 * time.Minute,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &timeoutProbeSessionService{
+				genericBudget: make(chan time.Duration, 1),
+				switchBudget:  make(chan time.Duration, 1),
+				switchDelay:   tt.switchDelay,
+			}
+			router := NewRouterWithControl(
+				config.Config{RequestTimeout: tt.configuredTimeout},
+				discardLogger(),
+				nil,
+				APIDeps{Sessions: svc},
+				ControlDeps{},
+			)
 
-	svc := &timeoutProbeSessionService{
-		genericBudget: make(chan time.Duration, 1),
-		switchBudget:  make(chan time.Duration, 1),
-		switchDelay:   switchDelay,
-	}
-	router := NewRouterWithControl(
-		config.Config{RequestTimeout: genericTimeout},
-		discardLogger(),
-		nil,
-		APIDeps{Sessions: svc},
-		ControlDeps{},
-	)
+			if tt.checkGenericTimeout {
+				genericResponse := httptest.NewRecorder()
+				router.ServeHTTP(genericResponse, httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil))
+				if genericResponse.Code != http.StatusOK {
+					t.Fatalf("GET sessions status = %d, want 200", genericResponse.Code)
+				}
+				genericBudget := <-svc.genericBudget
+				if genericBudget <= 0 || genericBudget > 2*tt.configuredTimeout {
+					t.Fatalf("generic request budget = %s, want approximately %s", genericBudget, tt.configuredTimeout)
+				}
+			}
 
-	genericResponse := httptest.NewRecorder()
-	router.ServeHTTP(genericResponse, httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil))
-	if genericResponse.Code != http.StatusOK {
-		t.Fatalf("GET sessions status = %d, want 200", genericResponse.Code)
-	}
-	genericBudget := <-svc.genericBudget
-	if genericBudget <= 0 || genericBudget > 2*genericTimeout {
-		t.Fatalf("generic request budget = %s, want approximately %s", genericBudget, genericTimeout)
-	}
-
-	started := time.Now()
-	switchRequest := httptest.NewRequest(
-		http.MethodPost,
-		"/api/v1/sessions/ao-1/switch-agent",
-		bytes.NewBufferString(`{"targetHarness":"codex"}`),
-	)
-	switchRequest.Header.Set("Content-Type", "application/json")
-	switchResponse := httptest.NewRecorder()
-	router.ServeHTTP(switchResponse, switchRequest)
-	if switchResponse.Code != http.StatusOK {
-		t.Fatalf("POST switch-agent status = %d, want 200; body=%s", switchResponse.Code, switchResponse.Body.String())
-	}
-	if elapsed := time.Since(started); elapsed < switchDelay {
-		t.Fatalf("POST switch-agent completed in %s, want at least %s", elapsed, switchDelay)
-	}
-	switchBudget := <-svc.switchBudget
-	if switchBudget < minimumSwitchAgentRequestTimeout-time.Second {
-		t.Fatalf("switch request budget = %s, want at least %s", switchBudget, minimumSwitchAgentRequestTimeout)
-	}
-}
-
-func TestSwitchAgentRoutePreservesLongerConfiguredTimeout(t *testing.T) {
-	configuredTimeout := 8 * time.Minute
-	svc := &timeoutProbeSessionService{
-		genericBudget: make(chan time.Duration, 1),
-		switchBudget:  make(chan time.Duration, 1),
-	}
-	router := NewRouterWithControl(
-		config.Config{RequestTimeout: configuredTimeout},
-		discardLogger(),
-		nil,
-		APIDeps{Sessions: svc},
-		ControlDeps{},
-	)
-
-	switchRequest := httptest.NewRequest(
-		http.MethodPost,
-		"/api/v1/sessions/ao-1/switch-agent",
-		bytes.NewBufferString(`{"targetHarness":"codex"}`),
-	)
-	switchRequest.Header.Set("Content-Type", "application/json")
-	switchResponse := httptest.NewRecorder()
-	router.ServeHTTP(switchResponse, switchRequest)
-	if switchResponse.Code != http.StatusOK {
-		t.Fatalf("POST switch-agent status = %d, want 200; body=%s", switchResponse.Code, switchResponse.Body.String())
-	}
-	if switchBudget := <-svc.switchBudget; switchBudget < configuredTimeout-time.Second {
-		t.Fatalf("switch request budget = %s, want approximately %s", switchBudget, configuredTimeout)
+			started := time.Now()
+			switchRequest := httptest.NewRequest(
+				http.MethodPost,
+				"/api/v1/sessions/ao-1/switch-agent",
+				bytes.NewBufferString(`{"targetHarness":"codex"}`),
+			)
+			switchRequest.Header.Set("Content-Type", "application/json")
+			switchResponse := httptest.NewRecorder()
+			router.ServeHTTP(switchResponse, switchRequest)
+			if switchResponse.Code != http.StatusOK {
+				t.Fatalf("POST switch-agent status = %d, want 200; body=%s", switchResponse.Code, switchResponse.Body.String())
+			}
+			if tt.switchDelay > 0 && time.Since(started) < tt.switchDelay {
+				t.Fatalf("POST switch-agent completed in %s, want at least %s", time.Since(started), tt.switchDelay)
+			}
+			if switchBudget := <-svc.switchBudget; switchBudget < tt.minimumSwitchBudget-time.Second {
+				t.Fatalf("switch request budget = %s, want at least %s", switchBudget, tt.minimumSwitchBudget)
+			}
+		})
 	}
 }

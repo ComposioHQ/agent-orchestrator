@@ -130,6 +130,9 @@ func hookAgentSessionID(payload []byte) string {
 	return id
 }
 
+// hookUsageMetadata extracts provider-native usage metadata. It deliberately
+// decodes separately from conversation facts because hook producers may emit
+// a malformed field in one projection while the other remains useful.
 func hookUsageMetadata(agent string, payload []byte) *usageHookMetadata {
 	harness := domain.AgentHarness(agent)
 	if harness != domain.HarnessClaudeCode && harness != domain.HarnessCodex {
@@ -163,9 +166,6 @@ type hookConversationSnapshot struct {
 	TranscriptPath        string
 }
 
-// hookConversationFacts extracts the deliberately small shared subset exposed
-// by the Claude Code and Codex hooks. Unknown fields are ignored, and the
-// aliases keep the daemon contract independent of either provider's raw schema.
 func hookConversationFacts(payload []byte) hookConversationSnapshot {
 	var p struct {
 		Prompt                    string `json:"prompt"`
@@ -184,7 +184,7 @@ func hookConversationFacts(payload []byte) hookConversationSnapshot {
 	// AO's own handoff request and continuation kickoff are coordination turns,
 	// not the latest real user instruction. They remain in provider history but
 	// must not overwrite deterministic user intent.
-	if isAOHandoffRequest(userPrompt) {
+	if strings.HasPrefix(strings.TrimSpace(userPrompt), "<ao-handoff-request") {
 		assistant = ""
 	}
 	if isAOCoordinationMessage(userPrompt) {
@@ -209,12 +209,7 @@ func firstHookValue(values ...string) string {
 func isAOCoordinationMessage(value string) bool {
 	value = strings.TrimSpace(value)
 	return strings.HasPrefix(value, "<ao-handoff-request") ||
-		strings.HasPrefix(value, "<ao-continuation") ||
 		strings.HasPrefix(value, "AO transferred the previous agent's context in hidden system instructions.")
-}
-
-func isAOHandoffRequest(value string) bool {
-	return strings.HasPrefix(strings.TrimSpace(value), "<ao-handoff-request")
 }
 
 func capHookText(value string, limit int) string {

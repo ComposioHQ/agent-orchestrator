@@ -1293,6 +1293,50 @@ func TestResumeAgent_RejectsConcurrentRequest(t *testing.T) {
 	}
 }
 
+func TestResumeAgent_ReleasesInputGateAfterInterfaceTransitionRejection(t *testing.T) {
+	tests := []struct {
+		name       string
+		activeErr  error
+		transition domain.SessionInterfaceTransition
+		wantError  string
+	}{
+		{
+			name:      "transition lookup error",
+			activeErr: errors.New("transition store unavailable"),
+			wantError: "transition store unavailable",
+		},
+		{
+			name: "active transition",
+			transition: domain.SessionInterfaceTransition{
+				ID: "transition-1", SessionID: "mer-1", Phase: domain.SessionInterfaceTransitionDraining,
+			},
+			wantError: ErrInterfaceTransitionInProgress.Error(),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+			agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+			manager, store, _ := newExitedResumeManager(t, runtime, agent)
+			transitionStore := newTransitionStore()
+			transitionStore.projects = store.projects
+			transitionStore.sessions = store.sessions
+			transitionStore.activeErr = tt.activeErr
+			if tt.transition.ID != "" {
+				transitionStore.transitions[tt.transition.ID] = tt.transition
+			}
+			manager.store = transitionStore
+
+			if _, err := manager.ResumeAgentWithMode(ctx, "mer-1"); err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("ResumeAgentWithMode error = %v, want %q", err, tt.wantError)
+			}
+			if manager.SessionMutationInProgress("mer-1") {
+				t.Fatal("interface-transition rejection left input admission closed")
+			}
+		})
+	}
+}
+
 func TestSpawn_RejectsMissingRoleHarness(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
@@ -6407,6 +6451,19 @@ func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 	// Hookless path returns within milliseconds (no 2s+ confirmation wait).
 	if dt := time.Since(start); dt > 250*time.Millisecond {
 		t.Fatalf("Send took %s for a hookless harness; confirmActive should have been skipped", dt)
+	}
+}
+
+func TestSend_RecordsDeliveredUserInput(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code"}
+	m := newSendTestManager(t, fakeAgent{}, &fakeMessenger{}, st)
+
+	if err := m.Send(context.Background(), "s1", "continue with the migration"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if got := st.sessions["s1"].Metadata.LatestUserPrompt; got != "continue with the migration" {
+		t.Fatalf("LatestUserPrompt = %q, want delivered user input", got)
 	}
 }
 

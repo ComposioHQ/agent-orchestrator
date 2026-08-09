@@ -61,14 +61,16 @@ func agentSwitchFixtureWithPrivateFields(id, state string) string {
 	var value map[string]any
 	_ = json.Unmarshal([]byte(agentSwitchFixture(id, state)), &value)
 	value["idempotencyKey"] = "private-key"
-	value["sourceNativeSessionRef"] = "native-source"
-	value["agentHandoff"] = map[string]any{"private": true}
+	value["requestFingerprint"] = "v1:private-fingerprint"
+	value["targetNativeSessionRef"] = "native-target"
 	value["agentHandoffPath"] = "/private/ao/handoff.json"
 	value["agentHandoffHash"] = "private-hash"
+	value["finalHandoffPath"] = "/private/ao/final-handoff.json"
+	value["finalHandoffHash"] = "private-final-hash"
 	value["sourceGenerationId"] = "generation-1"
-	value["errorDetail"] = "private detail"
-	value["reason"] = "manual"
-	value["completedAt"] = "2026-08-04T10:01:00Z"
+	value["targetGenerationId"] = "generation-2"
+	value["targetRuntimeHandleId"] = "private-target-runtime-handle"
+	value["targetAcknowledgedAt"] = "2026-08-04T10:01:00Z"
 	b, _ := json.Marshal(value)
 	return string(b)
 }
@@ -187,17 +189,17 @@ func TestSessionSwitchAgentJSONAndTypedDaemonError(t *testing.T) {
 			t.Fatalf("decode JSON envelope: %v", err)
 		}
 		for _, privateField := range []string{
-			"reason",
-			"completedAt",
 			"idempotencyKey",
-			"sourceNativeSessionRef",
+			"requestFingerprint",
 			"targetNativeSessionRef",
-			"agentHandoff",
 			"agentHandoffPath",
 			"agentHandoffHash",
+			"finalHandoffPath",
+			"finalHandoffHash",
 			"sourceGenerationId",
 			"targetGenerationId",
-			"errorDetail",
+			"targetRuntimeHandleId",
+			"targetAcknowledgedAt",
 		} {
 			if _, ok := envelope["switch"][privateField]; ok {
 				t.Errorf("private field %q leaked in output: %s", privateField, out)
@@ -270,95 +272,84 @@ func TestSessionHelpHidesInternalHandoffCommand(t *testing.T) {
 	}
 }
 
-func TestSessionHandoffSubmitUsesEnvironmentSessionAndEmbedsRawJSON(t *testing.T) {
-	cfg := setConfigEnv(t)
-	t.Setenv("AO_SESSION_ID", "demo-1")
-	handoffPath := filepath.Join(t.TempDir(), "handoff.json")
-	handoff := []byte(`{"summary":"fixed parser","nextSteps":["run tests"],"facts":{"branch":"feature/switch"}}`)
-	if err := os.WriteFile(handoffPath, handoff, 0o600); err != nil {
-		t.Fatalf("write handoff fixture: %v", err)
+func TestSessionHandoffSubmitChoosesSessionAndEmbedsRawJSON(t *testing.T) {
+	tests := []struct {
+		name            string
+		environmentID   string
+		explicitSession bool
+		handoff         []byte
+	}{
+		{
+			name:          "uses environment session",
+			environmentID: "demo-1",
+			handoff:       []byte(`{"summary":"fixed parser","nextSteps":["run tests"],"facts":{"branch":"feature/switch"}}`),
+		},
+		{
+			name:            "explicit session overrides environment",
+			environmentID:   "wrong-session",
+			explicitSession: true,
+			handoff:         []byte(`{"summary":"ready"}`),
+		},
 	}
-	capture := &agentSwitchRequestCapture{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capture.record(r)
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/agent-switches/switch-1/handoff" {
-			_, _ = io.WriteString(w, `{"switch":`+agentSwitchFixture("switch-1", "preparing_handoff")+`}`)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(srv.Close)
-	writeRunFileFor(t, cfg, srv)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := setConfigEnv(t)
+			t.Setenv("AO_SESSION_ID", tt.environmentID)
+			handoffPath := filepath.Join(t.TempDir(), "handoff.json")
+			if err := os.WriteFile(handoffPath, tt.handoff, 0o600); err != nil {
+				t.Fatalf("write handoff fixture: %v", err)
+			}
+			capture := &agentSwitchRequestCapture{}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capture.record(r)
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/agent-switches/switch-1/handoff" {
+					_, _ = io.WriteString(w, `{"switch":`+agentSwitchFixture("switch-1", "preparing_handoff")+`}`)
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			t.Cleanup(srv.Close)
+			writeRunFileFor(t, cfg, srv)
 
-	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
-		"session", "handoff", "submit",
-		"--switch", "switch-1",
-		"--source-generation", "generation-1",
-		"--file", handoffPath,
-	)
-	if err != nil {
-		t.Fatalf("handoff submit failed: %v\nstderr=%s", err, errOut)
-	}
-	method, path, body, count := capture.snapshot()
-	if method != http.MethodPost || path != "/api/v1/sessions/demo-1/agent-switches/switch-1/handoff" || count != 1 {
-		t.Fatalf("request = %s %s (count %d)", method, path, count)
-	}
-	var got submitAgentHandoffRequest
-	if err := json.Unmarshal(body, &got); err != nil {
-		t.Fatalf("decode request: %v; body=%s", err, body)
-	}
-	if got.SourceGenerationID != "generation-1" {
-		t.Errorf("sourceGenerationId = %q", got.SourceGenerationID)
-	}
-	var gotHandoff, wantHandoff any
-	if err := json.Unmarshal(got.Handoff, &gotHandoff); err != nil {
-		t.Fatalf("decode request handoff: %v", err)
-	}
-	if err := json.Unmarshal(handoff, &wantHandoff); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(gotHandoff, wantHandoff) {
-		t.Fatalf("handoff = %#v, want %#v", gotHandoff, wantHandoff)
-	}
-	if !strings.Contains(out, "handoff submitted for switch switch-1 (state: preparing_handoff)") {
-		t.Fatalf("unexpected output: %s", out)
-	}
-}
-
-func TestSessionHandoffSubmitExplicitSessionOverridesEnvironment(t *testing.T) {
-	cfg := setConfigEnv(t)
-	t.Setenv("AO_SESSION_ID", "wrong-session")
-	handoffPath := filepath.Join(t.TempDir(), "handoff.json")
-	if err := os.WriteFile(handoffPath, []byte(`{"summary":"ready"}`), 0o600); err != nil {
-		t.Fatalf("write handoff fixture: %v", err)
-	}
-	capture := &agentSwitchRequestCapture{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capture.record(r)
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/agent-switches/switch-1/handoff" {
-			_, _ = io.WriteString(w, `{"switch":`+agentSwitchFixture("switch-1", "preparing_handoff")+`}`)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(srv.Close)
-	writeRunFileFor(t, cfg, srv)
-
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
-		"session", "handoff", "submit",
-		"--session", "demo-1",
-		"--switch", "switch-1",
-		"--source-generation", "generation-1",
-		"--file", handoffPath,
-	)
-	if err != nil {
-		t.Fatalf("handoff submit failed: %v\nstderr=%s", err, errOut)
-	}
-	_, gotPath, _, count := capture.snapshot()
-	if gotPath != "/api/v1/sessions/demo-1/agent-switches/switch-1/handoff" || count != 1 {
-		t.Fatalf("path = %q (count %d)", gotPath, count)
+			args := []string{"session", "handoff", "submit"}
+			if tt.explicitSession {
+				args = append(args, "--session", "demo-1")
+			}
+			args = append(args,
+				"--switch", "switch-1",
+				"--source-generation", "generation-1",
+				"--file", handoffPath,
+			)
+			out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, args...)
+			if err != nil {
+				t.Fatalf("handoff submit failed: %v\nstderr=%s", err, errOut)
+			}
+			method, path, body, count := capture.snapshot()
+			if method != http.MethodPost || path != "/api/v1/sessions/demo-1/agent-switches/switch-1/handoff" || count != 1 {
+				t.Fatalf("request = %s %s (count %d)", method, path, count)
+			}
+			var got submitAgentHandoffRequest
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatalf("decode request: %v; body=%s", err, body)
+			}
+			if got.SourceGenerationID != "generation-1" {
+				t.Errorf("sourceGenerationId = %q", got.SourceGenerationID)
+			}
+			var gotHandoff, wantHandoff any
+			if err := json.Unmarshal(got.Handoff, &gotHandoff); err != nil {
+				t.Fatalf("decode request handoff: %v", err)
+			}
+			if err := json.Unmarshal(tt.handoff, &wantHandoff); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(gotHandoff, wantHandoff) {
+				t.Fatalf("handoff = %#v, want %#v", gotHandoff, wantHandoff)
+			}
+			if !strings.Contains(out, "handoff submitted for switch switch-1 (state: preparing_handoff)") {
+				t.Fatalf("unexpected output: %s", out)
+			}
+		})
 	}
 }
 

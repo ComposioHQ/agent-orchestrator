@@ -10,32 +10,47 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-func TestMigrateRecognizesAgentSwitchSchemaFromVersions0080And0081(t *testing.T) {
-	db := openAgentSwitchMigrationTestDB(t)
-	upTo(t, db, 79)
-	applyLegacyAgentSwitchMigrations(t, db, "migrations/0080_agent_switching.sql", "migrations/0081_finalized_agent_handoff.sql")
-	assertAgentSwitchMigrationHistoryRepaired(t, db, false)
-}
-
-func TestMigrateRecognizesAgentSwitchSchemaFromVersions0081And0082(t *testing.T) {
-	db := openAgentSwitchMigrationTestDB(t)
-	upTo(t, db, 80)
-	applyLegacyAgentSwitchMigrations(t, db, "migrations/0081_agent_switching.sql", "migrations/0082_finalized_agent_handoff.sql")
-	assertAgentSwitchMigrationHistoryRepaired(t, db, false)
-}
-
-func TestMigrateRecognizesPreConsolidationAgentSwitchSchemaFromVersions0083And0084(t *testing.T) {
-	db := openAgentSwitchMigrationTestDB(t)
-	upTo(t, db, 82)
-	applyLegacyAgentSwitchMigrations(t, db, "migrations/0083_agent_switching.sql", "migrations/0084_finalized_agent_handoff.sql")
-	assertAgentSwitchMigrationHistoryRepaired(t, db, true)
-}
-
-func TestMigrateRepairsPreConsolidationAgentSwitchBaseWithoutFinalHandoffMigration(t *testing.T) {
-	db := openAgentSwitchMigrationTestDB(t)
-	upTo(t, db, 82)
-	applyLegacyAgentSwitchMigrations(t, db, "migrations/0083_agent_switching.sql", "")
-	assertAgentSwitchMigrationHistoryRepaired(t, db, false)
+func TestMigrateRepairsLegacyAgentSwitchSchemas(t *testing.T) {
+	tests := []struct {
+		name           string
+		migrateTo      int64
+		switchPath     string
+		handoffPath    string
+		expectBurned84 bool
+	}{
+		{
+			name:        "versions 0080 and 0081",
+			migrateTo:   79,
+			switchPath:  "migrations/0080_agent_switching.sql",
+			handoffPath: "migrations/0081_finalized_agent_handoff.sql",
+		},
+		{
+			name:        "versions 0081 and 0082",
+			migrateTo:   80,
+			switchPath:  "migrations/0081_agent_switching.sql",
+			handoffPath: "migrations/0082_finalized_agent_handoff.sql",
+		},
+		{
+			name:           "pre-consolidation versions 0083 and 0084",
+			migrateTo:      82,
+			switchPath:     "migrations/0083_agent_switching.sql",
+			handoffPath:    "migrations/0084_finalized_agent_handoff.sql",
+			expectBurned84: true,
+		},
+		{
+			name:       "pre-consolidation base without final handoff migration",
+			migrateTo:  82,
+			switchPath: "migrations/0083_agent_switching.sql",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openAgentSwitchMigrationTestDB(t)
+			upTo(t, db, tt.migrateTo)
+			applyLegacyAgentSwitchMigrations(t, db, tt.switchPath, tt.handoffPath)
+			assertAgentSwitchMigrationHistoryRepaired(t, db, tt.expectBurned84)
+		})
+	}
 }
 
 func openAgentSwitchMigrationTestDB(t *testing.T) *sql.DB {

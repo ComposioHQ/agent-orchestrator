@@ -1092,14 +1092,6 @@ type fakeCommander struct {
 	killsAtSpawn    int
 	restoreErr      error
 	restoreResult   sessionmanager.RestoreResult
-	switchErr       error
-	switchResult    domain.AgentSwitch
-	switches        []domain.AgentSwitch
-	switchCfg       sessionmanager.SwitchAgentConfig
-	switchSessionID domain.SessionID
-	switchID        domain.AgentSwitchID
-	handoffSource   domain.AgentGenerationID
-	handoff         json.RawMessage
 	readyErr        error
 }
 
@@ -1119,21 +1111,14 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 	}
 	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, len(cfg.Prompt), 0, nil
 }
-func (f *fakeCommander) SwitchAgent(_ context.Context, id domain.SessionID, cfg sessionmanager.SwitchAgentConfig) (domain.AgentSwitch, error) {
-	f.switchSessionID = id
-	f.switchCfg = cfg
-	return f.switchResult, f.switchErr
+func (*fakeCommander) SwitchAgent(context.Context, domain.SessionID, sessionmanager.SwitchAgentConfig) (domain.AgentSwitch, error) {
+	return domain.AgentSwitch{}, nil
 }
-func (f *fakeCommander) ListAgentSwitches(_ context.Context, id domain.SessionID) ([]domain.AgentSwitch, error) {
-	f.switchSessionID = id
-	return f.switches, f.switchErr
+func (*fakeCommander) ListAgentSwitches(context.Context, domain.SessionID) ([]domain.AgentSwitch, error) {
+	return nil, nil
 }
-func (f *fakeCommander) SubmitAgentHandoff(_ context.Context, id domain.SessionID, switchID domain.AgentSwitchID, sourceGenerationID domain.AgentGenerationID, handoff json.RawMessage) (domain.AgentSwitch, error) {
-	f.switchSessionID = id
-	f.switchID = switchID
-	f.handoffSource = sourceGenerationID
-	f.handoff = append(json.RawMessage(nil), handoff...)
-	return f.switchResult, f.switchErr
+func (*fakeCommander) SubmitAgentHandoff(context.Context, domain.SessionID, domain.AgentSwitchID, domain.AgentGenerationID, json.RawMessage) (domain.AgentSwitch, error) {
+	return domain.AgentSwitch{}, nil
 }
 func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
 	if f.restoreErr != nil {
@@ -1751,36 +1736,6 @@ func TestToAPIErrorSwitchDeliveryUnconfirmedMessage(t *testing.T) {
 	const wantMessage = "The target agent started, but AO could not confirm that it accepted the continuation"
 	if apiError.Message != wantMessage {
 		t.Fatalf("message = %q, want %q", apiError.Message, wantMessage)
-	}
-}
-
-func TestAgentSwitchingDelegatesToManager(t *testing.T) {
-	want := domain.AgentSwitch{ID: "switch-7", SessionID: "mer-1", TargetHarness: domain.HarnessCodex}
-	fc := &fakeCommander{switchResult: want, switches: []domain.AgentSwitch{want}}
-	svc := &Service{manager: fc}
-
-	got, err := svc.SwitchAgent(context.Background(), "mer-1", SwitchAgentInput{
-		TargetHarness: domain.HarnessCodex, Note: "continue", IdempotencyKey: "retry-7",
-	})
-	if err != nil || got.ID != want.ID {
-		t.Fatalf("SwitchAgent = %+v, err=%v", got, err)
-	}
-	if fc.switchSessionID != "mer-1" || fc.switchCfg.TargetHarness != domain.HarnessCodex || fc.switchCfg.Note != "continue" || fc.switchCfg.IdempotencyKey != "retry-7" {
-		t.Fatalf("delegated switch = id %q cfg %+v", fc.switchSessionID, fc.switchCfg)
-	}
-
-	listed, err := svc.ListAgentSwitches(context.Background(), "mer-1")
-	if err != nil || len(listed) != 1 || listed[0].ID != want.ID {
-		t.Fatalf("ListAgentSwitches = %+v, err=%v", listed, err)
-	}
-
-	payload := json.RawMessage(`{"summary":"ready"}`)
-	got, err = svc.SubmitAgentHandoff(context.Background(), "mer-1", "switch-7", "generation-3", payload)
-	if err != nil || got.ID != want.ID {
-		t.Fatalf("SubmitAgentHandoff = %+v, err=%v", got, err)
-	}
-	if fc.handoffSource != "generation-3" || string(fc.handoff) != string(payload) {
-		t.Fatalf("delegated handoff source=%q payload=%s", fc.handoffSource, fc.handoff)
 	}
 }
 

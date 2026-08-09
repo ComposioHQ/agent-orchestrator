@@ -574,11 +574,7 @@ func (m *Manager) readVerifiedAgentHandoffForDelivery(ctx context.Context, sw do
 	if ctx.Err() != nil {
 		return nil, false
 	}
-	if sw.AgentHandoffStatus != domain.AgentHandoffReceived || len(sw.AgentHandoffHash) != sha256.Size*2 {
-		return nil, false
-	}
-	decoded, err := hex.DecodeString(sw.AgentHandoffHash)
-	if err != nil || len(decoded) != sha256.Size || sw.AgentHandoffHash != strings.ToLower(sw.AgentHandoffHash) {
+	if sw.AgentHandoffStatus != domain.AgentHandoffReceived || !validContentHash(sw.AgentHandoffHash) {
 		return nil, false
 	}
 	dir, err := m.handoffDirectory(sw.SessionID, string(sw.ID))

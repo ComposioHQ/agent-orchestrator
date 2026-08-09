@@ -259,7 +259,7 @@ func (f *fakeSessionService) SwitchAgent(_ context.Context, id domain.SessionID,
 	now := time.Now().UTC()
 	targetRef := domain.AgentNativeSessionID("native-target")
 	record := domain.AgentSwitch{
-		ID: "switch-1", SessionID: id, IdempotencyKey: "private-retry-key",
+		ID: "switch-1", SessionID: id, IdempotencyKey: "private-retry-key", RequestFingerprint: "v1:private-fingerprint",
 		FromHarness: domain.HarnessClaudeCode, TargetHarness: cfg.TargetHarness,
 		TargetNativeSessionRef: &targetRef,
 		TargetStartMode:        domain.AgentSwitchTargetStartFresh, State: domain.AgentSwitchCompleted,
@@ -269,6 +269,7 @@ func (f *fakeSessionService) SwitchAgent(_ context.Context, id domain.SessionID,
 		FinalHandoffPath: "/private/ao/handoff.json", FinalHandoffHash: "private-hash",
 		SourceGenerationID: "private-source-generation", TargetGenerationID: "private-target-generation",
 		TargetRuntimeHandleID:  "private-target-runtime-handle",
+		TargetAcknowledgedAt:   &now,
 		ErrorCode:              domain.AgentSwitchErrorTargetStartUnconfirmed,
 		SourceTranscriptStatus: domain.AgentSwitchSourceTranscriptUnavailable,
 		RequestedAt:            now, UpdatedAt: now,
@@ -547,18 +548,17 @@ func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
 func assertAgentSwitchResponseRedacted(t *testing.T, body []byte) {
 	t.Helper()
 	privateFields := []string{
-		"reason",
-		"completedAt",
 		"idempotencyKey",
-		"sourceNativeSessionRef",
+		"requestFingerprint",
 		"targetNativeSessionRef",
-		"agentHandoff",
 		"agentHandoffPath",
 		"agentHandoffHash",
+		"finalHandoffPath",
+		"finalHandoffHash",
 		"sourceGenerationId",
 		"targetGenerationId",
 		"targetRuntimeHandleId",
-		"errorDetail",
+		"targetAcknowledgedAt",
 	}
 	for _, field := range privateFields {
 		if strings.Contains(string(body), `"`+field+`"`) {

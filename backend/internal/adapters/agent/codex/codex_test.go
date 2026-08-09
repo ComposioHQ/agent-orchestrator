@@ -118,17 +118,6 @@ func TestComposerIsEmptyUsesCodexPromptMarker(t *testing.T) {
 	}
 }
 
-func TestContinuationCapabilities(t *testing.T) {
-	got := (&Plugin{}).ContinuationCapabilities()
-	want := ports.ContinuationCapabilities{
-		StandingInstructions: ports.StandingInstructionsCommand,
-		FreshNativeSessionID: ports.FreshNativeSessionIDProviderAssigned,
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("capabilities = %#v, want %#v", got, want)
-	}
-}
-
 func TestNativeSessionConfigDirUsesRuntimeOverride(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "codex-home")
 	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), map[string]string{

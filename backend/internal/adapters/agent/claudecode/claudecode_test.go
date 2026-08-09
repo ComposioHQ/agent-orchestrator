@@ -248,17 +248,6 @@ func TestGetLaunchCommandRejectsInvalidRequestedNativeSessionID(t *testing.T) {
 	}
 }
 
-func TestContinuationCapabilities(t *testing.T) {
-	got := (&Plugin{}).ContinuationCapabilities()
-	want := ports.ContinuationCapabilities{
-		StandingInstructions: ports.StandingInstructionsCommand,
-		FreshNativeSessionID: ports.FreshNativeSessionIDCallerAssigned,
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("capabilities = %#v, want %#v", got, want)
-	}
-}
-
 func TestNewNativeSessionIDReturnsDistinctClaudeUUIDs(t *testing.T) {
 	p := &Plugin{}
 	first := p.NewNativeSessionID()

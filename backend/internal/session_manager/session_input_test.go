@@ -3,29 +3,17 @@ package sessionmanager
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// SessionInputAllowed is a test-only snapshot helper. Production writes must
-// acquire a lease instead of authorizing input from this racy observation.
-func (m *Manager) SessionInputAllowed(sessionID string) bool {
-	id := domain.SessionID(strings.TrimSpace(sessionID))
-	m.agentOpMu.Lock()
-	defer m.agentOpMu.Unlock()
-	return !m.agentOperationActiveLocked(id)
-}
-
 func newInputLeaseTestManager() *Manager {
 	return &Manager{
-		resuming:            make(map[domain.SessionID]struct{}),
-		switching:           make(map[domain.SessionID]struct{}),
+		agentOperations:     make(map[domain.SessionID]agentOperationKind),
 		switchDecisionInput: make(map[domain.SessionID]domain.AgentSwitchID),
 		retainedSwitches:    make(map[domain.SessionID]struct{}),
-		mutating:            make(map[domain.SessionID]agentOperationKind),
 		inputLeases:         make(map[domain.SessionID]int),
 		inputDrained:        make(map[domain.SessionID]chan struct{}),
 	}

@@ -1,6 +1,6 @@
 import { ArrowLeftRight, FileWarning, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	createSwitchAgentIdempotencyKey,
@@ -87,8 +87,6 @@ export function SwitchAgentDialog({
 	const defaultTargetHarness: SwitchAgentHarness = session.provider === "claude-code" ? "codex" : "claude-code";
 	const [targetHarness, setTargetHarness] = useState<SwitchAgentHarness>(defaultTargetHarness);
 	const [note, setNote] = useState("");
-	const [idempotencyKey, setIdempotencyKey] = useState(createSwitchAgentIdempotencyKey);
-	const submittedRef = useRef(false);
 	const switchAgent = useSwitchAgent();
 	const switchMutation = useSwitchAgentState(session.id);
 	const switchesQuery = useAgentSwitches(session.id);
@@ -103,22 +101,23 @@ export function SwitchAgentDialog({
 	const checkingStatus = switchesQuery.isPending;
 	const switchBlocked = Boolean(recoverySwitch || switchInProgress || checkingStatus);
 
-	const resetAttemptAfterEdit = () => {
-		if (!submittedRef.current && !switchMutation.error) return;
-		submittedRef.current = false;
-		setIdempotencyKey(createSwitchAgentIdempotencyKey());
+	const clearFailedAttempt = () => {
+		if (!switchMutation.error) return;
 		clearSwitchAgentState(queryClient, session.id);
-		switchAgent.reset();
 	};
 
 	const submit = () => {
-		if (switchAgent.isPending || switchMutation.isPending || checkingStatus || activeSwitch || recoverySwitch) return;
-		submittedRef.current = true;
-		switchAgent.mutate({ session, targetHarness, note, idempotencyKey });
+		if (switchMutation.isPending || checkingStatus || activeSwitch || recoverySwitch) return;
+		switchAgent.mutate({
+			session,
+			targetHarness,
+			note,
+			idempotencyKey: createSwitchAgentIdempotencyKey(),
+		});
 		onOpenChange(false);
 	};
 
-	const error = switchAgent.error instanceof Error ? switchAgent.error.message : switchMutation.error;
+	const error = switchMutation.error;
 	const historyError = switchesQuery.error instanceof Error ? switchesQuery.error.message : null;
 	const stateLabel = (agentSwitch: AgentSwitch) => {
 		if (agentSwitch.state === "failed") {
@@ -202,10 +201,9 @@ export function SwitchAgentDialog({
 										{t("switchAgent.targetLabel")}
 									</label>
 									<Select
-										disabled={switchInProgress}
 										onValueChange={(value) => {
 											if (!canSwitchAgentHarness(value) || value === session.provider) return;
-											resetAttemptAfterEdit();
+											clearFailedAttempt();
 											setTargetHarness(value);
 										}}
 										value={targetHarness}
@@ -261,10 +259,9 @@ export function SwitchAgentDialog({
 									<textarea
 										id={noteId}
 										className="settings-field-control min-h-(--size-textarea-min) resize-y py-2.5"
-										disabled={switchInProgress}
 										maxLength={4096}
 										onChange={(event) => {
-											resetAttemptAfterEdit();
+											clearFailedAttempt();
 											setNote(event.target.value);
 										}}
 										placeholder={t("switchAgent.notePlaceholder")}
@@ -324,15 +321,10 @@ export function SwitchAgentDialog({
 						{!switchBlocked ? (
 							<button
 								className="settings-footer-button settings-footer-button-primary"
-								disabled={switchAgent.isPending}
 								type="submit"
 							>
-								{switchAgent.isPending ? (
-									<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
-								) : (
-									<ArrowLeftRight className="size-icon-sm" aria-hidden="true" />
-								)}
-								{switchAgent.isPending ? t("switchAgent.switching") : t("switchAgent.confirm")}
+								<ArrowLeftRight className="size-icon-sm" aria-hidden="true" />
+								{t("switchAgent.confirm")}
 							</button>
 						) : null}
 					</div>

@@ -120,7 +120,9 @@ func (s *Store) UpdateAgentNativeSession(ctx context.Context, rec domain.AgentNa
 // for a session that already has a non-terminal saga returns the active record
 // together with ErrAgentSwitchInProgress.
 func (s *Store) CreateAgentSwitch(ctx context.Context, rec domain.AgentSwitch) (domain.AgentSwitch, bool, error) {
-	rec.SourceTranscriptStatus = normalizeSourceTranscriptStatus(rec.SourceTranscriptStatus)
+	if rec.SourceTranscriptStatus == "" {
+		rec.SourceTranscriptStatus = domain.AgentSwitchSourceTranscriptNotAttempted
+	}
 	if err := validateAgentSwitch(rec, true); err != nil {
 		return domain.AgentSwitch{}, false, err
 	}
@@ -140,7 +142,8 @@ func (s *Store) CreateAgentSwitch(ctx context.Context, rec domain.AgentSwitch) (
 	})
 	if err == nil {
 		existing := agentSwitchFromGen(row)
-		if sameAgentSwitchRequest(existing, rec) {
+		if existing.SessionID == rec.SessionID && existing.IdempotencyKey == rec.IdempotencyKey &&
+			existing.RequestFingerprint == rec.RequestFingerprint {
 			return existing, false, nil
 		}
 		return existing, false, fmt.Errorf("create agent switch %s: %w", rec.ID, domain.ErrAgentSwitchIdempotencyConflict)
@@ -487,7 +490,7 @@ func (s *Store) ActivateAgentSwitchTarget(ctx context.Context, activation domain
 		sw.FromHarness != activation.SourceHarness || sw.TargetHarness != activation.TargetHarness ||
 		sw.SourceGenerationID != activation.SourceGenerationID || sw.TargetGenerationID != activation.TargetGenerationID ||
 		(sw.TargetRuntimeHandleID != "" && sw.TargetRuntimeHandleID != activation.RuntimeHandleID) ||
-		!equalNativeSessionID(sw.TargetNativeSessionRef, nativeSessionIDPtrForStore(activation.TargetNativeSessionRef)) ||
+		sw.TargetNativeSessionRef == nil || *sw.TargetNativeSessionRef != activation.TargetNativeSessionRef ||
 		sw.TargetAcknowledgedAt != nil {
 		return false, nil
 	}
@@ -598,8 +601,10 @@ func validateAgentSwitch(rec domain.AgentSwitch, create bool) error {
 	if err := validateAgentHandoffReference(rec.AgentHandoffStatus, rec.AgentHandoffPath, rec.AgentHandoffHash); err != nil {
 		return fmt.Errorf("agent switch %s: %w", rec.ID, err)
 	}
-	if err := validateFinalHandoffReferenceOptional(rec.FinalHandoffPath, rec.FinalHandoffHash); err != nil {
-		return fmt.Errorf("agent switch %s: %w", rec.ID, err)
+	if rec.FinalHandoffPath != "" || rec.FinalHandoffHash != "" {
+		if err := validateFinalHandoffReference(rec.FinalHandoffPath, rec.FinalHandoffHash); err != nil {
+			return fmt.Errorf("agent switch %s: %w", rec.ID, err)
+		}
 	}
 	if rec.SemanticHandoffIncluded &&
 		(rec.AgentHandoffStatus != domain.AgentHandoffReceived || rec.FinalHandoffPath == "" ||
@@ -681,13 +686,6 @@ func validateFinalHandoffReference(path, hash string) error {
 	return nil
 }
 
-func validateFinalHandoffReferenceOptional(path, hash string) error {
-	if path == "" && hash == "" {
-		return nil
-	}
-	return validateFinalHandoffReference(path, hash)
-}
-
 func validSHA256Hex(value string) bool {
 	if len(value) != 64 {
 		return false
@@ -737,7 +735,7 @@ func agentSwitchToInsert(rec domain.AgentSwitch) gen.InsertAgentSwitchParams {
 		SemanticHandoffIncluded: rec.SemanticHandoffIncluded,
 		AgentHandoffPath:        rec.AgentHandoffPath,
 		AgentHandoffHash:        rec.AgentHandoffHash,
-		SourceTranscriptStatus:  normalizeSourceTranscriptStatus(rec.SourceTranscriptStatus),
+		SourceTranscriptStatus:  rec.SourceTranscriptStatus,
 		FinalHandoffPath:        rec.FinalHandoffPath,
 		FinalHandoffHash:        rec.FinalHandoffHash,
 		SourceGenerationID:      rec.SourceGenerationID,
@@ -772,18 +770,6 @@ func agentSwitchFromGen(row gen.AgentSwitch) domain.AgentSwitch {
 	}
 }
 
-func normalizeSourceTranscriptStatus(status domain.AgentSwitchSourceTranscriptStatus) domain.AgentSwitchSourceTranscriptStatus {
-	if status == "" {
-		return domain.AgentSwitchSourceTranscriptNotAttempted
-	}
-	return status
-}
-
-func sameAgentSwitchRequest(a, b domain.AgentSwitch) bool {
-	return a.SessionID == b.SessionID && a.IdempotencyKey == b.IdempotencyKey &&
-		a.RequestFingerprint == b.RequestFingerprint
-}
-
 func ensureNativeSessionRefBelongsTo(ctx context.Context, q *gen.Queries, sessionID domain.SessionID, harness domain.AgentHarness, ref *domain.AgentNativeSessionID, role string) error {
 	if ref == nil {
 		return nil
@@ -802,18 +788,6 @@ func ensureNativeSessionRefBelongsTo(ctx context.Context, q *gen.Queries, sessio
 		return fmt.Errorf("%s native session %s belongs to harness %s, not %s", role, *ref, row.Harness, harness)
 	}
 	return nil
-}
-
-func equalNativeSessionID(a, b *domain.AgentNativeSessionID) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
-func nativeSessionIDPtrForStore(id domain.AgentNativeSessionID) *domain.AgentNativeSessionID {
-	copyID := id
-	return &copyID
 }
 
 func cloneNativeSessionID(id *domain.AgentNativeSessionID) *domain.AgentNativeSessionID {

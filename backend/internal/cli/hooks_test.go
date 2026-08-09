@@ -348,8 +348,6 @@ func TestHookConversationFactsExcludesAOCoordinationUserTurns(t *testing.T) {
 	for _, prompt := range []string{
 		"<ao-handoff-request>\nprepare context",
 		"<ao-handoff-request switch-id=\"switch-1\">\nprepare context",
-		"<ao-continuation>\ncontinue the session",
-		"<ao-continuation switch-id=\"switch-1\">\ncontinue the session",
 		"AO transferred the previous agent's context in hidden system instructions. Continue the unfinished action.",
 	} {
 		got := hookConversationFacts([]byte(`{"prompt":` + mustJSONString(t, prompt) + `,"lastAssistantMessage":"ok"}`))
@@ -364,6 +362,27 @@ func TestHookConversationFactsExcludesAOCoordinationUserTurns(t *testing.T) {
 			t.Fatalf("assistant update = %q, want %q", got.LatestAssistantUpdate, wantAssistant)
 		}
 	}
+}
+
+func TestHookMetadataAndConversationFactsTolerateMalformedOtherProjection(t *testing.T) {
+	t.Run("malformed usage retains conversation", func(t *testing.T) {
+		payload := []byte(`{"prompt":"continue investigating","lastAssistantMessage":"updated","transcriptPath":"/tmp/conversation.jsonl","model":false}`)
+		conversation := hookConversationFacts(payload)
+		if conversation.LatestUserPrompt != "continue investigating" || conversation.LatestAssistantUpdate != "updated" || conversation.TranscriptPath != "/tmp/conversation.jsonl" {
+			t.Fatalf("conversation = %+v", conversation)
+		}
+		if usage := hookUsageMetadata("claude-code", payload); usage != nil {
+			t.Fatalf("usage = %+v, want nil", usage)
+		}
+	})
+
+	t.Run("malformed conversation retains usage", func(t *testing.T) {
+		payload := []byte(`{"prompt":false,"transcript_path":"/tmp/usage.jsonl","model":"claude-sonnet","agent_id":"sub-1"}`)
+		usage := hookUsageMetadata("claude-code", payload)
+		if usage == nil || usage.TranscriptPath != "/tmp/usage.jsonl" || usage.ModelID != "claude-sonnet" || usage.SubagentID != "sub-1" {
+			t.Fatalf("usage = %+v", usage)
+		}
+	})
 }
 
 func mustJSONString(t *testing.T, value string) string {

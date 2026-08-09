@@ -31,7 +31,6 @@ var (
 // stable AO session.
 func (p *Plugin) ContinuationCapabilities() ports.ContinuationCapabilities {
 	return ports.ContinuationCapabilities{
-		StandingInstructions: ports.StandingInstructionsCommand,
 		FreshNativeSessionID: ports.FreshNativeSessionIDCallerAssigned,
 	}
 }

@@ -346,7 +346,9 @@ type switchTestAgent struct {
 	cleanupCalls        int
 	composerEmpty       func(string) bool
 	nativeIDCounter     int
+	freshNativeIDMode   ports.FreshNativeSessionIDMode
 	launchPrompt        string
+	launchNativeID      string
 	restorePrompt       string
 	launchSystemPrompt  string
 	restoreSystemPrompt string
@@ -394,7 +396,11 @@ func (*switchNudgeSafeAgent) EmitsSubmitActivity() bool  { return true }
 func (*switchNudgeSafeAgent) EmitsBlockedActivity() bool { return true }
 
 func (a *switchTestAgent) ContinuationCapabilities() ports.ContinuationCapabilities {
-	return ports.ContinuationCapabilities{StandingInstructions: ports.StandingInstructionsCommand, FreshNativeSessionID: ports.FreshNativeSessionIDCallerAssigned}
+	mode := a.freshNativeIDMode
+	if mode == "" {
+		mode = ports.FreshNativeSessionIDCallerAssigned
+	}
+	return ports.ContinuationCapabilities{FreshNativeSessionID: mode}
 }
 
 func (a *switchTestAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
@@ -453,6 +459,7 @@ func (a *switchTestAgent) LocateTranscript(_ context.Context, ref ports.NativeSe
 
 func (a *switchTestAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
 	a.launchPrompt = cfg.Prompt
+	a.launchNativeID = cfg.NativeSessionID
 	a.launchSystemPrompt = cfg.SystemPrompt
 	a.launchSystemFile = cfg.SystemPromptFile
 	return []string{"agent", "fresh", cfg.Prompt}, nil
@@ -544,21 +551,7 @@ func newSwitchTestManager(t *testing.T, runtime runtimeController) (*Manager, *s
 			}
 		},
 	}
-	messenger.onSend = func(id domain.SessionID, message string) {
-		ackSwitchContinuation(store, id, message)
-	}
 	return manager, store, messenger
-}
-
-func ackSwitchContinuation(store *switchTestStore, id domain.SessionID, message string) {
-	if !strings.HasPrefix(strings.TrimSpace(message), "<ao-continuation") {
-		return
-	}
-	sw, ok, err := store.GetActiveAgentSwitch(context.Background(), id)
-	if err != nil || !ok {
-		return
-	}
-	_, _ = store.AcknowledgeAgentSwitchTarget(context.Background(), sw.ID, id, sw.TargetGenerationID, time.Now().UTC())
 }
 
 func TestBuildSourceHandoffRequestUsesCurrentNativeSessionContext(t *testing.T) {
@@ -595,11 +588,6 @@ func TestBuildSourceHandoffRequestUsesCurrentNativeSessionContext(t *testing.T) 
 	} {
 		if !strings.Contains(request, want) {
 			t.Fatalf("source handoff request missing %q:\n%s", want, request)
-		}
-	}
-	for _, unwanted := range []string{"prepared.md", "prepared.json", "Read the deterministic context"} {
-		if strings.Contains(request, unwanted) {
-			t.Fatalf("source handoff request unexpectedly references %q:\n%s", unwanted, request)
 		}
 	}
 }
@@ -1094,7 +1082,7 @@ func TestSwitchAgentFreshPreservesAOIdentityAndDeliversArtifact(t *testing.T) {
 		}
 	}
 	runtime.onRestart = func() {
-		if manager.SessionInputAllowed("proj-1") {
+		if !manager.SessionMutationInProgress("proj-1") {
 			t.Error("session input was open while the runtime owner was being replaced")
 		}
 	}
@@ -1167,7 +1155,7 @@ func TestSwitchAgentFreshPreservesAOIdentityAndDeliversArtifact(t *testing.T) {
 	if sw.FinalHandoffPath == "" || sw.FinalHandoffHash == "" {
 		t.Fatalf("finalized handoff was not retained: %+v", sw)
 	}
-	for _, obsolete := range []string{"prepared.md", "prepared.json", "handoff.md", "agent-handoff.json", "agent-handoff-candidate.json"} {
+	for _, obsolete := range []string{"agent-handoff.json", "agent-handoff-candidate.json"} {
 		if _, statErr := os.Stat(filepath.Join(handoffDir, obsolete)); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("unexpected retained handoff file %s: %v", obsolete, statErr)
 		}
@@ -1211,8 +1199,10 @@ func TestSwitchAgentBindsHiddenContinuationBeforeReleasingLaunchHooks(t *testing
 	if target.launchPrompt != aoTargetActivationPrompt {
 		t.Fatalf("visible target prompt = %q, want activation only", target.launchPrompt)
 	}
-	if got := countSwitchContinuations(messenger.msgs); got != 0 {
-		t.Fatalf("in-command continuation was also pasted into the TUI %d times: %#v", got, messenger.msgs)
+	for _, message := range messenger.msgs {
+		if strings.HasPrefix(strings.TrimSpace(message), "<ao-continuation") {
+			t.Fatalf("in-command continuation was also pasted into the TUI: %#v", messenger.msgs)
+		}
 	}
 }
 
@@ -1283,7 +1273,7 @@ func TestSwitchAgentRetainsSwitchWhenCreateReturnsNoHandle(t *testing.T) {
 	if got := store.sessions["proj-1"].Harness; got != domain.HarnessClaudeCode {
 		t.Fatalf("session harness = %q, want source harness while target ownership is inconclusive", got)
 	}
-	if manager.SessionInputAllowed("proj-1") {
+	if !manager.SessionMutationInProgress("proj-1") {
 		t.Fatal("ambiguous target Create result reopened the switch input gate")
 	}
 }
@@ -1357,16 +1347,6 @@ func TestSwitchAgentTranscriptReadFailureUsesSingleTerminalFallback(t *testing.T
 	}
 }
 
-func countSwitchContinuations(messages []string) int {
-	count := 0
-	for _, message := range messages {
-		if strings.HasPrefix(strings.TrimSpace(message), "<ao-continuation") {
-			count++
-		}
-	}
-	return count
-}
-
 func TestSwitchAgentResumesVerifiedPriorNativeSession(t *testing.T) {
 	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
 	manager, store, _ := newSwitchTestManager(t, runtime)
@@ -1411,6 +1391,26 @@ func TestSwitchAgentUnknownResumeEvidenceStartsFresh(t *testing.T) {
 	}
 	if sw.TargetStartMode != domain.AgentSwitchTargetStartFresh || !strings.Contains(strings.Join(runtime.lastCfg.Argv, " "), "-- agent fresh ") || !strings.Contains(target.launchSystemPrompt, "<ao-continuation") || target.launchPrompt != aoTargetActivationPrompt {
 		t.Fatalf("unknown evidence should start fresh: mode=%q argv=%q", sw.TargetStartMode, strings.Join(runtime.lastCfg.Argv, " "))
+	}
+}
+
+func TestSwitchAgentLeavesFreshProviderAssignedNativeIDForTarget(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
+	target.freshNativeIDMode = ports.FreshNativeSessionIDProviderAssigned
+	rec := store.sessions["proj-1"]
+	project := store.projects[string(rec.ProjectID)]
+	caps, err := validateContinuationAgent(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := manager.prepareTargetActivation(context.Background(), store, rec, project, target, caps, domain.AgentSwitch{TargetHarness: domain.HarnessCodex}); err != nil {
+		t.Fatal(err)
+	}
+	if target.launchNativeID != "" {
+		t.Fatalf("fresh provider-assigned launch received native id %q", target.launchNativeID)
 	}
 }
 
@@ -1460,15 +1460,8 @@ func TestSwitchAgentIncludesAvailableSourceAuthoredHandoff(t *testing.T) {
 	store.sessions["proj-1"] = rec
 	manager.handoffWait = time.Second
 	messenger.onSend = func(_ domain.SessionID, message string) {
-		if strings.HasPrefix(strings.TrimSpace(message), "<ao-continuation") {
-			ackSwitchContinuation(store, "proj-1", message)
-			return
-		}
 		if !strings.HasPrefix(strings.TrimSpace(message), "<ao-handoff-request") {
 			return
-		}
-		if strings.Contains(message, "prepared.md") || strings.Contains(message, "prepared.json") || strings.Contains(message, "Read the deterministic context") {
-			t.Errorf("source request depends on prepared artifact:\n%s", message)
 		}
 		if !strings.Contains(message, "context already present in your current native conversation") || !strings.Contains(message, "comprehensive semantic handoff") {
 			t.Errorf("source request does not ask for its own session summary:\n%s", message)
@@ -1523,7 +1516,7 @@ func TestSwitchAgentIncludesAvailableSourceAuthoredHandoff(t *testing.T) {
 	if strings.Contains(target.launchSystemPrompt, "ao-source-transcript-tail") || target.launchPrompt != aoTargetActivationPrompt {
 		t.Fatalf("semantic continuation used a transcript fallback or leaked visibly: system=%s prompt=%q", target.launchSystemPrompt, target.launchPrompt)
 	}
-	for _, obsolete := range []string{"prepared.md", "prepared.json", "handoff.md", "agent-handoff.json", "agent-handoff-candidate.json"} {
+	for _, obsolete := range []string{"agent-handoff.json", "agent-handoff-candidate.json"} {
 		if _, statErr := os.Stat(filepath.Join(filepath.Dir(sw.AgentHandoffPath), obsolete)); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("unexpected retained handoff file %s: %v", obsolete, statErr)
 		}
@@ -1559,8 +1552,6 @@ func TestSwitchAgentRetriesSwallowedSourceHandoffEnterOnlyForSafeHarness(t *test
 			if err != nil {
 				t.Errorf("submit handoff after Enter nudge: %v", err)
 			}
-		case strings.HasPrefix(strings.TrimSpace(message), "<ao-continuation"):
-			ackSwitchContinuation(store, id, message)
 		}
 	}
 
@@ -1757,7 +1748,7 @@ func TestSwitchAgentGatesSendDuringReplacement(t *testing.T) {
 		done <- err
 	}()
 	<-runtime.entered
-	if manager.SessionInputAllowed("proj-1") {
+	if !manager.SessionMutationInProgress("proj-1") {
 		t.Fatal("terminal input gate opened during replacement")
 	}
 	if err := manager.Send(context.Background(), "proj-1", "do not race"); !errors.Is(err, ErrSwitchInProgress) {
@@ -1767,7 +1758,7 @@ func TestSwitchAgentGatesSendDuringReplacement(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if !manager.SessionInputAllowed("proj-1") {
+	if manager.SessionMutationInProgress("proj-1") {
 		t.Fatal("terminal input gate remained closed after switch")
 	}
 }
@@ -1780,14 +1771,13 @@ func TestSwitchAgentUsesSeparatePermissionDecisionWindow(t *testing.T) {
 	rec := store.sessions["proj-1"]
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now().UTC()}
 	store.sessions[rec.ID] = rec
-	messenger.onSend = func(id domain.SessionID, message string) {
+	messenger.onSend = func(_ domain.SessionID, message string) {
 		if strings.HasPrefix(strings.TrimSpace(message), "<ao-handoff-request") {
 			current := store.sessions[rec.ID]
 			current.Activity = domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: time.Now().UTC()}
 			store.sessions[rec.ID] = current
 			return
 		}
-		ackSwitchContinuation(store, id, message)
 	}
 
 	done := make(chan error, 1)
@@ -1838,14 +1828,13 @@ func TestSwitchAgentPermissionDecisionTimeoutUsesFallback(t *testing.T) {
 	rec := store.sessions["proj-1"]
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now().UTC()}
 	store.sessions[rec.ID] = rec
-	messenger.onSend = func(id domain.SessionID, message string) {
+	messenger.onSend = func(_ domain.SessionID, message string) {
 		if strings.HasPrefix(strings.TrimSpace(message), "<ao-handoff-request") {
 			current := store.sessions[rec.ID]
 			current.Activity = domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: time.Now().UTC()}
 			store.sessions[rec.ID] = current
 			return
 		}
-		ackSwitchContinuation(store, id, message)
 	}
 
 	started := time.Now()
@@ -2066,7 +2055,7 @@ func TestSwitchAgentDoesNotStartTargetWhenSourceStopIsUnconfirmed(t *testing.T) 
 	if got := store.sessions["proj-1"].Harness; got != domain.HarnessClaudeCode {
 		t.Fatalf("durable owner = %q, want source", got)
 	}
-	if manager.SessionInputAllowed("proj-1") {
+	if !manager.SessionMutationInProgress("proj-1") {
 		t.Fatal("input gate reopened while source teardown remained unconfirmed")
 	}
 }
@@ -2143,15 +2132,15 @@ func TestSwitchAgentRetainsGateWhenFailureCannotBePersisted(t *testing.T) {
 	if !errors.Is(err, ErrTargetAgentUnauthorized) {
 		t.Fatalf("switch error = %v, want target auth error", err)
 	}
-	if sw.State.Terminal() || manager.SessionInputAllowed("proj-1") {
-		t.Fatalf("unsettled failure released its gate: switch=%+v inputAllowed=%v", sw, manager.SessionInputAllowed("proj-1"))
+	if sw.State.Terminal() || !manager.SessionMutationInProgress("proj-1") {
+		t.Fatalf("unsettled failure released its gate: switch=%+v inputAllowed=%v", sw, !manager.SessionMutationInProgress("proj-1"))
 	}
 
 	store.failTransitionErr = nil
 	if err := manager.ReconcileAgentSwitches(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !manager.SessionInputAllowed("proj-1") {
+	if manager.SessionMutationInProgress("proj-1") {
 		t.Fatal("successful retry did not release retained switch gate")
 	}
 }
@@ -2175,15 +2164,15 @@ func TestSwitchAgentRetainsGateWhenSourceStopCommitIsUnknown(t *testing.T) {
 	sw, err := manager.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "unknown-source-stop-commit",
 	})
-	if err == nil || sw.State != domain.AgentSwitchStoppingSource || manager.SessionInputAllowed("proj-1") {
-		t.Fatalf("unknown source-stop outcome was exposed: switch=%+v err=%v inputAllowed=%v", sw, err, manager.SessionInputAllowed("proj-1"))
+	if err == nil || sw.State != domain.AgentSwitchStoppingSource || !manager.SessionMutationInProgress("proj-1") {
+		t.Fatalf("unknown source-stop outcome was exposed: switch=%+v err=%v inputAllowed=%v", sw, err, !manager.SessionMutationInProgress("proj-1"))
 	}
 
 	store.confirmErr = nil
 	if err := manager.ReconcileAgentSwitches(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !manager.SessionInputAllowed("proj-1") {
+	if manager.SessionMutationInProgress("proj-1") {
 		t.Fatal("resolved source-stop recovery left input gated")
 	}
 }
@@ -2207,7 +2196,7 @@ func TestSwitchAgentRetainedProbeAndCleanupFailureRecoversUsingOpaqueHandle(t *t
 	if sw.State != domain.AgentSwitchStartingTarget || sw.TargetRuntimeHandleID != "h1" {
 		t.Fatalf("retained switch = state %q handle %q, want starting_target on h1", sw.State, sw.TargetRuntimeHandleID)
 	}
-	if manager.SessionInputAllowed("proj-1") {
+	if !manager.SessionMutationInProgress("proj-1") {
 		t.Fatal("ambiguous target ownership released the input gate")
 	}
 	if got := runtime.destroyedIDs; len(got) != 2 || got[0] != "proj-1" || got[1] != "h1" {
@@ -2238,7 +2227,7 @@ func TestSwitchAgentRetainedProbeAndCleanupFailureRecoversUsingOpaqueHandle(t *t
 	if len(messenger.msgs) != 0 {
 		t.Fatalf("recovery sent an unowned continuation: %#v", messenger.msgs)
 	}
-	if !manager.SessionInputAllowed("proj-1") {
+	if manager.SessionMutationInProgress("proj-1") {
 		t.Fatal("terminal reconciliation did not reopen the input gate")
 	}
 	if target.cleanupCalls != 1 {
@@ -2264,7 +2253,7 @@ func TestSwitchAgentRetainedActivationAndCleanupFailureRecoversByAdoptingOpaqueH
 	if sw.State != domain.AgentSwitchStartingTarget || sw.TargetRuntimeHandleID != "h1" || sw.TargetNativeSessionRef == nil {
 		t.Fatalf("retained switch lacks target recovery facts: %+v", sw)
 	}
-	if manager.SessionInputAllowed("proj-1") {
+	if !manager.SessionMutationInProgress("proj-1") {
 		t.Fatal("ambiguous target activation released the input gate")
 	}
 	if rec := store.sessions["proj-1"]; rec.Harness != domain.HarnessClaudeCode || rec.Activity.State != domain.ActivityExited {
@@ -2294,7 +2283,7 @@ func TestSwitchAgentRetainedActivationAndCleanupFailureRecoversByAdoptingOpaqueH
 	if len(messenger.msgs) != 0 {
 		t.Fatalf("boot recovery resent continuation: %#v", messenger.msgs)
 	}
-	if !manager.SessionInputAllowed("proj-1") {
+	if manager.SessionMutationInProgress("proj-1") {
 		t.Fatal("conservative terminal recovery did not reopen the input gate")
 	}
 }
@@ -2393,10 +2382,10 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 			if len(messenger.msgs) != 0 {
 				t.Fatalf("boot recovery resent continuation: %#v", messenger.msgs)
 			}
-			if tt.wantGated && manager.SessionInputAllowed("proj-1") {
+			if tt.wantGated && !manager.SessionMutationInProgress("proj-1") {
 				t.Fatal("inconclusive recovery reopened session input")
 			}
-			if !tt.wantGated && !manager.SessionInputAllowed("proj-1") {
+			if !tt.wantGated && manager.SessionMutationInProgress("proj-1") {
 				t.Fatal("resolved recovery left input gated")
 			}
 		})

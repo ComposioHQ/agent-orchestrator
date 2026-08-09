@@ -199,7 +199,8 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	if !ok {
 		return domain.AgentSwitch{}, fmt.Errorf("switch agent %s: %w: %q", id, ErrUnknownHarness, cfg.TargetHarness)
 	}
-	if err := validateContinuationAgent(targetAgent); err != nil {
+	targetCapabilities, err := validateContinuationAgent(targetAgent)
+	if err != nil {
 		return domain.AgentSwitch{}, fmt.Errorf("switch agent %s: %w", id, errors.Join(ErrUnsupportedSwitchHarness, err))
 	}
 
@@ -267,7 +268,7 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	// Resolve credentials, native-resume evidence, and launch commands before
 	// asking the source to spend a model turn. This preflight does not install
 	// target workspace files or reserve a target generation in durable storage.
-	target, err = m.prepareTargetActivation(ctx, store, rec, project, targetAgent, result)
+	target, err = m.prepareTargetActivation(ctx, store, rec, project, targetAgent, targetCapabilities, result)
 	if err != nil {
 		return result, fmt.Errorf("switch agent %s: target preflight: %w", id, err)
 	}
@@ -651,25 +652,22 @@ func switchHarnessSupported(h domain.AgentHarness) bool {
 	}
 }
 
-func validateContinuationAgent(agent ports.Agent) error {
+func validateContinuationAgent(agent ports.Agent) (ports.ContinuationCapabilities, error) {
 	provider, ok := agent.(ports.AgentContinuationCapabilityProvider)
 	if !ok {
-		return errors.New("adapter has no continuation capability declaration")
+		return ports.ContinuationCapabilities{}, errors.New("adapter has no continuation capability declaration")
 	}
 	caps := provider.ContinuationCapabilities()
-	if caps.StandingInstructions == ports.StandingInstructionsUnsupported {
-		return errors.New("adapter cannot apply standing continuation instructions")
-	}
 	if caps.FreshNativeSessionID != ports.FreshNativeSessionIDProviderAssigned &&
 		caps.FreshNativeSessionID != ports.FreshNativeSessionIDCallerAssigned {
-		return errors.New("adapter has no verified fresh native-session identity mode")
+		return ports.ContinuationCapabilities{}, errors.New("adapter has no verified fresh native-session identity mode")
 	}
 	if caps.FreshNativeSessionID == ports.FreshNativeSessionIDCallerAssigned {
 		if _, ok := agent.(ports.AgentFreshNativeSessionIDProvider); !ok {
-			return errors.New("adapter declares caller-assigned ids without an allocator")
+			return ports.ContinuationCapabilities{}, errors.New("adapter declares caller-assigned ids without an allocator")
 		}
 	}
-	return nil
+	return caps, nil
 }
 
 func (m *Manager) preserveCurrentNativeSession(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, agent ports.Agent, env map[string]string, generation domain.AgentGenerationID) (domain.AgentNativeSession, error) {
@@ -718,7 +716,7 @@ func (m *Manager) preserveCurrentNativeSession(ctx context.Context, store ports.
 	return stored, err
 }
 
-func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, sw domain.AgentSwitch) (preparedTargetActivation, error) {
+func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, caps ports.ContinuationCapabilities, sw domain.AgentSwitch) (preparedTargetActivation, error) {
 	harness := sw.TargetHarness
 	if checker, ok := agent.(ports.AgentAuthChecker); ok {
 		status, authErr := checker.AuthStatus(ctx)
@@ -779,11 +777,6 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 		}
 	}
 	if !resumable {
-		capabilityProvider, ok := agent.(ports.AgentContinuationCapabilityProvider)
-		if !ok {
-			return preparedTargetActivation{}, errors.New("adapter has no continuation capability declaration")
-		}
-		caps := capabilityProvider.ContinuationCapabilities()
 		candidate = domain.AgentNativeSession{}
 		if caps.FreshNativeSessionID == ports.FreshNativeSessionIDCallerAssigned {
 			idProvider, ok := agent.(ports.AgentFreshNativeSessionIDProvider)
@@ -842,11 +835,7 @@ func appendAgentSwitchContinuation(systemPrompt, continuation string) string {
 }
 
 func appendAgentContinuationProtocol(systemPrompt string) string {
-	base := strings.TrimSpace(systemPrompt)
-	if base == "" {
-		return aoAgentContinuationProtocol
-	}
-	return base + "\n\n" + aoAgentContinuationProtocol
+	return appendAgentSwitchContinuation(systemPrompt, aoAgentContinuationProtocol)
 }
 
 // systemPromptForNativeRestore reapplies the latest finalized inbound handoff
@@ -1555,7 +1544,7 @@ func buildTargetContinuationMessageWithLimit(sw domain.AgentSwitch, snapshot det
 	// complete multiline PTY turn as a final guard. Paths remain available, and
 	// the target can inspect the full transcript narrowly if the inline excerpt
 	// would make the coordination turn too large.
-	omitted := continuationExcerptOmittedMarker(maxBytes)
+	omitted := continuationExcerptOmittedMarker()
 	clippedSnapshot := snapshot
 	clippedSnapshot.TerminalTail = ""
 	var clippedTranscript *switchTranscriptFact
@@ -1571,11 +1560,7 @@ func buildTargetContinuationMessageWithLimit(sw domain.AgentSwitch, snapshot det
 	if len(clipped) <= maxBytes {
 		return clipped
 	}
-	minimal := buildMinimalTargetContinuationMessage(sw, snapshot, transcript, maxBytes)
-	if len(minimal) <= maxBytes {
-		return minimal
-	}
-	return buildCompactTargetContinuationMessage(sw, snapshot, transcript, maxBytes)
+	return buildProgressiveTargetContinuationMessage(sw, snapshot, transcript, maxBytes)
 }
 
 func buildTargetContinuationMessageBody(sw domain.AgentSwitch, snapshot deterministicSwitchContext, transcript *switchTranscriptFact) string {
@@ -1704,83 +1689,12 @@ func coordinationQuotedReference(value string) string {
 	return fmt.Sprintf("%q", value)
 }
 
-func buildMinimalTargetContinuationMessage(sw domain.AgentSwitch, snapshot deterministicSwitchContext, transcript *switchTranscriptFact, maxBytes int) string {
-	originalTask := boundedString(boundedConversationFact(snapshot.OriginalTask), 2<<10)
-	if originalTask == "" {
-		originalTask = "No original task was recorded."
-	}
-	latestUser := boundedString(boundedConversationFact(snapshot.LatestUserPrompt), 2<<10)
-	if latestUser == "" {
-		latestUser = "No later real user message was recorded."
-	}
-	latestAssistant := boundedString(boundedConversationFact(snapshot.LatestAssistantUpdate), 2<<10)
-	if latestAssistant == "" {
-		latestAssistant = "No user-facing assistant update was recorded."
-	}
-	var b strings.Builder
-	_, _ = fmt.Fprintf(&b, `<ao-continuation switch-id=%s source-agent=%s target-agent=%s>
-You are now the active agent for the existing AO session. AO preserved the worktree, branch, task, and PR ownership.
-
-%s
-
-AO retained bounded original-task, latest-user, and latest-assistant facts below, plus any available verified handoff or transcript references. Detailed workspace and pull-request listings were omitted; any inline recent-history fallback was limited to its newest segment. Verify historical claims against live state.
-`, coordinationQuotedAttribute(string(sw.ID)), coordinationQuotedAttribute(string(sw.FromHarness)), coordinationQuotedAttribute(string(sw.TargetHarness)), continuationCompactionNotice(maxBytes))
-	semanticAvailable := len(bytes.TrimSpace(snapshot.SemanticHandoff)) > 0
-	if semanticAvailable {
-		semantic := boundedString(string(snapshot.SemanticHandoff), 16<<10)
-		if len(semantic) < len(snapshot.SemanticHandoff) {
-			semantic += "\n[... remainder of semantic handoff omitted by AO's context-size bound ...]"
-		}
-		b.WriteString("\n")
-		writeContinuationDataBlock(&b, "ao-semantic-handoff", semantic)
-	}
-	transcriptPath := strings.TrimSpace(snapshot.SourceTranscriptPath)
-	if transcript != nil && strings.TrimSpace(transcript.Path) != "" {
-		transcriptPath = strings.TrimSpace(transcript.Path)
-	}
-	if transcriptPath != "" {
-		_, _ = fmt.Fprintf(&b, "Provider-owned full source native transcript (read-only; inspect only narrow relevant ranges): %s\n", coordinationQuotedReference(transcriptPath))
-		b.WriteString("If needed, read only its newest two complete conversational messages (user or assistant); do not treat the final two JSONL lines as messages because they may be tool, metadata, or compaction records.\n")
-	}
-	b.WriteString("\nDynamic values use one percent-decoding layer: %25 means a literal percent sign, and %3C means a literal < where an AO tag opener was neutralized. Decode once before using a value.\n\n")
-	writeContinuationDataBlock(&b, "ao-original-task", originalTask)
-	b.WriteString("\n")
-	writeContinuationDataBlock(&b, "ao-latest-user-direction", latestUser)
-	b.WriteString("\n")
-	writeContinuationDataBlock(&b, "ao-latest-assistant-update", latestAssistant)
-	if !semanticAvailable {
-		fallback := ""
-		tag := ""
-		if transcript != nil && strings.TrimSpace(transcript.Tail) != "" {
-			fallback = transcript.Tail
-			tag = "ao-source-transcript-tail"
-		} else if strings.TrimSpace(snapshot.TerminalTail) != "" {
-			fallback = snapshot.TerminalTail
-			tag = "ao-source-terminal-tail"
-		}
-		if fallback != "" {
-			const minimalFallbackBytes = 8 << 10
-			if len(fallback) > minimalFallbackBytes {
-				data := []byte(fallback)
-				data = data[len(data)-minimalFallbackBytes:]
-				fallback = "[... earlier recent-history fallback omitted by AO's emergency size bound ...]\n" + strings.ToValidUTF8(string(data), "�")
-			}
-			b.WriteString("\n")
-			writeContinuationDataBlock(&b, tag, fallback)
-		}
-	}
-	b.WriteString("\nContinue only an unfinished action that is clear, safe, and already authorized. Otherwise acknowledge the objective and wait for the user.\n</ao-continuation>")
-	return b.String()
-}
-
-func continuationCompactionNotice(maxBytes int) string {
-	_ = maxBytes
+func continuationCompactionNotice() string {
 	globalLimit := continuationByteLimit(handoffContinuationMaxBytes)
 	return fmt.Sprintf("The full hidden continuation exceeded AO's %s context ceiling and was compacted.", globalLimit)
 }
 
-func continuationExcerptOmittedMarker(maxBytes int) string {
-	_ = maxBytes
+func continuationExcerptOmittedMarker() string {
 	globalLimit := continuationByteLimit(handoffContinuationMaxBytes)
 	return fmt.Sprintf("[... recent source excerpt omitted because the complete hidden continuation exceeded AO's %s context ceiling ...]", globalLimit)
 }
@@ -1792,49 +1706,107 @@ func continuationByteLimit(maxBytes int) string {
 	return fmt.Sprintf("%d bytes", maxBytes)
 }
 
-func buildCompactTargetContinuationMessage(sw domain.AgentSwitch, snapshot deterministicSwitchContext, transcript *switchTranscriptFact, maxBytes int) string {
+type progressiveContinuationRenderOptions struct {
+	factBytes         int
+	fallbackBytes     int
+	includeReferences bool
+	compact           bool
+}
+
+// buildProgressiveTargetContinuationMessage keeps the same three deterministic
+// facts in every emergency form, progressively reducing the optional semantic,
+// reference, and fallback detail until the complete hidden prompt fits.
+func buildProgressiveTargetContinuationMessage(sw domain.AgentSwitch, snapshot deterministicSwitchContext, transcript *switchTranscriptFact, maxBytes int) string {
+	stages := make([]progressiveContinuationRenderOptions, 0, 23)
+	stages = append(stages, progressiveContinuationRenderOptions{factBytes: 2 << 10, fallbackBytes: 8 << 10, includeReferences: true})
 	for _, factBytes := range []int{1024, 512, 256, 128, 64, 32, 16, minimumCompactFactBytes} {
-		message := buildCompactTargetContinuationBody(sw, snapshot, transcript, factBytes, true)
-		if len(message) <= maxBytes {
-			return message
-		}
+		stages = append(stages, progressiveContinuationRenderOptions{factBytes: factBytes, fallbackBytes: 8 << 10, includeReferences: true, compact: true})
 	}
 	// Extremely long or percent-heavy references can expand while being safely
 	// encoded. Omit them before sacrificing the three real conversation facts.
 	for _, factBytes := range []int{256, 128, 64, 32, 16, minimumCompactFactBytes} {
-		message := buildCompactTargetContinuationBody(sw, snapshot, transcript, factBytes, false)
+		stages = append(stages, progressiveContinuationRenderOptions{factBytes: factBytes, fallbackBytes: 8 << 10, compact: true})
+	}
+	for _, fallbackBytes := range []int{4 << 10, 2 << 10, 1 << 10, 512, 256, 128, 64, 0} {
+		stages = append(stages, progressiveContinuationRenderOptions{factBytes: minimumCompactFactBytes, fallbackBytes: fallbackBytes, compact: true})
+	}
+	for _, options := range stages {
+		message := buildProgressiveTargetContinuationBody(sw, snapshot, transcript, options)
 		if len(message) <= maxBytes {
 			return message
 		}
 	}
-	return buildCompactTargetContinuationBody(sw, snapshot, transcript, minimumCompactFactBytes, false)
+	return buildProgressiveTargetContinuationBody(sw, snapshot, transcript, stages[len(stages)-1])
 }
 
-func buildCompactTargetContinuationBody(sw domain.AgentSwitch, snapshot deterministicSwitchContext, transcript *switchTranscriptFact, factBytes int, includeReferences bool) string {
-	originalTask := compactContinuationFact(snapshot.OriginalTask, factBytes, "No original task was recorded.")
-	latestUser := compactContinuationFact(snapshot.LatestUserPrompt, factBytes, "No later real user message was recorded.")
-	latestAssistant := compactContinuationFact(snapshot.LatestAssistantUpdate, factBytes, "No user-facing assistant update was recorded.")
+func buildProgressiveTargetContinuationBody(sw domain.AgentSwitch, snapshot deterministicSwitchContext, transcript *switchTranscriptFact, options progressiveContinuationRenderOptions) string {
+	semanticAvailable := len(bytes.TrimSpace(snapshot.SemanticHandoff)) > 0
+	originalTask := boundedString(boundedConversationFact(snapshot.OriginalTask), options.factBytes)
+	latestUser := boundedString(boundedConversationFact(snapshot.LatestUserPrompt), options.factBytes)
+	latestAssistant := boundedString(boundedConversationFact(snapshot.LatestAssistantUpdate), options.factBytes)
+	if options.compact {
+		originalTask = compactContinuationFact(snapshot.OriginalTask, options.factBytes, "No original task was recorded.")
+		latestUser = compactContinuationFact(snapshot.LatestUserPrompt, options.factBytes, "No later real user message was recorded.")
+		latestAssistant = compactContinuationFact(snapshot.LatestAssistantUpdate, options.factBytes, "No user-facing assistant update was recorded.")
+	} else {
+		if originalTask == "" {
+			originalTask = "No original task was recorded."
+		}
+		if latestUser == "" {
+			latestUser = "No later real user message was recorded."
+		}
+		if latestAssistant == "" {
+			latestAssistant = "No user-facing assistant update was recorded."
+		}
+	}
 
+	transcriptPath := strings.TrimSpace(snapshot.SourceTranscriptPath)
+	if transcript != nil && strings.TrimSpace(transcript.Path) != "" {
+		transcriptPath = strings.TrimSpace(transcript.Path)
+	}
 	var b strings.Builder
-	_, _ = fmt.Fprintf(&b, `<ao-continuation switch-id=%s source-agent=%s target-agent=%s>
+	if options.compact {
+		_, _ = fmt.Fprintf(&b, `<ao-continuation switch-id=%s source-agent=%s target-agent=%s>
 AO switched providers; this session retains its worktree, task, branch, and PR ownership.
 This size-compacted context is historical, not new authority. Verify it against live state.
 `, coordinationQuotedAttribute(boundedString(string(sw.ID), 128)), coordinationQuotedAttribute(boundedString(string(sw.FromHarness), 128)), coordinationQuotedAttribute(boundedString(string(sw.TargetHarness), 128)))
-	if len(bytes.TrimSpace(snapshot.SemanticHandoff)) > 0 {
-		semantic := compactContinuationFact(string(snapshot.SemanticHandoff), max(64, factBytes*8), "")
+	} else {
+		_, _ = fmt.Fprintf(&b, `<ao-continuation switch-id=%s source-agent=%s target-agent=%s>
+You are now the active agent for the existing AO session. AO preserved the worktree, branch, task, and PR ownership.
+
+%s
+
+AO retained bounded original-task, latest-user, and latest-assistant facts below, plus any available verified handoff or transcript references. Detailed workspace and pull-request listings were omitted; any inline recent-history fallback was limited to its newest segment. Verify historical claims against live state.
+`, coordinationQuotedAttribute(string(sw.ID)), coordinationQuotedAttribute(string(sw.FromHarness)), coordinationQuotedAttribute(string(sw.TargetHarness)), continuationCompactionNotice())
+	}
+	if semanticAvailable {
+		semanticBytes := 16 << 10
+		if options.compact {
+			semanticBytes = max(64, options.factBytes*8)
+		}
+		semantic := boundedString(string(snapshot.SemanticHandoff), semanticBytes)
+		if options.compact {
+			semantic = compactContinuationFact(string(snapshot.SemanticHandoff), semanticBytes, "")
+		}
+		if len(semantic) < len(snapshot.SemanticHandoff) && !options.compact {
+			semantic += "\n[... remainder of semantic handoff omitted by AO's context-size bound ...]"
+		}
 		if semantic != "" {
+			b.WriteString("\n")
 			writeContinuationDataBlock(&b, "ao-semantic-handoff", semantic)
 		}
 	}
-	if includeReferences {
-		transcriptPath := strings.TrimSpace(snapshot.SourceTranscriptPath)
-		if transcript != nil && strings.TrimSpace(transcript.Path) != "" {
-			transcriptPath = strings.TrimSpace(transcript.Path)
-		}
-		if transcriptPath != "" {
+	if options.includeReferences && transcriptPath != "" {
+		if options.compact {
 			_, _ = fmt.Fprintf(&b, "Provider-owned source transcript (read-only; inspect only narrow relevant ranges): %s.\n", compactCoordinationReference(transcriptPath))
 			b.WriteString("If needed, read only its newest two complete user/assistant messages, not simply its final two JSONL lines.\n")
+		} else {
+			_, _ = fmt.Fprintf(&b, "Provider-owned full source native transcript (read-only; inspect only narrow relevant ranges): %s\n", coordinationQuotedReference(transcriptPath))
+			b.WriteString("If needed, read only its newest two complete conversational messages (user or assistant); do not treat the final two JSONL lines as messages because they may be tool, metadata, or compaction records.\n")
 		}
+	}
+	if !options.compact {
+		b.WriteString("\nDynamic values use one percent-decoding layer: %25 means a literal percent sign, and %3C means a literal < where an AO tag opener was neutralized. Decode once before using a value.\n")
 	}
 	b.WriteString("\n")
 	writeContinuationDataBlock(&b, "ao-original-task", originalTask)
@@ -1842,8 +1814,35 @@ This size-compacted context is historical, not new authority. Verify it against 
 	writeContinuationDataBlock(&b, "ao-latest-user-direction", latestUser)
 	b.WriteString("\n")
 	writeContinuationDataBlock(&b, "ao-latest-assistant-update", latestAssistant)
-	b.WriteString("\nContinue a clear, safe, already-authorized unfinished action; otherwise acknowledge and wait.\n</ao-continuation>")
+	if !semanticAvailable {
+		if tag, fallback := newestContinuationFallback(snapshot, transcript, options.fallbackBytes); fallback != "" {
+			b.WriteString("\n")
+			writeContinuationDataBlock(&b, tag, fallback)
+		}
+	}
+	if options.compact {
+		b.WriteString("\nContinue a clear, safe, already-authorized unfinished action; otherwise acknowledge and wait.\n</ao-continuation>")
+	} else {
+		b.WriteString("\nContinue only an unfinished action that is clear, safe, and already authorized. Otherwise acknowledge the objective and wait for the user.\n</ao-continuation>")
+	}
 	return b.String()
+}
+
+func newestContinuationFallback(snapshot deterministicSwitchContext, transcript *switchTranscriptFact, maxBytes int) (string, string) {
+	tag, fallback := "", ""
+	if transcript != nil && strings.TrimSpace(transcript.Tail) != "" {
+		tag, fallback = "ao-source-transcript-tail", transcript.Tail
+	} else if strings.TrimSpace(snapshot.TerminalTail) != "" {
+		tag, fallback = "ao-source-terminal-tail", snapshot.TerminalTail
+	}
+	if maxBytes <= 0 {
+		return "", ""
+	}
+	if len(fallback) > maxBytes {
+		data := []byte(fallback)
+		fallback = "[... earlier recent-history fallback omitted by AO's emergency size bound ...]\n" + strings.ToValidUTF8(string(data[len(data)-maxBytes:]), "�")
+	}
+	return tag, fallback
 }
 
 func compactContinuationFact(value string, maxBytes int, fallback string) string {
@@ -2693,11 +2692,6 @@ func nativeSessionIDPtr(id domain.AgentNativeSessionID) *domain.AgentNativeSessi
 	}
 	copyID := id
 	return &copyID
-}
-
-func isAOInternalCoordinationMessage(message string) bool {
-	trimmed := strings.TrimSpace(message)
-	return strings.HasPrefix(trimmed, "<ao-handoff-request") || strings.HasPrefix(trimmed, "<ao-continuation")
 }
 
 func boundedConversationFact(value string) string {

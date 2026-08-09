@@ -642,7 +642,6 @@
 	"switchAgent.state.startingTarget": "Iniciando o agente de destino",
 	"switchAgent.state.stoppingSource": "Interrompendo o agente de origem",
 	"switchAgent.state.targetReady": "Agente de destino pronto",
-	"switchAgent.state.deliveryUnconfirmed": "Entrega não confirmada",
 	"switchAgent.switching": "Trocando…",
 	"switchAgent.targetLabel": "Agente de destino",
 	"switchAgent.title": "Trocar agente",

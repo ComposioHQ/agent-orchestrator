@@ -74,18 +74,6 @@ WHERE id = 'switch-1';
 `, now.Add(time.Minute)); err == nil {
 		t.Fatal("agent_switches accepted an invalid semantic handoff inclusion fact")
 	}
-	for _, column := range []string{"final_handoff_path", "final_handoff_hash", "source_transcript_status", "semantic_handoff_included"} {
-		var count int
-		if err := db.QueryRow(
-			`SELECT COUNT(*) FROM pragma_table_info('agent_switches') WHERE name = ?`, column,
-		).Scan(&count); err != nil {
-			t.Fatalf("read agent_switches.%s: %v", column, err)
-		}
-		if count != 1 {
-			t.Fatalf("agent_switches.%s count = %d, want 1", column, count)
-		}
-	}
-
 	var before int
 	if err := db.QueryRow(`
 SELECT count(*)

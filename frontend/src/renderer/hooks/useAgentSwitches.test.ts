@@ -18,17 +18,11 @@ function switchRecord(overrides: Partial<AgentSwitch> = {}): AgentSwitch {
 }
 
 describe("agentSwitchesRefetchInterval", () => {
-	it("polls an ordinary active switch", () => {
-		expect(agentSwitchesRefetchInterval([switchRecord()])).toBe(1_000);
-	});
-
-	it("stops eager polling when a durable recovery marker is present", () => {
-		expect(agentSwitchesRefetchInterval([switchRecord({ errorCode: "target_start_unconfirmed" })])).toBe(
-			false,
-		);
-	});
-
-	it("does not poll terminal history", () => {
-		expect(agentSwitchesRefetchInterval([switchRecord({ state: "completed" })])).toBe(false);
+	it.each([
+		["polls an ordinary active switch", {}, 1_000],
+		["stops eager polling when a durable recovery marker is present", { errorCode: "target_start_unconfirmed" }, false],
+		["does not poll terminal history", { state: "completed" }, false],
+	] as const)("%s", (_name, overrides, expected) => {
+		expect(agentSwitchesRefetchInterval([switchRecord(overrides)])).toBe(expected);
 	});
 });

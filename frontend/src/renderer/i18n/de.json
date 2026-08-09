@@ -633,7 +633,6 @@
 	"switchAgent.state.startingTarget": "Ziel-Agent wird gestartet",
 	"switchAgent.state.stoppingSource": "Quell-Agent wird gestoppt",
 	"switchAgent.state.targetReady": "Ziel-Agent bereit",
-	"switchAgent.state.deliveryUnconfirmed": "Zustellung unbestätigt",
 	"switchAgent.switching": "Wechsel läuft…",
 	"switchAgent.targetLabel": "Zielagent",
 	"switchAgent.title": "Agent wechseln",

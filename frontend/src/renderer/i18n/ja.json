@@ -633,7 +633,6 @@
 	"switchAgent.state.startingTarget": "移行先エージェントを起動中",
 	"switchAgent.state.stoppingSource": "移行元エージェントを停止中",
 	"switchAgent.state.targetReady": "移行先の準備完了",
-	"switchAgent.state.deliveryUnconfirmed": "配信未確認",
 	"switchAgent.switching": "切り替え中…",
 	"switchAgent.targetLabel": "切り替え先エージェント",
 	"switchAgent.title": "エージェントを切り替える",

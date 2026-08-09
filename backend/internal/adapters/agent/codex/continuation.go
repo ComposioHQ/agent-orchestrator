@@ -27,7 +27,6 @@ var (
 // conversation ids, which AO captures through SessionStart hooks.
 func (p *Plugin) ContinuationCapabilities() ports.ContinuationCapabilities {
 	return ports.ContinuationCapabilities{
-		StandingInstructions: ports.StandingInstructionsCommand,
 		FreshNativeSessionID: ports.FreshNativeSessionIDProviderAssigned,
 	}
 }

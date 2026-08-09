@@ -207,48 +207,44 @@ describe("TerminalSwitchAgentButton", () => {
 		expect(within(screen.getByTestId("agent-switch-history")).getByText(label)).toBeInTheDocument();
 	});
 
-	it("marks completed history when AO had to use fallback context", async () => {
-		const degradedSwitch = switchRecord({
-			agentHandoffStatus: "received",
-			semanticHandoffIncluded: false,
-			sourceTranscriptStatus: "unavailable",
-			state: "completed",
-		});
+	it.each([
+		["marks completed history when AO had to use fallback context", false, true],
+		["does not mark completed history when the semantic handoff was included", true, false],
+	] as const)("%s", async (_label, semanticHandoffIncluded, expected) => {
 		getMock.mockResolvedValue({
-			data: { switches: [degradedSwitch] },
+			data: {
+				switches: [
+					switchRecord({
+						agentHandoffStatus: "received",
+						semanticHandoffIncluded,
+						sourceTranscriptStatus: "unavailable",
+						state: "completed",
+					}),
+				],
+			},
 			error: undefined,
 			response: { status: 200 },
 		});
 		renderControl();
 
 		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
-		expect(within(screen.getByTestId("agent-switch-history")).getByText("Fallback context used")).toBeInTheDocument();
+		const fallbackLabel = within(screen.getByTestId("agent-switch-history")).queryByText("Fallback context used");
+		if (expected) expect(fallbackLabel).toBeInTheDocument();
+		else expect(fallbackLabel).not.toBeInTheDocument();
 	});
 
-	it("does not mark completed history when the semantic handoff was included", async () => {
-		const completedSwitch = switchRecord({
-			agentHandoffStatus: "received",
-			semanticHandoffIncluded: true,
-			sourceTranscriptStatus: "unavailable",
-			state: "completed",
-		});
-		getMock.mockResolvedValue({
-			data: { switches: [completedSwitch] },
-			error: undefined,
-			response: { status: 200 },
-		});
-		renderControl();
-
-		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
-		expect(within(screen.getByTestId("agent-switch-history")).queryByText("Fallback context used")).not.toBeInTheDocument();
-	});
-
-	it("reopens the dialog when the daemon rejects the switch", async () => {
-		postMock.mockResolvedValue({
-			data: undefined,
-			error: { message: "target agent is unavailable" },
-			response: { status: 409 },
-		});
+	it("reopens a rejected switch and retries with a fresh idempotency key", async () => {
+		postMock
+			.mockResolvedValueOnce({
+				data: undefined,
+				error: { message: "target agent is unavailable" },
+				response: { status: 409 },
+			})
+			.mockResolvedValueOnce({
+				data: { switch: switchRecord({ id: "switch-2" }) },
+				error: undefined,
+				response: { status: 200 },
+			});
 		renderControl();
 
 		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
@@ -256,5 +252,14 @@ describe("TerminalSwitchAgentButton", () => {
 
 		const reopenedDialog = await screen.findByRole("dialog", { name: "Switch agent" });
 		expect(within(reopenedDialog).getByRole("alert")).toHaveTextContent("target agent is unavailable");
+		const firstIdempotencyKey = postMock.mock.calls[0]?.[1]?.body?.idempotencyKey;
+		await userEvent.click(within(reopenedDialog).getByRole("button", { name: "Switch" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+		const retryIdempotencyKey = postMock.mock.calls[1]?.[1]?.body?.idempotencyKey;
+		expect(firstIdempotencyKey).toEqual(expect.any(String));
+		expect(retryIdempotencyKey).toEqual(expect.any(String));
+		expect(retryIdempotencyKey).not.toBe(firstIdempotencyKey);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 });

@@ -311,11 +311,10 @@ type Manager struct {
 	// executable resolves the daemon's own binary (os.Executable in
 	// production); its directory is prepended to spawned sessions' PATH so the
 	// workspace hook commands resolve back to this daemon. Tests inject a stub.
-	executable  func() (string, error)
-	newLaunchID func() string
-	agentOpMu   sync.Mutex
-	resuming    map[domain.SessionID]struct{}
-	switching   map[domain.SessionID]struct{}
+	executable      func() (string, error)
+	newLaunchID     func() string
+	agentOpMu       sync.Mutex
+	agentOperations map[domain.SessionID]agentOperationKind
 	// switchDecisionInput opens a narrow human-only terminal lane while the
 	// source is blocked on permission during a mandatory switch.
 	switchDecisionInput map[domain.SessionID]domain.AgentSwitchID
@@ -324,7 +323,6 @@ type Manager struct {
 	// not be removed). A later reconciliation pass may reclaim exactly these
 	// gates; an actively-running switch remains non-reentrant.
 	retainedSwitches map[domain.SessionID]struct{}
-	mutating         map[domain.SessionID]agentOperationKind
 	inputLeases      map[domain.SessionID]int
 	inputDrained     map[domain.SessionID]chan struct{}
 	// handoffWait bounds optional source-agent enrichment. Deterministic AO
@@ -581,11 +579,9 @@ func New(d Deps) *Manager {
 		lookPath:                     d.LookPath,
 		executable:                   d.Executable,
 		newLaunchID:                  d.NewLaunchID,
-		resuming:                     make(map[domain.SessionID]struct{}),
-		switching:                    make(map[domain.SessionID]struct{}),
+		agentOperations:              make(map[domain.SessionID]agentOperationKind),
 		switchDecisionInput:          make(map[domain.SessionID]domain.AgentSwitchID),
 		retainedSwitches:             make(map[domain.SessionID]struct{}),
-		mutating:                     make(map[domain.SessionID]agentOperationKind),
 		inputLeases:                  make(map[domain.SessionID]int),
 		inputDrained:                 make(map[domain.SessionID]chan struct{}),
 		handoffWait:                  60 * time.Second,
@@ -1553,13 +1549,12 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	if err := m.beginAgentResume(ctx, id); err != nil {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
 	}
+	defer m.endAgentResume(id)
 	if active, err := m.hasActiveInterfaceTransition(ctx, id); err != nil {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: interface transition: %w", id, err)
 	} else if active {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrInterfaceTransitionInProgress)
 	}
-	defer m.endAgentResume(id)
-
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
@@ -2509,7 +2504,7 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 		return err
 	}
 	var afterWrite func(context.Context) error
-	if strings.TrimSpace(message) != "" && !isAOInternalCoordinationMessage(message) {
+	if strings.TrimSpace(message) != "" {
 		if recorder, ok := m.store.(latestUserPromptRecorder); ok {
 			afterWrite = func(writeCtx context.Context) error {
 				if _, recordErr := recorder.RecordSessionLatestUserPrompt(writeCtx, id, boundedConversationFact(message), m.clock()); recordErr != nil {

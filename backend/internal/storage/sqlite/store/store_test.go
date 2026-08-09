@@ -442,7 +442,6 @@ func TestDeleteSessionOnlyRemovesSeedRows(t *testing.T) {
 	ctx := context.Background()
 	seedProject(t, s, "mer")
 
-	// Seed row: just CreateSession output, no metadata yet.
 	now := time.Now().UTC().Truncate(time.Second)
 	seed := domain.SessionRecord{
 		ProjectID: "mer",
@@ -452,78 +451,66 @@ func TestDeleteSessionOnlyRemovesSeedRows(t *testing.T) {
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	r1, err := s.CreateSession(ctx, seed)
-	if err != nil {
-		t.Fatalf("create seed: %v", err)
+	tests := []struct {
+		name        string
+		record      domain.SessionRecord
+		prepare     func(*domain.SessionRecord)
+		wantDeleted bool
+		wantPresent bool
+	}{
+		{
+			name:        "seed row",
+			record:      seed,
+			wantDeleted: true,
+		},
+		{
+			name:        "spawn output",
+			record:      sampleRecord("mer"),
+			wantPresent: true,
+		},
+		{
+			name:   "terminated row",
+			record: seed,
+			prepare: func(rec *domain.SessionRecord) {
+				rec.IsTerminated = true
+			},
+			wantPresent: true,
+		},
+		{
+			name:   "recorded user interaction",
+			record: sampleRecord("mer"),
+			prepare: func(rec *domain.SessionRecord) {
+				// Keep the legacy seed predicates empty; the durable interaction
+				// fact alone is observable progress and must prevent deletion.
+				rec.Metadata.WorkspacePath = ""
+				rec.Metadata.LatestUserPrompt = "Continue the task."
+			},
+			wantPresent: true,
+		},
 	}
-
-	deleted, err := s.DeleteSession(ctx, r1.ID)
-	if err != nil || !deleted {
-		t.Fatalf("delete seed = %v %v, want true nil", deleted, err)
-	}
-	if _, ok, _ := s.GetSession(ctx, r1.ID); ok {
-		t.Fatal("seed row still present after DeleteSession")
-	}
-
-	// A row with workspace_path populated must NOT be deleted — even if
-	// !is_terminated. This is the no-resurrection guarantee for live work.
-	r2, err := s.CreateSession(ctx, sampleRecord("mer"))
-	if err != nil {
-		t.Fatalf("create live: %v", err)
-	}
-	deleted, err = s.DeleteSession(ctx, r2.ID)
-	if err != nil {
-		t.Fatalf("delete live err = %v", err)
-	}
-	if deleted {
-		t.Fatal("DeleteSession must be a no-op for rows with spawn output")
-	}
-	if _, ok, _ := s.GetSession(ctx, r2.ID); !ok {
-		t.Fatal("live row was removed by DeleteSession")
-	}
-
-	// A terminated row is also out of scope: terminal-state rows hold cleanup
-	// metadata users may still inspect, so the gate refuses them too.
-	r3, err := s.CreateSession(ctx, seed)
-	if err != nil {
-		t.Fatalf("create extra seed: %v", err)
-	}
-	terminated := r3
-	terminated.IsTerminated = true
-	if err := s.UpdateSession(ctx, terminated); err != nil {
-		t.Fatalf("mark terminated: %v", err)
-	}
-	deleted, err = s.DeleteSession(ctx, r3.ID)
-	if err != nil {
-		t.Fatalf("delete terminated err = %v", err)
-	}
-	if deleted {
-		t.Fatal("DeleteSession must be a no-op for terminated rows")
-	}
-}
-
-func TestDeleteSessionPreservesRowsWithRecordedInteraction(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	seedProject(t, s, "delete-interaction")
-	rec := sampleRecord("delete-interaction")
-	// Keep the legacy seed predicates empty; the durable interaction fact alone
-	// is observable progress and must prevent rollback deletion.
-	rec.Metadata.WorkspacePath = ""
-	rec.Metadata.LatestUserPrompt = "Continue the task."
-	created, err := s.CreateSession(ctx, rec)
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	deleted, err := s.DeleteSession(ctx, created.ID)
-	if err != nil {
-		t.Fatalf("delete session: %v", err)
-	}
-	if deleted {
-		t.Fatal("DeleteSession removed a row with recorded user interaction")
-	}
-	if _, ok, err := s.GetSession(ctx, created.ID); err != nil || !ok {
-		t.Fatalf("recorded-interaction row was not preserved: ok=%v err=%v", ok, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			created, err := s.CreateSession(ctx, tt.record)
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			if tt.prepare != nil {
+				tt.prepare(&created)
+				if err := s.UpdateSession(ctx, created); err != nil {
+					t.Fatalf("prepare session: %v", err)
+				}
+			}
+			deleted, err := s.DeleteSession(ctx, created.ID)
+			if err != nil {
+				t.Fatalf("delete session: %v", err)
+			}
+			if deleted != tt.wantDeleted {
+				t.Fatalf("DeleteSession deleted=%v, want %v", deleted, tt.wantDeleted)
+			}
+			if _, ok, err := s.GetSession(ctx, created.ID); err != nil || ok != tt.wantPresent {
+				t.Fatalf("session after DeleteSession: ok=%v err=%v, want present=%v", ok, err, tt.wantPresent)
+			}
+		})
 	}
 }
 
