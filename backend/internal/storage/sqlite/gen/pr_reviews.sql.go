@@ -10,6 +10,20 @@ import (
 	"time"
 )
 
+const deletePRReview = `-- name: DeletePRReview :exec
+DELETE FROM pr_reviews WHERE pr_url = ? AND review_id = ?
+`
+
+type DeletePRReviewParams struct {
+	PRURL    string
+	ReviewID string
+}
+
+func (q *Queries) DeletePRReview(ctx context.Context, arg DeletePRReviewParams) error {
+	_, err := q.db.ExecContext(ctx, deletePRReview, arg.PRURL, arg.ReviewID)
+	return err
+}
+
 const deletePRReviews = `-- name: DeletePRReviews :exec
 DELETE FROM pr_reviews WHERE pr_url = ?
 `
@@ -20,7 +34,7 @@ func (q *Queries) DeletePRReviews(ctx context.Context, prUrl string) error {
 }
 
 const listPRReviews = `-- name: ListPRReviews :many
-SELECT pr_url, review_id, author, state, url, is_bot, submitted_at, body, target_sha
+SELECT pr_url, review_id, author, state, url, is_bot, submitted_at, body, auto_inject_review, target_sha
 FROM pr_reviews WHERE pr_url = ? ORDER BY submitted_at, review_id
 `
 
@@ -42,6 +56,7 @@ func (q *Queries) ListPRReviews(ctx context.Context, prUrl string) ([]PRReview, 
 			&i.IsBot,
 			&i.SubmittedAt,
 			&i.Body,
+			&i.AutoInjectReview,
 			&i.TargetSha,
 		); err != nil {
 			return nil, err
@@ -58,8 +73,8 @@ func (q *Queries) ListPRReviews(ctx context.Context, prUrl string) ([]PRReview, 
 }
 
 const upsertPRReview = `-- name: UpsertPRReview :exec
-INSERT INTO pr_reviews (pr_url, review_id, author, state, url, is_bot, submitted_at, body, target_sha)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pr_reviews (pr_url, review_id, author, state, url, is_bot, submitted_at, body, target_sha, auto_inject_review)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (pr_url, review_id) DO UPDATE SET
     author = excluded.author,
     state = excluded.state,
@@ -71,15 +86,16 @@ ON CONFLICT (pr_url, review_id) DO UPDATE SET
 `
 
 type UpsertPRReviewParams struct {
-	PRURL       string
-	ReviewID    string
-	Author      string
-	State       string
-	URL         string
-	IsBot       int64
-	SubmittedAt time.Time
-	Body        string
-	TargetSha   string
+	PRURL            string
+	ReviewID         string
+	Author           string
+	State            string
+	URL              string
+	IsBot            int64
+	SubmittedAt      time.Time
+	Body             string
+	TargetSha        string
+	AutoInjectReview bool
 }
 
 func (q *Queries) UpsertPRReview(ctx context.Context, arg UpsertPRReviewParams) error {
@@ -93,6 +109,7 @@ func (q *Queries) UpsertPRReview(ctx context.Context, arg UpsertPRReviewParams) 
 		arg.SubmittedAt,
 		arg.Body,
 		arg.TargetSha,
+		arg.AutoInjectReview,
 	)
 	return err
 }

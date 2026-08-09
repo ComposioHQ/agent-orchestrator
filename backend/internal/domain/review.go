@@ -57,6 +57,9 @@ type ReviewRun struct {
 	GithubReviewID string     `json:"githubReviewId"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	DeliveredAt    *time.Time `json:"deliveredAt,omitempty"`
+	// AutoInjectReview snapshots the session policy when this result is first
+	// recorded. Later toggle changes must not rewrite or deliver this run.
+	AutoInjectReview bool `json:"autoInjectReview"`
 }
 
 // ReviewTriggerSource identifies who initiated a review pass.

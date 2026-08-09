@@ -2,7 +2,6 @@ import { resetConsumedPreviewTriggersForTest, useBrowserView, type BrowserNavSta
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BrowserMirrorFrame } from "../../main/browser-view-host";
 
 type Listener = (state: BrowserNavState) => void;
 type TabsListener = (state: import("../../main/browser-view-host").BrowserTabsState) => void;
@@ -33,6 +32,7 @@ function setupBridge() {
 	const devtoolsListeners = new Set<DevToolsListener>();
 	const activityListeners = new Set<ActivityListener>();
 	const bridge = {
+		nativeCompositionEnabled: false,
 		stateFor(viewId: string): BrowserNavState {
 			return {
 				viewId,
@@ -52,17 +52,7 @@ function setupBridge() {
 			isLoading: false,
 		})),
 		setBounds: vi.fn(),
-		capture: vi.fn(async (): Promise<BrowserMirrorFrame> => ({
-			dataUrl: "data:image/jpeg;base64,snapshot",
-			pixelWidth: 640,
-			pixelHeight: 480,
-			nativeBounds: { x: 12, y: 34, width: 320, height: 240 },
-			cssLeft: 0,
-			cssTop: 0,
-			cssWidth: 320,
-			cssHeight: 240,
-		})),
-		requestMirror: vi.fn(async () => false),
+		setOverlayOpen: vi.fn(),
 		navigate: vi.fn(async ({ viewId }: { viewId: string }) => bridge.stateFor(viewId)),
 		clear: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		goBack: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
@@ -85,13 +75,15 @@ function setupBridge() {
 			tabs: [{ id: "t1", url: "http://localhost:3000/", title: "First", active: true }],
 		})),
 		devtools: vi.fn(
-			async ({ viewId, operation }: {
+			async ({ viewId, operation, placement }: {
 				viewId: string;
-				operation: "open" | "close";
+				operation: "open" | "close" | "setPlacement";
+				placement?: "right" | "bottom" | "left" | "undocked";
 			}) => ({
 				viewId,
 				open: operation !== "close",
 				activeTabId: "t1",
+				placement: placement ?? "undocked",
 			}),
 		),
 		destroy: vi.fn(),
@@ -222,136 +214,6 @@ describe("useBrowserView", () => {
 		expect(bridge.closeTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t2" });
 	});
 
-	it("holds a captured frame while selecting a tab so the native handoff does not flash", async () => {
-		const bridge = setupBridge();
-		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-		act(() =>
-			bridge.emit({
-				viewId: "42:sess-1",
-				url: "http://localhost:3000/",
-				title: "First tab",
-				canGoBack: false,
-				canGoForward: false,
-				isLoading: false,
-			}),
-		);
-
-		vi.useFakeTimers();
-		try {
-			await act(async () => {
-				await result.current.selectTab("t2");
-			});
-
-			expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
-			expect(result.current.visualTransition).toMatchObject({
-				kind: "tab-switch",
-				snapshotUrl: "data:image/jpeg;base64,snapshot",
-			});
-
-			act(() => {
-				vi.advanceTimersByTime(260);
-			});
-			expect(result.current.visualTransition).toBeNull();
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it("clears the previous tab handoff when selecting a blank tab", async () => {
-		const bridge = setupBridge();
-		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-		act(() =>
-			bridge.emit({
-				viewId: "42:sess-1",
-				url: "http://localhost:3000/",
-				title: "First tab",
-				canGoBack: false,
-				canGoForward: false,
-				isLoading: false,
-			}),
-		);
-		await act(async () => {
-			await result.current.prepareForOverlay();
-		});
-		expect(result.current.mirrorFrame).not.toBeNull();
-
-		bridge.selectTab.mockImplementationOnce(async ({ viewId, tabId }) => {
-			act(() =>
-				bridge.emit({
-					viewId,
-					url: "",
-					title: "",
-					canGoBack: false,
-					canGoForward: false,
-					isLoading: false,
-				}),
-			);
-			return {
-				viewId,
-				activeTabId: tabId,
-				tabs: [{ id: tabId, url: "", title: "", active: true }],
-			};
-		});
-
-		await act(async () => {
-			await result.current.selectTab("t1");
-		});
-
-		expect(result.current.navState.url).toBe("");
-		expect(result.current.mirrorFrame).toBeNull();
-		expect(result.current.visualTransition).toBeNull();
-	});
-
-	it("does not block tab switching on a slow transition capture", async () => {
-		const bridge = setupBridge();
-		const slot = createSlot();
-		const lateFrame: BrowserMirrorFrame = {
-			dataUrl: "data:image/jpeg;base64,late",
-			pixelWidth: 640,
-			pixelHeight: 480,
-			nativeBounds: { x: 12, y: 34, width: 320, height: 240 },
-			cssLeft: 0,
-			cssTop: 0,
-			cssWidth: 320,
-			cssHeight: 240,
-		};
-		bridge.capture.mockImplementation(
-			() => new Promise<BrowserMirrorFrame>((resolve) => window.setTimeout(() => resolve(lateFrame), 10_000)),
-		);
-		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-		act(() =>
-			bridge.emit({
-				viewId: "42:sess-1",
-				url: "http://localhost:3000/",
-				title: "",
-				canGoBack: false,
-				canGoForward: false,
-				isLoading: false,
-			}),
-		);
-		act(() => result.current.slotRef(slot));
-
-		vi.useFakeTimers();
-		try {
-			let switchPromise: Promise<void> | undefined;
-			await act(async () => {
-				switchPromise = result.current.selectTab("t2");
-				await vi.advanceTimersByTimeAsync(180);
-			});
-
-			expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
-			expect(bridge.selectTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t2" });
-			await act(async () => {
-				await switchPromise;
-			});
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
 	it("remeasures the live native view while moving between panel and maximized browser slots", async () => {
 		const bridge = setupBridge();
 		const slot = createSlot();
@@ -391,109 +253,6 @@ describe("useBrowserView", () => {
 				visible: true,
 			}),
 		);
-		expect(bridge.capture).not.toHaveBeenCalled();
-		expect(bridge.setBounds.mock.calls.some(([payload]) => payload.parked)).toBe(false);
-	});
-
-	it("primes a browser frame before opening renderer overlays above the native view", async () => {
-		const bridge = setupBridge();
-		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-		act(() =>
-			bridge.emit({
-				viewId: "42:sess-1",
-				url: "http://localhost:3000/",
-				title: "",
-				canGoBack: false,
-				canGoForward: false,
-				isLoading: false,
-			}),
-		);
-
-		await act(async () => {
-			await result.current.prepareForOverlay();
-		});
-
-		expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
-		expect(result.current.mirrorFrame?.dataUrl).toBe("data:image/jpeg;base64,snapshot");
-	});
-
-	it("explicitly finishes a prepared overlay and restores the live view", async () => {
-		const bridge = setupBridge();
-		const slot = createSlot();
-		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-		act(() =>
-			bridge.emit({
-				viewId: "42:sess-1",
-				url: "http://localhost:3000/",
-				title: "First tab",
-				canGoBack: false,
-				canGoForward: false,
-				isLoading: false,
-			}),
-		);
-		act(() => result.current.slotRef(slot));
-		await act(() => result.current.prepareForOverlay());
-		expect(result.current.mirrorFrame?.dataUrl).toBe("data:image/jpeg;base64,snapshot");
-
-		bridge.setBounds.mockClear();
-		act(() => {
-			(result.current as typeof result.current & { finishOverlay?: () => void }).finishOverlay?.();
-		});
-
-		expect(result.current.mirrorFrame?.dataUrl).toBe("data:image/jpeg;base64,snapshot");
-		await waitFor(() =>
-			expect(bridge.setBounds).toHaveBeenCalledWith({
-				viewId: "42:sess-1",
-				rect: { x: 12, y: 34, width: 320, height: 240 },
-				visible: true,
-			}),
-		);
-	});
-
-	it("ignores a prepared frame that resolves after the overlay finishes", async () => {
-		let resolveCapture!: (frame: BrowserMirrorFrame) => void;
-		const bridge = setupBridge();
-		bridge.capture.mockImplementationOnce(
-			() =>
-				new Promise<BrowserMirrorFrame>((resolve) => {
-					resolveCapture = resolve;
-				}),
-		);
-		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-		act(() =>
-			bridge.emit({
-				viewId: "42:sess-1",
-				url: "http://localhost:3000/",
-				title: "First tab",
-				canGoBack: false,
-				canGoForward: false,
-				isLoading: false,
-			}),
-		);
-
-		let pending!: Promise<void>;
-		act(() => {
-			pending = result.current.prepareForOverlay();
-		});
-		act(() => result.current.finishOverlay());
-		await act(async () => {
-			resolveCapture({
-				dataUrl: "data:image/jpeg;base64,late-snapshot",
-				pixelWidth: 640,
-				pixelHeight: 480,
-				nativeBounds: { x: 12, y: 34, width: 320, height: 240 },
-				cssLeft: 0,
-				cssTop: 0,
-				cssWidth: 320,
-				cssHeight: 240,
-			});
-			await pending;
-		});
-
-		expect(result.current.mirrorFrame).toBeNull();
 	});
 
 	it("clamps the native view to its resizable-panel column when the slot overspills", async () => {
@@ -634,7 +393,7 @@ describe("useBrowserView", () => {
 		expect(bridge.destroy).not.toHaveBeenCalled();
 	});
 
-	it("parks the view over a captured frame while a modal dialog is open, then restores it on close", async () => {
+	it("does not snapshot or park the native page for an ordinary modal dialog", async () => {
 		const bridge = setupBridge();
 		const slot = createSlot();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
@@ -667,33 +426,16 @@ describe("useBrowserView", () => {
 			document.body.appendChild(dialog);
 			await Promise.resolve();
 		});
-		await waitFor(() =>
-			expect(bridge.setBounds).toHaveBeenLastCalledWith({
-				viewId: "42:sess-1",
-				rect: { x: 12, y: 34, width: 320, height: 240 },
-				visible: true,
-				parked: true,
-			}),
-		);
-		expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
-		await waitFor(() => expect(result.current.mirrorFrame?.dataUrl).toBe("data:image/jpeg;base64,snapshot"));
+		expect(bridge.setBounds).not.toHaveBeenCalled();
 
 		bridge.setBounds.mockClear();
 		await act(async () => {
 			dialog.remove();
 			await Promise.resolve();
 		});
-		await waitFor(() =>
-			expect(bridge.setBounds).toHaveBeenLastCalledWith({
-				viewId: "42:sess-1",
-				rect: { x: 12, y: 34, width: 320, height: 240 },
-				visible: true,
-			}),
-		);
-		await waitFor(() => expect(result.current.mirrorFrame).toBeNull());
 	});
 
-	it("parks the native view while a browser overlay is open", async () => {
+	it("raises the shell above the live native view while a browser overlay is open", async () => {
 		const bridge = setupBridge();
 		const slot = createSlot();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
@@ -718,7 +460,6 @@ describe("useBrowserView", () => {
 			}),
 		);
 
-		bridge.setBounds.mockClear();
 		const menu = document.createElement("div");
 		menu.setAttribute("role", "menu");
 		menu.setAttribute("data-browser-native-overlay", "true");
@@ -728,24 +469,11 @@ describe("useBrowserView", () => {
 			await Promise.resolve();
 		});
 
-		await waitFor(() =>
-			expect(bridge.setBounds).toHaveBeenLastCalledWith({
-				viewId: "42:sess-1",
-				rect: { x: 12, y: 34, width: 320, height: 240 },
-				visible: true,
-				parked: true,
-			}),
-		);
+		await waitFor(() => expect(bridge.setOverlayOpen).toHaveBeenCalledWith(true));
 	});
 
-	it("keeps the native view visible until the overlay snapshot has painted", async () => {
+	it("opens a browser overlay without waiting for a snapshot", async () => {
 		const bridge = setupBridge();
-		let releaseCapture: ((frame: BrowserMirrorFrame) => void) | undefined;
-		bridge.capture.mockImplementationOnce(
-			() => new Promise<BrowserMirrorFrame>((resolve) => {
-				releaseCapture = resolve;
-			}),
-		);
 		const slot = createSlot();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
 		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
@@ -762,7 +490,6 @@ describe("useBrowserView", () => {
 		act(() => result.current.slotRef(slot));
 		await waitFor(() => expect(result.current.navState.url).toBe("http://localhost:3000/"));
 
-		bridge.setBounds.mockClear();
 		const menu = document.createElement("div");
 		menu.setAttribute("role", "menu");
 		menu.setAttribute("data-browser-native-overlay", "true");
@@ -771,33 +498,50 @@ describe("useBrowserView", () => {
 			document.body.appendChild(menu);
 			await Promise.resolve();
 		});
-		await waitFor(() => expect(bridge.capture).toHaveBeenCalledWith("42:sess-1"));
-		expect(bridge.setBounds).not.toHaveBeenCalledWith(expect.objectContaining({ parked: true }));
+		await waitFor(() => expect(bridge.setOverlayOpen).toHaveBeenCalledWith(true));
+	});
 
-		await act(async () => {
-			releaseCapture?.({
-				dataUrl: "data:image/jpeg;base64,snapshot",
-				pixelWidth: 640,
-				pixelHeight: 480,
-				nativeBounds: { x: 12, y: 34, width: 320, height: 240 },
-				cssLeft: 0,
-				cssTop: 0,
-				cssWidth: 320,
-				cssHeight: 240,
-			});
-		});
-		await waitFor(() => expect(result.current.mirrorFrame?.dataUrl).toBe("data:image/jpeg;base64,snapshot"));
+	it("keeps the native page live while native composition raises a browser overlay", async () => {
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
 		await waitFor(() =>
-			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+			expect(bridge.setBounds).toHaveBeenCalledWith({
 				viewId: "42:sess-1",
 				rect: { x: 12, y: 34, width: 320, height: 240 },
 				visible: true,
-				parked: true,
 			}),
 		);
+
+		const menu = document.createElement("div");
+		menu.setAttribute("role", "menu");
+		menu.setAttribute("data-browser-native-overlay", "true");
+		menu.setAttribute("data-state", "open");
+		await act(async () => {
+			document.body.appendChild(menu);
+			await Promise.resolve();
+		});
+
+		await waitFor(() => expect(bridge.setOverlayOpen).toHaveBeenCalledWith(true));
+
+		menu.remove();
+		await waitFor(() => expect(bridge.setOverlayOpen).toHaveBeenLastCalledWith(false));
 	});
 
-	it("re-parks when a reused portal flips data-state in place under rapid toggling", async () => {
+	it("tracks a reused portal when its data-state flips in place", async () => {
 		// Radix reuses its portal node and flips data-state="open"↔"closed" without
 		// adding/removing a body child. A childList-only observer misses this, so the
 		// view stays un-parked while the dropdown is open. The hardened observer must
@@ -833,27 +577,13 @@ describe("useBrowserView", () => {
 			portal.setAttribute("data-state", "open");
 			await Promise.resolve();
 		});
-		await waitFor(() =>
-			expect(bridge.setBounds).toHaveBeenLastCalledWith({
-				viewId: "42:sess-1",
-				rect: { x: 12, y: 34, width: 320, height: 240 },
-				visible: true,
-				parked: true,
-			}),
-		);
+		await waitFor(() => expect(bridge.setOverlayOpen).toHaveBeenCalledWith(true));
 
-		bridge.setBounds.mockClear();
 		await act(async () => {
 			portal.setAttribute("data-state", "closed");
 			await Promise.resolve();
 		});
-		await waitFor(() =>
-			expect(bridge.setBounds).toHaveBeenLastCalledWith({
-				viewId: "42:sess-1",
-				rect: { x: 12, y: 34, width: 320, height: 240 },
-				visible: true,
-			}),
-		);
+		await waitFor(() => expect(bridge.setOverlayOpen).toHaveBeenLastCalledWith(false));
 	});
 
 	it("updates nav state only for the current view", async () => {
