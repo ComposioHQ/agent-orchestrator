@@ -599,6 +599,17 @@ func mergeabilityObservation(providerMergeable, providerMergeState, ci, review s
 		out.State = string(domain.MergeBlocked)
 		addBlocker("blocked_by_provider")
 	}
+	// UNSTABLE must be checked before the draft/CI/review blockers below:
+	// doc.go's priority order puts rule (3) mergeStateStatus == UNSTABLE
+	// ahead of rule (5) changes_requested and rule (6) CI == failing, and
+	// state can only hold one value, so this never masks the BLOCKED check
+	// above. UNSTABLE means GitHub still considers the PR mergeable despite
+	// a failing/pending NON-required check; a required-check failure
+	// surfaces as BLOCKED via mergeStateStatus, not via ci == CIFailing.
+	if state == "UNSTABLE" {
+		out.State = string(domain.MergeUnstable)
+		return out
+	}
 	if draft {
 		out.State = string(domain.MergeBlocked)
 		addBlocker("draft")
@@ -616,10 +627,6 @@ func mergeabilityObservation(providerMergeable, providerMergeState, ci, review s
 		addBlocker("review_required")
 	}
 	if out.State == string(domain.MergeBlocked) {
-		return out
-	}
-	if state == "UNSTABLE" {
-		out.State = string(domain.MergeUnstable)
 		return out
 	}
 	if mergeable == "MERGEABLE" && (state == "CLEAN" || state == "HAS_HOOKS" || state == "") &&

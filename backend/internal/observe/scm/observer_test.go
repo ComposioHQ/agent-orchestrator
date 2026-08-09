@@ -1602,3 +1602,24 @@ func TestDiscoverSubjects_NonGitPathDoesNotBackfill(t *testing.T) {
 		t.Fatalf("RepoOriginURL = %q, want empty (no persist on failed backfill)", got)
 	}
 }
+
+// TestMergeabilityFromProviderFactsUnstableBeatsCIFailing is the repro from
+// issue #2401: a PR whose provider mergeStateStatus is UNSTABLE (GitHub
+// still considers it mergeable despite a failing/pending non-required
+// check) must surface as MergeUnstable even though its CI rollup is
+// CIFailing. Per doc.go's documented priority order (backend/internal/adapters/scm/github/doc.go),
+// rule (3) UNSTABLE wins over rule (6) CI == failing — mirroring
+// mergeabilityFromGraphQL, which switches on state before ever consulting
+// CI. This path was previously untested, which is how the two functions
+// diverged from the documented order.
+func TestMergeabilityFromProviderFactsUnstableBeatsCIFailing(t *testing.T) {
+	got := mergeabilityFromProviderFacts("MERGEABLE", "UNSTABLE", string(domain.CIFailing), string(domain.ReviewApproved), false)
+	if got.State != string(domain.MergeUnstable) {
+		t.Fatalf("mergeability = %+v, want unstable (UNSTABLE must win over ci_failing per doc.go priority order)", got)
+	}
+	for _, b := range got.Blockers {
+		if b == "ci_failing" {
+			t.Fatalf("blockers = %v, unstable PR should not carry a ci_failing blocker", got.Blockers)
+		}
+	}
+}
