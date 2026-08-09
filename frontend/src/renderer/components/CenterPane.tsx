@@ -334,6 +334,7 @@ export function CenterPane({
 								<ChevronRight aria-hidden="true" className="size-icon-md" />
 							</button>
 						) : null}
+						<NewTerminalButton onClick={onNewShellTerminal} />
 					</div>
 				</div>
 				{isFullscreen ? null : (

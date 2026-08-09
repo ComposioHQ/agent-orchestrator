@@ -467,7 +467,12 @@ describe("CenterPane toolbar session label", () => {
 		});
 		fireEvent.scroll(scrollRegion);
 
-		expect(screen.getByRole("button", { name: "Scroll tabs right" })).toBeEnabled();
+		const scrollRightButton = screen.getByRole("button", { name: "Scroll tabs right" });
+		const addTerminalButton = screen.getByRole("button", { name: "New terminal" });
+		expect(scrollRightButton).toBeEnabled();
+		expect(scrollRightButton.compareDocumentPosition(addTerminalButton)).toBe(
+			Node.DOCUMENT_POSITION_FOLLOWING,
+		);
 		expect(screen.queryByRole("button", { name: "Scroll tabs left" })).not.toBeInTheDocument();
 
 		Object.defineProperty(scrollRegion, "scrollLeft", {
