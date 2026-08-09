@@ -117,6 +117,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
+	const initializedInspectorSessionIdRef = useRef<string | null>(null);
 	const [inspectorMotionState, setInspectorMotionState] = useState<"closed" | "closing" | "open" | "opening">(
 		isInspectorOpen ? "open" : "closed",
 	);
@@ -393,6 +394,33 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// content here either — otherwise a merged/terminated session with an old
 	// preview auto-opens Browser onto a view the hook has already torn down.
 	const hasBrowserContent = !terminated && Boolean(previewUrl || browserUrl);
+
+	// Entering a session always starts on Summary. Treat browser content that
+	// already existed when the route resolved as the baseline for that visit;
+	// only preview work arriving afterward may reveal Browser automatically.
+	useLayoutEffect(() => {
+		if (!session || initializedInspectorSessionIdRef.current === sessionId) return;
+		initializedInspectorSessionIdRef.current = sessionId;
+		if (!hasInspector) return;
+		const current = useUiStore.getState().inspectorSessions[sessionId];
+		setInspectorViewForSession(sessionId, "summary");
+		if (current?.browserContentRevealed === undefined) {
+			setBrowserContentRevealed(sessionId, hasBrowserContent);
+		}
+		if (current?.previewKey === undefined) {
+			markInspectorPreviewSeen(sessionId, previewRevealKey(previewUrl, previewRevision));
+		}
+	}, [
+		hasBrowserContent,
+		hasInspector,
+		markInspectorPreviewSeen,
+		previewRevision,
+		previewUrl,
+		session,
+		sessionId,
+		setBrowserContentRevealed,
+		setInspectorViewForSession,
+	]);
 
 	useLayoutEffect(() => {
 		setTerminalTarget({ kind: "worker" });
