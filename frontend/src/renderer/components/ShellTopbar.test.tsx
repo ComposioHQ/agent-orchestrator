@@ -185,7 +185,7 @@ describe("ShellTopbar status pill", () => {
 		const card = screen.getByTestId("session-identity-card");
 		expect(card).toHaveTextContent("do the thing");
 		expect(card).toContainElement(screen.getByRole("button", { name: "Switch interface" }));
-		expect(card.querySelector('img[aria-hidden="true"]')).toBeInTheDocument();
+		expect(card.querySelector('img[aria-hidden="true"]')).toHaveClass("size-icon-xs!");
 		expect(card).not.toHaveTextContent("ao/sess-1");
 	});
 

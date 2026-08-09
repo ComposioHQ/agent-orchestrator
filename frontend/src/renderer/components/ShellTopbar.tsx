@@ -419,7 +419,7 @@ function SessionIdentityCard({
 			{isOrchestrator ? (
 				<OrchestratorIcon aria-hidden="true" className="size-icon-xs shrink-0 text-muted-foreground" />
 			) : (
-				<AgentAvatar className="size-icon-xs shrink-0" decorative provider={session.provider} />
+				<AgentAvatar className="size-icon-xs! shrink-0" decorative provider={session.provider} />
 			)}
 			<span className="max-w-content-max truncate">
 				{isOrchestrator ? t("shell.orchestrator") : session.title}
