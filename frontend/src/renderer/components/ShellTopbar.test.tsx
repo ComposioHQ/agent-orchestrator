@@ -176,19 +176,18 @@ describe("ShellTopbar status pill", () => {
 		expect(screen.getByRole("button", { name: "Spawn Orchestrator" })).toBeInTheDocument();
 	});
 
-	it("keeps compact worker actions ahead of notifications in the terminal top bar", () => {
+	it("keeps compact worker actions ahead of notifications without a separator while the inspector is open", () => {
 		renderTopbarSessions([worker, orchestrator], worker.id, true);
 
 		const actionRegion = screen.getByTestId("workspace-topbar-actions");
 		const kill = within(actionRegion).getByRole("button", { name: "Kill session" });
 		const openOrchestrator = within(actionRegion).getByRole("button", { name: "Open orchestrator" });
 		const notification = within(actionRegion).getByRole("button", { name: "Notifications" });
-		const separator = within(actionRegion).getByTestId("topbar-utility-separator");
 
 		expect(kill).not.toHaveTextContent("Kill");
 		expect(within(openOrchestrator).getByText("Orchestrator")).toHaveAttribute("data-compact-label");
-		expect(openOrchestrator.compareDocumentPosition(separator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		expect(separator.compareDocumentPosition(notification) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(openOrchestrator.compareDocumentPosition(notification) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(within(actionRegion).queryByTestId("topbar-utility-separator")).not.toBeInTheDocument();
 	});
 
 	it.each([
@@ -367,10 +366,15 @@ describe("ShellTopbar inspector state", () => {
 		});
 		renderTopbarSessions([worker], "sess-1");
 
-		const toggle = screen.getByRole("button", { name: "Open inspector panel" });
-		const notification = screen.getByRole("button", { name: "Notifications" });
+		const actionRegion = screen.getByTestId("workspace-topbar-actions");
+		const toggle = within(actionRegion).getByRole("button", { name: "Open inspector panel" });
+		const notification = within(actionRegion).getByRole("button", { name: "Notifications" });
+		const separator = within(actionRegion).getByTestId("topbar-utility-separator");
 		const controls = within(toggle.closest("header") as HTMLElement).getAllByRole("button");
 
+		expect(within(actionRegion).getAllByTestId("topbar-utility-separator")).toHaveLength(1);
+		expect(notification.compareDocumentPosition(separator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(separator.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		expect(controls.indexOf(notification)).toBeLessThan(controls.indexOf(toggle));
 		expect(controls.at(-1)).toBe(toggle);
 	});
