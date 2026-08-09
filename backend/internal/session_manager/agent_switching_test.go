@@ -631,7 +631,7 @@ func newSwitchTestManager(t *testing.T, runtime runtimeController) (*Manager, *s
 	return manager, store, messenger
 }
 
-func switchAgentSynchronously(manager *Manager, ctx context.Context, id domain.SessionID, cfg SwitchAgentConfig) (domain.AgentSwitch, error) {
+func switchAgentSynchronously(ctx context.Context, manager *Manager, id domain.SessionID, cfg SwitchAgentConfig) (domain.AgentSwitch, error) {
 	record, admitted, err := manager.admitAgentSwitch(ctx, id, cfg)
 	if err != nil || admitted == nil {
 		return record, err
@@ -662,7 +662,7 @@ type switchAgentCallResult struct {
 	err    error
 }
 
-func callSwitchAgent(manager *Manager, ctx context.Context, id domain.SessionID, cfg SwitchAgentConfig) <-chan switchAgentCallResult {
+func callSwitchAgent(ctx context.Context, manager *Manager, id domain.SessionID, cfg SwitchAgentConfig) <-chan switchAgentCallResult {
 	result := make(chan switchAgentCallResult, 1)
 	go func() {
 		defer close(result)
@@ -710,7 +710,7 @@ func TestSwitchAgentReturnsAfterDurableAdmission(t *testing.T) {
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
 	releasePreflight := blockTargetPreflight(t, target)
 
-	call := callSwitchAgent(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	call := callSwitchAgent(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "async-admission",
 	})
 	cleanupBlockedSwitchCall(t, manager, releasePreflight, call)
@@ -742,7 +742,7 @@ func TestSwitchAgentRequestCancellationDoesNotCancelWorker(t *testing.T) {
 	requestCtx, cancelRequest := context.WithCancel(context.Background())
 	defer cancelRequest()
 
-	call := callSwitchAgent(manager, requestCtx, "proj-1", SwitchAgentConfig{
+	call := callSwitchAgent(requestCtx, manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "request-cancelled-after-admission",
 	})
 	cleanupBlockedSwitchCall(t, manager, releasePreflight, call)
@@ -771,7 +771,7 @@ func TestSwitchAgentIdempotentReplayStartsOneWorker(t *testing.T) {
 	releasePreflight := blockTargetPreflight(t, target)
 	cfg := SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "same-async-request"}
 
-	firstCall := callSwitchAgent(manager, context.Background(), "proj-1", cfg)
+	firstCall := callSwitchAgent(context.Background(), manager, "proj-1", cfg)
 	cleanupBlockedSwitchCall(t, manager, releasePreflight, firstCall)
 	firstResult := awaitSwitchAgentCall(t, firstCall)
 	if firstResult.err != nil {
@@ -779,7 +779,7 @@ func TestSwitchAgentIdempotentReplayStartsOneWorker(t *testing.T) {
 	}
 	first := firstResult.record
 	awaitSwitchTestSignal(t, target.preflightStarted, "target preflight")
-	replayResult := awaitSwitchAgentCall(t, callSwitchAgent(manager, context.Background(), "proj-1", cfg))
+	replayResult := awaitSwitchAgentCall(t, callSwitchAgent(context.Background(), manager, "proj-1", cfg))
 	if replayResult.err != nil {
 		t.Fatal(replayResult.err)
 	}
@@ -802,7 +802,7 @@ func TestWaitAgentSwitchWorkersObservesDaemonCancellation(t *testing.T) {
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
 	releasePreflight := blockTargetPreflight(t, target)
 
-	call := callSwitchAgent(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	call := callSwitchAgent(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "daemon-cancellation",
 	})
 	cleanupBlockedSwitchCall(t, manager, releasePreflight, call)
@@ -844,7 +844,7 @@ func TestSwitchAgentWorkerLaunchRefusalSettlesOrRetainsPreStopGate(t *testing.T)
 			releaseAdmission := func() { releaseOnce.Do(func() { close(store.createSwitchRelease) }) }
 			t.Cleanup(releaseAdmission)
 
-			call := callSwitchAgent(manager, context.Background(), "proj-1", SwitchAgentConfig{
+			call := callSwitchAgent(context.Background(), manager, "proj-1", SwitchAgentConfig{
 				TargetHarness: domain.HarnessCodex, IdempotencyKey: "worker-launch-refused",
 			})
 			awaitSwitchTestSignal(t, store.createSwitchCommitted, "durable switch admission")
@@ -1339,7 +1339,7 @@ func TestSwitchAgentRejectsCursorAndKimiBeforeMutation(t *testing.T) {
 			rec.Harness = tt.source
 			store.sessions[rec.ID] = rec
 
-			_, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{
+			_, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 				TargetHarness: tt.target, IdempotencyKey: "unsupported-harness",
 			})
 			if !errors.Is(err, ErrUnsupportedSwitchHarness) {
@@ -1419,7 +1419,7 @@ func TestSwitchAgentFreshPreservesAOIdentityAndDeliversArtifact(t *testing.T) {
 		}
 	}
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "request-1", Note: "preserve the unfinished test"})
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "request-1", Note: "preserve the unfinished test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1515,7 +1515,7 @@ func TestSwitchAgentBindsHiddenContinuationBeforeReleasingLaunchHooks(t *testing
 		}
 	}
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness:  domain.HarnessCodex,
 		IdempotencyKey: "in-command-continuation",
 	})
@@ -1586,7 +1586,7 @@ func TestSwitchAgentRetainsSwitchWhenCreateReturnsNoHandle(t *testing.T) {
 	}
 	manager, store, _ := newSwitchTestManager(t, runtime)
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness:  domain.HarnessCodex,
 		IdempotencyKey: "target-create-no-handle",
 	})
@@ -1620,7 +1620,7 @@ func TestSwitchAgentCreateErrorWithTargetHandleUsesConservativeCleanup(t *testin
 	}
 	manager, _, _ := newSwitchTestManager(t, runtime)
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness:  domain.HarnessCodex,
 		IdempotencyKey: "target-create-ambiguous-handle",
 	})
@@ -1661,7 +1661,7 @@ func TestSwitchAgentTranscriptReadFailureUsesSingleTerminalFallback(t *testing.T
 	rec.Metadata.NativeTranscriptPath = path
 	store.sessions[rec.ID] = rec
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "transcript-read-fallback",
 	})
 	if err != nil {
@@ -1691,7 +1691,7 @@ func TestSwitchAgentResumesVerifiedPriorNativeSession(t *testing.T) {
 		LastGenerationID: "old-generation", CreatedAt: now, LastUsedAt: now,
 	}
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "resume-prior"})
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "resume-prior"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1717,7 +1717,7 @@ func TestSwitchAgentUnknownResumeEvidenceStartsFresh(t *testing.T) {
 		LastGenerationID: "old-generation", CreatedAt: now, LastUsedAt: now,
 	}
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "fresh-on-unknown"})
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "fresh-on-unknown"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1752,7 +1752,7 @@ func TestSwitchAgentRejectsDefinitelyUnauthenticatedTargetBeforeStoppingSource(t
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
 	target.authStatus = ports.AgentAuthStatusUnauthorized
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "unauthenticated"})
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "unauthenticated"})
 	if !errors.Is(err, ErrTargetAgentUnauthorized) {
 		t.Fatalf("switch error = %v, want ErrTargetAgentUnauthorized", err)
 	}
@@ -1774,7 +1774,7 @@ func TestSwitchAgentRejectsOrchestratorBeforeCreatingSaga(t *testing.T) {
 	rec.Kind = domain.KindOrchestrator
 	store.sessions[rec.ID] = rec
 
-	_, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "orchestrator"})
+	_, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "orchestrator"})
 	if !errors.Is(err, ErrUnsupportedSwitchKind) {
 		t.Fatalf("switch error = %v, want ErrUnsupportedSwitchKind", err)
 	}
@@ -1812,7 +1812,7 @@ func TestSwitchAgentIncludesAvailableSourceAuthoredHandoff(t *testing.T) {
 		}
 	}
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "semantic", Note: "preserve storage semantics"})
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "semantic", Note: "preserve storage semantics"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1887,7 +1887,7 @@ func TestSwitchAgentRetriesSwallowedSourceHandoffEnterOnlyForSafeHarness(t *test
 		}
 	}
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "source-enter-retry",
 	})
 	if err != nil {
@@ -1907,7 +1907,7 @@ func TestSwitchAgentSourceSummaryTimeoutStillDeliversDeterministicHandoff(t *tes
 	store.sessions[rec.ID] = rec
 	manager.handoffWait = time.Millisecond
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "summary-timeout",
 	})
 	if err != nil {
@@ -1939,7 +1939,7 @@ func TestSwitchAgentSkipsSemanticHandoffWhenSourceComposerContainsDraft(t *testi
 	source := manager.agents.(switchTestAgents)[domain.HarnessClaudeCode].(*switchTestAgent)
 	source.composerEmpty = func(string) bool { return false }
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "source-unsent-draft",
 	})
 	if err != nil {
@@ -1972,7 +1972,7 @@ func TestSwitchAgentSourceSemanticSendFailureStillUsesDeterministicFallback(t *t
 		return nil
 	}
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "semantic-send-fallback",
 	})
 	if err != nil {
@@ -2002,7 +2002,7 @@ func TestSwitchAgentSemanticPollingFailureStillUsesDeterministicFallback(t *test
 	manager.handoffWait = 2 * switchPollInterval
 	store.getSwitchErrOnceWhenRequested = errors.New("semantic status read interrupted")
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "semantic-polling-fallback",
 	})
 	if err != nil {
@@ -2050,7 +2050,7 @@ func TestSwitchAgentSettlesAmbiguousSemanticRequestPersistenceToFallback(t *test
 			store.sessions[rec.ID] = rec
 			tt.configure(store)
 
-			sw, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{
+			sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 				TargetHarness: domain.HarnessCodex, IdempotencyKey: "ambiguous-semantic-request-" + strings.ReplaceAll(tt.name, " ", "-"),
 			})
 			if err != nil {
@@ -2076,7 +2076,7 @@ func TestSwitchAgentGatesSendDuringReplacement(t *testing.T) {
 	manager, _, _ := newSwitchTestManager(t, runtime)
 	done := make(chan error, 1)
 	go func() {
-		_, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "blocking"})
+		_, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "blocking"})
 		done <- err
 	}()
 	<-runtime.entered
@@ -2114,7 +2114,7 @@ func TestSwitchAgentUsesSeparatePermissionDecisionWindow(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{
+		_, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 			TargetHarness: domain.HarnessCodex, IdempotencyKey: "permission-during-handoff",
 		})
 		done <- err
@@ -2170,7 +2170,7 @@ func TestSwitchAgentPermissionDecisionTimeoutUsesFallback(t *testing.T) {
 	}
 
 	started := time.Now()
-	sw, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "permission-timeout-fallback",
 	})
 	if err != nil {
@@ -2328,7 +2328,7 @@ func TestSwitchAgentWaitsForDelayedExactGenerationAcknowledgement(t *testing.T) 
 		}(active)
 	}
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "delayed-exact-ack",
 	})
 	if err != nil {
@@ -2359,7 +2359,7 @@ func TestSwitchAgentRequiresTargetDeliveryAcknowledgement(t *testing.T) {
 		maxAttempts:     3,
 	}
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "missing-ack",
 	})
 	if !errors.Is(err, ErrSwitchDeliveryUnconfirmed) {
@@ -2387,7 +2387,7 @@ func TestSwitchAgentTreatsAmbiguousCommittedTargetActivationAsSuccess(t *testing
 	manager, store, _ := newSwitchTestManager(t, runtime)
 	store.activateAfterCommitErr = errors.New("commit response lost")
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "activation-commit-ambiguous",
 	})
 	if err != nil {
@@ -2408,7 +2408,7 @@ func TestSwitchAgentRecoversAmbiguousCommittedSagaCreation(t *testing.T) {
 	manager, store, _ := newSwitchTestManager(t, runtime)
 	store.createSwitchAfterCommitErr = errors.New("insert commit response lost")
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "create-commit-ambiguous",
 	})
 	if err != nil {
@@ -2425,7 +2425,7 @@ func TestSwitchAgentCompletesWhenAcknowledgementWinsFailureCAS(t *testing.T) {
 	messenger.onSend = nil // let the acknowledgement arrive at the timeout boundary
 	store.ackBeforeDeliveryFailure = true
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "ack-wins-timeout",
 	})
 	if err != nil {
@@ -2441,19 +2441,19 @@ func TestSwitchAgentCompletesWhenAcknowledgementWinsFailureCAS(t *testing.T) {
 
 func TestSwitchAgentIdempotencyFingerprintIncludesNote(t *testing.T) {
 	manager, _, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
-	first, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	first, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "same-key", Note: "preserve tests",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	retry, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "same-key", Note: " preserve tests ",
 	})
 	if err != nil || retry.ID != first.ID {
 		t.Fatalf("same request retry = %+v, err=%v", retry, err)
 	}
-	_, err = switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	_, err = switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "same-key", Note: "different request",
 	})
 	if !errors.Is(err, domain.ErrAgentSwitchIdempotencyConflict) {
@@ -2465,7 +2465,7 @@ func TestSwitchAgentDoesNotStartTargetWhenSourceStopIsUnconfirmed(t *testing.T) 
 	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{destroyErr: errors.New("teardown unavailable")}}
 	manager, store, _ := newSwitchTestManager(t, runtime)
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "stop-unconfirmed",
 	})
 	if !errors.Is(err, ErrSwitchSourceStopUnconfirmed) {
@@ -2499,7 +2499,7 @@ func TestSwitchAgentInstallsTargetWorkspaceOnlyAfterFinalSourceSnapshot(t *testi
 		}
 	}
 
-	if _, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	if _, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "snapshot-before-target-hooks",
 	}); err != nil {
 		t.Fatal(err)
@@ -2516,7 +2516,7 @@ func TestSwitchAgentRetainsGateWhenFailureCannotBePersisted(t *testing.T) {
 	target.authStatus = ports.AgentAuthStatusUnauthorized
 	store.failTransitionErr = errors.New("sqlite busy")
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "failure-write-lost",
 	})
 	if !errors.Is(err, ErrTargetAgentUnauthorized) {
@@ -2551,7 +2551,7 @@ func TestSwitchAgentRetainsGateWhenSourceStopCommitIsUnknown(t *testing.T) {
 	manager, store, _ := newSwitchTestManager(t, runtime)
 	store.confirmErr = errors.New("commit result unavailable")
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "unknown-source-stop-commit",
 	})
 	if err == nil || sw.State != domain.AgentSwitchStoppingSource || !manager.SessionMutationInProgress("proj-1") {
@@ -2577,7 +2577,7 @@ func TestSwitchAgentRetainedProbeAndCleanupFailureRecoversUsingOpaqueHandle(t *t
 	manager, store, messenger := newSwitchTestManager(t, runtime)
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "ambiguous-target-probe",
 	})
 	if !errors.Is(err, probeErr) || !errors.Is(err, cleanupErr) {
@@ -2634,7 +2634,7 @@ func TestSwitchAgentRetainedActivationAndCleanupFailureRecoversByAdoptingOpaqueH
 	manager, store, messenger := newSwitchTestManager(t, runtime)
 	store.activateErr = activationErr
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), "proj-1", SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "ambiguous-target-activation",
 	})
 	if !errors.Is(err, activationErr) || !errors.Is(err, cleanupErr) {
@@ -2890,7 +2890,7 @@ func TestSwitchAgentRefreshesLatestAssistantUpdateAfterSourceHandoff(t *testing.
 		}
 	}
 
-	if _, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "latest-assistant"}); err != nil {
+	if _, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "latest-assistant"}); err != nil {
 		t.Fatal(err)
 	}
 	continuation := target.launchSystemPrompt
@@ -2944,7 +2944,7 @@ func TestSwitchAgentRefreshesLateSourceNativeIdentityAtStopBoundary(t *testing.T
 		}
 	}
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{
+	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "late-source-native-identity",
 	})
 	if err != nil {
@@ -3004,7 +3004,7 @@ func TestSwitchAgentFallsBackWhenReceivedSemanticFileIsChangedBeforeSourceStop(t
 		}
 	}
 
-	sw, err := switchAgentSynchronously(manager, context.Background(), rec.ID, SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "changed-semantic"})
+	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "changed-semantic"})
 	if err != nil {
 		t.Fatal(err)
 	}
