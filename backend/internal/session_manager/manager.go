@@ -1751,12 +1751,11 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
-		if !errors.Is(err, ports.ErrRuntimeUnavailable) {
+		if !errors.Is(err, ports.ErrRuntimeServerAbsent) {
 			return ports.RuntimeHandle{}, fmt.Errorf("probe existing runtime: %w", err)
 		}
-		// The runtime infrastructure itself is gone (e.g. the tmux server was
-		// killed). Restore/restart is exactly the recovery path for that
-		// outage, so proceed as "no existing runtime" and create a fresh one.
+		// A pane cannot survive an absent tmux server. Restore/restart may create
+		// a replacement without launching beside the old runtime.
 		alive = false
 	}
 	if alive {
@@ -1921,9 +1920,9 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 			alive, err := m.runtime.IsAlive(ctx, handle)
 			switch {
 			case err == nil:
-			case errors.Is(err, ports.ErrRuntimeUnavailable):
-				// Normal after a machine reboot: the runtime is conclusively gone,
-				// so preserve work and create the restore marker below.
+			case errors.Is(err, ports.ErrRuntimeServerAbsent):
+				// Normal after a machine reboot: the server is authoritatively
+				// absent, so preserve work and create the restore marker below.
 				alive = false
 			default:
 				// A failed probe is not proof of death: leave the session as-is.
@@ -1957,7 +1956,7 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 	}
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
-		if errors.Is(err, ports.ErrRuntimeUnavailable) {
+		if errors.Is(err, ports.ErrRuntimeServerAbsent) {
 			return nil // no server means no leaked session to reap
 		}
 		return fmt.Errorf("reconcile reap %s: probe: %w", rec.ID, err)

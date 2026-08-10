@@ -1321,6 +1321,38 @@ func TestResumeAgent_FallsBackToRuntimeRecreateWithoutRestartCapability(t *testi
 	}
 }
 
+func TestRestartRuntime_ServerAbsentCreatesReplacement(t *testing.T) {
+	rt := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{
+		aliveErr: fmt.Errorf("tmux socket absent: %w", ports.ErrRuntimeServerAbsent),
+	}}
+	m := New(Deps{Runtime: rt})
+
+	handle, err := m.restartRuntime(context.Background(), ports.RuntimeHandle{ID: "old"}, ports.RuntimeConfig{SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("restartRuntime: %v", err)
+	}
+	if handle.ID != "h1" || rt.created != 1 || rt.restarted != 0 || rt.destroyed != 0 {
+		t.Fatalf("replacement = %+v create/restart/destroy=%d/%d/%d, want h1 and 1/0/0",
+			handle, rt.created, rt.restarted, rt.destroyed)
+	}
+}
+
+func TestRestartRuntime_UnavailableProbeFailsClosed(t *testing.T) {
+	rt := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{
+		aliveErr: fmt.Errorf("tmux permission failure: %w", ports.ErrRuntimeUnavailable),
+	}}
+	m := New(Deps{Runtime: rt})
+
+	_, err := m.restartRuntime(context.Background(), ports.RuntimeHandle{ID: "old"}, ports.RuntimeConfig{SessionID: "s1"})
+	if !errors.Is(err, ports.ErrRuntimeUnavailable) {
+		t.Fatalf("restartRuntime error = %v, want ErrRuntimeUnavailable", err)
+	}
+	if rt.created != 0 || rt.restarted != 0 || rt.destroyed != 0 {
+		t.Fatalf("inconclusive probe touched runtime: create/restart/destroy=%d/%d/%d",
+			rt.created, rt.restarted, rt.destroyed)
+	}
+}
+
 func TestResumeAgent_RequiresLiveExitedSession(t *testing.T) {
 	runtime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
 	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
@@ -6319,6 +6351,32 @@ func TestReconcileLive_ProbeErrorIsNotDeath(t *testing.T) {
 	}
 }
 
+func TestReconcileLive_UnavailableProbeIsNotDeath(t *testing.T) {
+	st := newFakeStore()
+	rt := &fakeRuntime{aliveErr: fmt.Errorf("tmux permission failure: %w", ports.ErrRuntimeUnavailable)}
+	ws := &fakeWorkspace{}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	rec := domain.SessionRecord{
+		ID: "s3", ProjectID: "p1",
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s3/root", WorkspacePath: "/wt/s3", RuntimeHandleID: "s3",
+		},
+	}
+
+	if err := m.reconcileLive(context.Background(), rec); !errors.Is(err, ports.ErrRuntimeUnavailable) {
+		t.Fatalf("reconcileLive error = %v, want ErrRuntimeUnavailable", err)
+	}
+	if ws.stashCalls != 0 || lcm.terminated["s3"] != 0 || rt.destroyed != 0 {
+		t.Fatalf("inconclusive probe mutated state: stash=%d term=%d destroy=%d",
+			ws.stashCalls, lcm.terminated["s3"], rt.destroyed)
+	}
+}
+
 func TestReconcileLive_ScratchDeadRuntimeTerminatesWithoutWorkspaceTeardown(t *testing.T) {
 	st := newFakeStore()
 	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents()}
@@ -6481,6 +6539,38 @@ func TestReconcileReap_TerminatedAndDeadTmuxLeftAlone(t *testing.T) {
 	}
 	if err := m.reconcileReap(context.Background(), rec); err != nil {
 		t.Fatalf("reconcileReap: %v", err)
+	}
+	if rt.destroyed != 0 {
+		t.Fatalf("Destroy calls = %d, want 0", rt.destroyed)
+	}
+}
+
+func TestReconcileReap_ServerAbsentNeedsNoDestroy(t *testing.T) {
+	rt := &fakeRuntime{aliveErr: fmt.Errorf("tmux socket absent: %w", ports.ErrRuntimeServerAbsent)}
+	m := New(Deps{Runtime: rt})
+	rec := domain.SessionRecord{
+		ID: "t3", IsTerminated: true,
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "t3"},
+	}
+
+	if err := m.reconcileReap(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileReap: %v", err)
+	}
+	if rt.destroyed != 0 {
+		t.Fatalf("Destroy calls = %d, want 0", rt.destroyed)
+	}
+}
+
+func TestReconcileReap_UnavailableProbeDoesNotClaimAbsence(t *testing.T) {
+	rt := &fakeRuntime{aliveErr: fmt.Errorf("tmux permission failure: %w", ports.ErrRuntimeUnavailable)}
+	m := New(Deps{Runtime: rt})
+	rec := domain.SessionRecord{
+		ID: "t4", IsTerminated: true,
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "t4"},
+	}
+
+	if err := m.reconcileReap(context.Background(), rec); !errors.Is(err, ports.ErrRuntimeUnavailable) {
+		t.Fatalf("reconcileReap error = %v, want ErrRuntimeUnavailable", err)
 	}
 	if rt.destroyed != 0 {
 		t.Fatalf("Destroy calls = %d, want 0", rt.destroyed)
