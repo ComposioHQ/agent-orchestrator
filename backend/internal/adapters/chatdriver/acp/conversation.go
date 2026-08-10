@@ -152,7 +152,13 @@ func (c *conversation) start(
 	c.mu.Lock()
 	c.sessionID = sessionID
 	c.capabilities = capabilities
-	c.configOptions = normalizeConfigOptions(configOptions)
+	// Preserve config options received via session/update during session/new.
+	// An agent may send config_option_update before start() runs; only overwrite
+	// the catalog when the response actually carries one, so an early update is
+	// not lost to an empty response snapshot.
+	if len(configOptions) > 0 {
+		c.configOptions = normalizeConfigOptions(configOptions)
+	}
 	if len(c.configOptions) > 0 {
 		c.capabilities[ports.ChatCapabilityConfigOptions] = true
 	}

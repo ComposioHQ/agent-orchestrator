@@ -43,6 +43,7 @@ type fakeAgent struct {
 	mode                string
 	modeNotFound        bool // SetSessionMode returns -32601
 	configNotFound      bool // SetSessionConfigOption returns -32601
+	newSessionUpdates   []acpsdk.SessionUpdate
 	options             map[string]string
 	newConfig           []acpsdk.SessionConfigOption
 	setConfig           []acpsdk.SessionConfigOption
@@ -125,10 +126,16 @@ func (a *fakeAgent) CloseSession(context.Context, acpsdk.CloseSessionRequest) (a
 func (a *fakeAgent) ListSessions(context.Context, acpsdk.ListSessionsRequest) (acpsdk.ListSessionsResponse, error) {
 	return acpsdk.ListSessionsResponse{}, nil
 }
-func (a *fakeAgent) NewSession(_ context.Context, params acpsdk.NewSessionRequest) (acpsdk.NewSessionResponse, error) {
+func (a *fakeAgent) NewSession(ctx context.Context, params acpsdk.NewSessionRequest) (acpsdk.NewSessionResponse, error) {
 	a.mu.Lock()
 	a.newParams = params
+	updates := append([]acpsdk.SessionUpdate(nil), a.newSessionUpdates...)
 	a.mu.Unlock()
+	for _, update := range updates {
+		if err := a.conn.SessionUpdate(ctx, acpsdk.SessionNotification{SessionId: "claude-session-1", Update: update}); err != nil {
+			return acpsdk.NewSessionResponse{}, err
+		}
+	}
 	return acpsdk.NewSessionResponse{SessionId: "claude-session-1", ConfigOptions: a.newConfig}, nil
 }
 func (a *fakeAgent) ResumeSession(_ context.Context, params acpsdk.ResumeSessionRequest) (acpsdk.ResumeSessionResponse, error) {
@@ -1278,5 +1285,43 @@ func TestNormalizeMCPServersEmptyReturnsEmptySlice(t *testing.T) {
 	}
 	if len(servers) != 0 {
 		t.Fatalf("servers = %d, want 0", len(servers))
+	}
+}
+
+// TestACPDriverPreservesEarlyConfigOptionUpdates verifies that config option
+// updates received via session/update during session/new are not overwritten
+// when the NewSession response carries an empty config options catalog.
+func TestACPDriverPreservesEarlyConfigOptionUpdates(t *testing.T) {
+	earlyOption := selectConfigOption("model", "Model", "model", "glm-5.2", "glm-5.2", "kimi")
+	agent := &fakeAgent{
+		newConfig: nil, // session/new response has no config options
+		newSessionUpdates: []acpsdk.SessionUpdate{
+			{ConfigOptionUpdate: &acpsdk.SessionConfigOptionUpdate{ConfigOptions: []acpsdk.SessionConfigOption{earlyOption}}},
+		},
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer conv.Close()
+
+	configurer := conv.(ports.ChatConfigOptionController)
+	options, err := configurer.ListConfigOptions(context.Background())
+	if err != nil {
+		t.Fatalf("ListConfigOptions: %v", err)
+	}
+	if len(options) != 1 {
+		t.Fatalf("options = %d, want 1 (early update preserved)", len(options))
+	}
+	if options[0].ID != "model" {
+		t.Fatalf("option id = %q, want %q", options[0].ID, "model")
 	}
 }
