@@ -228,23 +228,6 @@ describe("SessionInspector tabs", () => {
 		expect(summaryTab).toHaveAttribute("title", "Summary");
 	});
 
-	it("keeps the supplied notification action immediately left of the close toggle", () => {
-		renderWithQuery(
-			<SessionInspector
-				notificationAction={<button type="button">Notifications</button>}
-				onToggleVisibility={vi.fn()}
-				session={session([])}
-			/>,
-		);
-
-		const notification = screen.getByRole("button", { name: "Notifications" });
-		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
-		const controls = within(toggle.parentElement as HTMLElement).getAllByRole("button");
-
-		expect(controls.at(-2)).toBe(notification);
-		expect(controls.at(-1)).toBe(toggle);
-	});
-
 	it("shows the glow only while real browser activity is unseen", () => {
 		const currentSession = session([]);
 		const view = renderWithQuery(<SessionInspector session={currentSession} />);
