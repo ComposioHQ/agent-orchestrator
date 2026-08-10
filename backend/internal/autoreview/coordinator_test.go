@@ -63,7 +63,6 @@ func TestEvaluateSessionEligibility(t *testing.T) {
 		{name: "merged", mutate: func(f *fakeStore) { f.prs[0].Merged = true }},
 		{name: "missing head", mutate: func(f *fakeStore) { f.prs[0].HeadSHA = "" }},
 		{name: "no PR", mutate: func(f *fakeStore) { f.prs = nil }},
-		{name: "missing reviewer harness", mutate: func(f *fakeStore) { f.session.Harness = domain.AgentHarness("fake") }},
 		{name: "running current head", mutate: func(f *fakeStore) {
 			f.runs = []domain.ReviewRun{{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning, CreatedAt: now}}
 		}},
@@ -122,7 +121,9 @@ func TestEvaluateSessionReviewerHarnessPrecedence(t *testing.T) {
 	}{
 		{name: "session wins", session: domain.ReviewerOpenCode, project: domain.ReviewerClaudeCode, worker: domain.AgentHarness("codex"), expected: domain.ReviewerOpenCode},
 		{name: "project fallback", project: domain.ReviewerOpenCode, worker: domain.AgentHarness("codex"), expected: domain.ReviewerOpenCode},
-		{name: "worker fallback", worker: domain.AgentHarness("codex"), expected: domain.ReviewerCodex},
+		{name: "safe worker inheritance", worker: domain.HarnessCodex, expected: domain.ReviewerCodex},
+		{name: "known reviewer outside safe inheritance set", worker: domain.HarnessKimi, expected: domain.ReviewerClaudeCode},
+		{name: "non-reviewer worker fallback", worker: domain.HarnessAider, expected: domain.ReviewerClaudeCode},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

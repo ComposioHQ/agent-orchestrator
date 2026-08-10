@@ -176,16 +176,10 @@ func existingHeadReason(runs []domain.ReviewRun, prURL, targetSHA string) string
 }
 
 func effectiveReviewerHarness(session domain.SessionRecord, config domain.ProjectConfig) domain.ReviewerHarness {
-	if session.ReviewerHarness.IsKnown() {
+	if session.ReviewerHarness != "" {
 		return session.ReviewerHarness
 	}
-	if len(config.Reviewers) > 0 && config.Reviewers[0].Harness.IsKnown() {
-		return config.Reviewers[0].Harness
-	}
-	if worker := domain.ReviewerHarness(session.Harness); worker.IsKnown() {
-		return worker
-	}
-	return ""
+	return config.ResolveReviewerHarness(session.Harness)
 }
 
 func ineligibleReason(prs []domain.PullRequest, url string) string {
