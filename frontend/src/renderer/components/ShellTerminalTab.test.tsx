@@ -145,6 +145,16 @@ describe("ShellTerminalTab rename", () => {
 		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass("w-control-sm");
 	});
 
+	it("keeps a compact pinned-state marker visible while tab actions are hidden", () => {
+		renderTab({ appearance: "connected", isActive: false, isPinned: true, onPinnedChange: vi.fn() });
+
+		expect(screen.getByTestId("terminal-pinned-indicator")).toHaveClass(
+			"size-icon-xs",
+			"-rotate-45",
+			"text-muted-foreground",
+		);
+	});
+
 	it("uses a compact fixed width without reserving label space for inactive actions", () => {
 		renderTab({ appearance: "connected", isActive: false });
 

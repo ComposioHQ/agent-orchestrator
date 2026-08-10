@@ -133,6 +133,13 @@ export function ShellTerminalTab({
 			{appearance === "connected" ? (
 				<SquareTerminal aria-hidden="true" className="mr-1 size-icon-md shrink-0 translate-y-px" />
 			) : null}
+			{appearance === "connected" && isPinned ? (
+				<Pin
+					aria-hidden="true"
+					className="mr-1 size-icon-xs shrink-0 -rotate-45 text-muted-foreground"
+					data-testid="terminal-pinned-indicator"
+				/>
+			) : null}
 			{isEditing ? (
 				<input
 					aria-label={t("terminal.rename", { title: shell.title })}
