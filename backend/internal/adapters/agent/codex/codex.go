@@ -7,7 +7,9 @@
 package codex
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -199,10 +201,96 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 }
 
 // Transcript reads the agent's native transcript and returns a normalized
-// list of user/assistant turns. This stub returns no transcript; adapters with
-// native transcript storage override it to read from their own session files.
-func (p *Plugin) Transcript(_ context.Context, _ ports.SessionRef) ([]ports.TranscriptMessage, bool, error) {
-	return nil, false, nil
+// list of user/assistant turns. It locates and parses Codex's rollout JSONL.
+func (p *Plugin) Transcript(ctx context.Context, session ports.SessionRef) ([]ports.TranscriptMessage, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	agentSessionID := strings.TrimSpace(session.Metadata[ports.MetadataKeyAgentSessionID])
+	if agentSessionID == "" {
+		return nil, false, nil
+	}
+	ref := ports.NativeSessionRef{
+		NativeSessionID: agentSessionID,
+		ConfigDir:       strings.TrimSpace(session.Metadata["codexHome"]),
+	}
+	if ref.ConfigDir == "" {
+		ref.ConfigDir = strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	}
+	if ref.ConfigDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, false, fmt.Errorf("codex: resolve home: %w", err)
+		}
+		ref.ConfigDir = filepath.Join(home, ".codex")
+	}
+	transcriptPath, ok, err := p.LocateTranscript(ctx, ref)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok || transcriptPath == "" {
+		return nil, false, nil
+	}
+	return p.readCodexTranscript(ctx, transcriptPath)
+}
+
+func (p *Plugin) readCodexTranscript(ctx context.Context, path string) ([]ports.TranscriptMessage, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("codex: open transcript: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	var transcript []ports.TranscriptMessage
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var event struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Type    string `json:"type"`
+				Role    string `json:"role"`
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"payload"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		if event.Type != "response_item" || event.Payload.Type != "message" {
+			continue
+		}
+		role := event.Payload.Role
+		if role != "user" && role != "assistant" {
+			continue
+		}
+		var texts []string
+		for _, c := range event.Payload.Content {
+			// User prompts are input_text; assistant replies are output_text. Both
+			// carry the plain message content; images/tool parts are skipped.
+			if (c.Type == "input_text" || c.Type == "output_text") && c.Text != "" {
+				texts = append(texts, c.Text)
+			}
+		}
+		if len(texts) > 0 {
+			transcript = append(transcript, ports.TranscriptMessage{Role: role, Text: strings.Join(texts, "\n")})
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, false, fmt.Errorf("codex: scan transcript: %w", err)
+	}
+	return transcript, len(transcript) > 0, nil
 }
 
 // NativeConversationID bridges Codex's terminal resume id and app-server thread

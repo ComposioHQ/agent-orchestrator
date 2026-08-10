@@ -1196,6 +1196,28 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 	return m.rollbackSpawn(ctx, id)
 }
 
+// Agent returns the agent adapter for a session's harness.
+func (m *Manager) Agent(ctx context.Context, id domain.SessionID) (ports.Agent, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return nil, false, fmt.Errorf("get session %s: %w", id, err)
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	if rec.Harness == "" {
+		return nil, false, nil
+	}
+	agent, ok := m.agents.Agent(rec.Harness)
+	if !ok {
+		return nil, false, nil
+	}
+	return agent, true, nil
+}
+
 // Kill tears down the runtime and workspace, then records terminal intent with
 // the LCM. A workspace teardown refused by the worktree-remove safety
 // (uncommitted work) is never forced: Kill succeeds with freed=false,

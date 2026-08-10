@@ -43,6 +43,7 @@ type fakeSessionService struct {
 	workspaceFiles   sessionsvc.WorkspaceFiles
 	workspaceFile    sessionsvc.WorkspaceFileDetail
 	workspacePaths   []string
+	transcriptErr    error
 	spawnErr         error
 	orchestratorMode domain.SessionMode
 	claimErr         error
@@ -492,6 +493,19 @@ func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.Sessi
 		return f.workspaceFile, nil
 	}
 	return sessionsvc.WorkspaceFileDetail{SessionID: id, Path: path}, nil
+}
+
+func (f *fakeSessionService) Transcript(_ context.Context, id domain.SessionID) ([]ports.TranscriptMessage, error) {
+	if _, ok := f.sessions[id]; !ok {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if f.transcriptErr != nil {
+		return nil, f.transcriptErr
+	}
+	return []ports.TranscriptMessage{
+		{Role: "user", Text: "hello"},
+		{Role: "assistant", Text: "hi"},
+	}, nil
 }
 
 func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {

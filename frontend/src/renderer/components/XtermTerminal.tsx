@@ -33,6 +33,7 @@ import type {
 	TerminalUserInputSource,
 } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
+import { apiClient } from "../lib/api-client";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
@@ -68,6 +69,12 @@ export type XtermTerminalProps = {
 	isVisible?: boolean;
 	/** Move keyboard focus into xterm when a controller needs human input. */
 	focusRequested?: boolean;
+	/**
+	 * Optional session ID for agent sessions. When provided, the context menu
+	 * will include a "Copy full transcript" action that fetches the complete
+	 * transcript from the backend and copies it to the clipboard.
+	 */
+	sessionId?: string;
 	/**
 	 * The terminal is open in the DOM and ready to be attached to a PTY. The
 	 * handle stays valid until unmount; cols/rows are live getters.
@@ -209,7 +216,7 @@ type TerminalContextMenuState = {
 	link: string | null;
 };
 
-type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear";
+type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear" | "copyTranscript";
 
 type TerminalContextMenuActions = Record<TerminalContextMenuAction, () => void>;
 
@@ -479,6 +486,28 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			},
 			selectAll: () => {
 				term.selectAll();
+				focusTerminal();
+			},
+			copyTranscript: async () => {
+				const sessionId = callbacksRef.current.sessionId;
+				if (!sessionId) return;
+				try {
+					const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/transcript", {
+						params: { path: { sessionId } },
+					});
+					if (error || !data) {
+						console.warn("Failed to fetch transcript:", error);
+						return;
+					}
+					const messages = data.messages;
+					if (!messages || messages.length === 0) return;
+					const text = messages
+						.map((m) => `${m.role === "user" ? "User" : "Assistant"}:\n${m.text}`)
+						.join("\n\n---\n\n");
+					await aoBridge.clipboard.writeText(text);
+				} catch (err) {
+					console.warn("Failed to copy transcript:", err);
+				}
 				focusTerminal();
 			},
 		};
@@ -995,6 +1024,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={() => runContextMenuAction("paste")}>{t("titlebar.paste")}</DropdownMenuItem>
 					<DropdownMenuItem onSelect={() => runContextMenuAction("selectAll")}>{t("titlebar.selectAll")}</DropdownMenuItem>
+					{props.sessionId ? (
+						<>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={() => runContextMenuAction("copyTranscript")}>
+								{t("terminal.copyFullTranscript")}
+							</DropdownMenuItem>
+						</>
+					) : null}
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={() => runContextMenuAction("clear")}>{t("terminal.clear")}</DropdownMenuItem>
 				</DropdownMenuContent>

@@ -244,6 +244,7 @@ var schemaNames = map[string]string{
 	"ControllersWorkspaceFileResponse":                    "WorkspaceFileResponse",
 	"ControllersKillSessionResponse":                      "KillSessionResponse",
 	"ControllersRollbackSessionResponse":                  "RollbackSessionResponse",
+	"ControllersGetSessionTranscriptResponse":             "GetSessionTranscriptResponse",
 	"ControllersSendSessionMessageRequest":                "SendSessionMessageRequest",
 	"ControllersSendSessionMessageResponse":               "SendSessionMessageResponse",
 	"ControllersDelegateTaskRequest":                      "DelegateTaskRequest",
@@ -1634,6 +1635,17 @@ func sessionOperations() []operation {
 				// to paste into a pending dialog.
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/transcript", id: "getSessionTranscript", tag: "sessions",
+			summary:    "Get the full transcript of a session from its agent adapter",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.GetSessionTranscriptResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 		{

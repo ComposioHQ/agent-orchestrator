@@ -65,6 +65,8 @@ type commander interface {
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
 	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
+	// Agent returns the agent adapter for a session's harness, or (nil, false) if unknown.
+	Agent(ctx context.Context, id domain.SessionID) (ports.Agent, bool, error)
 }
 
 // interfaceTransitionCommander is an optional command capability. Keeping it
@@ -964,4 +966,48 @@ func (s *Service) harnessSignals(h domain.AgentHarness) bool {
 		return false
 	}
 	return s.signalCapable(h)
+}
+
+// Transcript returns the normalized transcript messages for a session.
+func (s *Service) Transcript(ctx context.Context, id domain.SessionID) ([]ports.TranscriptMessage, error) {
+	rec, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get session %s: %w", id, err)
+	}
+	if !ok {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	agent, ok, err := s.manager.Agent(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || agent == nil {
+		return nil, nil
+	}
+	metadata := map[string]string{
+		"agentSessionId": rec.Metadata.AgentSessionID,
+		"workspacePath":  rec.Metadata.WorkspacePath,
+	}
+	if rec.Metadata.ProviderConversationID != "" {
+		metadata["providerConversationId"] = rec.Metadata.ProviderConversationID
+	}
+	if rec.Metadata.NativeTranscriptPath != "" {
+		metadata["nativeTranscriptPath"] = rec.Metadata.NativeTranscriptPath
+	}
+	if rec.Metadata.Branch != "" {
+		metadata["branch"] = rec.Metadata.Branch
+	}
+	sessionRef := ports.SessionRef{
+		ID:            string(id),
+		Metadata:      metadata,
+		WorkspacePath: rec.Metadata.WorkspacePath,
+	}
+	messages, ok, err := agent.Transcript(ctx, sessionRef)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return messages, nil
 }

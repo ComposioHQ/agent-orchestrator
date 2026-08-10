@@ -1039,3 +1039,41 @@ func TestDoctorLaunchProbesMirrorLaunchFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestTranscriptReadsCodexRollout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	content := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"fix the tests"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"here is the patch"},{"type":"input_image_url"}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"shell"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"tool_use"}]}}
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	messages, ok, err := (&Plugin{}).readCodexTranscript(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []ports.TranscriptMessage{
+		{Role: "user", Text: "fix the tests"},
+		{Role: "assistant", Text: "done"},
+		{Role: "assistant", Text: "here is the patch"},
+	}
+	if !reflect.DeepEqual(messages, want) {
+		t.Fatalf("messages\nwant: %#v\n got: %#v", want, messages)
+	}
+}
+
+func TestTranscriptReadsCodexRolloutAbsentFile(t *testing.T) {
+	messages, ok, err := (&Plugin{}).readCodexTranscript(context.Background(), filepath.Join(t.TempDir(), "missing.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || messages != nil {
+		t.Fatalf("messages = %#v ok=%v, want nil/false", messages, ok)
+	}
+}

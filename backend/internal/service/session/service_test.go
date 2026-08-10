@@ -1259,6 +1259,10 @@ func (f *fakeCommander) StageAttachments(
 	return nil, nil
 }
 
+func (f *fakeCommander) Agent(context.Context, domain.SessionID) (ports.Agent, bool, error) {
+	return nil, false, nil
+}
+
 // TestCleanupMapsManagerResult: the service forwards both reclaimed and
 // skipped sessions, with non-nil slices so the wire shape stays stable.
 func TestCleanupMapsManagerResult(t *testing.T) {

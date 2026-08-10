@@ -994,3 +994,41 @@ func containsSubsequence(values, needle []string) bool {
 	}
 	return false
 }
+
+func TestTranscriptReadsClaudeSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	content := `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi there"}]}}
+{"type":"user","message":{"role":"user","content":"plain string text"}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"not a message"}]}}
+{"type":"system","summary":"compacted"}
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	messages, ok, err := (&Plugin{}).readClaudeTranscript(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []ports.TranscriptMessage{
+		{Role: "user", Text: "hello"},
+		{Role: "assistant", Text: "hi there"},
+		{Role: "user", Text: "plain string text"},
+	}
+	if !reflect.DeepEqual(messages, want) {
+		t.Fatalf("messages\nwant: %#v\n got: %#v", want, messages)
+	}
+}
+
+func TestTranscriptReadsClaudeSessionAbsentFile(t *testing.T) {
+	messages, ok, err := (&Plugin{}).readClaudeTranscript(context.Background(), filepath.Join(t.TempDir(), "missing.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || messages != nil {
+		t.Fatalf("messages = %#v ok=%v, want nil/false", messages, ok)
+	}
+}

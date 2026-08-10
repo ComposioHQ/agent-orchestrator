@@ -431,8 +431,8 @@ type SessionInfo struct {
 // Role is "user" or "assistant"; Text is the plain content suitable for
 // clipboard copy, with ANSI/markup stripped by the adapter.
 type TranscriptMessage struct {
-	Role string
-	Text string
+	Role string `json:"role"`
+	Text string `json:"text"`
 }
 
 // PermissionMode controls how much review an agent requires before acting. It
