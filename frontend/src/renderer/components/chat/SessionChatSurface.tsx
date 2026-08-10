@@ -8,6 +8,7 @@
  */
 
 import { AlertTriangle, Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
 import { ChatWorkspace } from "./ChatWorkspace";
 import {
 	useConversation,
@@ -24,12 +25,14 @@ import type { WorkspaceSession } from "../../types/workspace";
 
 export function SessionChatSurface({
 	session,
+	headerActions,
 	onOpenShell,
 	openingShell,
 	shellError,
 	controllerTransitioning,
 }: {
 	session: WorkspaceSession;
+	headerActions?: ReactNode;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
@@ -107,6 +110,8 @@ export function SessionChatSurface({
 			onLinkOpen={openLinkInBrowser}
 			sessionTitle={session.title}
 			sessionRole={session.kind}
+			sessionActivity={session.activity}
+			headerActions={headerActions}
 			controllerTransitioning={controllerTransitioning}
 			hasOlder={hasOlder}
 			loadingOlder={isLoadingOlder}

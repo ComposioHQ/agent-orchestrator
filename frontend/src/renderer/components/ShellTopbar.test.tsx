@@ -177,27 +177,35 @@ beforeEach(() => {
 });
 
 describe("ShellTopbar status pill", () => {
-	it("groups the interface action immediately before Kill", () => {
+	it("keeps the compact session actions together immediately before Kill", () => {
 		renderTopbar(
 			sessionWith(),
 			false,
-			<button type="button" aria-label="Switch interface">
-				Switch interface
-			</button>,
+			<div className="inline-flex gap-0.5">
+				<button type="button" aria-label="New terminal">New terminal</button>
+				<button type="button" aria-label="Switch agent">Switch agent</button>
+				<button type="button" aria-label="Switch interface">Switch interface</button>
+			</div>,
 		);
 
 		const identity = screen.getByTestId("session-topbar-identity");
 		const localActions = screen.getByTestId("session-local-actions");
 		const kill = screen.getByRole("button", { name: "Kill session" });
+		const newTerminal = screen.getByRole("button", { name: "New terminal" });
+		const switchAgent = screen.getByRole("button", { name: "Switch agent" });
 		const switchInterface = screen.getByRole("button", { name: "Switch interface" });
 		expect(identity).toHaveTextContent("do the thing");
 		expect(identity).toHaveTextContent("Working");
 		expect(identity.querySelector(".workspace-topbar__identity-separator")).toBeInTheDocument();
 		expect(identity).not.toContainElement(switchInterface);
 		expect(screen.queryByTestId("session-identity-card")).not.toBeInTheDocument();
-		expect(localActions).toHaveClass("gap-0.5", "mr-0.5");
+		expect(localActions).toHaveClass("gap-px", "mr-0.5");
+		expect(localActions).toContainElement(newTerminal);
+		expect(localActions).toContainElement(switchAgent);
 		expect(localActions).toContainElement(switchInterface);
 		expect(localActions).toContainElement(kill);
+		expect(newTerminal.compareDocumentPosition(switchAgent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(switchAgent.compareDocumentPosition(switchInterface) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		expect(switchInterface.compareDocumentPosition(kill) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 

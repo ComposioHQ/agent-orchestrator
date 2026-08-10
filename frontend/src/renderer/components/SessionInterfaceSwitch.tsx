@@ -10,6 +10,7 @@ import {
 	interfaceTransitionIsCancellable,
 } from "../hooks/useSessionInterfaceTransition";
 import { cn } from "../lib/utils";
+import { TopbarButton } from "./TopbarButton";
 import { Button } from "./ui/button";
 import {
 	Dialog,
@@ -113,13 +114,10 @@ export function SessionInterfaceSwitchButton({
 		<Tooltip>
 			<TooltipTrigger asChild>
 				<span className="inline-flex">
-					<Button
+					<TopbarButton
 						type="button"
-						size="icon-sm"
-						variant="ghost"
+						variant="icon"
 						className={cn(
-							"text-muted-foreground",
-							supported && "hover:text-foreground",
 							!supported && "opacity-50",
 							className,
 						)}
@@ -131,9 +129,9 @@ export function SessionInterfaceSwitchButton({
 						{pending ? (
 							<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
 						) : (
-							<TargetIcon aria-hidden="true" className="size-3.5" />
+							<TargetIcon aria-hidden="true" className="size-icon-md" />
 						)}
-					</Button>
+					</TopbarButton>
 				</span>
 			</TooltipTrigger>
 			<TooltipContent side="bottom">{tooltipLabel}</TooltipContent>
@@ -253,5 +251,5 @@ export function SessionInterfaceTransitionNotice({
 }
 
 export function SessionInterfaceActionGroup({ children }: { children: ReactNode }) {
-	return <div className="flex items-center gap-1">{children}</div>;
+	return <div className="inline-flex shrink-0 items-center gap-px">{children}</div>;
 }

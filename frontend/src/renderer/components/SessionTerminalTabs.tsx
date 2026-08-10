@@ -1,12 +1,12 @@
 import { Plus } from "lucide-react";
-import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
+import { getAgentActivityView } from "../lib/session-presentation";
 import { isMacPlatform } from "../lib/platform";
 import { cn } from "../lib/utils";
 import type { WorkspaceSession } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
-import { Button } from "./ui/button";
+import { TopbarButton } from "./TopbarButton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 const newTerminalShortcutLabel = shortcutBindingLabel(
@@ -15,13 +15,11 @@ const newTerminalShortcutLabel = shortcutBindingLabel(
 );
 
 export function SessionTerminalTab({
-	action,
 	isActive,
 	labelOverride,
 	onSelect,
 	session,
 }: {
-	action?: ReactNode;
 	isActive: boolean;
 	labelOverride?: string;
 	onSelect?: () => void;
@@ -29,6 +27,7 @@ export function SessionTerminalTab({
 }) {
 	const { t } = useTranslation();
 	const label = labelOverride ?? (session.kind === "orchestrator" ? t("shell.orchestrator") : session.title);
+	const activity = session.activity ? getAgentActivityView(session.activity, t) : undefined;
 
 	return (
 		<span
@@ -42,7 +41,7 @@ export function SessionTerminalTab({
 		>
 			<button
 				aria-current={isActive}
-				aria-label={label}
+				aria-label={activity ? `${label} · ${activity.label}` : label}
 				aria-selected={isActive}
 				className={cn(
 					"inline-flex min-w-flex-min max-w-shell-tab-max flex-1 items-center justify-center gap-1.5 text-control font-medium leading-none transition-colors",
@@ -56,8 +55,14 @@ export function SessionTerminalTab({
 			>
 				<AgentAvatar className="size-terminal-agent-icon" decorative provider={session.provider} />
 				<span className="truncate">{label}</span>
+				{activity ? (
+					<span
+						aria-hidden="true"
+						className={cn("ml-0.5 size-dot-sm shrink-0 rounded-full", activity.indicatorClassName)}
+						title={activity.label}
+					/>
+				) : null}
 			</button>
-			{action}
 		</span>
 	);
 }
@@ -77,18 +82,18 @@ export function NewTerminalButton({
 		<TooltipProvider>
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<Button
-						aria-label={label}
-						className="shrink-0 text-muted-foreground"
-						disabled={!onClick || disabled}
-						onClick={onClick}
-						size="icon-sm"
-						title={error}
-						type="button"
-						variant="outline"
-					>
-						<Plus aria-hidden="true" className="size-icon-md" />
-					</Button>
+					<span className="inline-flex shrink-0">
+						<TopbarButton
+							aria-label={label}
+							disabled={!onClick || disabled}
+							onClick={onClick}
+							title={error}
+							type="button"
+							variant="icon"
+						>
+							<Plus aria-hidden="true" className="size-icon-md" />
+						</TopbarButton>
+					</span>
 				</TooltipTrigger>
 				<TooltipContent>
 					{error ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}

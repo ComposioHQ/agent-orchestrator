@@ -143,43 +143,74 @@ describe("HumanMessage attachments", () => {
 });
 
 describe("ChatWorkspace timeline", () => {
-	it("creates a native terminal directly from the add button", () => {
+	it("renders the session action group outside the chat tab strip", () => {
 		const onOpenShell = vi.fn();
 		render(
 			<ChatWorkspace
+				headerActions={
+					<button aria-label="New terminal" onClick={onOpenShell} type="button">
+						New terminal
+					</button>
+				}
 				snapshot={chatFixture}
-				onOpenShell={onOpenShell}
 			/>,
 		);
 
-		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+		const action = screen.getByRole("button", { name: "New terminal" });
+		expect(screen.getByRole("tablist", { name: "Chat tabs" })).not.toContainElement(action);
+		fireEvent.click(action);
 		expect(onOpenShell).toHaveBeenCalledOnce();
 		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 	});
 
-	it("keeps chat font controls scoped to the chat instead of native page zoom", () => {
+	it("keeps fullscreen and font-size controls out of the Chat topbar", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
-		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
-
-		expect(menuAction).not.toHaveBeenCalled();
+		expect(screen.queryByRole("toolbar", { name: "Chat display controls" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Decrease font size" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Increase font size" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Fullscreen" })).not.toBeInTheDocument();
 	});
 
-	it("starts chat text at 12px and updates its scoped font size with the controls", () => {
+	it("routes Ctrl plus/minus to Chat text while leaving Cmd plus/minus to app zoom", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		const chat = screen.getByLabelText("Chat");
+		const composer = screen.getByLabelText("Message the agent");
 
-		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
 		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
 
-		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
-		expect(screen.getByLabelText("Chat font size: 13 pixels")).toHaveTextContent("13px");
+		expect(fireEvent.keyDown(composer, { code: "Equal", ctrlKey: true, key: "+", shiftKey: true })).toBe(false);
 		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("13px");
 
-		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
-		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
+		expect(fireEvent.keyDown(composer, { code: "Minus", ctrlKey: true, key: "-" })).toBe(false);
 		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
+
+		expect(fireEvent.keyDown(composer, { code: "Equal", key: "+", metaKey: true, shiftKey: true })).toBe(true);
+		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
+	});
+
+	it("toggles Chat fullscreen from the right-click menu", async () => {
+		const user = userEvent.setup();
+		render(<ChatWorkspace snapshot={chatFixture} />);
+		const chat = screen.getByLabelText("Chat");
+		const requestFullscreen = vi.fn(async () => undefined);
+		const exitFullscreen = vi.fn(async () => undefined);
+		Object.defineProperty(chat, "requestFullscreen", { configurable: true, value: requestFullscreen });
+		Object.defineProperty(document, "exitFullscreen", { configurable: true, value: exitFullscreen });
+
+		fireEvent.contextMenu(chat);
+		await user.click(await screen.findByRole("menuitem", { name: "Fullscreen" }));
+		expect(requestFullscreen).toHaveBeenCalledOnce();
+
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: chat });
+		fireEvent(document, new Event("fullscreenchange"));
+		fireEvent.contextMenu(chat);
+		const exitItem = await screen.findByRole("menuitem", { name: "Exit fullscreen" });
+		expect(chat).toContainElement(exitItem.closest("[role='menu']"));
+		await user.click(exitItem);
+		expect(exitFullscreen).toHaveBeenCalledOnce();
+
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
 	});
 
 	it("keeps the composer aligned to the readable conversation width", () => {

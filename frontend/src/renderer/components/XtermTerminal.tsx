@@ -37,6 +37,7 @@ import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { buildTerminalThemes } from "../lib/terminal-themes";
+import { scopedFontSizeDelta } from "../lib/scoped-font-size-shortcut";
 import { useUiStore, type Theme } from "../stores/ui-store";
 import {
 	DropdownMenu,
@@ -50,7 +51,12 @@ export type XtermTerminalProps = {
 	ariaLabel?: string;
 	className?: string;
 	fontSize?: number;
+	isFullscreen?: boolean;
 	theme: Theme;
+	/** Resize this terminal without changing application zoom. */
+	onChangeFontSize?: (delta: number) => void;
+	/** Enter or exit fullscreen for the terminal pane that owns this xterm. */
+	onToggleFullscreen?: () => void;
 	/**
 	 * The pane app scrolls its transcript by keyboard (PageUp/PageDown) rather
 	 * than acting on SGR wheel reports — e.g. opencode, which enables mouse
@@ -212,6 +218,7 @@ type TerminalContextMenuState = {
 type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear";
 
 type TerminalContextMenuActions = Record<TerminalContextMenuAction, () => void>;
+const terminalContextMenuItemClass = "px-2 py-1";
 
 // For mouse-tracking panes we synthesize SGR mouse-wheel reports and write them
 // to the pane; tmux (with `mouse on`, set by the runtime adapter) acts on them
@@ -519,6 +526,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (event.key === "Enter" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
 				consumeTerminalShortcut(event);
 				emitUserInput("\x1b\r", "keyboard");
+				return false;
+			}
+			const fontSizeDelta = scopedFontSizeDelta(event);
+			if (fontSizeDelta !== 0 && callbacksRef.current.onChangeFontSize) {
+				consumeTerminalShortcut(event);
+				callbacksRef.current.onChangeFontSize(fontSizeDelta);
 				return false;
 			}
 			if (isTerminalCopyShortcut(event)) {
@@ -937,6 +950,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (term) callbacksRef.current.onVisibleSize?.(term.cols, term.rows);
 	}, [props.isVisible]);
 
+	const fullscreenElement = document.fullscreenElement;
+	const contextMenuPortalContainer =
+		props.isFullscreen &&
+		fullscreenElement instanceof HTMLElement &&
+		hostRef.current &&
+		fullscreenElement.contains(hostRef.current)
+			? fullscreenElement
+			: undefined;
+
 	return (
 		<>
 			<div
@@ -971,14 +993,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				</DropdownMenuTrigger>
 				<DropdownMenuContent
 					align="start"
-					className="min-w-36"
+					className="min-w-32 p-0.5"
 					onCloseAutoFocus={(event) => event.preventDefault()}
+					portalContainer={contextMenuPortalContainer}
 					side="right"
 					sideOffset={2}
 				>
 					{contextMenu.link ? (
 						<>
 							<DropdownMenuItem
+								className={terminalContextMenuItemClass}
 								onSelect={() => {
 									const { link } = contextMenu;
 									setContextMenuOpen(false);
@@ -990,13 +1014,34 @@ export function XtermTerminal(props: XtermTerminalProps) {
 							<DropdownMenuSeparator />
 						</>
 					) : null}
-					<DropdownMenuItem disabled={!contextMenu.canCopy} onSelect={() => runContextMenuAction("copy")}>
+					<DropdownMenuItem
+						className={terminalContextMenuItemClass}
+						disabled={!contextMenu.canCopy}
+						onSelect={() => runContextMenuAction("copy")}
+					>
 						{t("titlebar.copy")}
 					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={() => runContextMenuAction("paste")}>{t("titlebar.paste")}</DropdownMenuItem>
-					<DropdownMenuItem onSelect={() => runContextMenuAction("selectAll")}>{t("titlebar.selectAll")}</DropdownMenuItem>
+					<DropdownMenuItem className={terminalContextMenuItemClass} onSelect={() => runContextMenuAction("paste")}>
+						{t("titlebar.paste")}
+					</DropdownMenuItem>
+					<DropdownMenuItem className={terminalContextMenuItemClass} onSelect={() => runContextMenuAction("selectAll")}>
+						{t("titlebar.selectAll")}
+					</DropdownMenuItem>
 					<DropdownMenuSeparator />
-					<DropdownMenuItem onSelect={() => runContextMenuAction("clear")}>{t("terminal.clear")}</DropdownMenuItem>
+					<DropdownMenuItem className={terminalContextMenuItemClass} onSelect={() => runContextMenuAction("clear")}>
+						{t("terminal.clear")}
+					</DropdownMenuItem>
+					{props.onToggleFullscreen ? (
+						<DropdownMenuItem
+							className={terminalContextMenuItemClass}
+							onSelect={() => {
+								setContextMenuOpen(false);
+								callbacksRef.current.onToggleFullscreen?.();
+							}}
+						>
+							{props.isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
+						</DropdownMenuItem>
+					) : null}
 				</DropdownMenuContent>
 			</DropdownMenu>
 		</>

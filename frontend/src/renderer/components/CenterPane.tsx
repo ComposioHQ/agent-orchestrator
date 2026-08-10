@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronLeft, ChevronRight, Maximize2, Minimize2, Minus, Plus, TriangleAlert } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
@@ -11,7 +11,6 @@ import { useSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
-import { getAgentActivityView } from "../lib/session-presentation";
 import { agentLabel } from "../lib/agent-options";
 import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
 import { aoBridge } from "../lib/bridge";
@@ -24,10 +23,7 @@ import { AgentAvatar } from "./AgentAvatar";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 import { SessionTerminalBar } from "./SessionTerminalBar";
-import { NewTerminalButton, SessionTerminalTab } from "./SessionTerminalTabs";
-import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
-import { Button } from "./ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { SessionTerminalTab } from "./SessionTerminalTabs";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
@@ -42,8 +38,8 @@ type CenterPaneProps = {
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
-	/** Opens a new shell tab in this session's worktree (the button at the end of the tab bar). */
-	onNewShellTerminal?: () => void;
+	/** Session actions rendered at the right edge of the shared topbar row. */
+	topbarActions?: ReactNode;
 	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
 	agentInputDisabled?: boolean;
 };
@@ -77,7 +73,7 @@ export function CenterPane({
 	onSelectShellTerminal,
 	onCloseShellTerminal,
 	onRenameShellTerminal,
-	onNewShellTerminal,
+	topbarActions,
 	agentInputDisabled = false,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
@@ -245,7 +241,7 @@ export function CenterPane({
 
 	const terminalTopbar = (
 		<SessionTerminalBar fullscreen={isFullscreen}>
-			<div className="session-topbar-surface flex min-w-0 flex-1">
+			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
 				<div
 					className={cn(
 						"flex min-w-0 shrink items-center pr-1.5",
@@ -279,7 +275,6 @@ export function CenterPane({
 						>
 							{session ? (
 								<SessionTerminalTab
-									action={<TerminalSwitchAgentButton session={session} />}
 									isActive={target.kind === "worker"}
 									onSelect={onSelectSessionTerminal}
 									session={session}
@@ -308,7 +303,6 @@ export function CenterPane({
 								/>
 							))}
 						</div>
-						<NewTerminalButton onClick={onNewShellTerminal} />
 						{tabsOverflow.canScrollRight ? (
 							<button
 								aria-label={t("terminal.scrollTabsRight")}
@@ -321,45 +315,12 @@ export function CenterPane({
 							</button>
 						) : null}
 					</div>
-					<div
-						aria-label={t("terminal.controlsAria")}
-						className="ml-1.5 flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1.5"
-						role="toolbar"
-					>
-						<TerminalControl
-							disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
-							label={t("terminal.decreaseFontSize")}
-							onClick={() => updateFontSize(-1)}
-						>
-							<Minus aria-hidden="true" className="size-icon-sm" />
-						</TerminalControl>
-						<span
-							aria-label={t("terminal.fontSizeAria", { size: fontSize })}
-							className="w-font-size-label text-center font-mono text-micro tabular-nums text-muted-foreground"
-						>
-							{fontSize}px
-						</span>
-						<TerminalControl
-							disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
-							label={t("terminal.increaseFontSize")}
-							onClick={() => updateFontSize(1)}
-						>
-							<Plus aria-hidden="true" className="size-icon-sm" />
-						</TerminalControl>
-						<div aria-hidden="true" className="mx-1 h-4 w-px bg-border/70" />
-						<TerminalControl
-							isPressed={isFullscreen}
-							label={isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
-							onClick={() => void toggleFullscreen()}
-						>
-							{isFullscreen ? (
-								<Minimize2 aria-hidden="true" className="size-icon-md" />
-							) : (
-								<Maximize2 aria-hidden="true" className="size-icon-md" />
-							)}
-						</TerminalControl>
-					</div>
 				</div>
+				{isFullscreen ? null : (
+					<div className="ml-auto flex shrink-0 items-center px-3" data-testid="session-action-region">
+						{topbarActions}
+					</div>
+				)}
 			</div>
 		</SessionTerminalBar>
 	);
@@ -385,7 +346,10 @@ export function CenterPane({
 						daemonReady={daemonReady}
 						fontSize={fontSize}
 						focusRequested={switchPermissionRequired && target.kind === "worker"}
+						isFullscreen={isFullscreen}
 						inputDisabled={agentInputDisabled && target.kind === "worker"}
+						onChangeFontSize={updateFontSize}
+						onToggleFullscreen={() => void toggleFullscreen()}
 						session={session}
 						terminalTarget={target}
 						theme={theme}
@@ -506,7 +470,6 @@ type SessionPaneTabProps = {
 	label: string;
 	isActive: boolean;
 	onSelect?: () => void;
-	session?: WorkspaceSession;
 	icon?: ReactNode;
 	title?: string;
 };
@@ -515,11 +478,9 @@ type SessionPaneTabProps = {
 // background as the inspector rail tabs (Summary · Reviews · Browser), and
 // the full label only becomes the hover tooltip when the tab strip is
 // crowded enough to truncate it.
-function SessionPaneTab({ label, isActive, onSelect, session, icon, title }: SessionPaneTabProps) {
+function SessionPaneTab({ label, isActive, onSelect, icon, title }: SessionPaneTabProps) {
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
-	const activity = session ? getAgentActivityView(session.activity, t) : undefined;
-	const tabIcon = session ? <AgentAvatar className="size-icon-base" decorative provider={session.provider} /> : icon;
 	return (
 		<span
 			data-terminal-role="primary"
@@ -533,7 +494,7 @@ function SessionPaneTab({ label, isActive, onSelect, session, icon, title }: Ses
 			<button
 				ref={ref}
 				aria-current={isActive}
-				aria-label={activity ? `${label} · ${activity.label}` : label}
+				aria-label={label}
 				aria-selected={isActive}
 				className={cn(
 					"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none transition-colors",
@@ -545,53 +506,9 @@ function SessionPaneTab({ label, isActive, onSelect, session, icon, title }: Ses
 				title={title ?? (isTruncated ? label : t("terminal.sessionAria"))}
 				type="button"
 			>
-				{tabIcon}
+				{icon}
 				<span className="truncate">{label}</span>
-				{activity ? (
-					<span
-						aria-hidden="true"
-						className="inline-flex shrink-0 self-center items-center"
-						style={{ color: activity.tone }}
-						title={activity.label}
-					>
-						<span
-							className={cn("size-1.5 rounded-full", activity.breathe && "animate-status-pulse")}
-							style={{ background: activity.tone }}
-						/>
-					</span>
-				) : null}
 			</button>
-			{session ? <TerminalSwitchAgentButton key={session.id} session={session} /> : null}
 		</span>
-	);
-}
-
-type TerminalControlProps = {
-	children: ReactNode;
-	disabled?: boolean;
-	isPressed?: boolean;
-	label: string;
-	onClick: () => void;
-};
-
-function TerminalControl({ children, disabled, isPressed, label, onClick }: TerminalControlProps) {
-	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<Button
-					aria-label={label}
-					aria-pressed={isPressed}
-					className="size-control-sm p-0 text-passive"
-					disabled={disabled}
-					onClick={onClick}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					{children}
-				</Button>
-			</TooltipTrigger>
-			<TooltipContent>{label}</TooltipContent>
-		</Tooltip>
 	);
 }

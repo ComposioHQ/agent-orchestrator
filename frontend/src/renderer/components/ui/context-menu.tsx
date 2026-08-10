@@ -8,10 +8,13 @@ export const ContextMenuPortal = ContextMenuPrimitive.Portal;
 
 export function ContextMenuContent({
 	className,
+	portalContainer,
 	...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
+}: React.ComponentProps<typeof ContextMenuPrimitive.Content> & {
+	portalContainer?: React.ComponentProps<typeof ContextMenuPrimitive.Portal>["container"];
+}) {
 	return (
-		<ContextMenuPrimitive.Portal>
+		<ContextMenuPrimitive.Portal container={portalContainer}>
 			<ContextMenuPrimitive.Content
 				className={cn(
 					"z-overlay min-w-[10rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md",

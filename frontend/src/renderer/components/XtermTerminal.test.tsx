@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AttachableTerminal } from "../hooks/useTerminalSession";
 import { useUiStore } from "../stores/ui-store";
@@ -303,6 +303,83 @@ describe("XtermTerminal", () => {
 		const trigger = container.querySelector("button[aria-hidden='true']") as HTMLButtonElement;
 		expect(trigger.style.left).toBe("120px");
 		expect(trigger.style.top).toBe("88px");
+	});
+
+	it("routes Ctrl plus/minus to terminal font size while leaving Cmd plus/minus to the app", () => {
+		const onChangeFontSize = vi.fn();
+		render(<XtermTerminal onChangeFontSize={onChangeFontSize} theme="dark" />);
+
+		const ctrlPlus = {
+			altKey: false,
+			code: "Equal",
+			ctrlKey: true,
+			key: "+",
+			metaKey: false,
+			preventDefault: vi.fn(),
+			shiftKey: true,
+			stopPropagation: vi.fn(),
+			type: "keydown",
+		} as unknown as KeyboardEvent;
+		const ctrlMinus = {
+			...ctrlPlus,
+			code: "Minus",
+			key: "-",
+			shiftKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const cmdPlus = {
+			...ctrlPlus,
+			ctrlKey: false,
+			metaKey: true,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+
+		expect(state.lastTerminal!.keyHandler!(ctrlPlus)).toBe(false);
+		expect(state.lastTerminal!.keyHandler!(ctrlMinus)).toBe(false);
+		expect(state.lastTerminal!.keyHandler!(cmdPlus)).toBe(true);
+		expect(onChangeFontSize).toHaveBeenNthCalledWith(1, 1);
+		expect(onChangeFontSize).toHaveBeenNthCalledWith(2, -1);
+		expect(onChangeFontSize).toHaveBeenCalledTimes(2);
+		expect(ctrlPlus.preventDefault).toHaveBeenCalledOnce();
+		expect(ctrlMinus.preventDefault).toHaveBeenCalledOnce();
+		expect(cmdPlus.preventDefault).not.toHaveBeenCalled();
+	});
+
+	it("toggles terminal fullscreen from the right-click menu", async () => {
+		const onToggleFullscreen = vi.fn();
+		const { container, rerender } = render(
+			<div className="terminal-pane-frame">
+				<XtermTerminal isFullscreen={false} onToggleFullscreen={onToggleFullscreen} theme="dark" />
+			</div>,
+		);
+
+		const pane = container.firstElementChild as HTMLElement;
+		const terminal = pane.firstElementChild as HTMLElement;
+		fireEvent.contextMenu(terminal);
+		const fullscreenItem = await screen.findByText("Fullscreen terminal");
+		const menu = fullscreenItem.closest<HTMLElement>("[role='menu']")!;
+		expect(menu).toHaveClass("min-w-32", "p-0.5");
+		for (const label of ["Copy", "Paste", "Select All", "Clear", "Fullscreen terminal"]) {
+			expect(within(menu).getByText(label)).toHaveClass("py-1");
+		}
+		expect(within(menu).getAllByRole("separator")).toHaveLength(1);
+		expect(within(menu).getByText("Clear").nextElementSibling).toBe(fullscreenItem);
+
+		fireEvent.click(fullscreenItem);
+		expect(onToggleFullscreen).toHaveBeenCalledOnce();
+
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: pane });
+		rerender(
+			<div className="terminal-pane-frame">
+				<XtermTerminal isFullscreen onToggleFullscreen={onToggleFullscreen} theme="dark" />
+			</div>,
+		);
+		fireEvent.contextMenu(terminal);
+		const exitFullscreenItem = await screen.findByText("Exit fullscreen");
+		expect(pane).toContainElement(exitFullscreenItem.closest<HTMLElement>("[role='menu']"));
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
 	});
 
 	it("runs context menu copy, select all, and clear against the xterm instance", async () => {

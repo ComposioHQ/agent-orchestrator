@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionInterfaceTransition } from "../hooks/useSessionInterfaceTransition";
-import { SessionInterfaceSwitchButton } from "./SessionInterfaceSwitch";
+import { SessionInterfaceActionGroup, SessionInterfaceSwitchButton } from "./SessionInterfaceSwitch";
 import { TooltipProvider } from "./ui/tooltip";
 
 function renderSwitch(props: ComponentProps<typeof SessionInterfaceSwitchButton>) {
@@ -28,6 +28,18 @@ function transition(phase: SessionInterfaceTransition["phase"]): SessionInterfac
 }
 
 describe("SessionInterfaceSwitchButton", () => {
+	it("keeps adjacent session actions separated by only one pixel", () => {
+		const { container } = render(
+			<SessionInterfaceActionGroup>
+				<button type="button">One</button>
+				<button type="button">Two</button>
+			</SessionInterfaceActionGroup>,
+		);
+
+		expect(container.firstElementChild).toHaveClass("gap-px");
+		expect(container.firstElementChild).not.toHaveClass("gap-0.5");
+	});
+
 	it("keeps a draining switch in the top bar with an adjacent Cancel action", () => {
 		const onCancel = vi.fn();
 		renderSwitch({

@@ -36,14 +36,6 @@ vi.mock("../hooks/useSwitchAgent", () => ({
 	useSwitchAgentState: () => agentSwitchMocks.mutation,
 }));
 
-vi.mock("./TerminalSwitchAgentButton", () => ({
-	TerminalSwitchAgentButton: ({ session }: { session: WorkspaceSession }) => (
-		<button aria-label="Switch agent" data-testid="terminal-switch-agent" type="button">
-			{session.provider}
-		</button>
-	),
-}));
-
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: {
@@ -221,8 +213,11 @@ describe("CenterPane toolbar session label", () => {
 		);
 		expect(sessionTab.parentElement).not.toHaveClass("session-primary-tab");
 		expect(sessionTab.parentElement).not.toHaveClass("rounded-md");
-		expect(sessionTab).toHaveAccessibleName("do the thing");
-		expect(sessionTab.querySelector('[title="Working"]')).not.toBeInTheDocument();
+		expect(sessionTab).toHaveAccessibleName("do the thing · Working");
+		const activityDot = sessionTab.querySelector('[title="Working"]') as HTMLElement;
+		const sessionLabel = within(sessionTab).getByText("do the thing");
+		expect(activityDot).toHaveClass("ml-0.5", "size-dot-sm", "bg-status-working");
+		expect(sessionLabel.compareDocumentPosition(activityDot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		expect(sessionTab).toHaveClass("justify-center");
 		expect(sessionTab.parentElement).toHaveClass("justify-center");
 		expect(sessionTab.parentElement?.querySelector('img[aria-hidden="true"]')).toHaveClass(
@@ -261,8 +256,8 @@ describe("CenterPane toolbar session label", () => {
 		const auxiliaryTab = screen.getByRole("tab", { name: shell.title });
 		expect(auxiliaryTab.parentElement?.querySelector("img")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: `Close terminal ${shell.title}` })).toBeInTheDocument();
-		expect(mainTab.querySelector('[title="Working"]')).not.toBeInTheDocument();
-		expect(within(mainContainer as HTMLElement).getByTestId("terminal-switch-agent")).toBeInTheDocument();
+		expect(mainTab.querySelector('[title="Working"]')).toBeInTheDocument();
+		expect(within(mainContainer as HTMLElement).queryByTestId("terminal-switch-agent")).not.toBeInTheDocument();
 	});
 
 	it("closes only the selected auxiliary terminal from the application shortcut", () => {
@@ -359,16 +354,15 @@ describe("CenterPane toolbar session label", () => {
 		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-sess-1", harness: "codex" });
 	});
 
-	it("creates a native terminal directly from the add button", () => {
-		const onNewShellTerminal = vi.fn();
+	it("keeps the new-terminal action with the session controls, outside the tab strip", () => {
 		renderCenterPane({
 			session: worker,
-			onNewShellTerminal,
+			topbarActions: <button aria-label="New terminal">New terminal</button>,
 		});
 
-		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
-		expect(onNewShellTerminal).toHaveBeenCalledOnce();
-		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+		const action = screen.getByRole("button", { name: "New terminal" });
+		expect(screen.getByTestId("session-terminal-region")).not.toContainElement(action);
+		expect(screen.getByTestId("session-action-region")).toContainElement(action);
 	});
 
 	it("shows 'No session' when there is no session", () => {
@@ -376,21 +370,21 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByText("No session")).toBeInTheDocument();
 	});
 
-	it("keeps only terminal navigation and display controls in the dedicated terminal bar", () => {
+	it("keeps terminal navigation in the topbar without display controls", () => {
 		renderCenterPane({
 			session: worker,
-			onNewShellTerminal: vi.fn(),
+			topbarActions: <button aria-label="New terminal">New terminal</button>,
 		});
 
 		const terminalRegion = screen.getByTestId("session-terminal-region");
 		const terminalBar = screen.getByTestId("session-terminal-bar");
 		expect(terminalBar).toContainElement(terminalRegion);
 		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Open terminals" }));
-		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "New terminal" }));
-		expect(terminalRegion).toContainElement(screen.getByRole("toolbar", { name: "Terminal display controls" }));
+		expect(terminalRegion).not.toContainElement(screen.getByRole("button", { name: "New terminal" }));
+		expect(screen.queryByRole("toolbar", { name: "Terminal display controls" })).not.toBeInTheDocument();
 	});
 
-	it("keeps the terminal bar and controls available while the terminal is fullscreen", () => {
+	it("keeps the terminal bar available without restoring display controls in fullscreen", () => {
 		const view = renderCenterPane({ session: worker });
 		const pane = view.container.querySelector(".terminal-pane-frame");
 
@@ -398,8 +392,8 @@ describe("CenterPane toolbar session label", () => {
 		act(() => document.dispatchEvent(new Event("fullscreenchange")));
 
 		expect(screen.getByTestId("session-terminal-bar")).toBeInTheDocument();
-		expect(screen.getByRole("toolbar", { name: "Terminal display controls" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Exit fullscreen" })).toBeInTheDocument();
+		expect(screen.queryByRole("toolbar", { name: "Terminal display controls" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Exit fullscreen" })).not.toBeInTheDocument();
 		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
 	});
 
@@ -429,14 +423,7 @@ describe("CenterPane toolbar session label", () => {
 		// jsdom reports no overflow, so no unavailable control reserves header space.
 		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
 
-		// The display controls now complete the top bar, but stay outside the
-		// flexible scroll region so a long tab list cannot overlap them.
-		const tabList = screen.getByRole("tablist", { name: "Open terminals" });
-		const toolbar = screen.getByRole("toolbar", {
-			name: "Terminal display controls",
-		});
-		expect(tabList.contains(toolbar)).toBe(false);
-		expect(toolbar).toContainElement(screen.getByRole("button", { name: "Fullscreen terminal" }));
+		expect(screen.queryByRole("toolbar", { name: "Terminal display controls" })).not.toBeInTheDocument();
 	});
 
 	it("reveals scroll chevrons only when the tab strip actually overflows", () => {

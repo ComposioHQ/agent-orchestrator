@@ -107,7 +107,7 @@ export function ShellTerminalTab({
 			className={cn(
 				"group relative min-w-shell-tab-min items-center transition-colors",
 				appearance === "connected"
-					? "grid w-shell-tab-connected grid-cols-[auto_minmax(0,1fr)_auto] self-stretch border-x border-transparent pl-2 pr-0"
+					? "grid w-shell-tab-connected grid-cols-[auto_minmax(0,1fr)_auto] self-stretch border-x border-transparent pl-2 pr-1"
 					: "inline-flex gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
@@ -120,7 +120,7 @@ export function ShellTerminalTab({
 			{...containerRenameHandlers}
 		>
 			{appearance === "connected" ? (
-				<SquareTerminal aria-hidden="true" className="mr-1 size-icon-sm shrink-0 translate-y-px" />
+				<SquareTerminal aria-hidden="true" className="mr-1 size-icon-md shrink-0 translate-y-px" />
 			) : null}
 			{isEditing ? (
 				<input

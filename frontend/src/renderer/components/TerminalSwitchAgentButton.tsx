@@ -12,6 +12,7 @@ import { agentLabel } from "../lib/agent-options";
 import { cn } from "../lib/utils";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { canSwitchAgentHarness, SwitchAgentDialog } from "./SwitchAgentDialog";
+import { TopbarButton } from "./TopbarButton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type TerminalSwitchAgentButtonProps = {
@@ -58,24 +59,26 @@ export function TerminalSwitchAgentButton({ session }: TerminalSwitchAgentButton
 		<>
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<button
-						aria-busy={switching ? true : undefined}
-						aria-label={label}
-						className={cn(
-							"ml-2 grid size-6 shrink-0 place-items-center rounded-full border border-border/70 bg-background/45 text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-							recoverySwitch && "border-warning/50 text-warning hover:border-warning/70 hover:text-warning",
-						)}
-						onClick={() => setOpen(true)}
-						type="button"
-					>
-						{recoverySwitch ? (
-							<TriangleAlert aria-hidden="true" className="size-icon-sm" />
-						) : switching ? (
-							<LoaderCircle aria-hidden="true" className="size-icon-sm animate-spin" />
-						) : (
-							<Repeat2 aria-hidden="true" className="size-4 stroke-[1.8]" />
-						)}
-					</button>
+					<span className="inline-flex shrink-0">
+						<TopbarButton
+							aria-busy={switching ? true : undefined}
+							aria-label={label}
+							className={cn(
+								recoverySwitch && "text-warning hover:bg-warning/10 hover:text-warning",
+							)}
+							onClick={() => setOpen(true)}
+							type="button"
+							variant="icon"
+						>
+							{recoverySwitch ? (
+								<TriangleAlert aria-hidden="true" className="size-icon-sm" />
+							) : switching ? (
+								<LoaderCircle aria-hidden="true" className="size-icon-sm animate-spin" />
+							) : (
+								<Repeat2 aria-hidden="true" className="size-icon-md stroke-[1.8]" />
+							)}
+						</TopbarButton>
+					</span>
 				</TooltipTrigger>
 				<TooltipContent>{label}</TooltipContent>
 			</Tooltip>

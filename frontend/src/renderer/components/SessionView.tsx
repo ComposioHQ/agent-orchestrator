@@ -11,11 +11,14 @@ import { NotificationCenter } from "./NotificationCenter";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import {
+	SessionInterfaceActionGroup,
 	SessionInterfaceSwitchButton,
 	SessionInterfaceSwitchDialog,
 	SessionInterfaceTransitionNotice,
 } from "./SessionInterfaceSwitch";
+import { NewTerminalButton } from "./SessionTerminalTabs";
 import { ShellTopbar } from "./ShellTopbar";
+import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { SessionTopbarHost } from "./SessionTopbarPortal";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useBrowserView } from "../hooks/useBrowserView";
@@ -365,6 +368,18 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			}}
 		/>
 	) : null;
+	const sessionLocalActions = session ? (
+		<SessionInterfaceActionGroup>
+			<NewTerminalButton
+				disabled={openShellTerminal.isPending}
+				error={openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined}
+				onClick={addShellTerminal}
+			/>
+			<TerminalSwitchAgentButton session={session} />
+			{interfaceSwitchAction}
+		</SessionInterfaceActionGroup>
+	) : null;
+	const sessionHeaderActions = <ShellTopbar embedded sessionAction={sessionLocalActions} />;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
 	const browserSlotVisible = Boolean(
@@ -693,7 +708,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					style={{ overflow: "hidden" }}
 				>
 					<div className="relative flex h-full min-h-0 flex-col">
-						<ShellTopbar sessionAction={interfaceSwitchAction} />
 						<SessionTopbarHost
 							className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
 							data-testid="session-topbar-host"
@@ -704,6 +718,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							{showChatSurface ? (
 								<SessionChatSurface
 									session={session}
+									headerActions={sessionHeaderActions}
 									controllerTransitioning={chatControllerTransitioning}
 									onOpenShell={addShellTerminal}
 									openingShell={openShellTerminal.isPending}
@@ -718,7 +733,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									}
 									daemonReady={daemonStatus.state === "ready"}
 									onCloseShellTerminal={closeShellTerminalByHandle}
-									onNewShellTerminal={addShellTerminal}
 									onRenameShellTerminal={renameShellTerminalByHandle}
 									onSelectSessionTerminal={selectSessionTerminal}
 									onSelectReviewerTerminal={selectReviewerTerminal}
@@ -728,6 +742,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									shellTerminals={shellTerminals}
 									terminalTarget={routedTerminalTarget}
 									theme={theme}
+									topbarActions={sessionHeaderActions}
 								/>
 							)}
 							{interfaceSwitch.transition?.id !== dismissedTransitionID ? (

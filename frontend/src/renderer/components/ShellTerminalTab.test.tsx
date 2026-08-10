@@ -93,6 +93,8 @@ describe("ShellTerminalTab rename", () => {
 		renderTab({ appearance: "connected", isActive: true });
 		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass("w-control-sm", "opacity-100");
 		expect(screen.getByRole("button", { name: "Close terminal ao" })).not.toHaveClass("absolute");
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass("pr-1");
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("pr-0");
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveAttribute("aria-selected", "true");
 	});
 
@@ -130,7 +132,10 @@ describe("ShellTerminalTab rename", () => {
 	it("optically centers the auxiliary terminal glyph with its label", () => {
 		renderTab({ appearance: "connected" });
 
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement?.querySelector("svg")).toHaveClass("translate-y-px");
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement?.querySelector("svg")).toHaveClass(
+			"size-icon-md",
+			"translate-y-px",
+		);
 	});
 });
 

@@ -136,9 +136,10 @@ vi.mock("./ShellTopbar", () => ({
 	),
 }));
 vi.mock("./chat/SessionChatSurface", () => ({
-	SessionChatSurface: ({ onOpenShell }: { onOpenShell?: () => void }) => (
+	SessionChatSurface: ({ headerActions, onOpenShell }: { headerActions?: ReactNode; onOpenShell?: () => void }) => (
 		<div data-testid="chat-surface">
 			chat surface
+			{headerActions}
 			<button type="button" onClick={onOpenShell}>
 				open shell from chat
 			</button>
@@ -152,21 +153,22 @@ vi.mock("./CenterPane", () => ({
 		onSelectShellTerminal,
 		onSelectSessionTerminal,
 		onSelectReviewerTerminal,
-		onNewShellTerminal,
 		reviewerTerminal,
 		terminalTarget,
+		topbarActions,
 	}: {
 		shellTerminals?: Array<{ handleId: string; title: string }>;
 		onCloseShellTerminal?: (handleId: string) => void;
 		onSelectShellTerminal?: (handleId: string) => void;
 		onSelectSessionTerminal?: () => void;
 		onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
-		onNewShellTerminal?: () => void;
 		reviewerTerminal?: { handleId: string; harness: string };
 		terminalTarget?: { kind: string; handleId?: string };
+		topbarActions?: ReactNode;
 	}) => (
 		<div>
 			terminal center
+			{topbarActions}
 			<div data-testid="terminal-target">
 				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : (terminalTarget?.kind ?? "worker")}
 			</div>
@@ -190,11 +192,12 @@ vi.mock("./CenterPane", () => ({
 			<button type="button" onClick={() => onSelectSessionTerminal?.()}>
 				select agent tab
 			</button>
-			<button type="button" onClick={() => onNewShellTerminal?.()}>
-				new terminal
-			</button>
 		</div>
 	),
+}));
+vi.mock("./TerminalSwitchAgentButton", () => ({
+	TerminalSwitchAgentButton: ({ session }: { session: WorkspaceSession }) =>
+		session.kind === "orchestrator" ? null : <button aria-label="Switch agent">{session.provider}</button>,
 }));
 vi.mock("./BrowserPanel", () => ({
 	BrowserPanelView: ({
@@ -556,8 +559,20 @@ describe("SessionView", () => {
 	it("opens new terminals in the on-screen session's worktree", () => {
 		render(<SessionView sessionId="sess-2" />);
 
-		fireEvent.click(screen.getByRole("button", { name: "new terminal" }));
+		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
 		expect(openShellTerminalMock).toHaveBeenCalledWith({ projectId: "proj-1", sessionId: "sess-2" }, expect.anything());
+	});
+
+	it("orders the worker session controls as terminal, agent, then interface", () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "chat" };
+		render(<SessionView sessionId="sess-1" />);
+
+		const actions = screen.getByTestId("session-action-slot");
+		const newTerminal = within(actions).getByRole("button", { name: "New terminal" });
+		const switchAgent = within(actions).getByRole("button", { name: "Switch agent" });
+		const switchInterface = within(actions).getByRole("button", { name: "Switch to chat UI" });
+		expect(newTerminal.compareDocumentPosition(switchAgent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(switchAgent.compareDocumentPosition(switchInterface) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
 	it("shows a shell opened from chat and returns to the chat agent tab", () => {

@@ -333,7 +333,7 @@ export function ShellTopbar({
 						    Keep them as one tight cluster, separated from navigation actions by space. */}
 						{!isOrchestrator && session && (sessionAction || sessionIsActive(session)) ? (
 							<div
-								className="mr-0.5 inline-flex shrink-0 items-center gap-0.5"
+								className="mr-0.5 inline-flex shrink-0 items-center gap-px"
 								data-testid="session-local-actions"
 								style={noDragStyle}
 							>

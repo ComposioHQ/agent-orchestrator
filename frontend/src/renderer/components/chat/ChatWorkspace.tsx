@@ -30,11 +30,7 @@ import {
 	Archive,
 	ArrowDown,
 	Loader2,
-	Maximize2,
 	MessageSquare,
-	Minimize2,
-	Minus,
-	Plus,
 	Square,
 	TriangleAlert,
 	Undo2,
@@ -42,11 +38,18 @@ import {
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
+import { scopedFontSizeDelta } from "../../lib/scoped-font-size-shortcut";
 import type { SessionKind, WorkspaceSession } from "../../types/workspace";
 import { Button } from "../ui/button";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuTrigger,
+} from "../ui/context-menu";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SessionTerminalBar } from "../SessionTerminalBar";
-import { NewTerminalButton, SessionTerminalTab } from "../SessionTerminalTabs";
+import { SessionTerminalTab } from "../SessionTerminalTabs";
 import {
 	ActivityRow,
 	ApprovalCard,
@@ -111,6 +114,10 @@ export interface ChatWorkspaceProps {
 	sessionTitle?: string;
 	/** The AO role using this shared conversation surface. */
 	sessionRole?: SessionKind;
+	/** Live activity rendered in the session terminal card. */
+	sessionActivity?: WorkspaceSession["activity"];
+	/** Session actions rendered at the right edge of the shared topbar row. */
+	headerActions?: ReactNode;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
 	/** Older durable history is available but not loaded into the DOM yet. */
@@ -197,6 +204,8 @@ export function ChatWorkspace({
 	snapshot,
 	sessionTitle,
 	sessionRole = "worker",
+	sessionActivity,
+	headerActions,
 	controllerTransitioning,
 	hasOlder,
 	loadingOlder,
@@ -297,6 +306,17 @@ export function ChatWorkspace({
 		setChatFontSize((current) => clampChatFontSize(current + delta));
 	}, []);
 
+	const handleChatKeyDownCapture = useCallback(
+		(event: ReactKeyboardEvent<HTMLElement>) => {
+			const delta = scopedFontSizeDelta(event.nativeEvent);
+			if (delta === 0) return;
+			event.preventDefault();
+			event.stopPropagation();
+			updateChatFontSize(delta);
+		},
+		[updateChatFontSize],
+	);
+
 	const toggleFullscreen = useCallback(async () => {
 		const target = fullscreenTarget();
 		if (!target) return;
@@ -319,25 +339,23 @@ export function ChatWorkspace({
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
 
 	return (
-		<section
-			ref={surfaceRef}
-			aria-label="Chat"
-			className="cursor-chat-surface flex h-full min-h-0 flex-col [font-size:var(--chat-font-size)]"
-			data-session-mode={snapshot.mode}
-			data-session-role={sessionRole}
-			style={{ "--chat-font-size": `${chatFontSize}px` } as CSSProperties}
-		>
+		<ContextMenu>
+			<ContextMenuTrigger asChild>
+				<section
+					ref={surfaceRef}
+					aria-label="Chat"
+					className="cursor-chat-surface flex h-full min-h-0 flex-col [font-size:var(--chat-font-size)]"
+					data-session-mode={snapshot.mode}
+					data-session-role={sessionRole}
+					onKeyDownCapture={handleChatKeyDownCapture}
+					style={{ "--chat-font-size": `${chatFontSize}px` } as CSSProperties}
+				>
 			<ChatHeader
 				snapshot={snapshot}
 				sessionTitle={sessionTitle}
-				onOpenShell={onOpenShell}
-				openingShell={openingShell}
-				shellError={shellError}
-				fontSize={chatFontSize}
-				onDecreaseFontSize={() => updateChatFontSize(-1)}
-				onIncreaseFontSize={() => updateChatFontSize(1)}
+				sessionActivity={sessionActivity}
+				headerActions={headerActions}
 				isFullscreen={isFullscreen}
-				onToggleFullscreen={() => void toggleFullscreen()}
 				topbarBounds={topbarBounds}
 			/>
 			{/* Ordered by what blocks what. A session that needs credentials cannot make
@@ -469,7 +487,17 @@ export function ChatWorkspace({
 					onRollback?.(turnId);
 				}}
 			/>
-		</section>
+				</section>
+			</ContextMenuTrigger>
+			<ContextMenuContent
+				className="min-w-32 p-0.5"
+				portalContainer={isFullscreen ? fullscreenTarget() ?? undefined : undefined}
+			>
+				<ContextMenuItem className="px-2 py-1" onSelect={() => void toggleFullscreen()}>
+					{isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 }
 
@@ -579,26 +607,16 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 function ChatHeader({
 	snapshot,
 	sessionTitle,
-	onOpenShell,
-	openingShell,
-	shellError,
-	fontSize,
-	onDecreaseFontSize,
-	onIncreaseFontSize,
+	sessionActivity,
+	headerActions,
 	isFullscreen,
-	onToggleFullscreen,
 	topbarBounds,
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
-	onOpenShell?: () => void;
-	openingShell?: boolean;
-	shellError?: string;
-	fontSize: number;
-	onDecreaseFontSize: () => void;
-	onIncreaseFontSize: () => void;
+	sessionActivity?: WorkspaceSession["activity"];
+	headerActions?: ReactNode;
 	isFullscreen: boolean;
-	onToggleFullscreen: () => void;
 	topbarBounds: TopbarBounds;
 }) {
 	const label = sessionTitle || snapshot.title || snapshot.sessionId;
@@ -609,12 +627,13 @@ function ChatHeader({
 		title: label,
 		provider: snapshot.harness as WorkspaceSession["provider"],
 		status: "unknown" as const,
+		activity: sessionActivity,
 		updatedAt: "",
 		prs: [],
 	};
 	return (
 		<SessionTerminalBar fullscreen={isFullscreen}>
-			<div className="session-topbar-surface flex min-w-0 flex-1">
+			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
 				<div
 					className="flex min-w-0 shrink items-center pr-1.5"
 					data-testid="session-terminal-region"
@@ -628,79 +647,15 @@ function ChatHeader({
 						>
 							<SessionTerminalTab isActive session={terminalSession} />
 						</div>
-						<NewTerminalButton disabled={Boolean(openingShell)} error={shellError} onClick={onOpenShell} />
-					</div>
-					<div
-						aria-label="Chat display controls"
-						className="ml-1.5 flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1.5"
-						role="toolbar"
-					>
-						<ChatTopbarControl
-							disabled={fontSize <= CHAT_FONT_SIZE_MIN}
-							label="Decrease font size"
-							onClick={onDecreaseFontSize}
-						>
-							<Minus aria-hidden="true" className="size-icon-sm" />
-						</ChatTopbarControl>
-						<span
-							aria-label={`Chat font size: ${fontSize} pixels`}
-							className="w-font-size-label text-center font-mono text-micro tabular-nums text-muted-foreground"
-						>
-							{fontSize}px
-						</span>
-						<ChatTopbarControl
-							disabled={fontSize >= CHAT_FONT_SIZE_MAX}
-							label="Increase font size"
-							onClick={onIncreaseFontSize}
-						>
-							<Plus aria-hidden="true" className="size-icon-sm" />
-						</ChatTopbarControl>
-						<div aria-hidden="true" className="mx-1 h-4 w-px bg-border/70" />
-						<ChatTopbarControl
-							isPressed={isFullscreen}
-							label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-							onClick={onToggleFullscreen}
-						>
-							{isFullscreen ? (
-								<Minimize2 aria-hidden="true" className="size-icon-md" />
-							) : (
-								<Maximize2 aria-hidden="true" className="size-icon-md" />
-							)}
-						</ChatTopbarControl>
 					</div>
 				</div>
+				{isFullscreen ? null : (
+					<div className="ml-auto flex shrink-0 items-center px-3" data-testid="session-action-region">
+						{headerActions}
+					</div>
+				)}
 			</div>
 		</SessionTerminalBar>
-	);
-}
-
-function ChatTopbarControl({
-	children,
-	disabled,
-	isPressed,
-	label,
-	onClick,
-}: {
-	children: ReactNode;
-	disabled?: boolean;
-	isPressed?: boolean;
-	label: string;
-	onClick: () => void;
-}) {
-	return (
-		<Button
-			aria-label={label}
-			aria-pressed={isPressed}
-			className="size-control-sm p-0 text-passive"
-			disabled={disabled}
-			onClick={onClick}
-			size="icon-sm"
-			title={label}
-			type="button"
-			variant="ghost"
-		>
-			{children}
-		</Button>
 	);
 }
 

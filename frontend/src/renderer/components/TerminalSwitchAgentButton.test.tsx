@@ -82,11 +82,12 @@ beforeEach(() => {
 });
 
 describe("TerminalSwitchAgentButton", () => {
-	it("renders a compact circular button with opposing horizontal arrows", async () => {
+	it("renders with the same semantic topbar hover surface as adjacent session actions", async () => {
 		renderControl();
 
 		const button = await screen.findByRole("button", { name: "Switch agent" });
-		expect(button).toHaveClass("size-6", "rounded-full");
+		expect(button).toHaveClass("topbar-control--icon", "size-control-lg", "rounded-md");
+		expect(button).not.toHaveClass("ml-2", "rounded-full");
 		expect(button.querySelector(".lucide-repeat-2")).toBeInTheDocument();
 		expect(button.querySelector("img")).not.toBeInTheDocument();
 		expect(button).toHaveTextContent("");
