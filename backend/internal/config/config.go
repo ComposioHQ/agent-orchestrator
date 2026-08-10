@@ -211,16 +211,11 @@ func Load() (Config, error) {
 		cfg.Agent = raw
 	}
 
-	if raw := os.Getenv("AO_PROCESS_CONTAINMENT"); strings.TrimSpace(raw) != "" {
-		containment := ProcessContainment(strings.ToLower(strings.TrimSpace(raw)))
-		if containment != ProcessContainmentSystemd {
-			return Config{}, fmt.Errorf("invalid AO_PROCESS_CONTAINMENT %q: must be unset|systemd", raw)
-		}
-		if runtime.GOOS != "linux" {
-			return Config{}, fmt.Errorf("invalid AO_PROCESS_CONTAINMENT %q: systemd is Linux-only (GOOS=%s)", raw, runtime.GOOS)
-		}
-		cfg.ProcessContainment = containment
+	containment, err := parseProcessContainment(os.Getenv("AO_PROCESS_CONTAINMENT"), runtime.GOOS)
+	if err != nil {
+		return Config{}, err
 	}
+	cfg.ProcessContainment = containment
 
 	// A missing AO_APP_RUN_ID means nothing is supervising this daemon, so this
 	// boot IS the run: mint an id rather than leaving it empty, which would make
@@ -297,6 +292,21 @@ func Load() (Config, error) {
 	cfg.DataDir = dataDir
 
 	return cfg, nil
+}
+
+func parseProcessContainment(raw, goos string) (ProcessContainment, error) {
+	containment := ProcessContainment(strings.ToLower(strings.TrimSpace(raw)))
+	switch containment {
+	case ProcessContainmentNone:
+		return ProcessContainmentNone, nil
+	case ProcessContainmentSystemd:
+		if goos != "linux" {
+			return ProcessContainmentNone, fmt.Errorf("invalid AO_PROCESS_CONTAINMENT %q: systemd is Linux-only (GOOS=%s)", raw, goos)
+		}
+		return ProcessContainmentSystemd, nil
+	default:
+		return ProcessContainmentNone, fmt.Errorf("invalid AO_PROCESS_CONTAINMENT %q: must be unset|systemd", raw)
+	}
 }
 
 func parseToggleEnv(name, raw string) (bool, error) {

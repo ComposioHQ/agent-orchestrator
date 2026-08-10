@@ -323,8 +323,12 @@ func TestRuntimeIntegrationSystemdContainment(t *testing.T) {
 		t.Fatalf("scoped Destroy: %v", err)
 	}
 	waitForProcessGone(t, newPID, newStart)
-	if alive, err := r.IsAlive(ctx, restarted); err != nil || alive {
-		t.Fatalf("tmux after scoped Destroy = (%v, %v), want (false, nil)", alive, err)
+	// This test owns an isolated tmux server. Destroying its final session can
+	// make the whole server exit before the probe; that is authoritative here,
+	// while the production runtime correctly preserves it as unavailable rather
+	// than inferring per-session death.
+	if alive, err := r.IsAlive(ctx, restarted); alive || (err != nil && !errors.Is(err, ports.ErrRuntimeUnavailable)) {
+		t.Fatalf("tmux after scoped Destroy = (%v, %v), want false with nil or runtime unavailable", alive, err)
 	}
 	if state := systemdUnitStateForTest(t, unit); state != "" && !strings.Contains(state, "inactive") && !strings.Contains(state, "dead") && !strings.Contains(state, "not-found") {
 		t.Fatalf("scope state after Destroy = %q", state)

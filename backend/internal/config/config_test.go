@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -93,7 +95,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("AO_PORT", "4002")
 	t.Setenv("AO_REQUEST_TIMEOUT", "5s")
 	t.Setenv("AO_SHUTDOWN_TIMEOUT", "3s")
-	t.Setenv("AO_PROCESS_CONTAINMENT", "systemd")
+	t.Setenv("AO_PROCESS_CONTAINMENT", "")
 	t.Setenv("AO_RUN_FILE", runFilePath)
 	t.Setenv("AO_DATA_DIR", dataDir)
 	t.Setenv("AO_TELEMETRY_EVENTS", "on")
@@ -115,9 +117,6 @@ func TestLoadOverrides(t *testing.T) {
 	if cfg.ShutdownTimeout != 3*time.Second {
 		t.Errorf("ShutdownTimeout = %s, want 3s", cfg.ShutdownTimeout)
 	}
-	if cfg.ProcessContainment != ProcessContainmentSystemd {
-		t.Errorf("ProcessContainment = %q, want systemd", cfg.ProcessContainment)
-	}
 	if cfg.RunFilePath != runFilePath {
 		t.Errorf("RunFilePath = %q, want %q", cfg.RunFilePath, runFilePath)
 	}
@@ -129,6 +128,64 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Telemetry.Remote != TelemetryRemotePostHog || cfg.Telemetry.PostHogKey != "phc_test" || cfg.Telemetry.PostHogHost != "https://eu.i.posthog.com" {
 		t.Fatalf("Telemetry remote = %+v", cfg.Telemetry)
+	}
+}
+
+func TestParseProcessContainment(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		goos    string
+		want    ProcessContainment
+		wantErr string
+	}{
+		{name: "empty on linux", goos: "linux", want: ProcessContainmentNone},
+		{name: "empty on darwin", goos: "darwin", want: ProcessContainmentNone},
+		{name: "empty on windows", goos: "windows", want: ProcessContainmentNone},
+		{name: "systemd on linux", raw: "systemd", goos: "linux", want: ProcessContainmentSystemd},
+		{name: "normalized systemd on linux", raw: " SystemD ", goos: "linux", want: ProcessContainmentSystemd},
+		{name: "systemd on darwin", raw: "systemd", goos: "darwin", wantErr: "systemd is Linux-only (GOOS=darwin)"},
+		{name: "systemd on windows", raw: "systemd", goos: "windows", wantErr: "systemd is Linux-only (GOOS=windows)"},
+		{name: "invalid on linux", raw: "cgroup", goos: "linux", wantErr: "must be unset|systemd"},
+		{name: "invalid on darwin", raw: "cgroup", goos: "darwin", wantErr: "must be unset|systemd"},
+		{name: "invalid on windows", raw: "cgroup", goos: "windows", wantErr: "must be unset|systemd"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseProcessContainment(tc.raw, tc.goos)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("parseProcessContainment(%q, %q) = %q, nil; want error containing %q", tc.raw, tc.goos, got, tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("parseProcessContainment(%q, %q) error = %q; want substring %q", tc.raw, tc.goos, err, tc.wantErr)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("parseProcessContainment(%q, %q): %v", tc.raw, tc.goos, err)
+			}
+			if got != tc.want {
+				t.Errorf("parseProcessContainment(%q, %q) = %q, want %q", tc.raw, tc.goos, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoadProcessContainmentSystemd(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd process containment is Linux-only")
+	}
+	t.Setenv("AO_PROCESS_CONTAINMENT", " SystemD ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ProcessContainment != ProcessContainmentSystemd {
+		t.Errorf("ProcessContainment = %q, want systemd", cfg.ProcessContainment)
 	}
 }
 

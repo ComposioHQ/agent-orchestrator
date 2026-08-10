@@ -111,6 +111,9 @@ func (s *systemdContainment) WaitActive(ctx context.Context, unit string) error 
 	for {
 		state, err := s.state(waitCtx, unit)
 		if err != nil {
+			if waitCtx.Err() != nil {
+				return fmt.Errorf("scope %s did not become active: %w", unit, waitCtx.Err())
+			}
 			return fmt.Errorf("read scope state: %w", err)
 		}
 		if state.active() {
