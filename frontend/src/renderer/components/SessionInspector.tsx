@@ -1,18 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
 	ArrowUpRight,
+	Bot,
 	ChevronDown,
 	ChevronRight,
+	ChevronUp,
+	FileCode2,
 	Files as FilesIcon,
 	GitPullRequest,
 	GitMerge,
 	Info,
+	MessageSquare,
 	Play,
 	Trash2,
 	Loader2,
@@ -28,11 +32,9 @@ import {
 	useSessionScmSummary,
 	type SessionPRSummary,
 } from "../hooks/useSessionScmSummary";
-import { useSessionUsage, type SessionUsage } from "../hooks/useSessionUsage";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, prCardPresentation, sessionPRDisplaySummaries } from "../lib/pr-display";
-import { formatTokenCount } from "../lib/format-token-count";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
@@ -305,14 +307,6 @@ function SummaryView({
 }) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
-	const developerMode = useUiStore((state) => state.developerMode);
-	const usageQuery = useSessionUsage(session.id, developerMode);
-	const showUsage =
-		developerMode &&
-		!usageQuery.isLoading &&
-		!usageQuery.isError &&
-		hasMeaningfulSessionUsage(usageQuery.data);
-	const showUsageError = developerMode && usageQuery.isError;
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
@@ -340,313 +334,8 @@ function SummaryView({
 				<ActivityTimeline prs={prSummaries} session={session} />
 				<ResumeAgentControl session={session} />
 			</Section>
-
-			{showUsageError ? (
-				<Section title={t("inspector.usage.title")}>
-					<p className={inspectorEmptyClass} role="alert">
-						{t("inspector.usage.totalTokensUnavailable")}
-					</p>
-				</Section>
-			) : showUsage && usageQuery.data ? (
-				<Section title={t("inspector.usage.title")}>
-					<UsageCostTelemetry usage={usageQuery.data} />
-				</Section>
-			) : null}
 		</div>
 	);
-}
-
-function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
-	const { t } = useTranslation();
-	const totalTokens = usageTokenTotal(usage.totals);
-	const exactTotal = totalTokens?.toLocaleString("en-US");
-
-	return (
-		<div>
-			<div className="grid grid-cols-2 gap-4">
-				<div className="min-w-0">
-					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalTokens")}</p>
-					<p
-						aria-label={
-							totalTokens === null
-								? t("inspector.usage.totalTokensUnavailable")
-								: t("inspector.usage.totalTokensAria", { count: exactTotal })
-						}
-						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
-						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
-					>
-						{totalTokens === null ? t("inspector.usage.noUsageYet") : formatTelemetryTokenValue(totalTokens)}
-					</p>
-				</div>
-				<div className="min-w-0 text-right">
-					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalCost")}</p>
-					<p
-						className="mt-0.5 truncate text-sm-md text-settings-muted"
-						title={t("inspector.usage.costComingSoon")}
-					>
-						{t("inspector.usage.comingSoon")}
-					</p>
-				</div>
-			</div>
-
-			<div className="mt-3">
-				<div
-					className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-2.5"
-					data-testid="session-usage-metrics"
-				>
-					<UsageMetrics totals={usage.totals} />
-				</div>
-			</div>
-
-			{usage.harnesses.length > 0 ? (
-				<div className="mt-3 border-t border-(--color-border-settings-input) pt-2">
-					<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
-						<span>{t("inspector.usage.agent")}</span>
-						<span className="text-right">{t("inspector.usage.tokens")}</span>
-						<span className="text-right">{t("inspector.usage.cost")}</span>
-					</div>
-					{usage.harnesses.map((harness, index) => (
-						<UsageProviderRow
-							harness={harness}
-							key={`${harness.harness}:${index}`}
-						/>
-					))}
-				</div>
-			) : null}
-		</div>
-	);
-}
-
-function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][number] }) {
-	const { t } = useTranslation();
-	const harnessName = formatHarnessName(harness.harness);
-
-	return (
-		<UsageDisclosureRow
-			detailsLabel={t("inspector.usage.providerDetails", { name: harnessName })}
-			name={harnessName}
-			nameClassName="text-sm-md"
-			regionLabel={t("inspector.usage.providerPeek", { name: harnessName })}
-			totals={harness.totals}
-		>
-			<ProviderUsageDetails harness={harness} />
-		</UsageDisclosureRow>
-	);
-}
-
-function ProviderUsageDetails({ harness }: { harness: SessionUsage["harnesses"][number] }) {
-	const { t } = useTranslation();
-
-	return (
-		<>
-			<div className="pb-2">
-				<UsageMetrics totals={harness.totals} />
-			</div>
-
-			<div className="border-t border-(--color-border-settings-input) pt-2">
-				<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
-					<span>{t("inspector.usage.models", { count: harness.models.length })}</span>
-					<span className="text-right">{t("inspector.usage.tokens")}</span>
-					<span className="text-right">{t("inspector.usage.cost")}</span>
-				</div>
-				{harness.models.length > 0 ? (
-					harness.models.map((model, index) => (
-						<UsageModelRow key={`${model.modelId}:${index}`} model={model} />
-					))
-				) : (
-					<p className="px-1 py-2 text-2xs text-settings-muted">{t("inspector.usage.noModelTelemetry")}</p>
-				)}
-			</div>
-		</>
-	);
-}
-
-function UsageModelRow({
-	model,
-}: {
-	model: SessionUsage["harnesses"][number]["models"][number];
-}) {
-	const { t } = useTranslation();
-	const modelName = model.modelId;
-
-	return (
-		<UsageDisclosureRow
-			detailsLabel={t("inspector.usage.modelDetails", { name: modelName })}
-			name={modelName}
-			nameClassName="font-mono text-2xs"
-			regionLabel={t("inspector.usage.modelPeek", { name: modelName })}
-			totals={model.totals}
-		>
-			<UsageMetrics totals={model.totals} />
-		</UsageDisclosureRow>
-	);
-}
-
-function UsageDisclosureRow({
-	children,
-	detailsLabel,
-	name,
-	nameClassName,
-	regionLabel,
-	totals,
-}: {
-	children: ReactNode;
-	detailsLabel: string;
-	name: string;
-	nameClassName: string;
-	regionLabel: string;
-	totals: SessionUsage["totals"];
-}) {
-	const { t } = useTranslation();
-	const [open, setOpen] = useState(false);
-	const detailID = useId();
-	const totalTokens = usageTokenTotal(totals);
-	const exactTotal = totalTokens?.toLocaleString("en-US");
-
-	return (
-		<div className="p-2">
-			<button
-				aria-controls={detailID}
-				aria-expanded={open}
-				aria-label={detailsLabel}
-				className="grid w-full grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
-				onClick={() => setOpen((current) => !current)}
-				type="button"
-			>
-				<span className={`flex min-w-0 items-center gap-1 text-settings-label ${nameClassName}`}>
-					{open ? (
-						<ChevronDown aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
-					) : (
-						<ChevronRight aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
-					)}
-					<span className="truncate">{name}</span>
-				</span>
-				<span
-					className="text-right font-mono text-2xs text-settings-label"
-					title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
-				>
-					{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
-				</span>
-				<UsageCostPlaceholder />
-			</button>
-			{open ? (
-				<div
-					aria-label={regionLabel}
-					className="mx-1 mb-2 border-l border-(--color-border-settings-input) py-1.5 pl-2.5"
-					id={detailID}
-					role="region"
-				>
-					{children}
-				</div>
-			) : null}
-		</div>
-	);
-}
-
-function UsageCostPlaceholder() {
-	const { t } = useTranslation();
-	const label = t("inspector.usage.metricUnavailable", { label: t("inspector.usage.cost") });
-	return (
-		<span aria-label={label} className="text-right font-mono text-2xs text-settings-muted" title={label}>
-			—
-		</span>
-	);
-}
-
-function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
-	const { t } = useTranslation();
-	return (
-		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1">
-			<UsageMetric label={t("inspector.usage.inputTokens")} metric={totals.inputTokens} />
-			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
-			<UsageMetric label={t("inspector.usage.cacheReadTokens")} metric={totals.cacheReadTokens} />
-			<UsageMetric label={t("inspector.usage.cacheWriteTokens")} metric={totals.cacheWriteTokens} />
-			<UsageMetric label={t("inspector.usage.reasoningTokens")} metric={totals.reasoningTokens} />
-			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
-		</dl>
-	);
-}
-
-function UsageMetric({
-	label,
-	metric,
-}: {
-	label: string;
-	metric: SessionUsage["totals"]["inputTokens"];
-}) {
-	const { t } = useTranslation();
-	const exactValue = metric?.toLocaleString("en-US");
-	const accessibleLabel =
-		metric === null
-			? t("inspector.usage.metricUnavailable", { label })
-			: t("inspector.usage.metricAria", { label, count: exactValue });
-	return (
-		<div className="min-w-0">
-			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
-			<dd
-				aria-label={accessibleLabel}
-				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
-				title={
-					metric === null
-						? t("inspector.usage.metricUnavailable", { label })
-						: t("inspector.usage.tokensExact", { count: exactValue })
-				}
-			>
-				{metric === null ? "—" : formatTelemetryTokenValue(metric)}
-			</dd>
-		</div>
-	);
-}
-
-const usageMetricKeys = [
-	"inputTokens",
-	"uncachedInputTokens",
-	"cacheReadTokens",
-	"cacheWriteTokens",
-	"outputTokens",
-	"reasoningTokens",
-] as const;
-
-function usageScopes(usage: SessionUsage): SessionUsage["totals"][] {
-	return [
-		usage.totals,
-		...usage.harnesses.flatMap((harness) => [
-			harness.totals,
-			...harness.models.map((model) => model.totals),
-		]),
-	];
-}
-
-function hasMeaningfulSessionUsage(usage?: SessionUsage): usage is SessionUsage {
-	if (!usage) return false;
-	return usageScopes(usage).some((totals) =>
-		usageMetricKeys.some((key) => (totals[key] ?? 0) > 0),
-	);
-}
-
-function formatTelemetryTokenValue(totalTokens: number): string {
-	return formatTokenCount(totalTokens).replace(/ tok$/, "");
-}
-
-function usageTokenTotal(totals: SessionUsage["totals"]): number | null {
-	if (totals.inputTokens === null && totals.outputTokens === null) return null;
-	return (totals.inputTokens ?? 0) + (totals.outputTokens ?? 0);
-}
-
-function formatHarnessName(harness: string): string {
-	const knownNames: Record<string, string> = {
-		"claude-code": "Claude",
-		claude: "Claude",
-		codex: "Codex",
-		glm: "GLM",
-		kimi: "Kimi",
-	};
-	if (knownNames[harness]) return knownNames[harness];
-	return harness
-		.split(/[-_]/)
-		.filter(Boolean)
-		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-		.join(" ");
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
@@ -1408,16 +1097,17 @@ function MergedReviewsSection({
 	if (rows.length === 0) return null;
 
 	return (
-		<Section surface title={t("inspector.reviews")}>
-			<div className="flex flex-col divide-y divide-border">
-				{rows.map(([number, { ao, github }]) => {
+		<Section surface={false} title={t("inspector.reviews")}>
+			<div className="flex flex-col gap-2">
+				{rows.map(([number, { ao, github }], index) => {
 					const aoRuns = ao ? (runsByPR.get(ao.prUrl) ?? []) : [];
 					const aoReviewNotInjected = aoRuns.some((run) => run.autoInjectReview === false);
 					const entries = github?.review?.reviews ?? [];
-					const unresolved = (github?.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0);
+					const unresolvedBy = github?.review?.unresolvedBy ?? [];
+					const unresolved = unresolvedBy.reduce((n, r) => n + r.count, 0);
 					const scmReviewNotInjected =
 						entries.some((review) => review.autoInjectReview === false) ||
-						(github?.review?.unresolvedBy ?? []).some((reviewer) =>
+						unresolvedBy.some((reviewer) =>
 							reviewer.links.some((link) => link.autoInjectReview === false),
 						);
 					const meta = [
@@ -1428,20 +1118,17 @@ function MergedReviewsSection({
 						.join(" · ");
 					return (
 						<ReviewDisclosure
-							collapsible
-							defaultOpen={false}
+							collapsible={rows.length > 1}
+							defaultOpen={index === 0}
 							key={number}
 							meta={meta}
 							title={(ao?.title ?? github?.title)?.trim() || `PR #${number}`}
 							verdict={ao ? reviewVerdict(ao) : undefined}
 						>
 							{ao ? (
-								<div className="flex min-w-0 flex-col gap-2.5">
-									{/* Names the side, not the agent. A PR's passes can come from
-									    different reviewers, so one harness on the group caption is
-									    wrong as often as it is right, and every run row below already
-									    carries its own agent name and avatar. */}
+								<div className="flex min-w-0 flex-col gap-2">
 									<ReviewSourceLabel
+										icon={<Bot aria-hidden="true" />}
 										marker={aoReviewNotInjected ? t("inspector.review.notInjected") : undefined}
 									>
 										{t("inspector.reviewBySource.ao")}
@@ -1450,15 +1137,15 @@ function MergedReviewsSection({
 								</div>
 							) : null}
 							{entries.length > 0 || unresolved > 0 ? (
-								<div className="flex min-w-0 flex-col gap-2.5">
+								<div className="flex min-w-0 flex-col gap-2">
 									<ReviewSourceLabel
+										icon={<GitPullRequest aria-hidden="true" />}
 										marker={scmReviewNotInjected ? t("inspector.review.notInjected") : undefined}
 									>
 										{t("inspector.reviewBySource.github")}
 									</ReviewSourceLabel>
-									{entries.map((entry) => (
-										<GithubReviewRow entry={entry} key={`${entry.reviewerId}:${entry.submittedAt}`} />
-									))}
+									{unresolved > 0 ? <GithubInlineComments reviewers={unresolvedBy} /> : null}
+									{entries.length > 0 ? <GithubReviewHistory entries={entries} /> : null}
 								</div>
 							) : null}
 						</ReviewDisclosure>
@@ -1478,10 +1165,13 @@ function MergedReviewsSection({
  * edge — enough to bracket the group without spending the vertical space a
  * real section header would cost inside an already-nested row.
  */
-function ReviewSourceLabel({ children, marker }: { children: ReactNode; marker?: string }) {
+function ReviewSourceLabel({ children, icon, marker }: { children: ReactNode; icon: ReactNode; marker?: string }) {
 	return (
-		<div className="flex min-w-0 items-center gap-2">
-			<span className="shrink-0 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+		<div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+			<span className="flex size-5 shrink-0 items-center justify-center rounded-sm bg-muted/55 [&_svg]:size-icon-xs">
+				{icon}
+			</span>
+			<span className="shrink-0 text-2xs font-semibold text-foreground">
 				{children}
 			</span>
 			{marker ? (
@@ -1489,7 +1179,7 @@ function ReviewSourceLabel({ children, marker }: { children: ReactNode; marker?:
 					{marker}
 				</Badge>
 			) : null}
-			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
+			<span aria-hidden="true" className="ml-1 h-px min-w-0 flex-1 bg-border/80" />
 		</div>
 	);
 }
@@ -1514,10 +1204,13 @@ function ReviewDisclosure({
 	const [open, setOpen] = useState(defaultOpen);
 	if (!collapsible) {
 		return (
-			<div className="py-2 first:pt-0.5 last:pb-0.5">
-				<div className="flex min-w-0 flex-col gap-1 px-1.5 py-1">
-				<span className="flex min-w-0 items-start justify-between gap-2">
-					<span className="min-w-0 whitespace-normal break-words text-sm-md font-semibold leading-snug text-foreground" title={title}>
+			<article
+				className="overflow-hidden rounded-lg border border-border bg-settings-row"
+				data-testid="review-pr-row"
+			>
+				<div className="flex min-w-0 flex-col gap-1 border-b border-border/70 px-3 py-2.5">
+					<span className="flex min-w-0 items-start justify-between gap-2">
+						<span className="min-w-0 whitespace-normal break-words text-sm-md font-semibold leading-snug text-foreground" title={title}>
 						{title}
 					</span>
 					{verdict ? <VerdictBadge label={verdict.label} tone={verdict.tone} /> : null}
@@ -1526,16 +1219,16 @@ function ReviewDisclosure({
 						{meta}
 					</span>
 				</div>
-				<div className="mt-2 flex flex-col gap-3 pl-1.5">{children}</div>
-			</div>
+				<div className="flex flex-col gap-3 px-3 py-3">{children}</div>
+			</article>
 		);
 	}
 	return (
-		<div className="py-2 first:pt-0.5 last:pb-0.5">
+		<article className="overflow-hidden rounded-lg border border-border bg-settings-row">
 			<button
 				aria-expanded={open}
 				data-testid="review-pr-row"
-			className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30"
+				className="flex w-full min-w-0 items-start gap-2 px-3 py-2.5 text-left transition-colors hover:bg-interactive-hover/30"
 				onClick={() => setOpen((current) => !current)}
 				type="button"
 			>
@@ -1554,8 +1247,8 @@ function ReviewDisclosure({
 				</span>
 				{verdict ? <VerdictBadge label={verdict.label} tone={verdict.tone} /> : null}
 			</button>
-			{open ? <div className="mt-2 flex flex-col gap-3 pl-1.5">{children}</div> : null}
-		</div>
+			{open ? <div className="flex flex-col gap-3 px-3 py-3">{children}</div> : null}
+		</article>
 	);
 }
 
@@ -1914,6 +1607,152 @@ function ReviewPanel({
 }
 
 type GithubReviewEntry = NonNullable<NonNullable<SessionPRSummary["review"]>["reviews"]>[number];
+type GithubUnresolvedReviewer = SessionPRSummary["review"]["unresolvedBy"][number];
+
+const REVIEW_HISTORY_PAGE_SIZE = 3;
+
+function GithubReviewHistory({ entries }: { entries: GithubReviewEntry[] }) {
+	const sorted = [...entries].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+	const latestKey = sorted[0] ? `${sorted[0].reviewerId}:${sorted[0].submittedAt}` : "";
+	const [visibleCount, setVisibleCount] = useState(1);
+	useEffect(() => setVisibleCount(1), [latestKey]);
+	const visible = sorted.slice(0, visibleCount);
+	const remaining = Math.max(0, sorted.length - visible.length);
+	return (
+		<div className="flex min-w-0 flex-col gap-2">
+			{visible.map((entry) => (
+				<GithubReviewRow entry={entry} key={`${entry.reviewerId}:${entry.submittedAt}`} />
+			))}
+			{remaining > 0 ? (
+				<ReviewHistoryPager
+					onCollapse={visibleCount > 1 ? () => setVisibleCount(1) : undefined}
+					onLoadMore={() => setVisibleCount((count) => Math.min(sorted.length, count + REVIEW_HISTORY_PAGE_SIZE))}
+					remaining={remaining}
+				/>
+			) : visibleCount > 1 ? (
+				<ReviewHistoryPager onCollapse={() => setVisibleCount(1)} remaining={0} />
+			) : null}
+		</div>
+	);
+}
+
+function GithubInlineComments({ reviewers }: { reviewers: GithubUnresolvedReviewer[] }) {
+	const { t } = useTranslation();
+	const active = reviewers.filter((reviewer) => reviewer.count > 0);
+	const count = active.reduce((total, reviewer) => total + reviewer.count, 0);
+	if (count === 0) return null;
+	return (
+		<div className="rounded-md border border-error/20 bg-error/6 px-2.5 py-2.5" data-testid="github-inline-comments">
+			<div className="flex min-w-0 items-center gap-1.5 text-2xs font-semibold text-foreground">
+				<MessageSquare aria-hidden="true" className="size-icon-xs shrink-0 text-error" />
+				<span>{t("inspector.openComments")}</span>
+				<span className="ml-auto shrink-0 font-mono text-micro font-normal text-error">
+					{t("inspector.unresolvedCount", { count })}
+				</span>
+			</div>
+			<div className="mt-2 flex min-w-0 flex-col gap-2">
+				{active.map((reviewer) => (
+					<div className="min-w-0" key={reviewer.reviewerId}>
+						<div className="flex min-w-0 items-center gap-1.5 text-micro text-muted-foreground">
+							<span className="min-w-0 truncate font-medium text-foreground">{reviewer.reviewerId}</span>
+							{reviewer.isBot ? <span className="font-mono text-passive">{t("inspector.bot")}</span> : null}
+						</div>
+						<div className="mt-1 flex min-w-0 flex-wrap gap-1">
+							{reviewer.links.map((link, index) => (
+								<InlineCommentReference
+									fallbackUrl={reviewer.reviewUrl}
+									index={index}
+									key={`${link.url ?? link.file ?? "comment"}:${link.line ?? index}`}
+									link={link}
+								/>
+							))}
+							{reviewer.links.length === 0 && reviewer.reviewUrl ? (
+								<a
+									className="inline-flex items-center gap-0.5 rounded-sm bg-background/35 px-1.5 py-1 font-medium text-muted-foreground no-underline transition-colors hover:text-foreground"
+									href={reviewer.reviewUrl}
+									rel="noopener noreferrer"
+									target="_blank"
+								>
+									{t("inspector.viewOnPR")}
+									<ArrowUpRight aria-hidden="true" className="size-2.5" />
+								</a>
+							) : null}
+						</div>
+					</div>
+				))}
+			</div>
+		</div>
+	);
+}
+
+function InlineCommentReference({
+	fallbackUrl,
+	index,
+	link,
+}: {
+	fallbackUrl?: string;
+	index: number;
+	link: GithubUnresolvedReviewer["links"][number];
+}) {
+	const { t } = useTranslation();
+	const label = link.file ? `${link.file}${link.line ? `:${link.line}` : ""}` : t("inspector.commentNumber", { number: index + 1 });
+	const className =
+		"inline-flex max-w-full min-w-0 items-center gap-1 rounded-sm bg-background/35 px-1.5 py-1 font-mono text-micro text-muted-foreground";
+	const contents = (
+		<>
+			<FileCode2 aria-hidden="true" className="size-2.5 shrink-0" />
+			<span className="truncate" title={label}>{label}</span>
+		</>
+	);
+	const href = link.url || fallbackUrl;
+	if (!href) return <span className={className}>{contents}</span>;
+	return (
+		<a
+			className={cn(className, "no-underline transition-colors hover:bg-background/60 hover:text-foreground")}
+			href={href}
+			rel="noopener noreferrer"
+			target="_blank"
+		>
+			{contents}
+		</a>
+	);
+}
+
+function ReviewHistoryPager({
+	onCollapse,
+	onLoadMore,
+	remaining,
+}: {
+	onCollapse?: () => void;
+	onLoadMore?: () => void;
+	remaining: number;
+}) {
+	const { t } = useTranslation();
+	return (
+		<div className="flex min-w-0 gap-1.5">
+			{onCollapse ? (
+				<button
+					className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1.5 text-micro font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover/30 hover:text-foreground"
+					onClick={onCollapse}
+					type="button"
+				>
+					<ChevronUp aria-hidden="true" className="size-icon-2xs shrink-0" />
+					<span className="truncate">{t("inspector.showLatestReviewOnly")}</span>
+				</button>
+			) : null}
+			{remaining > 0 && onLoadMore ? (
+				<button
+					className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1.5 text-micro font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover/30 hover:text-foreground"
+					onClick={onLoadMore}
+					type="button"
+				>
+					<ChevronDown aria-hidden="true" className="size-icon-2xs shrink-0" />
+					<span className="truncate">{t("inspector.loadMoreReviews", { count: remaining })}</span>
+				</button>
+			) : null}
+		</div>
+	);
+}
 
 function ReviewMarkdownBody({ body, clamped, testId }: { body: string; clamped: boolean; testId: string }) {
 	return (
@@ -1950,49 +1789,16 @@ function ReviewMarkdownBody({ body, clamped, testId }: { body: string; clamped: 
 
 function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 	const { t } = useTranslation();
-	const [expanded, setExpanded] = useState(false);
-	const verdict = githubVerdict(entry.verdict, t);
-	const raw = entry.body?.trim();
-	const body = raw ? raw.replace(/\n{3,}/g, "\n\n") : raw;
-	const clamped = Boolean(body) && isClampedSummary(body!);
 	return (
-		<div className="flex min-w-0 flex-col gap-1">
-			<div className="flex min-w-0 items-center gap-2">
-				<span className="min-w-0 truncate text-2xs font-medium text-foreground">{entry.reviewerId}</span>
-				{entry.isBot ? <span className="shrink-0 font-mono text-micro text-passive">{t("inspector.bot")}</span> : null}
-				<span className="ml-auto">
-					<VerdictBadge label={verdict.label} tone={verdict.tone} />
-				</span>
-			</div>
-			{body ? (
-				<ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId="github-review-summary" />
-			) : null}
-			{clamped || entry.reviewUrl ? (
-				<span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-passive">
-					{clamped ? (
-						<button
-							className="font-medium transition-colors hover:text-foreground"
-							onClick={() => setExpanded((open) => !open)}
-							type="button"
-						>
-							{expanded ? t("inspector.showLess") : t("inspector.showMore")}
-						</button>
-					) : null}
-					{clamped && entry.reviewUrl ? <span aria-hidden="true">·</span> : null}
-					{entry.reviewUrl ? (
-						<a
-							className="inline-flex items-center gap-0.5 font-medium no-underline transition-colors hover:text-foreground"
-							href={entry.reviewUrl}
-							target="_blank"
-							rel="noopener noreferrer"
-						>
-							{t("inspector.viewReview")}
-							<ArrowUpRight aria-hidden="true" className="size-2.5 shrink-0" />
-						</a>
-					) : null}
-				</span>
-			) : null}
-		</div>
+		<ReviewSummaryCard
+			actor={entry.reviewerId}
+			body={entry.body}
+			isBot={entry.isBot}
+			testId="github-review-summary"
+			timestamp={entry.submittedAt}
+			url={entry.reviewUrl}
+			verdict={githubVerdict(entry.verdict, t)}
+		/>
 	);
 }
 
@@ -2021,21 +1827,36 @@ function ReviewerRuns({
 	if (runs.length === 0) {
 		return <p className={cn(inspectorEmptyClass, "m-0")}>{t("inspector.noPastReviewSummaries")}</p>;
 	}
+	const sorted = [...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 	return (
 		<ReviewRunList
 			reviewState={reviewState}
-			runs={[...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))}
+			runs={sorted}
 		/>
 	);
 }
 
 /** Review history for a PR, with the harness identified on every pass. */
 function ReviewRunList({ reviewState, runs }: { reviewState: PRReviewState; runs: ReviewRunFacts[] }) {
+	const latestKey = runs[0]?.id ?? "";
+	const [visibleCount, setVisibleCount] = useState(1);
+	useEffect(() => setVisibleCount(1), [latestKey]);
+	const visible = runs.slice(0, visibleCount);
+	const remaining = Math.max(0, runs.length - visible.length);
 	return (
-		<div className={cn("flex min-w-0 flex-col gap-3", reviewState.status === "ineligible" && "opacity-70")}>
-			{runs.map((run, index) => (
+		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
+			{visible.map((run, index) => (
 				<ReviewRunRow isEarlier={index > 0} key={run.id} prUrl={reviewState.prUrl} run={run} />
 			))}
+			{remaining > 0 ? (
+				<ReviewHistoryPager
+					onCollapse={visibleCount > 1 ? () => setVisibleCount(1) : undefined}
+					onLoadMore={() => setVisibleCount((count) => Math.min(runs.length, count + REVIEW_HISTORY_PAGE_SIZE))}
+					remaining={remaining}
+				/>
+			) : visibleCount > 1 ? (
+				<ReviewHistoryPager onCollapse={() => setVisibleCount(1)} remaining={0} />
+			) : null}
 		</div>
 	);
 }
@@ -2056,43 +1877,66 @@ function isClampedSummary(body: string): boolean {
 
 function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: string; isEarlier: boolean }) {
 	const { t } = useTranslation();
-	const [expanded, setExpanded] = useState(false);
 	// A terminated run's body is the reason it stopped, not findings.
 	const raw = run.status === "cancelled" || run.status === "failed" ? "" : run.body?.trim();
-	// Runs of blank lines cost the clamp its budget without carrying anything: a
-	// two-line gap between paragraphs eats half a four-line preview. Collapsed to
-	// a single blank line, which still separates paragraphs when expanded.
-	const body = raw ? raw.replace(/\n{3,}/g, "\n\n") : raw;
 	// Falls back to the PR itself: an AO pass only has a review-comment anchor
 	// once it has been submitted to GitHub, and a row with no way out at all is
 	// a dead end.
 	const reviewUrl = aoReviewCommentUrl(run);
 	const url = reviewUrl ?? (prUrl || null);
+	return (
+		<ReviewSummaryCard
+			actor={run.harness || "reviewer"}
+			body={raw}
+			isEarlier={isEarlier}
+			testId="review-run-summary"
+			timestamp={run.createdAt}
+			url={url}
+			verdict={githubVerdict(run.verdict, t)}
+		/>
+	);
+}
+
+function ReviewSummaryCard({
+	actor,
+	body: rawBody,
+	isBot = false,
+	isEarlier = false,
+	testId,
+	timestamp,
+	url,
+	verdict,
+}: {
+	actor: string;
+	body?: string;
+	isBot?: boolean;
+	isEarlier?: boolean;
+	testId: string;
+	timestamp: string;
+	url?: string | null;
+	verdict: ReturnType<typeof githubVerdict>;
+}) {
+	const { t } = useTranslation();
+	const [expanded, setExpanded] = useState(false);
+	const trimmed = rawBody?.trim();
+	const body = trimmed ? trimmed.replace(/\n{3,}/g, "\n\n") : trimmed;
 	const clamped = Boolean(body) && isClampedSummary(body!);
 
 	return (
-		// Earlier passes get a hairline and breathing room above them. Without it
-		// two write-ups butt together and read as one long review by one agent,
-		// which is exactly the distinction this list exists to make.
-		<div className={cn("flex min-w-0 flex-col gap-1", isEarlier && "border-t border-border/60 pt-3")}>
-			{/* Who reviewed and what they concluded lead; when it ran and whether it
-			    is superseded are provenance, so they sit right and recede. */}
-			<span className="flex min-w-0 items-center gap-2">
+		<article className="flex min-w-0 flex-col gap-1 rounded-md bg-overlay/50 px-2.5 py-2.5">
+			<span className="flex min-w-0 items-center gap-1.5">
 				<span className="inline-flex min-w-0 items-center gap-1 text-micro font-medium text-muted-foreground">
-					<AgentAvatar className="size-icon-sm shrink-0" decorative provider={run.harness || "reviewer"} />
-					<span className="truncate">{run.harness || "reviewer"}</span>
+					<AgentAvatar className="size-icon-sm shrink-0" decorative provider={actor} />
+					<span className="truncate">{actor}</span>
 				</span>
+				{isBot ? <span className="shrink-0 font-mono text-micro text-passive">{t("inspector.bot")}</span> : null}
+				<VerdictBadge {...verdict} />
 				<span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-micro text-passive">
 					{isEarlier ? <span>{t("inspector.earlierPass")}</span> : null}
-					<span className="font-mono">{formatTimeCompact(run.createdAt)}</span>
+					<span className="font-mono">{formatTimeCompact(timestamp)}</span>
 				</span>
 			</span>
-			{body ? (
-				<ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId="review-run-summary" />
-			) : null}
-			{/* One tertiary group, not two competing labels. Below the body's size so
-			    they read as controls rather than sitting in the reading flow, and
-			    middot-separated so they scan as a pair. */}
+			{body ? <ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId={testId} /> : null}
 			{clamped || url ? (
 				<span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-passive">
 					{clamped ? (
@@ -2109,16 +1953,16 @@ function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: s
 						<a
 							className="inline-flex items-center gap-0.5 font-medium no-underline transition-colors hover:text-foreground"
 							href={url}
-							target="_blank"
 							rel="noopener noreferrer"
+							target="_blank"
 						>
-							{reviewUrl ? t("inspector.viewReview") : t("inspector.viewOnPR")}
+							{t("inspector.viewOnPR")}
 							<ArrowUpRight aria-hidden="true" className="size-2.5 shrink-0" />
 						</a>
 					) : null}
-					</span>
-				) : null}
-		</div>
+				</span>
+			) : null}
+		</article>
 	);
 }
 

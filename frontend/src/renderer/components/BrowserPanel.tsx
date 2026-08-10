@@ -5,7 +5,6 @@ import {
 	ArrowRight,
 	Bug,
 	Check,
-	Dock,
 	Globe2,
 	Layers3,
 	Maximize2,
@@ -16,7 +15,6 @@ import {
 } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
-import type { BrowserDevToolsPlacement } from "../../main/browser-view-host";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
@@ -99,7 +97,7 @@ export function useBrowserAnnotationQueue({
 				const message = formatBrowserAnnotationMessage(payload);
 				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
 					params: { path: { sessionId: sendSessionId } },
-					body: { message },
+					body: { message, attachment: payload.snapshot },
 				});
 				if (error) {
 					failureMessage = apiErrorMessage(error, appI18n.t("browser.unableSendAnnotation"));
@@ -246,7 +244,6 @@ export function BrowserPanelView({
 		devtoolsState = { viewId: "", open: false, activeTabId: "" },
 		openDevTools = async () => undefined,
 		closeDevTools = async () => undefined,
-		setDevToolsPlacement = async () => undefined,
 		annotationMode,
 		setAnnotationMode,
 	} = browserView;
@@ -259,34 +256,7 @@ export function BrowserPanelView({
 	const canPopOut = poppedOut || Boolean(navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
-	const nativeCompositionEnabled = Boolean(window.ao?.browser?.nativeCompositionEnabled);
 	const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
-	const [devtoolsPlacementMenuOpen, setDevtoolsPlacementMenuOpen] = useState(false);
-	const devtoolsPlacement = devtoolsState.placement ?? "right";
-	const devtoolsPlacementLabels: Record<BrowserDevToolsPlacement, string> = {
-		right: t("browser.devtoolsRight"),
-		bottom: t("browser.devtoolsBottom"),
-		left: t("browser.devtoolsLeft"),
-		undocked: t("browser.devtoolsUndocked"),
-	};
-
-	const handleOpenDevTools = useCallback(async () => {
-		if (nativeCompositionEnabled) {
-			const saved = window.localStorage?.getItem("ao.browser.devtoolsPlacement") as BrowserDevToolsPlacement | null;
-			if (saved === "right" || saved === "bottom" || saved === "left" || saved === "undocked") {
-				await setDevToolsPlacement(saved);
-			}
-		}
-		await openDevTools();
-	}, [nativeCompositionEnabled, openDevTools, setDevToolsPlacement]);
-
-	const handleDevToolsPlacement = useCallback(
-		(placement: BrowserDevToolsPlacement) => {
-			window.localStorage?.setItem("ao.browser.devtoolsPlacement", placement);
-			void setDevToolsPlacement(placement);
-		},
-		[setDevToolsPlacement],
-	);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
@@ -548,7 +518,7 @@ export function BrowserPanelView({
 					aria-label={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
 					className={cn(devtoolsState.open && "bg-accent-weak text-accent")}
 					disabled={!canUseDevTools}
-					onClick={() => void (devtoolsState.open ? closeDevTools() : handleOpenDevTools())}
+					onClick={() => void (devtoolsState.open ? closeDevTools() : openDevTools())}
 					size="icon-sm"
 					title={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
 					type="button"
@@ -556,44 +526,6 @@ export function BrowserPanelView({
 				>
 					<Bug aria-hidden="true" className="size-icon-base" />
 				</Button>
-				{nativeCompositionEnabled && devtoolsState.open ? (
-					<DropdownMenu
-						modal={false}
-						onOpenChange={setDevtoolsPlacementMenuOpen}
-						open={devtoolsPlacementMenuOpen}
-					>
-						<DropdownMenuTrigger asChild>
-							<Button
-								aria-label={t("browser.devtoolsPlacement")}
-								className="browser-panel__devtools-placement"
-								size="icon-sm"
-								type="button"
-								title={t("browser.devtoolsPlacement")}
-								variant="ghost"
-							>
-								<Dock aria-hidden="true" className="size-icon-base" />
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent
-							align="end"
-							className="w-44"
-							data-browser-native-overlay="true"
-							sideOffset={8}
-						>
-							<DropdownMenuLabel>{t("browser.dockDevTools")}</DropdownMenuLabel>
-							{(["right", "bottom", "left", "undocked"] as BrowserDevToolsPlacement[]).map((placement) => (
-								<DropdownMenuItem
-									key={placement}
-									data-testid={`browser-devtools-placement-${placement}`}
-									onSelect={() => handleDevToolsPlacement(placement)}
-								>
-									<span>{devtoolsPlacementLabels[placement]}</span>
-									{placement === devtoolsPlacement ? <Check aria-hidden="true" className="ml-auto" /> : null}
-								</DropdownMenuItem>
-							))}
-						</DropdownMenuContent>
-					</DropdownMenu>
-				) : null}
 				<Button
 					aria-label={poppedOut ? t("browser.returnToPanel") : t("browser.popOut")}
 					disabled={!canPopOut}
