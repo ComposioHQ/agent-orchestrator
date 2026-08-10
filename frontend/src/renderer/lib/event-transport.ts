@@ -6,6 +6,10 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
 import { conversationQueryKey } from "../hooks/useConversation";
 import { sessionUsageQueryRoot } from "../hooks/useSessionUsageSummaries";
+import {
+	sessionInterfaceTransitionQueryKey,
+	type SessionInterfaceTransitionStatus,
+} from "../hooks/useSessionInterfaceTransition";
 
 export type EventTransport = {
 	connect: () => () => void;
@@ -22,8 +26,9 @@ const EVENTSOURCE_CLOSED = 2;
 // CDC event types the daemon pushes over the SSE stream (see
 // backend/internal/cdc/event.go). The SSE writer tags each frame with
 // `event: <type>`, so named events bypass EventSource.onmessage and must be
-// subscribed explicitly. Every one of these can change the project/session list
-// the sidebar renders, so they all trigger a (debounced) workspace refetch.
+// subscribed explicitly. Most can change the project/session list the sidebar
+// renders; conversation-bearing updates and transient readiness updates are
+// routed to their narrower query keys below.
 const CDC_EVENT_TYPES = [
 	"session_created",
 	"session_updated",
@@ -39,23 +44,25 @@ const CDC_EVENT_TYPES = [
  * Wires live server state into the TanStack Query cache. Two sources feed it:
  *   - daemon lifecycle over Electron IPC (coming up/down changes session availability)
  *   - the backend CDC stream over SSE (project/session/PR changes)
- * Both invalidate the ["workspaces"] query so the UI refetches. Invalidations are
- * debounced because a single user action can emit a burst of CDC events.
+ * Both route invalidations to the affected query keys so the UI refetches.
+ * Invalidations are debounced because one action can emit a burst of CDC events.
  */
 export function createEventTransport(queryClient: QueryClient): EventTransport {
 	return {
 		connect() {
 			let debounce: ReturnType<typeof setTimeout> | undefined;
 			const pendingConversationSessions = new Set<string>();
+			const pendingTransitionSessions = new Set<string>();
 			let workspaceInvalidationPending = false;
 			let retryTimer: ReturnType<typeof setTimeout> | undefined;
 			let source: EventSource | undefined;
 			let sourceBaseUrl: string | undefined;
-			const refreshWorkspaces = (event?: Event) => {
-				let conversationOnly = false;
+			const scheduleCacheInvalidations = (event?: Event) => {
+				let skipWorkspaceInvalidation = false;
 				if (event && "data" in event) {
 					try {
 						const decoded = JSON.parse(String((event as MessageEvent).data)) as {
+							type?: unknown;
 							sessionId?: unknown;
 							payload?: unknown;
 						};
@@ -68,21 +75,36 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 							typeof decoded.payload === "object" && decoded.payload !== null
 								? (decoded.payload as { conversationId?: unknown })
 								: undefined;
-						if (
-							typeof decoded.sessionId === "string" &&
-							decoded.sessionId &&
-							typeof payload?.conversationId === "string" &&
-							payload.conversationId
-						) {
-							pendingConversationSessions.add(decoded.sessionId);
-							conversationOnly = true;
+						const sessionId =
+							typeof decoded.sessionId === "string" && decoded.sessionId
+								? decoded.sessionId
+								: undefined;
+						if (sessionId) {
+							if (
+								typeof payload?.conversationId === "string" &&
+								payload.conversationId
+							) {
+								pendingConversationSessions.add(sessionId);
+								skipWorkspaceInvalidation = true;
+							}
+							if (decoded.type === "session_updated") {
+								// The sessions CDC trigger fires when the provider-native id is
+								// captured. Wake only a mounted query that is waiting for that id;
+								// its narrow poll remains the fallback for a missed/reordered event.
+								const readiness = queryClient.getQueryData<SessionInterfaceTransitionStatus>(
+									sessionInterfaceTransitionQueryKey(sessionId),
+								);
+								if (readiness?.reasonCode === "NATIVE_SESSION_MISSING") {
+									pendingTransitionSessions.add(sessionId);
+								}
+							}
 						}
 					} catch {
 						// A malformed CDC payload still invalidates workspaces; it simply
 						// cannot target a conversation cache precisely.
 					}
 				}
-				if (!conversationOnly) workspaceInvalidationPending = true;
+				if (!skipWorkspaceInvalidation) workspaceInvalidationPending = true;
 				if (debounce) clearTimeout(debounce);
 				debounce = setTimeout(() => {
 					if (workspaceInvalidationPending) {
@@ -95,6 +117,12 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						void queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
 					}
 					pendingConversationSessions.clear();
+					for (const sessionId of pendingTransitionSessions) {
+						void queryClient.invalidateQueries({
+							queryKey: sessionInterfaceTransitionQueryKey(sessionId),
+						});
+					}
+					pendingTransitionSessions.clear();
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 
@@ -128,7 +156,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 					source.onopen = () => {
 						setEventsConnectionState("connected");
 						// Events emitted during the gap were lost; refetch once on (re)open.
-						refreshWorkspaces();
+						scheduleCacheInvalidations();
 					};
 					source.onerror = () => {
 						// While readyState is CONNECTING the browser retries on its own;
@@ -137,9 +165,9 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						setEventsConnectionState("disconnected");
 						if (source?.readyState === EVENTSOURCE_CLOSED) scheduleRetry();
 					};
-					source.onmessage = refreshWorkspaces; // unnamed events, if any
+					source.onmessage = scheduleCacheInvalidations; // unnamed events, if any
 					for (const type of CDC_EVENT_TYPES) {
-						source.addEventListener(type, refreshWorkspaces);
+						source.addEventListener(type, scheduleCacheInvalidations);
 					}
 					// EventSource auto-reconnects and resumes via Last-Event-ID while
 					// CONNECTING; scheduleRetry only covers the terminal CLOSED state.
@@ -150,7 +178,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 
 			const removeDaemonListener = aoBridge.daemon.onStatus(() => {
 				connectSource();
-				refreshWorkspaces();
+				scheduleCacheInvalidations();
 			});
 			// Rebind when the daemon comes back on a different port, independent of
 			// status-event ordering.

@@ -59,7 +59,10 @@ class EventSourceStub {
 }
 
 function fakeQueryClient() {
-	return { invalidateQueries: vi.fn() } as unknown as Parameters<typeof createEventTransport>[0];
+	return {
+		invalidateQueries: vi.fn(),
+		getQueryData: vi.fn(),
+	} as unknown as Parameters<typeof createEventTransport>[0];
 }
 
 beforeEach(() => {
@@ -172,6 +175,100 @@ describe("createEventTransport", () => {
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
 				queryKey: ["session-scm-summary"],
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("invalidates missing native-session readiness for the named session", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			vi.mocked(queryClient.getQueryData).mockReturnValue({
+				supported: false,
+				targetMode: "chat",
+				reasonCode: "NATIVE_SESSION_MISSING",
+				reason: "no native conversation found for codex",
+			});
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].emit(
+				"session_updated",
+				JSON.stringify({
+					seq: 43,
+					projectId: "proj-1",
+					sessionId: "tui-1",
+					type: "session_updated",
+					payload: { id: "tui-1", activity: "idle", isTerminated: false },
+					createdAt: "2026-08-10T13:42:39Z",
+				}),
+			);
+
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["session-interface-transition", "tui-1"],
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not refresh settled transition readiness for unrelated session updates", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			vi.mocked(queryClient.getQueryData).mockReturnValue({
+				supported: true,
+				targetMode: "chat",
+			});
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].emit(
+				"session_updated",
+				JSON.stringify({
+					seq: 44,
+					projectId: "proj-1",
+					sessionId: "tui-1",
+					type: "session_updated",
+					payload: { id: "tui-1", isPinned: true },
+					createdAt: "2026-08-10T13:43:39Z",
+				}),
+			);
+
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
+				queryKey: ["session-interface-transition", "tui-1"],
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not refresh missing native-session readiness for a non-session event", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			vi.mocked(queryClient.getQueryData).mockReturnValue({
+				supported: false,
+				targetMode: "chat",
+				reasonCode: "NATIVE_SESSION_MISSING",
+				reason: "no native conversation found for codex",
+			});
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].emit(
+				"pr_updated",
+				JSON.stringify({
+					seq: 45,
+					projectId: "proj-1",
+					sessionId: "tui-1",
+					type: "pr_updated",
+					payload: { url: "https://github.com/example/repo/pull/1" },
+					createdAt: "2026-08-10T13:44:39Z",
+				}),
+			);
+
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
+				queryKey: ["session-interface-transition", "tui-1"],
 			});
 		} finally {
 			vi.useRealTimers();
