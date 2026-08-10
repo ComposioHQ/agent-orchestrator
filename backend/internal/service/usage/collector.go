@@ -630,6 +630,10 @@ func (c *Collector) ReconcileSources(ctx context.Context, limit int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	var errs []error
+	if err := c.backfillPiPaths(ctx); err != nil {
+		errs = append(errs, err)
+	}
 	if limit == 0 {
 		limit = defaultDiscoveryLimit
 	}
@@ -638,7 +642,6 @@ func (c *Collector) ReconcileSources(ctx context.Context, limit int64) error {
 		return err
 	}
 	now := c.now().UTC()
-	var errs []error
 	for _, binding := range bindings {
 		if err := c.reconcileBinding(ctx, binding, now); err != nil {
 			errs = append(errs, err)

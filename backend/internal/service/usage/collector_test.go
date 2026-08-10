@@ -1983,6 +1983,24 @@ func TestCollectorBackfillFindsPiSessionWithoutCapturedNativeID(t *testing.T) {
 	}
 }
 
+func TestCollectorReconcileFindsPiSessionWithoutCapturedNativeID(t *testing.T) {
+	store := collectorTestStore(t)
+	workspace := t.TempDir()
+	session := collectorTestSession(t, store, domain.HarnessPi, "", false)
+	session.Metadata.WorkspacePath = workspace
+	mustNoError(t, store.UpdateSession(context.Background(), session))
+	root := t.TempDir()
+	path := filepath.Join(root, "project", "existing.jsonl")
+	writeUsageFixture(t, path, fmt.Sprintf(`{"type":"session","id":"pi-existing","cwd":%q,"version":3}`+"\n", workspace))
+	collector := NewCollector(store, SourceRoots{PiSessions: root}, nil)
+
+	mustNoError(t, collector.ReconcileSources(context.Background(), -1))
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].NativeRootID != "pi-existing" {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+}
+
 func TestCollectorBindsPiWhenLifecycleCapturesNativeSessionID(t *testing.T) {
 	const nativeID = "pi-captured"
 	store := collectorTestStore(t)
