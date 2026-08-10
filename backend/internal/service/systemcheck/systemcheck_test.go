@@ -33,6 +33,7 @@ func TestCheck_AllSatisfied(t *testing.T) {
 	svc := NewWithLookPath(catalog, lookPathFound(map[string]string{
 		"git":  "/usr/bin/git",
 		"tmux": "/usr/bin/tmux",
+		"gh":   "/usr/bin/gh",
 	}))
 
 	report, err := svc.Check(context.Background())
@@ -42,16 +43,20 @@ func TestCheck_AllSatisfied(t *testing.T) {
 	if !report.Ready {
 		t.Fatalf("Ready = false, want true; requirements=%+v", report.Requirements)
 	}
-	if len(report.Requirements) != 3 {
-		t.Fatalf("len(Requirements) = %d, want 3", len(report.Requirements))
+	if len(report.Requirements) != 4 {
+		t.Fatalf("len(Requirements) = %d, want 4", len(report.Requirements))
 	}
-	wantOrder := []string{"git", "tmux", "harness"}
+	wantOrder := []string{"git", "tmux", "harness", "gh"}
+	wantRequired := map[string]bool{"git": true, "tmux": true, "harness": true, "gh": false}
 	for i, id := range wantOrder {
 		if report.Requirements[i].ID != id {
 			t.Fatalf("Requirements[%d].ID = %q, want %q", i, report.Requirements[i].ID, id)
 		}
 		if !report.Requirements[i].Satisfied {
 			t.Fatalf("Requirements[%d] (%s) not satisfied", i, id)
+		}
+		if report.Requirements[i].Required != wantRequired[id] {
+			t.Fatalf("Requirements[%d] (%s).Required = %v, want %v", i, id, report.Requirements[i].Required, wantRequired[id])
 		}
 	}
 }
@@ -150,6 +155,67 @@ func TestCheck_HarnessCatalogError(t *testing.T) {
 	}
 	if harness.Detail != "probe boom" {
 		t.Fatalf("harness.Detail = %q, want %q", harness.Detail, "probe boom")
+	}
+}
+
+func TestCheck_GHPresent(t *testing.T) {
+	catalog := &fakeHarnessCatalog{inventory: agentsvc.Inventory{
+		Installed: []agentsvc.Info{{ID: "claude-code", Label: "Claude Code"}},
+	}}
+	svc := NewWithLookPath(catalog, lookPathFound(map[string]string{
+		"git":  "/usr/bin/git",
+		"tmux": "/usr/bin/tmux",
+		"gh":   "/usr/bin/gh",
+	}))
+
+	report, err := svc.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if !report.Ready {
+		t.Fatalf("Ready = false, want true")
+	}
+	gh := requirementByID(t, report, "gh")
+	if !gh.Satisfied {
+		t.Fatalf("gh.Satisfied = false, want true")
+	}
+	if gh.Required {
+		t.Fatalf("gh.Required = true, want false (gh is advisory)")
+	}
+	if gh.Detail == "" {
+		t.Fatalf("gh.Detail is empty, want the resolved path")
+	}
+}
+
+// TestCheck_GHMissing confirms gh being absent neither fails the requirement's
+// sibling checks nor flips Ready — this is the whole point of gh being
+// Required: false. Since git/tmux/harness are all satisfied here, this is
+// also the "Ready stays true when ONLY gh is unsatisfied" case.
+func TestCheck_GHMissing(t *testing.T) {
+	catalog := &fakeHarnessCatalog{inventory: agentsvc.Inventory{
+		Installed: []agentsvc.Info{{ID: "claude-code", Label: "Claude Code"}},
+	}}
+	svc := NewWithLookPath(catalog, lookPathFound(map[string]string{
+		"git":  "/usr/bin/git",
+		"tmux": "/usr/bin/tmux",
+	}))
+
+	report, err := svc.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if !report.Ready {
+		t.Fatalf("Ready = false, want true (gh is advisory and must not block readiness); requirements=%+v", report.Requirements)
+	}
+	gh := requirementByID(t, report, "gh")
+	if gh.Satisfied {
+		t.Fatalf("gh.Satisfied = true, want false")
+	}
+	if gh.Required {
+		t.Fatalf("gh.Required = true, want false")
+	}
+	if gh.Detail == "" {
+		t.Fatalf("gh.Detail is empty, want a not-found message")
 	}
 }
 

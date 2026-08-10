@@ -53,6 +53,7 @@ type APIDeps struct {
 	PreviewServer       controllers.ManagedPreviewServer
 	SessionCapabilities controllers.SessionCapabilityValidator
 	SystemChecks        controllers.SystemChecker
+	Installer           controllers.Installer
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -74,6 +75,7 @@ type API struct {
 	dev           *controllers.DevController
 	browser       *controllers.BrowserController
 	system        *controllers.SystemController
+	systemInstall *controllers.SystemInstallController
 	events        *EventsController
 }
 
@@ -108,6 +110,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		dev:           &controllers.DevController{Import: deps.DevImport},
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
 		system:        &controllers.SystemController{Checks: deps.SystemChecks},
+		systemInstall: &controllers.SystemInstallController{Installer: deps.Installer},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -145,6 +148,7 @@ func (a *API) Register(root chi.Router) {
 			a.dev.Register(r)
 			a.browser.Register(r)
 			a.system.Register(r)
+			a.systemInstall.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Agent switching synchronously collects a handoff, starts the target,

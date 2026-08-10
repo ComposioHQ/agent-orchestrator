@@ -43,6 +43,7 @@ import (
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	settingssvc "github.com/aoagents/agent-orchestrator/backend/internal/service/settings"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
 	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -269,6 +270,7 @@ func Run() error {
 		}
 	}()
 	systemChecks := systemcheck.New(agentSvc)
+	systemInstall := systeminstall.New()
 
 	// Connect Mobile: the bridge service needs the LAN listener, but the LAN
 	// listener needs the built router's handler, which only exists once srv is
@@ -379,6 +381,7 @@ func Run() error {
 		Projects:           projectSvc,
 		Agents:             agentSvc,
 		SystemChecks:       systemChecks,
+		Installer:          systemInstall,
 		Sessions:           sessionSvc,
 		PRs:                prActions,
 		Reviews:            reviewSvc,

@@ -30,9 +30,10 @@ func TestGetSystemRequirements(t *testing.T) {
 	checker := &fakeSystemChecker{report: systemcheck.Report{
 		Ready: false,
 		Requirements: []systemcheck.Requirement{
-			{ID: "git", Label: "git", Satisfied: true, Detail: "/usr/bin/git"},
-			{ID: "tmux", Label: "tmux", Satisfied: true, Detail: "/usr/bin/tmux"},
-			{ID: "harness", Label: "agent harness", Satisfied: false, Detail: "No agent CLI (Claude Code, Codex, etc.) was found on PATH."},
+			{ID: "git", Label: "git", Satisfied: true, Required: true, Detail: "/usr/bin/git"},
+			{ID: "tmux", Label: "tmux", Satisfied: true, Required: true, Detail: "/usr/bin/tmux"},
+			{ID: "harness", Label: "agent harness", Satisfied: false, Required: true, Detail: "No agent CLI (Claude Code, Codex, etc.) was found on PATH."},
+			{ID: "gh", Label: "gh", Satisfied: false, Required: false, Detail: "gh was not found on PATH. It lets agent sessions open pull requests and read issues, but AO runs fine without it."},
 		},
 	}}
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
@@ -44,7 +45,7 @@ func TestGetSystemRequirements(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET /system/requirements = %d, body=%s", status, body)
 	}
-	for _, want := range []string{`"ready":false`, `"id":"git"`, `"id":"tmux"`, `"id":"harness"`} {
+	for _, want := range []string{`"ready":false`, `"id":"git"`, `"id":"tmux"`, `"id":"harness"`, `"id":"gh"`, `"required":false`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}

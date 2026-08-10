@@ -273,6 +273,11 @@ var schemaNames = map[string]string{
 	// endpoint it serves, same treatment as AgentInventory above.
 	"SystemcheckReport":                                   "SystemRequirementsResponse",
 	"SystemcheckRequirement":                               "SystemRequirement",
+	"ControllersInstallTargetParam":                       "InstallTargetParam",
+	// service/systeminstall: Job backs both StartInstallResponse and
+	// InstallStatusResponse (they're the same Go type), so it reflects to one
+	// shared component — name it after the domain concept, not either alias.
+	"SysteminstallJob":                                    "InstallJob",
 	"PortsAgentModelCatalog":                              "AgentModelsResponse",
 	"PortsAgentModelInfo":                                 "AgentModelInfo",
 	"ControllersListNotificationsQuery":                   "ListNotificationsQuery",
@@ -442,15 +447,36 @@ func operations() []operation {
 }
 
 // systemOperations declares the startup requirements gate the desktop loading
-// screen polls before showing the board.
+// screen polls before showing the board, plus the real-install operations for
+// the fixed system/install target allowlist.
 func systemOperations() []operation {
 	return []operation{
 		{
 			method: http.MethodGet, path: "/api/v1/system/requirements", id: "getSystemRequirements", tag: "system",
-			summary: "Check local machine readiness (git, tmux, agent harness)",
+			summary: "Check local machine readiness (git, tmux, agent harness, gh)",
 			resps: []respUnit{
 				{http.StatusOK, controllers.SystemRequirementsResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/system/install/{target}", id: "startSystemInstall", tag: "system",
+			summary:    "Start (or return the already-running) install job for a fixed system target",
+			pathParams: []any{controllers.InstallTargetParam{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.StartInstallResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/system/install/{target}", id: "getSystemInstallStatus", tag: "system",
+			summary:    "Get the current or last known install job status for a system target",
+			pathParams: []any{controllers.InstallTargetParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.InstallStatusResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},

@@ -14,6 +14,7 @@ import (
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
 )
 
 // HTTP response envelopes for the projects surface — the SINGLE definition of
@@ -941,6 +942,17 @@ type SessionUsageResponse struct {
 
 // SystemRequirementsResponse is the body of GET /api/v1/system/requirements.
 type SystemRequirementsResponse = systemcheck.Report
+
+// InstallTargetParam is the {target} path parameter for /system/install routes.
+type InstallTargetParam struct {
+	Target string `path:"target" description:"Install target identifier: tmux, gh, claude, codex, opencode, or copilot."`
+}
+
+// StartInstallResponse is the body of POST /api/v1/system/install/{target} (202).
+type StartInstallResponse = systeminstall.Job
+
+// InstallStatusResponse is the body of GET /api/v1/system/install/{target}.
+type InstallStatusResponse = systeminstall.Job
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
