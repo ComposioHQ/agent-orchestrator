@@ -514,7 +514,7 @@ func parseJSONModels(output []byte) ([]ports.AgentModelInfo, error) {
 				if key == "models" {
 					if modelMap, ok := child.(map[string]any); ok {
 						for alias, item := range modelMap {
-							if modelNode, ok := item.(map[string]any); ok && strings.TrimSpace(alias) != "" {
+							if modelNode, ok := item.(map[string]any); ok && strings.TrimSpace(alias) != "" && looksLikeModelAliasRecord(modelNode) {
 								label := firstString(modelNode, "displayName", "display_name", "model_name", "label", "name")
 								if label == "" {
 									label = alias
@@ -525,7 +525,9 @@ func parseJSONModels(output []byte) ([]ports.AgentModelInfo, error) {
 									Provider:  firstString(modelNode, "provider", "providerId", "provider_id"),
 									IsDefault: firstBool(modelNode, "isDefault", "is_default", "default"),
 								})
+								continue
 							}
+							walk(item)
 						}
 						continue
 					}
@@ -536,6 +538,13 @@ func parseJSONModels(output []byte) ([]ports.AgentModelInfo, error) {
 	}
 	walk(root)
 	return normalize(models), nil
+}
+
+func looksLikeModelAliasRecord(node map[string]any) bool {
+	return firstString(node,
+		"modelId", "model_id", "model_uid", "slug", "model",
+		"provider", "providerId", "provider_id",
+	) != ""
 }
 
 func firstString(node map[string]any, keys ...string) string {

@@ -252,6 +252,20 @@ func TestParseJSONModelsUsesModelMapKeysAsSelectableIDs(t *testing.T) {
 	}
 }
 
+func TestParseJSONModelsWalksGroupedModelsMaps(t *testing.T) {
+	got, err := parseJSONModels([]byte(`{
+		"models": {
+			"available": [{"modelId": "claude-sonnet", "displayName": "Claude Sonnet"}]
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "claude-sonnet" || got[0].Label != "Claude Sonnet" {
+		t.Fatalf("models = %#v, want recursively discovered claude-sonnet", got)
+	}
+}
+
 func TestParseJSONModelsSupportsKiroAndDevinFields(t *testing.T) {
 	got, err := parseJSONModels([]byte(`{
 		"models": [{"model_name": "Auto", "model_id": "auto"}],
