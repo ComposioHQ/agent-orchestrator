@@ -361,9 +361,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 /**
  * Archive lives in its own component so expand/collapse state does not re-render
- * the kanban columns. Open/close uses transform+opacity (compositor) instead of a
- * height tween, and card mount is deferred via startTransition so the first click
- * does not synchronously layout every archived SessionCard.
+ * the kanban columns. The sheet still opens under the Archive row (same chrome as
+ * before); card mount is deferred via startTransition, and open/close uses the
+ * shared CSS grid 0fr→1fr pattern instead of a measured height tween.
  */
 const BoardArchivePanel = memo(function BoardArchivePanel({
 	activeProjectIdRef,
@@ -421,8 +421,6 @@ const BoardArchivePanel = memo(function BoardArchivePanel({
 			cancelAnimationFrame(id);
 		};
 	}, [expanded, cardsReady]);
-
-	const panelOpen = expanded && cardsReady;
 
 	const restoreArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
 		event.stopPropagation();
@@ -492,38 +490,39 @@ const BoardArchivePanel = memo(function BoardArchivePanel({
 					<span className="text-2xs font-medium tracking-wide-sm">{t("shell.archive")}</span>
 					<span className="ml-1.5 font-mono text-micro text-passive">{sessions.length}</span>
 				</button>
-				{/* Absolute overlay above the bar: transform/opacity only — no height layout
-				    tween. Cards mount after the open frame via startTransition. */}
+				{/* Disclosure sheet under the Archive row — same visual panel as before.
+				    grid 0fr→1fr avoids JS height measurement; cards mount after open
+				    is requested, then the sheet animates open with content already in. */}
 				<div
-					aria-hidden={!panelOpen}
 					className={cn(
-						"absolute inset-x-0 bottom-full max-h-[45vh] overflow-hidden bg-background px-3",
-						"origin-bottom will-change-transform",
-						"transition-[transform,opacity] duration-[140ms] ease-[cubic-bezier(0.25,0.46,0.45,0.94)]",
+						"grid transition-[grid-template-rows] duration-[140ms] ease-[cubic-bezier(0.25,0.46,0.45,0.94)]",
 						prefersReducedMotion && "transition-none",
-						panelOpen ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0",
+						expanded && cardsReady ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
 					)}
 				>
-					{cardsReady ? (
-						<div
-							aria-label={t("shell.archivedSessions")}
-							className="scrollbar-none grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
-							inert={!expanded ? true : undefined}
-							role="list"
-						>
-							{sessions.map((s) => (
-								<ArchiveSessionItem
-									key={s.id}
-									session={s}
-									restoreAction={(event) => void restoreArchivedSession(event, s)}
-									restoreError={restoreErrors[s.id]}
-									isRestoring={restoringSessionId === s.id}
-									isRestoreDisabled={restoringSessionId !== undefined}
-									usage={usageBySession.get(s.id)}
-								/>
-							))}
-						</div>
-					) : null}
+					<div className="min-h-0 overflow-hidden">
+						{cardsReady ? (
+							<div
+								aria-hidden={!expanded}
+								aria-label={t("shell.archivedSessions")}
+								className="scrollbar-none grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
+								inert={!expanded ? true : undefined}
+								role="list"
+							>
+								{sessions.map((s) => (
+									<ArchiveSessionItem
+										key={s.id}
+										session={s}
+										restoreAction={(event) => void restoreArchivedSession(event, s)}
+										restoreError={restoreErrors[s.id]}
+										isRestoring={restoringSessionId === s.id}
+										isRestoreDisabled={restoringSessionId !== undefined}
+										usage={usageBySession.get(s.id)}
+									/>
+								))}
+							</div>
+						) : null}
+					</div>
 				</div>
 			</div>
 			{restoreUnavailableSession ? (
