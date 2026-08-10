@@ -81,6 +81,8 @@ func Build() ([]byte, error) {
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
 		*(&openapi31.Tag{Name: "browser"}).WithDescription(
 			"Target-isolated desktop browser runtime (loopback only)"),
+		*(&openapi31.Tag{Name: "system"}).WithDescription(
+			"Local machine readiness checks the desktop app runs before showing the board"),
 	}
 
 	for _, op := range operations() {
@@ -266,6 +268,11 @@ var schemaNames = map[string]string{
 	"AgentInventory":                                      "ListAgentsResponse",
 	"AgentInfo":                                           "AgentInfo",
 	"AgentProbeResult":                                    "ProbeAgentResponse",
+	// service/systemcheck: "SystemcheckReport" is a generic default name that
+	// reads like an internal type, not a wire response — rename to match the
+	// endpoint it serves, same treatment as AgentInventory above.
+	"SystemcheckReport":                                   "SystemRequirementsResponse",
+	"SystemcheckRequirement":                               "SystemRequirement",
 	"PortsAgentModelCatalog":                              "AgentModelsResponse",
 	"PortsAgentModelInfo":                                 "AgentModelInfo",
 	"ControllersListNotificationsQuery":                   "ListNotificationsQuery",
@@ -430,7 +437,24 @@ func operations() []operation {
 	ops = append(ops, mobileOperations()...)
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
+	ops = append(ops, systemOperations()...)
 	return ops
+}
+
+// systemOperations declares the startup requirements gate the desktop loading
+// screen polls before showing the board.
+func systemOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/system/requirements", id: "getSystemRequirements", tag: "system",
+			summary: "Check local machine readiness (git, tmux, agent harness)",
+			resps: []respUnit{
+				{http.StatusOK, controllers.SystemRequirementsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func browserOperations() []operation {
