@@ -340,6 +340,17 @@ describe("ShellTopbar inspector state", () => {
 		expect(controls.at(-1)).toBe(toggle);
 	});
 
+	it("leaves notifications to the inspector header while the inspector is open", () => {
+		useUiStore.setState({
+			inspectorSessions: {
+				"sess-1": { isOpen: true, view: "summary" },
+			},
+		});
+		renderTopbarSessions([worker], "sess-1");
+
+		expect(screen.queryByRole("button", { name: "Notifications" })).not.toBeInTheDocument();
+	});
+
 	it("toggles only the current worker session", async () => {
 		useUiStore.setState({
 			inspectorSessions: {

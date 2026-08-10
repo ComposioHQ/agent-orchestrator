@@ -262,13 +262,26 @@ describe("NotificationCenter", () => {
 		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument());
 	});
 
-	it("keeps a three-digit unread count inside the compact badge", () => {
+	it("uses the slightly larger topbar bell glyph", () => {
+		renderNotificationCenter();
+
+		const trigger = screen.getByRole("button", { name: /unread notifications/ });
+		expect(trigger.querySelector("svg")).toHaveClass("size-icon-base");
+	});
+
+	it("keeps a three-digit unread count legible inside the compact badge", () => {
 		notificationQueryMock.mockImplementation((status: NotificationListStatus) =>
 			notificationQueryResult(status, { unreadCount: 101 }),
 		);
 		renderNotificationCenter();
 
-		expect(screen.getByText("99+")).toBeInTheDocument();
+		expect(screen.getByText("99+")).toHaveClass(
+			"h-3",
+			"min-w-3",
+			"text-[7px]",
+			"bg-accent-strong",
+			"text-accent-foreground",
+		);
 	});
 
 	it("supports tab navigation inside the panel and restores focus to the bell", async () => {

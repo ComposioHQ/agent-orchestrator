@@ -7,6 +7,7 @@ import type { components } from "../../api/schema";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
+import { NotificationCenter } from "./NotificationCenter";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import {
@@ -780,6 +781,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										) : null
 									}
 									isInspectorVisible={inspectorPanelVisible}
+									notificationAction={isInspectorOpen ? <NotificationCenter /> : undefined}
 									onOpenFiles={handleOpenFiles}
 									onOpenReviewerTerminal={selectReviewerTerminal}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}

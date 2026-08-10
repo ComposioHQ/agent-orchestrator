@@ -325,8 +325,10 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 						)}
 					</>
 				) : null}
-				{/* Notifications trail the primary actions but stay left of the inspector toggle. */}
-				<NotificationCenter style={noDragStyle} />
+				{/* The expanded inspector owns the notification action beside its close toggle. */}
+				{!(isSessionRoute && !isOrchestrator && isInspectorOpen) ? (
+					<NotificationCenter style={noDragStyle} />
+				) : null}
 				{/* The inspector header owns closing; the shell only restores a fully
 				    collapsed worker rail. Keep this final so it remains at the far right. */}
 				{isSessionRoute && !isOrchestrator && !isInspectorOpen ? (

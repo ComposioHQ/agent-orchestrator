@@ -154,6 +154,7 @@ export function SessionInspector({
 	browserPoppedOut = false,
 	browserAnnotationQueue,
 	isInspectorVisible = true,
+	notificationAction,
 	onToggleBrowserPopOut,
 	onToggleVisibility,
 	onOpenFiles,
@@ -167,6 +168,7 @@ export function SessionInspector({
 	browserPoppedOut?: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
+	notificationAction?: ReactNode;
 	onToggleBrowserPopOut?: (next: boolean) => void;
 	onToggleVisibility?: () => void;
 	onOpenFiles?: () => void;
@@ -243,6 +245,7 @@ export function SessionInspector({
 						))}
 					</div>
 				) : null}
+				{isInspectorVisible ? notificationAction : null}
 				{isInspectorVisible ? (
 					<TopbarButton
 						aria-expanded="true"
