@@ -12,6 +12,12 @@ The desktop app is the normal place to add projects and change settings. The CLI
 In the desktop app, choose **Add project** and select a local repository. From the CLI:
 
 ```bash
+ao project add --path /absolute/path/to/repo
+```
+
+To set the default agents while registering the project:
+
+```bash
 ao project add --path /absolute/path/to/repo \
   --worker-agent codex \
   --orchestrator-agent claude-code
@@ -65,6 +71,6 @@ Choose the default for new sessions in project settings. You can also select it 
 
 <Cards>
 	<Card title="Projects" href="/docs/configuration/projects" description="Configure one project and its session roles." />
-	<Card title="Lifecycle automation" href="/docs/configuration/reactions" description="Understand built-in CI, review, and merge-conflict handling." />
+	<Card title="Lifecycle automation" href="/docs/configuration/lifecycle-automation" description="Understand built-in CI, review, and merge-conflict handling." />
 	<Card title="Remote access" href="/docs/configuration/remote-access" description="Pair the native mobile app safely." />
 </Cards>
