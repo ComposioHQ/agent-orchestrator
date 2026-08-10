@@ -15,11 +15,12 @@ import {
 import { AgentLogo } from "../lib/AgentLogo";
 import { agentErrorCopy } from "../lib/agentError";
 import { defaultAgent, rankAgents } from "../lib/agentPicker";
-import { ApiError, getAgents, getSettings, type AgentCatalog, type SessionMode } from "../lib/api";
+import { ApiError, getAgentModels, getAgents, getProject, getSettings, type AgentCatalog, type AgentModelCatalog, type ProjectDetail, type SessionMode } from "../lib/api";
 import { classifyConnectionFailure, describeConnectionFailure } from "../lib/connectionError";
 import { chatErrorCopy, isChatPreflightError } from "../lib/chatError";
 import { haptics } from "../lib/haptics";
-import { agentSheetRoute, projectSheetRoute } from "../lib/sheetResult";
+import { agentSheetRoute, modelSheetRoute, projectSheetRoute } from "../lib/sheetResult";
+import { modelOverride, resolveSpawnModel } from "../lib/spawnModel";
 import { useApp } from "../lib/store";
 import type { Theme } from "../lib/theme";
 import { useTheme, useThemedStyles } from "../lib/ThemeProvider";
@@ -35,8 +36,13 @@ export default function SpawnModal() {
 	const [harness, setHarness] = useState("");
 	const [mode, setMode] = useState<SessionMode>("chat");
 	const [chatHarnesses, setChatHarnesses] = useState<string[]>([]);
-	const [name, setName] = useState("");
 	const [prompt, setPrompt] = useState("");
+	const [model, setModel] = useState("");
+	const [modelTouched, setModelTouched] = useState(false);
+	const [modelCatalog, setModelCatalog] = useState<AgentModelCatalog>();
+	const [projectDetail, setProjectDetail] = useState<ProjectDetail>();
+	const [modelLoading, setModelLoading] = useState(false);
+	const [modelError, setModelError] = useState<string>();
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -86,16 +92,30 @@ export default function SpawnModal() {
 	const agents = useMemo(() => mode === "chat" ? allAgents.filter((agent) => chatHarnesses.includes(agent.id)) : allAgents, [allAgents, chatHarnesses, mode]);
 	const selectedAgent = agents.find((a) => a.id === harness);
 	const project = projects.find((p) => p.id === projectId);
+	const projectWorkerAgent = projectDetail?.config?.worker?.agent ?? projectDetail?.agent ?? "";
+	const projectWorkerModel = projectDetail?.config?.worker?.agentConfig?.model ?? projectDetail?.config?.agentConfig?.model ?? "";
+	const catalogDefault = modelCatalog?.models.find((item) => item.isDefault)?.id ?? "";
+	const resolvedModel = resolveSpawnModel({ selectedAgent: harness, projectWorkerAgent, projectWorkerModel, catalogDefault });
+	const displayedModel = modelTouched ? model : resolvedModel;
+	const displayedModelLabel = displayedModel ? modelCatalog?.models.find((item) => item.id === displayedModel)?.label ?? displayedModel : "Auto";
+
+	useEffect(() => {
+		if (!config || !projectId || !harness) { setProjectDetail(undefined); setModelCatalog(undefined); return; }
+		let cancelled = false;
+		setModelLoading(true);
+		Promise.all([getProject(config, projectId), getAgentModels(config, harness, projectId)])
+			.then(([nextProject, nextCatalog]) => { if (!cancelled) { setProjectDetail(nextProject); setModelCatalog(nextCatalog); setModelError(nextCatalog.warning); } })
+			.catch((cause) => { if (!cancelled) setModelError(cause instanceof Error ? cause.message : String(cause)); })
+			.finally(() => { if (!cancelled) setModelLoading(false); });
+		return () => { cancelled = true; };
+	}, [config, harness, projectId]);
+
+	const resetModel = () => { setModel(""); setModelTouched(false); setModelCatalog(undefined); setProjectDetail(undefined); setModelError(undefined); };
 
 	const onSpawn = async () => {
 		// Validated on submit rather than by disabling the button — desktop's
 		// choice, and the better one: a disabled button with no explanation is
 		// worse than a message naming what is missing.
-		if (!name.trim() || !prompt.trim()) {
-			haptics.error();
-			setError("Name and task are required.");
-			return;
-		}
 		setBusy(true);
 		setError(null);
 		setOfferTUI(false);
@@ -103,8 +123,8 @@ export default function SpawnModal() {
 			const session = await spawn({
 				projectId: projectId ?? undefined,
 				prompt: prompt.trim() || undefined,
-				issueId: name.trim() || undefined,
 				harness: harness || undefined,
+				model: modelOverride(displayedModel, resolvedModel, modelTouched),
 				mode,
 			});
 			haptics.success();
@@ -146,7 +166,7 @@ export default function SpawnModal() {
 							router.push(
 								projectSheetRoute({
 									selected: projectId ?? "",
-									onSelect: setProjectId,
+								onSelect: (value) => { setProjectId(value); resetModel(); },
 									// "All projects" is a filter — there is nothing to spawn into.
 									includeAll: false,
 									title: "Project",
@@ -162,9 +182,16 @@ export default function SpawnModal() {
 						// The collapsed row carries the mark too, as desktop's trigger does.
 						leading={selectedAgent ? <AgentLogo harness={selectedAgent.id} size={20} /> : undefined}
 						disabled={loading}
-						onPress={() => router.push(agentSheetRoute({ selected: harness, onSelect: setHarness, allowed: mode === "chat" ? chatHarnesses : undefined, mode }))}
-					/>
-				</SettingsGroup>
+					onPress={() => router.push(agentSheetRoute({ selected: harness, onSelect: (value) => { setHarness(value); resetModel(); }, allowed: mode === "chat" ? chatHarnesses : undefined, mode }))}
+				/>
+				<SettingsRow
+					icon="box"
+					label="Model"
+					value={modelLoading ? "Loading…" : displayedModelLabel}
+					disabled={!projectId || !harness || modelLoading}
+					onPress={() => projectId && harness && router.push(modelSheetRoute({ agentId: harness, projectId, selected: displayedModel, onSelect: (value) => { setModel(value); setModelTouched(true); } }))}
+				/>
+			</SettingsGroup>
 
 				<Text style={styles.label}>INTERFACE</Text>
 				<View accessibilityRole="radiogroup" style={styles.modeControl}>
@@ -174,38 +201,28 @@ export default function SpawnModal() {
 						selected={mode === "chat"}
 						onPress={() => {
 							setMode("chat");
+							resetModel();
 							setHarness((current) => chatHarnesses.includes(current) ? current : (defaultAgent(allAgents.filter((agent) => chatHarnesses.includes(agent.id))) ?? ""));
 						}}
 					/>
-					<ModeChoice label="Terminal UI" detail="Agent's own TUI" selected={mode === "tui"} onPress={() => { setMode("tui"); setHarness((current) => current || (defaultAgent(allAgents) ?? "")); }} />
+					<ModeChoice label="Terminal UI" detail="Agent's own TUI" selected={mode === "tui"} onPress={() => { setMode("tui"); resetModel(); setHarness((current) => current || (defaultAgent(allAgents) ?? "")); }} />
 				</View>
 				<Text style={styles.hint}>{mode === "chat" ? "Chat is the mobile default. The agent runs through its structured controller; no tmux is created for it." : "Compatibility mode. The agent runs inside tmux and mobile mirrors its terminal."}</Text>
 				{mode === "chat" && !loading && agents.length === 0 ? <Text style={styles.warn}>No installed agent on this AO host currently supports Chat. Choose Terminal UI or install/authenticate a Chat-capable agent.</Text> : null}
 
 				{catalogError ? <Text style={styles.warn}>{catalogError}</Text> : null}
 
-				<Text style={styles.label}>NAME</Text>
-				<TextInput
-					style={styles.input}
-					value={name}
-					onChangeText={setName}
-					placeholder="e.g. fix flaky login test"
-					placeholderTextColor={t.textFaint}
-					autoCapitalize="sentences"
-					returnKeyType="next"
-				/>
-				<Text style={styles.hint}>What this session is called on the board.</Text>
-
-				<Text style={styles.label}>TASK</Text>
+				<Text style={styles.label}>TASK (OPTIONAL)</Text>
 				<TextInput
 					style={[styles.input, styles.textarea]}
 					value={prompt}
 					onChangeText={setPrompt}
-					placeholder="e.g. Fix the flaky login test and open a PR"
+					placeholder="Describe the task (optional)…"
 					placeholderTextColor={t.textFaint}
 					multiline
 					autoCapitalize="sentences"
 				/>
+				{modelError ? <Text style={styles.warn}>{modelError}</Text> : null}
 
 				{error ? <Text style={styles.error}>{error}</Text> : null}
 				{offerTUI ? <Button title="Create as Terminal UI instead" variant="ghost" icon="terminal" onPress={() => { setMode("tui"); setOfferTUI(false); setError(null); }} style={{ marginTop: 12 }} /> : null}

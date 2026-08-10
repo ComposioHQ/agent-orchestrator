@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
 	ApiError,
+	delegateTask,
 	getNotifications,
 	getSessions,
 	killSession,
@@ -9,7 +10,6 @@ import {
 	mergePR as apiMergePR,
 	restoreSession,
 	sendMessage,
-	spawnSession,
 	type DashboardPR,
 	type DashboardSession,
 	type DashboardStats,
@@ -36,9 +36,8 @@ export type SpawnOptions = {
 	/** Falls back to the active project, or the only project. */
 	projectId?: string;
 	prompt?: string;
-	/** The task name. Becomes the session's title — see sessionTitle. */
-	issueId?: string;
 	harness?: string;
+	model?: string;
 	/** Mobile defaults to Chat; TUI remains an explicit compatibility choice. */
 	mode?: SessionMode;
 };
@@ -233,12 +232,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [activeProjectId, projects]);
 
 	const spawn = useCallback(
-		async ({ projectId, prompt, issueId, harness, mode }: SpawnOptions) =>
+		async ({ projectId, prompt, harness, model, mode }: SpawnOptions) =>
 			trackFeature("spawn", async () => {
 				const c = cfgRef.current;
 				const proj = projectId ?? targetProject();
 				if (!c || !proj) throw new Error("Pick a project first");
-				const session = await spawnSession(c, { projectId: proj, prompt, issueId, harness, mode: mode ?? "chat" });
+				const session = await delegateTask(c, {
+					projectId: proj,
+					brief: prompt ?? "",
+					agent: harness,
+					model,
+					mode: mode ?? "chat",
+				});
 				await fetchAll();
 				return session;
 			}),

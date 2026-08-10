@@ -4,7 +4,7 @@ vi.mock("@react-native-async-storage/async-storage", () => ({ default: { getItem
 vi.mock("expo-secure-store", () => ({ getItemAsync: vi.fn(), setItemAsync: vi.fn(), deleteItemAsync: vi.fn() }));
 vi.mock("expo/fetch", () => ({ fetch: vi.fn() }));
 
-import { ApiError, apiRequest, getPreview, getSettings, launchOrchestrator, mobileReachablePreviewURL, restoreSession, resumeSessionAgent, spawnSession } from "./api";
+import { ApiError, apiRequest, delegateTask, getAgentModels, getPreview, getSessions, getSettings, launchOrchestrator, mobileReachablePreviewURL, restoreSession, resumeSessionAgent, spawnSession } from "./api";
 import { getConversationPage, getWorkspacePaths } from "./chat/api";
 import type { ServerConfig } from "./config";
 
@@ -21,6 +21,37 @@ describe("mobile Chat API boundaries", () => {
 		expect(JSON.parse(String(init?.body))).toMatchObject({ projectId: "p-1", harness: "codex", kind: "worker", mode: "chat" });
 		expect(session.mode).toBe("chat");
 		expect(init?.headers).toMatchObject({ Authorization: "Bearer secret12" });
+	});
+
+	it("loads a project-scoped model catalog for the selected agent", async () => {
+		vi.mocked(fetch).mockResolvedValue(response({
+			agentId: "codex", selectionMode: "catalog", allowCustom: true,
+			models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }],
+			source: "codex", stale: false, fetchedAt: "2026-08-09T00:00:00Z",
+		}));
+		const catalog = await getAgentModels(cfg, "codex", "project one");
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe("http://ao.test:3011/api/v1/agents/codex/models?projectId=project%20one");
+		expect(catalog.models[0]).toMatchObject({ id: "gpt-5", isDefault: true });
+	});
+
+	it("preserves daemon pin facts used by the Agents ordering", async () => {
+		vi.mocked(fetch)
+			.mockResolvedValueOnce(response({ sessions: [{ id: "w-1", projectId: "p-1", mode: "chat", activity: { state: "idle", lastActivityAt: "2026-08-08T10:00:00Z" }, updatedAt: "2026-08-09T10:00:00Z", isPinned: true, pinnedAt: "2026-08-09T10:00:00Z" }] }))
+			.mockResolvedValueOnce(response({ sessions: [] }))
+			.mockResolvedValueOnce(response({ projects: [] }));
+		const result = await getSessions(cfg);
+		expect(result.sessions[0]).toMatchObject({ isPinned: true, pinnedAt: "2026-08-09T10:00:00Z", lastActivityAt: "2026-08-08T10:00:00Z" });
+	});
+
+	it("delegates an optional empty task with explicit interface and model", async () => {
+		vi.mocked(fetch)
+			.mockResolvedValueOnce(response({ ok: true, workerId: "w-2" }, 202))
+			.mockResolvedValueOnce(response({ session: { id: "w-2", projectId: "p-1", harness: "codex", mode: "chat" } }));
+		const session = await delegateTask(cfg, { projectId: "p-1", brief: "", agent: "codex", model: "gpt-5", mode: "chat" });
+		const [url, init] = vi.mocked(fetch).mock.calls[0];
+		expect(url).toBe("http://ao.test:3011/api/v1/orchestrators/delegate");
+		expect(JSON.parse(String(init?.body))).toEqual({ projectId: "p-1", brief: "", agent: "codex", model: "gpt-5", mode: "chat" });
+		expect(session).toMatchObject({ id: "w-2", projectId: "p-1", mode: "chat" });
 	});
 
 	it("keeps an explicit TUI orchestrator request explicit", async () => {

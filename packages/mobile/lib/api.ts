@@ -61,6 +61,8 @@ export type DashboardSession = {
 	// finished status: a merged session whose agent is still running belongs on
 	// the board, only a terminated one belongs in the archive.
 	isTerminated?: boolean;
+	isPinned?: boolean;
+	pinnedAt?: string | null;
 };
 
 export type OrchestratorLink = {
@@ -84,6 +86,14 @@ export type ProjectInfo = {
 	name: string;
 	kind?: "single_repo" | "workspace" | "scratch";
 	sessionPrefix?: string;
+};
+
+export type ProjectDetail = ProjectInfo & {
+	agent?: string;
+	config?: {
+		agentConfig?: { model?: string };
+		worker?: { agent?: string; agentConfig?: { model?: string } };
+	};
 };
 
 export type DashboardStats = {
@@ -136,6 +146,8 @@ type WireSession = {
 	createdAt?: string;
 	updatedAt?: string;
 	previewUrl?: string;
+	isPinned?: boolean;
+	pinnedAt?: string | null;
 	prs?: WirePR[];
 };
 
@@ -188,6 +200,12 @@ function activityString(a: unknown): string | null {
 	return null;
 }
 
+function activityLastAt(a: unknown): string | undefined {
+	if (!a || typeof a !== "object" || !("lastActivityAt" in a)) return undefined;
+	const value = (a as { lastActivityAt: unknown }).lastActivityAt;
+	return typeof value === "string" && value ? value : undefined;
+}
+
 function mapSession(s: WireSession): DashboardSession {
 	const prs = (s.prs ?? []).map(mapPR);
 	return {
@@ -204,11 +222,13 @@ function mapSession(s: WireSession): DashboardSession {
 		displayName: s.displayName ?? null,
 		summary: null,
 		createdAt: s.createdAt ?? "",
-		lastActivityAt: s.updatedAt ?? s.createdAt ?? "",
+		lastActivityAt: activityLastAt(s.activity) ?? s.updatedAt ?? s.createdAt ?? "",
 		pr: prs[0] ?? null,
 		prs,
 		previewUrl: s.previewUrl ?? null,
 		isTerminated: !!s.isTerminated,
+		isPinned: !!s.isPinned,
+		pinnedAt: s.pinnedAt ?? null,
 	};
 }
 
@@ -317,6 +337,12 @@ export async function getProjects(cfg: ServerConfig): Promise<ProjectInfo[]> {
 	}));
 }
 
+export async function getProject(cfg: ServerConfig, id: string): Promise<ProjectDetail> {
+	const res = await req(cfg, `${API}/projects/${encodeURIComponent(id)}`);
+	const data = await res.json();
+	return (data?.project ?? data) as ProjectDetail;
+}
+
 export async function getSessions(cfg: ServerConfig, _projectId?: string): Promise<SessionsResponse> {
 	// The daemon exposes sessions and orchestrators as two lists. Fetch both,
 	// keep worker sessions for the board, and map orchestrators for their screen.
@@ -414,6 +440,20 @@ export type AgentCatalog = {
 	authorized: AgentInfo[];
 };
 
+export type AgentModelInfo = { id: string; label: string; isDefault?: boolean; provider?: string };
+export type AgentModelCatalog = {
+	agentId: string;
+	selectionMode: "catalog" | "text" | "mode";
+	allowCustom: boolean;
+	models: AgentModelInfo[];
+	source: string;
+	stale: boolean;
+	fetchedAt: string;
+	validatedAt?: string;
+	refreshRecommended?: boolean;
+	warning?: string;
+};
+
 export type AOSettings = {
 	defaultSessionMode: SessionMode;
 	chatHarnesses: string[];
@@ -446,6 +486,18 @@ export async function refreshAgents(cfg: ServerConfig): Promise<AgentCatalog> {
 		installed: Array.isArray(data?.installed) ? data.installed : [],
 		authorized: Array.isArray(data?.authorized) ? data.authorized : [],
 	};
+}
+
+export async function getAgentModels(cfg: ServerConfig, agent: string, projectId?: string): Promise<AgentModelCatalog> {
+	const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+	const res = await req(cfg, `${API}/agents/${encodeURIComponent(agent)}/models${query}`);
+	return await res.json() as AgentModelCatalog;
+}
+
+export async function refreshAgentModels(cfg: ServerConfig, agent: string, projectId?: string): Promise<AgentModelCatalog> {
+	const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+	const res = await req(cfg, `${API}/agents/${encodeURIComponent(agent)}/models/refresh${query}`, { method: "POST" });
+	return await res.json() as AgentModelCatalog;
 }
 
 // ---- Push notifications -----------------------------------------------------
@@ -616,6 +668,31 @@ export async function spawnSession(
 	});
 	const data = await res.json();
 	return mapSession(data?.session ?? data);
+}
+
+export async function getSession(cfg: ServerConfig, id: string): Promise<DashboardSession> {
+	const res = await req(cfg, `${API}/sessions/${encodeURIComponent(id)}`);
+	const data = await res.json();
+	return mapSession(data?.session ?? data);
+}
+
+export async function delegateTask(
+	cfg: ServerConfig,
+	opts: { projectId: string; brief: string; agent?: string; model?: string; mode: SessionMode },
+): Promise<DashboardSession> {
+	const res = await req(cfg, `${API}/orchestrators/delegate`, {
+		method: "POST",
+		body: JSON.stringify({
+			projectId: opts.projectId,
+			brief: opts.brief,
+			agent: opts.agent || undefined,
+			model: opts.model || undefined,
+			mode: opts.mode,
+		}),
+	});
+	const data = await res.json();
+	if (!data?.workerId) throw new Error("The daemon did not return the new worker session");
+	return getSession(cfg, data.workerId);
 }
 
 export async function launchOrchestrator(
