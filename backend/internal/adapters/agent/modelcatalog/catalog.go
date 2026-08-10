@@ -510,7 +510,26 @@ func parseJSONModels(output []byte) ([]ports.AgentModelInfo, error) {
 					IsDefault: firstBool(node, "isDefault", "is_default", "default"),
 				})
 			}
-			for _, child := range node {
+			for key, child := range node {
+				if key == "models" {
+					if modelMap, ok := child.(map[string]any); ok {
+						for alias, item := range modelMap {
+							if modelNode, ok := item.(map[string]any); ok && strings.TrimSpace(alias) != "" {
+								label := firstString(modelNode, "displayName", "display_name", "model_name", "label", "name")
+								if label == "" {
+									label = alias
+								}
+								models = append(models, ports.AgentModelInfo{
+									ID:        strings.TrimSpace(alias),
+									Label:     label,
+									Provider:  firstString(modelNode, "provider", "providerId", "provider_id"),
+									IsDefault: firstBool(modelNode, "isDefault", "is_default", "default"),
+								})
+							}
+						}
+						continue
+					}
+				}
 				walk(child)
 			}
 		}

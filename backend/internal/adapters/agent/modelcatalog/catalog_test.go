@@ -234,6 +234,24 @@ func TestParseJSONModelsFindsNestedModels(t *testing.T) {
 	}
 }
 
+func TestParseJSONModelsUsesModelMapKeysAsSelectableIDs(t *testing.T) {
+	got, err := parseJSONModels([]byte(`{
+		"models": {
+			"kimi-code/kimi-for-coding": {
+				"provider": "managed:kimi-code",
+				"model": "kimi-for-coding",
+				"displayName": "K2.7 Coding"
+			}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "kimi-code/kimi-for-coding" || got[0].Label != "K2.7 Coding" || got[0].Provider != "managed:kimi-code" {
+		t.Fatalf("models = %#v, want provider-qualified Kimi config alias", got)
+	}
+}
+
 func TestParseJSONModelsSupportsKiroAndDevinFields(t *testing.T) {
 	got, err := parseJSONModels([]byte(`{
 		"models": [{"model_name": "Auto", "model_id": "auto"}],
