@@ -2585,8 +2585,10 @@ func TestListPRSummariesExposesPerPRAutoInjectCIPolicy(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
 	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
-		{URL: "enabled", SessionID: "mer-1", CI: domain.CIFailing, AutoInjectCI: true},
-		{URL: "disabled", SessionID: "mer-1", CI: domain.CIFailing, AutoInjectCI: false},
+		{URL: "enabled-failing", SessionID: "mer-1", CI: domain.CIFailing, AutoInjectCI: true},
+		{URL: "disabled-failing", SessionID: "mer-1", CI: domain.CIFailing, AutoInjectCI: false},
+		{URL: "enabled-passing", SessionID: "mer-1", CI: domain.CIPassing, AutoInjectCI: true},
+		{URL: "enabled-merged", SessionID: "mer-1", CI: domain.CIPassing, Merged: true, AutoInjectCI: true},
 	}}
 
 	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
@@ -2597,8 +2599,14 @@ func TestListPRSummariesExposesPerPRAutoInjectCIPolicy(t *testing.T) {
 	for _, pr := range got {
 		byURL[pr.URL] = pr
 	}
-	if !byURL["enabled"].CI.AutoInjectCI || byURL["disabled"].CI.AutoInjectCI {
-		t.Fatalf("CI policies = enabled:%v disabled:%v", byURL["enabled"].CI.AutoInjectCI, byURL["disabled"].CI.AutoInjectCI)
+	if !byURL["enabled-failing"].CI.AutoInjectCI || byURL["disabled-failing"].CI.AutoInjectCI {
+		t.Fatalf("failing CI policies = enabled:%v disabled:%v", byURL["enabled-failing"].CI.AutoInjectCI, byURL["disabled-failing"].CI.AutoInjectCI)
+	}
+	if !byURL["enabled-passing"].CI.AutoInjectCI {
+		t.Fatal("passing PR lost its enabled CI injection policy")
+	}
+	if !byURL["enabled-merged"].CI.AutoInjectCI {
+		t.Fatal("terminal PR lost its enabled CI injection policy")
 	}
 }
 

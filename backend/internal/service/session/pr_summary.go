@@ -133,7 +133,7 @@ func summarizePRStateChangedAt(pr domain.PullRequest) time.Time {
 
 func summarizeCI(pr domain.PullRequest, checks []domain.PullRequestCheck) PRCISummary {
 	state := ciOrUnknown(pr.CI)
-	out := PRCISummary{State: state}
+	out := PRCISummary{State: state, AutoInjectCI: pr.AutoInjectCI}
 	if state != domain.CIFailing || pr.Merged || pr.Closed {
 		return out
 	}
@@ -151,7 +151,6 @@ func summarizeCI(pr domain.PullRequest, checks []domain.PullRequestCheck) PRCISu
 			URL:        ch.URL,
 		})
 	}
-	out.AutoInjectCI = pr.AutoInjectCI
 	return out
 }
 

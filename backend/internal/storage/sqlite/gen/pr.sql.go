@@ -14,8 +14,9 @@ import (
 )
 
 const claimPRForSession = `-- name: ClaimPRForSession :exec
-INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at, auto_inject_ci)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE))
 ON CONFLICT (url) DO UPDATE SET
     session_id = excluded.session_id,
     state_changed_at = CASE
@@ -37,6 +38,7 @@ type ClaimPRForSessionParams struct {
 	Mergeability   domain.Mergeability
 	UpdatedAt      time.Time
 	StateChangedAt sql.NullTime
+	ID             domain.SessionID
 }
 
 func (q *Queries) ClaimPRForSession(ctx context.Context, arg ClaimPRForSessionParams) error {
@@ -50,6 +52,7 @@ func (q *Queries) ClaimPRForSession(ctx context.Context, arg ClaimPRForSessionPa
 		arg.Mergeability,
 		arg.UpdatedAt,
 		arg.StateChangedAt,
+		arg.ID,
 	)
 	return err
 }
