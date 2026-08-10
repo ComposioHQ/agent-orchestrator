@@ -7,7 +7,11 @@ export const env = createEnv({
       .enum(["development", "production", "test"])
       .default("development"),
   },
-  server: {},
+  server: {
+    // GitHub's unauthenticated API quota is shared by all visitors, so the
+    // landing page can lose its live star count during normal traffic.
+    GITHUB_TOKEN: z.string().optional(),
+  },
   client: {
     NEXT_PUBLIC_API_URL: z.string().url().optional(),
     NEXT_PUBLIC_WEB_URL: z.string().url().optional(),
@@ -27,6 +31,7 @@ export const env = createEnv({
     NEXT_PUBLIC_SENTRY_DSN_MARKETING:
       process.env.NEXT_PUBLIC_SENTRY_DSN_MARKETING,
     NEXT_PUBLIC_SENTRY_ENVIRONMENT: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
+    GITHUB_TOKEN: process.env.GITHUB_TOKEN,
   },
   skipValidation: true,
 });
