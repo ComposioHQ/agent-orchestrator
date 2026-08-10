@@ -434,6 +434,183 @@ func TestProjectSetConfig_ClearStillWipes(t *testing.T) {
 	}
 }
 
+func TestProjectSetConfig_MergePreservesReviewersAndContainerReap(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectSetConfigServer(t,
+		`{"status":"ok","project":{"id":"demo","config":{"reviewers":[{"harness":"codex"}],"containerReap":{"disabled":true},"env":{"SOME_VAR":"hello"}}}}`,
+		`{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--model", "claude-opus-4-5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	if got.Config.AgentConfig.Model != "claude-opus-4-5" {
+		t.Fatalf("model = %q, want claude-opus-4-5", got.Config.AgentConfig.Model)
+	}
+	if len(got.Config.Reviewers) != 1 || got.Config.Reviewers[0].Harness != "codex" {
+		t.Fatalf("reviewers = %#v, want [{harness:codex}] preserved", got.Config.Reviewers)
+	}
+	if !got.Config.ContainerReap.Disabled {
+		t.Fatalf("containerReap = %#v, want {disabled:true} preserved", got.Config.ContainerReap)
+	}
+	if got.Config.Env["SOME_VAR"] != "hello" {
+		t.Fatalf("env = %#v, want SOME_VAR=hello preserved", got.Config.Env)
+	}
+}
+
+func TestProjectSetConfig_TrackerFlagOverlaysOnlyChangedField(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectSetConfigServer(t,
+		`{"status":"ok","project":{"id":"demo","config":{"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice"}}}}`,
+		`{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--tracker-assignee", "bob")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	if got.Config.TrackerIntake.Assignee != "bob" {
+		t.Fatalf("assignee = %q, want bob", got.Config.TrackerIntake.Assignee)
+	}
+	if !got.Config.TrackerIntake.Enabled {
+		t.Fatalf("enabled = false, want true preserved from existing")
+	}
+	if got.Config.TrackerIntake.Repo != "acme/demo" {
+		t.Fatalf("repo = %q, want acme/demo preserved from existing", got.Config.TrackerIntake.Repo)
+	}
+	if got.Config.TrackerIntake.Provider != "github" {
+		t.Fatalf("provider = %q, want github preserved from existing", got.Config.TrackerIntake.Provider)
+	}
+}
+
+func TestProjectSetConfig_GETFailurePreventsPUT(t *testing.T) {
+	cfg := setConfigEnv(t)
+	capture := &projectCapture{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capture.method = r.Method
+		capture.path = r.URL.Path
+		data, _ := io.ReadAll(r.Body)
+		capture.body = data
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/projects") {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":"internal server error"}`)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"project":{"id":"demo"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--model", "claude-opus-4-5")
+	if err == nil {
+		t.Fatal("expected error from GET failure, got nil")
+	}
+	if capture.method == http.MethodPut {
+		t.Fatalf("PUT was issued despite GET failure — fail-open must not allow data loss")
+	}
+}
+
+func TestProjectSetConfig_EnvMergesByKey(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectSetConfigServer(t,
+		`{"status":"ok","project":{"id":"demo","config":{"env":{"EXISTING":"kept","OTHER":"also"}}}}`,
+		`{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--env", "NEW=val")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	if got.Config.Env["NEW"] != "val" {
+		t.Fatalf("env[NEW] = %q, want val", got.Config.Env["NEW"])
+	}
+	if got.Config.Env["EXISTING"] != "kept" {
+		t.Fatalf("env[EXISTING] = %q, want kept (merge by key, not wholesale replace)", got.Config.Env["EXISTING"])
+	}
+	if got.Config.Env["OTHER"] != "also" {
+		t.Fatalf("env[OTHER] = %q, want also preserved", got.Config.Env["OTHER"])
+	}
+}
+
+func TestProjectSetConfig_ConfigJSONEnvMergesByKey(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectSetConfigServer(t,
+		`{"status":"ok","project":{"id":"demo","config":{"env":{"EXISTING":"kept"}}}}`,
+		`{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo",
+		"--config-json", `{"env":{"NEW":"val"}}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	if got.Config.Env["NEW"] != "val" {
+		t.Fatalf("env[NEW] = %q, want val", got.Config.Env["NEW"])
+	}
+	if got.Config.Env["EXISTING"] != "kept" {
+		t.Fatalf("env[EXISTING] = %q, want kept (deep merge by key)", got.Config.Env["EXISTING"])
+	}
+}
+
+func TestProjectSetConfig_ReplaceEnvWholeMap(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectSetConfigServer(t,
+		`{"status":"ok","project":{"id":"demo","config":{"env":{"EXISTING":"kept"}}}}`,
+		`{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo",
+		"--config-json", `{"env":{"NEW":"val"}}`, "--replace")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	if got.Config.Env["NEW"] != "val" {
+		t.Fatalf("env[NEW] = %q, want val", got.Config.Env["NEW"])
+	}
+	if _, exists := got.Config.Env["EXISTING"]; exists {
+		t.Fatalf("env[EXISTING] = %q, want absent (--replace replaces whole map)", got.Config.Env["EXISTING"])
+	}
+}
+
+
 func TestProjectRemove_RequiresID(t *testing.T) {
 	setConfigEnv(t)
 	_, _, err := executeCLI(t, Deps{}, "project", "rm")

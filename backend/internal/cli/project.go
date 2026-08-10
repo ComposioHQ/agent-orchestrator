@@ -95,22 +95,34 @@ type trackerIntakeConfig struct {
 	Assignee string `json:"assignee,omitempty"`
 }
 
+// reviewerConfig mirrors domain.ReviewerConfig.
+type reviewerConfig struct {
+	Harness string `json:"harness,omitempty"`
+}
+
+// containerReapConfig mirrors domain.ContainerReapConfig.
+type containerReapConfig struct {
+	Disabled bool `json:"disabled,omitempty"`
+}
+
 // projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI
 // client. The CLI sets common fields via flags and the whole object via
 // --config-json.
 type projectConfig struct {
-	DefaultBranch     string              `json:"defaultBranch,omitempty"`
-	SessionPrefix     string              `json:"sessionPrefix,omitempty"`
-	Env               map[string]string   `json:"env,omitempty"`
-	Symlinks          []string            `json:"symlinks,omitempty"`
-	PostCreate        []string            `json:"postCreate,omitempty"`
-	AgentRules        string              `json:"agentRules,omitempty"`
-	AgentRulesFile    string              `json:"agentRulesFile,omitempty"`
-	OrchestratorRules string              `json:"orchestratorRules,omitempty"`
-	AgentConfig       agentConfig         `json:"agentConfig,omitempty"`
-	Worker            roleOverride        `json:"worker,omitempty"`
-	Orchestrator      roleOverride        `json:"orchestrator,omitempty"`
-	TrackerIntake     trackerIntakeConfig `json:"trackerIntake,omitempty"`
+	DefaultBranch     string               `json:"defaultBranch,omitempty"`
+	SessionPrefix     string               `json:"sessionPrefix,omitempty"`
+	Env               map[string]string    `json:"env,omitempty"`
+	Symlinks          []string             `json:"symlinks,omitempty"`
+	PostCreate        []string             `json:"postCreate,omitempty"`
+	AgentRules        string               `json:"agentRules,omitempty"`
+	AgentRulesFile    string               `json:"agentRulesFile,omitempty"`
+	OrchestratorRules string               `json:"orchestratorRules,omitempty"`
+	AgentConfig       agentConfig          `json:"agentConfig,omitempty"`
+	Worker            roleOverride         `json:"worker,omitempty"`
+	Orchestrator      roleOverride         `json:"orchestrator,omitempty"`
+	Reviewers         []reviewerConfig     `json:"reviewers,omitempty"`
+	TrackerIntake     trackerIntakeConfig  `json:"trackerIntake,omitempty"`
+	ContainerReap     containerReapConfig  `json:"containerReap,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
@@ -302,8 +314,9 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 			if !opts.replace && !opts.clear {
 				var existing projectGetResult
 				if err := ctx.getJSON(cmd.Context(), "projects/"+url.PathEscape(id), &existing); err != nil {
-					current = projectConfig{}
-				} else if existing.Project.Config != nil {
+					return fmt.Errorf("cannot merge: fetch current config for %s: %w", id, err)
+				}
+				if existing.Project.Config != nil {
 					current = *existing.Project.Config
 				}
 			}
@@ -388,7 +401,12 @@ func buildProjectConfig(opts projectSetConfigOptions, current projectConfig, fla
 		if err != nil {
 			return projectConfig{}, err
 		}
-		cfg.Env = env
+		if cfg.Env == nil {
+			cfg.Env = make(map[string]string)
+		}
+		for k, v := range env {
+			cfg.Env[k] = v
+		}
 	}
 	if flags.Changed("symlink") {
 		cfg.Symlinks = opts.symlink
@@ -417,12 +435,21 @@ func buildProjectConfig(opts projectSetConfigOptions, current projectConfig, fla
 	if flags.Changed("orchestrator-agent") {
 		cfg.Orchestrator.Agent = opts.orchestratorAgent
 	}
+	if flags.Changed("tracker-intake") {
+		cfg.TrackerIntake.Enabled = opts.trackerIntake
+	}
+	if flags.Changed("tracker-repo") {
+		cfg.TrackerIntake.Repo = opts.trackerRepo
+		if opts.trackerRepo != "" && cfg.TrackerIntake.Provider == "" {
+			cfg.TrackerIntake.Provider = "github"
+		}
+	}
+	if flags.Changed("tracker-assignee") {
+		cfg.TrackerIntake.Assignee = opts.trackerAssignee
+	}
 	if flags.Changed("tracker-intake") || flags.Changed("tracker-repo") || flags.Changed("tracker-assignee") {
-		cfg.TrackerIntake = trackerIntakeConfig{
-			Enabled:  opts.trackerIntake,
-			Provider: trackerProviderForFlags(opts),
-			Repo:     opts.trackerRepo,
-			Assignee: opts.trackerAssignee,
+		if cfg.TrackerIntake.Provider == "" && (opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "") {
+			cfg.TrackerIntake.Provider = "github"
 		}
 	}
 
@@ -443,7 +470,12 @@ func mergeProjectConfig(current, overlay projectConfig) projectConfig {
 		out.SessionPrefix = overlay.SessionPrefix
 	}
 	if len(overlay.Env) > 0 {
-		out.Env = overlay.Env
+		if out.Env == nil {
+			out.Env = make(map[string]string)
+		}
+		for k, v := range overlay.Env {
+			out.Env[k] = v
+		}
 	}
 	if len(overlay.Symlinks) > 0 {
 		out.Symlinks = overlay.Symlinks
@@ -494,16 +526,26 @@ func mergeProjectConfig(current, overlay projectConfig) projectConfig {
 		out.Orchestrator.AgentConfig.Permissions = overlay.Orchestrator.AgentConfig.Permissions
 	}
 	if overlay.TrackerIntake.Enabled || overlay.TrackerIntake.Repo != "" || overlay.TrackerIntake.Assignee != "" {
-		out.TrackerIntake = overlay.TrackerIntake
+		if overlay.TrackerIntake.Enabled {
+			out.TrackerIntake.Enabled = true
+		}
+		if overlay.TrackerIntake.Provider != "" {
+			out.TrackerIntake.Provider = overlay.TrackerIntake.Provider
+		}
+		if overlay.TrackerIntake.Repo != "" {
+			out.TrackerIntake.Repo = overlay.TrackerIntake.Repo
+		}
+		if overlay.TrackerIntake.Assignee != "" {
+			out.TrackerIntake.Assignee = overlay.TrackerIntake.Assignee
+		}
+	}
+	if len(overlay.Reviewers) > 0 {
+		out.Reviewers = overlay.Reviewers
+	}
+	if overlay.ContainerReap.Disabled {
+		out.ContainerReap.Disabled = true
 	}
 	return out
-}
-
-func trackerProviderForFlags(opts projectSetConfigOptions) string {
-	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" {
-		return "github"
-	}
-	return ""
 }
 
 // parseEnvPairs turns repeated KEY=VALUE flags into a map.
