@@ -300,13 +300,20 @@ var (
 	// with no message (issue #2775).
 	ErrRuntimeWorkspaceCwdMismatch = errors.New("runtime: session working directory mismatch")
 	// ErrRuntimeUnavailable reports that a liveness probe could not reach the
-	// runtime infrastructure at all (e.g. tmux "no server running" or "error
-	// connecting"). It says nothing about any individual session, so callers
-	// must treat it as an inconclusive probe, never as per-session death
-	// (issue #3475: reading a server-level outage as N session deaths archived
-	// every session on the board). Adapters wrap this sentinel via fmt.Errorf
-	// so callers can match it with errors.Is.
+	// runtime infrastructure and learned nothing authoritative about the target
+	// session. Callers must treat it as an inconclusive probe, never as
+	// per-session death. Adapters wrap this sentinel via fmt.Errorf so callers can
+	// match it with errors.Is (issue #3475).
 	ErrRuntimeUnavailable = errors.New("runtime: infrastructure unavailable")
+	// ErrRuntimeServerAbsent is the authoritative subset of
+	// ErrRuntimeUnavailable where the adapter proved that the runtime server does
+	// not exist. It wraps ErrRuntimeUnavailable so callers that do not explicitly
+	// opt into the distinction remain fail-closed.
+	//
+	// For tmux, an absent server proves its panes are gone. Recovery and cleanup
+	// paths may use that fact, while steady-state board probes still see an error
+	// and cannot convert one server outage into N independent session deaths.
+	ErrRuntimeServerAbsent = fmt.Errorf("%w: server absent", ErrRuntimeUnavailable)
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.
