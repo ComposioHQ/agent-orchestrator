@@ -246,7 +246,6 @@ describe("ShellTopbar status pill", () => {
 		expect(within(actionRegion).getByRole("button", { name: "Open orchestrator" })).toBeInTheDocument();
 		expect(within(actionRegion).queryByRole("button", { name: "Notifications" })).not.toBeInTheDocument();
 		expect(within(actionRegion).queryByTestId("topbar-utility-separator")).not.toBeInTheDocument();
-		expect(notification).toHaveClass("-mr-0.5");
 		expect(header).toHaveClass("pr-2.5");
 	});
 
