@@ -1,8 +1,9 @@
 import { Feather } from "@expo/vector-icons";
-import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { haptics } from "../haptics";
 import type { Theme } from "../theme";
 import { useTheme, useThemedStyles } from "../ThemeProvider";
+import { SheetHeader } from "../ui";
 import type { ChatConfigOption, ChatModel, ConversationSnapshot, TurnSettings } from "./types";
 import { can } from "./types";
 
@@ -13,9 +14,7 @@ const APPROVALS = [
 	{ id: "bypass-permissions", label: "Never ask", hint: "No approvals or sandbox prompts" },
 ] as const;
 
-export function ChatSettingsModal({
-	visible,
-	onClose,
+export function ChatSettingsSheet({
 	snapshot,
 	models,
 	options,
@@ -24,8 +23,6 @@ export function ChatSettingsModal({
 	onSettings,
 	onOption,
 }: {
-	visible: boolean;
-	onClose(): void;
 	snapshot: ConversationSnapshot;
 	models: ChatModel[];
 	options: ChatConfigOption[];
@@ -40,15 +37,8 @@ export function ChatSettingsModal({
 	const efforts = selected?.efforts ?? [];
 	const usesProviderOptions = can(snapshot, "config_options");
 	return (
-		<Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-			<Pressable accessibilityLabel="Close turn settings" style={styles.scrim} onPress={onClose} />
-			<View style={styles.sheet}>
-				<View style={styles.grabber} />
-				<View style={styles.header}>
-					<View style={{ flex: 1 }}><Text style={styles.title}>Turn settings</Text><Text style={styles.subtitle}>Changes apply to the next message.</Text></View>
-					<Pressable accessibilityRole="button" accessibilityLabel="Close" hitSlop={10} onPress={onClose}><Feather name="x" size={20} color={t.textSecondary} /></Pressable>
-				</View>
-				<ScrollView contentContainerStyle={styles.content}>
+		<ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+			<SheetHeader title="Turn settings" subtitle="Changes apply to the next message." />
 					{error ? <View accessibilityRole="alert" style={styles.error}><Feather name="alert-circle" size={14} color={t.red} /><Text style={styles.errorText}>{error}</Text></View> : null}
 					{snapshot.modelReroute ? <View style={styles.reroute}><Feather name="shuffle" size={14} color={t.amber} /><View style={{ flex: 1 }}><Text style={styles.rerouteTitle}>Currently answered by {snapshot.modelReroute.toModel}</Text><Text style={styles.rerouteCopy}>{snapshot.modelReroute.fromModel ? `${snapshot.modelReroute.fromModel} was requested. ` : ""}{snapshot.modelReroute.reason || "The provider selected a fallback model for this conversation."}</Text></View></View> : null}
 					{!usesProviderOptions && models.length ? <SettingsSection icon="cpu" title="Model">
@@ -64,9 +54,7 @@ export function ChatSettingsModal({
 						{option.type === "boolean" ? <View style={styles.switchRow}><Text style={styles.choiceLabel}>{option.currentBoolean ? "On" : "Off"}</Text><Switch disabled={disabled} value={Boolean(option.currentBoolean)} onValueChange={(enabled) => onOption(option.id, { enabled })} trackColor={{ true: t.blue }} /></View> : <GroupedChoices option={option} disabled={disabled} onOption={onOption} />}
 					</SettingsSection>)}
 					{usesProviderOptions && options.length === 0 ? <Text style={styles.empty}>The provider has not advertised any turn controls yet.</Text> : null}
-				</ScrollView>
-			</View>
-		</Modal>
+		</ScrollView>
 	);
 }
 
@@ -96,12 +84,7 @@ function capitalize(value: string): string { return value ? value[0].toUpperCase
 function configOptionIcon(option: ChatConfigOption): keyof typeof Feather.glyphMap { if (option.id === "fast") return "zap"; if (option.id === "agent") return "user"; return option.category === "model" ? "cpu" : option.category === "thought_level" ? "activity" : option.category === "mode" ? "shield" : "sliders"; }
 
 const makeStyles = (t: Theme) => StyleSheet.create({
-	scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: t.scrim },
-	sheet: { position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "88%", borderTopLeftRadius: 22, borderTopRightRadius: 22, backgroundColor: t.bgSurface, borderWidth: 1, borderColor: t.borderSubtle },
-	grabber: { width: 36, height: 4, borderRadius: 2, alignSelf: "center", backgroundColor: t.borderStrong, marginTop: 8 },
-	header: { flexDirection: "row", alignItems: "center", paddingHorizontal: 18, paddingTop: 14, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: t.borderSubtle },
-	title: { color: t.textPrimary, fontSize: 17, fontWeight: "700" },
-	subtitle: { color: t.textTertiary, fontSize: 11, marginTop: 2 },
+	screen: { flex: 1, backgroundColor: t.bgSurface },
 	content: { padding: 16, paddingBottom: 42, gap: 22 },
 	error: { flexDirection: "row", alignItems: "flex-start", gap: 8, borderRadius: 10, backgroundColor: t.tintRed, padding: 10 },
 	errorText: { flex: 1, color: t.red, fontSize: 11, lineHeight: 16 },
