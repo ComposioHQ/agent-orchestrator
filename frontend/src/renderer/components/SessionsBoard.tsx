@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { motion, useReducedMotion } from "motion/react";
 import {
 	AlertTriangle,
 	Check,
@@ -164,6 +165,15 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
 	// Archived sessions cost one quiet line under the board until expanded.
 	const [archiveExpanded, setArchiveExpanded] = useState(false);
+	// Mount once on first open and keep mounted — remounting 100+ cards every
+	// toggle is what made open/close feel laggy.
+	const [archiveMounted, setArchiveMounted] = useState(false);
+	const archivePanelRef = useRef<HTMLDivElement>(null);
+	const [archivePanelHeight, setArchivePanelHeight] = useState(0);
+	const prefersReducedMotion = useReducedMotion();
+	const archiveMotion = prefersReducedMotion
+		? { duration: 0 }
+		: { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] as const };
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
 	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
@@ -174,7 +184,25 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		setRestoringSessionId(undefined);
 		setRestoreErrors({});
 		setRestoreUnavailableSession(undefined);
+		setArchiveExpanded(false);
+		setArchiveMounted(false);
+		setArchivePanelHeight(0);
 	}, [projectId]);
+
+	// Pixel height (capped at 45vh) avoids Motion measuring height:"auto" against
+	// a large archive grid on every animation frame.
+	useLayoutEffect(() => {
+		if (!archiveMounted || !archivePanelRef.current) return;
+		const measure = () => {
+			const panel = archivePanelRef.current;
+			if (!panel) return;
+			const cap = window.innerHeight * 0.45;
+			setArchivePanelHeight(Math.min(panel.scrollHeight, cap));
+		};
+		measure();
+		window.addEventListener("resize", measure);
+		return () => window.removeEventListener("resize", measure);
+	}, [archiveMounted, archived.length]);
 
 	const openSession = (session: WorkspaceSession) =>
 		void navigate({
@@ -311,8 +339,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		<NotificationCenter />
 	) : undefined;
 
+	const hasArchive = archived.length > 0;
+
 	return (
-		<div className="flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
+		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
 			{/* macOS: shell topbar is hidden on board routes, so the project/"Board"
 			    crumb + New task / Orchestrator / bell live in this in-panel row.
 			    Win/Linux keep the crumb and actions in the framed ShellTopbar.
@@ -333,7 +363,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				</div>
 			) : null}
 
-			<div className="min-h-0 flex-1 overflow-hidden">
+			{/* Reserve only the collapsed archive bar. Expanded archive overlays the
+			    board so lane height (and Needs You scrollbars) stay stable. */}
+			<div className={cn("min-h-0 flex-1 overflow-hidden", hasArchive && "pb-[46px]")}>
 				{projectId && health.state !== "ok" ? (
 					<div className="mx-3 my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
@@ -387,53 +419,71 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				)}
 			</div>
 
-			{archived.length > 0 && (
-				<div className="shrink-0 border-t border-border-strong px-3">
-					{/* The 46px control gives the compact archive bar a slightly taller
-					    target while preserving the bar's surrounding row height. */}
-					<div className={cn("flex items-center gap-2", archiveExpanded ? "min-h-11" : "min-h-row-md")}>
-						<button
-							aria-expanded={archiveExpanded}
-							aria-label={t("shell.archiveSessionsAria", { count: archived.length })}
-							className="group flex h-[46px] min-w-0 items-center gap-2 py-0 text-muted-foreground transition-colors hover:text-foreground"
-							onClick={() => setArchiveExpanded((v) => !v)}
-							type="button"
+			{hasArchive && (
+				<div className="absolute inset-x-0 bottom-0 z-20 border-t border-border-strong bg-background px-3">
+					{/* Full-row hit target: the 46px control stretches edge-to-edge so
+					    empty space beside the label toggles archive too. */}
+					<button
+						aria-expanded={archiveExpanded}
+						aria-label={t("shell.archiveSessionsAria", { count: archived.length })}
+						className={cn(
+							"group flex h-[46px] w-full min-w-0 items-center gap-2 py-0 text-muted-foreground transition-colors hover:text-foreground",
+							archiveExpanded ? "min-h-11" : "min-h-row-md",
+						)}
+						onClick={() => {
+							setArchiveExpanded((open) => {
+								if (!open) setArchiveMounted(true);
+								return !open;
+							});
+						}}
+						type="button"
+					>
+						<svg
+							aria-hidden="true"
+							className={cn(
+								"size-icon-2xs shrink-0 transition-transform duration-[140ms] ease-[cubic-bezier(0.25,0.46,0.45,0.94)]",
+								archiveExpanded && "rotate-90",
+							)}
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							viewBox="0 0 24 24"
 						>
-							<svg
-								aria-hidden="true"
-								className={cn(
-									"size-icon-2xs shrink-0 transition-transform duration-normal",
-									archiveExpanded && "rotate-90",
-								)}
-								fill="none"
-								stroke="currentColor"
-								strokeWidth="2"
-								viewBox="0 0 24 24"
+							<path d="m9 18 6-6-6-6" />
+						</svg>
+						<span className="font-mono text-2xs font-medium tracking-wide-sm">{t("shell.archive")}</span>
+						<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
+					</button>
+					{/* Keep cards mounted after first open; animate a measured px height
+					    (not height:"auto") so toggles stay cheap with large archives. */}
+					{archiveMounted && (
+						<motion.div
+							initial={false}
+							animate={{ height: archiveExpanded ? archivePanelHeight : 0 }}
+							transition={archiveMotion}
+							style={{ overflow: "hidden" }}
+						>
+							<div
+								ref={archivePanelRef}
+								aria-hidden={!archiveExpanded}
+								aria-label={t("shell.archivedSessions")}
+								className="scrollbar-none grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
+								inert={!archiveExpanded ? true : undefined}
+								role="list"
 							>
-								<path d="m9 18 6-6-6-6" />
-							</svg>
-							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">{t("shell.archive")}</span>
-							<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
-						</button>
-					</div>
-					{archiveExpanded && (
-						<div
-							aria-label={t("shell.archivedSessions")}
-							className="board-scrollbar grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
-							role="list"
-						>
-							{archived.map((s) => (
-								<ArchiveSessionItem
-									key={s.id}
-									session={s}
-									restoreAction={(event) => void restoreArchivedSession(event, s)}
-									restoreError={restoreErrors[s.id]}
-									isRestoring={restoringSessionId === s.id}
-									isRestoreDisabled={restoringSessionId !== undefined}
-									usage={usageBySession.get(s.id)}
-								/>
-							))}
-						</div>
+								{archived.map((s) => (
+									<ArchiveSessionItem
+										key={s.id}
+										session={s}
+										restoreAction={(event) => void restoreArchivedSession(event, s)}
+										restoreError={restoreErrors[s.id]}
+										isRestoring={restoringSessionId === s.id}
+										isRestoreDisabled={restoringSessionId !== undefined}
+										usage={usageBySession.get(s.id)}
+									/>
+								))}
+							</div>
+						</motion.div>
 					)}
 				</div>
 			)}

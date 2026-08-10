@@ -750,11 +750,16 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const archiveButton = screen.getByRole("button", { name: /archive/i });
-		expect(archiveButton).toHaveClass("h-[46px]", "py-0");
+		expect(archiveButton).toHaveClass("h-[46px]", "w-full", "py-0");
+		expect(archiveButton.querySelector("span")).not.toHaveClass("uppercase");
+		// Expanded archive overlays the board instead of shrinking lanes (which would
+		// force a persistent Needs You column scrollbar gutter).
+		expect(archiveButton.parentElement).toHaveClass("absolute", "inset-x-0", "bottom-0", "bg-background");
+		expect(screen.getByTestId("board")).toHaveClass("relative");
 		await userEvent.click(archiveButton);
 
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
-		expect(archive).toHaveClass("board-scrollbar", "overflow-y-auto");
+		expect(archive).toHaveClass("scrollbar-none", "overflow-y-auto");
 		const terminatedCard = within(archive).getByText("dead worker").closest<HTMLElement>("[role='listitem']");
 		expect(terminatedCard).not.toBeNull();
 		expect(terminatedCard).toHaveAttribute("data-testid", "board-session-card");
