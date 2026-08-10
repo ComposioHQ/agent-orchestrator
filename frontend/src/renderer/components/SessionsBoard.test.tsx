@@ -78,6 +78,12 @@ function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
 	);
 }
 
+/** Archive cards mount on the next frame via startTransition — wait for the list. */
+async function expandArchive() {
+	await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+	return screen.findByRole("list", { name: "Archived sessions" });
+}
+
 beforeEach(() => {
 	navigateMock.mockReset();
 	notificationShowMock.mockReset().mockResolvedValue(undefined);
@@ -317,8 +323,7 @@ describe("SessionsBoard", () => {
 		await userEvent.hover(activeUsage);
 		expect((await screen.findAllByText("12,400 tokens")).length).toBeGreaterThan(0);
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-		const archive = screen.getByRole("list", { name: "Archived sessions" });
+		const archive = await expandArchive();
 		const archivedUsage = within(archive).getByText("2K tok");
 		expect(archivedUsage).toHaveAttribute("aria-label", "2,000 tokens");
 	});
@@ -751,14 +756,14 @@ describe("SessionsBoard", () => {
 
 		const archiveButton = screen.getByRole("button", { name: /archive/i });
 		expect(archiveButton).toHaveClass("h-[46px]", "w-full", "py-0");
-		expect(archiveButton.querySelector("span")).not.toHaveClass("uppercase");
+		const archiveLabel = within(archiveButton).getByText("Archive");
+		expect(archiveLabel).not.toHaveClass("font-mono", "uppercase");
+		expect(archiveLabel).toHaveClass("text-2xs", "font-medium");
 		// Expanded archive overlays the board instead of shrinking lanes (which would
 		// force a persistent Needs You column scrollbar gutter).
 		expect(archiveButton.parentElement).toHaveClass("absolute", "inset-x-0", "bottom-0", "bg-background");
 		expect(screen.getByTestId("board")).toHaveClass("relative");
-		await userEvent.click(archiveButton);
-
-		const archive = screen.getByRole("list", { name: "Archived sessions" });
+		const archive = await expandArchive();
 		expect(archive).toHaveClass("scrollbar-none", "overflow-y-auto");
 		const terminatedCard = within(archive).getByText("dead worker").closest<HTMLElement>("[role='listitem']");
 		expect(terminatedCard).not.toBeNull();
@@ -801,7 +806,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		expect(archive).toHaveClass("grid");
@@ -819,7 +824,7 @@ describe("SessionsBoard", () => {
 		const queryClient = renderBoard("p1");
 		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() =>
@@ -843,7 +848,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() =>
@@ -865,7 +870,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalled());
@@ -887,7 +892,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		const restoringButton = screen.getByRole("button", { name: "Restore dead worker" });
@@ -911,7 +916,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		expect(await screen.findByText("Session can no longer be restored")).toBeInTheDocument();
@@ -927,7 +932,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		expect(await screen.findByText("Unable to restore session")).toBeInTheDocument();
@@ -943,7 +948,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByText("dead worker"));
 
 		expect(postMock).not.toHaveBeenCalled();
@@ -973,7 +978,7 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		view.rerender(
@@ -1014,7 +1019,7 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		view.rerender(
@@ -1138,7 +1143,7 @@ describe("SessionsBoard", () => {
 		expect(within(mergedRegion).getByText("live merged worker")).toBeInTheDocument();
 		expect(within(mergedRegion).queryByText("archived merged worker")).not.toBeInTheDocument();
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		const archivedMergedCard = within(archive)
 			.getByText("archived merged worker")

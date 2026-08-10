@@ -1,9 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { memo, startTransition, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { motion, useReducedMotion } from "motion/react";
+import { useReducedMotion } from "motion/react";
 import {
 	AlertTriangle,
 	Check,
@@ -91,7 +91,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone, t));
-	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
 	const usageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
@@ -163,85 +162,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		(!isDaemonReady || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError));
 	const showWelcome = !projectId && isLoaded && all.length === 0;
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
-	// Archived sessions cost one quiet line under the board until expanded.
-	const [archiveExpanded, setArchiveExpanded] = useState(false);
-	// Mount once on first open and keep mounted — remounting 100+ cards every
-	// toggle is what made open/close feel laggy.
-	const [archiveMounted, setArchiveMounted] = useState(false);
-	const archivePanelRef = useRef<HTMLDivElement>(null);
-	const [archivePanelHeight, setArchivePanelHeight] = useState(0);
-	const prefersReducedMotion = useReducedMotion();
-	const archiveMotion = prefersReducedMotion
-		? { duration: 0 }
-		: { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] as const };
-	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
-	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
-	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
+	const hasArchive = archived.length > 0;
 	const terminateSession = useTerminateSession();
 	const activeProjectIdRef = useRef(projectId);
 	activeProjectIdRef.current = projectId;
-	useEffect(() => {
-		setRestoringSessionId(undefined);
-		setRestoreErrors({});
-		setRestoreUnavailableSession(undefined);
-		setArchiveExpanded(false);
-		setArchiveMounted(false);
-		setArchivePanelHeight(0);
-	}, [projectId]);
-
-	// Pixel height (capped at 45vh) avoids Motion measuring height:"auto" against
-	// a large archive grid on every animation frame.
-	useLayoutEffect(() => {
-		if (!archiveMounted || !archivePanelRef.current) return;
-		const measure = () => {
-			const panel = archivePanelRef.current;
-			if (!panel) return;
-			const cap = window.innerHeight * 0.45;
-			setArchivePanelHeight(Math.min(panel.scrollHeight, cap));
-		};
-		measure();
-		window.addEventListener("resize", measure);
-		return () => window.removeEventListener("resize", measure);
-	}, [archiveMounted, archived.length]);
 
 	const openSession = (session: WorkspaceSession) =>
 		void navigate({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: session.workspaceId, sessionId: session.id },
 		});
-
-	const restoreArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
-		event.stopPropagation();
-		if (restoringSessionId) return;
-		const restoreProjectId = projectId;
-		const isStillActiveProject = () => !restoreProjectId || activeProjectIdRef.current === restoreProjectId;
-		setRestoringSessionId(session.id);
-		setRestoreErrors((current) => {
-			const next = { ...current };
-			delete next[session.id];
-			return next;
-		});
-		try {
-			const result = await restoreSessionById(session.id);
-			if (!isStillActiveProject()) return;
-			if (result.status === "success") {
-				void navigate({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId: session.workspaceId, sessionId: session.id },
-				});
-				return;
-			}
-			if (result.status === "not_resumable") {
-				setRestoreUnavailableSession(session);
-				return;
-			}
-			setRestoreErrors((current) => ({ ...current, [session.id]: result.message }));
-		} finally {
-			if (isStillActiveProject()) {
-				setRestoringSessionId(undefined);
-			}
-		}
-	};
 
 	const openOrchestrator = async (mode?: "tui") => {
 		if (!projectId || isProjectRestarting) return;
@@ -339,8 +269,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		<NotificationCenter />
 	) : undefined;
 
-	const hasArchive = archived.length > 0;
-
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
 			{/* macOS: shell topbar is hidden on board routes, so the project/"Board"
@@ -419,75 +347,186 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				)}
 			</div>
 
-			{hasArchive && (
-				<div className="absolute inset-x-0 bottom-0 z-20 border-t border-border-strong bg-background px-3">
-					{/* Full-row hit target: the 46px control stretches edge-to-edge so
-					    empty space beside the label toggles archive too. */}
-					<button
-						aria-expanded={archiveExpanded}
-						aria-label={t("shell.archiveSessionsAria", { count: archived.length })}
-						className={cn(
-							"group flex h-[46px] w-full min-w-0 items-center gap-2 py-0 text-muted-foreground transition-colors hover:text-foreground",
-							archiveExpanded ? "min-h-11" : "min-h-row-md",
-						)}
-						onClick={() => {
-							setArchiveExpanded((open) => {
-								if (!open) setArchiveMounted(true);
-								return !open;
-							});
-						}}
-						type="button"
-					>
-						<svg
-							aria-hidden="true"
-							className={cn(
-								"size-icon-2xs shrink-0 transition-transform duration-[140ms] ease-[cubic-bezier(0.25,0.46,0.45,0.94)]",
-								archiveExpanded && "rotate-90",
-							)}
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2"
-							viewBox="0 0 24 24"
-						>
-							<path d="m9 18 6-6-6-6" />
-						</svg>
-						<span className="font-mono text-2xs font-medium tracking-wide-sm">{t("shell.archive")}</span>
-						<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
-					</button>
-					{/* Keep cards mounted after first open; animate a measured px height
-					    (not height:"auto") so toggles stay cheap with large archives. */}
-					{archiveMounted && (
-						<motion.div
-							initial={false}
-							animate={{ height: archiveExpanded ? archivePanelHeight : 0 }}
-							transition={archiveMotion}
-							style={{ overflow: "hidden" }}
-						>
-							<div
-								ref={archivePanelRef}
-								aria-hidden={!archiveExpanded}
-								aria-label={t("shell.archivedSessions")}
-								className="scrollbar-none grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
-								inert={!archiveExpanded ? true : undefined}
-								role="list"
-							>
-								{archived.map((s) => (
-									<ArchiveSessionItem
-										key={s.id}
-										session={s}
-										restoreAction={(event) => void restoreArchivedSession(event, s)}
-										restoreError={restoreErrors[s.id]}
-										isRestoring={restoringSessionId === s.id}
-										isRestoreDisabled={restoringSessionId !== undefined}
-										usage={usageBySession.get(s.id)}
-									/>
-								))}
-							</div>
-						</motion.div>
+			{hasArchive ? (
+				<BoardArchivePanel
+					activeProjectIdRef={activeProjectIdRef}
+					projectId={projectId}
+					sessions={archived}
+					usageBySession={usageBySession}
+				/>
+			) : null}
+		</div>
+	);
+}
+
+/**
+ * Archive lives in its own component so expand/collapse state does not re-render
+ * the kanban columns. Open/close uses transform+opacity (compositor) instead of a
+ * height tween, and card mount is deferred via startTransition so the first click
+ * does not synchronously layout every archived SessionCard.
+ */
+const BoardArchivePanel = memo(function BoardArchivePanel({
+	activeProjectIdRef,
+	projectId,
+	sessions,
+	usageBySession,
+}: {
+	activeProjectIdRef: React.MutableRefObject<string | undefined>;
+	projectId?: string;
+	sessions: WorkspaceSession[];
+	usageBySession: UsageBySession;
+}) {
+	const { t } = useTranslation();
+	const navigate = useNavigate();
+	const queryClient = useQueryClient();
+	const restoreSessionById = useRestoreSession();
+	const prefersReducedMotion = useReducedMotion();
+	const [expanded, setExpanded] = useState(false);
+	const [cardsReady, setCardsReady] = useState(false);
+	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
+	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
+	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
+	const restoreGenerationRef = useRef(0);
+
+	useEffect(() => {
+		setExpanded(false);
+		setCardsReady(false);
+		setRestoringSessionId(undefined);
+		setRestoreErrors({});
+		setRestoreUnavailableSession(undefined);
+		restoreGenerationRef.current += 1;
+	}, [projectId]);
+
+	useEffect(() => {
+		const generation = restoreGenerationRef.current;
+		return () => {
+			// Invalidate in-flight restores if this panel unmounts (e.g. project with
+			// no archive) so completion cannot navigate after the user left.
+			if (restoreGenerationRef.current === generation) {
+				restoreGenerationRef.current += 1;
+			}
+		};
+	}, []);
+
+	useEffect(() => {
+		if (!expanded || cardsReady) return;
+		let cancelled = false;
+		const id = requestAnimationFrame(() => {
+			startTransition(() => {
+				if (!cancelled) setCardsReady(true);
+			});
+		});
+		return () => {
+			cancelled = true;
+			cancelAnimationFrame(id);
+		};
+	}, [expanded, cardsReady]);
+
+	const panelOpen = expanded && cardsReady;
+
+	const restoreArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
+		event.stopPropagation();
+		if (restoringSessionId) return;
+		const restoreProjectId = projectId;
+		const generation = restoreGenerationRef.current;
+		const isStillActiveProject = () =>
+			generation === restoreGenerationRef.current &&
+			(!restoreProjectId || activeProjectIdRef.current === restoreProjectId);
+		setRestoringSessionId(session.id);
+		setRestoreErrors((current) => {
+			const next = { ...current };
+			delete next[session.id];
+			return next;
+		});
+		try {
+			const result = await restoreSessionById(session.id);
+			if (!isStillActiveProject()) return;
+			if (result.status === "success") {
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId: session.workspaceId, sessionId: session.id },
+				});
+				return;
+			}
+			if (result.status === "not_resumable") {
+				setRestoreUnavailableSession(session);
+				return;
+			}
+			setRestoreErrors((current) => ({ ...current, [session.id]: result.message }));
+		} finally {
+			if (isStillActiveProject()) {
+				setRestoringSessionId(undefined);
+			}
+		}
+	};
+
+	return (
+		<>
+			<div className="absolute inset-x-0 bottom-0 z-20 border-t border-border-strong bg-background px-3">
+				{/* Full-row hit target: the 46px control stretches edge-to-edge so
+				    empty space beside the label toggles archive too. */}
+				<button
+					aria-expanded={expanded}
+					aria-label={t("shell.archiveSessionsAria", { count: sessions.length })}
+					className={cn(
+						"group flex h-[46px] w-full min-w-0 items-center gap-2 py-0 text-muted-foreground transition-colors hover:text-foreground",
+						expanded ? "min-h-11" : "min-h-row-md",
 					)}
+					onClick={() => setExpanded((open) => !open)}
+					type="button"
+				>
+					<svg
+						aria-hidden="true"
+						className={cn(
+							"size-icon-2xs shrink-0 transition-transform duration-[140ms] ease-[cubic-bezier(0.25,0.46,0.45,0.94)]",
+							prefersReducedMotion && "transition-none",
+							expanded && "rotate-90",
+						)}
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						viewBox="0 0 24 24"
+					>
+						<path d="m9 18 6-6-6-6" />
+					</svg>
+					<span className="text-2xs font-medium tracking-wide-sm">{t("shell.archive")}</span>
+					<span className="ml-1.5 font-mono text-micro text-passive">{sessions.length}</span>
+				</button>
+				{/* Absolute overlay above the bar: transform/opacity only — no height layout
+				    tween. Cards mount after the open frame via startTransition. */}
+				<div
+					aria-hidden={!panelOpen}
+					className={cn(
+						"absolute inset-x-0 bottom-full max-h-[45vh] overflow-hidden bg-background px-3",
+						"origin-bottom will-change-transform",
+						"transition-[transform,opacity] duration-[140ms] ease-[cubic-bezier(0.25,0.46,0.45,0.94)]",
+						prefersReducedMotion && "transition-none",
+						panelOpen ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0",
+					)}
+				>
+					{cardsReady ? (
+						<div
+							aria-label={t("shell.archivedSessions")}
+							className="scrollbar-none grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
+							inert={!expanded ? true : undefined}
+							role="list"
+						>
+							{sessions.map((s) => (
+								<ArchiveSessionItem
+									key={s.id}
+									session={s}
+									restoreAction={(event) => void restoreArchivedSession(event, s)}
+									restoreError={restoreErrors[s.id]}
+									isRestoring={restoringSessionId === s.id}
+									isRestoreDisabled={restoringSessionId !== undefined}
+									usage={usageBySession.get(s.id)}
+								/>
+							))}
+						</div>
+					) : null}
 				</div>
-			)}
-			{restoreUnavailableSession && (
+			</div>
+			{restoreUnavailableSession ? (
 				<RestoreUnavailableDialog
 					open={true}
 					session={restoreUnavailableSession}
@@ -498,10 +537,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 					}}
 				/>
-			)}
-		</div>
+			) : null}
+		</>
 	);
-}
+});
 
 function BoardColumn({
 	col,
