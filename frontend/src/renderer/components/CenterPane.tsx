@@ -19,17 +19,15 @@ import { AgentAvatar } from "./AgentAvatar";
 import { TerminalPane } from "./TerminalPane";
 import { SessionTerminalBar } from "./SessionTerminalBar";
 import { TerminalTabStrip, type TerminalTabStripProps } from "./TerminalTabStrip";
-import { Button } from "./ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
 	theme: Theme;
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
+	terminalTabs?: TerminalTabStripProps;
 	/** Session actions rendered at the right edge of the shared topbar row. */
 	topbarActions?: ReactNode;
-	terminalTabs?: TerminalTabStripProps;
 	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
 	agentInputDisabled?: boolean;
 };
@@ -54,8 +52,8 @@ export function CenterPane({
 	theme,
 	daemonReady,
 	terminalTarget,
-	topbarActions,
 	terminalTabs,
+	topbarActions,
 	agentInputDisabled = false,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
@@ -64,7 +62,7 @@ export function CenterPane({
 	const lastWheelZoomAtRef = useRef(0);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
-	const [terminalBounds, setTerminalBounds] = useState({ leftInset: 0, rightInset: 0, width: 0 });
+	const [terminalWidth, setTerminalWidth] = useState(0);
 	const shellTerminals = terminalTabs?.shellTerminals ?? [];
 	const ownerTerminalKey = terminalTabs ? (`session:${terminalTabs.ownerSession.id}` as const) : undefined;
 	const onSelectTerminalTab = terminalTabs?.onSelect;
@@ -154,27 +152,13 @@ export function CenterPane({
 	useEffect(() => {
 		const pane = paneRef.current;
 		if (!pane) return;
-		const workspaceSurface = pane.closest<HTMLElement>(".center-panel-surface");
 		const measure = () => {
-			const paneRect = pane.getBoundingClientRect();
-			// leftInset/rightInset are kept for the terminal region width calculation
-			// but no longer used for viewport-alignment padding (topbar is inside the surface).
-			const workspaceRect = workspaceSurface?.getBoundingClientRect() ?? paneRect;
-			const next = {
-				leftInset: workspaceRect.left,
-				rightInset: Math.max(0, window.innerWidth - workspaceRect.right),
-				width: paneRect.width,
-			};
-			setTerminalBounds((current) =>
-				current.leftInset === next.leftInset && current.rightInset === next.rightInset && current.width === next.width
-					? current
-					: next,
-			);
+			const next = pane.getBoundingClientRect().width;
+			setTerminalWidth((current) => (current === next ? current : next));
 		};
 		measure();
 		const observer = new ResizeObserver(measure);
 		observer.observe(pane);
-		if (workspaceSurface) observer.observe(workspaceSurface);
 		return () => observer.disconnect();
 	}, []);
 
@@ -229,7 +213,7 @@ export function CenterPane({
 					className="flex min-w-0 shrink items-center pr-1.5"
 					data-testid="session-terminal-region"
 					style={{
-						width: terminalBounds.width > 0 ? terminalBounds.width : "100%",
+						width: terminalWidth > 0 ? terminalWidth : "100%",
 					}}
 				>
 					<div className="flex h-full min-w-0 flex-1 items-center">

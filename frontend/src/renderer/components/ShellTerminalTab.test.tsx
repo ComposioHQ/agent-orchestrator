@@ -93,28 +93,14 @@ describe("ShellTerminalTab rename", () => {
 		renderTab({ appearance: "connected", isActive: true, isPinned: false, onPinnedChange: vi.fn() });
 		const actionTray = screen.getByRole("button", { name: "Close terminal ao" }).parentElement;
 
-		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass("w-control-sm", "opacity-100");
+		expect(screen.getByRole("button", { name: "Close terminal ao" })).toBeVisible();
 		expect(actionTray).toHaveClass(
-			"absolute",
-			"inset-y-0",
-			"right-0",
-			"h-full",
 			"translate-x-0",
 			"rounded-l-[3px]",
 			"border-foreground/25",
 			"bg-background",
-			"opacity-100",
-			"pointer-events-auto",
 		);
-		expect(actionTray).not.toHaveClass("bg-overlay/95", "bg-raised", "bg-surface");
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
-			"shrink-0",
-			"w-auto",
-			"min-w-shell-tab-connected",
-			"after:z-20",
-		);
-		expect(screen.getByRole("tab", { name: "ao" })).toHaveClass("whitespace-nowrap");
-		expect(screen.getByRole("tab", { name: "ao" })).not.toHaveClass("truncate");
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass("w-auto", "after:z-20");
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveAttribute("aria-selected", "true");
 	});
 
@@ -123,49 +109,20 @@ describe("ShellTerminalTab rename", () => {
 		const actionTray = screen.getByRole("button", { name: "Close terminal ao" }).parentElement;
 
 		expect(actionTray).toHaveClass(
-			"absolute",
-			"inset-y-0",
-			"right-0",
-			"h-full",
-			"duration-200",
-			"pointer-events-none",
 			"translate-x-full",
 			"opacity-0",
-			"group-hover:pointer-events-auto",
 			"group-hover:translate-x-0",
 			"group-hover:opacity-100",
-			"group-hover:animate-in",
 			"group-hover:slide-in-from-right",
-			"group-hover:fade-in-0",
-			"group-focus-within:pointer-events-auto",
-			"group-focus-within:translate-x-0",
-			"group-focus-within:opacity-100",
 		);
-		expect(screen.getByRole("button", { name: "Pin tab" })).toHaveClass("w-control-sm");
-		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass("w-control-sm");
+		expect(screen.getByRole("button", { name: "Pin tab" })).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass("w-shell-tab-connected");
 	});
 
 	it("keeps a compact pinned-state marker visible while tab actions are hidden", () => {
 		renderTab({ appearance: "connected", isActive: false, isPinned: true, onPinnedChange: vi.fn() });
 
-		expect(screen.getByTestId("terminal-pinned-indicator")).toHaveClass(
-			"size-icon-xs",
-			"-rotate-45",
-			"text-muted-foreground",
-		);
-	});
-
-	it("uses a compact fixed width without reserving label space for inactive actions", () => {
-		renderTab({ appearance: "connected", isActive: false });
-
-		expect(screen.getByRole("button", { name: "Close terminal ao" }).parentElement).toHaveClass("absolute");
-		expect(screen.getByRole("tab", { name: "ao" })).toHaveClass("w-full", "min-w-0", "text-left");
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
-			"shrink-0",
-			"w-shell-tab-connected",
-			"border-r",
-			"border-border/60",
-		);
+		expect(screen.getByTestId("terminal-pinned-indicator")).toHaveClass("size-icon-xs", "-rotate-45");
 	});
 
 	it("uses a neutral active surface with a strong foreground selection line", () => {

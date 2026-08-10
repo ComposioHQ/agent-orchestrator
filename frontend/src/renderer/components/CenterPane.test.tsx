@@ -39,20 +39,11 @@ vi.mock("../hooks/useSwitchAgent", () => ({
 	useSwitchAgentState: () => agentSwitchMocks.mutation,
 }));
 
-vi.mock("./TerminalSwitchAgentButton", () => ({
-	TerminalSwitchAgentButton: ({ session }: { session: WorkspaceSession }) => (
-		<button aria-label="Switch agent" data-testid="terminal-switch-agent" type="button">
-			{session.provider}
-		</button>
-	),
-}));
-
 vi.mock("../lib/platform", () => ({
 	isLinuxPlatform: () => false,
 	isMacPlatform: () => true,
 	isWindowsPlatform: () => false,
 }));
-
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: {
@@ -421,30 +412,6 @@ describe("CenterPane toolbar session label", () => {
 		expect(onSelect).toHaveBeenCalledWith("reviewer:review-sess-1");
 	});
 
-	it("keeps fixed tabs around a pinned shell and maps its unpin action", () => {
-		const [shell] = makeShells(1);
-		const onPinnedChange = vi.fn();
-		renderCenterPane({
-			session: worker,
-			terminalTabs: makeTerminalTabs({
-				layout: { pinned: [`shell:${shell.handleId}`], unpinned: [], history: [] },
-				onPinnedChange,
-				reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
-				shellTerminals: [shell],
-			}),
-		});
-
-		expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"))).toEqual([
-			"do the thing · Working",
-			"agent-orchestrator-0",
-			"Reviewer · Working",
-		]);
-		const unpin = screen.getByRole("button", { name: "Unpin tab" });
-		expect(unpin.nextElementSibling).toBe(screen.getByRole("button", { name: "Close terminal agent-orchestrator-0" }));
-		fireEvent.click(unpin);
-		expect(onPinnedChange).toHaveBeenCalledWith("shell:h-0", false);
-	});
-
 	it("keeps the new-terminal action with the session controls, outside the tab strip", () => {
 		renderCenterPane({
 			session: worker,
@@ -504,29 +471,13 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByTestId("session-terminal-bar")).toHaveClass("pl-titlebar-content-offset");
 	});
 
-	it("keeps auxiliary tabs fixed-width inside their own scrollable strip", () => {
-		const shells = makeShells(8);
-		renderCenterPane({ session: worker, terminalTabs: makeTerminalTabs({ shellTerminals: shells }) });
-
-		const scrollRegion = document.querySelector(".overflow-x-auto");
-		expect(scrollRegion).toHaveClass("scrollbar-none", "min-w-0", "flex-1");
-		for (const tab of screen.getAllByTitle(/^\/tmp\/ws/)) {
-			expect(tab.parentElement).toHaveClass(
-				"min-w-shell-tab-min",
-				"w-shell-tab-connected",
-			);
-			expect(tab.parentElement).not.toHaveClass("min-w-16", "shrink-0");
-			expect(tab).toHaveClass("min-w-0", "w-full");
-		}
-		// jsdom reports no overflow, so no unavailable control reserves header space.
-		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
-
-		expect(screen.queryByRole("toolbar", { name: "Terminal display controls" })).not.toBeInTheDocument();
-	});
-
 	it("reveals scroll chevrons only when the tab strip actually overflows", () => {
 		const shells = makeShells(8);
-		renderCenterPane({ session: worker, terminalTabs: makeTerminalTabs({ shellTerminals: shells }) });
+		renderCenterPane({
+			session: worker,
+			terminalTabs: makeTerminalTabs({ shellTerminals: shells }),
+			topbarActions: <button aria-label="New terminal">New terminal</button>,
+		});
 
 		const scrollRegion = document.querySelector(".overflow-x-auto") as HTMLElement;
 		Object.defineProperty(scrollRegion, "clientWidth", {

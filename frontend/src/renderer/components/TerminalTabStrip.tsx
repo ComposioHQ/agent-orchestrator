@@ -25,7 +25,6 @@ export type TerminalTabStripProps = {
 	ownerSession: WorkspaceSession;
 	shellTerminals: ShellTerminal[];
 	reviewerTerminal?: ReviewerTerminalTab;
-	ownerAction?: ReactNode;
 	onClose: (key: ReorderableTerminalTabKey) => void;
 	onPinnedChange: (key: ReorderableTerminalTabKey, pinned: boolean) => void;
 	onRenameShell?: (handleId: string, title: string) => void;
@@ -55,6 +54,29 @@ function DraggableTab({ children, value }: { children: ReactNode; value: Reorder
 	);
 }
 
+function ScrollTabsButton({
+	direction,
+	label,
+	onClick,
+}: {
+	direction: -1 | 1;
+	label: string;
+	onClick: () => void;
+}) {
+	const Icon = direction === -1 ? ChevronLeft : ChevronRight;
+	return (
+		<button
+			aria-label={label}
+			className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+			onClick={onClick}
+			title={label}
+			type="button"
+		>
+			<Icon aria-hidden="true" className="size-icon-md" />
+		</button>
+	);
+}
+
 export function TerminalTabStrip({
 	activeKey,
 	ariaLabel,
@@ -62,7 +84,6 @@ export function TerminalTabStrip({
 	ownerSession,
 	shellTerminals,
 	reviewerTerminal,
-	ownerAction,
 	onClose,
 	onPinnedChange,
 	onRenameShell,
@@ -130,26 +151,20 @@ export function TerminalTabStrip({
 			role="tablist"
 		>
 			<SessionTerminalTab
-				action={ownerAction}
 				isActive={activeKey === ownerKey}
 				onSelect={() => onSelect(ownerKey)}
 				session={ownerSession}
 			/>
 			{overflow.canScrollLeft ? (
-				<button
-					aria-label={t("terminal.scrollTabsLeft")}
-					className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+				<ScrollTabsButton
+					direction={-1}
+					label={t("terminal.scrollTabsLeft")}
 					onClick={() => overflow.scrollByDirection(-1)}
-					title={t("terminal.scrollTabsLeft")}
-					type="button"
-				>
-					<ChevronLeft aria-hidden="true" className="size-icon-md" />
-				</button>
+				/>
 			) : null}
 			<div
 				ref={overflow.ref}
 				className="scrollbar-none flex min-w-0 flex-1 self-stretch items-center overflow-x-auto"
-				data-testid="terminal-auxiliary-scroll-region"
 			>
 				{group("pinned", resolved.pinned)}
 				{group("unpinned", resolved.unpinned)}
@@ -170,15 +185,11 @@ export function TerminalTabStrip({
 				) : null}
 			</div>
 			{overflow.canScrollRight ? (
-				<button
-					aria-label={t("terminal.scrollTabsRight")}
-					className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+				<ScrollTabsButton
+					direction={1}
+					label={t("terminal.scrollTabsRight")}
 					onClick={() => overflow.scrollByDirection(1)}
-					title={t("terminal.scrollTabsRight")}
-					type="button"
-				>
-					<ChevronRight aria-hidden="true" className="size-icon-md" />
-				</button>
+				/>
 			) : null}
 		</div>
 	);

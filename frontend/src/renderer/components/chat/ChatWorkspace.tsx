@@ -49,7 +49,7 @@ import {
 } from "../ui/context-menu";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SessionTerminalBar } from "../SessionTerminalBar";
-import { NewTerminalButton, SessionTerminalTab } from "../SessionTerminalTabs";
+import { SessionTerminalTab } from "../SessionTerminalTabs";
 import { TerminalTabStrip, type TerminalTabStripProps } from "../TerminalTabStrip";
 import {
 	ActivityRow,
@@ -102,12 +102,6 @@ const CHAT_FONT_SIZE_DEFAULT = 12;
 function clampChatFontSize(size: number): number {
 	return Math.min(CHAT_FONT_SIZE_MAX, Math.max(CHAT_FONT_SIZE_MIN, size));
 }
-
-type TopbarBounds = {
-	leftInset: number;
-	rightInset: number;
-	width: number;
-};
 
 export interface ChatWorkspaceProps {
 	snapshot: ConversationSnapshot;
@@ -260,11 +254,7 @@ export function ChatWorkspace({
 	const [chatFontSize, setChatFontSize] = useState(CHAT_FONT_SIZE_DEFAULT);
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const surfaceRef = useRef<HTMLElement | null>(null);
-	const [topbarBounds, setTopbarBounds] = useState<TopbarBounds>({
-		leftInset: 0,
-		rightInset: 0,
-		width: 0,
-	});
+	const [topbarWidth, setTopbarWidth] = useState(0);
 
 	const fullscreenTarget = useCallback(() => {
 		const surface = surfaceRef.current;
@@ -280,28 +270,14 @@ export function ChatWorkspace({
 	useEffect(() => {
 		const surface = surfaceRef.current;
 		if (!surface) return;
-		const workspaceSurface = surface.closest<HTMLElement>(".center-panel-surface");
 		const measure = () => {
-			const surfaceRect = surface.getBoundingClientRect();
-			const workspaceRect = workspaceSurface?.getBoundingClientRect() ?? surfaceRect;
-			const next = {
-				leftInset: workspaceRect.left,
-				rightInset: Math.max(0, window.innerWidth - workspaceRect.right),
-				width: surfaceRect.width,
-			};
-			setTopbarBounds((current) =>
-				current.leftInset === next.leftInset &&
-				current.rightInset === next.rightInset &&
-				current.width === next.width
-					? current
-					: next,
-			);
+			const next = surface.getBoundingClientRect().width;
+			setTopbarWidth((current) => (current === next ? current : next));
 		};
 		measure();
 		if (typeof ResizeObserver === "undefined") return;
 		const observer = new ResizeObserver(measure);
 		observer.observe(surface);
-		if (workspaceSurface) observer.observe(workspaceSurface);
 		return () => observer.disconnect();
 	}, []);
 
@@ -359,14 +335,8 @@ export function ChatWorkspace({
 				sessionTitle={sessionTitle}
 				sessionActivity={sessionActivity}
 				headerActions={headerActions}
-				onOpenShell={onOpenShell}
-				openingShell={openingShell}
-				shellError={shellError}
-				fontSize={chatFontSize}
-				onDecreaseFontSize={() => updateChatFontSize(-1)}
-				onIncreaseFontSize={() => updateChatFontSize(1)}
 				isFullscreen={isFullscreen}
-				topbarBounds={topbarBounds}
+				topbarWidth={topbarWidth}
 			/>
 			{/* Ordered by what blocks what. A session that needs credentials cannot make
 			    progress at all, so it is stated first; the controller's own health next;
@@ -620,28 +590,16 @@ function ChatHeader({
 	sessionTitle,
 	sessionActivity,
 	headerActions,
-	onOpenShell,
-	openingShell,
-	shellError,
-	fontSize,
-	onDecreaseFontSize,
-	onIncreaseFontSize,
 	isFullscreen,
-	topbarBounds,
+	topbarWidth,
 }: {
 	snapshot: ConversationSnapshot;
 	terminalTabs?: TerminalTabStripProps;
 	sessionTitle?: string;
 	sessionActivity?: WorkspaceSession["activity"];
 	headerActions?: ReactNode;
-	onOpenShell?: () => void;
-	openingShell?: boolean;
-	shellError?: string;
-	fontSize: number;
-	onDecreaseFontSize: () => void;
-	onIncreaseFontSize: () => void;
 	isFullscreen: boolean;
-	topbarBounds: TopbarBounds;
+	topbarWidth: number;
 }) {
 	const label = sessionTitle || snapshot.title || snapshot.sessionId;
 	const fallbackSession = {
@@ -661,7 +619,7 @@ function ChatHeader({
 				<div
 					className="flex min-w-0 shrink items-center pr-1.5"
 					data-testid="session-terminal-region"
-					style={{ width: topbarBounds.width > 0 ? topbarBounds.width : "100%" }}
+					style={{ width: topbarWidth > 0 ? topbarWidth : "100%" }}
 				>
 					<div className="flex h-full min-w-0 flex-1 items-center">
 						{terminalTabs ? (
