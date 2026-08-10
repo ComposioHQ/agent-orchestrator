@@ -21,11 +21,12 @@ This replaces PR #3676's current `rollback -> send` implementation. That impleme
 ### Inline editing
 
 - Clicking Edit replaces the bubble body with an inline multiline editor; it does not move the text to the bottom composer.
+- The editor is one wide, rounded composer surface using the same border, background, spacing, transparent textarea, and focus treatment as the main Codex-style message input. It must not render a second bordered textarea inside that surface.
 - The editor starts with the exact original structured prompt: text, attachments, images, skills, and mention bindings when those inputs are durably available.
 - The existing bottom composer and any unsent draft remain untouched.
 - The editor uses the conversation's readable width, grows with content up to a bounded height, and then scrolls internally.
 - Escape cancels. Command/Ctrl+Enter sends. Enter inserts a newline.
-- The footer has a quiet Cancel control and a primary Send control with the same send-arrow treatment as the main composer. It does not say Save because no existing message is mutated.
+- The footer keeps the existing icon-only Cancel and Send controls unchanged. It does not say Save because no existing message is mutated.
 
 ### Sending and branch navigation
 
