@@ -27,7 +27,32 @@ const agentSwitchRequestFingerprintPrefix = "v1:"
 // ComputeAgentSwitchRequestFingerprint deterministically binds an idempotency
 // key to the stable request tuple. Note whitespace is normalized in the same
 // way as the switch entry point before it is hashed.
-func ComputeAgentSwitchRequestFingerprint(sessionID SessionID, targetHarness AgentHarness, note string) AgentSwitchRequestFingerprint {
+func ComputeAgentSwitchRequestFingerprint(sessionID SessionID, targetHarness AgentHarness, note, model string) AgentSwitchRequestFingerprint {
+	payload, _ := json.Marshal(struct {
+		SessionID     SessionID    `json:"sessionId"`
+		TargetHarness AgentHarness `json:"targetHarness"`
+		Note          string       `json:"note"`
+		Model         string       `json:"model"`
+	}{
+		SessionID:     sessionID,
+		TargetHarness: targetHarness,
+		Note:          strings.TrimSpace(note),
+		Model:         strings.TrimSpace(model),
+	})
+	sum := sha256.Sum256(payload)
+	return AgentSwitchRequestFingerprint(agentSwitchRequestFingerprintPrefix + hex.EncodeToString(sum[:]))
+}
+
+// MatchesRequest preserves idempotent retries created before model selection
+// became part of the switch request. A legacy fingerprint can only match when
+// no model override is requested because the old tuple did not bind that field.
+func (f AgentSwitchRequestFingerprint) MatchesRequest(sessionID SessionID, targetHarness AgentHarness, note, model string) bool {
+	if f == ComputeAgentSwitchRequestFingerprint(sessionID, targetHarness, note, model) {
+		return true
+	}
+	if strings.TrimSpace(model) != "" {
+		return false
+	}
 	payload, _ := json.Marshal(struct {
 		SessionID     SessionID    `json:"sessionId"`
 		TargetHarness AgentHarness `json:"targetHarness"`
@@ -38,7 +63,7 @@ func ComputeAgentSwitchRequestFingerprint(sessionID SessionID, targetHarness Age
 		Note:          strings.TrimSpace(note),
 	})
 	sum := sha256.Sum256(payload)
-	return AgentSwitchRequestFingerprint(agentSwitchRequestFingerprintPrefix + hex.EncodeToString(sum[:]))
+	return f == AgentSwitchRequestFingerprint(agentSwitchRequestFingerprintPrefix+hex.EncodeToString(sum[:]))
 }
 
 // Valid reports whether a persisted fingerprint uses AO's current canonical

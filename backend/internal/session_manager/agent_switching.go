@@ -51,6 +51,7 @@ var (
 // replacement.
 type SwitchAgentConfig struct {
 	TargetHarness  domain.AgentHarness
+	Model          string
 	Note           string
 	IdempotencyKey string
 }
@@ -130,14 +131,15 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w", id, err)
 	}
 	cfg.TargetHarness = domain.AgentHarness(strings.TrimSpace(string(cfg.TargetHarness)))
+	cfg.Model = strings.TrimSpace(cfg.Model)
 	cfg.Note = boundedString(strings.TrimSpace(cfg.Note), maxSwitchNoteBytes)
 	cfg.IdempotencyKey = strings.TrimSpace(cfg.IdempotencyKey)
-	requestFingerprint := domain.ComputeAgentSwitchRequestFingerprint(id, cfg.TargetHarness, cfg.Note)
+	requestFingerprint := domain.ComputeAgentSwitchRequestFingerprint(id, cfg.TargetHarness, cfg.Note, cfg.Model)
 	if cfg.IdempotencyKey != "" {
 		if existing, ok, err := store.GetAgentSwitchByIdempotencyKey(ctx, id, cfg.IdempotencyKey); err != nil {
 			return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: idempotency lookup: %w", id, err)
 		} else if ok {
-			if existing.RequestFingerprint != requestFingerprint {
+			if !existing.RequestFingerprint.MatchesRequest(id, cfg.TargetHarness, cfg.Note, cfg.Model) {
 				return existing, nil, fmt.Errorf("switch agent %s: %w", id, domain.ErrAgentSwitchIdempotencyConflict)
 			}
 			return existing, nil, nil
@@ -345,7 +347,7 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	// Resolve credentials, native-resume evidence, and launch commands before
 	// asking the source to spend a model turn. This preflight does not install
 	// target workspace files or reserve a target generation in durable storage.
-	target, err := m.prepareTargetActivation(ctx, store, rec, project, targetAgent, targetCapabilities, result)
+	target, err := m.prepareTargetActivation(ctx, store, rec, project, targetAgent, targetCapabilities, result, cfg.Model)
 	if err != nil {
 		return result, fmt.Errorf("switch agent %s: target preflight: %w", id, err)
 	}
@@ -902,7 +904,7 @@ func (m *Manager) preserveCurrentNativeSession(ctx context.Context, store ports.
 	return stored, err
 }
 
-func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, caps ports.ContinuationCapabilities, sw domain.AgentSwitch) (preparedTargetActivation, error) {
+func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, caps ports.ContinuationCapabilities, sw domain.AgentSwitch, modelOverride string) (preparedTargetActivation, error) {
 	harness := sw.TargetHarness
 	if checker, ok := agent.(ports.AgentAuthChecker); ok {
 		status, authErr := checker.AuthStatus(ctx)
@@ -922,6 +924,9 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 		return preparedTargetActivation{}, fmt.Errorf("system prompt file: %w", err)
 	}
 	config := effectiveAgentConfig(rec.Kind, project.Config)
+	if model := strings.TrimSpace(modelOverride); model != "" {
+		config.Model = model
+	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	configDir, err := nativeConfigDir(ctx, agent, env)

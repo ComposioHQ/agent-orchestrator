@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSwitch } from "../hooks/useAgentSwitches";
 import type { SwitchAgentInput } from "../hooks/useSwitchAgent";
+import { agentModelsQueryKey } from "../hooks/useAgentModelsQuery";
 import type { AgentSwitchSummary, WorkspaceSession } from "../types/workspace";
 import { SwitchAgentDialog } from "./SwitchAgentDialog";
 
@@ -75,6 +76,23 @@ function renderDialog(session: WorkspaceSession = worker, onOpenChange = vi.fn()
 	const queryClient = new QueryClient({
 		defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
 	});
+	for (const agentId of ["claude-code", "codex"]) {
+		queryClient.setQueryData(agentModelsQueryKey(agentId, session.workspaceId), {
+			agentId,
+			allowCustom: false,
+			fetchedAt: "2026-06-10T00:00:00Z",
+			models:
+				agentId === "codex"
+					? [
+							{ id: "gpt-5.4", label: "GPT-5.4", isDefault: true },
+							{ id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+						]
+					: [{ id: "claude-opus-4-6", label: "Claude Opus 4.6", isDefault: true }],
+			selectionMode: "catalog",
+			source: "test",
+			stale: false,
+		});
+	}
 	const result = render(
 		<QueryClientProvider client={queryClient}>
 			<SwitchAgentDialog onOpenChange={onOpenChange} open session={session} />
@@ -95,15 +113,32 @@ beforeEach(() => {
 });
 
 describe("SwitchAgentDialog", () => {
+	it("matches the New task composer and omits switch history", () => {
+		switchMocks.query.data = [switchRecord({ state: "completed" }) as AgentSwitch];
+		renderDialog();
+
+		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
+		expect(dialog.querySelector(".composer-prompt-surface")).not.toBeNull();
+		expect(
+			within(dialog).getByText((_content, element) => element?.textContent === "Claude Code → Codex"),
+		).toBeInTheDocument();
+		expect(within(dialog).getByLabelText("Note (optional)")).toHaveClass("resize-none");
+		expect(within(dialog).queryByText("Switch history")).not.toBeInTheDocument();
+		expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+	});
+
 	it("closes only after switch admission succeeds", async () => {
 		const { onOpenChange } = renderDialog();
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
+		await userEvent.click(within(dialog).getByRole("button", { name: "Model" }));
+		await userEvent.click(screen.getByRole("menuitem", { name: "GPT-5.4 Mini" }));
 
 		await userEvent.click(within(dialog).getByRole("button", { name: "Switch" }));
 
 		expect(switchMocks.mutate).toHaveBeenCalledWith(
 			{
 				idempotencyKey: "idempotency-1",
+				model: "gpt-5.4-mini",
 				note: "",
 				session: worker,
 				targetHarness: "codex",
@@ -120,6 +155,7 @@ describe("SwitchAgentDialog", () => {
 	it("keeps admission controls visible but disabled while displaying Starting...", () => {
 		switchMocks.state.input = {
 			idempotencyKey: "idempotency-1",
+			model: "gpt-5.4",
 			note: "keep context",
 			session: worker,
 			targetHarness: "codex",
@@ -129,16 +165,17 @@ describe("SwitchAgentDialog", () => {
 		renderDialog();
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
 
-		expect(within(dialog).getByRole("combobox", { name: "Target agent" })).toBeDisabled();
+		expect(within(dialog).getByRole("button", { name: "Target agent" })).toBeDisabled();
+		expect(within(dialog).getByRole("button", { name: "Model" })).toBeDisabled();
 		expect(within(dialog).getByLabelText("Note (optional)")).toBeDisabled();
-		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeDisabled();
-		expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
+		expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
 		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
 	});
 
 	it("keeps raw admission pending non-dismissible when a durable row appears", async () => {
 		switchMocks.state.input = {
 			idempotencyKey: "idempotency-1",
+			model: "gpt-5.4",
 			note: "keep context",
 			session: worker,
 			targetHarness: "codex",
@@ -150,8 +187,7 @@ describe("SwitchAgentDialog", () => {
 
 		expect(within(dialog).getByRole("status")).toHaveTextContent("Starting target agent");
 		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
-		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeDisabled();
-		expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
+		expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
 		await userEvent.keyboard("{Escape}");
 		expect(screen.getByRole("dialog", { name: "Switch agent" })).toBeInTheDocument();
 	});

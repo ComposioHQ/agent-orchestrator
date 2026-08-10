@@ -47,7 +47,7 @@ func TestListActiveAgentSwitchesExcludesTerminalRows(t *testing.T) {
 		}
 		rec := domain.AgentSwitch{
 			ID: switchID, SessionID: session.ID, IdempotencyKey: string(switchID),
-			RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+			RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "", ""),
 			FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
 			State: domain.AgentSwitchPreparingHandoff, TargetStartMode: domain.AgentSwitchTargetStartPending,
 			AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: domain.AgentGenerationID("generation-" + projectID),
@@ -190,7 +190,7 @@ func TestAgentSwitchIdempotencySingleActiveSagaAndGenerationFences(t *testing.T)
 	now := time.Now().UTC().Truncate(time.Second)
 	switchRec := domain.AgentSwitch{
 		ID: "switch-1", SessionID: session.ID, IdempotencyKey: "request-1",
-		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "", ""),
 		FromHarness:        domain.HarnessClaudeCode,
 		TargetHarness:      domain.HarnessCodex,
 		State:              domain.AgentSwitchPreparingHandoff, TargetStartMode: domain.AgentSwitchTargetStartPending,
@@ -226,7 +226,7 @@ func TestAgentSwitchIdempotencySingleActiveSagaAndGenerationFences(t *testing.T)
 	}
 
 	conflictingRetry := retry
-	conflictingRetry.RequestFingerprint = domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "different note")
+	conflictingRetry.RequestFingerprint = domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "different note", "")
 	if _, _, err := s.CreateAgentSwitch(ctx, conflictingRetry); !errors.Is(err, domain.ErrAgentSwitchIdempotencyConflict) {
 		t.Fatalf("conflicting idempotency key err=%v", err)
 	}
@@ -361,7 +361,7 @@ func TestAgentSwitchTargetStartUnconfirmedMarkerIsNonTerminalAndMonotonic(t *tes
 	targetRef := target.ID
 	sw, created, err := s.CreateAgentSwitch(ctx, domain.AgentSwitch{
 		ID: "switch-recovery", SessionID: session.ID, IdempotencyKey: "switch-recovery",
-		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "", ""),
 		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
 		State: domain.AgentSwitchPreparingHandoff, TargetStartMode: domain.AgentSwitchTargetStartPending,
 		AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: "source-generation",
@@ -433,7 +433,7 @@ func TestAgentHandoffOutcomeIsMonotonicWhenTimeoutWins(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	switchRec := domain.AgentSwitch{
 		ID: "switch-timeout", SessionID: session.ID, IdempotencyKey: "request-timeout",
-		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "", ""),
 		FromHarness:        domain.HarnessClaudeCode,
 		TargetHarness:      domain.HarnessCodex, State: domain.AgentSwitchPreparingHandoff,
 		AgentHandoffStatus: domain.AgentHandoffNotAttempted,
@@ -471,7 +471,7 @@ func TestAgentHandoffUnavailableClosesRequestedLaneDuringRecovery(t *testing.T) 
 	now := time.Now().UTC().Truncate(time.Second)
 	sw := domain.AgentSwitch{
 		ID: "switch-recovery-handoff", SessionID: session.ID, IdempotencyKey: "request-recovery-handoff",
-		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "", ""),
 		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
 		State: domain.AgentSwitchPreparingHandoff, AgentHandoffStatus: domain.AgentHandoffNotAttempted,
 		SourceGenerationID: "source-generation", RequestedAt: now, UpdatedAt: now,
@@ -553,7 +553,7 @@ func TestAgentSwitchRejectsNativeReferenceFromAnotherAOSession(t *testing.T) {
 	}
 	base, created, err := s.CreateAgentSwitch(ctx, domain.AgentSwitch{
 		ID: "cross-session", SessionID: first.ID, IdempotencyKey: "cross-session",
-		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(first.ID, domain.HarnessCodex, ""),
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(first.ID, domain.HarnessCodex, "", ""),
 		FromHarness:        domain.HarnessClaudeCode,
 		TargetHarness:      domain.HarnessCodex,
 		State:              domain.AgentSwitchPreparingHandoff,
@@ -588,7 +588,7 @@ func TestAgentSwitchRejectsTargetNativeReferenceWithWrongHarness(t *testing.T) {
 
 	base := domain.AgentSwitch{
 		ID: "wrong-target-switch", SessionID: session.ID, IdempotencyKey: "wrong-target-switch",
-		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "", ""),
 		FromHarness:        domain.HarnessClaudeCode,
 		TargetHarness:      domain.HarnessCodex,
 		State:              domain.AgentSwitchPreparingHandoff,
@@ -640,7 +640,7 @@ func TestAgentSwitchTargetAcknowledgementIsGenerationFencedAndWriteOnce(t *testi
 	targetRef := target.ID
 	sw := domain.AgentSwitch{
 		ID: "switch-ack", SessionID: session.ID, IdempotencyKey: "switch-ack",
-		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "", ""),
 		FromHarness:        domain.HarnessClaudeCode,
 		TargetHarness:      domain.HarnessCodex, State: domain.AgentSwitchPreparingHandoff,
 		AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: "source-generation",
@@ -718,7 +718,7 @@ func TestAgentSwitchDeliveryFailureIsAtomicWithAcknowledgement(t *testing.T) {
 			targetRef := target.ID
 			sw := domain.AgentSwitch{
 				ID: "switch-delivery", SessionID: session.ID, IdempotencyKey: "switch-delivery",
-				RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+				RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "", ""),
 				FromHarness:        domain.HarnessClaudeCode,
 				TargetHarness:      domain.HarnessCodex, State: domain.AgentSwitchPreparingHandoff,
 				AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: "source-generation",
@@ -825,7 +825,7 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	targetRef := target.ID
 	sw := domain.AgentSwitch{
 		ID: "switch-activation", SessionID: session.ID, IdempotencyKey: "switch-activation",
-		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "keep going"),
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "keep going", ""),
 		FromHarness:        domain.HarnessClaudeCode,
 		TargetHarness:      domain.HarnessCodex, State: domain.AgentSwitchPreparingHandoff,
 		AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: "source-switch-generation",
@@ -1020,7 +1020,7 @@ func TestAgentSwitchOwnershipTransactionsRejectTerminatedSession(t *testing.T) {
 	targetRef := target.ID
 	sw := domain.AgentSwitch{
 		ID: "switch-terminated", SessionID: session.ID, IdempotencyKey: "switch-terminated",
-		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "", ""),
 		FromHarness:        domain.HarnessClaudeCode,
 		TargetHarness:      domain.HarnessCodex, TargetNativeSessionRef: nil,
 		State:              domain.AgentSwitchPreparingHandoff,
@@ -1080,7 +1080,7 @@ func TestAgentSwitchAndOwnerChangesEmitSessionInvalidationCDC(t *testing.T) {
 	baseSeq, _ := s.LatestSeq(ctx)
 	sw := domain.AgentSwitch{
 		ID: "switch-cdc", SessionID: session.ID, IdempotencyKey: "switch-cdc",
-		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, "", ""),
 		FromHarness:        domain.HarnessClaudeCode,
 		TargetHarness:      domain.HarnessCodex, State: domain.AgentSwitchPreparingHandoff,
 		AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: "source-generation",

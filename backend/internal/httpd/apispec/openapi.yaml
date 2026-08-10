@@ -7438,6 +7438,10 @@ components:
             rejected.
           maxLength: 128
           type: string
+        model:
+          description: Optional model override for the target agent launch or resume.
+          maxLength: 256
+          type: string
         note:
           description: Optional user guidance included in the bounded handoff context.
           maxLength: 4096

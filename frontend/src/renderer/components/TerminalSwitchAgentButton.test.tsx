@@ -77,7 +77,25 @@ function renderControl(session: WorkspaceSession = worker) {
 
 beforeEach(() => {
 	getMock.mockReset();
-	getMock.mockResolvedValue({ data: { switches: [] }, error: undefined, response: { status: 200 } });
+	getMock.mockImplementation(async (path: string, options?: { params?: { path?: { agent?: string } } }) => {
+		if (path === "/api/v1/agents/{agent}/models") {
+			const agentId = options?.params?.path?.agent ?? "codex";
+			return {
+				data: {
+					agentId,
+					allowCustom: false,
+					fetchedAt: "2026-06-10T00:00:00Z",
+					models: [{ id: agentId === "codex" ? "gpt-5.4" : "claude-opus-4-6", label: "Default" }],
+					selectionMode: "catalog",
+					source: "test",
+					stale: false,
+				},
+				error: undefined,
+				response: { status: 200 },
+			};
+		}
+		return { data: { switches: [] }, error: undefined, response: { status: 200 } };
+	});
 	postMock.mockReset();
 });
 
@@ -110,11 +128,11 @@ describe("TerminalSwitchAgentButton", () => {
 
 		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
-		const targetAgent = within(dialog).getByRole("combobox", { name: "Target agent" });
+		const targetAgent = within(dialog).getByRole("button", { name: "Target agent" });
 		expect(targetAgent).toHaveTextContent("Codex");
 		await userEvent.click(targetAgent);
-		expect(screen.getAllByRole("option")).toHaveLength(AGENT_OPTIONS.length);
-		expect(screen.getByRole("option", { name: /Cursor,\s*Coming soon/ })).toHaveAttribute("data-disabled");
+		expect(screen.getAllByRole("menuitem")).toHaveLength(AGENT_OPTIONS.length);
+		expect(screen.getByRole("menuitem", { name: /Cursor,\s*Coming soon/ })).toHaveAttribute("data-disabled");
 		await userEvent.keyboard("{Escape}");
 		await userEvent.type(within(dialog).getByLabelText("Note (optional)"), "  Check tests first.  ");
 		await userEvent.click(within(dialog).getByRole("button", { name: "Switch" }));
@@ -158,14 +176,14 @@ describe("TerminalSwitchAgentButton", () => {
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
 		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
-		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeDisabled();
+		expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
 		expect(document.querySelector('button[aria-label="Switching to Codex"]')).toHaveAttribute(
 			"aria-busy",
 			"true",
 		);
 	});
 
-	it("keeps a new admission busy above unrelated settled completion history", async () => {
+	it("ignores unrelated settled completion history during a new admission", async () => {
 		const settledSession = {
 			...worker,
 			provider: "codex",
@@ -181,7 +199,7 @@ describe("TerminalSwitchAgentButton", () => {
 
 		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
-		expect(await within(dialog).findByText("Completed")).toBeInTheDocument();
+		expect(within(dialog).queryByText("Completed")).not.toBeInTheDocument();
 		await userEvent.click(within(dialog).getByRole("button", { name: "Switch" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
@@ -287,50 +305,17 @@ describe("TerminalSwitchAgentButton", () => {
 		expect(button.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
 	});
 
-	it.each([
-		["target_binary_missing", "Target agent is not installed"],
-		["target_agent_unauthorized", "Target agent is not authenticated"],
-		["source_stop_unconfirmed", "Source shutdown unconfirmed"],
-		["daemon_restart_post_stop", "Recovery failed after source shutdown"],
-		["daemon_restart_unrecoverable_target", "Target agent could not be recovered"],
-		["delivery_unconfirmed", "Delivery unconfirmed"],
-		["future_error_code", "Failed"],
-	] as const)("renders an actionable history label for %s", async (errorCode, label) => {
+	it("does not expose durable switch history in the configuration dialog", async () => {
 		getMock.mockResolvedValue({
-			data: { switches: [switchRecord({ errorCode, state: "failed" })] },
+			data: { switches: [switchRecord({ state: "completed" })] },
 			error: undefined,
 			response: { status: 200 },
 		});
 		renderControl();
 
 		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
-		expect(within(screen.getByTestId("agent-switch-history")).getByText(label)).toBeInTheDocument();
-	});
-
-	it.each([
-		["marks completed history when AO had to use fallback context", false, true],
-		["does not mark completed history when the semantic handoff was included", true, false],
-	] as const)("%s", async (_label, semanticHandoffIncluded, expected) => {
-		getMock.mockResolvedValue({
-			data: {
-				switches: [
-					switchRecord({
-						agentHandoffStatus: "received",
-						semanticHandoffIncluded,
-						sourceTranscriptStatus: "unavailable",
-						state: "completed",
-					}),
-				],
-			},
-			error: undefined,
-			response: { status: 200 },
-		});
-		renderControl();
-
-		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
-		const fallbackLabel = within(screen.getByTestId("agent-switch-history")).queryByText("Fallback context used");
-		if (expected) expect(fallbackLabel).toBeInTheDocument();
-		else expect(fallbackLabel).not.toBeInTheDocument();
+		expect(screen.queryByText("Switch history")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("agent-switch-history")).not.toBeInTheDocument();
 	});
 
 	it("reopens a rejected switch and retries with a fresh idempotency key", async () => {

@@ -2594,6 +2594,8 @@ export interface components {
         SwitchAgentRequest: {
             /** @description Optional retry key. Reusing it with a different request is rejected. */
             idempotencyKey?: string;
+            /** @description Optional model override for the target agent launch or resume. */
+            model?: string;
             /** @description Optional user guidance included in the bounded handoff context. */
             note?: string;
             /**

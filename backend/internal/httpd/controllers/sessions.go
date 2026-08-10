@@ -1051,6 +1051,11 @@ func (c *SessionsController) switchAgent(w http.ResponseWriter, r *http.Request)
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "TARGET_HARNESS_REQUIRED", "targetHarness is required", nil)
 		return
 	}
+	model := strings.TrimSpace(in.Model)
+	if utf8.RuneCountInString(model) > maxModelLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MODEL_TOO_LONG", "Model must be 256 characters or fewer", nil)
+		return
+	}
 	note := domain.SanitizeControlChars(strings.TrimSpace(in.Note))
 	if len(note) > maxSwitchNoteLen {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "SWITCH_NOTE_TOO_LONG", "note is too long", nil)
@@ -1063,6 +1068,7 @@ func (c *SessionsController) switchAgent(w http.ResponseWriter, r *http.Request)
 	}
 	switchRecord, err := c.Svc.SwitchAgent(r.Context(), sessionID(r), sessionsvc.SwitchAgentInput{
 		TargetHarness:  targetHarness,
+		Model:          model,
 		Note:           note,
 		IdempotencyKey: idempotencyKey,
 	})

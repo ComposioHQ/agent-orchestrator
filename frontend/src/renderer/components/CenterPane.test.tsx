@@ -170,6 +170,7 @@ describe("CenterPane toolbar session label", () => {
 	it("uses mutation input only while switch admission is still pending", () => {
 		agentSwitchMocks.mutation.input = {
 			idempotencyKey: "switch-request-1",
+			model: "",
 			note: "",
 			session: worker,
 			targetHarness: "codex",
@@ -181,6 +182,8 @@ describe("CenterPane toolbar session label", () => {
 		const overlay = screen.getByRole("status", { name: "Switching from Claude Code to Codex" });
 		const terminalPanel = screen.getByRole("tabpanel", { name: "do the thing terminal" });
 		expect(terminalPanel).toContainElement(overlay);
+		expect(overlay).toHaveClass("backdrop-blur-[3px]");
+		expect(within(overlay).getByTestId("agent-switch-transition-card")).toBeInTheDocument();
 		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
 		expect(within(overlay).getByText("Claude Code")).toBeInTheDocument();
 		expect(within(overlay).getByText("Codex")).toBeInTheDocument();
@@ -196,6 +199,7 @@ describe("CenterPane toolbar session label", () => {
 		agentSwitchMocks.switches.push(switchRecord({ state: "completed" }));
 		agentSwitchMocks.mutation.input = {
 			idempotencyKey: "switch-request-2",
+			model: "",
 			note: "",
 			session: settledSession,
 			targetHarness: "claude-code",

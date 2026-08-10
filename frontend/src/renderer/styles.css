@@ -1388,7 +1388,20 @@ textarea,
 }
 
 .agent-switch-progress-step.is-current .agent-switch-progress-dot {
+	animation: agent-switch-step-pulse 1.4s ease-in-out infinite;
 	box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+@keyframes agent-switch-step-pulse {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.55;
+		transform: scale(0.72);
+	}
 }
 
 @keyframes agent-switch-transfer {
@@ -1412,6 +1425,10 @@ textarea,
 	.agent-switch-transfer-pulse {
 		left: calc(50% - 1.25rem);
 		opacity: 0.85;
+		animation: none;
+	}
+
+	.agent-switch-progress-step.is-current .agent-switch-progress-dot {
 		animation: none;
 	}
 

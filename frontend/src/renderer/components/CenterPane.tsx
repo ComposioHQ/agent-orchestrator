@@ -656,7 +656,10 @@ function AgentSwitchTerminalOverlay({
 					</div>
 				</div>
 			) : (
-				<div className="flex max-w-lg flex-col items-center gap-5 px-6 text-center">
+				<div
+					className="flex max-w-lg flex-col items-center gap-5 rounded-xl border border-border-strong bg-surface/95 px-8 py-6 text-center shadow-xl shadow-black/20"
+					data-testid="agent-switch-transition-card"
+				>
 					<div className="flex items-center gap-5 sm:gap-7">
 						<SwitchingAgentMark harness={agentSwitch.fromHarness} />
 						<div aria-hidden="true" className="flex items-center gap-2 text-accent">

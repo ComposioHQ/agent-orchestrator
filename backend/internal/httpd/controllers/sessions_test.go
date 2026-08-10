@@ -500,6 +500,7 @@ func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/switch-agent", `{
 		"targetHarness":"codex",
+		"model":" gpt-5.4 ",
 		"note":" continue the review ",
 		"idempotencyKey":"retry-1"
 	}`)
@@ -521,7 +522,7 @@ func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
 	if !switched.Switch.SemanticHandoffIncluded {
 		t.Fatal("semantic handoff inclusion fact was not projected")
 	}
-	if svc.switchConfig.Note != "continue the review" || svc.switchConfig.IdempotencyKey != "retry-1" {
+	if svc.switchConfig.Model != "gpt-5.4" || svc.switchConfig.Note != "continue the review" || svc.switchConfig.IdempotencyKey != "retry-1" {
 		t.Fatalf("switch config = %+v", svc.switchConfig)
 	}
 
@@ -658,6 +659,7 @@ func TestSessionsAPI_AgentSwitchValidationAndErrors(t *testing.T) {
 		wantCode string
 	}{
 		{name: "target required", method: http.MethodPost, path: "/api/v1/sessions/ao-1/switch-agent", body: `{}`, wantCode: "TARGET_HARNESS_REQUIRED"},
+		{name: "model bounded", method: http.MethodPost, path: "/api/v1/sessions/ao-1/switch-agent", body: `{"targetHarness":"codex","model":"` + strings.Repeat("x", 257) + `"}`, wantCode: "MODEL_TOO_LONG"},
 		{name: "note bounded", method: http.MethodPost, path: "/api/v1/sessions/ao-1/switch-agent", body: `{"targetHarness":"codex","note":"` + strings.Repeat("x", 4097) + `"}`, wantCode: "SWITCH_NOTE_TOO_LONG"},
 		{name: "source generation required", method: http.MethodPost, path: "/api/v1/sessions/ao-1/agent-switches/switch-1/handoff", body: `{"handoff":{}}`, wantCode: "SOURCE_GENERATION_REQUIRED"},
 		{name: "handoff required", method: http.MethodPost, path: "/api/v1/sessions/ao-1/agent-switches/switch-1/handoff", body: `{"sourceGenerationId":"generation-7"}`, wantCode: "HANDOFF_REQUIRED"},

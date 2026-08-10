@@ -392,7 +392,9 @@ type switchTestAgent struct {
 	freshNativeIDMode   ports.FreshNativeSessionIDMode
 	launchPrompt        string
 	launchNativeID      string
+	launchModel         string
 	restorePrompt       string
+	restoreModel        string
 	launchSystemPrompt  string
 	restoreSystemPrompt string
 	launchSystemFile    string
@@ -537,6 +539,7 @@ func (a *switchTestAgent) LocateTranscript(_ context.Context, ref ports.NativeSe
 func (a *switchTestAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
 	a.launchPrompt = cfg.Prompt
 	a.launchNativeID = cfg.NativeSessionID
+	a.launchModel = cfg.Config.Model
 	a.launchSystemPrompt = cfg.SystemPrompt
 	a.launchSystemFile = cfg.SystemPromptFile
 	return []string{"agent", "fresh", cfg.Prompt}, nil
@@ -548,6 +551,7 @@ func (a *switchTestAgent) GetRestoreCommand(_ context.Context, cfg ports.Restore
 		return nil, false, nil
 	}
 	a.restorePrompt = cfg.Prompt
+	a.restoreModel = cfg.Config.Model
 	a.restoreSystemPrompt = cfg.SystemPrompt
 	a.restoreSystemFile = cfg.SystemPromptFile
 	return []string{"agent", "resume", id, cfg.Prompt}, true, nil
@@ -1691,12 +1695,15 @@ func TestSwitchAgentResumesVerifiedPriorNativeSession(t *testing.T) {
 		LastGenerationID: "old-generation", CreatedAt: now, LastUsedAt: now,
 	}
 
-	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "resume-prior"})
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, Model: " target-model ", IdempotencyKey: "resume-prior"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sw.TargetStartMode != domain.AgentSwitchTargetStartResumed {
 		t.Fatalf("target mode = %q, want resumed", sw.TargetStartMode)
+	}
+	if target.restoreModel != "target-model" {
+		t.Fatalf("restore model = %q, want target-model", target.restoreModel)
 	}
 	if got := strings.Join(runtime.lastCfg.Argv, " "); !strings.Contains(got, "-- agent resume codex-prior ") || !strings.Contains(target.restoreSystemPrompt, "<ao-continuation") || target.restorePrompt != aoTargetActivationPrompt {
 		t.Fatalf("target argv = %q", got)
@@ -1717,12 +1724,15 @@ func TestSwitchAgentUnknownResumeEvidenceStartsFresh(t *testing.T) {
 		LastGenerationID: "old-generation", CreatedAt: now, LastUsedAt: now,
 	}
 
-	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "fresh-on-unknown"})
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, Model: " target-model ", IdempotencyKey: "fresh-on-unknown"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sw.TargetStartMode != domain.AgentSwitchTargetStartFresh || !strings.Contains(strings.Join(runtime.lastCfg.Argv, " "), "-- agent fresh ") || !strings.Contains(target.launchSystemPrompt, "<ao-continuation") || target.launchPrompt != aoTargetActivationPrompt {
 		t.Fatalf("unknown evidence should start fresh: mode=%q argv=%q", sw.TargetStartMode, strings.Join(runtime.lastCfg.Argv, " "))
+	}
+	if target.launchModel != "target-model" {
+		t.Fatalf("launch model = %q, want target-model", target.launchModel)
 	}
 }
 
@@ -1738,7 +1748,7 @@ func TestSwitchAgentLeavesFreshProviderAssignedNativeIDForTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := manager.prepareTargetActivation(context.Background(), store, rec, project, target, caps, domain.AgentSwitch{TargetHarness: domain.HarnessCodex}); err != nil {
+	if _, err := manager.prepareTargetActivation(context.Background(), store, rec, project, target, caps, domain.AgentSwitch{TargetHarness: domain.HarnessCodex}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if target.launchNativeID != "" {
@@ -2439,16 +2449,16 @@ func TestSwitchAgentCompletesWhenAcknowledgementWinsFailureCAS(t *testing.T) {
 	}
 }
 
-func TestSwitchAgentIdempotencyFingerprintIncludesNote(t *testing.T) {
+func TestSwitchAgentIdempotencyFingerprintIncludesNoteAndModel(t *testing.T) {
 	manager, _, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
 	first, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
-		TargetHarness: domain.HarnessCodex, IdempotencyKey: "same-key", Note: "preserve tests",
+		TargetHarness: domain.HarnessCodex, Model: "gpt-5.4", IdempotencyKey: "same-key", Note: "preserve tests",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	retry, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
-		TargetHarness: domain.HarnessCodex, IdempotencyKey: "same-key", Note: " preserve tests ",
+		TargetHarness: domain.HarnessCodex, Model: " gpt-5.4 ", IdempotencyKey: "same-key", Note: " preserve tests ",
 	})
 	if err != nil || retry.ID != first.ID {
 		t.Fatalf("same request retry = %+v, err=%v", retry, err)
@@ -2458,6 +2468,12 @@ func TestSwitchAgentIdempotencyFingerprintIncludesNote(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrAgentSwitchIdempotencyConflict) {
 		t.Fatalf("changed-note retry error = %v, want idempotency conflict", err)
+	}
+	_, err = switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
+		TargetHarness: domain.HarnessCodex, Model: "gpt-5.4-mini", IdempotencyKey: "same-key", Note: "preserve tests",
+	})
+	if !errors.Is(err, domain.ErrAgentSwitchIdempotencyConflict) {
+		t.Fatalf("changed-model retry error = %v, want idempotency conflict", err)
 	}
 }
 
@@ -2724,7 +2740,7 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 			targetRef := targetNative.ID
 			sw := domain.AgentSwitch{
 				ID: "switch-recovery", SessionID: "proj-1", IdempotencyKey: "recovery",
-				RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, ""),
+				RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, "", ""),
 				FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
 				TargetNativeSessionRef: &targetRef, TargetStartMode: domain.AgentSwitchTargetStartFresh,
 				State:              tt.state,
@@ -2798,7 +2814,7 @@ func TestReconcileRejectsTargetGenerationWithoutProviderNativeIdentity(t *testin
 	ref := targetNative.ID
 	sw := domain.AgentSwitch{
 		ID: "switch-provider-id-pending", SessionID: "proj-1", IdempotencyKey: "provider-id-pending",
-		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, ""),
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, "", ""),
 		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
 		TargetNativeSessionRef: &ref, TargetStartMode: domain.AgentSwitchTargetStartFresh,
 		State: domain.AgentSwitchStartingTarget, AgentHandoffStatus: domain.AgentHandoffUnavailable,
