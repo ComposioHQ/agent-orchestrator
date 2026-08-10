@@ -208,7 +208,7 @@ export function SessionInspector({
 		<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
 			<div className="session-inspector__topbar flex h-inspector-tabs shrink-0 items-center border-b border-border pl-2.5">
 				{isInspectorVisible ? (
-					<div className="flex min-w-0 flex-1 items-center gap-0.5" role="tablist">
+					<div className="session-inspector__tabs flex min-w-0 flex-1 items-center gap-0.5" role="tablist">
 						{views.map((entry) => (
 							<button
 								aria-label={entry.label}
@@ -245,18 +245,20 @@ export function SessionInspector({
 						))}
 					</div>
 				) : null}
-				{isInspectorVisible ? notificationAction : null}
 				{isInspectorVisible ? (
-					<TopbarButton
-						aria-expanded="true"
-						aria-label={t("shell.closeInspector")}
-						className="session-inspector__toggle ml-1.5 shrink-0"
-						onClick={onToggleVisibility}
-						title={t("shell.closeInspectorTitle")}
-						variant="icon"
-					>
-						<PanelRightClose className="size-icon-lg" aria-hidden="true" />
-					</TopbarButton>
+					<div className="session-inspector__utility-actions">
+						{notificationAction}
+						<TopbarButton
+							aria-expanded="true"
+							aria-label={t("shell.closeInspector")}
+							className="session-inspector__toggle shrink-0"
+							onClick={onToggleVisibility}
+							title={t("shell.closeInspectorTitle")}
+							variant="icon"
+						>
+							<PanelRightClose className="size-icon-lg" aria-hidden="true" />
+						</TopbarButton>
+					</div>
 				) : null}
 			</div>
 
