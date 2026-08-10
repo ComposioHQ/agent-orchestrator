@@ -32,8 +32,8 @@ export function MobileAppCTA() {
   // swap (dialog -> sheet), not a text change; it merely looks seamless
   // because TRIGGER_CLASS here and the trigger className in TestFlightDialog
   // are byte-identical. Keep the two in sync or the swap will visibly jump.
-  // Android and desktop both keep the original QR dialog. Android additionally
-  // sees the untouched "Android coming soon" chip beside it.
+  // Android and desktop both keep the original iOS QR dialog; Android gets its
+  // own direct-install sheet from the neighboring AndroidAppCTA.
   if (mobileOS !== "ios") return <TestFlightDialog />;
 
   return (

@@ -8,7 +8,8 @@ import {
 import { Download } from "lucide-react";
 import type { Metadata } from "next";
 import Image from "next/image";
-import { FaAndroid, FaApple, FaLinux, FaWindows } from "react-icons/fa";
+import { FaApple, FaLinux, FaWindows } from "react-icons/fa";
+import { AndroidAppCTA } from "./AndroidAppCTA";
 import { MobileAppCTA } from "./MobileAppCTA";
 import { PlatformDownloadButton } from "./PlatformDownloadButton";
 import { DesktopAppPreview, PhoneAppPreview } from "./StaticAppPreviews";
@@ -16,7 +17,7 @@ import { DesktopAppPreview, PhoneAppPreview } from "./StaticAppPreviews";
 export const metadata: Metadata = {
   title: "Download",
   description:
-    "Download Agent Orchestrator for macOS, Windows, or Linux, and join the iOS TestFlight beta of the mobile companion.",
+    "Download Agent Orchestrator for macOS, Windows, or Linux, or join the AO Mobile beta on iOS and Android.",
 };
 
 interface GitHubReleaseAsset {
@@ -222,10 +223,7 @@ export default async function DownloadPage() {
                 </p>
                 <div className="mt-6 flex flex-wrap items-center gap-3">
                   <MobileAppCTA />
-                  <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-3xl border border-border px-3 py-2 text-sm font-semibold tracking-[-0.5px] text-muted-foreground sm:px-6 sm:py-3 sm:text-base">
-                    <FaAndroid className="size-4 shrink-0" aria-hidden="true" />
-                    Android coming soon
-                  </span>
+                  <AndroidAppCTA />
                 </div>
               </div>
             </article>
