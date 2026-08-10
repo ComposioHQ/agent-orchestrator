@@ -101,12 +101,12 @@ describe("ShellTerminalTab rename", () => {
 			"h-full",
 			"translate-x-0",
 			"rounded-l-[3px]",
-			"border-foreground/15",
-			"bg-surface",
+			"border-foreground/25",
+			"bg-background",
 			"opacity-100",
 			"pointer-events-auto",
 		);
-		expect(actionTray).not.toHaveClass("bg-overlay/95", "bg-raised");
+		expect(actionTray).not.toHaveClass("bg-overlay/95", "bg-raised", "bg-surface");
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
 			"shrink-0",
 			"w-auto",

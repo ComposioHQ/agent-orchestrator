@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSwitch } from "../hooks/useAgentSwitches";
 import type { SwitchAgentInput } from "../hooks/useSwitchAgent";
 import { emptyTerminalBarLayout } from "../lib/terminal-tab-state";
+import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession } from "../types/workspace";
 import { CenterPane } from "./CenterPane";
 import type { TerminalTabStripProps } from "./TerminalTabStrip";
@@ -134,6 +135,7 @@ function renderCenterPane(props: Partial<ComponentProps<typeof CenterPane>> = {}
 }
 
 beforeEach(() => {
+	useUiStore.setState({ isSidebarOpen: true });
 	shortcutMocks.closeListener = undefined;
 	shortcutMocks.nextTabListener = undefined;
 	shortcutMocks.previousTabListener = undefined;
@@ -493,6 +495,13 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByRole("tablist", { name: "Open terminals" })).not.toHaveClass("pt-1.5");
 		expect(screen.queryByRole("button", { name: "Scroll tabs left" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
+	});
+
+	it("keeps the first terminal card right of the left navigation when the sidebar is collapsed", () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		renderCenterPane({ session: worker });
+
+		expect(screen.getByTestId("session-terminal-bar")).toHaveClass("pl-titlebar-content-offset");
 	});
 
 	it("keeps auxiliary tabs fixed-width inside their own scrollable strip", () => {
