@@ -189,9 +189,9 @@ ao start
 | [docs/STATUS.md](../docs/STATUS.md)                                 | Ce qui est actuellement livré sur `main` et ce qui est encore en cours.                      |
 | [docs/stack.md](../docs/stack.md)                                   | Décisions de bibliothèques, runtime et dépendances.                                          |
 
-## Télémétrie
+## Télémétrie anonyme
 
-Le renderer Electron d'Agent Orchestrator envoie des événements d'usage anonymes à PostHog pour la fiabilité et la compréhension produit. L'enregistrement de session PostHog est désactivé par défaut ; si une investigation limitée dans le temps l'active, les chemins locaux et les URL locales sont expurgés avant transmission. Définissez `VITE_AO_POSTHOG_KEY` sur une chaîne vide avant la compilation pour désactiver la transmission. Voir [docs/telemetry.md](../docs/telemetry.md).
+AO utilise des mesures d'usage et de fiabilité respectueuses de la vie privée — conçues pour exclure les PII et le contenu des projets — afin de mesurer l'adoption et d'améliorer le produit. [En savoir plus sur la télémétrie et la confidentialité](../docs/telemetry.md).
 
 ## Licence
 

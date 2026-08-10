@@ -39,20 +39,14 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
-	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
 // fakeSessionService captures the ports.SpawnConfig the controller decodes from
-// the CLI's request body. Every other method is a no-op so it satisfies the
-// controllers.SessionService interface.
+// the CLI's request body. Its embedded interface keeps unrelated controller
+// methods outside this DTO-drift test's fixture surface.
 type fakeSessionService struct {
+	controllers.SessionService
 	spawned ports.SpawnConfig
-}
-
-var _ controllers.SessionService = (*fakeSessionService)(nil)
-
-func (f *fakeSessionService) List(context.Context, sessionsvc.ListFilter) ([]domain.Session, error) {
-	return nil, nil
 }
 
 func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
@@ -62,97 +56,6 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 		Status:        domain.StatusIdle,
 	}, len(cfg.Prompt), 0, nil
 }
-
-func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, _ bool, _ domain.SessionMode) (domain.Session, error) {
-	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
-	return s, err
-}
-
-func (f *fakeSessionService) DelegateTask(context.Context, sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error) {
-	return sessionsvc.DelegateTaskOutcome{}, nil
-}
-
-func (f *fakeSessionService) Get(context.Context, domain.SessionID) (domain.Session, error) {
-	return domain.Session{}, nil
-}
-
-func (f *fakeSessionService) Restore(context.Context, domain.SessionID) (sessionsvc.RestoreOutcome, error) {
-	return sessionsvc.RestoreOutcome{}, nil
-}
-
-func (f *fakeSessionService) ResumeAgent(context.Context, domain.SessionID) (sessionsvc.ResumeAgentOutcome, error) {
-	return sessionsvc.ResumeAgentOutcome{}, nil
-}
-
-func (f *fakeSessionService) Kill(context.Context, domain.SessionID) (bool, error) {
-	return false, nil
-}
-
-func (f *fakeSessionService) RollbackSpawn(context.Context, domain.SessionID) (sessionsvc.RollbackOutcome, error) {
-	return sessionsvc.RollbackOutcome{}, nil
-}
-
-func (f *fakeSessionService) Cleanup(context.Context, domain.ProjectID) (sessionsvc.CleanupOutcome, error) {
-	return sessionsvc.CleanupOutcome{}, nil
-}
-
-func (f *fakeSessionService) Rename(context.Context, domain.SessionID, string) error {
-	return nil
-}
-
-func (f *fakeSessionService) SetPreview(context.Context, domain.SessionID, string) (domain.Session, error) {
-	return domain.Session{}, nil
-}
-
-func (f *fakeSessionService) SetTerminateOnPRMerge(context.Context, domain.SessionID, bool) (domain.Session, error) {
-	return domain.Session{}, nil
-}
-
-func (f *fakeSessionService) SetAutoInjectReview(context.Context, domain.SessionID, bool) (domain.Session, error) {
-	return domain.Session{}, nil
-}
-
-func (f *fakeSessionService) Pin(context.Context, domain.SessionID) (domain.Session, error) {
-	return domain.Session{}, nil
-}
-
-func (f *fakeSessionService) Unpin(context.Context, domain.SessionID) (domain.Session, error) {
-	return domain.Session{}, nil
-}
-
-func (f *fakeSessionService) SetReviewerHarness(context.Context, domain.SessionID, domain.ReviewerHarness) (domain.Session, error) {
-	return domain.Session{}, nil
-}
-
-func (f *fakeSessionService) Send(context.Context, domain.SessionID, string, *ports.SpawnAttachment) error {
-	return nil
-}
-
-func (f *fakeSessionService) ListPRSummaries(context.Context, domain.SessionID) ([]sessionsvc.PRSummary, error) {
-	return nil, nil
-}
-
-func (f *fakeSessionService) ClaimPR(context.Context, domain.SessionID, string, sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error) {
-	return sessionsvc.ClaimPRResult{}, nil
-}
-
-func (f *fakeSessionService) ListWorkspaceFiles(context.Context, domain.SessionID) (sessionsvc.WorkspaceFiles, error) {
-	return sessionsvc.WorkspaceFiles{}, nil
-}
-
-func (f *fakeSessionService) WorkspaceWatchPaths(context.Context, domain.SessionID) ([]string, error) {
-	return nil, nil
-}
-
-func (f *fakeSessionService) GetWorkspaceFile(context.Context, domain.SessionID, string) (sessionsvc.WorkspaceFileDetail, error) {
-	return sessionsvc.WorkspaceFileDetail{}, nil
-}
-
-func (f *fakeSessionService) StageAttachments(context.Context, domain.SessionID, []ports.SpawnAttachment) ([]string, error) {
-	return nil, nil
-}
-
-func (f *fakeSessionService) InvalidateWorkspaceCache(domain.SessionID) {}
 
 type fakeAgentCatalog struct{}
 

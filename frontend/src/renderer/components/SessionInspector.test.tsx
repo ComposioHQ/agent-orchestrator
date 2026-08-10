@@ -7,7 +7,6 @@ import { SessionInspector } from "./SessionInspector";
 import { TooltipProvider } from "./ui/tooltip";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
-import { sessionUsageDetailQueryKey, type SessionUsage } from "../hooks/useSessionUsage";
 import { sessionWorkspaceFilesQueryKey } from "../hooks/useSessionWorkspaceFiles";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useUiStore } from "../stores/ui-store";
@@ -109,46 +108,6 @@ const prSummary = (
 	};
 };
 
-const usageTelemetry = (overrides: Partial<SessionUsage> = {}): SessionUsage => ({
-	sessionId: "sess-1",
-	incomplete: false,
-	totals: {
-		inputTokens: 1000,
-		uncachedInputTokens: 600,
-		cacheReadTokens: 400,
-		cacheWriteTokens: 0,
-		outputTokens: 200,
-		reasoningTokens: 40,
-	},
-	harnesses: [
-		{
-			harness: "codex",
-			totals: {
-				inputTokens: 1000,
-				uncachedInputTokens: 600,
-				cacheReadTokens: 400,
-				cacheWriteTokens: 0,
-				outputTokens: 200,
-				reasoningTokens: 40,
-			},
-			models: [
-				{
-					modelId: "gpt-5.6",
-					totals: {
-						inputTokens: 1000,
-						uncachedInputTokens: 600,
-						cacheReadTokens: 400,
-						cacheWriteTokens: 0,
-						outputTokens: 200,
-						reasoningTokens: 40,
-					},
-				},
-			],
-		},
-	],
-	...overrides,
-});
-
 function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[], seed?: (client: QueryClient) => void) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -167,9 +126,6 @@ function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[], s
 
 function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", reviews: unknown[] = []) {
 	getMock.mockImplementation(async (path: string) => {
-		if (path === "/api/v1/usage/sessions/{sessionId}") {
-			return { data: usageTelemetry(), error: undefined };
-		}
 		if (path === "/api/v1/agents") {
 			const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
 			return { data: { supported: agents, installed: agents, authorized: agents } };
@@ -233,7 +189,6 @@ const reviewState = (n: number, status: string, targetSha = `sha-${n}`) => ({
 });
 
 beforeEach(() => {
-	useUiStore.getState().setDeveloperMode(false);
 	getMock.mockReset();
 	navigateMock.mockReset();
 	patchMock.mockReset();
@@ -895,276 +850,6 @@ describe("SessionInspector Activity section", () => {
 	});
 });
 
-describe("SessionInspector Usage & cost section", () => {
-	beforeEach(() => {
-		useUiStore.getState().setDeveloperMode(true);
-	});
-
-	it("stays hidden and does not fetch detailed usage outside Developer Mode", async () => {
-		useUiStore.getState().setDeveloperMode(false);
-		renderWithQuery(<SessionInspector session={session([])} />);
-
-		expect(screen.queryByText("Usage & cost")).not.toBeInTheDocument();
-		await waitFor(() => expect(getMock.mock.calls.length).toBeGreaterThan(0));
-		expect(getMock.mock.calls.some(([path]) => path === "/api/v1/usage/sessions/{sessionId}")).toBe(false);
-	});
-
-	it("hides the section while detailed usage is loading", async () => {
-		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/usage/sessions/{sessionId}") {
-				return await new Promise(() => undefined);
-			}
-			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
-		});
-
-		renderWithQuery(<SessionInspector session={session([])} />);
-
-		await waitFor(() =>
-			expect(getMock).toHaveBeenCalledWith("/api/v1/usage/sessions/{sessionId}", {
-				params: { path: { sessionId: "sess-1" } },
-			}),
-		);
-		expect(screen.queryByText("Usage & cost")).not.toBeInTheDocument();
-	});
-
-	it("keeps API failures visible instead of silently hiding the section", async () => {
-		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/usage/sessions/{sessionId}") {
-				return { data: undefined, error: { message: "usage query failed" } };
-			}
-			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
-		});
-
-		renderWithQuery(<SessionInspector session={session([])} />);
-
-		const usageTitle = await screen.findByText("Usage & cost", undefined, { timeout: 2_500 });
-		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
-		expect(within(usageSection).getByRole("alert")).toHaveTextContent("Total tokens unavailable");
-	});
-
-	it("hides the section when no usage event or token value exists", async () => {
-		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/usage/sessions/{sessionId}") {
-				return {
-					data: usageTelemetry({
-						totals: {
-							inputTokens: null,
-							uncachedInputTokens: null,
-							cacheReadTokens: null,
-							cacheWriteTokens: null,
-							outputTokens: null,
-							reasoningTokens: null,
-						},
-						harnesses: [],
-					}),
-					error: undefined,
-				};
-			}
-			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
-		});
-
-		const { queryClient } = renderWithQuery(<SessionInspector session={session([])} />);
-
-		await waitFor(() =>
-			expect(queryClient.getQueryData(sessionUsageDetailQueryKey("sess-1"))).toEqual(
-				expect.objectContaining({ harnesses: [] }),
-			),
-		);
-		expect(screen.queryByText("Usage & cost")).not.toBeInTheDocument();
-	});
-
-	it("hides the section when an observed usage record has only zero token values", async () => {
-		const zeroUsage = usageTelemetry({
-			totals: {
-				inputTokens: 0,
-				uncachedInputTokens: 0,
-				cacheReadTokens: 0,
-				cacheWriteTokens: 0,
-				outputTokens: 0,
-				reasoningTokens: 0,
-			},
-			harnesses: [],
-		});
-		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/usage/sessions/{sessionId}") {
-				return { data: zeroUsage, error: undefined };
-			}
-			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
-		});
-
-		const { queryClient } = renderWithQuery(<SessionInspector session={session([])} />);
-		await waitFor(() =>
-			expect(queryClient.getQueryData(sessionUsageDetailQueryKey("sess-1"))).toEqual(zeroUsage),
-		);
-
-		expect(screen.queryByText("Usage & cost")).not.toBeInTheDocument();
-	});
-
-	it("shows token telemetry and expands agent and model details on click", async () => {
-		const user = userEvent.setup();
-		renderWithQuery(<SessionInspector session={session([])} />);
-
-		const usageTitle = await screen.findByText("Usage & cost");
-		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
-
-		expect(within(usageSection).getByText("Total tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Total cost")).toBeInTheDocument();
-		expect(within(usageSection).getAllByText("Coming soon")).toHaveLength(1);
-		expect(within(usageSection).getByText("Coming soon")).toHaveClass("text-settings-muted");
-		expect(within(usageSection).getAllByText("1.2K").length).toBeGreaterThan(0);
-		expect(within(usageSection).queryByText("1.2K tok")).not.toBeInTheDocument();
-		expect(within(usageSection).getByText("Input tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Output tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Cache read tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Cache write tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Reasoning tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Uncached input tokens")).toBeInTheDocument();
-		expect(within(usageSection).getByTestId("session-usage-metrics")).toHaveClass(
-			"rounded-lg",
-			"border",
-			"bg-(--color-bg-settings-input)",
-		);
-		expect(within(usageSection).getByText("Codex")).toBeInTheDocument();
-		expect(within(usageSection).queryByText("OpenAI")).not.toBeInTheDocument();
-		expect(within(usageSection).queryByText("Unknown provider")).not.toBeInTheDocument();
-		expect(within(usageSection).queryByText(/coverage|collecting/i)).not.toBeInTheDocument();
-		expect(within(usageSection).getByLabelText("Input tokens: 1,000 tokens")).toBeInTheDocument();
-		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
-		const providerTrigger = within(usageSection).getByRole("button", {
-			name: "Codex usage details",
-		});
-		expect(providerTrigger).toHaveAttribute("aria-expanded", "false");
-		expect(within(providerTrigger).getByLabelText("Cost telemetry unavailable")).toHaveTextContent("—");
-
-		await user.click(providerTrigger);
-		expect(providerTrigger).toHaveAttribute("aria-expanded", "true");
-		const providerPeek = await screen.findByRole("region", { name: "Codex usage peek" });
-		expect(within(providerPeek).getByText("1 model")).toBeInTheDocument();
-		expect(within(providerPeek).getByText("gpt-5.6")).toBeInTheDocument();
-		expect(within(providerPeek).getByText("Input tokens")).toBeInTheDocument();
-		expect(within(providerPeek).getByText("Output tokens")).toBeInTheDocument();
-		expect(within(providerPeek).queryByText("Coming soon")).not.toBeInTheDocument();
-
-		const modelTrigger = within(providerPeek).getByRole("button", {
-			name: "gpt-5.6 usage details",
-		});
-		expect(modelTrigger).toHaveAttribute("aria-expanded", "false");
-		expect(within(modelTrigger).getByLabelText("Cost telemetry unavailable")).toHaveTextContent("—");
-		await user.click(modelTrigger);
-		expect(modelTrigger).toHaveAttribute("aria-expanded", "true");
-		const modelPeek = await screen.findByRole("region", { name: "gpt-5.6 usage peek" });
-		expect(providerPeek).toContainElement(modelPeek);
-		expect(within(modelPeek).getByText("Input tokens")).toBeInTheDocument();
-		expect(within(modelPeek).getByText("Output tokens")).toBeInTheDocument();
-		expect(within(modelPeek).getByText("Cache read tokens")).toBeInTheDocument();
-		expect(within(modelPeek).getByText("Cache write tokens")).toBeInTheDocument();
-		expect(within(modelPeek).getByText("Reasoning tokens")).toBeInTheDocument();
-		expect(within(modelPeek).getByText("Uncached input tokens")).toBeInTheDocument();
-		expect(within(usageSection).getAllByText("Coming soon")).toHaveLength(1);
-
-		const sectionTitles = Array.from(
-			document.querySelectorAll("[data-testid='inspector-section']"),
-			(section) => section.querySelector("span")?.textContent,
-		);
-		expect(sectionTitles.indexOf("Usage & cost")).toBe(sectionTitles.indexOf("Activity") + 1);
-		expect(getMock).toHaveBeenCalledWith("/api/v1/usage/sessions/{sessionId}", {
-			params: { path: { sessionId: "sess-1" } },
-		});
-	});
-
-	it("does not expose backend integrity state as a usage warning", async () => {
-		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/usage/sessions/{sessionId}") {
-				return {
-					data: usageTelemetry({
-						incomplete: true,
-					}),
-					error: undefined,
-				};
-			}
-			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
-		});
-
-		renderWithQuery(<SessionInspector session={session([])} />);
-		const usageTitle = await screen.findByText("Usage & cost");
-		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
-
-		expect(within(usageSection).queryByText("Usage may be incomplete")).not.toBeInTheDocument();
-		expect(within(usageSection).queryByLabelText(/Usage may be incomplete/)).not.toBeInTheDocument();
-	});
-
-	it("opens and closes provider and model details with the keyboard", async () => {
-		const user = userEvent.setup();
-		renderWithQuery(<SessionInspector session={session([])} />);
-
-		const providerTrigger = await screen.findByRole("button", {
-			name: "Codex usage details",
-		});
-		providerTrigger.focus();
-		await user.keyboard("{Enter}");
-
-		const providerPeek = await screen.findByRole("region", { name: "Codex usage peek" });
-		const modelTrigger = within(providerPeek).getByRole("button", {
-			name: "gpt-5.6 usage details",
-		});
-		modelTrigger.focus();
-		await user.keyboard("{Enter}");
-		expect(await screen.findByRole("region", { name: "gpt-5.6 usage peek" })).toBeInTheDocument();
-		expect(modelTrigger).toHaveFocus();
-
-		await user.keyboard(" ");
-		expect(screen.queryByRole("region", { name: "gpt-5.6 usage peek" })).not.toBeInTheDocument();
-		expect(modelTrigger).toHaveFocus();
-	});
-
-	it("shows multiple agents as compact rows with independent disclosures", async () => {
-		const user = userEvent.setup();
-		const codex = usageTelemetry().harnesses[0];
-		if (!codex) throw new Error("missing Codex usage fixture");
-		const claude = {
-			...codex,
-			harness: "claude-code",
-			totals: { ...codex.totals, reasoningTokens: null },
-			models: codex.models.map((model) => ({
-				...model,
-				modelId: "claude-opus-4.1",
-				totals: { ...model.totals, reasoningTokens: null },
-			})),
-		};
-		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/usage/sessions/{sessionId}") {
-				return { data: usageTelemetry({ harnesses: [codex, claude] }), error: undefined };
-			}
-			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
-		});
-
-		renderWithQuery(<SessionInspector session={session([])} />);
-		const usageTitle = await screen.findByText("Usage & cost");
-		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
-
-		await waitFor(() => expect(within(usageSection).getByLabelText(/Codex usage details/)).toBeInTheDocument());
-		const codexRow = within(usageSection).getByLabelText(/Codex usage details/);
-		const claudeRow = within(usageSection).getByLabelText(/Claude usage details/);
-		expect(within(usageSection).getByText("Codex")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Claude")).toBeInTheDocument();
-		expect(within(usageSection).queryByText("OpenAI")).not.toBeInTheDocument();
-		expect(within(usageSection).queryByText("Anthropic")).not.toBeInTheDocument();
-		expect(within(usageSection).queryByText("Unknown provider")).not.toBeInTheDocument();
-		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
-		expect(within(usageSection).queryByText("claude-opus-4.1")).not.toBeInTheDocument();
-
-		await user.click(codexRow);
-		const codexPeek = await screen.findByRole("region", { name: "Codex usage peek" });
-		expect(within(codexPeek).getByText("gpt-5.6")).toBeInTheDocument();
-
-		await user.click(claudeRow);
-		const claudePeek = await screen.findByRole("region", { name: "Claude usage peek" });
-		expect(within(claudePeek).getByText("claude-opus-4.1")).toBeInTheDocument();
-		expect(within(claudePeek).getByLabelText("Reasoning tokens telemetry unavailable")).toHaveTextContent("—");
-		expect(codexPeek).toBeInTheDocument();
-	});
-});
-
 describe("SessionInspector tabs", () => {
 	it("exposes Summary, Browser, and Files as inspector tabs", () => {
 		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
@@ -1312,10 +997,10 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 4")).toBeInTheDocument();
 		expect(
-			within(screen.getByText("Reviewable change 4").closest("[data-testid='review-pr-row']") as HTMLElement).getByText(
+			within(screen.getByText("Reviewable change 4").closest("[data-testid='review-pr-row']") as HTMLElement).getAllByText(
 				"Approved",
 			),
-		).toBeInTheDocument();
+		).not.toHaveLength(0);
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
@@ -1387,7 +1072,7 @@ describe("SessionInspector summary reviews", () => {
 		]);
 		const { unmount } = renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
-		expect(await screen.findByRole("link", { name: /View review/ })).toHaveAttribute(
+		expect(await screen.findByRole("link", { name: /View on PR/ })).toHaveAttribute(
 			"href",
 			"https://example.com/pr/3#pullrequestreview-98765",
 		);
@@ -1436,8 +1121,12 @@ describe("SessionInspector summary reviews", () => {
 			expect(await screen.findAllByText(runLabel)).not.toHaveLength(0);
 			expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
 			expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
+		if (status === "needs_review") {
+			expect(screen.getByText("Changes requested")).toBeInTheDocument();
+		} else {
 			expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
-			expect(screen.getByRole("link", { name: "View review" })).toHaveAttribute(
+		}
+			expect(screen.getByRole("link", { name: "View on PR" })).toHaveAttribute(
 				"href",
 				"https://example.com/pr/3#pullrequestreview-98765",
 			);
@@ -1500,16 +1189,20 @@ describe("SessionInspector summary reviews", () => {
 
 		expect(await screen.findByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
-		expect(screen.getByText(/2 unresolved/)).toBeInTheDocument();
+		expect(screen.getAllByText(/2 unresolved/)).toHaveLength(2);
+		expect(screen.getByTestId("github-inline-comments")).toHaveTextContent("a.ts:3");
+		expect(screen.getByTestId("github-inline-comments")).toHaveTextContent("a.ts:9");
 		// AO's runs and the PR's own reviews share one section keyed by PR, so the
 		// unresolved count rides the same row as the AO verdict.
-		expect(screen.getByText("Reviews")).toBeInTheDocument();
+		expect(screen.getByText("Review summary")).toBeInTheDocument();
 		expect(screen.queryByText("Reviews on the pull request")).not.toBeInTheDocument();
 		expect(screen.queryByText("AO code reviews")).not.toBeInTheDocument();
 		expect(screen.queryByText("No unresolved threads.")).not.toBeInTheDocument();
 	});
 
 	it("renders PR review summaries as Markdown", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		vi.setSystemTime(new Date("2026-06-19T11:00:00Z"));
 		mockCommonGets([], "reviewer-pane", [reviewState(3, "up_to_date", "sha-1")]);
 		const previous = getMock.getMockImplementation()!;
 		getMock.mockImplementation(async (path: string, opts?: unknown) => {
@@ -1557,9 +1250,16 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		const summary = await screen.findByTestId("github-review-summary");
+		const externalReview = summary.closest("article") as HTMLElement;
 		expect(within(summary).getByText("ready").tagName).toBe("STRONG");
 		expect(within(summary).getByText("Ship it").tagName).toBe("LI");
 		expect(summary).not.toHaveTextContent("**ready**");
+		expect(within(externalReview).getByText("3d ago")).toBeInTheDocument();
+		expect(within(externalReview).getByRole("link", { name: "View on PR" })).toHaveAttribute(
+			"href",
+			"https://example.com/pr/3#pullrequestreview-456",
+		);
+		expect(screen.getByText("External reviews")).toBeInTheDocument();
 	});
 
 	it("marks SCM reviews and individual comments using their stored injection decision", async () => {
@@ -1604,7 +1304,7 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		expect(await screen.findByText("Not injected")).toBeInTheDocument();
-		expect(screen.getByText("On GitHub")).toBeInTheDocument();
+		expect(screen.getByText("External reviews")).toBeInTheDocument();
 	});
 
 	it("marks an AO review using its stored injection decision", async () => {
@@ -1623,7 +1323,7 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		expect(await screen.findByText("Not injected")).toBeInTheDocument();
-		expect(screen.getByText("AO review")).toBeInTheDocument();
+		expect(screen.getByText("Agent reviews")).toBeInTheDocument();
 	});
 
 	it("persists the automatic review injection toggle", async () => {
@@ -1691,7 +1391,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("Review in progress · claude-code")).not.toBeInTheDocument();
 	});
 
-	it("keeps every harness summary visible when selecting the agent for the next run", async () => {
+	it("keeps older harness summaries behind explicit pagination when selecting the next agent", async () => {
 		const state = {
 			...reviewState(3, "changes_requested", "sha-1"),
 			latestRun: {
@@ -1732,10 +1432,14 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		expect(await screen.findByText("codex asked for tests.")).toBeInTheDocument();
+		expect(screen.queryByText("claude-code found nothing blocking.")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Load more · 1 earlier" }));
 		expect(screen.getByText("claude-code found nothing blocking.")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Show latest only" }));
+		expect(screen.queryByText("claude-code found nothing blocking.")).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: /Select reviewer agent/ }));
 		await userEvent.click(screen.getByRole("menuitem", { name: /claude-code/ }));
-		expect(screen.getByText("claude-code found nothing blocking.")).toBeInTheDocument();
+		expect(screen.queryByText("claude-code found nothing blocking.")).not.toBeInTheDocument();
 		expect(screen.getByText("codex asked for tests.")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 3")).toBeInTheDocument();
 	});

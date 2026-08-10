@@ -189,9 +189,9 @@ ao start
 | [docs/STATUS.md](../docs/STATUS.md)                                 | `main`에 현재 출시된 내용과 진행 중인 항목.                                                  |
 | [docs/stack.md](../docs/stack.md)                                   | 라이브러리, 런타임, 의존성 결정.                                                             |
 
-## 텔레메트리
+## 익명 텔레메트리
 
-Agent Orchestrator의 Electron 렌더러는 안정성과 제품 이해를 위해 익명 사용 이벤트를 PostHog로 전송합니다. PostHog 세션 녹화는 기본적으로 비활성화되어 있습니다. 한시적 조사에서 활성화되면 로컬 경로와 로컬 URL은 전송 전에 마스킹됩니다. 전송을 끄려면 빌드 전에 `VITE_AO_POSTHOG_KEY`를 빈 문자열로 설정하세요. 자세한 내용은 [docs/telemetry.md](../docs/telemetry.md)를 참고하세요.
+AO는 제품 도입 현황을 파악하고 개선하기 위해 PII와 프로젝트 콘텐츠를 제외하도록 설계된 개인정보 보호 중심의 제품 사용 및 안정성 지표를 활용합니다. [텔레메트리와 개인정보 보호에 대해 자세히 알아보세요](../docs/telemetry.md).
 
 ## 라이선스
 
