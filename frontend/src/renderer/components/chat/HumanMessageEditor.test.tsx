@@ -4,27 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { HumanMessageEditor } from "./HumanMessageEditor";
 
 describe("HumanMessageEditor", () => {
-	it("uses one wide Codex-style composer surface without a nested input border", () => {
-		render(
-			<HumanMessageEditor
-				text="prompt"
-				content={[]}
-				pending={false}
-				busy={false}
-				onCancel={vi.fn()}
-				onSend={vi.fn()}
-			/>,
-		);
-
-		const editor = screen.getByRole("textbox", { name: "Edit message" });
-		const surface = editor.parentElement;
-		expect(surface).toHaveClass("w-full", "max-w-3xl", "border-border-strong", "p-2.5");
-		expect(editor).toHaveClass("bg-transparent", "px-1.5", "py-1.5");
-		expect(editor).not.toHaveClass("border", "bg-background", "rounded-md");
-		expect(screen.getByRole("button", { name: "Cancel edit" })).toHaveClass("size-7");
-		expect(screen.getByRole("button", { name: "Send edited message" })).toHaveClass("size-7", "rounded-full");
-	});
-
 	it("sends with Cmd+Enter while Enter inserts a newline", async () => {
 		const user = userEvent.setup();
 		const onSend = vi.fn(async () => undefined);

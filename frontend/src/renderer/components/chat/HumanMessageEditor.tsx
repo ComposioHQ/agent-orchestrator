@@ -52,7 +52,7 @@ export function HumanMessageEditor({
 	}
 
 	return (
-		<div className="cursor-chat-composer relative flex w-full max-w-3xl flex-col gap-2 rounded-[10px] border border-border-strong p-2.5 transition-[background,border-color,box-shadow]">
+		<div className="flex w-full max-w-[min(78%,560px)] flex-col rounded-[10px] border border-logo-accent/50 bg-raised p-2 shadow-sm">
 		<textarea
 			ref={textarea}
 			value={draft}
@@ -61,7 +61,7 @@ export function HumanMessageEditor({
 			aria-label="Edit message"
 			autoFocus
 			rows={2}
-			className="chat-composer-scrollbar max-h-56 min-h-[3.25rem] w-full resize-none overflow-y-auto overscroll-contain bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none"
+			className="max-h-56 min-h-20 w-full resize-none overflow-y-auto rounded-md border border-border bg-background px-2.5 py-2 text-sm leading-[1.55] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/40"
 		/>
 		{content.length > 0 ? (
 			<div className="mt-2 flex flex-wrap gap-1.5" aria-label="Preserved message content">
