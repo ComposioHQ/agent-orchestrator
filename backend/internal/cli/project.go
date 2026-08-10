@@ -87,9 +87,10 @@ type roleOverride struct {
 	AgentConfig agentConfig `json:"agentConfig,omitempty"`
 }
 
-// trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
+// trackerIntakeConfig mirrors domain.TrackerIntakeConfig. Enabled is a pointer
+// so that --config-json merge can distinguish "false" from "field absent".
 type trackerIntakeConfig struct {
-	Enabled  bool   `json:"enabled,omitempty"`
+	Enabled  *bool  `json:"enabled,omitempty"`
 	Provider string `json:"provider,omitempty"`
 	Repo     string `json:"repo,omitempty"`
 	Assignee string `json:"assignee,omitempty"`
@@ -100,29 +101,30 @@ type reviewerConfig struct {
 	Harness string `json:"harness,omitempty"`
 }
 
-// containerReapConfig mirrors domain.ContainerReapConfig.
+// containerReapConfig mirrors domain.ContainerReapConfig. Disabled is a
+// pointer so that --config-json merge can distinguish "false" from "absent".
 type containerReapConfig struct {
-	Disabled bool `json:"disabled,omitempty"`
+	Disabled *bool `json:"disabled,omitempty"`
 }
 
 // projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI
 // client. The CLI sets common fields via flags and the whole object via
 // --config-json.
 type projectConfig struct {
-	DefaultBranch     string               `json:"defaultBranch,omitempty"`
-	SessionPrefix     string               `json:"sessionPrefix,omitempty"`
-	Env               map[string]string    `json:"env,omitempty"`
-	Symlinks          []string             `json:"symlinks,omitempty"`
-	PostCreate        []string             `json:"postCreate,omitempty"`
-	AgentRules        string               `json:"agentRules,omitempty"`
-	AgentRulesFile    string               `json:"agentRulesFile,omitempty"`
-	OrchestratorRules string               `json:"orchestratorRules,omitempty"`
-	AgentConfig       agentConfig          `json:"agentConfig,omitempty"`
-	Worker            roleOverride         `json:"worker,omitempty"`
-	Orchestrator      roleOverride         `json:"orchestrator,omitempty"`
-	Reviewers         []reviewerConfig     `json:"reviewers,omitempty"`
-	TrackerIntake     trackerIntakeConfig  `json:"trackerIntake,omitempty"`
-	ContainerReap     containerReapConfig  `json:"containerReap,omitempty"`
+	DefaultBranch     string              `json:"defaultBranch,omitempty"`
+	SessionPrefix     string              `json:"sessionPrefix,omitempty"`
+	Env               map[string]string   `json:"env,omitempty"`
+	Symlinks          []string            `json:"symlinks,omitempty"`
+	PostCreate        []string            `json:"postCreate,omitempty"`
+	AgentRules        string              `json:"agentRules,omitempty"`
+	AgentRulesFile    string              `json:"agentRulesFile,omitempty"`
+	OrchestratorRules string              `json:"orchestratorRules,omitempty"`
+	AgentConfig       agentConfig         `json:"agentConfig,omitempty"`
+	Worker            roleOverride        `json:"worker,omitempty"`
+	Orchestrator      roleOverride        `json:"orchestrator,omitempty"`
+	Reviewers         []reviewerConfig    `json:"reviewers,omitempty"`
+	TrackerIntake     trackerIntakeConfig `json:"trackerIntake,omitempty"`
+	ContainerReap     containerReapConfig `json:"containerReap,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
@@ -436,7 +438,8 @@ func buildProjectConfig(opts projectSetConfigOptions, current projectConfig, fla
 		cfg.Orchestrator.Agent = opts.orchestratorAgent
 	}
 	if flags.Changed("tracker-intake") {
-		cfg.TrackerIntake.Enabled = opts.trackerIntake
+		v := opts.trackerIntake
+		cfg.TrackerIntake.Enabled = &v
 	}
 	if flags.Changed("tracker-repo") {
 		cfg.TrackerIntake.Repo = opts.trackerRepo
@@ -525,25 +528,23 @@ func mergeProjectConfig(current, overlay projectConfig) projectConfig {
 	if overlay.Orchestrator.AgentConfig.Permissions != "" {
 		out.Orchestrator.AgentConfig.Permissions = overlay.Orchestrator.AgentConfig.Permissions
 	}
-	if overlay.TrackerIntake.Enabled || overlay.TrackerIntake.Repo != "" || overlay.TrackerIntake.Assignee != "" {
-		if overlay.TrackerIntake.Enabled {
-			out.TrackerIntake.Enabled = true
-		}
-		if overlay.TrackerIntake.Provider != "" {
-			out.TrackerIntake.Provider = overlay.TrackerIntake.Provider
-		}
-		if overlay.TrackerIntake.Repo != "" {
-			out.TrackerIntake.Repo = overlay.TrackerIntake.Repo
-		}
-		if overlay.TrackerIntake.Assignee != "" {
-			out.TrackerIntake.Assignee = overlay.TrackerIntake.Assignee
-		}
+	if overlay.TrackerIntake.Enabled != nil {
+		out.TrackerIntake.Enabled = overlay.TrackerIntake.Enabled
+	}
+	if overlay.TrackerIntake.Provider != "" {
+		out.TrackerIntake.Provider = overlay.TrackerIntake.Provider
+	}
+	if overlay.TrackerIntake.Repo != "" {
+		out.TrackerIntake.Repo = overlay.TrackerIntake.Repo
+	}
+	if overlay.TrackerIntake.Assignee != "" {
+		out.TrackerIntake.Assignee = overlay.TrackerIntake.Assignee
 	}
 	if len(overlay.Reviewers) > 0 {
 		out.Reviewers = overlay.Reviewers
 	}
-	if overlay.ContainerReap.Disabled {
-		out.ContainerReap.Disabled = true
+	if overlay.ContainerReap.Disabled != nil {
+		out.ContainerReap.Disabled = overlay.ContainerReap.Disabled
 	}
 	return out
 }

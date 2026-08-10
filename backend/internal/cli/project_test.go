@@ -89,7 +89,7 @@ func TestProjectSetConfig_TrackerIntakeFlags(t *testing.T) {
 	if err := json.Unmarshal(capture.body, &got); err != nil {
 		t.Fatalf("decode request: %v\nbody=%s", err, capture.body)
 	}
-	if !got.Config.TrackerIntake.Enabled || got.Config.TrackerIntake.Provider != "github" || got.Config.TrackerIntake.Repo != "acme/demo" || got.Config.TrackerIntake.Assignee != "alice" {
+	if got.Config.TrackerIntake.Enabled == nil || !*got.Config.TrackerIntake.Enabled || got.Config.TrackerIntake.Provider != "github" || got.Config.TrackerIntake.Repo != "acme/demo" || got.Config.TrackerIntake.Assignee != "alice" {
 		t.Fatalf("tracker intake request = %#v", got.Config.TrackerIntake)
 	}
 }
@@ -109,7 +109,7 @@ func TestProjectSetConfig_TrackerIntakeJSON(t *testing.T) {
 	if err := json.Unmarshal(capture.body, &got); err != nil {
 		t.Fatalf("decode request: %v\nbody=%s", err, capture.body)
 	}
-	if !got.Config.TrackerIntake.Enabled || got.Config.TrackerIntake.Provider != "github" || got.Config.TrackerIntake.Assignee != "alice" {
+	if got.Config.TrackerIntake.Enabled == nil || !*got.Config.TrackerIntake.Enabled || got.Config.TrackerIntake.Provider != "github" || got.Config.TrackerIntake.Assignee != "alice" {
 		t.Fatalf("tracker intake request = %#v", got.Config.TrackerIntake)
 	}
 	if got.Config.Worker.Agent != "amp" || got.Config.Worker.AgentConfig.Mode != "ultra" {
@@ -142,7 +142,7 @@ func TestBuildProjectConfigTrackerIntakeFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.TrackerIntake.Enabled || got.TrackerIntake.Provider != "github" || got.TrackerIntake.Repo != "acme/demo" || got.TrackerIntake.Assignee != "alice" {
+	if got.TrackerIntake.Enabled == nil || !*got.TrackerIntake.Enabled || got.TrackerIntake.Provider != "github" || got.TrackerIntake.Repo != "acme/demo" || got.TrackerIntake.Assignee != "alice" {
 		t.Fatalf("tracker intake config = %#v", got.TrackerIntake)
 	}
 }
@@ -457,7 +457,7 @@ func TestProjectSetConfig_MergePreservesReviewersAndContainerReap(t *testing.T) 
 	if len(got.Config.Reviewers) != 1 || got.Config.Reviewers[0].Harness != "codex" {
 		t.Fatalf("reviewers = %#v, want [{harness:codex}] preserved", got.Config.Reviewers)
 	}
-	if !got.Config.ContainerReap.Disabled {
+	if got.Config.ContainerReap.Disabled == nil || !*got.Config.ContainerReap.Disabled {
 		t.Fatalf("containerReap = %#v, want {disabled:true} preserved", got.Config.ContainerReap)
 	}
 	if got.Config.Env["SOME_VAR"] != "hello" {
@@ -485,7 +485,7 @@ func TestProjectSetConfig_TrackerFlagOverlaysOnlyChangedField(t *testing.T) {
 	if got.Config.TrackerIntake.Assignee != "bob" {
 		t.Fatalf("assignee = %q, want bob", got.Config.TrackerIntake.Assignee)
 	}
-	if !got.Config.TrackerIntake.Enabled {
+	if got.Config.TrackerIntake.Enabled == nil || !*got.Config.TrackerIntake.Enabled {
 		t.Fatalf("enabled = false, want true preserved from existing")
 	}
 	if got.Config.TrackerIntake.Repo != "acme/demo" {
@@ -493,6 +493,72 @@ func TestProjectSetConfig_TrackerFlagOverlaysOnlyChangedField(t *testing.T) {
 	}
 	if got.Config.TrackerIntake.Provider != "github" {
 		t.Fatalf("provider = %q, want github preserved from existing", got.Config.TrackerIntake.Provider)
+	}
+}
+
+// TestProjectSetConfig_ConfigJSONCanDisableTrackerIntake verifies that
+// --config-json merge can set trackerIntake.enabled to false. Before the
+// pointer fix, a false value was indistinguishable from "field absent"
+// after JSON unmarshaling, so the merge silently kept the existing true
+// value — the disable was a no-op.
+func TestProjectSetConfig_ConfigJSONCanDisableTrackerIntake(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectSetConfigServer(t,
+		`{"status":"ok","project":{"id":"demo","config":{"trackerIntake":{"enabled":true,"provider":"github","repo":"acme/demo","assignee":"alice"}}}}`,
+		`{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--config-json", `{"trackerIntake":{"enabled":false}}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	if got.Config.TrackerIntake.Enabled == nil {
+		t.Fatalf("enabled = nil, want pointer to false")
+	}
+	if *got.Config.TrackerIntake.Enabled {
+		t.Fatalf("enabled = true, want false (merge should honor explicit false)")
+	}
+	if got.Config.TrackerIntake.Provider != "github" || got.Config.TrackerIntake.Repo != "acme/demo" || got.Config.TrackerIntake.Assignee != "alice" {
+		t.Fatalf("other tracker fields = %#v, want preserved from existing", got.Config.TrackerIntake)
+	}
+}
+
+// TestProjectSetConfig_ConfigJSONCanReenableContainerReap verifies that
+// --config-json merge can set containerReap.disabled to false. Before the
+// pointer fix, a false value was indistinguishable from "field absent",
+// so once disabled the merge path could never re-enable reaping — the
+// user had to fall back to --replace or --clear.
+func TestProjectSetConfig_ConfigJSONCanReenableContainerReap(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectSetConfigServer(t,
+		`{"status":"ok","project":{"id":"demo","config":{"containerReap":{"disabled":true},"env":{"FOO":"bar"}}}}`,
+		`{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--config-json", `{"containerReap":{"disabled":false}}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	if got.Config.ContainerReap.Disabled == nil {
+		t.Fatalf("disabled = nil, want pointer to false")
+	}
+	if *got.Config.ContainerReap.Disabled {
+		t.Fatalf("disabled = true, want false (merge should honor explicit false)")
+	}
+	if got.Config.Env["FOO"] != "bar" {
+		t.Fatalf("env = %#v, want FOO=bar preserved from existing", got.Config.Env)
 	}
 }
 
@@ -609,7 +675,6 @@ func TestProjectSetConfig_ReplaceEnvWholeMap(t *testing.T) {
 		t.Fatalf("env[EXISTING] = %q, want absent (--replace replaces whole map)", got.Config.Env["EXISTING"])
 	}
 }
-
 
 func TestProjectRemove_RequiresID(t *testing.T) {
 	setConfigEnv(t)
