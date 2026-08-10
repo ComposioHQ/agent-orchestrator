@@ -726,7 +726,7 @@ func TestSwitchAgentReturnsAfterDurableAdmission(t *testing.T) {
 	if err != nil || !found || active.ID != sw.ID {
 		t.Fatalf("durable active switch = (%+v, %v, %v), want id %q", active, found, err, sw.ID)
 	}
-	if err := manager.Send(context.Background(), "proj-1", "must remain fenced"); !errors.Is(err, ErrSwitchInProgress) {
+	if err := manager.Send(context.Background(), "proj-1", "must remain fenced", nil); !errors.Is(err, ErrSwitchInProgress) {
 		t.Fatalf("ordinary session input error = %v, want ErrSwitchInProgress", err)
 	}
 
