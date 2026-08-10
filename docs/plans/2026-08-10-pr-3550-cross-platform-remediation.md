@@ -1,7 +1,7 @@
 # PR #3550 cross-platform remediation and validation
 
-Status: active; Slices 1-2 complete; configuration remediation, exact-head
-validation, and maintainer re-review pending
+Status: active; Slices 1-6 complete and refreshed onto upstream `main`
+`00330ae9`; exact-head GitHub validation and maintainer re-review pending
 
 Date: 2026-08-10
 
@@ -23,7 +23,7 @@ them before any rebase, push, review, or response because all are movable.
 | Upstream PR | [Untrivial-ai/agent-orchestrator#3550](https://github.com/Untrivial-ai/agent-orchestrator/pull/3550) | existing delivery surface |
 | PR head | `bd7baa54e829c3426cdeefe345b8252d1c8ed746` | pre-remediation rollback and lease point |
 | PR base snapshot | `5f3e6bcd5a47bb7312f80cfc3966464a8f948cda` | original comparison base |
-| Current upstream `main` | `c17b6c3f5a76dbbff38a05589ff6f9ac6c22ea54` | required rebase target at read time |
+| Current upstream `main` | `00330ae9b06a40ad21273511915fdeaf56438bf9` | refreshed rebase target after #3808 |
 | Current fork `main` | `17748630b701367bc70edfab6155c272eb10595b` | fork validation reference only |
 | PR state | open, ready, conflicting, review required | blocks delivery until refreshed |
 | GitHub checks | none reported on the upstream PR head | requires exact-head fork validation |
@@ -115,13 +115,19 @@ Acceptance:
 - no unrelated fork-only change is introduced; and
 - the old exact head remains recoverable as the recorded rollback point.
 
-Status: complete on 2026-08-10. The branch is locally rebased onto
+Status: complete on 2026-08-10. The first refresh rebased the branch onto
 `c17b6c3f5a76dbbff38a05589ff6f9ac6c22ea54`. Range comparison against the
 original PR commit found only the upstream-required `errors` import in the tmux
 integration test and the containment ADR renumber from `0002` to `0003`, because
-upstream now owns ADR 0002. The rebased containment commit is
-`8d52b7aa8cc8b08d9d5898efdf50411450929e76`; the fork branch remains at the
-recorded pre-remediation head and has not been pushed.
+upstream now owns ADR 0002.
+
+Later the same day, upstream `main` advanced by one commit to
+`00330ae9b06a40ad21273511915fdeaf56438bf9` (`#3808`). That commit changes only
+the landing `DownloadButton` label and its test, with zero file overlap against
+this PR. The four local commits rebased without conflicts, and `git range-diff`
+reported all four patches equivalent. The refreshed containment commit is
+`5591250dc79506dd884de845c6f1ce4541692670`; the fork branch remains at the
+recorded pre-remediation head until the Slice 7 lease-protected push.
 
 ### Slice 3: make configuration policy deterministic
 
@@ -150,6 +156,12 @@ Acceptance:
 - production behavior is unchanged; and
 - the collaborator's reproduced macOS/Windows failure is no longer possible.
 
+Status: complete on 2026-08-10. `parseProcessContainment(raw, goos)` now owns
+the portable policy, while `Load()` remains the environment wiring boundary.
+The table test covers empty values, Linux, Darwin, Windows, normalization, and
+invalid values; the generic override test no longer injects a Linux-only
+setting. A Linux-only `Load()` wiring test preserves the real environment path.
+
 ### Slice 4: add native-platform config coverage
 
 Reuse the existing Ubuntu/macOS/Windows native matrix in
@@ -169,6 +181,11 @@ Acceptance:
 - the config package executes on all three GitHub-hosted OS families;
 - the workflow still runs for `backend/**` and workflow changes; and
 - a future unconditional Linux-only override fails the macOS and Windows jobs.
+
+Status: source complete on 2026-08-10. The existing native matrix now runs
+`go test -count=1 ./internal/config` before CLI E2E on Ubuntu, macOS, and
+Windows. Execution on all three hosted runners remains an exact-head Slice 7
+gate and is not inferred from the local Linux result.
 
 ### Slice 5: local verification
 
@@ -195,6 +212,37 @@ Acceptance:
 - no formatting, whitespace, generated-artifact, or unrelated-diff drift is
   present.
 
+Status: complete locally on 2026-08-10. Final-source evidence:
+
+- `go test -count=1 ./internal/config` passed;
+- the containment packages passed in the host process view, and the bounded
+  `WaitActive` case passed 50 consecutive runs after normalizing the total
+  timeout error path;
+- `go build -buildvcs=false -p 2 ./...` passed (`-buildvcs=false` is required
+  only because this is a linked worktree; the unmodified command stopped at Go
+  VCS stamping before compilation);
+- `go vet -p 2 ./...` passed;
+- `go test -race -p 2 ./...` passed with a CI-like `PATH` that excludes the
+  host's older `codex-cli 0.144.1`. With the host CLI visible, the only failure
+  was the repository's installed-provider conformance check because generated
+  protocol data targets `codex-cli 0.146.0`; no source in that package differs
+  from upstream `main`; and
+- `git diff --check` passed and the full upstream-main range contained only the
+  containment contract, its ADR/plan, the config remediation, and native CI
+  coverage.
+
+The validation also exposed a 10 ms error-classification race in the PR's new
+`WaitActive` test (2 failures in 10 runs). The implementation now maps expiry
+of the total wait context to the existing `did not become active` contract;
+50 consecutive runs and the full race gate passed. After the second rebase,
+the remediation commit is
+`f01bc4b68d8808e0cc208ab48cd39d13bbd9d9fe`.
+
+The refreshed source repeated the config test, 50-run timeout test, uncached
+host containment packages, linked-worktree build, vet, and full race command;
+all passed. The full race command retained the documented CI-like `PATH` that
+excludes the host's older Codex provider.
+
 ### Slice 6: Linux containment canary
 
 Run the opt-in integration canary on a compatible Linux user-systemd host:
@@ -215,6 +263,22 @@ Require evidence for:
 - the canary cleans up only its disposable resources.
 
 The canary is source validation, not production deployment.
+
+Status: complete on 2026-08-10. The refreshed host run passed in 10.89 seconds. Its
+assertions proved the `setsid` child had a different SID while remaining in the
+expected scope, the ignored-TERM child was removed during Restart/Destroy, the
+restarted handle and terminal input worked, and the outside-scope negative
+control survived worker teardown. The isolated test also accepts its dedicated
+tmux server exiting after the final session as `runtime unavailable`, while
+continuing to require process disappearance and authoritative scope release.
+
+Post-run readback reported the dedicated scope as
+`not-found/inactive/dead`, with no listed unit. The installed AO binary hash
+remained
+`2b9b4db43ea9d8437bc2aeabb150535dae35cbf443120e7e8290d7751830ab68`.
+The pre-existing stale run-file state was unchanged; no AO binary, service,
+database, Dashboard, environment, or production process was updated or
+restarted.
 
 ### Slice 7: exact-head GitHub validation and review
 
