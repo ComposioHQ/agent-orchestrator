@@ -73,6 +73,7 @@ func New(plugin claudePlugin, log *slog.Logger) ports.ChatDriver {
 			if err != nil {
 				return acpdriver.Launch{}, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 			}
+			claudeBinary = resolveClaudeExe(ctx, claudeBinary)
 			env := make(map[string]string, len(cfg.Env)+1)
 			for key, value := range cfg.Env {
 				env[key] = value
@@ -199,6 +200,57 @@ func requireFile(path, label string) error {
 		return fmt.Errorf("%s at %s is a directory", label, path)
 	}
 	return nil
+}
+
+// resolveClaudeExe resolves a Windows npm .cmd shim to the .exe it delegates
+// to. Node child_process.spawn cannot execute .cmd files, so the ACP runtime
+// needs the real executable path. Without it, Windows users cannot switch to
+// Chat at all — the CDC and readiness work in the companion branch would be
+// unusable on Windows until this lands.
+func resolveClaudeExe(ctx context.Context, binary string) string {
+	if err := ctx.Err(); err != nil {
+		return binary
+	}
+	if runtime.GOOS != "windows" || !strings.HasSuffix(strings.ToLower(binary), ".cmd") {
+		return binary
+	}
+	exe := binary[:len(binary)-4] + ".exe"
+	if info, err := os.Stat(exe); err == nil && !info.IsDir() {
+		return exe
+	}
+	data, err := os.ReadFile(binary)
+	if err != nil {
+		return binary
+	}
+	dir := filepath.Dir(binary)
+	for _, line := range strings.Split(string(data), "\n") {
+		if err := ctx.Err(); err != nil {
+			return binary
+		}
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, ".exe") {
+			continue
+		}
+		start := strings.Index(line, `"`)
+		if start < 0 {
+			continue
+		}
+		rest := line[start+1:]
+		end := strings.Index(rest, `"`)
+		if end < 0 {
+			continue
+		}
+		quoted := rest[:end]
+		quoted = strings.ReplaceAll(quoted, `%dp0%`, dir)
+		quoted = filepath.Clean(quoted)
+		if !strings.HasSuffix(strings.ToLower(quoted), ".exe") {
+			continue
+		}
+		if info, err := os.Stat(quoted); err == nil && !info.IsDir() {
+			return quoted
+		}
+	}
+	return binary
 }
 
 func requireNodeVersion(ctx context.Context, node string) error {
