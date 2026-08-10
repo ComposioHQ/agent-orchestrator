@@ -150,12 +150,10 @@ vi.mock("./chat/SessionChatSurface", () => ({
 vi.mock("./CenterPane", () => ({
 	CenterPane: ({
 		terminalTabs,
-		onNewShellTerminal,
 		terminalTarget,
 		topbarActions,
 	}: {
 		terminalTabs?: TerminalTabStripProps;
-		onNewShellTerminal?: () => void;
 		terminalTarget?: { kind: string; handleId?: string };
 		topbarActions?: ReactNode;
 	}) => {
@@ -186,9 +184,6 @@ vi.mock("./CenterPane", () => ({
 			))}
 			<button type="button" onClick={() => terminalTabs?.onSelect(`session:${terminalTabs.ownerSession.id}`)}>
 				select agent tab
-			</button>
-			<button type="button" onClick={() => onNewShellTerminal?.()}>
-				new terminal
 			</button>
 		</div>;
 	},

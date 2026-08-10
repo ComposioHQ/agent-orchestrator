@@ -1,6 +1,10 @@
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Reorder, useDragControls } from "motion/react";
-import { type PointerEvent, type ReactNode } from "react";
+import { useEffect, type PointerEvent, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
+import { useOverflowScroll } from "../hooks/useOverflowScroll";
+import { handleTerminalTabListKeyDown } from "../lib/terminal-tabs";
 import {
 	resolveTerminalTabLayout,
 	type ReorderableTerminalTabKey,
@@ -16,6 +20,7 @@ export type ReviewerTerminalTab = { handleId: string; harness: string; label?: s
 
 export type TerminalTabStripProps = {
 	activeKey: TerminalTabKey;
+	ariaLabel?: string;
 	layout: TerminalBarLayout;
 	ownerSession: WorkspaceSession;
 	shellTerminals: ShellTerminal[];
@@ -37,7 +42,8 @@ function DraggableTab({ children, value }: { children: ReactNode; value: Reorder
 	return (
 		<Reorder.Item
 			as="div"
-			className="flex self-stretch touch-pan-y"
+			className="flex shrink-0 self-stretch touch-pan-y"
+			data-terminal-tab-key={value}
 			drag="x"
 			dragControls={controls}
 			dragListener={false}
@@ -51,6 +57,7 @@ function DraggableTab({ children, value }: { children: ReactNode; value: Reorder
 
 export function TerminalTabStrip({
 	activeKey,
+	ariaLabel,
 	layout,
 	ownerSession,
 	shellTerminals,
@@ -62,6 +69,7 @@ export function TerminalTabStrip({
 	onReorder,
 	onSelect,
 }: TerminalTabStripProps) {
+	const { t } = useTranslation();
 	const ownerKey = `session:${ownerSession.id}` as const;
 	const shells = new Map<ReorderableTerminalTabKey, ShellTerminal>(
 		shellTerminals.map((shell) => [`shell:${shell.handleId}` as const, shell]),
@@ -70,6 +78,16 @@ export function TerminalTabStrip({
 	const availableKeys: TerminalTabKey[] = [ownerKey, ...shells.keys()];
 	if (reviewerKey) availableKeys.push(reviewerKey);
 	const resolved = resolveTerminalTabLayout(layout, availableKeys);
+	const overflowWatch = [activeKey, ...resolved.pinned, ...resolved.unpinned, reviewerKey ?? ""].join("|");
+	const overflow = useOverflowScroll<HTMLDivElement>(overflowWatch);
+
+	useEffect(() => {
+		if (activeKey === ownerKey) return;
+		const activeTab = Array.from(
+			overflow.ref.current?.querySelectorAll<HTMLElement>("[data-terminal-tab-key]") ?? [],
+		).find((element) => element.dataset.terminalTabKey === activeKey);
+		activeTab?.scrollIntoView?.({ behavior: "smooth", block: "nearest", inline: "nearest" });
+	}, [activeKey, overflow.ref, ownerKey]);
 
 	const renderTab = (key: ReorderableTerminalTabKey, pinned: boolean) => {
 		const shell = shells.get(key);
@@ -105,28 +123,63 @@ export function TerminalTabStrip({
 	);
 
 	return (
-		<>
+		<div
+			aria-label={ariaLabel ?? t("terminal.tabsAria")}
+			className="flex min-w-0 flex-1 self-stretch items-center"
+			onKeyDown={handleTerminalTabListKeyDown}
+			role="tablist"
+		>
 			<SessionTerminalTab
 				action={ownerAction}
 				isActive={activeKey === ownerKey}
 				onSelect={() => onSelect(ownerKey)}
 				session={ownerSession}
 			/>
-			{group("pinned", resolved.pinned)}
-			{group("unpinned", resolved.unpinned)}
-			{reviewerTerminal && reviewerKey ? (
-				<SessionTerminalTab
-					isActive={activeKey === reviewerKey}
-					labelOverride={reviewerTerminal.label ?? "Reviewer"}
-					onSelect={() => onSelect(reviewerKey)}
-					session={{
-						...ownerSession,
-						id: reviewerTerminal.handleId,
-						provider: reviewerTerminal.harness as WorkspaceSession["provider"],
-						title: reviewerTerminal.label ?? "Reviewer",
-					}}
-				/>
+			{overflow.canScrollLeft ? (
+				<button
+					aria-label={t("terminal.scrollTabsLeft")}
+					className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+					onClick={() => overflow.scrollByDirection(-1)}
+					title={t("terminal.scrollTabsLeft")}
+					type="button"
+				>
+					<ChevronLeft aria-hidden="true" className="size-icon-md" />
+				</button>
 			) : null}
-		</>
+			<div
+				ref={overflow.ref}
+				className="scrollbar-none flex min-w-0 flex-1 self-stretch items-center overflow-x-auto"
+				data-testid="terminal-auxiliary-scroll-region"
+			>
+				{group("pinned", resolved.pinned)}
+				{group("unpinned", resolved.unpinned)}
+				{reviewerTerminal && reviewerKey ? (
+					<span className="inline-flex shrink-0 self-stretch" data-terminal-tab-key={reviewerKey}>
+						<SessionTerminalTab
+							isActive={activeKey === reviewerKey}
+							labelOverride={reviewerTerminal.label ?? "Reviewer"}
+							onSelect={() => onSelect(reviewerKey)}
+							session={{
+								...ownerSession,
+								id: reviewerTerminal.handleId,
+								provider: reviewerTerminal.harness as WorkspaceSession["provider"],
+								title: reviewerTerminal.label ?? "Reviewer",
+							}}
+						/>
+					</span>
+				) : null}
+			</div>
+			{overflow.canScrollRight ? (
+				<button
+					aria-label={t("terminal.scrollTabsRight")}
+					className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+					onClick={() => overflow.scrollByDirection(1)}
+					title={t("terminal.scrollTabsRight")}
+					type="button"
+				>
+					<ChevronRight aria-hidden="true" className="size-icon-md" />
+				</button>
+			) : null}
+		</div>
 	);
 }

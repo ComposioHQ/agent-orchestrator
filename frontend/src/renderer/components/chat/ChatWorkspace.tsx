@@ -663,18 +663,18 @@ function ChatHeader({
 					data-testid="session-terminal-region"
 					style={{ width: topbarBounds.width > 0 ? topbarBounds.width : "100%" }}
 				>
-					<div className="flex h-full min-w-flex-min flex-1 items-center">
-						<div
-							aria-label="Chat tabs"
-							className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
-							role="tablist"
-						>
-							{terminalTabs ? (
-								<TerminalTabStrip {...terminalTabs} />
-							) : (
+					<div className="flex h-full min-w-0 flex-1 items-center">
+						{terminalTabs ? (
+							<TerminalTabStrip {...terminalTabs} ariaLabel="Chat tabs" />
+						) : (
+							<div
+								aria-label="Chat tabs"
+								className="flex min-w-0 flex-1 self-stretch items-center"
+								role="tablist"
+							>
 								<SessionTerminalTab isActive session={fallbackSession} />
-							)}
-						</div>
+							</div>
+						)}
 					</div>
 				</div>
 				{isFullscreen ? null : (

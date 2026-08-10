@@ -299,6 +299,9 @@ describe("CenterPane toolbar session label", () => {
 		expect(mainContainer?.querySelector('img[aria-hidden="true"]')).toBeInTheDocument();
 
 		const auxiliaryTab = screen.getByRole("tab", { name: shell.title });
+		const auxiliaryScrollRegion = document.querySelector(".overflow-x-auto") as HTMLElement;
+		expect(auxiliaryScrollRegion).not.toContainElement(mainTab);
+		expect(auxiliaryScrollRegion).toContainElement(auxiliaryTab);
 		expect(auxiliaryTab.parentElement?.querySelector("img")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: `Close terminal ${shell.title}` })).toBeInTheDocument();
 		expect(mainTab.querySelector('[title="Working"]')).toBeInTheDocument();
@@ -396,9 +399,9 @@ describe("CenterPane toolbar session label", () => {
 			terminalTarget: { kind: "reviewer", handleId: "review-sess-1", harness: "codex", sessionId: worker.id },
 		});
 
-		expect(screen.getByRole("tab", { name: "Reviewer" })).toHaveAttribute("aria-current", "true");
+		expect(screen.getByRole("tab", { name: /^Reviewer/ })).toHaveAttribute("aria-current", "true");
 		expect(screen.getByRole("tab", { name: /^do the thing/ })).not.toHaveAttribute("aria-current", "true");
-		expect(screen.getByRole("tab", { name: "Reviewer" }).querySelector("img")).toHaveAttribute("src");
+		expect(screen.getByRole("tab", { name: /^Reviewer/ }).querySelector("img")).toHaveAttribute("src");
 		expect(screen.queryByRole("button", { name: "Back to agent" })).not.toBeInTheDocument();
 	});
 
@@ -412,7 +415,7 @@ describe("CenterPane toolbar session label", () => {
 			}),
 		});
 
-		fireEvent.click(screen.getByRole("tab", { name: "Reviewer" }));
+		fireEvent.click(screen.getByRole("tab", { name: /^Reviewer/ }));
 		expect(onSelect).toHaveBeenCalledWith("reviewer:review-sess-1");
 	});
 
@@ -430,9 +433,9 @@ describe("CenterPane toolbar session label", () => {
 		});
 
 		expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"))).toEqual([
-			"do the thing",
+			"do the thing · Working",
 			"agent-orchestrator-0",
-			"Reviewer",
+			"Reviewer · Working",
 		]);
 		const unpin = screen.getByRole("button", { name: "Unpin tab" });
 		expect(unpin.nextElementSibling).toBe(screen.getByRole("button", { name: "Close terminal agent-orchestrator-0" }));
@@ -492,12 +495,12 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
 	});
 
-	it("lets tabs shrink into a scrollable strip instead of overflowing onto the controls", () => {
+	it("keeps auxiliary tabs fixed-width inside their own scrollable strip", () => {
 		const shells = makeShells(8);
 		renderCenterPane({ session: worker, terminalTabs: makeTerminalTabs({ shellTerminals: shells }) });
 
 		const scrollRegion = document.querySelector(".overflow-x-auto");
-		expect(scrollRegion).toHaveClass("scrollbar-none", "min-w-flex-min", "flex-1");
+		expect(scrollRegion).toHaveClass("scrollbar-none", "min-w-0", "flex-1");
 		for (const tab of screen.getAllByTitle(/^\/tmp\/ws/)) {
 			expect(tab.parentElement).toHaveClass(
 				"min-w-shell-tab-min",

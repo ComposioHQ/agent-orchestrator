@@ -1,7 +1,6 @@
-import { ArrowRight, ChevronLeft, ChevronRight, TriangleAlert } from "lucide-react";
+import { ArrowRight, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import {
 	findActiveAgentSwitch,
 	findRecoveryRequiredAgentSwitch,
@@ -12,7 +11,6 @@ import { useTruncatedText } from "../hooks/useTruncatedText";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
 import { agentLabel } from "../lib/agent-options";
 import { aoBridge } from "../lib/bridge";
-import { handleTerminalTabListKeyDown } from "../lib/terminal-tabs";
 import { cn } from "../lib/utils";
 import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
@@ -20,9 +18,7 @@ import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace
 import { AgentAvatar } from "./AgentAvatar";
 import { TerminalPane } from "./TerminalPane";
 import { SessionTerminalBar } from "./SessionTerminalBar";
-import { NewTerminalButton } from "./SessionTerminalTabs";
 import { TerminalTabStrip, type TerminalTabStripProps } from "./TerminalTabStrip";
-import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -33,8 +29,6 @@ type CenterPaneProps = {
 	terminalTarget?: TerminalTarget;
 	/** Session actions rendered at the right edge of the shared topbar row. */
 	topbarActions?: ReactNode;
-	/** Opens a new shell tab in this session's worktree (the button at the end of the tab bar). */
-	onNewShellTerminal?: () => void;
 	terminalTabs?: TerminalTabStripProps;
 	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
 	agentInputDisabled?: boolean;
@@ -61,7 +55,6 @@ export function CenterPane({
 	daemonReady,
 	terminalTarget,
 	topbarActions,
-	onNewShellTerminal,
 	terminalTabs,
 	agentInputDisabled = false,
 }: CenterPaneProps) {
@@ -76,8 +69,6 @@ export function CenterPane({
 	const ownerTerminalKey = terminalTabs ? (`session:${terminalTabs.ownerSession.id}` as const) : undefined;
 	const onSelectTerminalTab = terminalTabs?.onSelect;
 	const onCloseTerminalTab = terminalTabs?.onClose;
-	const tabOverflowWatch = `${session?.id ?? ""}|${shellTerminals.map((terminal) => terminal.handleId).join("|")}`;
-	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
 	const agentSwitchesQuery = useAgentSwitches(session?.id ?? "");
 	const agentSwitches = agentSwitchesQuery.data ?? [];
 	const activeAgentSwitch = findActiveAgentSwitch(agentSwitches);
@@ -241,47 +232,18 @@ export function CenterPane({
 						width: terminalBounds.width > 0 ? terminalBounds.width : "100%",
 					}}
 				>
-					<div className="flex h-full min-w-flex-min flex-1 items-center">
-						{tabsOverflow.canScrollLeft ? (
-							<button
-								aria-label={t("terminal.scrollTabsLeft")}
-								className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-								onClick={() => tabsOverflow.scrollByDirection(-1)}
-								title={t("terminal.scrollTabsLeft")}
-								type="button"
+					<div className="flex h-full min-w-0 flex-1 items-center">
+						{session && terminalTabs ? (
+							<TerminalTabStrip {...terminalTabs} />
+						) : (
+							<div
+								aria-label={t("terminal.tabsAria")}
+								className="flex min-w-0 flex-1 self-stretch items-center"
+								role="tablist"
 							>
-								<ChevronLeft aria-hidden="true" className="size-icon-md" />
-							</button>
-						) : null}
-						{/* The permanent agent tab plus shells opened in this session's worktree. */}
-						<div
-							ref={tabsOverflow.ref}
-							aria-label={t("terminal.tabsAria")}
-							className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
-							onKeyDown={handleTerminalTabListKeyDown}
-							role="tablist"
-						>
-							{session && terminalTabs ? (
-								<TerminalTabStrip
-									{...terminalTabs}
-									ownerAction={<TerminalSwitchAgentButton session={session} />}
-								/>
-							) : (
 								<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
-							)}
-						</div>
-						{tabsOverflow.canScrollRight ? (
-							<button
-								aria-label={t("terminal.scrollTabsRight")}
-								className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-								onClick={() => tabsOverflow.scrollByDirection(1)}
-								title={t("terminal.scrollTabsRight")}
-								type="button"
-							>
-								<ChevronRight aria-hidden="true" className="size-icon-md" />
-							</button>
-						) : null}
-						<NewTerminalButton onClick={onNewShellTerminal} />
+							</div>
+						)}
 					</div>
 				</div>
 				{isFullscreen ? null : (

@@ -33,7 +33,7 @@ export function SessionTerminalTab({
 		<span
 			data-terminal-role="primary"
 			className={cn(
-				"group relative inline-flex min-w-shell-tab-min self-stretch items-center justify-center border-r border-border bg-surface px-3 text-foreground transition-colors",
+				"group relative inline-flex min-w-shell-tab-min shrink-0 self-stretch items-center justify-center border-r border-border bg-surface px-3 text-foreground transition-colors",
 				isActive
 					? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 					: "text-muted-foreground hover:bg-raised hover:text-foreground",
@@ -44,7 +44,7 @@ export function SessionTerminalTab({
 				aria-label={activity ? `${label} · ${activity.label}` : label}
 				aria-selected={isActive}
 				className={cn(
-					"inline-flex min-w-flex-min max-w-shell-tab-max flex-1 items-center justify-center gap-1.5 text-control font-medium leading-none transition-colors",
+					"inline-flex min-w-flex-min flex-none items-center justify-center gap-1.5 whitespace-nowrap text-control font-medium leading-none transition-colors",
 					isActive ? "text-foreground" : "text-passive group-hover:text-foreground",
 				)}
 				onClick={onSelect}
@@ -54,7 +54,7 @@ export function SessionTerminalTab({
 				type="button"
 			>
 				<AgentAvatar className="size-terminal-agent-icon" decorative provider={session.provider} />
-				<span className="truncate">{label}</span>
+				<span>{label}</span>
 				{activity ? (
 					<span
 						aria-hidden="true"

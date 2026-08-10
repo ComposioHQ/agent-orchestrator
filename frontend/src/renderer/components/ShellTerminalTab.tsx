@@ -109,14 +109,21 @@ export function ShellTerminalTab({
 	return (
 		<span
 			className={cn(
-				"group relative min-w-shell-tab-min items-center transition-colors",
+				"group relative min-w-shell-tab-min shrink-0 items-center transition-colors",
 				appearance === "connected"
-					? "grid w-shell-tab-connected grid-cols-[auto_minmax(0,1fr)_auto] self-stretch border-x border-transparent pl-2 pr-1"
+					? cn(
+							"inline-flex self-stretch overflow-hidden border-r border-border/60 pl-2",
+							isActive
+								? onPinnedChange
+									? "min-w-shell-tab-connected w-auto pr-12"
+									: "min-w-shell-tab-connected w-auto pr-7"
+								: "w-shell-tab-connected pr-2",
+						)
 					: "inline-flex gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
-						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-						: "border-transparent text-passive hover:bg-interactive-hover/60 hover:text-foreground"
+						? "border-border-strong bg-overlay text-foreground after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:z-20 after:h-0.5 after:bg-foreground/80"
+						: "text-passive hover:bg-interactive-hover/60 hover:text-foreground"
 					: isActive
 						? "bg-interactive-active"
 						: "hover:bg-interactive-hover/60",
@@ -131,7 +138,11 @@ export function ShellTerminalTab({
 					aria-label={t("terminal.rename", { title: shell.title })}
 					className={cn(
 						"rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent",
-						appearance === "connected" ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
+						appearance === "connected"
+							? isActive
+								? "min-w-max w-auto text-left"
+								: "min-w-0 w-full text-left"
+							: "min-w-flex-min max-w-shell-tab-max",
 					)}
 					onBlur={commit}
 					onChange={(event) => setDraft(event.target.value)}
@@ -154,8 +165,12 @@ export function ShellTerminalTab({
 					aria-current={isActive}
 					aria-selected={isActive}
 					className={cn(
-						"select-none truncate text-control transition-colors",
-						appearance === "connected" ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
+						"select-none text-control transition-colors",
+						appearance === "connected"
+							? isActive
+								? "min-w-max w-auto whitespace-nowrap text-left"
+								: "min-w-0 w-full truncate text-left"
+							: "min-w-flex-min max-w-shell-tab-max truncate",
 						appearance === "connected" ? "font-normal" : "font-mono font-semibold",
 						isActive ? "text-foreground" : "text-passive group-hover:text-foreground",
 					)}
@@ -173,19 +188,30 @@ export function ShellTerminalTab({
 					{shell.title}
 				</button>
 			)}
-			<span className={cn("inline-flex shrink-0 items-center gap-0.5", appearance === "connected" && "ml-2")}>
+			<span
+				className={cn(
+					"inline-flex shrink-0 items-center gap-0.5",
+					appearance === "connected" &&
+						cn(
+							"absolute inset-y-0 right-0 z-10 h-full translate-x-[calc(100%+1px)] border-l px-0.5 opacity-0 shadow-sm transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform motion-reduce:transition-none",
+							isActive
+								? "pointer-events-auto translate-x-0 border-border-strong bg-raised opacity-100"
+								: "pointer-events-none translate-x-full border-border bg-overlay/95 opacity-0 group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100",
+						),
+				)}
+			>
 				{onPinnedChange ? (
 					<button
 						aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab")}
 						aria-pressed={isPinned}
 						data-terminal-tab-action
 						className={cn(
-							"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm transition-[width,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+							"inline-flex h-control-sm w-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm opacity-100 transition-[background,color] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
 							isPinned
-								? "w-control-sm text-foreground opacity-100"
+								? "text-foreground"
 								: appearance === "connected"
-									? "w-control-sm text-passive opacity-100"
-									: "w-control-sm text-passive opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+									? "text-passive"
+									: "text-passive opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
 						)}
 						onClick={(event) => {
 							event.stopPropagation();
@@ -202,13 +228,9 @@ export function ShellTerminalTab({
 					aria-label={t("terminal.closeNamed", { title: shell.title })}
 					data-terminal-tab-action
 					className={cn(
-						"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+						"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
 						appearance === "connected"
-							? onPinnedChange
-								? "w-control-sm opacity-100"
-								: isActive
-									? "ml-1 w-control-sm opacity-100"
-									: "ml-0 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-sm group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-sm group-focus-within:opacity-100"
+							? "w-control-sm opacity-100"
 							: "w-control-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
 					)}
 					onClick={(event) => {

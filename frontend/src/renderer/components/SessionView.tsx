@@ -821,7 +821,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										(interfaceSwitch.starting || activeInterfaceTransition) && session?.mode === "tui"
 									}
 									daemonReady={daemonStatus.state === "ready"}
-									onNewShellTerminal={addShellTerminal}
 									session={session}
 									terminalTabs={terminalTabs}
 									terminalTarget={routedTerminalTarget}
