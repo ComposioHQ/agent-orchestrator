@@ -17,6 +17,7 @@ const INSTALL_COMMAND = "brew install agentwrapper/tap/agent-orchestrator";
 // Wraps at the path separators instead of mid-word once the pill goes two-line.
 const INSTALL_COMMAND_PARTS = INSTALL_COMMAND.split("/");
 const LAST_KNOWN_STARS_KEY = "ao:github-stars";
+const STARS_CACHE_TTL_MS = 60 * 60 * 1000;
 // Keep the control populated for a first visit if the static build and the
 // browser request both fail. A successful request replaces this immediately.
 const FALLBACK_STARS = 9158;
@@ -38,19 +39,27 @@ export function HeroSection({ initialStars }: HeroSectionProps) {
   const [stars, setStars] = useState(initialStars ?? FALLBACK_STARS);
 
   useEffect(() => {
-    const controller = new AbortController();
+    let lastFetchedAt = 0;
 
-    if (initialStars === null) {
-      try {
-        const storedStars = Number(localStorage.getItem(LAST_KNOWN_STARS_KEY));
-        if (Number.isFinite(storedStars) && storedStars >= 0) {
-          setStars(storedStars);
+    try {
+      const cached = JSON.parse(
+        localStorage.getItem(LAST_KNOWN_STARS_KEY) ?? "null",
+      ) as { count?: unknown; fetchedAt?: unknown } | null;
+      if (typeof cached?.count === "number" && cached.count >= 0) {
+        if (initialStars === null) setStars(cached.count);
+        if (typeof cached.fetchedAt === "number") {
+          lastFetchedAt = cached.fetchedAt;
         }
-      } catch {
-        // Storage may be unavailable in private or restricted browser modes.
       }
+    } catch {
+      // Storage may be unavailable in private or restricted browser modes.
     }
 
+    if (Date.now() - lastFetchedAt < STARS_CACHE_TTL_MS) {
+      return;
+    }
+
+    const controller = new AbortController();
     fetch(GITHUB_STARS_URL, {
       headers: { Accept: "application/vnd.github.v3+json" },
       cache: "no-store",
@@ -63,7 +72,10 @@ export function HeroSection({ initialStars }: HeroSectionProps) {
           try {
             localStorage.setItem(
               LAST_KNOWN_STARS_KEY,
-              String(data.stargazers_count),
+              JSON.stringify({
+                count: data.stargazers_count,
+                fetchedAt: Date.now(),
+              }),
             );
           } catch {
             // Storage may be unavailable in private or restricted browser modes.
