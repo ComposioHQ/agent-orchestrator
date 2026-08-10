@@ -129,6 +129,10 @@
 	--color-settings-title: var(--color-text-settings-title);
 	--color-settings-muted: var(--color-text-settings-muted);
 	--color-settings-label: var(--color-text-settings-row);
+	--color-bg-settings-row-hover: color-mix(in oklch, var(--color-bg-settings-row) 94%, var(--color-text-settings-title));
+	--color-bg-settings-trigger: color-mix(in oklch, var(--color-bg-settings-row) 97%, var(--color-text-settings-title));
+	--color-bg-settings-trigger-hover: color-mix(in oklch, var(--color-bg-settings-row) 91%, var(--color-text-settings-title));
+	--color-text-settings-trigger: color-mix(in oklch, var(--color-text-settings-title) 80%, var(--color-text-settings-muted));
 	--radius-settings-row: var(--radius-settings-row);
 	--radius-settings-panel: var(--radius-settings-panel);
 
@@ -279,11 +283,13 @@
 	--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
-	--animate-overlay-in: overlay-in 130ms var(--ease-out);
-	--animate-modal-in: modal-in 180ms var(--ease-out);
+	--animate-overlay-in: overlay-in 80ms var(--ease-out);
+	--animate-modal-in: modal-in 120ms var(--ease-out);
+	--animate-popover-in: popover-in 150ms var(--ease-out);
 	/* Exits are shorter than entries: the system is responding, not deciding. */
-	--animate-overlay-out: overlay-out 90ms ease-in;
-	--animate-modal-out: modal-out 100ms cubic-bezier(0.4, 0, 1, 1);
+	--animate-overlay-out: overlay-out 60ms ease-in;
+	--animate-modal-out: modal-out 70ms cubic-bezier(0.4, 0, 1, 1);
+	--animate-popover-out: popover-out 100ms cubic-bezier(0.4, 0, 1, 1);
 }
 
 /* Full-viewport modal/sheet scrim — dim + blur everything behind pop panels. */
@@ -575,12 +581,41 @@
 	gap: var(--size-settings-row-icon-gap);
 	border-radius: var(--radius-settings-row);
 	background-color: var(--color-bg-settings-row);
-	padding: var(--size-settings-row-padding);
+	padding-inline: var(--size-settings-row-padding);
+	padding-block: var(--size-settings-row-padding);
+}
+
+/* Helper copy belongs to the preceding settings row, not a separate divided row. */
+[data-section="updates"] .nightly-warning {
+	border-top: 0 !important;
+	border-block-start: 0 !important;
 }
 
 /* Tailwind preflight clears button backgrounds; keep settings rows filled. */
 button.settings-row-bar {
 	background-color: var(--color-bg-settings-row);
+}
+
+button.settings-link-row:hover,
+button.settings-link-row:active {
+	background-color: var(--color-bg-settings-row-hover);
+	color: var(--color-text-settings-title);
+}
+
+/* Grouped rows size around the shared action control, keeping its top/bottom
+ * inset equal to the row's right and left inset. */
+.settings-grouped-rows .settings-row-bar {
+	height: auto;
+	min-height: calc(var(--size-settings-action-height) + (var(--space-2) * 2));
+	padding-block: var(--space-2);
+	padding-inline: var(--space-3);
+	border-radius: 0;
+}
+
+/* Button/link rows (e.g. Connect Mobile, Keyboard Shortcuts) keep rounded
+ * corners even though the shared group container lost its outer border. */
+.settings-grouped-rows .settings-link-row.settings-row-bar {
+	border-radius: var(--radius-md);
 }
 
 @utility settings-menu-item {
@@ -600,14 +635,14 @@ button.settings-row-bar {
 	display: inline-flex;
 	align-items: center;
 	gap: calc(var(--spacing) * 1.5);
-	border-radius: var(--radius-settings-row);
-	padding-inline: var(--space-1);
-	padding-block: var(--space-0_5);
+	border-radius: var(--radius-md);
+	padding-inline: var(--space-2);
+	padding-block: var(--space-1);
 	font-size: var(--font-size-base);
 	color: var(--color-text-settings-muted);
 	outline: none;
 	box-shadow: none;
-	transition-property: color;
+	transition-property: color, background-color;
 	transition-duration: var(--duration-fast);
 }
 
@@ -642,7 +677,7 @@ button.settings-row-bar {
 	background-color: var(--color-bg-settings-menu);
 	padding: var(--space-2);
 	gap: var(--space-1_5);
-	box-shadow: var(--elevation-md);
+	box-shadow: none;
 }
 
 @utility settings-agent-menu-surface {
@@ -744,9 +779,6 @@ button.settings-row-bar {
 	min-width: 1rem;
 	align-items: center;
 	justify-content: center;
-	border-radius: var(--radius-xs);
-	background-color: color-mix(in oklab, currentcolor 14%, transparent);
-	padding-inline: calc(var(--spacing) * 1);
 	font-family: var(--font-mono);
 	font-size: var(--font-size-xs);
 	line-height: 1.1;
@@ -778,7 +810,13 @@ button.settings-row-bar {
 	min-width: 0;
 	grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
 	align-items: center;
-	column-gap: var(--space-2);
+	overflow: hidden;
+	border-radius: var(--radius-md);
+	/* Same mix formula as the settings-modal dropdown trigger, but anchored to
+	   --card (an opaque color) instead of --color-bg-settings-row (transparent
+	   by design there, since it always sits inside an already-painted dialog
+	   surface) — this pill floats on its own with nothing painted behind it. */
+	background-color: color-mix(in oklch, var(--card) 97%, var(--foreground));
 }
 
 .composer-toolbar-slot {
@@ -786,65 +824,32 @@ button.settings-row-bar {
 }
 
 .composer-toolbar-divider {
+	align-self: stretch;
 	width: 1px;
-	height: var(--space-4);
+	height: 100%;
 	background-color: var(--color-border);
 }
 
+/* The divider is the shared edge between the two segments — when either one
+   is focused, it becomes part of that segment's own border/focus ring
+   instead of staying a disconnected neutral line. */
+.composer-run-controls:has(.composer-toolbar-slot :focus-within) .composer-toolbar-divider {
+	background-color: var(--bridge-accent);
+}
+
 .composer-toolbar .composer-toolbar-option {
-	height: var(--size-control-md);
-	border-radius: var(--radius-md) !important;
+	height: var(--size-settings-action-height);
+	border-radius: 0 !important;
 	background-color: transparent !important;
 }
 
 .composer-toolbar .composer-toolbar-option:hover:not(:disabled),
 .composer-toolbar .composer-toolbar-option[data-state="open"] {
-	background-color: var(--color-bg-composer-chip-hover) !important;
+	background-color: color-mix(in oklch, var(--card) 88%, var(--foreground)) !important;
 }
 
 .composer-toolbar .composer-toolbar-option:focus-visible {
 	box-shadow: inset 0 0 0 2px var(--bridge-accent-weak);
-}
-
-.composer-value-swap {
-	display: inline-block;
-	animation: composer-value-in var(--duration-fast) ease-out;
-}
-
-.composer-model-skeleton {
-	width: var(--space-10);
-	height: var(--space-2);
-	border-radius: var(--radius-xs);
-	background-color: color-mix(in oklab, currentcolor 14%, transparent);
-	animation: composer-skeleton-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes composer-value-in {
-	from {
-		opacity: 0;
-		transform: translateY(2px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
-}
-
-@keyframes composer-skeleton-pulse {
-	0%,
-	100% {
-		opacity: 0.45;
-	}
-	50% {
-		opacity: 0.9;
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.composer-value-swap,
-	.composer-model-skeleton {
-		animation: none;
-	}
 }
 
 /* Inline value control inside the task composer's bottom toolbar. Reads as a
@@ -854,15 +859,15 @@ button.settings-row-bar {
 	width: auto;
 	min-width: 0;
 	max-width: 100%;
-	height: var(--size-control-md);
+	height: var(--size-settings-action-height);
 	align-items: center;
 	gap: calc(var(--spacing) * 2);
 	border: 1px solid transparent;
 	/* SelectTrigger and settings-option-trigger bring different radii. The
-	   composer owns this shared surface, so both agent and model must resolve to
-	   the same geometry regardless of the primitive underneath. */
-	border-radius: var(--radius-md) !important;
-	background-color: var(--color-bg-composer-chip);
+	   shared container now owns the rounding, so each segment stays square and
+	   only the outer edge reads as one pill. */
+	border-radius: 0 !important;
+	background-color: transparent;
 	padding-inline: var(--space-2);
 	font-size: var(--font-size-base);
 	color: var(--color-foreground);
@@ -870,7 +875,7 @@ button.settings-row-bar {
 	transition-duration: var(--duration-fast);
 
 	&:hover:not(:disabled) {
-		background-color: var(--color-bg-composer-chip-hover);
+		background-color: color-mix(in oklch, var(--card) 88%, var(--foreground));
 	}
 
 	&:focus-visible {
@@ -880,8 +885,18 @@ button.settings-row-bar {
 	}
 
 	&[data-state="open"] {
-		background-color: var(--color-bg-composer-chip-hover);
+		background-color: color-mix(in oklch, var(--card) 88%, var(--foreground));
 		border-color: transparent;
+	}
+
+	/* The agent chip's SelectTrigger chevron has no rotation of its own — give
+	   it the same open-state flip as the settings dropdowns. */
+	& svg {
+		transition: transform var(--duration-normal) ease-out;
+	}
+
+	&[data-state="open"] svg {
+		transform: rotate(180deg);
 	}
 }
 
@@ -911,7 +926,7 @@ button.settings-row-bar {
    its text, which reads as a stray half-width box once it sits in a menu. */
 @utility menu-search-input {
 	width: 100%;
-	height: var(--size-settings-inline-input-height);
+	height: var(--size-settings-action-height);
 	border: 1px solid var(--color-border-settings-input);
 	border-radius: var(--radius-md);
 	background-color: var(--color-bg-settings-input);
@@ -1066,7 +1081,7 @@ button.settings-row-bar {
 	transition-duration: var(--duration-normal);
 
 	&:hover {
-		background-color: var(--color-bg-settings-row);
+		background-color: var(--color-bg-settings-row-hover);
 		color: var(--color-text-settings-title);
 	}
 
@@ -1351,6 +1366,35 @@ textarea,
 	}
 }
 
+.agent-switch-transfer-pulse {
+	animation: agent-switch-transfer 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes agent-switch-transfer {
+	0% {
+		left: -2.5rem;
+		opacity: 0;
+	}
+	18% {
+		opacity: 1;
+	}
+	82% {
+		opacity: 1;
+	}
+	100% {
+		left: 100%;
+		opacity: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.agent-switch-transfer-pulse {
+		left: calc(50% - 1.25rem);
+		opacity: 0.85;
+		animation: none;
+	}
+}
+
 @keyframes ao-startup-logo-breathe {
 	0%,
 	100% {
@@ -1463,6 +1507,28 @@ textarea,
 	}
 }
 
+@keyframes popover-in {
+	from {
+		opacity: 0;
+		scale: 0.98;
+	}
+	to {
+		opacity: 1;
+		scale: 1;
+	}
+}
+
+@keyframes popover-out {
+	from {
+		opacity: 1;
+		scale: 1;
+	}
+	to {
+		opacity: 0;
+		scale: 0.98;
+	}
+}
+
 /* ── Global resize state (sidebar drag) ─────────────────────────────────── */
 body.is-resizing-x {
 	cursor: col-resize;
@@ -1476,6 +1542,13 @@ body.is-resizing-x [data-slot="resize-handle"]::after {
 body.is-resizing-x [data-slot="sidebar-gap"],
 body.is-resizing-x [data-slot="sidebar-container"] {
 	transition: none;
+}
+
+/* Keep keyboard focus visible without adding a ring to the sidebar chrome. */
+.sidebar-focusless :focus-visible {
+	background-color: var(--color-interactive-hover) !important;
+	outline: none !important;
+	box-shadow: none !important;
 }
 
 /* Expanded-only sidebar chrome waits for the rail width transition to finish
@@ -1581,6 +1654,41 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	border-color: color-mix(in srgb, var(--color-logo-accent) 45%, var(--color-border-strong));
 	background: var(--color-bg-secondary);
 	box-shadow: var(--elevation-md);
+}
+
+/* The draft grows to seven lines before it becomes its own scroll surface. A
+   narrow inset thumb keeps long prompts legible without the platform scrollbar
+   competing with the composer controls. */
+.chat-composer-scrollbar {
+	scrollbar-width: thin;
+	scrollbar-color: var(--color-scrollbar-board) transparent;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar {
+	width: 8px;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar-button {
+	display: none;
+	width: 0;
+	height: 0;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar-track,
+.chat-composer-scrollbar::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar-thumb {
+	border: 2px solid transparent;
+	border-radius: var(--radius-full);
+	background: var(--color-scrollbar-board);
+	background-clip: content-box;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar-thumb:hover {
+	background: var(--color-scrollbar-board-hover);
+	background-clip: content-box;
 }
 
 .cursor-chat-human-message {
@@ -2907,16 +3015,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		background var(--duration-normal) ease;
 }
 
-.browser-panel--agent-active {
-	border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
-	box-shadow:
-		0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent),
-		0 0 28px color-mix(in srgb, var(--color-accent) 10%, transparent),
-		var(--elevation-sm);
-}
-
-/* Maximized workspace overlays: fixed layers portaled to <body>, so they cover
-   the sidebar + topbar too, not just the session area.
+/* Maximized browser overlay: a fixed layer over the app workspace (portaled to
+   <body>, so it covers the sidebar + topbar too, not just the session area).
    Electron's Window Controls Overlay owns the top-right titlebar region on
    Windows, so start below its reported safe-area height. macOS hides the shell
    topbar; windowed mode reserves the native traffic-light band below, while
@@ -2934,6 +3034,14 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	   maximized browser surface interactive even if those regions overlap while
 	   the window is transitioning between layouts. */
 	-webkit-app-region: no-drag;
+}
+
+/* BaseWindow's explicit shell WebContentsView does not always expose the
+   Window Controls Overlay safe-area env value. Keep maximized browser/files
+   surfaces below the Windows native min/max/close controls in that mode. */
+html[data-native-browser-composition="true"][data-ao-platform="win32"] .browser-popout-overlay,
+html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-popout-overlay {
+	top: var(--size-window-titlebar);
 }
 
 /* macOS keeps the native traffic lights visible while the window is not in
@@ -3131,6 +3239,78 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	background: color-mix(in srgb, var(--red) 8%, var(--bg));
 	color: var(--red);
 	font-size: 12px;
+}
+
+/* Native composition keeps the browser page in an Electron
+ * WebContentsView below the transparent shell renderer. The normal renderer
+ * path remains available for web-only development; these rules remove the
+ * opaque paint layers that would otherwise hide the native page behind the
+ * shell. Toolbar and controls stay opaque so the app chrome remains readable. */
+html[data-native-browser-composition="true"] body:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay),
+html[data-native-browser-composition="true"] #root:has(.browser-panel[data-browser-native-page="live"]) {
+	background: transparent;
+}
+
+html[data-native-browser-composition="true"] .platform-windows:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] .platform-linux:has(.browser-panel[data-browser-native-page="live"]) {
+	background: transparent;
+}
+
+/* A maximized BrowserPanel is portaled directly under <body>, outside the
+ * normal shell root. Clear the shell layers beneath that portal as well, or a
+ * sidebar/center surface can paint an opaque sheet over the live native page
+ * whenever the transparent shell is raised for its tabs/menu portals. */
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .platform-windows,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .platform-linux,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .center-panel-shell,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .center-panel-surface,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root [data-testid="session-detail"],
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .session-split,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .session-inspector,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .session-inspector__body,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root [data-slot="sidebar-container"],
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root [data-slot="sidebar-inner"],
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .dashboard-app-header,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .session-topbar-surface {
+	background: transparent !important;
+}
+
+/* The popout is the only visible workspace while maximized. Hide the normal
+ * shell subtree instead of letting its terminal/sidebar controls show through
+ * the transparent compositor when the shell is raised for a menu portal. The
+ * BrowserPanel portal and the Windows titlebar remain outside this wrapper and
+ * stay interactive. */
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root [data-slot="sidebar-wrapper"] {
+	visibility: hidden;
+}
+
+html[data-native-browser-composition="true"] .center-panel-shell--session:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] .center-panel-shell--session:has(.browser-panel[data-browser-native-page="live"]) > .center-panel-surface,
+html[data-native-browser-composition="true"] [data-testid="session-detail"]:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] .session-split:has(.browser-panel[data-browser-native-page="live"]) {
+	background: transparent;
+}
+
+html[data-native-browser-composition="true"] .browser-panel[data-browser-native-page="live"],
+html[data-native-browser-composition="true"] .browser-panel[data-browser-native-page="live"] .browser-panel__content,
+html[data-native-browser-composition="true"] .browser-panel[data-browser-native-page="live"] .browser-panel__viewport {
+	background: transparent !important;
+	box-shadow: none;
+}
+
+/* The inspector rail paints its own opaque background. When its browser tab is
+ * active, clear only that containing rail so the native page remains visible
+ * when the transparent shell is raised for a menu. Other inspector tabs keep
+ * their existing surface unchanged. */
+html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]) .session-inspector__body {
+	background: transparent;
+}
+
+html[data-native-browser-composition="true"] .browser-popout-overlay {
+	background: transparent;
 }
 
 @keyframes browser-popout-in {
