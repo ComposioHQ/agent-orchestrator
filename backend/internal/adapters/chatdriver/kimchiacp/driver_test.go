@@ -42,7 +42,7 @@ func TestConfigurePassesAutoPermission(t *testing.T) {
 		args, _, err := configure(acpdriver.LaunchConfig{Permissions: perm})
 		if err != nil {
 			t.Fatalf("configure(%q): %v", perm, err)
-	}
+		}
 		want := []string{"--mode", "acp", "--auto"}
 		if !reflect.DeepEqual(args, want) {
 			t.Fatalf("perm %q: args = %#v, want %#v", perm, args, want)

@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
-	"strings"
 
 	acpsdk "github.com/coder/acp-go-sdk"
 
@@ -1182,7 +1182,7 @@ func TestACPDriverStartToleratesMethodNotFound(t *testing.T) {
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
-		SessionMode: func(ports.PermissionMode) string { return "acceptEdits" },
+		SessionMode:  func(ports.PermissionMode) string { return "acceptEdits" },
 		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
 			if settings.Model == "" {
 				return nil
@@ -1216,7 +1216,7 @@ func TestACPDriverSendTurnPropagatesMethodNotFound(t *testing.T) {
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
-		SessionMode: func(ports.PermissionMode) string { return "acceptEdits" },
+		SessionMode:  func(ports.PermissionMode) string { return "acceptEdits" },
 		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
 			if settings.Model == "" {
 				return nil

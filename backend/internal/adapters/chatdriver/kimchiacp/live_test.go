@@ -43,9 +43,9 @@ func TestLiveKimchiACP(t *testing.T) {
 
 	// Send a turn and verify streaming + completion.
 	ref, err := conversation.SendTurn(ctx, ports.ChatUserMessage{
-		Text:             "Reply with exactly: AO Kimchi ACP works",
-		ClientMessageID:  "live-1",
-		Origin:           domain.MessageOriginHuman,
+		Text:            "Reply with exactly: AO Kimchi ACP works",
+		ClientMessageID: "live-1",
+		Origin:          domain.MessageOriginHuman,
 	})
 	if err != nil {
 		t.Fatalf("SendTurn: %v", err)

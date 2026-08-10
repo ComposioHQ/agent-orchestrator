@@ -6,10 +6,10 @@ import (
 
 func TestParseSemver(t *testing.T) {
 	tests := map[string]semver{
-		"kimchi 0.0.7":            {0, 0, 7},
-		"kimchi version 1.2.3":    {1, 2, 3},
-		"kimchi 0.10.0":            {0, 10, 0},
-		"  0.1.0-rc1 ":            {0, 1, 0},
+		"kimchi 0.0.7":         {0, 0, 7},
+		"kimchi version 1.2.3": {1, 2, 3},
+		"kimchi 0.10.0":        {0, 10, 0},
+		"  0.1.0-rc1 ":         {0, 1, 0},
 	}
 	for input, want := range tests {
 		got, ok := parseSemver(input)

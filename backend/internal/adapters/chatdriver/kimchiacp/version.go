@@ -31,7 +31,7 @@ func versionProbe(ctx context.Context, bin string) error {
 	}
 	minimum, _ := parseSemver(minimumKimchiVersion)
 	if installed.less(minimum) {
-		return fmt.Errorf("Kimchi %s is older than AO's tested minimum %s",
+		return fmt.Errorf("kimchi %s is older than AO's tested minimum %s",
 			installed, minimumKimchiVersion)
 	}
 	return nil
