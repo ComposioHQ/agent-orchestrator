@@ -2,7 +2,7 @@ import { load } from "cheerio";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+vi.mock("../../lib/analytics", () => ({ track: vi.fn() }));
 
 import { AndroidBetaMobileSheet } from "./AndroidBetaMobileSheet";
 

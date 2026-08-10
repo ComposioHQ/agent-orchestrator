@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { FaAndroid } from "react-icons/fa";
-import { track } from "@/lib/analytics";
+import { track } from "../../lib/analytics";
 import { Platform, usePlatform } from "../hooks/useOS";
 import {
   ANDROID_BETA_TRIGGER_CLASS,

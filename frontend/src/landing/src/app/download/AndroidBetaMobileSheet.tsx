@@ -7,7 +7,7 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ExternalLink, X } from "lucide-react";
 import { useEffect } from "react";
-import { track } from "@/lib/analytics";
+import { track } from "../../lib/analytics";
 
 const ACTION_CLASS =
   "mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-foreground px-4 py-3.5 text-sm font-semibold text-background transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card motion-reduce:transition-none";

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { track } from "@/lib/analytics";
+import { track } from "../../../lib/analytics";
 import { isMacPlatform, Platform, usePlatform } from "../../hooks/useOS";
 
 interface DownloadButtonProps {
