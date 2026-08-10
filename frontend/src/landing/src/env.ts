@@ -31,7 +31,6 @@ export const env = createEnv({
     NEXT_PUBLIC_SENTRY_DSN_MARKETING:
       process.env.NEXT_PUBLIC_SENTRY_DSN_MARKETING,
     NEXT_PUBLIC_SENTRY_ENVIRONMENT: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
-    GITHUB_TOKEN: process.env.GITHUB_TOKEN,
   },
   skipValidation: true,
 });

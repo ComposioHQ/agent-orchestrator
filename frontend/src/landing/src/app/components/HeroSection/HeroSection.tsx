@@ -16,6 +16,10 @@ import { ProductDemo } from "./components/ProductDemo";
 const INSTALL_COMMAND = "brew install agentwrapper/tap/agent-orchestrator";
 // Wraps at the path separators instead of mid-word once the pill goes two-line.
 const INSTALL_COMMAND_PARTS = INSTALL_COMMAND.split("/");
+const LAST_KNOWN_STARS_KEY = "ao:github-stars";
+// Keep the control populated for a first visit if the static build and the
+// browser request both fail. A successful request replaces this immediately.
+const FALLBACK_STARS = 9158;
 
 function formatStarCount(count: number) {
   if (count >= 1000) {
@@ -31,10 +35,21 @@ interface HeroSectionProps {
 
 export function HeroSection({ initialStars }: HeroSectionProps) {
   const [copiedCommand, setCopiedCommand] = useState(false);
-  const [stars, setStars] = useState(initialStars);
+  const [stars, setStars] = useState(initialStars ?? FALLBACK_STARS);
 
   useEffect(() => {
     const controller = new AbortController();
+
+    if (initialStars === null) {
+      try {
+        const storedStars = Number(localStorage.getItem(LAST_KNOWN_STARS_KEY));
+        if (Number.isFinite(storedStars) && storedStars >= 0) {
+          setStars(storedStars);
+        }
+      } catch {
+        // Storage may be unavailable in private or restricted browser modes.
+      }
+    }
 
     fetch(GITHUB_STARS_URL, {
       headers: { Accept: "application/vnd.github.v3+json" },
@@ -45,6 +60,14 @@ export function HeroSection({ initialStars }: HeroSectionProps) {
       .then((data: { stargazers_count?: unknown } | null) => {
         if (typeof data?.stargazers_count === "number") {
           setStars(data.stargazers_count);
+          try {
+            localStorage.setItem(
+              LAST_KNOWN_STARS_KEY,
+              String(data.stargazers_count),
+            );
+          } catch {
+            // Storage may be unavailable in private or restricted browser modes.
+          }
         }
       })
       .catch(() => {
