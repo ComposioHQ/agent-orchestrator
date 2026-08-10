@@ -27,6 +27,14 @@ const (
 var (
 	errConversationClosed = errors.New("ACP conversation closed")
 	errClientCapability   = errors.New("ACP client capability not advertised")
+
+	// ErrACPSetterUnsupported is returned by applyTurnSettings when the agent
+	// does not implement session/set_mode or session/set_config_option
+	// (JSON-RPC -32601). Start() and Resume() tolerate it because the initial
+	// model and permission mode may have been applied via launch-time flags;
+	// SendTurn propagates it so a runtime change that cannot be applied is
+	// surfaced to the user instead of silently running with the wrong mode.
+	ErrACPSetterUnsupported = errors.New("ACP agent does not support runtime session configuration")
 )
 
 type preparedTurn struct {
@@ -225,16 +233,10 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 			if _, err := c.conn.SetSessionMode(ctx, acpsdk.SetSessionModeRequest{
 				SessionId: acpsdk.SessionId(sessionID), ModeId: acpsdk.SessionModeId(mode),
 			}); err != nil {
-				// An agent that does not implement session/set_mode (JSON-RPC
-				// -32601) cannot have its permission mode changed at runtime.
-				// The launch-time mode (if any) remains in effect, so this is
-				// a degraded capability, not a fatal error.
-				if !isACPMethodNotFound(err) {
-					return fmt.Errorf("set ACP session mode %q: %w", mode, err)
+				if isACPMethodNotFound(err) {
+					return fmt.Errorf("%w: session/set_mode %q", ErrACPSetterUnsupported, mode)
 				}
-				if c.log != nil {
-					c.log.Debug("ACP agent does not support session/set_mode; skipping", "mode", mode, "error", err)
-				}
+				return fmt.Errorf("set ACP session mode %q: %w", mode, err)
 			}
 		}
 	}
@@ -251,10 +253,7 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 			})
 			if err != nil {
 				if isACPMethodNotFound(err) {
-					if c.log != nil {
-						c.log.Debug("ACP agent does not support session/set_config_option; skipping", "option", option.ID, "error", err)
-					}
-					continue
+					return fmt.Errorf("%w: session/set_config_option %q", ErrACPSetterUnsupported, option.ID)
 				}
 				return fmt.Errorf("set ACP session option %q: %w", option.ID, err)
 			}

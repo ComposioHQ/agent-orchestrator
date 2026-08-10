@@ -39,6 +39,11 @@ export function ChatSettingsModal({
 	const selected = models.find((model) => model.id === snapshot.settings.model) ?? models.find((model) => model.default);
 	const efforts = selected?.efforts ?? [];
 	const usesProviderOptions = can(snapshot, "config_options");
+	const hasProviderModel = options.some(
+		(option) => option.category === "model" || option.id === "model" || option.id === "agent",
+	);
+	const hasProviderMode = options.some(
+		(option) => option.category === "mode" || option.id === "mode");
 	return (
 		<Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
 			<Pressable accessibilityLabel="Close turn settings" style={styles.scrim} onPress={onClose} />
@@ -51,13 +56,13 @@ export function ChatSettingsModal({
 				<ScrollView contentContainerStyle={styles.content}>
 					{error ? <View accessibilityRole="alert" style={styles.error}><Feather name="alert-circle" size={14} color={t.red} /><Text style={styles.errorText}>{error}</Text></View> : null}
 					{snapshot.modelReroute ? <View style={styles.reroute}><Feather name="shuffle" size={14} color={t.amber} /><View style={{ flex: 1 }}><Text style={styles.rerouteTitle}>Currently answered by {snapshot.modelReroute.toModel}</Text><Text style={styles.rerouteCopy}>{snapshot.modelReroute.fromModel ? `${snapshot.modelReroute.fromModel} was requested. ` : ""}{snapshot.modelReroute.reason || "The provider selected a fallback model for this conversation."}</Text></View></View> : null}
-					{!usesProviderOptions && models.length ? <SettingsSection icon="cpu" title="Model">
+					{(!usesProviderOptions || !hasProviderModel) && models.length ? <SettingsSection icon="cpu" title="Model">
 						{models.map((model) => <Choice key={model.id} label={model.displayName} hint={model.description || (model.default ? "Provider default" : undefined)} selected={model.id === selected?.id} disabled={disabled} onPress={() => onSettings({ ...snapshot.settings, model: model.id, reasoningEffort: undefined })} />)}
 					</SettingsSection> : null}
-					{!usesProviderOptions && efforts.length ? <SettingsSection icon="activity" title="Reasoning effort">
+					{(!usesProviderOptions || !hasProviderModel) && efforts.length ? <SettingsSection icon="activity" title="Reasoning effort">
 						{efforts.map((effort) => <Choice key={effort} label={capitalize(effort)} selected={effort === (snapshot.settings.reasoningEffort ?? selected?.defaultEffort)} disabled={disabled} onPress={() => onSettings({ ...snapshot.settings, reasoningEffort: effort })} />)}
 					</SettingsSection> : null}
-					{!usesProviderOptions ? <SettingsSection icon="shield" title="Approvals">
+					{(!usesProviderOptions || !hasProviderMode) ? <SettingsSection icon="shield" title="Approvals">
 						{APPROVALS.map((mode) => <Choice key={mode.id} label={mode.label} hint={mode.hint} selected={mode.id === (snapshot.settings.approvalMode ?? "default")} disabled={disabled} onPress={() => onSettings({ ...snapshot.settings, approvalMode: mode.id })} />)}
 					</SettingsSection> : null}
 					{options.map((option) => <SettingsSection key={option.id} icon={configOptionIcon(option)} title={option.name} description={option.description}>

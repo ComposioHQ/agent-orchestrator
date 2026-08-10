@@ -19,20 +19,59 @@ func New(plugin nativeacp.Plugin, log *slog.Logger) ports.ChatDriver {
 	return nativeacp.New(plugin, nativeacp.Config{
 		Harness:        domain.HarnessKimchi,
 		Configure:      configure,
-		SessionMode:    sessionMode,
 		SessionOptions: sessionOptions,
+		VersionProbe:   versionProbe,
 	}, log)
 }
 
 func configure(cfg acpdriver.LaunchConfig) ([]string, map[string]string, error) {
 	args := []string{"--mode", "acp"}
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		args = append(args, "--model", model)
+	}
+	appendPermissionFlags(&args, cfg.Permissions)
 	if strings.TrimSpace(cfg.SystemPrompt) != "" {
 		args = append(args, "--append-system-prompt", cfg.SystemPrompt)
 	}
 	return args, nil, nil
 }
 
-func sessionMode(permission ports.PermissionMode) string {
+// appendPermissionFlags mirrors the TUI adapter's launch-time permission
+// mapping: --auto for accept-edits/auto, --yolo for bypass-permissions,
+// and no flag for default. This ensures the initial permission mode reaches
+// Kimchi even when the ACP runtime setters (session/set_mode,
+// session/set_config_option) are unsupported (-32601).
+func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
+	switch ports.NormalizePermissionMode(permissions) {
+	case ports.PermissionModeAcceptEdits, ports.PermissionModeAuto:
+		*cmd = append(*cmd, "--auto")
+	case ports.PermissionModeBypassPermissions:
+		*cmd = append(*cmd, "--yolo")
+	}
+}
+
+// sessionMode returns "" because Kimchi does not implement the legacy
+// session/set_mode ACP method (returns -32601). Permission mode changes
+// are applied through the "permissions-mode" config option instead — see
+// sessionOptions.
+
+func sessionOptions(settings ports.ChatTurnSettings) []acpdriver.SessionOption {
+	var options []acpdriver.SessionOption
+	if settings.Model != "" {
+		options = append(options, acpdriver.SessionOption{ID: "model", Value: settings.Model})
+	}
+	if mode := kimchiPermissionMode(settings.Approval); mode != "" {
+		options = append(options, acpdriver.SessionOption{ID: "permissions-mode", Value: mode})
+	}
+	return options
+}
+
+// kimchiPermissionMode maps AO's permission vocabulary onto Kimchi's native
+// mode ids ("default", "plan", "auto", "yolo"). These are sent through
+// session/set_config_option with configId "permissions-mode", which Kimchi
+// implements. The legacy session/set_mode path is not used because Kimchi
+// does not implement it.
+func kimchiPermissionMode(permission ports.PermissionMode) string {
 	switch ports.NormalizePermissionMode(permission) {
 	case ports.PermissionModeAcceptEdits, ports.PermissionModeAuto:
 		return "auto"
@@ -41,11 +80,4 @@ func sessionMode(permission ports.PermissionMode) string {
 	default:
 		return ""
 	}
-}
-
-func sessionOptions(settings ports.ChatTurnSettings) []acpdriver.SessionOption {
-	if settings.Model == "" {
-		return nil
-	}
-	return []acpdriver.SessionOption{{ID: "model", Value: settings.Model}}
 }

@@ -152,8 +152,14 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		d.cfg.SessionMode, d.cfg.SessionOptions, resp.ConfigOptions,
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Approval: cfg.Permissions}); err != nil {
-		_ = conv.Close()
-		return nil, fmt.Errorf("configure ACP session: %w", err)
+		// Initial model and permission mode may have been applied via launch-time
+		// flags (e.g. kimchiacp passes --model, --auto, --yolo). An agent that
+		// does not implement the runtime ACP setters returns -32601; tolerate it
+		// at session start so those bindings can still open a session.
+		if !errors.Is(err, ErrACPSetterUnsupported) {
+			_ = conv.Close()
+			return nil, fmt.Errorf("configure ACP session: %w", err)
+		}
 	}
 	return conv, nil
 }
@@ -237,8 +243,10 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		d.cfg.SessionMode, d.cfg.SessionOptions, configOptions,
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Approval: cfg.Permissions}); err != nil {
-		_ = conv.Close()
-		return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
+		if !errors.Is(err, ErrACPSetterUnsupported) {
+			_ = conv.Close()
+			return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
+		}
 	}
 	return conv, nil
 }
