@@ -266,6 +266,19 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	reviews := Plan(prs, runs)
 	if source == domain.ReviewTriggerAuto {
 		reviews = Plan(prs, reviewRunsForHarness(runs, harness))
+		// Automatic sweeps may discover another eligible PR while this harness is
+		// already reviewing one. Reconciliation above has proved the reviewer
+		// terminal is still alive, so do not append work to its active batch. A
+		// later sweep can start the remaining PR after the current run terminates.
+		if hadRunningReviewer {
+			return TriggerResult{
+				Run:              firstReusableRun(reviews),
+				ReviewerHandleID: reviewRow.ReviewerHandleID,
+				Created:          false,
+				Reviews:          reviews,
+				Runs:             runs,
+			}, nil
+		}
 	}
 
 	now := e.clock()

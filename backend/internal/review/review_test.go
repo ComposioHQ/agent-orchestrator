@@ -1313,6 +1313,67 @@ func TestAutoTriggerWaitsForNewCommitAfterCancelledRun(t *testing.T) {
 	}
 }
 
+func TestAutoTriggerDoesNotAppendPRToLiveRunningReviewer(t *testing.T) {
+	pr1 := "https://github.com/o/r/pull/1"
+	pr2 := "https://github.com/o/r/pull/2"
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", ReviewID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode,
+			PRURL: pr1, TargetSHA: "sha1", Status: domain.ReviewRunRunning,
+		}},
+	}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	prs := fakePRs{prs: []domain.PullRequest{
+		{URL: pr1, Number: 1, HeadSHA: "sha1"},
+		{URL: pr2, Number: 2, HeadSHA: "sha2"},
+	}}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prs, fakeProjects{}, launcher)
+
+	res, err := eng.TriggerWithSource(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.ReviewTriggerAuto)
+	if err != nil {
+		t.Fatalf("TriggerWithSource: %v", err)
+	}
+	if res.Created || len(store.runs) != 1 {
+		t.Fatalf("live running reviewer accepted another PR: result=%+v runs=%+v", res, store.runs)
+	}
+	if !launcher.aliveChecked || launcher.spawned || launcher.notified {
+		t.Fatalf("auto trigger should only check liveness: %+v", launcher)
+	}
+}
+
+func TestAutoTriggerReconcilesDeadReviewerBeforeRunningGate(t *testing.T) {
+	pr1 := "https://github.com/o/r/pull/1"
+	pr2 := "https://github.com/o/r/pull/2"
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", ReviewID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode,
+			PRURL: pr1, TargetSHA: "sha1", Status: domain.ReviewRunRunning,
+		}},
+	}
+	launcher := &fakeLauncher{alive: false, handle: "review-mer-1"}
+	prs := fakePRs{prs: []domain.PullRequest{
+		{URL: pr1, Number: 1, HeadSHA: "sha1"},
+		{URL: pr2, Number: 2, HeadSHA: "sha2"},
+	}}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prs, fakeProjects{}, launcher)
+
+	res, err := eng.TriggerWithSource(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.ReviewTriggerAuto)
+	if err != nil {
+		t.Fatalf("TriggerWithSource: %v", err)
+	}
+	if !res.Created || res.Run.PRURL != pr2 {
+		t.Fatalf("dead reviewer did not release pending PR: result=%+v", res)
+	}
+	if store.runs[0].Status != domain.ReviewRunCancelled || len(store.runs) != 2 {
+		t.Fatalf("stale run was not reconciled before retry: %+v", store.runs)
+	}
+	if !launcher.aliveChecked || !launcher.spawned || launcher.notified {
+		t.Fatalf("pending PR should launch a fresh reviewer: %+v", launcher)
+	}
+}
+
 func TestTriggerCreatesRunsForMultipleEligiblePRsWithOneReviewer(t *testing.T) {
 	store := &fakeStore{}
 	launcher := &fakeLauncher{handle: "review-mer-1"}
