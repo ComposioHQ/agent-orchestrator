@@ -189,9 +189,9 @@ ao start
 | [docs/STATUS.md](../docs/STATUS.md)                                 | `main` 上当前已交付的内容，以及仍在进行中的部分。                                            |
 | [docs/stack.md](../docs/stack.md)                                   | 库、运行时与依赖决策。                                                                       |
 
-## 遥测
+## 匿名遥测
 
-Agent Orchestrator 的 Electron 渲染进程会向 PostHog 发送匿名使用事件，用于可靠性与产品理解。PostHog 会话录制默认关闭；若在限时调查中启用，本地路径与本地 URL 会在传输前脱敏。构建前将 `VITE_AO_POSTHOG_KEY` 设为空字符串可禁用传输。详见 [docs/telemetry.md](../docs/telemetry.md)。
+AO 使用注重隐私的产品使用与可靠性指标，其设计会排除个人身份信息（PII）和项目内容，帮助我们了解产品采用情况并持续改进。[进一步了解遥测与隐私](../docs/telemetry.md)。
 
 ## 许可证
 
