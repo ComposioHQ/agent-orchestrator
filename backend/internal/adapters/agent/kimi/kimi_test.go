@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -138,8 +139,11 @@ func TestPromptReadinessHints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if hints.Timeout <= 0 || len(hints.Patterns) == 0 {
-		t.Fatalf("hints = %#v, want bounded readiness patterns", hints)
+	if hints.InitialDelay != 750*time.Millisecond || hints.PollInterval != 200*time.Millisecond || hints.Timeout != 90*time.Second || hints.Lines != 80 {
+		t.Fatalf("hints = %#v", hints)
+	}
+	if !reflect.DeepEqual(hints.Patterns, []string{"│ >"}) {
+		t.Fatalf("patterns = %#v, want Kimi composer prompt", hints.Patterns)
 	}
 }
 
