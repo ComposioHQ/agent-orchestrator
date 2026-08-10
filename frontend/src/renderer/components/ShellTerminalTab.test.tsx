@@ -100,12 +100,13 @@ describe("ShellTerminalTab rename", () => {
 			"right-0",
 			"h-full",
 			"translate-x-0",
-			"border-border-strong",
-			"bg-raised",
+			"rounded-l-[3px]",
+			"border-foreground/15",
+			"bg-surface",
 			"opacity-100",
 			"pointer-events-auto",
 		);
-		expect(actionTray).not.toHaveClass("bg-overlay/95");
+		expect(actionTray).not.toHaveClass("bg-overlay/95", "bg-raised");
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
 			"shrink-0",
 			"w-auto",
@@ -133,6 +134,9 @@ describe("ShellTerminalTab rename", () => {
 			"group-hover:pointer-events-auto",
 			"group-hover:translate-x-0",
 			"group-hover:opacity-100",
+			"group-hover:animate-in",
+			"group-hover:slide-in-from-right",
+			"group-hover:fade-in-0",
 			"group-focus-within:pointer-events-auto",
 			"group-focus-within:translate-x-0",
 			"group-focus-within:opacity-100",

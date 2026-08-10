@@ -193,10 +193,10 @@ export function ShellTerminalTab({
 					"inline-flex shrink-0 items-center gap-0.5",
 					appearance === "connected" &&
 						cn(
-							"absolute inset-y-0 right-0 z-10 h-full translate-x-[calc(100%+1px)] border-l px-0.5 opacity-0 shadow-sm transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform motion-reduce:transition-none",
+							"absolute inset-y-0 right-0 z-10 h-full translate-x-[calc(100%+1px)] rounded-l-[3px] border-l px-0.5 opacity-0 shadow-sm transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform motion-reduce:transition-none",
 							isActive
-								? "pointer-events-auto translate-x-0 border-border-strong bg-raised opacity-100"
-								: "pointer-events-none translate-x-full border-border bg-overlay/95 opacity-0 group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100",
+								? "pointer-events-auto translate-x-0 border-foreground/15 bg-surface opacity-100"
+								: "pointer-events-none translate-x-full border-border bg-overlay/95 opacity-0 group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:animate-in group-hover:fade-in-0 group-hover:slide-in-from-right group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:animate-in group-focus-within:fade-in-0 group-focus-within:slide-in-from-right group-focus-within:opacity-100",
 						),
 				)}
 			>
