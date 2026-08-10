@@ -22,6 +22,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
+	"github.com/aoagents/agent-orchestrator/backend/internal/datadirlock"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
@@ -64,6 +65,17 @@ func Run() error {
 	ignoreBrokenPipeSignal()
 
 	log := newLogger()
+
+	// Acquire durable mutation authority before opening the store or running any
+	// reconciliation. Without this process-lifetime lease, concurrent starts can
+	// both pass the run-file probe, bind different ports, and mutate the same DB.
+	dataLease, err := datadirlock.Acquire(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("acquire data-dir ownership: %w", err)
+	}
+	defer func() { _ = dataLease.Close() }()
+	log.Info("data-dir ownership acquired", "lock", dataLease.Path(), "pid", dataLease.PID())
+
 	var browserRuntimeToken string
 	if os.Getenv(browserruntime.RuntimeTokenStdinEnv) == "1" {
 		browserRuntimeToken, err = browserruntime.ReadRuntimeToken(os.Stdin)
@@ -88,6 +100,8 @@ func Run() error {
 	// PID for unrelated processes. So a "live" PID is verified against an actual
 	// /healthz probe; a run-file left by a crashed/hard-killed/reused-PID
 	// predecessor is treated as stale and overwritten when the new server starts.
+	// The data-dir lease above is authoritative; this retains stale-run-file
+	// cleanup for the lease holder.
 	if live, err := runfile.CheckStale(cfg.RunFilePath); err != nil {
 		return fmt.Errorf("inspect run-file: %w", err)
 	} else if live != nil && runFileOwnerServing(&http.Client{Timeout: staleProbeTimeout}, config.LoopbackHost, live) {
