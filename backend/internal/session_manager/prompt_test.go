@@ -82,7 +82,7 @@ func TestBuildSystemPrompt_OrchestratorRequiresConfirmationAndAOOnlyDelegation(t
 		"Never ever make code changes directly in the orchestrator session",
 		"ask for explicit confirmation before making any code changes",
 		"prefer spawning or redirecting a worker unless the human explicitly confirms",
-		"Do not use runtime-relative sub-agents or task-delegation workers",
+		"Do not use the agent runtime's built-in subagent or task-delegation tools for implementation work",
 		"You may coordinate multiple workers, but AO workers only",
 	} {
 		if !strings.Contains(got, want) {
@@ -107,10 +107,26 @@ func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing
 		"freeform task, new-task button task, or orchestrator-requested feature",
 		"claim or attach that PR/MR first",
 		"do not invent issue, PR, or MR requirements",
+		"Do not use the agent runtime's built-in subagent or task-delegation tools",
+		"If no orchestrator is attached, continue serially and report the need for additional AO workers to the human",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("worker prompt missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestBuildSystemPrompt_WorkerWithOrchestratorUsesOrchestratorParallelHandoff(t *testing.T) {
+	got := buildSystemPromptText(systemPromptConfig{
+		Role:                  sessionPromptRoleWorker,
+		Project:               promptProject{ID: "mer", Name: "Mercury"},
+		OrchestratorSessionID: "mer-orchestrator",
+	})
+	if !strings.Contains(got, "ask the orchestrator to spawn additional AO worker sessions") {
+		t.Fatalf("worker prompt missing orchestrator handoff guidance:\n%s", got)
+	}
+	if strings.Contains(got, "If no orchestrator is attached, continue serially") {
+		t.Fatalf("worker prompt should not include standalone fallback when orchestrator is attached:\n%s", got)
 	}
 }
 
