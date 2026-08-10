@@ -176,14 +176,13 @@ describe("ShellTopbar status pill", () => {
 		expect(screen.getByRole("button", { name: "Spawn Orchestrator" })).toBeInTheDocument();
 	});
 
-	it("keeps compact worker actions ahead of notifications without a separator while the inspector is open", () => {
+	it("leaves notifications and their separator to the open inspector", () => {
 		renderTopbarSessions([worker, orchestrator], worker.id, true);
 
 		const actionRegion = screen.getByTestId("workspace-topbar-actions");
-		const openOrchestrator = within(actionRegion).getByRole("button", { name: "Open orchestrator" });
-		const notification = within(actionRegion).getByRole("button", { name: "Notifications" });
 
-		expect(openOrchestrator.compareDocumentPosition(notification) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(within(actionRegion).getByRole("button", { name: "Open orchestrator" })).toBeInTheDocument();
+		expect(within(actionRegion).queryByRole("button", { name: "Notifications" })).not.toBeInTheDocument();
 		expect(within(actionRegion).queryByTestId("topbar-utility-separator")).not.toBeInTheDocument();
 	});
 
