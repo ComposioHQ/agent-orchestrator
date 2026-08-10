@@ -17,7 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func TestNativeConversationIDUsesTheSameOpenCodeSessionAcrossInterfaces(t *testing.T) {
+func TestNativeConversationIDSelectsTheModeOwnedOpenCodeSessionID(t *testing.T) {
 	p := &Plugin{}
 	if id, ok, err := p.NativeConversationID(context.Background(), ports.SessionRef{
 		ID: "ao-session-1", Metadata: map[string]string{},
@@ -31,9 +31,10 @@ func TestNativeConversationIDUsesTheSameOpenCodeSessionAcrossInterfaces(t *testi
 	if err != nil || !ok || tuiID != "ses_opencode_1" {
 		t.Fatalf("captured TUI native id = %q ok=%v err=%v", tuiID, ok, err)
 	}
+	const providerID = "ses_opencode_acp_1"
 	chatID, ok, err := p.NativeConversationID(context.Background(), ports.SessionRef{},
-		domain.SessionModeChat, tuiID)
-	if err != nil || !ok || chatID != tuiID {
+		domain.SessionModeChat, providerID)
+	if err != nil || !ok || chatID != providerID {
 		t.Fatalf("Chat native id = %q ok=%v err=%v", chatID, ok, err)
 	}
 }
