@@ -7,12 +7,16 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
 	ArrowUpRight,
+	Bot,
 	ChevronDown,
 	ChevronRight,
+	ChevronUp,
+	FileCode2,
 	Files as FilesIcon,
 	GitPullRequest,
 	GitMerge,
 	Info,
+	MessageSquare,
 	Play,
 	Terminal,
 	Trash2,
@@ -1229,7 +1233,7 @@ function ReviewsSection({
 	);
 
 	return (
-		<div>
+		<div className="mb-4">
 			{/* Running a review is an action; reading them is a list. The action stays
 			    on top, then one list carrying both sources keyed by PR. */}
 				<ReviewPanel
@@ -1308,11 +1312,12 @@ function MergedReviewsSection({
 	if (rows.length === 0) return null;
 
 	return (
-		<Section surface title={t("inspector.reviews")}>
-			<div className="flex flex-col divide-y divide-border">
-				{rows.map(([number, { ao, github }]) => {
+		<Section surface={false} title={t("inspector.reviews")}>
+			<div className="flex flex-col gap-2">
+				{rows.map(([number, { ao, github }], index) => {
 					const entries = github?.review?.reviews ?? [];
-					const unresolved = (github?.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0);
+					const unresolvedBy = github?.review?.unresolvedBy ?? [];
+					const unresolved = unresolvedBy.reduce((n, r) => n + r.count, 0);
 					const meta = [
 						ao ? aoReviewMeta(ao) : `#${number}`,
 						unresolved > 0 ? t("inspector.unresolvedCount", { count: unresolved }) : null,
@@ -1321,29 +1326,28 @@ function MergedReviewsSection({
 						.join(" · ");
 					return (
 						<ReviewDisclosure
-							collapsible
-							defaultOpen={false}
+							collapsible={rows.length > 1}
+							defaultOpen={index === 0}
 							key={number}
 							meta={meta}
 							title={(ao?.title ?? github?.title)?.trim() || `PR #${number}`}
 							verdict={ao ? reviewVerdict(ao) : undefined}
 						>
 							{ao ? (
-								<div className="flex min-w-0 flex-col gap-2.5">
-									{/* Names the side, not the agent. A PR's passes can come from
-									    different reviewers, so one harness on the group caption is
-									    wrong as often as it is right, and every run row below already
-									    carries its own agent name and avatar. */}
-									<ReviewSourceLabel>{t("inspector.reviewBySource.ao")}</ReviewSourceLabel>
+								<div className="flex min-w-0 flex-col gap-2">
+									<ReviewSourceLabel icon={<Bot aria-hidden="true" />}>
+										{t("inspector.reviewBySource.ao")}
+									</ReviewSourceLabel>
 									<ReviewerRuns reviewState={ao} runs={runsByPR.get(ao.prUrl) ?? []} />
 								</div>
 							) : null}
-							{entries.length > 0 ? (
-								<div className="flex min-w-0 flex-col gap-2.5">
-									<ReviewSourceLabel>{t("inspector.reviewBySource.github")}</ReviewSourceLabel>
-									{entries.map((entry) => (
-										<GithubReviewRow entry={entry} key={`${entry.reviewerId}:${entry.submittedAt}`} />
-									))}
+							{entries.length > 0 || unresolved > 0 ? (
+								<div className="flex min-w-0 flex-col gap-2">
+									<ReviewSourceLabel icon={<GitPullRequest aria-hidden="true" />}>
+										{t("inspector.reviewBySource.github")}
+									</ReviewSourceLabel>
+									{unresolved > 0 ? <GithubInlineComments reviewers={unresolvedBy} /> : null}
+									{entries.length > 0 ? <GithubReviewHistory entries={entries} /> : null}
 								</div>
 							) : null}
 						</ReviewDisclosure>
@@ -1363,13 +1367,16 @@ function MergedReviewsSection({
  * edge — enough to bracket the group without spending the vertical space a
  * real section header would cost inside an already-nested row.
  */
-function ReviewSourceLabel({ children }: { children: ReactNode }) {
+function ReviewSourceLabel({ children, icon }: { children: ReactNode; icon: ReactNode }) {
 	return (
-		<div className="flex min-w-0 items-center gap-2">
-			<span className="shrink-0 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+		<div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+			<span className="flex size-5 shrink-0 items-center justify-center rounded-sm bg-muted/55 [&_svg]:size-icon-xs">
+				{icon}
+			</span>
+			<span className="shrink-0 text-2xs font-semibold text-foreground">
 				{children}
 			</span>
-			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
+			<span aria-hidden="true" className="ml-1 h-px min-w-0 flex-1 bg-border/80" />
 		</div>
 	);
 }
@@ -1394,10 +1401,13 @@ function ReviewDisclosure({
 	const [open, setOpen] = useState(defaultOpen);
 	if (!collapsible) {
 		return (
-			<div className="py-2 first:pt-0.5 last:pb-0.5">
-				<div className="flex min-w-0 flex-col gap-1 px-1.5 py-1">
-				<span className="flex min-w-0 items-start justify-between gap-2">
-					<span className="min-w-0 whitespace-normal break-words text-sm-md font-semibold leading-snug text-foreground" title={title}>
+			<article
+				className="overflow-hidden rounded-lg border border-border bg-settings-row"
+				data-testid="review-pr-row"
+			>
+				<div className="flex min-w-0 flex-col gap-1 border-b border-border/70 px-3 py-2.5">
+					<span className="flex min-w-0 items-start justify-between gap-2">
+						<span className="min-w-0 whitespace-normal break-words text-sm-md font-semibold leading-snug text-foreground" title={title}>
 						{title}
 					</span>
 					{verdict ? <VerdictBadge label={verdict.label} tone={verdict.tone} /> : null}
@@ -1406,16 +1416,16 @@ function ReviewDisclosure({
 						{meta}
 					</span>
 				</div>
-				<div className="mt-2 flex flex-col gap-3 pl-1.5">{children}</div>
-			</div>
+				<div className="flex flex-col gap-3 px-3 py-3">{children}</div>
+			</article>
 		);
 	}
 	return (
-		<div className="py-2 first:pt-0.5 last:pb-0.5">
+		<article className="overflow-hidden rounded-lg border border-border bg-settings-row">
 			<button
 				aria-expanded={open}
 				data-testid="review-pr-row"
-			className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30"
+				className="flex w-full min-w-0 items-start gap-2 px-3 py-2.5 text-left transition-colors hover:bg-interactive-hover/30"
 				onClick={() => setOpen((current) => !current)}
 				type="button"
 			>
@@ -1434,8 +1444,8 @@ function ReviewDisclosure({
 				</span>
 				{verdict ? <VerdictBadge label={verdict.label} tone={verdict.tone} /> : null}
 			</button>
-			{open ? <div className="mt-2 flex flex-col gap-3 pl-1.5">{children}</div> : null}
-		</div>
+			{open ? <div className="flex flex-col gap-3 px-3 py-3">{children}</div> : null}
+		</article>
 	);
 }
 
@@ -1762,6 +1772,152 @@ function ReviewPanel({
 }
 
 type GithubReviewEntry = NonNullable<NonNullable<SessionPRSummary["review"]>["reviews"]>[number];
+type GithubUnresolvedReviewer = SessionPRSummary["review"]["unresolvedBy"][number];
+
+const REVIEW_HISTORY_PAGE_SIZE = 3;
+
+function GithubReviewHistory({ entries }: { entries: GithubReviewEntry[] }) {
+	const sorted = [...entries].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+	const latestKey = sorted[0] ? `${sorted[0].reviewerId}:${sorted[0].submittedAt}` : "";
+	const [visibleCount, setVisibleCount] = useState(1);
+	useEffect(() => setVisibleCount(1), [latestKey]);
+	const visible = sorted.slice(0, visibleCount);
+	const remaining = Math.max(0, sorted.length - visible.length);
+	return (
+		<div className="flex min-w-0 flex-col gap-2">
+			{visible.map((entry) => (
+				<GithubReviewRow entry={entry} key={`${entry.reviewerId}:${entry.submittedAt}`} />
+			))}
+			{remaining > 0 ? (
+				<ReviewHistoryPager
+					onCollapse={visibleCount > 1 ? () => setVisibleCount(1) : undefined}
+					onLoadMore={() => setVisibleCount((count) => Math.min(sorted.length, count + REVIEW_HISTORY_PAGE_SIZE))}
+					remaining={remaining}
+				/>
+			) : visibleCount > 1 ? (
+				<ReviewHistoryPager onCollapse={() => setVisibleCount(1)} remaining={0} />
+			) : null}
+		</div>
+	);
+}
+
+function GithubInlineComments({ reviewers }: { reviewers: GithubUnresolvedReviewer[] }) {
+	const { t } = useTranslation();
+	const active = reviewers.filter((reviewer) => reviewer.count > 0);
+	const count = active.reduce((total, reviewer) => total + reviewer.count, 0);
+	if (count === 0) return null;
+	return (
+		<div className="rounded-md border border-error/20 bg-error/6 px-2.5 py-2.5" data-testid="github-inline-comments">
+			<div className="flex min-w-0 items-center gap-1.5 text-2xs font-semibold text-foreground">
+				<MessageSquare aria-hidden="true" className="size-icon-xs shrink-0 text-error" />
+				<span>{t("inspector.openComments")}</span>
+				<span className="ml-auto shrink-0 font-mono text-micro font-normal text-error">
+					{t("inspector.unresolvedCount", { count })}
+				</span>
+			</div>
+			<div className="mt-2 flex min-w-0 flex-col gap-2">
+				{active.map((reviewer) => (
+					<div className="min-w-0" key={reviewer.reviewerId}>
+						<div className="flex min-w-0 items-center gap-1.5 text-micro text-muted-foreground">
+							<span className="min-w-0 truncate font-medium text-foreground">{reviewer.reviewerId}</span>
+							{reviewer.isBot ? <span className="font-mono text-passive">{t("inspector.bot")}</span> : null}
+						</div>
+						<div className="mt-1 flex min-w-0 flex-wrap gap-1">
+							{reviewer.links.map((link, index) => (
+								<InlineCommentReference
+									fallbackUrl={reviewer.reviewUrl}
+									index={index}
+									key={`${link.url ?? link.file ?? "comment"}:${link.line ?? index}`}
+									link={link}
+								/>
+							))}
+							{reviewer.links.length === 0 && reviewer.reviewUrl ? (
+								<a
+									className="inline-flex items-center gap-0.5 rounded-sm bg-background/35 px-1.5 py-1 font-medium text-muted-foreground no-underline transition-colors hover:text-foreground"
+									href={reviewer.reviewUrl}
+									rel="noopener noreferrer"
+									target="_blank"
+								>
+									{t("inspector.viewOnPR")}
+									<ArrowUpRight aria-hidden="true" className="size-2.5" />
+								</a>
+							) : null}
+						</div>
+					</div>
+				))}
+			</div>
+		</div>
+	);
+}
+
+function InlineCommentReference({
+	fallbackUrl,
+	index,
+	link,
+}: {
+	fallbackUrl?: string;
+	index: number;
+	link: GithubUnresolvedReviewer["links"][number];
+}) {
+	const { t } = useTranslation();
+	const label = link.file ? `${link.file}${link.line ? `:${link.line}` : ""}` : t("inspector.commentNumber", { number: index + 1 });
+	const className =
+		"inline-flex max-w-full min-w-0 items-center gap-1 rounded-sm bg-background/35 px-1.5 py-1 font-mono text-micro text-muted-foreground";
+	const contents = (
+		<>
+			<FileCode2 aria-hidden="true" className="size-2.5 shrink-0" />
+			<span className="truncate" title={label}>{label}</span>
+		</>
+	);
+	const href = link.url || fallbackUrl;
+	if (!href) return <span className={className}>{contents}</span>;
+	return (
+		<a
+			className={cn(className, "no-underline transition-colors hover:bg-background/60 hover:text-foreground")}
+			href={href}
+			rel="noopener noreferrer"
+			target="_blank"
+		>
+			{contents}
+		</a>
+	);
+}
+
+function ReviewHistoryPager({
+	onCollapse,
+	onLoadMore,
+	remaining,
+}: {
+	onCollapse?: () => void;
+	onLoadMore?: () => void;
+	remaining: number;
+}) {
+	const { t } = useTranslation();
+	return (
+		<div className="flex min-w-0 gap-1.5">
+			{onCollapse ? (
+				<button
+					className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1.5 text-micro font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover/30 hover:text-foreground"
+					onClick={onCollapse}
+					type="button"
+				>
+					<ChevronUp aria-hidden="true" className="size-icon-2xs shrink-0" />
+					<span className="truncate">{t("inspector.showLatestReviewOnly")}</span>
+				</button>
+			) : null}
+			{remaining > 0 && onLoadMore ? (
+				<button
+					className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1.5 text-micro font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover/30 hover:text-foreground"
+					onClick={onLoadMore}
+					type="button"
+				>
+					<ChevronDown aria-hidden="true" className="size-icon-2xs shrink-0" />
+					<span className="truncate">{t("inspector.loadMoreReviews", { count: remaining })}</span>
+				</button>
+			) : null}
+		</div>
+	);
+}
 
 function ReviewMarkdownBody({ body, clamped, testId }: { body: string; clamped: boolean; testId: string }) {
 	return (
@@ -1798,49 +1954,16 @@ function ReviewMarkdownBody({ body, clamped, testId }: { body: string; clamped: 
 
 function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 	const { t } = useTranslation();
-	const [expanded, setExpanded] = useState(false);
-	const verdict = githubVerdict(entry.verdict, t);
-	const raw = entry.body?.trim();
-	const body = raw ? raw.replace(/\n{3,}/g, "\n\n") : raw;
-	const clamped = Boolean(body) && isClampedSummary(body!);
 	return (
-		<div className="flex min-w-0 flex-col gap-1">
-			<div className="flex min-w-0 items-center gap-2">
-				<span className="min-w-0 truncate text-2xs font-medium text-foreground">{entry.reviewerId}</span>
-				{entry.isBot ? <span className="shrink-0 font-mono text-micro text-passive">{t("inspector.bot")}</span> : null}
-				<span className="ml-auto">
-					<VerdictBadge label={verdict.label} tone={verdict.tone} />
-				</span>
-			</div>
-			{body ? (
-				<ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId="github-review-summary" />
-			) : null}
-			{clamped || entry.reviewUrl ? (
-				<span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-passive">
-					{clamped ? (
-						<button
-							className="font-medium transition-colors hover:text-foreground"
-							onClick={() => setExpanded((open) => !open)}
-							type="button"
-						>
-							{expanded ? t("inspector.showLess") : t("inspector.showMore")}
-						</button>
-					) : null}
-					{clamped && entry.reviewUrl ? <span aria-hidden="true">·</span> : null}
-					{entry.reviewUrl ? (
-						<a
-							className="inline-flex items-center gap-0.5 font-medium no-underline transition-colors hover:text-foreground"
-							href={entry.reviewUrl}
-							target="_blank"
-							rel="noopener noreferrer"
-						>
-							{t("inspector.viewReview")}
-							<ArrowUpRight aria-hidden="true" className="size-2.5 shrink-0" />
-						</a>
-					) : null}
-				</span>
-			) : null}
-		</div>
+		<ReviewSummaryCard
+			actor={entry.reviewerId}
+			body={entry.body}
+			isBot={entry.isBot}
+			testId="github-review-summary"
+			timestamp={entry.submittedAt}
+			url={entry.reviewUrl}
+			verdict={githubVerdict(entry.verdict, t)}
+		/>
 	);
 }
 
@@ -1869,21 +1992,36 @@ function ReviewerRuns({
 	if (runs.length === 0) {
 		return <p className={cn(inspectorEmptyClass, "m-0")}>{t("inspector.noPastReviewSummaries")}</p>;
 	}
+	const sorted = [...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 	return (
 		<ReviewRunList
 			reviewState={reviewState}
-			runs={[...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))}
+			runs={sorted}
 		/>
 	);
 }
 
 /** Review history for a PR, with the harness identified on every pass. */
 function ReviewRunList({ reviewState, runs }: { reviewState: PRReviewState; runs: ReviewRunFacts[] }) {
+	const latestKey = runs[0]?.id ?? "";
+	const [visibleCount, setVisibleCount] = useState(1);
+	useEffect(() => setVisibleCount(1), [latestKey]);
+	const visible = runs.slice(0, visibleCount);
+	const remaining = Math.max(0, runs.length - visible.length);
 	return (
-		<div className={cn("flex min-w-0 flex-col gap-3", reviewState.status === "ineligible" && "opacity-70")}>
-			{runs.map((run, index) => (
+		<div className={cn("flex min-w-0 flex-col gap-2", reviewState.status === "ineligible" && "opacity-70")}>
+			{visible.map((run, index) => (
 				<ReviewRunRow isEarlier={index > 0} key={run.id} prUrl={reviewState.prUrl} run={run} />
 			))}
+			{remaining > 0 ? (
+				<ReviewHistoryPager
+					onCollapse={visibleCount > 1 ? () => setVisibleCount(1) : undefined}
+					onLoadMore={() => setVisibleCount((count) => Math.min(runs.length, count + REVIEW_HISTORY_PAGE_SIZE))}
+					remaining={remaining}
+				/>
+			) : visibleCount > 1 ? (
+				<ReviewHistoryPager onCollapse={() => setVisibleCount(1)} remaining={0} />
+			) : null}
 		</div>
 	);
 }
@@ -1904,43 +2042,66 @@ function isClampedSummary(body: string): boolean {
 
 function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: string; isEarlier: boolean }) {
 	const { t } = useTranslation();
-	const [expanded, setExpanded] = useState(false);
 	// A terminated run's body is the reason it stopped, not findings.
 	const raw = run.status === "cancelled" || run.status === "failed" ? "" : run.body?.trim();
-	// Runs of blank lines cost the clamp its budget without carrying anything: a
-	// two-line gap between paragraphs eats half a four-line preview. Collapsed to
-	// a single blank line, which still separates paragraphs when expanded.
-	const body = raw ? raw.replace(/\n{3,}/g, "\n\n") : raw;
 	// Falls back to the PR itself: an AO pass only has a review-comment anchor
 	// once it has been submitted to GitHub, and a row with no way out at all is
 	// a dead end.
 	const reviewUrl = aoReviewCommentUrl(run);
 	const url = reviewUrl ?? (prUrl || null);
+	return (
+		<ReviewSummaryCard
+			actor={run.harness || "reviewer"}
+			body={raw}
+			isEarlier={isEarlier}
+			testId="review-run-summary"
+			timestamp={run.createdAt}
+			url={url}
+			verdict={githubVerdict(run.verdict, t)}
+		/>
+	);
+}
+
+function ReviewSummaryCard({
+	actor,
+	body: rawBody,
+	isBot = false,
+	isEarlier = false,
+	testId,
+	timestamp,
+	url,
+	verdict,
+}: {
+	actor: string;
+	body?: string;
+	isBot?: boolean;
+	isEarlier?: boolean;
+	testId: string;
+	timestamp: string;
+	url?: string | null;
+	verdict: ReturnType<typeof githubVerdict>;
+}) {
+	const { t } = useTranslation();
+	const [expanded, setExpanded] = useState(false);
+	const trimmed = rawBody?.trim();
+	const body = trimmed ? trimmed.replace(/\n{3,}/g, "\n\n") : trimmed;
 	const clamped = Boolean(body) && isClampedSummary(body!);
 
 	return (
-		// Earlier passes get a hairline and breathing room above them. Without it
-		// two write-ups butt together and read as one long review by one agent,
-		// which is exactly the distinction this list exists to make.
-		<div className={cn("flex min-w-0 flex-col gap-1", isEarlier && "border-t border-border/60 pt-3")}>
-			{/* Who reviewed and what they concluded lead; when it ran and whether it
-			    is superseded are provenance, so they sit right and recede. */}
-			<span className="flex min-w-0 items-center gap-2">
+		<article className="flex min-w-0 flex-col gap-1 rounded-md bg-overlay/50 px-2.5 py-2.5">
+			<span className="flex min-w-0 items-center gap-1.5">
 				<span className="inline-flex min-w-0 items-center gap-1 text-micro font-medium text-muted-foreground">
-					<AgentAvatar className="size-icon-sm shrink-0" decorative provider={run.harness || "reviewer"} />
-					<span className="truncate">{run.harness || "reviewer"}</span>
+					<AgentAvatar className="size-icon-sm shrink-0" decorative provider={actor} />
+					<span className="truncate">{actor}</span>
 				</span>
+				{isBot ? <span className="shrink-0 font-mono text-micro text-passive">{t("inspector.bot")}</span> : null}
+				<VerdictBadge {...verdict} />
 				<span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-micro text-passive">
 					{isEarlier ? <span>{t("inspector.earlierPass")}</span> : null}
-					<span className="font-mono">{formatTimeCompact(run.createdAt)}</span>
+					<span className="font-mono">{formatTimeCompact(timestamp)}</span>
 				</span>
 			</span>
-			{body ? (
-				<ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId="review-run-summary" />
-			) : null}
-			{/* One tertiary group, not two competing labels. Below the body's size so
-			    they read as controls rather than sitting in the reading flow, and
-			    middot-separated so they scan as a pair. */}
+			{body ? <ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId={testId} /> : null}
 			{clamped || url ? (
 				<span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-passive">
 					{clamped ? (
@@ -1957,16 +2118,16 @@ function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: s
 						<a
 							className="inline-flex items-center gap-0.5 font-medium no-underline transition-colors hover:text-foreground"
 							href={url}
-							target="_blank"
 							rel="noopener noreferrer"
+							target="_blank"
 						>
-							{reviewUrl ? t("inspector.viewReview") : t("inspector.viewOnPR")}
+							{t("inspector.viewOnPR")}
 							<ArrowUpRight aria-hidden="true" className="size-2.5 shrink-0" />
 						</a>
 					) : null}
-					</span>
-				) : null}
-		</div>
+				</span>
+			) : null}
+		</article>
 	);
 }
 

@@ -1281,10 +1281,10 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 4")).toBeInTheDocument();
 		expect(
-			within(screen.getByText("Reviewable change 4").closest("[data-testid='review-pr-row']") as HTMLElement).getByText(
+			within(screen.getByText("Reviewable change 4").closest("[data-testid='review-pr-row']") as HTMLElement).getAllByText(
 				"Approved",
 			),
-		).toBeInTheDocument();
+		).not.toHaveLength(0);
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
@@ -1355,7 +1355,7 @@ describe("SessionInspector summary reviews", () => {
 		]);
 		const { unmount } = renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
-		expect(await screen.findByRole("link", { name: /View review/ })).toHaveAttribute(
+		expect(await screen.findByRole("link", { name: /View on PR/ })).toHaveAttribute(
 			"href",
 			"https://example.com/pr/3#pullrequestreview-98765",
 		);
@@ -1404,8 +1404,12 @@ describe("SessionInspector summary reviews", () => {
 			expect(await screen.findAllByText(runLabel)).not.toHaveLength(0);
 			expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
 			expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
+		if (status === "needs_review") {
+			expect(screen.getByText("Changes requested")).toBeInTheDocument();
+		} else {
 			expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
-			expect(screen.getByRole("link", { name: "View review" })).toHaveAttribute(
+		}
+			expect(screen.getByRole("link", { name: "View on PR" })).toHaveAttribute(
 				"href",
 				"https://example.com/pr/3#pullrequestreview-98765",
 			);
@@ -1468,16 +1472,20 @@ describe("SessionInspector summary reviews", () => {
 
 		expect(await screen.findByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
-		expect(screen.getByText(/2 unresolved/)).toBeInTheDocument();
+		expect(screen.getAllByText(/2 unresolved/)).toHaveLength(2);
+		expect(screen.getByTestId("github-inline-comments")).toHaveTextContent("a.ts:3");
+		expect(screen.getByTestId("github-inline-comments")).toHaveTextContent("a.ts:9");
 		// AO's runs and the PR's own reviews share one section keyed by PR, so the
 		// unresolved count rides the same row as the AO verdict.
-		expect(screen.getByText("Reviews")).toBeInTheDocument();
+		expect(screen.getByText("Review summary")).toBeInTheDocument();
 		expect(screen.queryByText("Reviews on the pull request")).not.toBeInTheDocument();
 		expect(screen.queryByText("AO code reviews")).not.toBeInTheDocument();
 		expect(screen.queryByText("No unresolved threads.")).not.toBeInTheDocument();
 	});
 
 	it("renders PR review summaries as Markdown", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		vi.setSystemTime(new Date("2026-06-19T11:00:00Z"));
 		mockCommonGets([], "reviewer-pane", [reviewState(3, "up_to_date", "sha-1")]);
 		const previous = getMock.getMockImplementation()!;
 		getMock.mockImplementation(async (path: string, opts?: unknown) => {
@@ -1524,9 +1532,16 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		const summary = await screen.findByTestId("github-review-summary");
+		const externalReview = summary.closest("article") as HTMLElement;
 		expect(within(summary).getByText("ready").tagName).toBe("STRONG");
 		expect(within(summary).getByText("Ship it").tagName).toBe("LI");
 		expect(summary).not.toHaveTextContent("**ready**");
+		expect(within(externalReview).getByText("3d ago")).toBeInTheDocument();
+		expect(within(externalReview).getByRole("link", { name: "View on PR" })).toHaveAttribute(
+			"href",
+			"https://example.com/pr/3#pullrequestreview-456",
+		);
+		expect(screen.getByText("External reviews")).toBeInTheDocument();
 	});
 
 	it("persists the chosen reviewer for the session and uses it for the run", async () => {
@@ -1578,7 +1593,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("Review in progress · claude-code")).not.toBeInTheDocument();
 	});
 
-	it("keeps every harness summary visible when selecting the agent for the next run", async () => {
+	it("keeps older harness summaries behind explicit pagination when selecting the next agent", async () => {
 		const state = {
 			...reviewState(3, "changes_requested", "sha-1"),
 			latestRun: {
@@ -1619,10 +1634,14 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		expect(await screen.findByText("codex asked for tests.")).toBeInTheDocument();
+		expect(screen.queryByText("claude-code found nothing blocking.")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Load more · 1 earlier" }));
 		expect(screen.getByText("claude-code found nothing blocking.")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Show latest only" }));
+		expect(screen.queryByText("claude-code found nothing blocking.")).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: /Select reviewer agent/ }));
 		await userEvent.click(screen.getByRole("menuitem", { name: /claude-code/ }));
-		expect(screen.getByText("claude-code found nothing blocking.")).toBeInTheDocument();
+		expect(screen.queryByText("claude-code found nothing blocking.")).not.toBeInTheDocument();
 		expect(screen.getByText("codex asked for tests.")).toBeInTheDocument();
 		expect(screen.getByText("Reviewable change 3")).toBeInTheDocument();
 	});
