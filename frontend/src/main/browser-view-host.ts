@@ -6,7 +6,7 @@ import type {
 	Session,
 	View,
 	WebContents,
-	WebFrameMain,
+	OpenDevToolsOptions,
 } from "electron";
 import { randomUUID } from "node:crypto";
 import type {
@@ -16,10 +16,13 @@ import type {
 	BrowserAnnotationPageCancelPayload,
 	BrowserAnnotationPageSubmitPayload,
 	BrowserAnnotationSelection,
+	BrowserAnnotationSnapshot,
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
 import type { KeybindingOverrides } from "../shared/shortcuts";
+import type { AgentBrowserRuntime } from "./agent-browser-runtime";
+import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 
 function isValidAnnotationContext(value: unknown): value is BrowserAnnotationContext {
 	if (typeof value !== "object" || value === null) return false;
@@ -28,25 +31,16 @@ function isValidAnnotationContext(value: unknown): value is BrowserAnnotationCon
 		tag?: unknown;
 		classes?: unknown;
 		selector?: unknown;
-		rect?: unknown;
-		nearbyText?: unknown;
+		size?: unknown;
 		computedStyle?: unknown;
 	};
 	if (typeof context.url !== "string") return false;
 	if (typeof context.tag !== "string") return false;
 	if (!Array.isArray(context.classes)) return false;
 	if (typeof context.selector !== "string") return false;
-	if (typeof context.rect !== "object" || context.rect === null) return false;
-	const rect = context.rect as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
-	if (
-		typeof rect.x !== "number" ||
-		typeof rect.y !== "number" ||
-		typeof rect.width !== "number" ||
-		typeof rect.height !== "number"
-	) {
-		return false;
-	}
-	if (!Array.isArray(context.nearbyText)) return false;
+	if (typeof context.size !== "object" || context.size === null) return false;
+	const size = context.size as { width?: unknown; height?: unknown };
+	if (typeof size.width !== "number" || typeof size.height !== "number") return false;
 	if (typeof context.computedStyle !== "object" || context.computedStyle === null) return false;
 	return true;
 }
@@ -104,11 +98,27 @@ export type BrowserAgentActivityState = {
 	commandId?: string;
 };
 
+export type BrowserDevToolsState = {
+	viewId: string;
+	open: boolean;
+	activeTabId: string;
+	placement?: BrowserDevToolsPlacement;
+};
+
+export type BrowserDevToolsPlacement = "right" | "bottom" | "left" | "undocked";
+
+export type BrowserDevToolsInput = {
+	viewId: string;
+	operation: "open" | "close" | "setPlacement";
+	placement?: BrowserDevToolsPlacement;
+};
+
+type InternalBrowserDevToolsOperation = BrowserDevToolsInput["operation"] | "toggle";
+
 type BrowserBoundsInput = {
 	viewId: string;
 	rect: BrowserRect;
 	visible: boolean;
-	parked?: boolean;
 };
 
 type BrowserNavigateInput = {
@@ -129,6 +139,7 @@ type BrowserWebContents = Pick<
 	| "capturePage"
 	| "clearHistory"
 	| "debugger"
+	| "executeJavaScript"
 	| "focus"
 	| "mainFrame"
 	| "getTitle"
@@ -143,6 +154,8 @@ type BrowserWebContents = Pick<
 	| "setWindowOpenHandler"
 	| "stop"
 > & {
+	openDevTools?: (options?: Pick<OpenDevToolsOptions, "mode" | "activate">) => void;
+	closeDevTools?: () => void;
 	close?: () => void;
 	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler">;
 };
@@ -160,9 +173,7 @@ type BrowserWindowLike = {
 		removeChildView?: (view: BrowserViewLike) => void;
 	};
 	getContentBounds: () => BrowserRect;
-	webContents: Pick<WebContents, "focus" | "id" | "send"> & {
-		session?: Pick<Session, "setDisplayMediaRequestHandler">;
-	};
+	webContents?: WebContents;
 	isDestroyed?: () => boolean;
 };
 
@@ -174,6 +185,7 @@ type WebContentsViewConstructor = new (options: { webPreferences: Electron.WebPr
 
 export type BrowserViewHostOptions = {
 	mainWindow: BrowserWindowLike;
+	shellWebContents?: WebContents;
 	ipcMain: Pick<IpcMain, "handle" | "on" | "removeHandler" | "off">;
 	shell: ShellLike;
 	WebContentsView: WebContentsViewConstructor;
@@ -184,16 +196,19 @@ export type BrowserViewHostOptions = {
 	isMac?: boolean;
 	getKeybindingOverrides?: () => KeybindingOverrides;
 	isKeybindingRecording?: () => boolean;
+	agentBrowserRuntime?: AgentBrowserRuntime;
 	isCloseShellTerminalShortcutEnabled?: () => boolean;
 };
 
 export type BrowserViewHost = {
-	dispose: () => void;
+	dispose: () => Promise<void>;
 	destroy: (viewId: string) => void;
 	destroyAll: () => void;
 	execute: (sessionId: string, action: string, args?: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
 	// webContents of the most recently focused browser panel (or null); the titlebar menu targets it for Edit/Reload/Zoom/DevTools.
 	getLastFocusedPanelContents: () => WebContents | null;
+	/** Toggle Chromium DevTools for the last focused AO browser panel. */
+	toggleDevToolsForLastFocused: () => Promise<BrowserDevToolsState | null>;
 	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
 	forgetLastFocusedPanel: () => void;
 };
@@ -202,12 +217,9 @@ type BrowserEntry = {
 	sessionId: string;
 	tabId: string;
 	view: BrowserViewLike;
+	ready: Promise<void>;
 	state: BrowserNavState;
 	annotationEnabled: boolean;
-	refGeneration: number;
-	refs: Map<string, { backendNodeId: number; generation: number }>;
-	consoleMessages: BrowserLogEntry[];
-	errors: BrowserLogEntry[];
 	networkCapture?: BrowserNetworkCapture;
 };
 
@@ -219,10 +231,24 @@ type BrowserSessionEntry = {
 	activeTabId: string;
 	nextTabNumber: number;
 	bounds: BrowserRect;
+	rendererBounds: BrowserRect;
+	zoomFactor: number;
 	visible: boolean;
-	parked: boolean;
 	networkTabId?: string;
 	agentBrowserCommands: number;
+	nativeActiveTabId?: string;
+	nativeOperationQueue: Promise<void>;
+	devtoolsPlacement: BrowserDevToolsPlacement;
+	devtools?: {
+		contents: BrowserWebContents;
+		placement: BrowserDevToolsPlacement;
+		nativeCloseForReopen?: boolean;
+		targetTabId: string;
+		desiredTabId: string;
+		retargetGeneration: number;
+		retargetQueue: Promise<void>;
+		revealRequested: boolean;
+	};
 };
 
 type BrowserLogEntry = {
@@ -280,15 +306,21 @@ const DEFAULT_NETWORK_CAPTURE_SECONDS = 60;
 const MAX_NETWORK_CAPTURE_SECONDS = 300;
 const MAX_NETWORK_REQUESTS = 200;
 const MAX_BROWSER_TABS = 16;
+const DEFAULT_NATIVE_DEVTOOLS_PLACEMENT: BrowserDevToolsPlacement = "right";
 const MAX_EXTERNAL_TEXT_BYTES = 1 << 20;
-const MAX_SNAPSHOT_LINES = 1_000;
-const MAX_LOG_MESSAGE_CHARS = 16_384;
+// Annotation submit must never feel laggy: capture is best-effort and bounded
+// so a slow/hung capturePage() can't delay the send past this ceiling.
+const ANNOTATION_SNAPSHOT_TIMEOUT_MS = 200;
+// Caps the longest edge so the encoded image stays small and matches Claude
+// vision's effective resolution — larger just costs more tokens for no gain.
+const ANNOTATION_SNAPSHOT_MAX_DIMENSION = 1568;
 const UNTRUSTED_BEGIN = "<<<BEGIN UNTRUSTED EXTERNAL CONTENT>>>";
 const UNTRUSTED_END = "<<<END UNTRUSTED EXTERNAL CONTENT>>>";
-// The human-facing address bar may open local preview files. Agent commands use
-// normalizeAgentBrowserURL below, which permits only explicit HTTP(S) targets.
-const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
-
+// Browser targets are shared with session automation after navigation. Keep
+// local files out of this surface even when navigation starts in the human
+// address bar; workspace files arrive through the daemon's confined HTTP
+// preview origin instead.
+const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 export function normalizeBrowserURL(input: string): URL {
 	const raw = input.trim();
 	if (raw === "") {
@@ -346,10 +378,13 @@ export function scaleBoundsForZoom(rect: BrowserRect, zoomFactor: number): Brows
 
 export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserViewHost {
 	const entries = new Map<string, BrowserSessionEntry>();
+	const shellWebContents = options.shellWebContents ?? options.mainWindow.webContents;
+	if (!shellWebContents) throw new Error("Browser view host requires shell WebContents");
 	const viewIdsBySessionId = new Map<string, string>();
 	const rendererOwnersByViewId = new Map<string, Set<number>>();
 	const tabsByWebContentsId = new Map<number, BrowserEntry>();
 	const ipcDisposers: Array<() => void> = [];
+	let disposePromise: Promise<void> | null = null;
 	// viewId of the panel that most recently held focus; cleared when it is hidden or destroyed.
 	let lastFocusedViewId: string | null = null;
 	const forgetIfFocused = (viewId: string): void => {
@@ -363,7 +398,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		phase?: BrowserAgentActivityState["phase"],
 	): void => {
 		session.agentBrowserCommands = Math.max(0, session.agentBrowserCommands + (active ? 1 : -1));
-		options.mainWindow.webContents.send("browser:agentActivity", {
+		shellWebContents.send("browser:agentActivity", {
 			viewId: session.viewId,
 			active: session.agentBrowserCommands > 0,
 			action,
@@ -376,41 +411,30 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (visible !== undefined) view.setVisible?.(visible);
 		view.setBorderRadius?.(BROWSER_VIEW_BORDER_RADIUS);
 	};
-	let pendingMirror: { viewId: string; expires: number; frame: WebFrameMain } | null = null;
+	const pushDevToolsState = (session: BrowserSessionEntry): BrowserDevToolsState => {
+		const state: BrowserDevToolsState = {
+			viewId: session.viewId,
+			open: Boolean(session.devtools),
+			activeTabId: session.activeTabId,
+			placement: session.devtools?.placement ?? session.devtoolsPlacement,
+		};
+		shellWebContents.send("browser:devtoolsState", state);
+		return state;
+	};
 
-	const sameFrame = (a: WebFrameMain, b: WebFrameMain | null | undefined): boolean =>
-		Boolean(b) && a.processId === b!.processId && a.routingId === b!.routingId;
+	const destroyDevTools = (session: BrowserSessionEntry): void => {
+		const devtools = session.devtools;
+		if (!devtools) return;
+		session.devtools = undefined;
+		try {
+			devtools.contents.closeDevTools?.();
+		} catch {
+			// Chromium may already have torn down the native DevTools surface.
+		}
+		pushDevToolsState(session);
+	};
 
-	const displayMediaSession = options.mainWindow.webContents.session;
-	const mirrorSupported = Boolean(displayMediaSession?.setDisplayMediaRequestHandler);
-	if (mirrorSupported) {
-		displayMediaSession!.setDisplayMediaRequestHandler((request, callback) => {
-			const pending = pendingMirror;
-			pendingMirror = null;
-			const session =
-				pending && pending.expires > Date.now() && sameFrame(pending.frame, request.frame)
-					? entries.get(pending.viewId)
-					: undefined;
-			try {
-				if (session) {
-					callback({ video: activeEntry(session).view.webContents.mainFrame });
-				} else {
-					callback({});
-				}
-			} catch {
-				return;
-			}
-		});
-		ipcDisposers.push(() => {
-			try {
-				displayMediaSession?.setDisplayMediaRequestHandler(null);
-			} catch {
-				return;
-			}
-		});
-	}
-
-	const createTab = (session: BrowserSessionEntry, activate: boolean): BrowserEntry => {
+	const createTab = (session: BrowserSessionEntry, activate: boolean, syncNativeOnActivate = false): BrowserEntry => {
 		if (session.tabs.size >= MAX_BROWSER_TABS) {
 			throw browserError("BROWSER_TAB_LIMIT", `Browser tab limit of ${MAX_BROWSER_TABS} reached`);
 		}
@@ -435,17 +459,28 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			sessionId: session.sessionId,
 			tabId,
 			view,
+			ready: Promise.resolve(),
 			state,
 			annotationEnabled: false,
-			refGeneration: 0,
-			refs: new Map(),
-			consoleMessages: [],
-			errors: [],
 		};
 		session.tabs.set(tabId, entry);
 		tabsByWebContentsId.set(view.webContents.id, entry);
+		// Native Chromium DevTools can be closed from its own window controls. Keep
+		// the renderer's toggle state in sync with that user action. Programmatic
+		// close/reopen cycles used for retargeting or placement changes are marked
+		// and ignored so they do not look like a user close.
+		view.webContents.on("devtools-closed", () => {
+			const devtools = session.devtools;
+			if (!devtools || devtools.contents !== view.webContents) return;
+			if (devtools.nativeCloseForReopen) {
+				devtools.nativeCloseForReopen = false;
+				return;
+			}
+			session.devtools = undefined;
+			pushDevToolsState(session);
+		});
 		hardenWebContents(view.webContents, options, entry, () => {
-			const popup = createTab(session, true);
+			const popup = createTab(session, true, true);
 			pushTabsState(options, session, { kind: "popup", tabId: popup.tabId });
 			return popup.view.webContents;
 		}, () => session.tabs.size < MAX_BROWSER_TABS);
@@ -464,15 +499,31 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		attachAppShortcuts(
 			view.webContents,
 			Boolean(options.isMac),
-			options.mainWindow.webContents,
+			shellWebContents,
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
+			(id) => id !== "close-shell-terminal" || options.isCloseShellTerminalShortcutEnabled?.() !== false,
+			(id) => {
+				if (id !== "toggle-browser-devtools") return;
+				lastFocusedViewId = session.viewId;
+				void devtoolsAction(session, "toggle").catch(() => undefined);
+			},
 		);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = session.viewId;
 		});
-		if (activate) activateTab(session, tabId, false);
+		// A newly-created WebContentsView reports about:blank before its renderer
+		// has actually been initialized. CDP commands can hang until that initial
+		// document has completed, so make readiness explicit for every tab.
+		entry.ready = view.webContents.loadURL("about:blank");
+		// Keep an unobserved tab initialization failure from becoming an unhandled
+		// rejection; callers that need the target still await the original promise.
+		void entry.ready.catch(() => undefined);
+		if (activate) {
+			activateTab(session, tabId, false);
+			if (syncNativeOnActivate) queueNativeActiveTabSync(session);
+		}
 		return entry;
 	};
 
@@ -492,13 +543,20 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				activeTabId: "",
 				nextTabNumber: 1,
 				bounds: OFFSCREEN_BOUNDS,
+				rendererBounds: OFFSCREEN_BOUNDS,
+				zoomFactor: 1,
 				visible: false,
-				parked: false,
 				agentBrowserCommands: 0,
+				nativeOperationQueue: Promise.resolve(),
+				devtoolsPlacement: DEFAULT_NATIVE_DEVTOOLS_PLACEMENT,
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
 			createTab(session, true);
+			// A fresh native session starts on the provider's first target. Recording
+			// that invariant avoids an unnecessary tab command before the first action;
+			// later human selections and popups explicitly invalidate it.
+			session.nativeActiveTabId = session.activeTabId;
 		}
 		if (rendererId !== undefined) {
 			const owners = rendererOwnersByViewId.get(viewId) ?? new Set<number>();
@@ -507,6 +565,42 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		return session;
 	};
+
+	const queueNativeOperation = <T>(session: BrowserSessionEntry, operation: () => Promise<T>): Promise<T> => {
+		const result = session.nativeOperationQueue.then(operation, operation);
+		// A failed operation is returned to its caller, but must not permanently
+		// poison the session queue. The next operation re-validates the active tab.
+		session.nativeOperationQueue = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
+	};
+
+	const ensureNativeActiveTab = async (session: BrowserSessionEntry, signal?: AbortSignal): Promise<void> => {
+		if (!options.agentBrowserRuntime) return;
+		while (session.nativeActiveTabId !== session.activeTabId) {
+			const tabId = session.activeTabId;
+			const entry = session.tabs.get(tabId);
+			if (!entry) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Active browser tab is unavailable");
+			await entry.ready;
+			// The human-facing BrowserView state is authoritative. Selecting through
+			// agent-browser updates its independent active_page_index before another
+			// native command is allowed to run.
+			await options.agentBrowserRuntime.runAction(
+				session.sessionId,
+				"tab-select",
+				{ tabId },
+				agentBrowserTargets(session),
+				signal,
+			);
+			session.nativeActiveTabId = tabId;
+		}
+	};
+
+	function queueNativeActiveTabSync(session: BrowserSessionEntry): void {
+		void queueNativeOperation(session, () => ensureNativeActiveTab(session)).catch(() => undefined);
+	}
 
 	const openTab = async (
 		session: BrowserSessionEntry,
@@ -523,6 +617,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			normalizedURL = normalized.href;
 		}
 		const entry = createTab(session, activate);
+		await entry.ready;
 		if (normalizedURL) {
 			const navigation = navigateEntry(entry, normalizedURL);
 			pushTabsState(options, session, { kind: reason, tabId: entry.tabId });
@@ -539,14 +634,16 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!next) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
 		const previous = session.tabs.get(session.activeTabId);
 		if (previous && previous !== next) {
-			invalidateRefs(previous);
 			applyBrowserViewBounds(previous.view, OFFSCREEN_BOUNDS, false);
 		}
 		session.activeTabId = tabId;
-		invalidateRefs(next);
 		applySessionBounds(session, next);
 		pushNavState(options, next);
 		if (notify) pushTabsState(options, session, { kind: "selected", tabId });
+		if (session.devtools) pushDevToolsState(session);
+		if (session.devtools && session.devtools.desiredTabId !== tabId) {
+			void retargetDevTools(session, tabId).catch(() => undefined);
+		}
 		return next;
 	}
 
@@ -567,43 +664,197 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			activateTab(session, nextTabId, false);
 		}
 		const state = listTabs(session, { kind: "closed", tabId });
-		options.mainWindow.webContents.send("browser:tabsState", state);
+		shellContents(options).send("browser:tabsState", state);
 		return state;
 	}
+
+	function agentBrowserTargets(session: BrowserSessionEntry): AgentBrowserTargetProvider {
+		const target = (entry: BrowserEntry): AgentBrowserTarget => ({
+			id: entry.tabId,
+			url: entry.view.webContents.getURL() || "about:blank",
+			title: entry.view.webContents.getTitle(),
+			debugger: entry.view.webContents.debugger,
+		});
+		return {
+			listTargets: () => [...session.tabs.values()].map(target),
+			createTarget: async (url) => target(await openTab(session, url === "about:blank" ? undefined : url, true)),
+			activateTarget: async (targetId) => {
+				const entry = session.tabs.get(targetId);
+				if (!entry) throw browserError("TAB_NOT_FOUND", `Browser tab ${targetId} does not exist`);
+				await entry.ready;
+				activateTab(session, targetId);
+			},
+			closeTarget: (targetId) => {
+				closeTab(session, targetId);
+			},
+		};
+	}
+
+	const retargetDevTools = async (
+		session: BrowserSessionEntry,
+		tabId = session.activeTabId,
+		reveal = false,
+	): Promise<BrowserDevToolsState> => {
+		const devtools = session.devtools;
+		if (!devtools) return pushDevToolsState(session);
+		devtools.desiredTabId = tabId;
+		if (reveal) devtools.revealRequested = true;
+		const generation = ++devtools.retargetGeneration;
+		const retarget = async (): Promise<BrowserDevToolsState> => {
+			if (session.devtools !== devtools || generation !== devtools.retargetGeneration) {
+				return pushDevToolsState(session);
+			}
+			const entry = session.tabs.get(tabId);
+			if (!entry) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+			await entry.ready;
+			if (session.devtools !== devtools || generation !== devtools.retargetGeneration) {
+				return pushDevToolsState(session);
+			}
+			const contents = entry.view.webContents;
+			if (!contents.openDevTools) {
+				throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
+			}
+			const targetChanged = devtools.contents !== contents || devtools.targetTabId !== entry.tabId;
+			if (targetChanged) {
+				const previousContents = devtools.contents;
+				devtools.contents = contents;
+				if (devtools.targetTabId || previousContents !== contents) {
+					if (previousContents === contents) devtools.nativeCloseForReopen = true;
+					try {
+						previousContents.closeDevTools?.();
+					} catch {
+						// Chromium may already have closed the previous native surface.
+					}
+				}
+			}
+			if (targetChanged || devtools.revealRequested) {
+				contents.openDevTools({
+					mode: devtools.placement,
+					activate: devtools.revealRequested,
+				});
+			}
+			devtools.targetTabId = entry.tabId;
+			devtools.revealRequested = false;
+			applySessionBounds(session, entry);
+			return pushDevToolsState(session);
+		};
+		const result = devtools.retargetQueue.then(retarget, retarget);
+		devtools.retargetQueue = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
+	};
+
+	const openDevTools = async (
+		session: BrowserSessionEntry,
+	): Promise<BrowserDevToolsState> => {
+		const entry = activeEntry(session);
+		if (!entry.view.webContents.openDevTools) {
+			throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
+		}
+		if (!session.devtools) {
+			session.devtools = {
+				contents: entry.view.webContents,
+				placement: session.devtoolsPlacement,
+				targetTabId: "",
+				desiredTabId: entry.tabId,
+				retargetGeneration: 0,
+				retargetQueue: Promise.resolve(),
+				revealRequested: false,
+			};
+		}
+		return retargetDevTools(session, entry.tabId, true);
+	};
+
+	const devtoolsAction = async (
+		session: BrowserSessionEntry,
+		operation: InternalBrowserDevToolsOperation,
+		placement?: BrowserDevToolsPlacement,
+	): Promise<BrowserDevToolsState> => {
+		switch (operation) {
+			case "open":
+				return openDevTools(session);
+			case "toggle":
+				if (session.devtools) {
+					destroyDevTools(session);
+					return pushDevToolsState(session);
+				}
+				return openDevTools(session);
+			case "close":
+				destroyDevTools(session);
+				return pushDevToolsState(session);
+			case "setPlacement":
+				if (!placement) throw browserError("INVALID_ARGUMENT", "DevTools placement is required");
+				return setDevToolsPlacement(session, placement);
+		}
+	};
+
+	const setDevToolsPlacement = (
+		session: BrowserSessionEntry,
+		placement: BrowserDevToolsPlacement,
+	): BrowserDevToolsState => {
+		if (!Object.hasOwn({ right: true, bottom: true, left: true, undocked: true }, placement)) {
+			throw browserError("INVALID_ARGUMENT", "Unsupported browser DevTools placement");
+		}
+		session.devtoolsPlacement = placement;
+		const devtools = session.devtools;
+		if (!devtools) return pushDevToolsState(session);
+		devtools.placement = placement;
+		const contents = activeEntry(session).view.webContents;
+		if (!contents.openDevTools) {
+			throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
+		}
+		const previousContents = devtools.contents;
+		if (previousContents === contents) devtools.nativeCloseForReopen = true;
+		devtools.contents = contents;
+		try {
+			previousContents.closeDevTools?.();
+		} catch {
+			// Chromium may already have closed the native surface.
+			devtools.nativeCloseForReopen = false;
+		}
+		devtools.targetTabId = session.activeTabId;
+		try {
+			contents.openDevTools({ mode: placement, activate: placement === "undocked" });
+		} catch (error) {
+			devtools.nativeCloseForReopen = false;
+			throw error;
+		}
+		return pushDevToolsState(session);
+	};
 
 	function applySessionBounds(session: BrowserSessionEntry, entry: BrowserEntry): void {
 		if (!session.visible) {
 			applyBrowserViewBounds(entry.view, OFFSCREEN_BOUNDS, false);
 			return;
 		}
+		// Keep the initialized blank target available to automation, but let the
+		// renderer show AO's empty-page UI instead of Chromium's white about:blank.
+		const currentURL = entry.view.webContents.getURL();
+		if (!currentURL || currentURL === "about:blank") {
+			applyBrowserViewBounds(entry.view, session.bounds, false);
+			return;
+		}
 		applyBrowserViewBounds(
 			entry.view,
 			session.bounds,
-			session.parked || (session.bounds.width > 0 && session.bounds.height > 0),
+			session.bounds.width > 0 && session.bounds.height > 0,
 		);
 	}
 
 	const isRendererOwned = (event: IpcMainInvokeEvent | IpcMainEvent, viewId: string): boolean =>
 		rendererOwnersByViewId.get(viewId)?.has(event.sender.id) ?? false;
 
-	const setBounds = ({ viewId, rect, visible, parked }: BrowserBoundsInput, zoomFactor = 1): void => {
+	const setBounds = ({ viewId, rect, visible }: BrowserBoundsInput, zoomFactor = 1): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
+		const effectiveZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+		session.zoomFactor = effectiveZoomFactor;
 		const entry = activeEntry(session);
-		if (parked) {
-			const scaled = scaleBoundsForZoom(rect, zoomFactor);
-			const width = Math.max(1, Math.round(scaled.width));
-			const height = Math.max(1, Math.round(scaled.height));
-			session.bounds = { x: OFFSCREEN_BOUNDS.x, y: 0, width, height };
-			session.visible = true;
-			session.parked = true;
-			applySessionBounds(session, entry);
-			return;
-		}
 		if (!visible) {
 			session.bounds = OFFSCREEN_BOUNDS;
 			session.visible = false;
-			session.parked = false;
 			applySessionBounds(session, entry);
 			forgetIfFocused(viewId);
 			return;
@@ -611,13 +862,17 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// The renderer measures the slot in page-zoomed CSS pixels, while
 		// WebContentsView bounds are window coordinates. Convert before clamping so
 		// Cmd+/Cmd- page zoom does not detach the native view from its React slot.
+		session.rendererBounds = { ...rect };
 		session.bounds = clampBoundsToWindow(
-			scaleBoundsForZoom(rect, zoomFactor),
+			scaleBoundsForZoom(rect, effectiveZoomFactor),
 			options.mainWindow.getContentBounds(),
 		);
 		session.visible = true;
-		session.parked = false;
 		applySessionBounds(session, entry);
+		// The shell toolbar can receive focus immediately after the Browser panel
+		// becomes visible. Remember that active panel too, so the DevTools shortcut
+		// still targets the browser even when the native page itself is not focused.
+		lastFocusedViewId = viewId;
 	};
 
 	const navigate = async ({ viewId, url }: BrowserNavigateInput): Promise<BrowserNavState> => {
@@ -627,6 +882,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const navigateEntry = async (entry: BrowserEntry, url: string): Promise<BrowserNavState> => {
+		await entry.ready;
 		cancelAnnotation(options, entry, "navigation");
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
@@ -638,7 +894,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if ((err as { errorCode?: number })?.errorCode === -3) return pushNavState(options, entry);
 			entry.view.setVisible?.(false);
 			entry.state = { ...readNavState(entry), error: String((err as Error)?.message || "Unable to load page") };
-			options.mainWindow.webContents.send("browser:navState", entry.state);
+			shellWebContents.send("browser:navState", entry.state);
 			return entry.state;
 		}
 		const session = entries.get(entry.state.viewId);
@@ -656,31 +912,51 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const entry = activeEntry(session);
 		cancelAnnotation(options, entry, "navigation");
 		session.visible = false;
-		session.parked = false;
 		session.bounds = OFFSCREEN_BOUNDS;
 		applySessionBounds(session, entry);
 		forgetIfFocused(viewId);
-		await entry.view.webContents.loadURL("about:blank");
+		entry.ready = entry.view.webContents.loadURL("about:blank");
+		await entry.ready;
 		entry.view.webContents.clearHistory();
 		return pushNavState(options, entry);
 	};
 
-	const capture = async (viewId: string): Promise<string> => {
-		const session = entries.get(viewId);
-		if (!session) return "";
-		const entry = activeEntry(session);
+	// Best-effort full-viewport capture for a browser-annotation submit. Bounded
+	// by ANNOTATION_SNAPSHOT_TIMEOUT_MS so a slow/hung capturePage() can never
+	// delay the send — on timeout, error, or an empty frame this resolves
+	// undefined and the caller proceeds with a text-only message.
+	const captureAnnotationSnapshot = async (entry: BrowserEntry): Promise<BrowserAnnotationSnapshot | undefined> => {
 		try {
-			const image = await entry.view.webContents.capturePage();
-			if (image.isEmpty()) return "";
-			return `data:image/jpeg;base64,${image.toJPEG(70).toString("base64")}`;
+			const timedOut = Symbol("annotation-snapshot-timeout");
+			const image = await Promise.race([
+				entry.view.webContents.capturePage(),
+				new Promise<typeof timedOut>((resolve) => {
+					setTimeout(() => resolve(timedOut), ANNOTATION_SNAPSHOT_TIMEOUT_MS);
+				}),
+			]);
+			if (image === timedOut || image.isEmpty()) return undefined;
+			const { width, height } = image.getSize();
+			const longestEdge = Math.max(width, height);
+			const resized =
+				longestEdge > ANNOTATION_SNAPSHOT_MAX_DIMENSION
+					? image.resize(
+							width >= height
+								? { width: ANNOTATION_SNAPSHOT_MAX_DIMENSION }
+								: { height: ANNOTATION_SNAPSHOT_MAX_DIMENSION },
+						)
+					: image;
+			return { mimeType: "image/png", data: resized.toPNG().toString("base64") };
 		} catch {
-			return "";
+			return undefined;
 		}
 	};
 
 	const destroy = (viewId: string): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
+		if (options.mainWindow.isDestroyed?.()) session.devtools = undefined;
+		else destroyDevTools(session);
+		void options.agentBrowserRuntime?.closeSession(session.sessionId);
 		entries.delete(viewId);
 		viewIdsBySessionId.delete(session.sessionId);
 		rendererOwnersByViewId.delete(viewId);
@@ -737,10 +1013,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (input.enabled) entry.view.webContents.focus();
 	};
 
-	const forwardAnnotationSubmit = (
-		event: IpcMainEvent,
+	const forwardAnnotationSubmit = async (
+		event: IpcMainInvokeEvent,
 		payload: BrowserAnnotationPageSubmitPayload | undefined,
-	): void => {
+	): Promise<void> => {
 		const entry = tabsByWebContentsId.get(event.sender.id);
 		const viewId = entry?.state.viewId;
 		if (
@@ -753,12 +1029,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return;
 		}
 		entry.annotationEnabled = false;
+		// Captured now, before returning: the preload only tears down the
+		// highlight overlay after this handler resolves, so the frame we grab
+		// here still has the selection ring(s) on it and not the prompt box
+		// (the preload hides that synchronously before invoking).
+		const snapshot = await captureAnnotationSnapshot(entry);
 		const forwarded: BrowserAnnotationSubmitPayload = {
 			viewId,
 			instruction: payload.instruction,
 			selection: payload.selection,
+			...(snapshot ? { snapshot } : {}),
 		};
-		options.mainWindow.webContents.send("browser:annotation:submitted", forwarded);
+		shellWebContents.send("browser:annotation:submitted", forwarded);
 	};
 
 	const forwardAnnotationCancel = (
@@ -773,7 +1055,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			viewId,
 			reason: payload?.reason ?? "cancel",
 		};
-		options.mainWindow.webContents.send("browser:annotation:canceled", forwarded);
+		shellWebContents.send("browser:annotation:canceled", forwarded);
 	};
 
 	const handle = <Args extends unknown[], Result>(
@@ -788,9 +1070,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		ipcDisposers.push(() => options.ipcMain.off(channel, fn));
 	};
 
-	handle("browser:ensure", (event, sessionId: string) =>
-		pushNavState(options, activeEntry(ensureSession(sessionId, event.sender.id))),
-	);
+	handle("browser:ensure", (event, sessionId: string) => {
+		const session = ensureSession(sessionId, event.sender.id);
+		pushDevToolsState(session);
+		return pushNavState(options, activeEntry(session));
+	});
 	on("browser:setBounds", (event, input: BrowserBoundsInput) => {
 		if (isRendererOwned(event, input.viewId)) setBounds(input, event.sender.getZoomFactor());
 	});
@@ -800,14 +1084,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:clear", (event, viewId: string) =>
 		isRendererOwned(event, viewId) ? clear(viewId) : emptyNavState(viewId),
 	);
-	handle("browser:capture", (event, viewId: string) => (isRendererOwned(event, viewId) ? capture(viewId) : ""));
-	handle("browser:requestMirror", (event, viewId: string) => {
-		if (!mirrorSupported || !isRendererOwned(event, viewId) || !entries.has(viewId)) return false;
-		const frame = event.senderFrame;
-		if (!frame) return false;
-		pendingMirror = { viewId, expires: Date.now() + 5000, frame };
-		return true;
-	});
 	handle("browser:goBack", (event, viewId: string) =>
 		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.goBack(), true) : emptyNavState(viewId),
 	);
@@ -829,20 +1105,51 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:selectTab", (event, input: BrowserTabInput) => {
 		const session = entries.get(input.viewId);
 		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
-		activateTab(session, input.tabId);
-		return listTabs(session);
+		return queueNativeOperation(session, async () => {
+			activateTab(session, input.tabId);
+			await ensureNativeActiveTab(session);
+			return listTabs(session);
+		});
 	});
 	handle("browser:closeTab", (event, input: BrowserTabInput) => {
 		const session = entries.get(input.viewId);
-		return session && isRendererOwned(event, input.viewId)
-			? closeTab(session, input.tabId)
-			: emptyTabsState(input.viewId);
+		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
+		if (session.tabs.size === 1) {
+			throw browserError("CANNOT_CLOSE_LAST_TAB", "The only browser tab cannot be closed");
+		}
+		if (!session.tabs.has(input.tabId)) {
+			throw browserError("TAB_NOT_FOUND", `Browser tab ${input.tabId} does not exist`);
+		}
+		if (!options.agentBrowserRuntime) return closeTab(session, input.tabId);
+		return queueNativeOperation(session, async () => {
+			await ensureNativeActiveTab(session);
+			await options.agentBrowserRuntime!.runAction(
+				session.sessionId,
+				"tab-close",
+				{ tabId: input.tabId },
+				agentBrowserTargets(session),
+			);
+			session.nativeActiveTabId = undefined;
+			await ensureNativeActiveTab(session);
+			return listTabs(session);
+		});
+	});
+	handle("browser:devtools", (event, input: BrowserDevToolsInput) => {
+		if (!input || typeof input.viewId !== "string" || !isRendererOwned(event, input.viewId)) {
+			return emptyDevToolsState(input?.viewId ?? "");
+		}
+		const session = entries.get(input.viewId);
+		if (!session) return emptyDevToolsState(input.viewId);
+		if (!["open", "close", "setPlacement"].includes(input.operation)) {
+			throw browserError("INVALID_ARGUMENT", "Unsupported browser DevTools operation");
+		}
+		return devtoolsAction(session, input.operation, input.placement);
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
 		if (isRendererOwned(event, viewId)) destroy(viewId);
 	});
-	on("browser:annotation:submit", (event, payload: BrowserAnnotationPageSubmitPayload) =>
+	handle("browser:annotation:submit", (event, payload: BrowserAnnotationPageSubmitPayload) =>
 		forwardAnnotationSubmit(event, payload),
 	);
 	on("browser:annotation:cancel", (event, payload: BrowserAnnotationPageCancelPayload) =>
@@ -855,43 +1162,79 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if (!sessionId.trim()) throw browserError("INVALID_ARGUMENT", "sessionId is required");
 			if (action === "__destroy-session") {
 				const viewId = viewIdsBySessionId.get(sessionId);
+				await options.agentBrowserRuntime?.closeSession(sessionId);
 				if (viewId) destroy(viewId);
 				return { destroyed: Boolean(viewId) };
 			}
 			const session = ensureSession(sessionId);
-			const entry = activeEntry(session);
 			const commandId = randomUUID();
 			setAgentBrowserActivity(session, action, true, commandId, "started");
 			try {
-				switch (action) {
+				const entry = activeEntry(session);
+			const runNative = async (nativeAction: string, nativeArgs: Record<string, unknown> = {}) => {
+				if (!options.agentBrowserRuntime) {
+					throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
+				}
+				return queueNativeOperation(session, async () => {
+					await ensureNativeActiveTab(session, signal);
+					await activeEntry(session).ready;
+					const result = await options.agentBrowserRuntime!.runAction(
+						sessionId,
+						nativeAction,
+						nativeArgs,
+						agentBrowserTargets(session),
+						signal,
+					);
+					if (nativeAction === "tab-select" && typeof nativeArgs.tabId === "string") {
+						session.nativeActiveTabId = nativeArgs.tabId;
+					}
+					if (nativeAction === "tab-new" || nativeAction === "tab-close") {
+						session.nativeActiveTabId = undefined;
+					}
+					if (nativeAction.startsWith("tab-")) await ensureNativeActiveTab(session, signal);
+					return result;
+				});
+			};
+			switch (action) {
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
-					const state = await navigate({ viewId: entry.state.viewId, url: normalizeAgentBrowserURL(url) });
-					if (state.error) throw browserError("NAVIGATION_FAILED", state.error);
-					return state;
+					await runNative(action, { url: normalizeAgentBrowserURL(url) });
+					return pushNavState(options, activeEntry(session));
 				}
-				case "snapshot":
-					return snapshotEntry(entry, Boolean(args.interactive));
+				case "snapshot": {
+					const result = await runNative(action, { interactive: Boolean(args.interactive) });
+					if (typeof result.snapshot !== "string") {
+						throw browserError("BROWSER_AUTOMATION_INVALID_OUTPUT", "Browser snapshot output was invalid");
+					}
+					return {
+						text: result.snapshot,
+						refs: result.refs,
+						...(result._boundary ? { _boundary: result._boundary } : {}),
+						untrustedExternalContent: true,
+					};
+				}
 				case "click":
-					return clickEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
-				case "fill":
-					return fillEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true),
-					);
-				case "type":
-					return typeEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true),
-					);
-				case "press":
-					return pressEntry(entry, stringArg(args, "key", "INVALID_ARGUMENT", "key is required"));
+				case "dblclick":
+				case "focus":
 				case "hover":
-					return hoverEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
 				case "highlight":
-					return highlightEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
+				case "scrollintoview":
+				case "check":
+				case "uncheck":
+					return runNative(action, { ref: stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required") });
+				case "fill":
+				case "type":
+					return runNative(action, {
+						ref: stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
+						text: stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true),
+					});
+				case "press":
+					return runNative(action, { key: stringArg(args, "key", "INVALID_ARGUMENT", "key is required") });
+				case "drag":
+					return runNative(action, {
+						ref: stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
+						targetRef: stringArg(args, "targetRef", "REFERENCE_REQUIRED", "target ref is required"),
+					});
 				case "unhighlight":
 					return unhighlightEntry(entry);
 				case "tabs":
@@ -899,55 +1242,54 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "tab-new": {
 					const url =
 						typeof args.url === "string" && args.url.trim() ? normalizeAgentBrowserURL(args.url) : undefined;
-					const tab = await openTab(session, url, true);
-					return tabResult(tab, true);
+					await runNative(action, { url });
+					return tabResult(activeEntry(session), true);
 				}
 				case "tab-select": {
-					const tab = activateTab(
-						session,
-						stringArg(args, "tabId", "TAB_ID_REQUIRED", "tabId is required"),
-					);
-					return tabResult(tab, true);
+					await runNative(action, { tabId: stringArg(args, "tabId", "TAB_ID_REQUIRED", "tabId is required") });
+					return tabResult(activeEntry(session), true);
 				}
 				case "tab-close": {
 					const tabId =
 						typeof args.tabId === "string" && args.tabId.trim() ? args.tabId.trim() : session.activeTabId;
-					return { closedTabId: tabId, ...closeTab(session, tabId) };
+					await runNative(action, { tabId });
+					return { closedTabId: tabId, ...listTabs(session) };
 				}
 				case "scroll":
-					return scrollEntry(
-						entry,
-						stringArg(args, "direction", "INVALID_ARGUMENT", "direction is required"),
-						numberArg(args.amount, 1, 5_000) || 600,
-					);
+					return runNative(action, {
+						direction: stringArg(args, "direction", "INVALID_ARGUMENT", "direction is required"),
+						amount: numberArg(args.amount, 1, 5_000) || 600,
+					});
 				case "select":
-					return selectEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						stringArg(args, "value", "INVALID_ARGUMENT", "value is required", true),
-					);
-				case "check":
-					return checkEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						true,
-					);
-				case "uncheck":
-					return checkEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						false,
-					);
-				case "get":
-					return getEntry(
-						entry,
-						stringArg(args, "property", "INVALID_ARGUMENT", "property is required"),
-						typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
-					);
+					return runNative(action, {
+						ref: stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
+						value: stringArg(args, "value", "INVALID_ARGUMENT", "value is required", true),
+					});
+				case "get": {
+					const property = stringArg(args, "property", "INVALID_ARGUMENT", "property is required");
+					const result = await runNative(action, {
+						property,
+						ref: typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
+					});
+					return { ...result, value: result.value ?? result[property] };
+				}
 				case "wait":
-					return waitForEntry(entry, args, signal);
+					return runNative(action, args);
+				case "frame":
+				case "dialog":
+					return runNative(action, args);
+				case "devtools-open":
+				case "devtools-close":
+				{
+					const operation = action.slice("devtools-".length) as BrowserDevToolsInput["operation"];
+					return devtoolsAction(session, operation);
+				}
 				case "screenshot":
-					return screenshotEntry(entry);
+					if (!options.agentBrowserRuntime) {
+						throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
+					}
+					await activeEntry(session).ready;
+					return options.agentBrowserRuntime.screenshot(sessionId, agentBrowserTargets(session), signal);
 				case "network-start":
 					return startNetworkCapture(
 						session,
@@ -963,21 +1305,25 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "network-clear":
 					return clearNetworkCapture(networkEntryFor(session));
 				case "console":
-					return { messages: markLogMessages(entry.consoleMessages), untrustedExternalContent: true };
 				case "errors":
-					return { messages: markLogMessages(entry.errors), untrustedExternalContent: true };
+					return normalizeNativeMessages(await runNative(action), action);
 				default:
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
-				}
+			}
 			} finally {
 				setAgentBrowserActivity(session, action, false, commandId, "finished");
 			}
 		},
 		dispose: () => {
-			ipcDisposers.splice(0).forEach((dispose) => dispose());
-			for (const viewId of [...entries.keys()]) {
-				destroy(viewId);
-			}
+			if (disposePromise) return disposePromise;
+			disposePromise = (async () => {
+				ipcDisposers.splice(0).forEach((dispose) => dispose());
+				await options.agentBrowserRuntime?.dispose();
+				for (const viewId of [...entries.keys()]) {
+					destroy(viewId);
+				}
+			})();
+			return disposePromise;
 		},
 		destroy,
 		destroyAll: () => {
@@ -993,6 +1339,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			// Stored narrowed as BrowserWebContents but is a full WebContents at runtime.
 			const contents = entry.view.webContents as unknown as WebContents;
 			return contents.isDestroyed() ? null : contents;
+		},
+		toggleDevToolsForLastFocused: async () => {
+			if (lastFocusedViewId === null) return null;
+			const session = entries.get(lastFocusedViewId);
+			if (!session) return null;
+			return devtoolsAction(session, "toggle");
 		},
 		forgetLastFocusedPanel: () => {
 			lastFocusedViewId = null;
@@ -1069,31 +1421,35 @@ function emptyTabsState(viewId: string): BrowserTabsState {
 	return { viewId, activeTabId: "", tabs: [] };
 }
 
+function emptyDevToolsState(viewId: string): BrowserDevToolsState {
+	return { viewId, open: false, activeTabId: "", placement: "undocked" };
+}
+
 function activeEntry(session: BrowserSessionEntry): BrowserEntry {
 	const entry = session.tabs.get(session.activeTabId);
 	if (!entry) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Active browser tab is unavailable");
 	return entry;
 }
 
-function tabResult(entry: BrowserEntry, active: boolean): {
-	id: string;
-	url: string;
-	title: string;
-	active: boolean;
-} {
+function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { untrustedExternalContent: true } {
 	return {
 		id: entry.tabId,
 		url: entry.view.webContents.getURL(),
 		title: entry.view.webContents.getTitle(),
 		active,
+		untrustedExternalContent: true,
 	};
 }
 
-function listTabs(session: BrowserSessionEntry, change?: BrowserTabsState["change"]): BrowserTabsState {
+function listTabs(
+	session: BrowserSessionEntry,
+	change?: BrowserTabsState["change"],
+): BrowserTabsState & { untrustedExternalContent: true } {
 	return {
 		viewId: session.viewId,
 		activeTabId: session.activeTabId,
 		tabs: [...session.tabs.values()].map((entry) => tabResult(entry, entry.tabId === session.activeTabId)),
+		untrustedExternalContent: true,
 		...(change ? { change } : {}),
 	};
 }
@@ -1104,8 +1460,14 @@ function pushTabsState(
 	change?: BrowserTabsState["change"],
 ): BrowserTabsState {
 	const state = listTabs(session, change);
-	options.mainWindow.webContents.send("browser:tabsState", state);
+	shellContents(options).send("browser:tabsState", state);
 	return state;
+}
+
+function shellContents(options: BrowserViewHostOptions): WebContents {
+	const contents = options.shellWebContents ?? options.mainWindow.webContents;
+	if (!contents) throw new Error("Browser view host requires shell WebContents");
+	return contents;
 }
 
 function hardenWebContents(
@@ -1128,7 +1490,7 @@ function hardenWebContents(
 		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
 			event.preventDefault();
 			entry.state = { ...entry.state, error: "Unsupported browser URL" };
-			options.mainWindow.webContents.send("browser:navState", entry.state);
+			shellContents(options).send("browser:navState", entry.state);
 		}
 	};
 	contents.on("will-navigate", blockUnsafeNavigation);
@@ -1154,21 +1516,17 @@ function wireNavEvents(
 	contents.on("did-navigate-in-page", update);
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
-		invalidateRefs(entry);
 		cancelAnnotation(options, entry, "navigation");
 		update();
 	});
-	contents.on("did-stop-loading", update);
+	contents.on("did-stop-loading", () => {
+		update();
+	});
 	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
 		if (errorCode === -3) return;
-		pushBrowserLog(entry.errors, {
-			level: "error",
-			message: String(errorDescription || `Navigation failed (${errorCode})`),
-			timestamp: new Date().toISOString(),
-		});
 		if (isActive()) entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
-		if (isActive()) options.mainWindow.webContents.send("browser:navState", entry.state);
+		if (isActive()) shellContents(options).send("browser:navState", entry.state);
 	});
 }
 
@@ -1180,12 +1538,15 @@ function cancelAnnotation(
 	if (!entry.annotationEnabled) return;
 	entry.annotationEnabled = false;
 	entry.view.webContents.send("browser:annotation:setMode", { enabled: false });
-	options.mainWindow.webContents.send("browser:annotation:canceled", { viewId: entry.state.viewId, reason });
+	shellContents(options).send("browser:annotation:canceled", {
+		viewId: entry.state.viewId,
+		reason,
+	});
 }
 
 function pushNavState(options: BrowserViewHostOptions, entry: BrowserEntry): BrowserNavState {
 	entry.state = readNavState(entry);
-	options.mainWindow.webContents.send("browser:navState", entry.state);
+	shellContents(options).send("browser:navState", entry.state);
 	return entry.state;
 }
 
@@ -1205,101 +1566,15 @@ function readNavState(entry: BrowserEntry): BrowserNavState {
 	};
 }
 
-type AXValue = { value?: unknown };
-type AXNode = {
-	nodeId: string;
-	parentId?: string;
-	ignored?: boolean;
-	backendDOMNodeId?: number;
-	role?: AXValue;
-	name?: AXValue;
-	value?: AXValue;
-	properties?: Array<{ name: string; value?: AXValue }>;
-};
-
-const INTERACTIVE_ROLES = new Set([
-	"button",
-	"checkbox",
-	"combobox",
-	"link",
-	"listbox",
-	"menuitem",
-	"menuitemcheckbox",
-	"menuitemradio",
-	"option",
-	"radio",
-	"scrollbar",
-	"searchbox",
-	"slider",
-	"spinbutton",
-	"switch",
-	"tab",
-	"textbox",
-	"treeitem",
-]);
-
 function wireAutomationEvents(contents: BrowserWebContents, entry: BrowserEntry): void {
-	contents.on("console-message", (...eventArgs: unknown[]) => {
-		const details = eventArgs.find(
-			(value) => value && typeof value === "object" && typeof (value as { message?: unknown }).message === "string",
-		) as { level?: string; message: string; lineNumber?: number; sourceId?: string } | undefined;
-		const legacyLevel = typeof eventArgs[1] === "number" ? eventArgs[1] : 1;
-		const legacyMessage = typeof eventArgs[2] === "string" ? eventArgs[2] : "";
-		const level = details?.level ?? ["debug", "info", "warning", "error"][legacyLevel] ?? "info";
-		const log: BrowserLogEntry = {
-			level,
-			message: details?.message ?? legacyMessage,
-			source: details?.sourceId ?? (typeof eventArgs[4] === "string" ? eventArgs[4] : undefined),
-			line: details?.lineNumber ?? (typeof eventArgs[3] === "number" ? eventArgs[3] : undefined),
-			timestamp: new Date().toISOString(),
-		};
-		pushBrowserLog(entry.consoleMessages, log);
-		if (level === "error") pushBrowserLog(entry.errors, log);
-	});
-	contents.on("render-process-gone", (_event, details) => {
-		pushBrowserLog(entry.errors, {
-			level: "error",
-			message: `Browser renderer exited: ${details.reason}`,
-			timestamp: new Date().toISOString(),
-		});
-	});
-	const targetDebugger = contents.debugger;
-	if (!targetDebugger) return;
-	targetDebugger.on("message", (_event, method, params) => {
+	contents.debugger?.on("message", (_event, method, params) => {
 		handleNetworkDebuggerEvent(entry, method, params as Record<string, unknown>);
-		if (method === "DOM.documentUpdated") {
-			invalidateRefs(entry);
-			return;
-		}
-		if (method === "Runtime.exceptionThrown") {
-			const detail = params as { exceptionDetails?: { text?: string; url?: string; lineNumber?: number } };
-			const exception = detail.exceptionDetails;
-			pushBrowserLog(entry.errors, {
-				level: "error",
-				message: exception?.text ?? "Uncaught browser exception",
-				source: exception?.url,
-				line: exception?.lineNumber,
-				timestamp: new Date().toISOString(),
-			});
-		}
 	});
 }
 
-function pushBrowserLog(target: BrowserLogEntry[], entry: BrowserLogEntry): void {
-	target.push({
-		...entry,
-		message: entry.message.slice(0, MAX_LOG_MESSAGE_CHARS),
-		source: entry.source?.slice(0, 2_048),
-	});
-	if (target.length > 200) target.splice(0, target.length - 200);
-}
-
-function invalidateRefs(entry: BrowserEntry): void {
-	entry.refGeneration += 1;
-	entry.refs.clear();
-}
 
 async function ensureDebugger(entry: BrowserEntry): Promise<void> {
+	await entry.ready;
 	const debug = entry.view.webContents.debugger;
 	if (!debug) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser debugger is unavailable");
 	if (!debug.isAttached()) {
@@ -1366,6 +1641,7 @@ function networkCaptureStatus(entry: BrowserEntry): Record<string, unknown> {
 			tabId: entry.tabId,
 			requestCount: 0,
 			maxEntries: MAX_NETWORK_REQUESTS,
+			untrustedExternalContent: true,
 		};
 	}
 	return {
@@ -1378,6 +1654,7 @@ function networkCaptureStatus(entry: BrowserEntry): Record<string, unknown> {
 		expiresAt: capture.expiresAt,
 		...(capture.stoppedAt ? { stoppedAt: capture.stoppedAt } : {}),
 		...(capture.stopReason ? { stopReason: capture.stopReason } : {}),
+		untrustedExternalContent: true,
 	};
 }
 
@@ -1399,12 +1676,9 @@ async function stopNetworkCapture(entry: BrowserEntry, reason: string): Promise<
 	capture.active = false;
 	capture.stoppedAt = new Date().toISOString();
 	capture.stopReason = reason;
-	try {
-		await entry.view.webContents.debugger.sendCommand("Network.disable");
-	} catch {
-		// The target may have closed while an expiry timer was firing. The in-memory
-		// capture is still safely stopped and can be discarded with the tab.
-	}
+	// The debugger attachment is shared by capture, agent-browser, and DevTools.
+	// Stop recording locally, but leave the shared Network domain enabled until
+	// the attachment itself is released.
 	return networkCaptureResult(entry);
 }
 
@@ -1420,19 +1694,11 @@ function clearNetworkCapture(entry: BrowserEntry): Record<string, unknown> {
 function disposeNetworkCapture(entry: BrowserEntry, reason: string): void {
 	const capture = entry.networkCapture;
 	if (!capture) return;
-	const wasActive = capture.active;
 	if (capture.timer) clearTimeout(capture.timer);
 	capture.timer = undefined;
 	capture.active = false;
 	capture.stoppedAt = new Date().toISOString();
 	capture.stopReason = reason;
-	try {
-		if (wasActive && entry.view.webContents.debugger?.isAttached()) {
-			void entry.view.webContents.debugger.sendCommand("Network.disable").catch(() => undefined);
-		}
-	} catch {
-		// Electron may already have destroyed the target during window shutdown.
-	}
 }
 
 function handleNetworkDebuggerEvent(entry: BrowserEntry, method: string, params: Record<string, unknown>): void {
@@ -1585,246 +1851,6 @@ function finiteNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean): Promise<unknown> {
-	await ensureDebugger(entry);
-	await entry.view.webContents.debugger.sendCommand("Accessibility.enable");
-	const response = (await entry.view.webContents.debugger.sendCommand("Accessibility.getFullAXTree")) as {
-		nodes?: AXNode[];
-	};
-	const nodes = response.nodes ?? [];
-	entry.refGeneration += 1;
-	entry.refs.clear();
-	const generation = entry.refGeneration;
-	const depths = new Map<string, number>();
-	const lines: string[] = [];
-	const elements: Array<{ ref: string; role: string; name: string }> = [];
-	let refIndex = 0;
-	let truncated = false;
-	for (const node of nodes) {
-		if (node.ignored) continue;
-		const role = stringValue(node.role) || "generic";
-		const name = stringValue(node.name);
-		const value = stringValue(node.value);
-		const interactive =
-			INTERACTIVE_ROLES.has(role) || node.properties?.some((property) => property.name === "focusable");
-		if (interactiveOnly && !interactive) continue;
-		if (!interactive && !name && !value) continue;
-		if (lines.length >= MAX_SNAPSHOT_LINES) {
-			truncated = true;
-			continue;
-		}
-		let ref = "";
-		if (interactive && node.backendDOMNodeId) {
-			ref = `e${++refIndex}`;
-			entry.refs.set(ref, { backendNodeId: node.backendDOMNodeId, generation });
-			elements.push({ ref, role, name });
-		}
-		const parentDepth = node.parentId ? (depths.get(node.parentId) ?? -1) : -1;
-		const depth = Math.max(0, parentDepth + 1);
-		depths.set(node.nodeId, depth);
-		const label = name ? ` \"${compactText(name)}\"` : "";
-		const currentValue = value && value !== name ? ` value=\"${compactText(value)}\"` : "";
-		const reference = ref ? ` [ref=${ref}]` : "";
-		lines.push(`${"  ".repeat(Math.min(depth, 8))}${role}${label}${currentValue}${reference}`);
-	}
-	const snapshotText = lines.join("\n") || "(empty accessibility snapshot)";
-	const truncationNotice = truncated
-		? `\n[Snapshot truncated: showing ${lines.length} lines from ${nodes.length} accessibility nodes]`
-		: "";
-	return {
-		url: entry.view.webContents.getURL(),
-		title: entry.view.webContents.getTitle(),
-		generation,
-		text: markUntrusted(snapshotText + truncationNotice),
-		elements,
-		totalNodes: nodes.length,
-		truncated,
-		untrustedExternalContent: true,
-	};
-}
-
-async function clickEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	const point = await pointerPoint(entry, objectId, refName);
-	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-		type: "mousePressed",
-		x: point.x,
-		y: point.y,
-		button: "left",
-		clickCount: 1,
-	});
-	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-		type: "mouseReleased",
-		x: point.x,
-		y: point.y,
-		button: "left",
-		clickCount: 1,
-	});
-	return { ref: refName, x: point.x, y: point.y, url: entry.view.webContents.getURL() };
-}
-
-async function fillEntry(entry: BrowserEntry, refName: string, text: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration: `function(next){
-			this.scrollIntoView({block:'center',inline:'center'});
-			this.focus();
-			const proto = Object.getPrototypeOf(this);
-			const descriptor = proto && Object.getOwnPropertyDescriptor(proto, 'value');
-			if (descriptor && descriptor.set) descriptor.set.call(this, next); else this.value = next;
-			this.dispatchEvent(new Event('input', {bubbles:true, composed:true}));
-			this.dispatchEvent(new Event('change', {bubbles:true, composed:true}));
-		}`,
-		arguments: [{ value: text }],
-		awaitPromise: true,
-	});
-	return { ref: refName, value: text, url: entry.view.webContents.getURL() };
-}
-
-async function typeEntry(entry: BrowserEntry, refName: string, text: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration:
-			"function(){ this.scrollIntoView({block:'center',inline:'center'}); this.focus(); }",
-	});
-	await entry.view.webContents.debugger.sendCommand("Input.insertText", { text });
-	return { ref: refName, text, url: entry.view.webContents.getURL() };
-}
-
-type BrowserKey = {
-	key: string;
-	code: string;
-	keyCode: number;
-	text?: string;
-	modifiers: number;
-};
-
-const NAMED_KEYS: Record<string, Omit<BrowserKey, "modifiers">> = {
-	enter: { key: "Enter", code: "Enter", keyCode: 13, text: "\r" },
-	tab: { key: "Tab", code: "Tab", keyCode: 9, text: "\t" },
-	escape: { key: "Escape", code: "Escape", keyCode: 27 },
-	esc: { key: "Escape", code: "Escape", keyCode: 27 },
-	backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
-	delete: { key: "Delete", code: "Delete", keyCode: 46 },
-	home: { key: "Home", code: "Home", keyCode: 36 },
-	end: { key: "End", code: "End", keyCode: 35 },
-	pageup: { key: "PageUp", code: "PageUp", keyCode: 33 },
-	pagedown: { key: "PageDown", code: "PageDown", keyCode: 34 },
-	arrowup: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
-	arrowdown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
-	arrowleft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
-	arrowright: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
-	space: { key: " ", code: "Space", keyCode: 32, text: " " },
-};
-
-function parseBrowserKey(input: string): BrowserKey {
-	const parts = input
-		.split("+")
-		.map((part) => part.trim())
-		.filter(Boolean);
-	if (parts.length === 0) throw browserError("INVALID_ARGUMENT", "key is required");
-	let modifiers = 0;
-	for (const modifier of parts.slice(0, -1)) {
-		switch (modifier.toLowerCase()) {
-			case "alt":
-				modifiers |= 1;
-				break;
-			case "control":
-			case "ctrl":
-				modifiers |= 2;
-				break;
-			case "meta":
-			case "command":
-			case "cmd":
-				modifiers |= 4;
-				break;
-			case "shift":
-				modifiers |= 8;
-				break;
-			default:
-				throw browserError("INVALID_ARGUMENT", `Unsupported key modifier: ${modifier}`);
-		}
-	}
-	const rawKey = parts.at(-1)!;
-	const named = NAMED_KEYS[rawKey.toLowerCase()];
-	if (named) {
-		return {
-			...named,
-			text: modifiers & (1 | 2 | 4) ? undefined : named.text,
-			modifiers,
-		};
-	}
-	if ([...rawKey].length !== 1) {
-		throw browserError("INVALID_ARGUMENT", `Unsupported key: ${rawKey}`);
-	}
-	const rawIsLetter = /^[a-zA-Z]$/.test(rawKey);
-	const key = rawIsLetter ? (modifiers & 8 ? rawKey.toUpperCase() : rawKey.toLowerCase()) : rawKey;
-	const upper = key.toUpperCase();
-	const isLetter = /^[A-Z]$/.test(upper);
-	const isDigit = /^\d$/.test(key);
-	return {
-		key,
-		code: isLetter ? `Key${upper}` : isDigit ? `Digit${key}` : "",
-		keyCode: upper.charCodeAt(0),
-		text: modifiers & (1 | 2 | 4) ? undefined : key,
-		modifiers,
-	};
-}
-
-async function pressEntry(entry: BrowserEntry, input: string): Promise<unknown> {
-	await ensureDebugger(entry);
-	const key = parseBrowserKey(input);
-	const params = {
-		key: key.key,
-		code: key.code,
-		windowsVirtualKeyCode: key.keyCode,
-		nativeVirtualKeyCode: key.keyCode,
-		modifiers: key.modifiers,
-		...(key.text === undefined ? {} : { text: key.text, unmodifiedText: key.text }),
-	};
-	await entry.view.webContents.debugger.sendCommand("Input.dispatchKeyEvent", {
-		type: key.text === undefined ? "rawKeyDown" : "keyDown",
-		...params,
-	});
-	await entry.view.webContents.debugger.sendCommand("Input.dispatchKeyEvent", {
-		type: "keyUp",
-		...params,
-		text: undefined,
-		unmodifiedText: undefined,
-	});
-	return { key: input, url: entry.view.webContents.getURL() };
-}
-
-async function hoverEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	const point = await pointerPoint(entry, objectId, refName);
-	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-		type: "mouseMoved",
-		x: point.x,
-		y: point.y,
-	});
-	return { ref: refName, x: point.x, y: point.y, url: entry.view.webContents.getURL() };
-}
-
-async function highlightEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	await entry.view.webContents.debugger.sendCommand("Overlay.enable");
-	await entry.view.webContents.debugger.sendCommand("Overlay.highlightNode", {
-		objectId,
-		highlightConfig: {
-			showInfo: false,
-			showStyles: false,
-			showRulers: false,
-			contentColor: { r: 59, g: 130, b: 246, a: 0.18 },
-			borderColor: { r: 37, g: 99, b: 235, a: 1 },
-			paddingColor: { r: 96, g: 165, b: 250, a: 0.12 },
-			marginColor: { r: 147, g: 197, b: 253, a: 0.08 },
-		},
-	});
-	return { ref: refName, url: entry.view.webContents.getURL() };
-}
 
 async function unhighlightEntry(entry: BrowserEntry): Promise<unknown> {
 	await ensureDebugger(entry);
@@ -1833,272 +1859,6 @@ async function unhighlightEntry(entry: BrowserEntry): Promise<unknown> {
 	return { url: entry.view.webContents.getURL() };
 }
 
-function quadCenter(quad: number[] | undefined): { x: number; y: number } | undefined {
-	if (!quad || quad.length < 8) return undefined;
-	const xs = [quad[0], quad[2], quad[4], quad[6]];
-	const ys = [quad[1], quad[3], quad[5], quad[7]];
-	return {
-		x: xs.reduce((sum, value) => sum + value, 0) / xs.length,
-		y: ys.reduce((sum, value) => sum + value, 0) / ys.length,
-	};
-}
-
-async function scrollEntry(entry: BrowserEntry, rawDirection: string, amount: number): Promise<unknown> {
-	await ensureDebugger(entry);
-	const direction = rawDirection.toLowerCase();
-	const deltas: Record<string, { deltaX: number; deltaY: number }> = {
-		up: { deltaX: 0, deltaY: -amount },
-		down: { deltaX: 0, deltaY: amount },
-		left: { deltaX: -amount, deltaY: 0 },
-		right: { deltaX: amount, deltaY: 0 },
-	};
-	const delta = deltas[direction];
-	if (!delta) {
-		throw browserError("INVALID_ARGUMENT", "direction must be up, down, left, or right");
-	}
-	const viewport = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
-		expression: "({x: Math.max(0, innerWidth / 2), y: Math.max(0, innerHeight / 2)})",
-		returnByValue: true,
-	})) as { result?: { value?: { x?: number; y?: number } } };
-	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-		type: "mouseWheel",
-		x: viewport.result?.value?.x ?? 0,
-		y: viewport.result?.value?.y ?? 0,
-		...delta,
-	});
-	return { direction, amount, url: entry.view.webContents.getURL() };
-}
-
-async function selectEntry(entry: BrowserEntry, refName: string, value: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	const response = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration: `function(next){
-			if (!(this instanceof HTMLSelectElement)) return {supported:false};
-			const values = Array.isArray(next) ? next : [next];
-			const matched = Array.from(this.options).some((option) => values.includes(option.value));
-			if (!matched) return {supported:true, matched:false, value:this.value};
-			for (const option of this.options) option.selected = values.includes(option.value);
-			this.dispatchEvent(new Event('input', {bubbles:true, composed:true}));
-			this.dispatchEvent(new Event('change', {bubbles:true, composed:true}));
-			return {supported:true, matched:true, value:this.value};
-		}`,
-		arguments: [{ value }],
-		returnByValue: true,
-	})) as { result?: { value?: { supported?: boolean; matched?: boolean; value?: string } } };
-	if (!response.result?.value?.supported) {
-		throw browserError("INVALID_ELEMENT_STATE", `Element ${refName} is not a select control`);
-	}
-	if (!response.result.value.matched) {
-		throw browserError("INVALID_ARGUMENT", `Select option ${JSON.stringify(value)} does not exist`);
-	}
-	return { ref: refName, value: response.result.value.value, url: entry.view.webContents.getURL() };
-}
-
-async function checkEntry(entry: BrowserEntry, refName: string, checked: boolean): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	const response = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration: `function(next){
-			if (!('checked' in this)) return {supported:false};
-			if (Boolean(this.checked) !== Boolean(next)) this.click();
-			return {supported:true, checked:Boolean(this.checked)};
-		}`,
-		arguments: [{ value: checked }],
-		returnByValue: true,
-	})) as { result?: { value?: { supported?: boolean; checked?: boolean } } };
-	if (!response.result?.value?.supported) {
-		throw browserError("INVALID_ELEMENT_STATE", `Element ${refName} is not checkable`);
-	}
-	if (response.result.value.checked !== checked) {
-		throw browserError("ELEMENT_NOT_INTERACTABLE", `Element ${refName} did not change checked state`);
-	}
-	return { ref: refName, checked: response.result.value.checked, url: entry.view.webContents.getURL() };
-}
-
-async function getEntry(entry: BrowserEntry, property: string, refName?: string): Promise<unknown> {
-	const normalized = property.toLowerCase();
-	if (!refName) {
-		if (normalized === "url") return { property: normalized, value: entry.view.webContents.getURL() };
-		if (normalized === "title") return { property: normalized, value: entry.view.webContents.getTitle() };
-		if (normalized !== "text") {
-			throw browserError("INVALID_ARGUMENT", "page property must be url, title, or text");
-		}
-		await ensureDebugger(entry);
-		const response = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
-			expression: "document.body ? document.body.innerText : ''",
-			returnByValue: true,
-		})) as { result?: { value?: unknown } };
-		return {
-			property: normalized,
-			value: markUntrusted(externalText(response.result?.value)),
-			untrustedExternalContent: true,
-		};
-	}
-	if (!["text", "value", "checked"].includes(normalized)) {
-		throw browserError("INVALID_ARGUMENT", "element property must be text, value, or checked");
-	}
-	const objectId = await resolveRef(entry, refName);
-	const response = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration: `function(property){
-			if (property === 'text') return this.innerText ?? this.textContent ?? '';
-			if (property === 'value') return this.value ?? '';
-			if (property === 'checked') return Boolean(this.checked);
-		}`,
-		arguments: [{ value: normalized }],
-		returnByValue: true,
-	})) as { result?: { value?: unknown } };
-	const value =
-		normalized === "text" ? markUntrusted(externalText(response.result?.value)) : response.result?.value;
-	return {
-		ref: refName,
-		property: normalized,
-		value,
-		url: entry.view.webContents.getURL(),
-		...(normalized === "text" ? { untrustedExternalContent: true } : {}),
-	};
-}
-
-async function resolveRef(entry: BrowserEntry, refName: string): Promise<string> {
-	await ensureDebugger(entry);
-	const ref = entry.refs.get(refName);
-	if (!ref || ref.generation !== entry.refGeneration) {
-		throw browserError("STALE_REFERENCE", `Element reference ${refName} is stale; run ao browser snapshot again`);
-	}
-	try {
-		const resolved = (await entry.view.webContents.debugger.sendCommand("DOM.resolveNode", {
-			backendNodeId: ref.backendNodeId,
-		})) as { object?: { objectId?: string } };
-		if (!resolved.object?.objectId) throw new Error("node has no runtime object");
-		return resolved.object.objectId;
-	} catch {
-		entry.refs.delete(refName);
-		throw browserError("STALE_REFERENCE", `Element reference ${refName} is stale; run ao browser snapshot again`);
-	}
-}
-
-async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
-	const fixedMS = numberArg(args.ms, 0, 60_000);
-	if (fixedMS > 0) {
-		await delay(fixedMS, signal);
-		return { waitedMs: fixedMS, url: entry.view.webContents.getURL() };
-	}
-	const timeoutMS = numberArg(args.timeoutMs, 1, 55_000) || 10_000;
-	const stableMS = numberArg(args.stableMs, 1, 10_000);
-	let expression = "";
-	let condition = "";
-	let valueSatisfies = (value: unknown): boolean => value === true;
-	if (typeof args.text === "string" && args.text) {
-		expression = `Boolean(document.body && document.body.innerText.includes(${JSON.stringify(args.text)}))`;
-		condition = `text ${JSON.stringify(args.text)}`;
-	} else if (typeof args.textGone === "string" && args.textGone) {
-		expression = `Boolean(!document.body || !document.body.innerText.includes(${JSON.stringify(args.textGone)}))`;
-		condition = `text ${JSON.stringify(args.textGone)} to disappear`;
-	} else if (typeof args.selector === "string" && args.selector) {
-		expression = `Boolean(document.querySelector(${JSON.stringify(args.selector)}))`;
-		condition = `selector ${JSON.stringify(args.selector)}`;
-	} else if (typeof args.selectorGone === "string" && args.selectorGone) {
-		expression = `Boolean(!document.querySelector(${JSON.stringify(args.selectorGone)}))`;
-		condition = `selector ${JSON.stringify(args.selectorGone)} to disappear`;
-	} else if (typeof args.url === "string" && args.url) {
-		expression = `location.href.includes(${JSON.stringify(args.url)})`;
-		condition = `URL ${JSON.stringify(args.url)}`;
-	} else if (args.load === true) {
-		expression = "document.readyState === 'complete'";
-		condition = "page load completion";
-	} else if (stableMS > 0) {
-		expression = `(() => {
-			const key = "__ao_browser_dom_stability__";
-			let state = globalThis[key];
-			if (!state || state.document !== document) {
-				state = {document, lastMutation: performance.now()};
-				state.observer = new MutationObserver(() => { state.lastMutation = performance.now(); });
-				state.observer.observe(document, {
-					subtree: true,
-					childList: true,
-					attributes: true,
-					characterData: true,
-				});
-				globalThis[key] = state;
-			}
-			return performance.now() - state.lastMutation;
-		})()`;
-		condition = `DOM stability for ${stableMS}ms`;
-		valueSatisfies = (value) => typeof value === "number" && value >= stableMS;
-	} else {
-		throw browserError(
-			"INVALID_ARGUMENT",
-			"wait requires text, textGone, selector, selectorGone, url, load, stableMs, or ms",
-		);
-	}
-	await ensureDebugger(entry);
-	const deadline = Date.now() + timeoutMS;
-	try {
-		while (Date.now() <= deadline) {
-			throwIfAborted(signal);
-			if (args.load === true && entry.view.webContents.isLoading()) {
-				await delay(100, signal);
-				continue;
-			}
-			let evaluated: {
-				result?: { value?: unknown };
-				exceptionDetails?: { text?: string };
-			};
-			try {
-				evaluated = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
-					expression,
-					returnByValue: true,
-				})) as typeof evaluated;
-			} catch {
-				// Navigations and HMR can briefly replace the execution context. Retry
-				// until the requested condition or timeout rather than failing early.
-				await delay(100, signal);
-				continue;
-			}
-			if (evaluated.exceptionDetails) {
-				throw browserError(
-					"INVALID_ARGUMENT",
-					evaluated.exceptionDetails.text ?? `Unable to evaluate wait condition ${condition}`,
-				);
-			}
-			if (valueSatisfies(evaluated.result?.value)) {
-				return { condition, url: entry.view.webContents.getURL() };
-			}
-			await delay(100, signal);
-		}
-		throw browserError("WAIT_TIMEOUT", `Timed out after ${timeoutMS}ms waiting for ${condition}`);
-	} finally {
-		if (stableMS > 0) {
-			try {
-				await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
-					expression: `(() => {
-						const key = "__ao_browser_dom_stability__";
-						const state = globalThis[key];
-						state?.observer?.disconnect();
-						delete globalThis[key];
-					})()`,
-				});
-			} catch {
-				// Navigation may have already destroyed the observed document.
-			}
-		}
-	}
-}
-
-async function screenshotEntry(entry: BrowserEntry): Promise<unknown> {
-	const image = await entry.view.webContents.capturePage();
-	if (image.isEmpty()) throw browserError("BROWSER_COMMAND_FAILED", "Browser screenshot is empty");
-	const size = image.getSize();
-	return {
-		mimeType: "image/png",
-		data: image.toPNG().toString("base64"),
-		width: size.width,
-		height: size.height,
-		url: entry.view.webContents.getURL(),
-		untrustedExternalContent: true,
-	};
-}
 
 function stringArg(
 	args: Record<string, unknown>,
@@ -2111,6 +1871,7 @@ function stringArg(
 	if (typeof value !== "string" || (!allowEmpty && !value.trim())) throw browserError(code, message);
 	return value;
 }
+
 
 function numberArg(value: unknown, min: number, max: number): number {
 	if (typeof value !== "number" || !Number.isFinite(value)) return 0;
@@ -2134,14 +1895,6 @@ function networkDurationArg(value: unknown): number {
 	return value;
 }
 
-function stringValue(value: AXValue | undefined): string {
-	return typeof value?.value === "string" ? value.value : value?.value == null ? "" : String(value.value);
-}
-
-function compactText(value: string): string {
-	return value.replace(/\s+/g, " ").replace(/\"/g, '\\"').trim().slice(0, 240);
-}
-
 function normalizeAgentBrowserURL(input: string): string {
 	const raw = input.trim();
 	if (!raw) throw browserError("URL_REQUIRED", "url is required");
@@ -2158,42 +1911,6 @@ function normalizeAgentBrowserURL(input: string): string {
 	return normalized.href;
 }
 
-async function pointerPoint(
-	entry: BrowserEntry,
-	objectId: string,
-	refName: string,
-): Promise<{ x: number; y: number }> {
-	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration: "function(){ this.scrollIntoView({block:'center',inline:'center'}); this.focus(); }",
-	});
-	const response = (await entry.view.webContents.debugger.sendCommand("DOM.getBoxModel", { objectId })) as {
-		model?: { border?: number[]; content?: number[] };
-	};
-	const pagePoint = quadCenter(response.model?.border ?? response.model?.content);
-	if (!pagePoint) throw browserError("ELEMENT_NOT_VISIBLE", `Element ${refName} has no visible box`);
-	const metrics = (await entry.view.webContents.debugger.sendCommand("Page.getLayoutMetrics")) as {
-		cssVisualViewport?: { pageX?: number; pageY?: number };
-		visualViewport?: { pageX?: number; pageY?: number };
-	};
-	const viewport = metrics.cssVisualViewport ?? metrics.visualViewport ?? {};
-	const point = {
-		x: pagePoint.x - (viewport.pageX ?? 0),
-		y: pagePoint.y - (viewport.pageY ?? 0),
-	};
-	const hit = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
-		functionDeclaration:
-			"function(x,y){ const hit=document.elementFromPoint(x,y); return Boolean(hit && (hit===this || this.contains(hit))); }",
-		arguments: [{ value: point.x }, { value: point.y }],
-		returnByValue: true,
-	})) as { result?: { value?: boolean } };
-	if (!hit.result?.value) {
-		throw browserError("ELEMENT_NOT_INTERACTABLE", `Element ${refName} is covered or not pointer-interactable`);
-	}
-	return point;
-}
-
 function externalText(value: unknown): string {
 	const raw = value == null ? "" : String(value);
 	const bytes = Buffer.from(raw, "utf8");
@@ -2202,27 +1919,44 @@ function externalText(value: unknown): string {
 }
 
 function markUntrusted(value: string): string {
-	return `${UNTRUSTED_BEGIN}\n${value}\n${UNTRUSTED_END}`;
+	const escaped = value
+		.replaceAll(UNTRUSTED_BEGIN, `\\u003c${UNTRUSTED_BEGIN.slice(1)}`)
+		.replaceAll(UNTRUSTED_END, `\\u003c${UNTRUSTED_END.slice(1)}`);
+	return `${UNTRUSTED_BEGIN}\n${escaped}\n${UNTRUSTED_END}`;
 }
 
-function markLogMessages(messages: BrowserLogEntry[]): BrowserLogEntry[] {
-	return messages.map((message) => ({ ...message, message: markUntrusted(externalText(message.message)) }));
-}
-
-function delay(ms: number, signal?: AbortSignal): Promise<void> {
-	if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
-	throwIfAborted(signal);
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => {
-			signal.removeEventListener("abort", onAbort);
-			resolve();
-		}, ms);
-		const onAbort = () => {
-			clearTimeout(timer);
-			reject(browserError("BROWSER_COMMAND_CANCELED", "Browser command was canceled"));
+function normalizeNativeMessages(result: Record<string, unknown>, action: string): Record<string, unknown> {
+	const raw = Array.isArray(result.messages) ? result.messages : Array.isArray(result.value) ? result.value : [];
+	const messages = raw.map((item): BrowserLogEntry => {
+		if (typeof item === "string") {
+			return {
+				level: action === "errors" ? "error" : "log",
+				message: markUntrusted(externalText(item)),
+				timestamp: new Date().toISOString(),
+			};
+		}
+		const record = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+		const level =
+			typeof record.level === "string"
+				? record.level
+				: typeof record.type === "string"
+					? record.type
+					: action === "errors"
+						? "error"
+						: "log";
+		const message =
+			typeof record.message === "string"
+				? record.message
+				: typeof record.text === "string"
+					? record.text
+					: JSON.stringify(record);
+		return {
+			level,
+			message: markUntrusted(externalText(message)),
+			timestamp: typeof record.timestamp === "string" ? record.timestamp : new Date().toISOString(),
 		};
-		signal.addEventListener("abort", onAbort, { once: true });
 	});
+	return { messages, untrustedExternalContent: true };
 }
 
 function throwIfAborted(signal?: AbortSignal): void {

@@ -363,7 +363,7 @@
 	/* Command palette */
 	--color-bg-command-palette: var(--popover);
 	--color-border-command-palette: var(--border);
-	--color-bg-command-item-active: var(--accent);
+	--color-bg-command-item-active: color-mix(in oklch, var(--popover) 88%, var(--foreground) 12%);
 	--color-text-command-item: var(--foreground);
 	--color-text-command-placeholder: var(--muted-foreground);
 	--color-text-command-muted: var(--muted-foreground);
@@ -384,8 +384,8 @@
 	--size-branch-chip: 13rem;
 	--size-inspector-min: 280px;
 	--size-textarea-min: 112px;
-	/* Three 20px actions + two 1px gaps + the 2px right inset. */
-	--size-sidebar-project-actions: 64px;
+	/* Two 20px actions + one 1px gap + the 2px right inset. */
+	--size-sidebar-project-actions: 43px;
 
 	/* Shared inset-panel geometry (welcome board + settings page) */
 	--size-center-panel-inset: 24px;
@@ -432,13 +432,13 @@
 	/* Settings */
 	--color-bg-settings-row: transparent;
 	--color-bg-settings-menu: var(--popover);
-	--color-bg-settings-menu-selected: var(--accent);
+	--color-bg-settings-menu-selected: color-mix(in oklch, var(--popover) 92%, var(--foreground) 8%);
 	--color-bg-settings-dialog: var(--card);
 	--color-text-settings-title: var(--foreground);
 	--color-text-settings-muted: var(--muted-foreground);
 	--color-text-settings-row: var(--foreground);
 	--color-border-settings: var(--color-border-welcome-panel);
-	--color-border-settings-menu: var(--border);
+	--color-border-settings-menu: color-mix(in oklch, var(--border) 60%, var(--foreground) 40%);
 	--font-size-settings-title: 28px;
 	--tracking-settings-title: -0.015em;
 	--tracking-settings-section: 0.06em;
@@ -746,7 +746,7 @@
 	/* Command palette */
 	--color-bg-command-palette: var(--popover);
 	--color-border-command-palette: var(--border);
-	--color-bg-command-item-active: var(--accent);
+	--color-bg-command-item-active: color-mix(in oklch, var(--popover) 88%, var(--foreground) 12%);
 	--color-text-command-item: var(--foreground);
 	--color-text-command-placeholder: var(--muted-foreground);
 	--color-text-command-muted: var(--muted-foreground);
@@ -776,12 +776,12 @@
 
 	--color-bg-settings-row: var(--card);
 	--color-bg-settings-menu: var(--popover);
-	--color-bg-settings-menu-selected: var(--accent);
+	--color-bg-settings-menu-selected: color-mix(in oklch, var(--popover) 92%, var(--foreground) 8%);
 	--color-bg-settings-dialog: var(--card);
 	--color-text-settings-title: var(--foreground);
 	--color-text-settings-muted: var(--muted-foreground);
 	--color-text-settings-row: var(--foreground);
-	--color-border-settings-menu: var(--border);
+	--color-border-settings-menu: color-mix(in oklch, var(--border) 60%, var(--foreground) 40%);
 	--color-border-settings-dialog: var(--border);
 	--color-border-settings-dialog-header: color-mix(in oklch, var(--border) 70%, transparent);
 	--color-bg-settings-input: var(--input);
@@ -821,6 +821,17 @@
    Body text lands at ~12.5:1 (dark) / ~13.0:1 (light); muted at ~5.6 / ~5.0.
    Text chroma is capped so re-lighting cannot oversaturate a hue.
    ═══════════════════════════════════════════════════════════════ */
+
+/* A named palette owns the terminal's default plate and text as well as the
+   surrounding app chrome. ANSI slots stay independent because agent TUIs use
+   them semantically, but the formerly near-black terminal canvas now follows
+   each palette in both dark and light modes. */
+:root[data-style-theme] {
+	--color-bg-terminal-opaque: var(--background);
+	--color-bg-terminal: var(--background);
+	--color-text-terminal: var(--foreground);
+	--color-text-terminal-dim: var(--muted-foreground);
+}
 
 /* ── GitHub (Primer) ── */
 :root[data-style-theme="github"] {
