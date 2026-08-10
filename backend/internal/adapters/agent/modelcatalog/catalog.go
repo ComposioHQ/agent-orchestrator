@@ -541,6 +541,9 @@ func parseJSONModels(output []byte) ([]ports.AgentModelInfo, error) {
 }
 
 func looksLikeModelAliasRecord(node map[string]any) bool {
+	if _, isModelContainer := node["models"]; isModelContainer {
+		return false
+	}
 	return firstString(node,
 		"modelId", "model_id", "model_uid", "slug", "model",
 		"provider", "providerId", "provider_id",
