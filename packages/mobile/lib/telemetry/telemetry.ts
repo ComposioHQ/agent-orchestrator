@@ -12,6 +12,9 @@ export interface MobileTelemetryClient {
 	capture(event: string, properties?: Record<string, unknown>): void;
 	// register returns a Promise in the SDK; we never await it (best-effort).
 	register(properties: Record<string, unknown>): void | Promise<void>;
+	// Optional so unit-test mocks need not implement it; the real SDK client
+	// (posthog-react-native) provides it. Used to drain the batch on background.
+	flush?(): void | Promise<void>;
 }
 
 export type MobileTelemetry = {
@@ -19,6 +22,13 @@ export type MobileTelemetry = {
 	capture(event: MobileEventName, properties?: Record<string, unknown>): void;
 	/** Emit the daily-active heartbeat at most once per UTC day. */
 	active(storage?: ActiveStorage, now?: Date): Promise<void>;
+	/**
+	 * Send whatever is queued now, best-effort. Called when the app leaves the
+	 * foreground so a launch heartbeat or a last feature_used is not stranded in
+	 * the batch if the app is killed while backgrounded. Adds no new events, it
+	 * only sends already-queued ones sooner.
+	 */
+	flush(): void;
 };
 
 export type MobileTelemetryOptions = {
@@ -65,6 +75,11 @@ export function createMobileTelemetry(
 			if (await reserveDailyActive(storage, now)) {
 				capture(MOBILE_EVENTS.active);
 			}
+		},
+		flush: () => {
+			// Fire-and-forget: a missing flush (test mock) or a rejected drain must
+			// never surface to the caller.
+			void client.flush?.();
 		},
 	};
 }

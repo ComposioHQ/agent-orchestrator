@@ -52,7 +52,13 @@ func newTelemetrySink(cfg config.Config, store *sqlite.Store, log *slog.Logger) 
 	// applies the generous tier to those same names as a structural backstop
 	// rather than the primary cost control, and still does the real limiting
 	// job for every event name that isn't aggregated.
-	rateLimited := telemetryadapter.NewRateLimitedSink(remote, aggregatedEventNames)
+	// ao.cli.invoked is deduped upstream to once per command path per UTC day
+	// (see httpd cliTelemetryReservoir), so a legitimate burst is many distinct
+	// commands in one minute. Exempt it from the tight shared per-minute cap so
+	// those distinct commands are not starved and dropped; the reservoir and the
+	// daily ceiling still bound its volume.
+	rateLimited := telemetryadapter.NewRateLimitedSink(remote, aggregatedEventNames).
+		WithBurstExempt("ao.cli.invoked")
 	aggregated := telemetryadapter.NewAggregatingSink(rateLimited, aggregatedEventNames, time.Minute)
 	// The kill switch sits outermost on the remote chain so a silenced stream
 	// costs nothing downstream: no aggregation window, no rate-limit slot, no
