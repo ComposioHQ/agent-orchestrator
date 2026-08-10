@@ -1676,6 +1676,24 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
 
+	it("surfaces the latest automatic review failure while auto review is enabled", async () => {
+		const failedAutoReview = {
+			...failedReview,
+			triggerSource: "auto",
+			body: 'reviewer preflight: reviewer harness "kimi" is unauthorized',
+		};
+		mockCommonGets([], "", [
+			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedAutoReview },
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")], { autoReviewEnabled: true })} />);
+		await openReviewsSection();
+
+		expect(screen.getByRole("status")).toHaveTextContent(
+			'Auto review Failed: reviewer preflight: reviewer harness "kimi" is unauthorized',
+		);
+	});
+
 	it("does not expose the Reviews tab when the session has no PRs", async () => {
 		mockCommonGets();
 		renderWithQuery(<SessionInspector session={session([])} />);

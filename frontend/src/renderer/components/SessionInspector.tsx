@@ -827,7 +827,8 @@ function ReviewsSection({
 		refetchInterval: (query) => {
 			const data = query.state.data as ReviewsResponse | undefined;
 			const reviews = data?.reviews ?? [];
-			return reviews.some((review) => review.status === "running") ? 2500 : false;
+			if (reviews.some((review) => review.status === "running")) return 2500;
+			return session.autoReviewEnabled === true ? 10_000 : false;
 		},
 		queryFn: async () => {
 			if (usePreviewData) return mockReviewsResponse(session);
@@ -1456,6 +1457,24 @@ function ReviewPanel({
 	onKill: () => void;
 }) {
 	const { t } = useTranslation();
+	const latestAutoFailure = reviewStates
+		.map((review) => review.latestRun)
+		.filter(
+			(run): run is ReviewRunFacts =>
+				Boolean(
+					autoReviewEnabled &&
+						run?.triggerSource === "auto" &&
+						run.status === "failed" &&
+						run.body?.trim(),
+				),
+		)
+		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+	const [dismissedAutoFailureId, setDismissedAutoFailureId] = useState<string | null>(null);
+	useEffect(() => {
+		if (!latestAutoFailure || latestAutoFailure.id === dismissedAutoFailureId) return;
+		const timer = window.setTimeout(() => setDismissedAutoFailureId(latestAutoFailure.id), 10_000);
+		return () => window.clearTimeout(timer);
+	}, [dismissedAutoFailureId, latestAutoFailure]);
 	if (sortedPRs(session).length === 0) {
 		return <p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>;
 	}
@@ -1474,6 +1493,8 @@ function ReviewPanel({
 		.filter((run): run is NonNullable<typeof run> => Boolean(run))
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 	const latest = runningRun ?? newestRun;
+	const autoReviewFailure =
+		latestAutoFailure && latestAutoFailure.id !== dismissedAutoFailureId ? latestAutoFailure.body.trim() : null;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const projectDefaultLabel = t("newTask.projectDefault");
 	const hasReviewerSession = reviewerHandleId.trim() !== "";
@@ -1499,6 +1520,14 @@ function ReviewPanel({
 					{error ? (
 						<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
 							{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
+					</p>
+				) : null}
+				{autoReviewFailure ? (
+					<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error" role="status">
+						<span className="font-semibold">
+							{t("inspector.autoReview")} {t("inspector.review.failed")}:
+						</span>{" "}
+						{autoReviewFailure}
 					</p>
 				) : null}
 				{/* Neutral, not success: a notice is the trigger declining to run and
@@ -1537,6 +1566,7 @@ function ReviewPanel({
 						<ReviewerSelect
 							ariaLabel={t("inspector.selectReviewerAgent")}
 							authorized={agentCatalog?.authorized}
+							contentAlign="end"
 							defaultHarness={harness}
 							defaultOptionLabel={harness ? `${projectDefaultLabel} (${harness})` : projectDefaultLabel}
 							defaultTriggerLabel={harness || projectDefaultLabel}
@@ -1544,7 +1574,7 @@ function ReviewPanel({
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
-							triggerClassName="review-run-agent-select ml-auto h-control-md w-36 min-w-24 max-w-36 shrink-0 text-xs"
+							triggerClassName="review-run-agent-select ml-auto h-control-md w-36 min-w-24 max-w-36 shrink-0 justify-end text-right text-xs"
 							value={reviewerOverride}
 						/>
 					</div>

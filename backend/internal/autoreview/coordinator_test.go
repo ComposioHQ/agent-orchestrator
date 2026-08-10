@@ -146,3 +146,36 @@ func TestEvaluateSessionReviewerHarnessPrecedence(t *testing.T) {
 		})
 	}
 }
+
+type notifyingTrigger struct {
+	called chan domain.SessionID
+}
+
+func (f *notifyingTrigger) TriggerAuto(_ context.Context, id domain.SessionID, _ domain.ReviewerHarness) (reviewcore.TriggerResult, error) {
+	f.called <- id
+	return reviewcore.TriggerResult{Created: true}, nil
+}
+
+func TestCoordinatorPeriodicallyEvaluatesPersistedFacts(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	store := &fakeStore{
+		session: domain.SessionRecord{ID: "s1", ProjectID: "p1", Kind: domain.KindWorker, Harness: domain.HarnessCodex, AutoReviewEnabled: true, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)}},
+		project: domain.ProjectRecord{ID: "p1"},
+		prs:     []domain.PullRequest{{URL: "pr1", Number: 1, HeadSHA: "sha1"}},
+	}
+	trigger := &notifyingTrigger{called: make(chan domain.SessionID, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := New(store, trigger, Config{Clock: func() time.Time { return now }, SweepInterval: time.Millisecond}).Start(ctx)
+
+	select {
+	case id := <-trigger.called:
+		if id != "s1" {
+			t.Fatalf("triggered session = %q, want s1", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("periodic coordinator sweep did not evaluate persisted facts")
+	}
+
+	cancel()
+	<-done
+}

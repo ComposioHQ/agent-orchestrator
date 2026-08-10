@@ -239,7 +239,8 @@ func (c *Coordinator) Sweep(ctx context.Context) error {
 	return nil
 }
 
-// Start runs periodic auto-review sweeps until ctx is cancelled.
+// Start evaluates persisted session and PR facts on the configured cadence
+// until ctx is cancelled.
 func (c *Coordinator) Start(ctx context.Context) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
