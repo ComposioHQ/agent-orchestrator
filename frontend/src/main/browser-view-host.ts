@@ -319,7 +319,11 @@ type BrowserNetworkCapture = {
 // Hidden targets still need a real viewport for screenshots, responsive
 // layout, scrolling, and pointer automation before the panel is first shown.
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 1280, height: 720 };
-const BROWSER_VIEW_BORDER_RADIUS = 8;
+// Must match `--radius-lg` (tokens.css, 0.625rem = 10px) — `.browser-panel`'s own
+// `rounded-lg` corner. The native view isn't a DOM node, so CSS never clips it;
+// this is the only thing rounding its corners. A mismatch here leaves a sliver of
+// the page's own background peeking past the DOM panel's rounded corner curve.
+const BROWSER_VIEW_BORDER_RADIUS = 10;
 const DEFAULT_NETWORK_CAPTURE_SECONDS = 60;
 const MAX_NETWORK_CAPTURE_SECONDS = 300;
 const MAX_NETWORK_REQUESTS = 200;
