@@ -467,7 +467,7 @@ const BoardArchivePanel = memo(function BoardArchivePanel({
 					aria-expanded={expanded}
 					aria-label={t("shell.archiveSessionsAria", { count: sessions.length })}
 					className={cn(
-						"group flex h-[46px] w-full min-w-0 items-center gap-2 py-0 text-muted-foreground transition-colors hover:text-foreground",
+						"group flex h-[58px] w-full min-w-0 items-center gap-2 py-0 text-muted-foreground transition-colors hover:text-foreground",
 						expanded ? "min-h-11" : "min-h-row-md",
 					)}
 					onClick={() => setExpanded((open) => !open)}
@@ -490,16 +490,9 @@ const BoardArchivePanel = memo(function BoardArchivePanel({
 					<span className="text-2xs font-medium tracking-wide-sm">{t("shell.archive")}</span>
 					<span className="ml-1.5 font-mono text-micro text-passive">{sessions.length}</span>
 				</button>
-				{/* Disclosure sheet under the Archive row — same visual panel as before.
-				    grid 0fr→1fr avoids JS height measurement; cards mount after open
-				    is requested, then the sheet animates open with content already in. */}
-				<div
-					className={cn(
-						"grid transition-[grid-template-rows] duration-[140ms] ease-[cubic-bezier(0.25,0.46,0.45,0.94)]",
-						prefersReducedMotion && "transition-none",
-						expanded && cardsReady ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
-					)}
-				>
+				{/* Disclosure sheet under the Archive row. No grid-rows transition —
+				    animating 0fr→1fr with overflow:hidden reads as a top→bottom clip wipe. */}
+				<div className={cn("grid", expanded && cardsReady ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}>
 					<div className="min-h-0 overflow-hidden">
 						{cardsReady ? (
 							<div
