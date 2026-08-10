@@ -20,6 +20,7 @@ export function screenKeyboardAvoidance(platform: "android" | "ios", height: num
 		showEvent: platform === "ios" ? "keyboardWillShow" as const : "keyboardDidShow" as const,
 		hideEvent: platform === "ios" ? "keyboardWillHide" as const : "keyboardDidHide" as const,
 		paddingBottom: height,
+		rootStyle: { paddingBottom: height },
 	};
 }
 

@@ -3,7 +3,9 @@ import { Feather } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
 import {
 	InteractionManager,
+	Keyboard,
 	KeyboardAvoidingView,
+	LayoutAnimation,
 	Platform,
 	Pressable,
 	ScrollView,
@@ -20,6 +22,7 @@ import { classifyConnectionFailure, describeConnectionFailure } from "../lib/con
 import { chatErrorCopy, isChatPreflightError } from "../lib/chatError";
 import { haptics } from "../lib/haptics";
 import { agentSheetRoute, modelSheetRoute, projectSheetRoute } from "../lib/sheetResult";
+import { screenKeyboardAvoidance } from "../lib/session/keyboardInset";
 import { modelOverride, resolveSpawnModel } from "../lib/spawnModel";
 import { useApp } from "../lib/store";
 import type { Theme } from "../lib/theme";
@@ -45,11 +48,33 @@ export default function SpawnModal() {
 	const [modelError, setModelError] = useState<string>();
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [keyboardHeight, setKeyboardHeight] = useState(0);
 
 	const [catalog, setCatalog] = useState<AgentCatalog | null>(null);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [offerTUI, setOfferTUI] = useState(false);
+
+	useEffect(() => {
+		if (Platform.OS !== "android") return;
+		const avoidance = screenKeyboardAvoidance("android", 0);
+		const animate = (duration?: number) => LayoutAnimation.configureNext({
+			duration: duration || 250,
+			update: { type: LayoutAnimation.Types.keyboard },
+		});
+		const show = Keyboard.addListener(avoidance.showEvent, (event) => {
+			animate(event.duration);
+			setKeyboardHeight(event.endCoordinates.height);
+		});
+		const hide = Keyboard.addListener(avoidance.hideEvent, (event) => {
+			animate(event?.duration);
+			setKeyboardHeight(0);
+		});
+		return () => {
+			show.remove();
+			hide.remove();
+		};
+	}, []);
 
 	// Seed from the active project, or the only project. Mirrors the store's
 	// `targetProject()`; kept here because the screen needs it as UI state to
@@ -151,7 +176,15 @@ export default function SpawnModal() {
 	};
 
 	return (
-		<KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+		<KeyboardAvoidingView
+			style={[
+				styles.screen,
+				Platform.OS === "android" && keyboardHeight > 0
+					? screenKeyboardAvoidance("android", keyboardHeight).rootStyle
+					: undefined,
+			]}
+			behavior={Platform.OS === "ios" ? "padding" : undefined}
+		>
 			<ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
 				<Text style={styles.lead}>
 					Spawn a worker agent. It gets its own isolated workspace, then starts on the task you give it.

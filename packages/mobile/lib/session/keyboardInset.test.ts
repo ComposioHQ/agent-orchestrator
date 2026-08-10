@@ -26,6 +26,7 @@ describe("screenKeyboardAvoidance", () => {
 			showEvent: "keyboardDidShow",
 			hideEvent: "keyboardDidHide",
 			paddingBottom: 336,
+			rootStyle: { paddingBottom: 336 },
 		});
 	});
 });
