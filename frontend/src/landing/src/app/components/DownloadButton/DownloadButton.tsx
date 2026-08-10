@@ -138,7 +138,7 @@ export function DownloadButton({
       <span data-download-icon className="hidden md:inline-flex">
         <PlatformIcon platform={downloadPlatform} />
       </span>
-      <span data-download-label>Download AO</span>
+      <span data-download-label>Download</span>
     </Link>
   );
 }
