@@ -27,7 +27,7 @@ test("renderer: command palette hover does not rerender persistent shell content
 	await page.goto("/#/");
 	await expect(page.getByTestId("board")).toBeVisible();
 
-	await page.keyboard.press("Meta+k");
+	await page.keyboard.press("ControlOrMeta+k");
 	await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible();
 	const command = page.locator("[data-slot='command-item']").nth(5);
 	await expect(command).toBeVisible();
