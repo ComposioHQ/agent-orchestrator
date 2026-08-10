@@ -1,4 +1,6 @@
 import { CheckCircle2, TriangleAlert, XCircle } from "lucide-react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
 
 export type SystemRequirement = components["schemas"]["SystemRequirement"];
@@ -8,8 +10,8 @@ const STAGGER_STEP_MS = 150;
 
 // The backend's stable id -> label for "harness" is "agent harness" (see
 // systemcheck.go); the product name for this row is "Coding agent".
-export function requirementDisplayLabel(requirement: SystemRequirement): string {
-	return requirement.id === "harness" ? "Coding agent" : requirement.label;
+export function requirementDisplayLabel(requirement: SystemRequirement, t: TFunction): string {
+	return requirement.id === "harness" ? t("startup.codingAgentLabel") : requirement.label;
 }
 
 /** Checklist of the 4 startup requirements, in the backend's stable order. */
@@ -20,6 +22,7 @@ export function SystemRequirementsChecklist({
 	requirements: SystemRequirement[];
 	ready: boolean;
 }) {
+	const { t } = useTranslation();
 	return (
 		<div
 			aria-live="polite"
@@ -34,7 +37,7 @@ export function SystemRequirementsChecklist({
 				>
 					<RequirementGlyph requirement={requirement} />
 					<div className="min-w-0">
-						<p className="text-control font-medium text-foreground">{requirementDisplayLabel(requirement)}</p>
+						<p className="text-control font-medium text-foreground">{requirementDisplayLabel(requirement, t)}</p>
 						{requirement.detail ? (
 							<p className="text-caption leading-snug text-muted-foreground">{requirement.detail}</p>
 						) : null}
@@ -42,7 +45,9 @@ export function SystemRequirementsChecklist({
 				</div>
 			))}
 			{ready ? (
-				<p className="ao-startup-checklist__row mt-0.5 text-caption font-medium text-success">All checks passed</p>
+				<p className="ao-startup-checklist__row mt-0.5 text-caption font-medium text-success">
+					{t("startup.allChecksPassed")}
+				</p>
 			) : null}
 		</div>
 	);

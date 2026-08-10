@@ -1414,6 +1414,41 @@ export interface paths {
         patch: operations["renameShellTerminal"];
         trace?: never;
     };
+    "/api/v1/system/install/{target}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the current or last known install job status for a system target */
+        get: operations["getSystemInstallStatus"];
+        put?: never;
+        /** Start (or return the already-running) install job for a fixed system target */
+        post: operations["startSystemInstall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/requirements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check local machine readiness (git, tmux, agent harness, gh) */
+        get: operations["getSystemRequirements"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/usage/sessions": {
         parameters: {
             query?: never;
@@ -1913,6 +1948,31 @@ export interface components {
         };
         InitializeRepositoryResult: {
             path: string;
+        };
+        InstallJob: {
+            /** @description Human-readable install command, e.g. "brew install tmux", for display even before/without output. */
+            command?: string;
+            /** @description Set on failure or when the target is unsupported on this machine: the exec error, or the Unsupported reason. */
+            error?: string;
+            /**
+             * Format: date-time
+             * @description Zero until the job finishes.
+             */
+            finishedAt?: string;
+            /** @description Combined stdout+stderr from the install command, tail-capped to the last ~4000 bytes. */
+            output?: string;
+            /** Format: date-time */
+            startedAt?: string;
+            /**
+             * @description Current lifecycle state of the job.
+             * @enum {string}
+             */
+            status: "idle" | "running" | "succeeded" | "failed" | "unsupported";
+            /**
+             * @description Install target this job ran (or is running) for.
+             * @enum {string}
+             */
+            target: "tmux" | "gh" | "claude" | "codex" | "opencode" | "copilot";
         };
         KillReviewResponse: {
             reviewerHandleId: string;
@@ -2600,6 +2660,27 @@ export interface components {
              * @enum {string}
              */
             targetHarness: "claude-code" | "codex";
+        };
+        SystemRequirement: {
+            /** @description Extra context: the resolved path when satisfied, or why it is not. */
+            detail?: string;
+            /**
+             * @description Stable requirement identifier.
+             * @enum {string}
+             */
+            id: "git" | "tmux" | "harness" | "gh";
+            /** @description Human-readable requirement name. */
+            label: string;
+            /** @description Whether this requirement blocks the overall Ready state. */
+            required: boolean;
+            /** @description Whether this requirement is currently met. */
+            satisfied: boolean;
+        };
+        SystemRequirementsResponse: {
+            /** @description True iff every requirement with Required=true is satisfied. Requirements with Required=false (e.g. gh) are advisory and never block readiness. */
+            ready: boolean;
+            /** @description Individual checks, in stable order: git, tmux, harness, gh. */
+            requirements: components["schemas"]["SystemRequirement"][];
         };
         TrackerIntakeConfig: {
             assignee?: string;
@@ -8195,6 +8276,126 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSystemInstallStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Install target identifier: tmux, gh, claude, codex, opencode, or copilot. */
+                target: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallJob"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    startSystemInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Install target identifier: tmux, gh, claude, codex, opencode, or copilot. */
+                target: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallJob"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSystemRequirements: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemRequirementsResponse"];
                 };
             };
             /** @description Internal Server Error */

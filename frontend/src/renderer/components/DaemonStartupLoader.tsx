@@ -88,7 +88,7 @@ export function DaemonStartupLoader() {
 				) : requirementsQuery.isSuccess ? (
 					<SystemRequirementsChecklist requirements={requirements} ready={ready} />
 				) : (
-					<p className="mt-2 min-h-5 text-md-sm text-muted-foreground">Checking your setup</p>
+					<p className="mt-2 min-h-5 text-md-sm text-muted-foreground">{t("startup.checkingSetup")}</p>
 				)}
 				<div className="ao-startup-dots mt-3 flex h-4 items-center gap-1.5" aria-hidden="true">
 					<span />

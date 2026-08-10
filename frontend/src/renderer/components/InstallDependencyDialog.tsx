@@ -1,7 +1,10 @@
 import { RadioGroup } from "radix-ui";
 import { XCircle } from "lucide-react";
+import type { TFunction } from "i18next";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
+import type { MessageKey } from "../i18n";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { cn } from "../lib/utils";
 import { requirementDisplayLabel, type SystemRequirement } from "./SystemRequirementsChecklist";
@@ -20,12 +23,22 @@ type InstallJob = components["schemas"]["InstallJob"];
 type InstallTarget = InstallJob["target"];
 type AgentInstallTarget = Extract<InstallTarget, "claude" | "codex" | "opencode" | "copilot">;
 
-const AGENT_INSTALL_OPTIONS: Array<{ target: AgentInstallTarget; label: string; description: string }> = [
-	{ target: "claude", label: "Claude Code", description: "Anthropic Claude Code CLI" },
-	{ target: "codex", label: "Codex", description: "OpenAI command-line agent" },
-	{ target: "opencode", label: "opencode", description: "Open-source terminal agent" },
-	{ target: "copilot", label: "Copilot CLI", description: "GitHub Copilot CLI" },
+// Labels are the CLIs' own product names — not translated, same treatment as
+// "Agent Orchestrator" itself. Descriptions are ordinary UI copy and go
+// through t() at render time (see AGENT_INSTALL_DESCRIPTION_KEYS below).
+const AGENT_INSTALL_OPTIONS: Array<{ target: AgentInstallTarget; label: string }> = [
+	{ target: "claude", label: "Claude Code" },
+	{ target: "codex", label: "Codex" },
+	{ target: "opencode", label: "opencode" },
+	{ target: "copilot", label: "Copilot CLI" },
 ];
+
+const AGENT_INSTALL_DESCRIPTION_KEYS: Record<AgentInstallTarget, MessageKey> = {
+	claude: "startup.agentDescClaude",
+	codex: "startup.agentDescCodex",
+	opencode: "startup.agentDescOpencode",
+	copilot: "startup.agentDescCopilot",
+};
 
 const POLL_INTERVAL_MS = 1_000;
 
@@ -98,6 +111,7 @@ export function InstallDependencyDialog({
 	requirements: SystemRequirement[];
 	onRefetchRequirements: () => void;
 }) {
+	const { t } = useTranslation();
 	const [selectedAgent, setSelectedAgent] = useState<AgentInstallTarget | null>(null);
 	const [ghDismissed, setGhDismissed] = useState(false);
 	const install = useInstallRunner(onRefetchRequirements);
@@ -112,7 +126,7 @@ export function InstallDependencyDialog({
 	const harnessBlocking = Boolean(harness && harness.required && !harness.satisfied);
 	const ghAdvisory = Boolean(gh && !gh.satisfied);
 
-	const title = harnessBlocking ? "No coding agent found" : "Missing dependency";
+	const title = harnessBlocking ? t("startup.blockedTitleAgent") : t("startup.blockedTitleDependency");
 
 	return (
 		<Dialog open onOpenChange={() => {}}>
@@ -125,38 +139,34 @@ export function InstallDependencyDialog({
 				<div className={settingsDialogHeaderClass}>
 					<DialogTitle className="settings-dialog-title">{title}</DialogTitle>
 					<DialogDescription asChild>
-						<div className="text-control leading-4 text-settings-muted">
-							Agent Orchestrator needs a few things on this machine before it can run sessions. Install what&apos;s
-							missing below, or quit and finish setup yourself.
-						</div>
+						<div className="text-control leading-4 text-settings-muted">{t("startup.blockedBody")}</div>
 					</DialogDescription>
 				</div>
 
 				<div className={cn(settingsDialogBodyClass, "gap-5")}>
 					{gitBlocking && git ? (
-						<IssueSection label={requirementDisplayLabel(git)} detail={git.detail}>
-							<p className="text-caption leading-snug text-settings-muted">
-								Install git from git-scm.com, then restart Agent Orchestrator.
-							</p>
+						<IssueSection label={requirementDisplayLabel(git, t)} detail={git.detail}>
+							<p className="text-caption leading-snug text-settings-muted">{t("startup.installGitInstructions")}</p>
 						</IssueSection>
 					) : null}
 
 					{tmuxBlocking && tmux ? (
-						<IssueSection label={requirementDisplayLabel(tmux)} detail={tmux.detail}>
+						<IssueSection label={requirementDisplayLabel(tmux, t)} detail={tmux.detail}>
 							<InstallAction
-								primaryLabel="Install tmux"
+								primaryLabel={t("startup.installTmux")}
 								disabled={install.running && install.target !== "tmux"}
 								job={install.target === "tmux" ? install.job : undefined}
 								error={install.target === "tmux" ? install.startError : undefined}
 								onInstall={() => void install.start("tmux")}
+								t={t}
 							/>
 						</IssueSection>
 					) : null}
 
 					{harnessBlocking && harness ? (
-						<IssueSection label={requirementDisplayLabel(harness)} detail={harness.detail}>
+						<IssueSection label={requirementDisplayLabel(harness, t)} detail={harness.detail}>
 							<RadioGroup.Root
-								aria-label="Choose a coding agent to install"
+								aria-label={t("startup.chooseAgentAriaLabel")}
 								className="mt-2 flex flex-col gap-1.5"
 								value={selectedAgent ?? ""}
 								onValueChange={(value) => setSelectedAgent(value as AgentInstallTarget)}
@@ -176,20 +186,23 @@ export function InstallDependencyDialog({
 										</span>
 										<span className="min-w-0">
 											<span className="block text-control font-medium text-settings-title">{option.label}</span>
-											<span className="block text-caption text-settings-muted">{option.description}</span>
+											<span className="block text-caption text-settings-muted">
+												{t(AGENT_INSTALL_DESCRIPTION_KEYS[option.target])}
+											</span>
 										</span>
 									</RadioGroup.Item>
 								))}
 							</RadioGroup.Root>
 							<div className="mt-2">
 								<InstallAction
-									primaryLabel="Install selected"
+									primaryLabel={t("startup.installSelected")}
 									disabled={
 										!selectedAgent || (install.running && install.target !== selectedAgent)
 									}
 									job={selectedAgent && install.target === selectedAgent ? install.job : undefined}
 									error={selectedAgent && install.target === selectedAgent ? install.startError : undefined}
 									onInstall={() => selectedAgent && void install.start(selectedAgent)}
+									t={t}
 								/>
 							</div>
 						</IssueSection>
@@ -197,15 +210,16 @@ export function InstallDependencyDialog({
 
 					{ghAdvisory && gh && !ghDismissed ? (
 						<div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs leading-body-md">
-							<p className="font-medium text-settings-title">Recommended: install gh</p>
+							<p className="font-medium text-settings-title">{t("startup.recommendedInstallGh")}</p>
 							<p className="mt-0.5 text-settings-muted">{gh.detail}</p>
 							<div className="mt-2">
 								<InstallAction
-									primaryLabel="Install gh"
+									primaryLabel={t("startup.installGh")}
 									disabled={install.running && install.target !== "gh"}
 									job={install.target === "gh" ? install.job : undefined}
 									error={install.target === "gh" ? install.startError : undefined}
 									onInstall={() => void install.start("gh")}
+									t={t}
 								/>
 							</div>
 							<button
@@ -213,7 +227,7 @@ export function InstallDependencyDialog({
 								className="mt-2 text-caption text-settings-muted underline-offset-2 hover:underline"
 								onClick={() => setGhDismissed(true)}
 							>
-								Don&apos;t show this again this session
+								{t("startup.dismissGhSession")}
 							</button>
 						</div>
 					) : null}
@@ -225,7 +239,7 @@ export function InstallDependencyDialog({
 						className="settings-footer-button"
 						onClick={() => void window.ao?.menu?.action("app.quit")}
 					>
-						Quit
+						{t("titlebar.quit")}
 					</button>
 				</div>
 			</DialogContent>
@@ -262,12 +276,14 @@ function InstallAction({
 	job,
 	error,
 	onInstall,
+	t,
 }: {
 	primaryLabel: string;
 	disabled: boolean;
 	job: InstallJob | undefined;
 	error: string | undefined;
 	onInstall: () => void;
+	t: TFunction;
 }) {
 	const running = job?.status === "running";
 	const failed = job?.status === "failed" || job?.status === "unsupported";
@@ -275,7 +291,9 @@ function InstallAction({
 	if (running) {
 		return (
 			<div className="flex flex-col gap-1.5">
-				<p className="text-caption text-settings-muted">Installing{job?.command ? ` — ${job.command}` : "…"}</p>
+				<p className="text-caption text-settings-muted">
+					{job?.command ? t("startup.installingCommand", { command: job.command }) : t("startup.installingEllipsis")}
+				</p>
 				<div className="ao-install-progress" aria-hidden="true">
 					<div className="ao-install-progress__bar" />
 				</div>
@@ -291,7 +309,7 @@ function InstallAction({
 				disabled={disabled}
 				onClick={onInstall}
 			>
-				{failed ? `Retry: ${primaryLabel}` : primaryLabel}
+				{failed ? t("startup.retryPrefix", { label: primaryLabel }) : primaryLabel}
 			</button>
 			{error ? <p className="text-caption text-error">{error}</p> : null}
 			{failed ? (
