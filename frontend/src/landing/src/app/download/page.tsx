@@ -93,17 +93,39 @@ export default async function DownloadPage() {
     {
       name: "macOS",
       icon: FaApple,
+      // Prefer the .dmg, fall back to the .zip. The dmg mounts to the
+      // drag-to-Applications window, so the app lands in /Applications instead
+      // of being unzipped into ~/Downloads and launched from there, which is
+      // what leaves macOS running it translocated or as a stale copy (#3617,
+      // #3527). No release carries a dmg yet, so every row below still resolves
+      // to its zip today; the moment a release publishes the alias these switch
+      // over on their own. This page reads the live release list, so the
+      // fallback is what makes preferring the dmg safe here: the DOWNLOAD_URL_*
+      // constants and the README are static releases/latest/download links and
+      // would 404, so they stay on the zip until a dmg has actually shipped.
       builds: available([
-        build("Mac (Apple silicon)", DOWNLOAD_URL_MAC_ARM64, "Stable"),
-        build("Mac (Intel)", DOWNLOAD_URL_MAC_X64, "Stable"),
         build(
           "Mac (Apple silicon)",
-          assetUrl(nightly, "agent-orchestrator-darwin-arm64.zip"),
+          assetUrl(stable, "agent-orchestrator-darwin-arm64.dmg") ??
+            DOWNLOAD_URL_MAC_ARM64,
+          "Stable",
+        ),
+        build(
+          "Mac (Intel)",
+          assetUrl(stable, "agent-orchestrator-darwin-x64.dmg") ??
+            DOWNLOAD_URL_MAC_X64,
+          "Stable",
+        ),
+        build(
+          "Mac (Apple silicon)",
+          assetUrl(nightly, "agent-orchestrator-darwin-arm64.dmg") ??
+            assetUrl(nightly, "agent-orchestrator-darwin-arm64.zip"),
           "Nightly",
         ),
         build(
           "Mac (Intel)",
-          assetUrl(nightly, "agent-orchestrator-darwin-x64.zip"),
+          assetUrl(nightly, "agent-orchestrator-darwin-x64.dmg") ??
+            assetUrl(nightly, "agent-orchestrator-darwin-x64.zip"),
           "Nightly",
         ),
       ]),

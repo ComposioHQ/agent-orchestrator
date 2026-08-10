@@ -138,6 +138,47 @@ jobs:
           jq -n --arg f "$name" --arg h "$hash" \
             '{($f): $h}' > "dist-artifact/$PLATFORM.digest.json"
           echo "$PLATFORM: $name sha256=$hash" >> "$GITHUB_STEP_SUMMARY"
+      # The dmg maker in forge.config.ts has run on every darwin build since
+      # #3294, and this step is the reason none of its output has ever reached a
+      # release: the case above only ever collected the zip, so the dmg was
+      # built, then discarded with the runner. No published release has carried
+      # a .dmg (verified across the last 30), which is why every macOS user
+      # still installs by unzipping into ~/Downloads and launching from there,
+      # the exact state that produces the translocated and stale copies this
+      # branch exists to survive.
+      #
+      # Own dir for the same reason as the deb and rpm below: the `Upload
+      # artifact` step globs dist-artifact/agent-orchestrator-<platform>.*, so a
+      # dmg sitting next to the zip would be swept into the platform artifact
+      # the conductor consumes and change that artifact's contract silently.
+      # Digest merged into the darwin fragment so the digests job still reads
+      # exactly one fragment per platform.
+      - name: Collect macOS .dmg and compute digest
+        if: startsWith(matrix.platform, 'darwin-')
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          mkdir -p dist-dmg
+          # app-builder-lib dmg target output, written to Forge's makeDir
+          # (makers/maker-dmg.ts sets directories.output): out/make/<name>.dmg
+          src="$(find out/make -maxdepth 1 -name '*.dmg' | head -n1)"
+          if [ -z "$src" ]; then echo "no .dmg output found under out/make" >&2; exit 1; fi
+          name="agent-orchestrator-$PLATFORM.dmg"
+          cp "$src" "dist-dmg/$name"
+          hash="$(openssl dgst -sha256 "dist-dmg/$name" | awk '{print $NF}')"
+          jq --arg f "$name" --arg h "$hash" '. + {($f): $h}' \
+            "dist-artifact/$PLATFORM.digest.json" > "dist-artifact/$PLATFORM.digest.json.tmp"
+          mv "dist-artifact/$PLATFORM.digest.json.tmp" "dist-artifact/$PLATFORM.digest.json"
+          echo "$PLATFORM: $name sha256=$hash" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload macOS .dmg artifact
+        if: startsWith(matrix.platform, 'darwin-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-dmg
+          path: frontend/dist-dmg/agent-orchestrator-${{ matrix.platform }}.dmg
+          retention-days: 1
+          if-no-files-found: error
       # The deb maker in forge.config.ts also runs on linux; capture its output
       # as a separate `linux-deb` artifact. It lives in its own dist-deb dir so
       # the `linux` artifact's agent-orchestrator-linux-x64.* glob below cannot
