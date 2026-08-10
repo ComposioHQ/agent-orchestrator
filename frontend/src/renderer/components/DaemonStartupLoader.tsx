@@ -1,10 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import aoLogo from "../../../assets/ao-logo.svg";
-import { apiClient } from "../lib/api-client";
+import { useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
 import { InstallDependencyDialog } from "./InstallDependencyDialog";
-import { SystemRequirementsChecklist, type SystemRequirement } from "./SystemRequirementsChecklist";
+import { SystemRequirementsChecklist } from "./SystemRequirementsChecklist";
 
 const STARTUP_PHRASE_KEYS = [
 	"startup.startingServices",
@@ -19,33 +18,15 @@ const PHRASE_INTERVAL_MS = 2_200;
 // existing phrase-rotation presentation (brief: ~600-800ms).
 const READY_HOLD_MS = 700;
 
-function isBlocked(requirements: SystemRequirement[]): boolean {
-	return requirements.some((requirement) => requirement.required && !requirement.satisfied);
-}
-
 export function DaemonStartupLoader() {
 	const { t } = useTranslation();
 	const [phase, setPhase] = useState<"requirements" | "phrases">("requirements");
 	const [phraseIndex, setPhraseIndex] = useState(0);
 
-	const requirementsQuery = useQuery({
-		queryKey: ["system-requirements"],
-		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/system/requirements");
-			if (error || !data) throw new Error("Could not check local requirements.");
-			return data;
-		},
-		refetchOnWindowFocus: false,
-	});
-
-	const requirements = requirementsQuery.data?.requirements ?? [];
-	const blocked = requirementsQuery.isSuccess && isBlocked(requirements);
-	const ready = requirementsQuery.isSuccess && !blocked;
-	// The daemon is already confirmed reachable by the time this component
-	// mounts (see SessionsBoard's showStartup gate) — if the readiness probe
-	// itself errors out, fail open rather than stranding the user on
-	// "Checking your setup" forever.
-	const probeFailed = requirementsQuery.isError;
+	// Shared with SessionsBoard's showStartup gate (same react-query cache
+	// entry) so this component and the mount decision that keeps it on screen
+	// never disagree about whether the machine is actually ready.
+	const { query: requirementsQuery, requirements, blocked, ready, probeFailed } = useSystemRequirementsGate();
 
 	// Once every required check passes (or the probe itself failed), hold the
 	// state briefly, then fall through to the pre-existing phrase-rotation loader.
@@ -54,6 +35,13 @@ export function DaemonStartupLoader() {
 		const timer = window.setTimeout(() => setPhase("phrases"), READY_HOLD_MS);
 		return () => window.clearTimeout(timer);
 	}, [phase, ready, probeFailed]);
+
+	// Defensive: if a requirement regresses after we've already moved on to
+	// the phrase-rotation phase (e.g. a stale refetch), fall back to showing
+	// the checklist/dialog rather than silently staying on the wrong phase.
+	useEffect(() => {
+		if (blocked) setPhase("requirements");
+	}, [blocked]);
 
 	useEffect(() => {
 		if (phase !== "phrases") return;

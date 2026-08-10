@@ -124,6 +124,10 @@ describe("DaemonStartupLoader", () => {
 	it("shows no popup for an unsatisfied gh when nothing required is missing", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/system/requirements") {
+				// detail is backend-authoritative English; the frontend ignores it for
+				// an unsatisfied requirement and renders its own translated copy (see
+				// requirementDetailText), so what's mocked here is deliberately
+				// different from what the UI actually shows below.
 				return {
 					data: requirementsResponse({ gh: { satisfied: false, detail: "gh was not found on PATH." } }),
 					error: undefined,
@@ -134,7 +138,13 @@ describe("DaemonStartupLoader", () => {
 
 		renderLoader();
 
-		await waitFor(() => expect(screen.getByText("gh was not found on PATH.")).toBeInTheDocument());
+		await waitFor(() =>
+			expect(
+				screen.getByText(
+					"gh was not found on PATH. It lets agent sessions open pull requests and read issues, but AO runs fine without it.",
+				),
+			).toBeInTheDocument(),
+		);
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 

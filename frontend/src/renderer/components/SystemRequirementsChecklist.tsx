@@ -2,6 +2,7 @@ import { CheckCircle2, TriangleAlert, XCircle } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
+import type { MessageKey } from "../i18n";
 
 export type SystemRequirement = components["schemas"]["SystemRequirement"];
 
@@ -12,6 +13,24 @@ const STAGGER_STEP_MS = 150;
 // systemcheck.go); the product name for this row is "Coding agent".
 export function requirementDisplayLabel(requirement: SystemRequirement, t: TFunction): string {
 	return requirement.id === "harness" ? t("startup.codingAgentLabel") : requirement.label;
+}
+
+const MISSING_DETAIL_KEYS: Record<string, MessageKey> = {
+	git: "startup.detailGitMissing",
+	tmux: "startup.detailTmuxMissing",
+	harness: "startup.detailHarnessMissing",
+	gh: "startup.detailGhMissing",
+};
+
+// requirement.detail is backend-authoritative (systemcheck.go) and hardcoded
+// English. That's fine when satisfied — it's a resolved path or a
+// comma-joined list of installed agent names, not prose — but the "why this
+// is missing" sentence needs to live in the frontend's i18n system like every
+// other string here, not leak untranslated English next to a localized label.
+export function requirementDetailText(requirement: SystemRequirement, t: TFunction): string | undefined {
+	if (requirement.satisfied) return requirement.detail;
+	const key = MISSING_DETAIL_KEYS[requirement.id];
+	return key ? t(key) : requirement.detail;
 }
 
 /** Checklist of the 4 startup requirements, in the backend's stable order. */
@@ -38,8 +57,8 @@ export function SystemRequirementsChecklist({
 					<RequirementGlyph requirement={requirement} />
 					<div className="min-w-0">
 						<p className="text-control font-medium text-foreground">{requirementDisplayLabel(requirement, t)}</p>
-						{requirement.detail ? (
-							<p className="text-caption leading-snug text-muted-foreground">{requirement.detail}</p>
+						{requirementDetailText(requirement, t) ? (
+							<p className="text-caption leading-snug text-muted-foreground">{requirementDetailText(requirement, t)}</p>
 						) : null}
 					</div>
 				</div>

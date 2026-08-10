@@ -7,7 +7,7 @@ import type { components } from "../../api/schema";
 import type { MessageKey } from "../i18n";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { cn } from "../lib/utils";
-import { requirementDisplayLabel, type SystemRequirement } from "./SystemRequirementsChecklist";
+import { requirementDetailText, requirementDisplayLabel, type SystemRequirement } from "./SystemRequirementsChecklist";
 import {
 	Dialog,
 	DialogContent,
@@ -145,13 +145,13 @@ export function InstallDependencyDialog({
 
 				<div className={cn(settingsDialogBodyClass, "gap-5")}>
 					{gitBlocking && git ? (
-						<IssueSection label={requirementDisplayLabel(git, t)} detail={git.detail}>
+						<IssueSection label={requirementDisplayLabel(git, t)} detail={requirementDetailText(git, t)}>
 							<p className="text-caption leading-snug text-settings-muted">{t("startup.installGitInstructions")}</p>
 						</IssueSection>
 					) : null}
 
 					{tmuxBlocking && tmux ? (
-						<IssueSection label={requirementDisplayLabel(tmux, t)} detail={tmux.detail}>
+						<IssueSection label={requirementDisplayLabel(tmux, t)} detail={requirementDetailText(tmux, t)}>
 							<InstallAction
 								primaryLabel={t("startup.installTmux")}
 								disabled={install.running && install.target !== "tmux"}
@@ -164,7 +164,7 @@ export function InstallDependencyDialog({
 					) : null}
 
 					{harnessBlocking && harness ? (
-						<IssueSection label={requirementDisplayLabel(harness, t)} detail={harness.detail}>
+						<IssueSection label={requirementDisplayLabel(harness, t)} detail={requirementDetailText(harness, t)}>
 							<RadioGroup.Root
 								aria-label={t("startup.chooseAgentAriaLabel")}
 								className="mt-2 flex flex-col gap-1.5"
@@ -211,7 +211,7 @@ export function InstallDependencyDialog({
 					{ghAdvisory && gh && !ghDismissed ? (
 						<div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs leading-body-md">
 							<p className="font-medium text-settings-title">{t("startup.recommendedInstallGh")}</p>
-							<p className="mt-0.5 text-settings-muted">{gh.detail}</p>
+							<p className="mt-0.5 text-settings-muted">{requirementDetailText(gh, t)}</p>
 							<div className="mt-2">
 								<InstallAction
 									primaryLabel={t("startup.installGh")}

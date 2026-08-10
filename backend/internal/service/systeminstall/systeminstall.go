@@ -70,15 +70,29 @@ const (
 // unbounded — only the last ~4000 bytes are kept.
 const maxOutputBytes = 4000
 
+// defaultInstallTimeout bounds how long a single install run may take. A
+// stalled installer (a network hang on curl, a held brew/apt lock, winget
+// waiting on a prompt it'll never get) would otherwise pin its target in
+// StatusRunning forever: no retry path, and the caller polls an indefinite
+// progress bar. Real installs (npm global, brew, curl-piped scripts) normally
+// finish in well under a minute; 15 minutes is generous headroom, not a
+// realistic expected duration.
+const defaultInstallTimeout = 15 * time.Minute
+
 // Job is the tracked state of one install run for a Target.
 type Job struct {
-	Target     Target    `json:"target" enum:"tmux,gh,claude,codex,opencode,copilot" description:"Install target this job ran (or is running) for."`
-	Status     Status    `json:"status" enum:"idle,running,succeeded,failed,unsupported" description:"Current lifecycle state of the job."`
-	Command    string    `json:"command,omitempty" description:"Human-readable install command, e.g. \"brew install tmux\", for display even before/without output."`
-	Output     string    `json:"output,omitempty" description:"Combined stdout+stderr from the install command, tail-capped to the last ~4000 bytes."`
-	Error      string    `json:"error,omitempty" description:"Set on failure or when the target is unsupported on this machine: the exec error, or the Unsupported reason."`
-	StartedAt  time.Time `json:"startedAt,omitempty"`
-	FinishedAt time.Time `json:"finishedAt,omitempty" description:"Zero until the job finishes."`
+	Target  Target `json:"target" enum:"tmux,gh,claude,codex,opencode,copilot" description:"Install target this job ran (or is running) for."`
+	Status  Status `json:"status" enum:"idle,running,succeeded,failed,unsupported" description:"Current lifecycle state of the job."`
+	Command string `json:"command,omitempty" description:"Human-readable install command, e.g. \"brew install tmux\", for display even before/without output."`
+	Output  string `json:"output,omitempty" description:"Combined stdout+stderr from the install command, tail-capped to the last ~4000 bytes."`
+	Error   string `json:"error,omitempty" description:"Set on failure or when the target is unsupported on this machine: the exec error, the Unsupported reason, or a timeout message."`
+	// Pointers, not time.Time: omitempty has no effect on a struct, so a bare
+	// time.Time always serializes (as the zero value's "0001-01-01..."
+	// timestamp) even when nothing has happened yet. A nil pointer actually
+	// omits the field, matching FinishedAt's documented "zero until the job
+	// finishes" contract.
+	StartedAt  *time.Time `json:"startedAt,omitempty"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty" description:"Absent until the job finishes."`
 }
 
 // Service runs real install commands for the fixed Target allowlist.
@@ -87,28 +101,34 @@ type Service struct {
 	jobs map[Target]*Job
 
 	lookPath func(string) (string, error)
-	// commandFunc builds the *exec.Cmd for a resolved argv. Real installs use
-	// exec.CommandContext(context.Background(), ...); tests override it with a
-	// fast, deterministic command so they never hit the network.
-	commandFunc func(argv []string) *exec.Cmd
+	// commandFunc builds the *exec.Cmd for a resolved argv against ctx (which
+	// carries the run's timeout — see installTimeout). Real installs use
+	// exec.CommandContext; tests override it with a fast, deterministic
+	// command so they never hit the network.
+	commandFunc func(ctx context.Context, argv []string) *exec.Cmd
 	// goos selects the platform branch in planFor. Real use is always
 	// runtime.GOOS; tests override it to exercise every OS branch from one
 	// machine, the same seam lookPath provides for PATH probing.
 	goos string
+	// installTimeout bounds each run — see defaultInstallTimeout. Tests
+	// override it with a short duration to exercise the timeout path without
+	// a real multi-minute wait.
+	installTimeout time.Duration
 }
 
 // New returns a Service backed by the real exec.LookPath and exec.Command.
 func New() *Service {
 	return &Service{
-		jobs:     make(map[Target]*Job),
-		lookPath: exec.LookPath,
-		goos:     runtime.GOOS,
-		commandFunc: func(argv []string) *exec.Cmd {
-			// context.Background(), not the caller's ctx: an install kicked
-			// off by an HTTP request must keep running (and stay queryable)
-			// after that request returns — the one deliberate exception to
-			// always threading ctx through.
-			return exec.CommandContext(context.Background(), argv[0], argv[1:]...) //nolint:gosec // G204: fixed allowlist, argv is never caller-derived.
+		jobs:           make(map[Target]*Job),
+		lookPath:       exec.LookPath,
+		goos:           runtime.GOOS,
+		installTimeout: defaultInstallTimeout,
+		commandFunc: func(ctx context.Context, argv []string) *exec.Cmd {
+			// ctx here is a timeout rooted in context.Background(), not the
+			// HTTP request's ctx: an install kicked off by a request must
+			// keep running (and stay queryable) after that request returns —
+			// the one deliberate exception to always threading ctx through.
+			return exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // G204: fixed allowlist, argv is never caller-derived.
 		},
 	}
 }
@@ -134,14 +154,15 @@ func (s *Service) Start(ctx context.Context, target Target) (Job, error) {
 
 	plan := s.planFor(target)
 	command := strings.Join(plan.Command, " ")
+	now := time.Now()
 	if plan.Unsupported {
 		job := &Job{
 			Target:     target,
 			Status:     StatusUnsupported,
 			Command:    command,
 			Error:      plan.Reason,
-			StartedAt:  time.Now(),
-			FinishedAt: time.Now(),
+			StartedAt:  &now,
+			FinishedAt: &now,
 		}
 		s.jobs[target] = job
 		return *job, nil
@@ -151,11 +172,11 @@ func (s *Service) Start(ctx context.Context, target Target) (Job, error) {
 		Target:    target,
 		Status:    StatusRunning,
 		Command:   command,
-		StartedAt: time.Now(),
+		StartedAt: &now,
 	}
 	s.jobs[target] = job
 
-	go s.run(plan.Command, job)
+	go s.run(plan.Command, job) //nolint:gosec // G118: run() deliberately roots its own timeout in context.Background(), not ctx — see the commandFunc field doc above.
 
 	return *job, nil
 }
@@ -181,18 +202,29 @@ func (s *Service) Status(target Target) (Job, error) {
 // run executes argv in the background and records the outcome onto job. job
 // is only ever mutated here and read back through a copy under s.mu, so
 // concurrent Start/Status calls never race with this goroutine's writes.
+// The run is bounded by installTimeout so a stalled installer eventually
+// surfaces as a failure instead of pinning the target in StatusRunning.
 func (s *Service) run(argv []string, job *Job) {
-	cmd := s.commandFunc(argv)
+	ctx, cancel := context.WithTimeout(context.Background(), s.installTimeout)
+	defer cancel()
+
+	cmd := s.commandFunc(ctx, argv)
 	out := &capturedOutput{max: maxOutputBytes}
 	cmd.Stdout = out
 	cmd.Stderr = out
 
 	runErr := cmd.Run()
+	now := time.Now()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	job.Output = out.String()
-	job.FinishedAt = time.Now()
+	job.FinishedAt = &now
+	if ctx.Err() == context.DeadlineExceeded {
+		job.Status = StatusFailed
+		job.Error = fmt.Sprintf("install timed out after %s", s.installTimeout)
+		return
+	}
 	if runErr != nil {
 		job.Status = StatusFailed
 		job.Error = runErr.Error()
@@ -290,12 +322,15 @@ func (s *Service) planOpencode() Plan {
 	if _, err := s.lookPath("curl"); err != nil {
 		return Plan{Target: TargetOpencode, Unsupported: true, Reason: "curl was not found on PATH."}
 	}
+	// opencode's official installer is documented as a bash script
+	// (curl -fsSL https://opencode.ai/install | bash); there is no sh
+	// fallback here because sh piping into "| bash" still requires bash to
+	// actually exist, so probing for sh and then unconditionally invoking
+	// bash anyway would silently fail the moment the pipe reaches it.
 	if _, err := s.lookPath("bash"); err != nil {
-		if _, err := s.lookPath("sh"); err != nil {
-			return Plan{Target: TargetOpencode, Unsupported: true, Reason: "bash or sh was not found on PATH."}
-		}
+		return Plan{Target: TargetOpencode, Unsupported: true, Reason: "bash was not found on PATH."}
 	}
-	return Plan{Target: TargetOpencode, Command: []string{"sh", "-c", "curl -fsSL https://opencode.ai/install | bash"}}
+	return Plan{Target: TargetOpencode, Command: []string{"bash", "-c", "curl -fsSL https://opencode.ai/install | bash"}}
 }
 
 func (s *Service) planBrew(target Target, pkg string) Plan {
@@ -322,12 +357,26 @@ var linuxPackageManagers = []string{"apt-get", "dnf", "pacman", "zypper"}
 // planLinuxPackage resolves a Linux install command for target via the first
 // available package manager. pkgFor lets a target use a different package
 // name on a given manager (e.g. gh is "github-cli" on pacman).
+//
+// AO deliberately never elevates privileges on the user's behalf (no auto
+// sudo, no pkexec): every one of apt-get/dnf/pacman/zypper install requires
+// root, so running the resolved command as the desktop user is guaranteed to
+// fail with a permission error. Rather than expose a button that always
+// fails, this always resolves as Unsupported on Linux, with Reason carrying
+// the exact sudo-prefixed command for the user to run themselves.
 func (s *Service) planLinuxPackage(target Target, pkgFor func(mgr string) string) Plan {
 	for _, mgr := range linuxPackageManagers {
 		if _, err := s.lookPath(mgr); err != nil {
 			continue
 		}
-		return Plan{Target: target, Command: linuxInstallArgv(mgr, pkgFor(mgr))}
+		argv := linuxInstallArgv(mgr, pkgFor(mgr))
+		return Plan{
+			Target: target, Unsupported: true,
+			Reason: fmt.Sprintf(
+				"AO does not run installers as root. Run this yourself in a terminal: sudo %s",
+				strings.Join(argv, " "),
+			),
+		}
 	}
 	return Plan{
 		Target: target, Unsupported: true,

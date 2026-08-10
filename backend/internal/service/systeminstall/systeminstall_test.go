@@ -28,11 +28,12 @@ func lookPathFound(names ...string) func(string) (string, error) {
 
 func newTestService(goos string, found ...string) *Service {
 	return &Service{
-		jobs:     make(map[Target]*Job),
-		lookPath: lookPathFound(found...),
-		goos:     goos,
-		commandFunc: func(argv []string) *exec.Cmd {
-			return exec.Command(argv[0], argv[1:]...) //nolint:gosec // test-only, deterministic argv
+		jobs:           make(map[Target]*Job),
+		lookPath:       lookPathFound(found...),
+		goos:           goos,
+		installTimeout: 2 * time.Second,
+		commandFunc: func(ctx context.Context, argv []string) *exec.Cmd {
+			return exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // test-only, deterministic argv
 		},
 	}
 }
@@ -60,20 +61,20 @@ func TestPlanFor(t *testing.T) {
 			wantUnsupported: true, wantReasonHas: "Homebrew was not found",
 		},
 		{
-			name: "tmux linux apt-get", target: TargetTmux, goos: "linux", found: []string{"apt-get", "dnf"},
-			wantCommand: []string{"apt-get", "install", "-y", "tmux"},
+			name: "tmux linux apt-get is unsupported with instructions", target: TargetTmux, goos: "linux", found: []string{"apt-get", "dnf"},
+			wantUnsupported: true, wantReasonHas: "sudo apt-get install -y tmux",
 		},
 		{
-			name: "tmux linux dnf", target: TargetTmux, goos: "linux", found: []string{"dnf", "zypper"},
-			wantCommand: []string{"dnf", "install", "-y", "tmux"},
+			name: "tmux linux dnf is unsupported with instructions", target: TargetTmux, goos: "linux", found: []string{"dnf", "zypper"},
+			wantUnsupported: true, wantReasonHas: "sudo dnf install -y tmux",
 		},
 		{
-			name: "tmux linux pacman", target: TargetTmux, goos: "linux", found: []string{"pacman"},
-			wantCommand: []string{"pacman", "-S", "--noconfirm", "tmux"},
+			name: "tmux linux pacman is unsupported with instructions", target: TargetTmux, goos: "linux", found: []string{"pacman"},
+			wantUnsupported: true, wantReasonHas: "sudo pacman -S --noconfirm tmux",
 		},
 		{
-			name: "tmux linux zypper", target: TargetTmux, goos: "linux", found: []string{"zypper"},
-			wantCommand: []string{"zypper", "install", "-y", "tmux"},
+			name: "tmux linux zypper is unsupported with instructions", target: TargetTmux, goos: "linux", found: []string{"zypper"},
+			wantUnsupported: true, wantReasonHas: "sudo zypper install -y tmux",
 		},
 		{
 			name: "tmux linux no package manager is unsupported", target: TargetTmux, goos: "linux",
@@ -92,12 +93,12 @@ func TestPlanFor(t *testing.T) {
 			wantCommand: []string{"brew", "install", "gh"},
 		},
 		{
-			name: "gh linux apt-get uses gh package", target: TargetGH, goos: "linux", found: []string{"apt-get"},
-			wantCommand: []string{"apt-get", "install", "-y", "gh"},
+			name: "gh linux apt-get is unsupported with instructions for the gh package", target: TargetGH, goos: "linux", found: []string{"apt-get"},
+			wantUnsupported: true, wantReasonHas: "sudo apt-get install -y gh",
 		},
 		{
-			name: "gh linux pacman uses github-cli package", target: TargetGH, goos: "linux", found: []string{"pacman"},
-			wantCommand: []string{"pacman", "-S", "--noconfirm", "github-cli"},
+			name: "gh linux pacman is unsupported with instructions for the github-cli package", target: TargetGH, goos: "linux", found: []string{"pacman"},
+			wantUnsupported: true, wantReasonHas: "sudo pacman -S --noconfirm github-cli",
 		},
 		{
 			name: "claude uses npm on every platform", target: TargetClaude, goos: "darwin", found: []string{"npm"},
@@ -116,20 +117,19 @@ func TestPlanFor(t *testing.T) {
 			wantCommand: []string{"winget", "install", "-e", "--id", "SST.opencode"},
 		},
 		{
-			name: "opencode darwin uses the curl pipeline", target: TargetOpencode, goos: "darwin", found: []string{"curl", "bash"},
-			wantCommand: []string{"sh", "-c", "curl -fsSL https://opencode.ai/install | bash"},
-		},
-		{
-			name: "opencode linux accepts sh when bash is absent", target: TargetOpencode, goos: "linux", found: []string{"curl", "sh"},
-			wantCommand: []string{"sh", "-c", "curl -fsSL https://opencode.ai/install | bash"},
+			name: "opencode darwin uses the curl pipeline via bash", target: TargetOpencode, goos: "darwin", found: []string{"curl", "bash"},
+			wantCommand: []string{"bash", "-c", "curl -fsSL https://opencode.ai/install | bash"},
 		},
 		{
 			name: "opencode without curl is unsupported", target: TargetOpencode, goos: "linux", found: []string{"bash"},
 			wantUnsupported: true, wantReasonHas: "curl was not found",
 		},
 		{
-			name: "opencode without bash or sh is unsupported", target: TargetOpencode, goos: "linux", found: []string{"curl"},
-			wantUnsupported: true, wantReasonHas: "bash or sh was not found",
+			// sh alone must NOT satisfy this: the command always pipes into
+			// bash, so a machine with sh but no bash would still fail at the
+			// pipe if this were accepted.
+			name: "opencode without bash is unsupported even if sh is present", target: TargetOpencode, goos: "linux", found: []string{"curl", "sh"},
+			wantUnsupported: true, wantReasonHas: "bash was not found",
 		},
 	}
 
@@ -170,7 +170,7 @@ func TestValid(t *testing.T) {
 
 func TestStartAndStatus_Succeeded(t *testing.T) {
 	s := newTestService("darwin", "brew")
-	s.commandFunc = func([]string) *exec.Cmd { return exec.Command("true") }
+	s.commandFunc = func(context.Context, []string) *exec.Cmd { return exec.Command("true") }
 
 	job, err := s.Start(context.Background(), TargetTmux)
 	if err != nil {
@@ -192,14 +192,14 @@ func TestStartAndStatus_Succeeded(t *testing.T) {
 	if final.Error != "" {
 		t.Fatalf("Error = %q, want empty", final.Error)
 	}
-	if final.FinishedAt.IsZero() {
-		t.Fatalf("FinishedAt is zero, want set")
+	if final.FinishedAt == nil {
+		t.Fatalf("FinishedAt is nil, want set")
 	}
 }
 
 func TestStartAndStatus_Failed(t *testing.T) {
 	s := newTestService("darwin", "brew")
-	s.commandFunc = func([]string) *exec.Cmd { return exec.Command("false") }
+	s.commandFunc = func(context.Context, []string) *exec.Cmd { return exec.Command("false") }
 
 	if _, err := s.Start(context.Background(), TargetTmux); err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -226,8 +226,8 @@ func TestStart_Unsupported(t *testing.T) {
 	if job.Error == "" {
 		t.Fatalf("Error is empty, want the Unsupported reason")
 	}
-	if job.FinishedAt.IsZero() {
-		t.Fatalf("FinishedAt is zero, want set immediately for an Unsupported job")
+	if job.FinishedAt == nil {
+		t.Fatalf("FinishedAt is nil, want set immediately for an Unsupported job")
 	}
 }
 
@@ -268,7 +268,7 @@ func TestStart_IdempotentWhileRunning(t *testing.T) {
 
 	s := newTestService("darwin", "brew")
 	callCount := 0
-	s.commandFunc = func([]string) *exec.Cmd {
+	s.commandFunc = func(context.Context, []string) *exec.Cmd {
 		callCount++
 		started <- struct{}{}
 		<-release
@@ -298,6 +298,33 @@ func TestStart_IdempotentWhileRunning(t *testing.T) {
 
 	if callCount != 1 {
 		t.Fatalf("commandFunc called %d times, want 1 (Start must be idempotent while running)", callCount)
+	}
+}
+
+// TestRun_Timeout confirms a stalled installer eventually surfaces as a
+// failure instead of pinning its target in StatusRunning forever. The fake
+// command actually respects ctx (exec.CommandContext, same as real installs),
+// so the short installTimeout below kills it well before the real 5s sleep
+// would return on its own.
+func TestRun_Timeout(t *testing.T) {
+	s := newTestService("darwin", "brew")
+	s.installTimeout = 50 * time.Millisecond
+	s.commandFunc = func(ctx context.Context, _ []string) *exec.Cmd {
+		return exec.CommandContext(ctx, "sleep", "5") //nolint:gosec // test-only, fixed argv
+	}
+
+	if _, err := s.Start(context.Background(), TargetTmux); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	waitForStatus(t, s, TargetTmux, StatusFailed)
+
+	final, _ := s.Status(TargetTmux)
+	if !strings.Contains(final.Error, "timed out") {
+		t.Fatalf("Error = %q, want it to mention the timeout", final.Error)
+	}
+	if final.FinishedAt == nil {
+		t.Fatalf("FinishedAt is nil, want set")
 	}
 }
 

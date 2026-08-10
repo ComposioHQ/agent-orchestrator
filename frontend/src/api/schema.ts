@@ -1952,17 +1952,17 @@ export interface components {
         InstallJob: {
             /** @description Human-readable install command, e.g. "brew install tmux", for display even before/without output. */
             command?: string;
-            /** @description Set on failure or when the target is unsupported on this machine: the exec error, or the Unsupported reason. */
+            /** @description Set on failure or when the target is unsupported on this machine: the exec error, the Unsupported reason, or a timeout message. */
             error?: string;
             /**
              * Format: date-time
-             * @description Zero until the job finishes.
+             * @description Absent until the job finishes.
              */
-            finishedAt?: string;
+            finishedAt?: null | string;
             /** @description Combined stdout+stderr from the install command, tail-capped to the last ~4000 bytes. */
             output?: string;
             /** Format: date-time */
-            startedAt?: string;
+            startedAt?: null | string;
             /**
              * @description Current lifecycle state of the job.
              * @enum {string}

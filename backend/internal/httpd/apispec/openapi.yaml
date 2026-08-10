@@ -5790,19 +5790,23 @@ components:
           type: string
         error:
           description: 'Set on failure or when the target is unsupported on this machine:
-            the exec error, or the Unsupported reason.'
+            the exec error, the Unsupported reason, or a timeout message.'
           type: string
         finishedAt:
-          description: Zero until the job finishes.
+          description: Absent until the job finishes.
           format: date-time
-          type: string
+          type:
+          - "null"
+          - string
         output:
           description: Combined stdout+stderr from the install command, tail-capped
             to the last ~4000 bytes.
           type: string
         startedAt:
           format: date-time
-          type: string
+          type:
+          - "null"
+          - string
         status:
           description: Current lifecycle state of the job.
           enum:
