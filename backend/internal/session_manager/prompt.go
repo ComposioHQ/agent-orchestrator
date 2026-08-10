@@ -272,7 +272,7 @@ Your job is to complete the assigned task in this workspace. Inspect the relevan
 
 %s
 
-%s`, taskSourceRules, repoRules, parallelHelpRules, projectContextSection(project))
+%s`, taskSourceRules, parallelHelpRules, repoRules, projectContextSection(project))
 }
 
 func workerOrchestratorPrompt(orchestratorID string) string {

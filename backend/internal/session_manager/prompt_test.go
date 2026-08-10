@@ -114,12 +114,18 @@ func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing
 			t.Fatalf("worker prompt missing %q:\n%s", want, got)
 		}
 	}
+	if strings.Contains(got, "- ## Git and PR/MR Rules") || strings.Contains(got, "- ## Local Git Rules") {
+		t.Fatalf("worker prompt has malformed repository heading bullet prefix:\n%s", got)
+	}
+	if !strings.Contains(got, "## Git and PR/MR Rules") {
+		t.Fatalf("worker prompt missing repository rules section heading:\n%s", got)
+	}
 }
 
 func TestBuildSystemPrompt_WorkerWithOrchestratorUsesOrchestratorParallelHandoff(t *testing.T) {
 	got := buildSystemPromptText(systemPromptConfig{
 		Role:                  sessionPromptRoleWorker,
-		Project:               promptProject{ID: "mer", Name: "Mercury"},
+		Project:               promptProject{ID: "mer", Name: "Mercury", Repo: "https://github.com/acme/mercury"},
 		OrchestratorSessionID: "mer-orchestrator",
 	})
 	if !strings.Contains(got, "ask the orchestrator to spawn additional AO worker sessions") {
@@ -127,6 +133,12 @@ func TestBuildSystemPrompt_WorkerWithOrchestratorUsesOrchestratorParallelHandoff
 	}
 	if strings.Contains(got, "If no orchestrator is attached, continue serially") {
 		t.Fatalf("worker prompt should not include standalone fallback when orchestrator is attached:\n%s", got)
+	}
+	if strings.Contains(got, "- ## Git and PR/MR Rules") || strings.Contains(got, "- ## Local Git Rules") {
+		t.Fatalf("worker prompt has malformed repository heading bullet prefix:\n%s", got)
+	}
+	if !strings.Contains(got, "## Git and PR/MR Rules") {
+		t.Fatalf("worker prompt missing repository rules section heading:\n%s", got)
 	}
 }
 
