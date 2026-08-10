@@ -413,6 +413,10 @@ func TestGetAgentHooksSeedsAOManagedCredentialsFromUserKimiHome(t *testing.T) {
 	userHome := t.TempDir()
 	aoHome := t.TempDir()
 	t.Setenv(kimiCodeHomeEnv, userHome)
+	userConfig := []byte("default_model = \"kimi-code/kimi-for-coding\"\n")
+	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), userConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	userCredentials := []byte(`{"access_token":"user-token","refresh_token":"refresh-token"}`)
 	userCredentialsPath := filepath.Join(userHome, "credentials", "kimi-code.json")
 	if err := os.MkdirAll(filepath.Dir(userCredentialsPath), 0o700); err != nil {
@@ -443,6 +447,13 @@ func TestGetAgentHooksSeedsAOManagedCredentialsFromUserKimiHome(t *testing.T) {
 	}
 	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
 		t.Fatalf("AO credentials permissions = %o, want %o", got, want)
+	}
+	managedConfig, err := os.ReadFile(filepath.Join(aoHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read AO config: %v", err)
+	}
+	if !strings.Contains(string(managedConfig), string(userConfig)) || !strings.Contains(string(managedConfig), kimiHooksSentinelStart) {
+		t.Fatalf("AO config did not preserve OAuth profile config and managed hooks: %s", managedConfig)
 	}
 }
 

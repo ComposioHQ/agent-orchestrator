@@ -166,10 +166,26 @@ func kimiSeedConfig(targetPath string, existing []byte) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("read source Kimi config %s: %w", sourcePath, err)
 	}
-	if !kimiConfigHasAPIKey(source) {
+	authorized, err := kimiSourceConfigAuthorized(sourceHome, source)
+	if err != nil {
+		return nil, false, err
+	}
+	if !authorized {
 		return nil, false, nil
 	}
 	return source, true, nil
+}
+
+func kimiSourceConfigAuthorized(sourceHome string, config []byte) (bool, error) {
+	if kimiConfigHasAPIKey(config) {
+		return true, nil
+	}
+	credentialsPath := filepath.Join(sourceHome, "credentials", "kimi-code.json")
+	status, ok, err := kimiCredentialsAuthStatus(credentialsPath)
+	if err != nil {
+		return false, fmt.Errorf("read source Kimi credentials %s: %w", credentialsPath, err)
+	}
+	return ok && status == ports.AgentAuthStatusAuthorized, nil
 }
 
 func kimiConfigCanSeed(existing []byte) bool {
