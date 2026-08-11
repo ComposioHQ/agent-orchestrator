@@ -17,6 +17,7 @@ type Config struct {
 	HTTPAddress          string
 	DatabaseURL          string
 	MigrationDatabaseURL string
+	MigrateOnStartup     bool
 	WorkOSIssuer         string
 	WorkOSClientID       string
 	WorkOSAPIKey         string
@@ -29,6 +30,7 @@ type Config struct {
 
 func Load() (Config, error) {
 	environment := strings.ToLower(strings.TrimSpace(os.Getenv("AO_CLOUD_ENV")))
+	hosted := environment == "staging" || environment == "production"
 	defaultHTTPAddress := ":8080"
 	if environment == "development" || environment == "test" {
 		defaultHTTPAddress = "127.0.0.1:8080"
@@ -38,6 +40,7 @@ func Load() (Config, error) {
 		HTTPAddress:          envOrDefault("AO_CLOUD_HTTP_ADDRESS", defaultHTTPAddress),
 		DatabaseURL:          strings.TrimSpace(os.Getenv("AO_CLOUD_DATABASE_URL")),
 		MigrationDatabaseURL: strings.TrimSpace(os.Getenv("AO_CLOUD_MIGRATION_DATABASE_URL")),
+		MigrateOnStartup:     boolEnv("AO_CLOUD_MIGRATE_ON_STARTUP", !hosted),
 		WorkOSIssuer:         strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_ISSUER")),
 		WorkOSClientID:       strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_CLIENT_ID")),
 		WorkOSAPIKey:         strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_API_KEY")),

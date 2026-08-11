@@ -24,6 +24,7 @@ func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !cfg.LocalAuthEnabled ||
+		!cfg.MigrateOnStartup ||
 		cfg.LocalSessionTTL != 2*time.Hour ||
 		cfg.HTTPAddress != "127.0.0.1:8080" ||
 		cfg.SandboxProvider != "ecs" ||
@@ -72,7 +73,10 @@ func TestLoadStagingConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Hosted() || cfg.Release != "sha-staging" || cfg.HTTPAddress != ":8080" {
+	if !cfg.Hosted() ||
+		cfg.MigrateOnStartup ||
+		cfg.Release != "sha-staging" ||
+		cfg.HTTPAddress != ":8080" {
 		t.Fatalf("config = %#v", cfg)
 	}
 }

@@ -27,10 +27,12 @@ set -a; source .env; set +a
 AO_CLOUD_LOCAL_AUTH=true go run ./cmd/ao-cloud
 ```
 
-The service applies embedded Goose migrations at startup, using
+Development and test environments apply embedded Goose migrations at startup, using
 `AO_CLOUD_MIGRATION_DATABASE_URL` when set and `AO_CLOUD_DATABASE_URL`
-otherwise. Local auth is disabled unless `AO_CLOUD_LOCAL_AUTH=true`, cannot run
-alongside WorkOS, and is rejected when `AO_CLOUD_ENV=production`.
+otherwise. Hosted deployments run `/ao-cloud-migrate` as a one-off task before
+rolling the API service. Local auth is disabled unless
+`AO_CLOUD_LOCAL_AUTH=true`, cannot run alongside WorkOS, and is rejected when
+`AO_CLOUD_ENV` is `staging` or `production`.
 
 For WorkOS, set `AO_CLOUD_WORKOS_ISSUER`, `AO_CLOUD_WORKOS_CLIENT_ID`, and
 `AO_CLOUD_WORKOS_API_KEY`. The OIDC verifier validates issuer, audience,

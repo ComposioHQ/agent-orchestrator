@@ -36,8 +36,10 @@ func run(logger *slog.Logger) error {
 	)
 	defer cancel()
 
-	if err := postgres.Migrate(ctx, cfg.MigrationDatabaseURL); err != nil {
-		return err
+	if cfg.MigrateOnStartup {
+		if err := postgres.Migrate(ctx, cfg.MigrationDatabaseURL); err != nil {
+			return err
+		}
 	}
 	store, err := postgres.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
