@@ -247,7 +247,7 @@ if [[ "$unhealthy_targets" != "0" ]]; then
 	exit 1
 fi
 
-printf 'Deployed release %s\\nImage digest: %s\\nTask definition: %s\\n' \
+printf 'Deployed release %s\nImage digest: %s\nTask definition: %s\n' \
 	"$RELEASE" \
 	"$image_digest" \
 	"$api_task"
