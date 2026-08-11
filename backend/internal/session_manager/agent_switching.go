@@ -2730,7 +2730,7 @@ func (m *Manager) reconcileAgentSwitch(ctx context.Context, store ports.AgentSwi
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
+		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
 	case domain.AgentSwitchStartingTarget:
 		return m.reconcileStartingTarget(ctx, store, rec, sw)
 	case domain.AgentSwitchTargetReady:
@@ -2886,7 +2886,7 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 	if err != nil {
 		return false, err
 	}
-	return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, current, domain.AgentSwitchErrorDaemonRestartPostStop)
+	return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, current)
 }
 
 func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, sw domain.AgentSwitch) (bool, error) {
@@ -2912,13 +2912,13 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
+		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
 	}
 	if !alive {
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
+		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
 	}
 	inspector, ok := m.runtime.(ports.ExactSupervisedProcessInspector)
 	if !ok {
@@ -2935,7 +2935,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
+		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
 	}
 	if !targetAlive {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
@@ -2944,7 +2944,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
+		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
 	}
 	if sw.TargetNativeSessionRef == nil {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
@@ -2953,7 +2953,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
+		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
 	}
 	targetNative, found, err := store.GetAgentNativeSession(ctx, *sw.TargetNativeSessionRef)
 	if err != nil {
@@ -2967,7 +2967,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
+		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
 	}
 	activated, err := m.lcm.ActivateAgentSwitchTarget(ctx, domain.AgentSwitchTargetActivation{
 		SwitchID:                      sw.ID,
@@ -3000,7 +3000,6 @@ func (m *Manager) failRecoveredSwitchWithSourceRollback(
 	store ports.AgentSwitchStore,
 	rec domain.SessionRecord,
 	sw domain.AgentSwitch,
-	code domain.AgentSwitchErrorCode,
 ) (bool, error) {
 	project, projectErr := m.loadProject(ctx, rec.ProjectID)
 	if projectErr == nil {
@@ -3012,7 +3011,7 @@ func (m *Manager) failRecoveredSwitchWithSourceRollback(
 	} else {
 		m.logger.Error("agent switch recovery: source project unavailable for rollback", "sessionID", rec.ID, "switchID", sw.ID, "error", projectErr)
 	}
-	_, failErr := m.failAgentSwitch(ctx, store, sw, code)
+	_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
 	return failErr == nil, failErr
 }
 
