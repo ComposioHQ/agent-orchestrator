@@ -1,0 +1,470 @@
+// Package reconcile converges durable sandbox intent with provider reality.
+// HTTP handlers record intent only; every slow provider call happens here, so a
+// degraded provider can never stall an API request or a browser.
+package reconcile
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/Untrivial-ai/ao-cloud/internal/domain"
+	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
+	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
+	"github.com/google/uuid"
+)
+
+// Store is the durable state the reconciler converges.
+type Store interface {
+	ClaimSandboxes(ctx context.Context, owner string, limit int, lease time.Duration) ([]domain.Sandbox, error)
+	UpdateSandboxObservation(ctx context.Context, owner, orgID, sessionID, providerEnvironmentID, observedState, lastError string, reconcileAfter time.Time) error
+	ReleaseSandboxClaim(ctx context.Context, owner, orgID, sessionID string, reconcileAfter time.Time) error
+	IssueAccessTicket(ctx context.Context, orgID, sessionID, purpose string, scopes []string, ttl time.Duration) (string, error)
+	AppendSessionEvent(ctx context.Context, orgID, sessionID, eventType string, payload json.RawMessage) (domain.ClientEvent, error)
+	DeleteSandboxSession(ctx context.Context, orgID, sessionID string) error
+}
+
+// Resolver selects the provider that owns one sandbox's compute.
+type Resolver interface {
+	Resolve(context.Context, domain.Sandbox) (sandbox.Provider, error)
+}
+
+// Options configures a Reconciler. Zero values fall back to the defaults below.
+type Options struct {
+	// PublicURL is the origin a worker dials back to.
+	PublicURL string
+	// WorkerBinary is uploaded into sandboxes whose provider supports it.
+	WorkerBinary []byte
+	// WorkerDestination is where that binary lands inside the sandbox.
+	WorkerDestination string
+	// Interval is the reconcile tick.
+	Interval time.Duration
+	// StartupTimeout is the budget from Create to the first worker heartbeat.
+	// It must exceed the provider's p95 cold start: an under-set deadline
+	// produces a recreate storm where every cycle replaces a sandbox that was
+	// still booting.
+	StartupTimeout time.Duration
+	// HeartbeatTimeout is how long a silent worker is tolerated before repair.
+	HeartbeatTimeout time.Duration
+	// BatchSize is the maximum number of sandboxes claimed per tick.
+	BatchSize int
+	// Logger receives lifecycle events.
+	Logger *slog.Logger
+}
+
+// Reconciler defaults, tuned for a decentralized provider whose provisioning
+// latency is variable by design.
+const (
+	DefaultInterval          = 2 * time.Second
+	DefaultStartupTimeout    = 180 * time.Second
+	DefaultHeartbeatTimeout  = time.Minute
+	DefaultBatchSize         = 20
+	defaultLease             = 30 * time.Second
+	defaultWorkerDestination = "/usr/local/bin/ao-worker"
+	bootstrapTicketTTL       = 10 * time.Minute
+)
+
+// Reconciler converges durable sandbox intent with provider state.
+type Reconciler struct {
+	store     Store
+	providers Resolver
+	options   Options
+	owner     string
+	log       *slog.Logger
+}
+
+// New creates a sandbox reconciler.
+func New(store Store, providers Resolver, options Options) *Reconciler {
+	if options.Interval <= 0 {
+		options.Interval = DefaultInterval
+	}
+	if options.StartupTimeout <= 0 {
+		options.StartupTimeout = DefaultStartupTimeout
+	}
+	if options.HeartbeatTimeout <= 0 {
+		options.HeartbeatTimeout = DefaultHeartbeatTimeout
+	}
+	if options.BatchSize <= 0 {
+		options.BatchSize = DefaultBatchSize
+	}
+	if strings.TrimSpace(options.WorkerDestination) == "" {
+		options.WorkerDestination = defaultWorkerDestination
+	}
+	options.PublicURL = strings.TrimRight(options.PublicURL, "/")
+	if options.Logger == nil {
+		options.Logger = slog.Default()
+	}
+	return &Reconciler{
+		store:     store,
+		providers: providers,
+		options:   options,
+		owner:     uuid.NewString(),
+		log:       options.Logger,
+	}
+}
+
+// Run reconciles sandboxes until ctx is canceled.
+func (r *Reconciler) Run(ctx context.Context) error {
+	if err := r.ReconcileOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		r.log.Error("initial sandbox reconciliation failed", "err", err)
+	}
+	ticker := time.NewTicker(r.options.Interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := r.ReconcileOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				r.log.Error("sandbox reconciliation failed", "err", err)
+			}
+		}
+	}
+}
+
+// ReconcileOnce performs a single pass. Run calls it on a ticker; tests call it
+// directly so a lifecycle assertion never depends on wall-clock timing.
+func (r *Reconciler) ReconcileOnce(ctx context.Context) error {
+	sandboxes, err := r.store.ClaimSandboxes(ctx, r.owner, r.options.BatchSize, defaultLease)
+	if err != nil {
+		return err
+	}
+	for _, record := range sandboxes {
+		if err := r.reconcileSandbox(ctx, record); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			r.log.Warn("sandbox reconciliation attempt failed",
+				"session_id", record.SessionID,
+				"provider_id", record.ProviderEnvironmentID,
+				"err", err,
+			)
+		}
+	}
+	return nil
+}
+
+func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox) error {
+	provider, err := r.providers.Resolve(ctx, record)
+	if err != nil {
+		return r.fail(ctx, record, err)
+	}
+
+	if record.DesiredState == domain.SandboxDesiredDeleted {
+		if record.ProviderEnvironmentID != "" {
+			r.log.Info("deleting sandbox",
+				"session_id", record.SessionID,
+				"provider", record.Provider,
+				"provider_id", record.ProviderEnvironmentID,
+			)
+			err := provider.Delete(ctx, sandbox.ID(record.ProviderEnvironmentID))
+			if err != nil && !errors.Is(err, sandbox.ErrNotFound) {
+				return r.fail(ctx, record, err)
+			}
+		}
+		return r.store.DeleteSandboxSession(ctx, record.OrgID, record.SessionID)
+	}
+
+	if record.ProviderEnvironmentID == "" {
+		return r.provision(ctx, record, provider)
+	}
+
+	environment, err := provider.Get(ctx, sandbox.ID(record.ProviderEnvironmentID))
+	if errors.Is(err, sandbox.ErrNotFound) {
+		if record.DesiredState == domain.SandboxDesiredRunning {
+			return r.observe(ctx, record, "", domain.SandboxObservedRequested,
+				"provider environment disappeared", 2*time.Second)
+		}
+		return r.observe(ctx, record, "", domain.SandboxObservedDeleted, "", 24*time.Hour)
+	}
+	if err != nil {
+		// A failed probe is not evidence of death. Record the error, keep the
+		// provider ID, and try again — a provider outage must leave healthy
+		// sessions alone.
+		return r.fail(ctx, record, err)
+	}
+
+	if record.DesiredState == domain.SandboxDesiredPaused ||
+		record.DesiredState == domain.SandboxDesiredStopped {
+		switch environment.State {
+		case sandbox.StateStopped, sandbox.StatePaused, sandbox.StateDeleted:
+		default:
+			if err := provider.Stop(ctx, environment.ID); err != nil {
+				return r.fail(ctx, record, err)
+			}
+		}
+		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedStopped, "", 30*time.Second)
+	}
+
+	switch environment.State {
+	case sandbox.StateDeleted:
+		return r.observe(ctx, record, "", domain.SandboxObservedRequested,
+			"provider environment was destroyed", 2*time.Second)
+	case sandbox.StateDeleting:
+		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedDeleting, "", 2*time.Second)
+	case sandbox.StateStopped, sandbox.StatePaused:
+		// Restoring in place is always preferable to replacing compute: a
+		// resumed sandbox keeps its filesystem, and on providers that snapshot
+		// memory it keeps the running worker too. Recreate is repair, not the
+		// normal path out of an idle auto-pause.
+		if err := r.restore(ctx, environment, provider); err != nil {
+			if recreator, ok := provider.(sandbox.Recreator); ok {
+				r.log.Warn("restore failed, replacing sandbox",
+					"session_id", record.SessionID, "provider_id", environment.ID, "err", err)
+				return r.recreate(ctx, record, environment, recreator)
+			}
+			return r.fail(ctx, record, err)
+		}
+		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedBootstrapping, "", 2*time.Second)
+	case sandbox.StateRunning:
+		return r.superviseRunning(ctx, record, environment, provider)
+	default:
+		// Any state this control plane does not recognize is treated as
+		// not-yet-ready. Guessing "running" would suppress the startup
+		// deadline and strand the session in silence.
+		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedProvisioning, "", 5*time.Second)
+	}
+}
+
+func (r *Reconciler) restore(
+	ctx context.Context,
+	environment sandbox.Environment,
+	provider sandbox.Provider,
+) error {
+	if environment.State == sandbox.StatePaused {
+		return provider.Resume(ctx, environment.ID)
+	}
+	return provider.Start(ctx, environment.ID)
+}
+
+func (r *Reconciler) superviseRunning(
+	ctx context.Context,
+	record domain.Sandbox,
+	environment sandbox.Environment,
+	provider sandbox.Provider,
+) error {
+	startupExpired := (record.ObservedState == domain.SandboxObservedProvisioning ||
+		record.ObservedState == domain.SandboxObservedBootstrapping) &&
+		record.WorkerLastSeenAt == nil &&
+		time.Since(record.UpdatedAt) >= r.options.StartupTimeout
+	heartbeatExpired := record.WorkerLastSeenAt != nil &&
+		time.Since(*record.WorkerLastSeenAt) >= r.options.HeartbeatTimeout
+
+	if record.ObservedState == domain.SandboxObservedFailed || startupExpired || heartbeatExpired {
+		// Repairing in place is cheaper than replacing compute, so prefer the
+		// bootstrapper when the provider exposes one.
+		if bootstrapper, ok := provider.(sandbox.Bootstrapper); ok && len(r.options.WorkerBinary) > 0 {
+			spec, err := r.workerSpec(ctx, record)
+			if err != nil {
+				return r.fail(ctx, record, err)
+			}
+			r.log.Info("reinstalling worker in live sandbox",
+				"session_id", record.SessionID,
+				"provider", record.Provider,
+				"provider_id", environment.ID,
+				"reason", repairReason(record, startupExpired, heartbeatExpired),
+			)
+			if err := bootstrapper.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
+				Binary:      r.options.WorkerBinary,
+				Destination: r.options.WorkerDestination,
+				Environment: spec.Environment,
+			}); err != nil {
+				return r.fail(ctx, record, err)
+			}
+			return r.observe(ctx, record, string(environment.ID),
+				domain.SandboxObservedBootstrapping, "", r.options.Interval)
+		}
+		if recreator, ok := provider.(sandbox.Recreator); ok {
+			return r.recreate(ctx, record, environment, recreator)
+		}
+	}
+
+	state := record.ObservedState
+	if state != domain.SandboxObservedRunning {
+		state = domain.SandboxObservedBootstrapping
+	}
+	return r.observe(ctx, record, string(environment.ID), state, "", 5*time.Second)
+}
+
+func repairReason(record domain.Sandbox, startupExpired, heartbeatExpired bool) string {
+	switch {
+	case record.ObservedState == domain.SandboxObservedFailed:
+		return "previous attempt failed"
+	case startupExpired:
+		return "worker never checked in before the startup deadline"
+	case heartbeatExpired:
+		return "worker heartbeat stopped"
+	default:
+		return "unknown"
+	}
+}
+
+func (r *Reconciler) provision(
+	ctx context.Context,
+	record domain.Sandbox,
+	provider sandbox.Provider,
+) error {
+	// Dedupe guard: a reconciler that crashed between Create and the durable
+	// write must adopt the sandbox it already made, never create a second.
+	existing, found, err := provider.FindBySession(ctx, record.SessionID)
+	if err != nil {
+		return r.fail(ctx, record, err)
+	}
+	if found {
+		return r.observe(ctx, record, string(existing.ID), domain.SandboxObservedProvisioning, "", time.Second)
+	}
+
+	spec, err := r.workerSpec(ctx, record)
+	if err != nil {
+		return r.fail(ctx, record, err)
+	}
+	payload, _ := json.Marshal(map[string]string{"provider": record.Provider})
+	if _, err := r.store.AppendSessionEvent(
+		ctx, record.OrgID, record.SessionID, "sandbox.provisioning", payload,
+	); err != nil {
+		r.log.Warn("append sandbox.provisioning event failed",
+			"session_id", record.SessionID, "err", err)
+	}
+
+	r.log.Info("provisioning sandbox", "session_id", record.SessionID, "provider", record.Provider)
+	startedAt := time.Now()
+	environment, err := provider.Create(ctx, spec)
+	if err != nil {
+		return r.fail(ctx, record, err)
+	}
+	r.log.Info("sandbox provisioned",
+		"session_id", record.SessionID,
+		"provider", record.Provider,
+		"provider_id", environment.ID,
+		"duration_ms", time.Since(startedAt).Milliseconds(),
+	)
+
+	if bootstrapper, ok := provider.(sandbox.Bootstrapper); ok && len(r.options.WorkerBinary) > 0 {
+		if err := bootstrapper.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
+			Binary:      r.options.WorkerBinary,
+			Destination: r.options.WorkerDestination,
+			Environment: spec.Environment,
+		}); err != nil {
+			return r.fail(ctx, record, err)
+		}
+		return r.observe(ctx, record, string(environment.ID),
+			domain.SandboxObservedBootstrapping, "", r.options.Interval)
+	}
+	return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedProvisioning, "", 2*time.Second)
+}
+
+func (r *Reconciler) recreate(
+	ctx context.Context,
+	record domain.Sandbox,
+	environment sandbox.Environment,
+	recreator sandbox.Recreator,
+) error {
+	// Fresh compute needs a fresh ticket: the previous one was single-use and
+	// has already been consumed.
+	spec, err := r.workerSpec(ctx, record)
+	if err != nil {
+		return r.fail(ctx, record, err)
+	}
+	r.log.Info("recreating sandbox with fresh worker credentials",
+		"session_id", record.SessionID,
+		"provider", record.Provider,
+		"provider_id", environment.ID,
+	)
+	recreated, err := recreator.Recreate(ctx, environment.ID, spec)
+	if err != nil {
+		return r.fail(ctx, record, err)
+	}
+	return r.observe(ctx, record, string(recreated.ID), domain.SandboxObservedBootstrapping, "", 2*time.Second)
+}
+
+// nodeOpsProfile is the subset of the stored resource profile the provider
+// needs. Reading the shape from the durable row rather than from configuration
+// means a config change never disturbs an in-flight session.
+type nodeOpsProfile struct {
+	NodeOps struct {
+		DefaultShape     string `json:"defaultShape"`
+		DefaultRootFS    string `json:"defaultRootFs"`
+		Ingress          string `json:"ingress"`
+		AutoPauseMinutes int    `json:"autoPauseMinutes"`
+	} `json:"nodeOps"`
+}
+
+func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (sandbox.Spec, error) {
+	ticket, err := r.store.IssueAccessTicket(
+		ctx,
+		record.OrgID,
+		record.SessionID,
+		"worker_bootstrap",
+		[]string{"worker:connect", "worker:event", "worker:terminal", "worker:git", "worker:orchestrate"},
+		bootstrapTicketTTL,
+	)
+	if err != nil {
+		return sandbox.Spec{}, err
+	}
+
+	var profile nodeOpsProfile
+	if len(record.ResourceProfile) > 0 {
+		_ = json.Unmarshal(record.ResourceProfile, &profile)
+	}
+	autoStopMinutes := record.AutoStopMinutes
+	if autoStopMinutes <= 0 {
+		autoStopMinutes = profile.NodeOps.AutoPauseMinutes
+	}
+
+	return sandbox.Spec{
+		Name:            "ao-" + record.SessionID,
+		SessionID:       record.SessionID,
+		OrgID:           record.OrgID,
+		ResourceProfile: domain.ResourceProfile{CPU: 4, Memory: 8, Disk: 10},
+		Shape:           profile.NodeOps.DefaultShape,
+		RootFS:          profile.NodeOps.DefaultRootFS,
+		Ingress:         profile.NodeOps.Ingress,
+		Environment: map[string]string{
+			"AO_CLOUD_PUBLIC_URL":       r.options.PublicURL,
+			"AO_CLOUD_SESSION_ID":       record.SessionID,
+			"AO_WORKER_BOOTSTRAP_TOKEN": ticket,
+			"AO_WORKSPACE_DIR":          "/workspace/repository",
+			"AO_DATA_DIR":               "/workspace/.ao/worker",
+			"HOME":                      "/workspace/.ao/home",
+			"CLAUDE_CONFIG_DIR":         "/workspace/.ao/home/.claude",
+			"CODEX_HOME":                "/workspace/.ao/home/.codex",
+		},
+		Labels: map[string]string{
+			"ao.session_id": record.SessionID,
+			"ao.org_id":     record.OrgID,
+			"ao.managed":    "true",
+		},
+		AutoStopMinutes:   autoStopMinutes,
+		AutoDeleteMinutes: 7 * 24 * 60,
+	}, nil
+}
+
+func (r *Reconciler) fail(ctx context.Context, record domain.Sandbox, cause error) error {
+	updateErr := r.observe(ctx, record, record.ProviderEnvironmentID,
+		domain.SandboxObservedFailed, cause.Error(), 15*time.Second)
+	if updateErr != nil && !errors.Is(updateErr, postgres.ErrSandboxLeaseLost) {
+		return errors.Join(cause, updateErr)
+	}
+	return cause
+}
+
+func (r *Reconciler) observe(
+	ctx context.Context,
+	record domain.Sandbox,
+	providerID, state, lastError string,
+	after time.Duration,
+) error {
+	return r.store.UpdateSandboxObservation(
+		ctx,
+		r.owner,
+		record.OrgID,
+		record.SessionID,
+		providerID,
+		state,
+		lastError,
+		time.Now().Add(after),
+	)
+}
