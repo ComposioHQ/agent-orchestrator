@@ -147,6 +147,7 @@ register_api_task() {
 			DATABASE_SECRET="$database_secret" \
 			WORKOS_SECRET="$workos_secret" \
 			FAMILY="$PRODUCTION_API_FAMILY" \
+			REGION="$REGION" \
 			python3 - <<'PY'
 import json
 import os
@@ -199,7 +200,7 @@ container["secrets"] = [
 ]
 container["logConfiguration"]["options"].update({
     "awslogs-group": "/ao-cloud/production/control-plane",
-    "awslogs-region": "eu-north-1",
+    "awslogs-region": os.environ["REGION"],
     "awslogs-stream-prefix": "api",
 })
 payload["tags"] = [
@@ -232,6 +233,7 @@ register_migration_task() {
 			MIGRATION_SECRET="$migration_secret" \
 			RUNTIME_DATABASE_USER="$RUNTIME_DATABASE_USER" \
 			FAMILY="$PRODUCTION_MIGRATION_FAMILY" \
+			REGION="$REGION" \
 			python3 - <<'PY'
 import json
 import os
@@ -274,7 +276,7 @@ container["secrets"] = [{
 }]
 container["logConfiguration"]["options"].update({
     "awslogs-group": "/ao-cloud/production/control-plane",
-    "awslogs-region": "eu-north-1",
+    "awslogs-region": os.environ["REGION"],
     "awslogs-stream-prefix": "migration",
 })
 payload["tags"] = [

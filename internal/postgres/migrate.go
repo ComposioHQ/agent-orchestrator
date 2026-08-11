@@ -63,11 +63,12 @@ func GrantRuntimeRole(ctx context.Context, databaseURL, role string) error {
 	defer db.Close()
 
 	var exists bool
+	var databaseName string
 	if err := db.QueryRowContext(
 		ctx,
-		`SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`,
+		`SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1), current_database()`,
 		role,
-	).Scan(&exists); err != nil {
+	).Scan(&exists, &databaseName); err != nil {
 		return fmt.Errorf("find runtime database role: %w", err)
 	}
 	if !exists {
@@ -76,6 +77,7 @@ func GrantRuntimeRole(ctx context.Context, databaseURL, role string) error {
 
 	quotedRole := pgx.Identifier{role}.Sanitize()
 	statements := []string{
+		"GRANT CONNECT ON DATABASE " + pgx.Identifier{databaseName}.Sanitize() + " TO " + quotedRole,
 		"GRANT USAGE ON SCHEMA public TO " + quotedRole,
 		"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO " + quotedRole,
 		"GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO " + quotedRole,

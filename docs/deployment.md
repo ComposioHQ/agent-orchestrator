@@ -1,4 +1,6 @@
-# Staging deployment
+# Deployments
+
+## Staging
 
 AO Cloud staging runs the control plane as a stateless ECS/Fargate service.
 PostgreSQL is the durable source of truth, so any healthy replica can serve a
@@ -88,3 +90,91 @@ AWS_PROFILE=ao-cloud aws ecs update-service \
 
 Schema migrations must remain backward-compatible with the previous API
 revision so that rolling deploys and application rollback are safe.
+
+## Production promotion
+
+Production is deliberately a separate environment. It has its own PostgreSQL
+instance, ECS cluster, service, ALB, IAM roles, logs, alarms, and Secrets Manager
+entries. Staging and production share only the immutable ECR image selected for
+promotion.
+
+Run this only after the release is healthy in staging:
+
+```bash
+AO_CLOUD_APPROVE_PRODUCTION=1 \
+  AWS_PROFILE=ao-cloud \
+  ./scripts/promote-production.sh
+```
+
+The production script does not build an image. It reads the release and
+digest-pinned image from the healthy staging service, requires the ECR scan to
+be complete with no high or critical findings, and refuses a requested release
+that is not currently running in staging. It then:
+
+1. Registers production API and migration task definitions using that exact
+   digest.
+2. Runs `/ao-cloud-migrate` against production as a one-off task.
+3. Refreshes the restricted runtime role's grants, including default privileges
+   for objects created by future migrations.
+4. Leaves the existing API service untouched if migration or grant application
+   fails.
+5. Rolls two production replicas, waits for ECS stability, and requires every
+   ALB target to be healthy.
+6. Verifies that production is running the same image digest and release as
+   staging.
+
+This promotes migration code, not staging data. Each environment retains its
+own users, organizations, projects, sessions, events, and credentials.
+
+### Production resources
+
+- PostgreSQL: `ao-cloud-production-storage` (encrypted, single-AZ
+  `db.t4g.small`, 7-day backups, deletion protection)
+- ECS cluster: `ao-cloud-production`
+- ECS service: `ao-cloud-production-api`
+- API task family: `ao-cloud-production-api`
+- migration task family: `ao-cloud-production-migrate`
+- internal ALB: `ao-cloud-production`
+- target group: `ao-cloud-production-cp`
+- CloudWatch log group: `/ao-cloud/production/control-plane` (90-day retention)
+- autoscaling: two to six replicas at 60% average CPU utilization
+- deployment alarms: `ao-cloud-production-target-5xx` and
+  `ao-cloud-production-unhealthy-targets`
+
+The service reads only these production-scoped secrets:
+
+- `ao-cloud/production/workos`
+- `ao-cloud/production/database-url`
+- `ao-cloud/production/migration-database-url`
+
+The production WorkOS entry currently contains the staging test tenant's
+credentials to support pre-launch verification. Replace it with a separate live
+WorkOS environment before public launch, then force a new deployment.
+
+### Promotion and rollback limits
+
+If a migration fails, promotion stops before the API changes. If new API tasks
+fail startup or health checks, the ECS deployment circuit breaker restores the
+last healthy task definition. The release script also checks the final task
+definition so that an automatic rollback cannot be reported as a successful
+promotion.
+
+Application rollback does not reverse a completed database migration. Every
+production migration must therefore use an expand-and-contract sequence and
+remain compatible with the previous API release. Destructive cleanup belongs in
+a later release after the old application version can no longer run.
+
+### Pre-launch network work
+
+The production ALB is internal and accepts HTTP only from the VPC. Fargate tasks
+currently use the existing VPC's public subnets with public IPs, while security
+groups admit application traffic only from the ALB and database traffic only
+from the production task group. Before connecting desktop clients:
+
+1. Create a production hostname and ACM certificate.
+2. Add an HTTPS listener and remove or redirect HTTP.
+3. Move tasks to private subnets with NAT or the required VPC endpoints.
+4. Replace the temporary test WorkOS tenant with production credentials.
+
+Bearer tokens must never be sent to the current plaintext internal endpoint
+from outside the controlled VPC verification path.
