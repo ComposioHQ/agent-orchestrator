@@ -77,6 +77,14 @@ class TaskDefinitionTests(unittest.TestCase):
             environment="production",
             log_group="/ao-cloud/production/control-plane",
             region="eu-north-1",
+            environment_overrides={
+                "AO_CLOUD_PUBLIC_URL": "https://api.aoagents.dev"
+            },
+            secret_overrides={
+                "AO_CLOUD_GITHUB_APP_ID": (
+                    "arn:secret:ao-cloud/production/github:app_id::"
+                )
+            },
         )
         container = payload["containerDefinitions"][0]
         self.assertEqual(container["image"], "repository@sha256:digest")
@@ -89,6 +97,13 @@ class TaskDefinitionTests(unittest.TestCase):
         }
         self.assertEqual(environment["AO_CLOUD_RELEASE"], "abc123")
         self.assertEqual(environment["AO_CLOUD_ENV"], "production")
+        secrets = {
+            item["name"]: item["valueFrom"] for item in container["secrets"]
+        }
+        self.assertEqual(
+            secrets["AO_CLOUD_GITHUB_APP_ID"],
+            "arn:secret:ao-cloud/production/github:app_id::",
+        )
 
     def test_rejects_staging_reference_in_production_template(self):
         source = task_source()
