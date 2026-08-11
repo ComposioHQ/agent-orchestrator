@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
+	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
 	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 	"github.com/jackc/pgx/v5"
 )
@@ -251,9 +253,9 @@ func (s *Store) CreateSession(
 			return normalizeConstraintError(err)
 		}
 
-		provider := input.Provider
+		provider := strings.ToLower(strings.TrimSpace(input.Provider))
 		if provider == "" {
-			provider = "ecs"
+			provider = sandbox.DefaultProvider
 		}
 		if input.SandboxConnectionID != "" {
 			var connectionProvider string
@@ -272,11 +274,40 @@ func (s *Store) CreateSession(
 				return ErrInvalid
 			}
 		}
+		resourceProfile, err := patchSandboxJSON(
+			input.ResourceProfile,
+			provider,
+			orgID,
+			session.ID,
+			input.Release,
+			input.ProviderConnectionID,
+			false,
+		)
+		if err != nil {
+			return err
+		}
+		bootstrapContext, err := patchSandboxJSON(
+			input.BootstrapContext,
+			provider,
+			orgID,
+			session.ID,
+			input.Release,
+			input.ProviderConnectionID,
+			true,
+		)
+		if err != nil {
+			return err
+		}
+		autoStopMinutes := input.AutoStopMinutes
+		if autoStopMinutes <= 0 {
+			autoStopMinutes = sandbox.DefaultAutoPauseMinutes
+		}
 		if _, err := tx.Exec(
 			ctx,
 			`INSERT INTO ao_sandboxes (
-				session_id, org_id, provider, provider_connection_id
-			) VALUES ($1, $2, $3, NULLIF($4, '')::uuid)`,
+				session_id, org_id, provider, provider_connection_id,
+				resource_profile, auto_stop_minutes, bootstrap_context
+			) VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7)`,
 			session.ID,
 			orgID,
 			provider,
@@ -501,6 +532,43 @@ func jsonEqual(left, right []byte) bool {
 	leftJSON, _ := json.Marshal(leftValue)
 	rightJSON, _ := json.Marshal(rightValue)
 	return bytes.Equal(leftJSON, rightJSON)
+}
+
+func patchSandboxJSON(
+	raw json.RawMessage,
+	provider, orgID, sessionID, release, providerConnectionID string,
+	isBootstrap bool,
+) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		raw = json.RawMessage(`{}`)
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, ErrInvalid
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, ErrInvalid
+	}
+	object["provider"] = provider
+	object["orgId"] = orgID
+	object["sessionId"] = sessionID
+	if release != "" {
+		object["release"] = release
+	}
+	if providerConnectionID != "" {
+		object["providerConnectionId"] = providerConnectionID
+	}
+	if isBootstrap {
+		object["kind"] = "bootstrap"
+	} else {
+		object["kind"] = "resource-profile"
+	}
+	patched, err := json.Marshal(object)
+	if err != nil {
+		return nil, err
+	}
+	return patched, nil
 }
 
 func cursorTime(cursor *domain.Cursor) any {
