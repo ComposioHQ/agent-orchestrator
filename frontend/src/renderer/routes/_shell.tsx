@@ -363,6 +363,8 @@ function ShellLayout() {
 
 	const removeProject = useCallback(
 		async (projectId: string) => {
+			const isLastWorkspace =
+              workspaces.length === 1 && workspaces[0]?.id === projectId;
 			void addRendererExceptionStep("Project removal requested", {
 				source: "project-remove",
 				operation: "project_remove",
@@ -385,8 +387,11 @@ function ShellLayout() {
 			}
 			void captureRendererEvent("ao.renderer.project_removed", { project_id: projectId });
 			updateWorkspaces((current) => current.filter((item) => item.id !== projectId));
+			if (isLastWorkspace) {
+              void navigate({ to: "/" });
+}
 		},
-		[updateWorkspaces],
+		[navigate, updateWorkspaces, workspaces],
 	);
 
 	const restartOrchestrator = useCallback(
