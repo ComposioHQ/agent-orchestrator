@@ -21,6 +21,44 @@ type AgentModelCatalog struct {
 	FetchedAt     time.Time
 }
 
+type AgentNativeSession struct {
+	ID               domain.AgentNativeSessionID
+	AoSessionID      domain.SessionID
+	Harness          domain.AgentHarness
+	ConfigDir        string
+	NativeSessionID  string
+	TranscriptPath   string
+	LastGenerationID domain.AgentGenerationID
+	CreatedAt        time.Time
+	LastUsedAt       time.Time
+}
+
+type AgentSwitch struct {
+	ID                      domain.AgentSwitchID
+	SessionID               domain.SessionID
+	IdempotencyKey          string
+	RequestFingerprint      domain.AgentSwitchRequestFingerprint
+	FromHarness             domain.AgentHarness
+	TargetHarness           domain.AgentHarness
+	TargetNativeSessionRef  *domain.AgentNativeSessionID
+	TargetStartMode         domain.AgentSwitchTargetStartMode
+	State                   domain.AgentSwitchState
+	AgentHandoffStatus      domain.AgentHandoffStatus
+	SourceTranscriptStatus  domain.AgentSwitchSourceTranscriptStatus
+	SemanticHandoffIncluded bool
+	AgentHandoffPath        string
+	AgentHandoffHash        string
+	SourceGenerationID      domain.AgentGenerationID
+	TargetGenerationID      domain.AgentGenerationID
+	TargetRuntimeHandleID   string
+	TargetAcknowledgedAt    sql.NullTime
+	ErrorCode               string
+	RequestedAt             time.Time
+	UpdatedAt               time.Time
+	FinalHandoffPath        string
+	FinalHandoffHash        string
+}
+
 type AppSetting struct {
 	ID                 int64
 	DefaultSessionMode domain.SessionMode
@@ -328,6 +366,9 @@ type Session struct {
 	ControllerGeneration      string
 	BrowserCapabilityVerifier string
 	AutoInjectReview          bool
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
 }
 
 type SessionCleanupFact struct {

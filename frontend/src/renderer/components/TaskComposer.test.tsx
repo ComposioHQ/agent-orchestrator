@@ -98,7 +98,7 @@ describe("TaskComposer", () => {
 			</Wrap>,
 		);
 
-		expect(task()).toHaveAttribute("placeholder", "Describe the task (optional)…");
+		expect(task()).toHaveAttribute("placeholder", "e.g. Fix the flaky checkout test (optional)…");
 		expect(screen.getByRole("button", { name: "Start task" })).toBeEnabled();
 		fireEvent.click(screen.getByText("Start task"));
 
@@ -118,7 +118,7 @@ describe("TaskComposer", () => {
 			</Wrap>,
 		);
 
-		expect(task()).toHaveAttribute("placeholder", "Describe the task (optional)…");
+		expect(task()).toHaveAttribute("placeholder", "e.g. Fix the flaky checkout test (optional)…");
 		expect(screen.queryByText("Start now — details can come later.")).not.toBeInTheDocument();
 		expect(screen.queryByText("Shift+Enter for a new line")).not.toBeInTheDocument();
 		fireEvent.change(task(), { target: { value: "Investigate the failure" } });
@@ -483,7 +483,7 @@ describe("TaskComposer", () => {
 		expect(await screen.findByDisplayValue("opus[1m]")).toBeInTheDocument();
 	});
 
-	it("shows an agent-chosen model as a compact automatic value", async () => {
+	it("shows the same no-override label on the trigger and in the menu", async () => {
 		h.get.mockImplementation(async (path: string) => {
 			if (path.includes("/models")) {
 				return {
@@ -505,11 +505,10 @@ describe("TaskComposer", () => {
 		);
 
 		const picker = await screen.findByRole("button", { name: "Model" });
-		expect(picker).toHaveTextContent("Auto");
-		expect(picker).not.toHaveTextContent("Let codex choose");
+		expect(picker).toHaveTextContent("Use codex's default");
 
 		await userEvent.click(picker);
-		expect(await screen.findByText("Let codex choose")).toBeInTheDocument();
+		expect(await screen.findByRole("menuitem", { name: "Use codex's default" })).toBeInTheDocument();
 	});
 
 	it("uses the project worker model as the new task model default", async () => {

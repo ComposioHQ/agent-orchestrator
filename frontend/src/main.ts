@@ -385,7 +385,6 @@ async function createWindowInternal(): Promise<void> {
 	syncNativeWindowBackground();
 	const shellWebContents = getShellWebContents();
 	if (!shellWebContents) throw new Error("AO shell WebContents was not created");
-	mainWindow.on("resize", composition.resize);
 
 	// On Windows the app paints its own title bar (WindowTitlebar), so the native
 	// menu bar is hidden (autoHideMenuBar above). The role-based menu is still

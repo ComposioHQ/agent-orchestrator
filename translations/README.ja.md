@@ -189,9 +189,9 @@ ao start
 | [docs/STATUS.md](../docs/STATUS.md)                                 | `main` で現在出荷されている内容と、進行中の内容。                                            |
 | [docs/stack.md](../docs/stack.md)                                   | ライブラリ、ランタイム、依存関係の決定。                                                     |
 
-## テレメトリ
+## 匿名テレメトリ
 
-Agent Orchestrator の Electron レンダラーは、信頼性と製品理解のため、匿名の利用イベントを PostHog に送信します。PostHog のセッション録画はデフォルトで無効です。期限付きの調査で有効にした場合、ローカルパスとローカル URL は送信前にマスキングされます。送信を無効にするには、ビルド前に `VITE_AO_POSTHOG_KEY` を空文字列に設定してください。詳細は [docs/telemetry.md](../docs/telemetry.md) を参照してください。
+AO は、利用状況を把握して製品を改善するため、PII とプロジェクト内容を除外するよう設計された、プライバシーに配慮した製品利用・信頼性指標を使用します。[テレメトリとプライバシーについて詳しく見る](../docs/telemetry.md)。
 
 ## ライセンス
 

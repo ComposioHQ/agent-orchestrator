@@ -56,7 +56,7 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 				if len(spec.Inputs) != 2 || spec.Inputs[0] != "\x1b" || spec.Inputs[1] != "\x1b" {
 					t.Errorf("reviewer harness %q cancel inputs = %#v, want double escape", h, spec.Inputs)
 				}
-			case domain.ReviewerAgy, domain.ReviewerGoose, domain.ReviewerDevin, domain.ReviewerDroid, domain.ReviewerKimi:
+			case domain.ReviewerAgy, domain.ReviewerGoose, domain.ReviewerDevin, domain.ReviewerDroid:
 				if spec.Mode != ports.ReviewCancelInterrupt {
 					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInterrupt)
 				}

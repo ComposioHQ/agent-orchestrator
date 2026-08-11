@@ -1,6 +1,6 @@
-import type { BaseWindow, WebContents, WebContentsView, Rectangle } from "electron";
+import type { BaseWindow, WebContents, WebContentsView } from "electron";
 
-type MainWindowHost = Pick<BaseWindow, "contentView" | "getContentBounds" | "on" | "isDestroyed">;
+type MainWindowHost = Pick<BaseWindow, "contentView" | "isDestroyed">;
 
 export type WebContentsViewConstructor = new (options: {
 	webPreferences: Electron.WebPreferences;
@@ -42,10 +42,11 @@ export function createWindowComposition(options: {
 	let overlayOpen = false;
 	const resize = (): void => {
 		if (options.mainWindow.isDestroyed?.()) return;
-		const bounds = options.mainWindow.getContentBounds() as Rectangle;
+		const bounds = options.mainWindow.contentView.getBounds();
 		shellView.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height });
 		shellView.setVisible(true);
 	};
+	options.mainWindow.contentView.on("bounds-changed", resize);
 
 	const setOverlayOpen = (open: boolean): void => {
 		if (overlayOpen === open) return;
@@ -67,6 +68,7 @@ export function createWindowComposition(options: {
 		setOverlayOpen,
 		resize,
 		dispose: () => {
+			options.mainWindow.contentView.removeListener("bounds-changed", resize);
 			try {
 				options.mainWindow.contentView.removeChildView(shellView);
 			} catch {

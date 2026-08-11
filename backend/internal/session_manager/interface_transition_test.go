@@ -23,6 +23,7 @@ type transitionStore struct {
 	messages       map[string][]domain.SessionInterfaceTransitionMessage
 	nextMessage    int64
 	loseCancelCAS  bool
+	activeErr      error
 	messenger      *fakeMessenger
 	markMessageErr error
 }
@@ -57,6 +58,9 @@ func (s *transitionStore) GetSessionInterfaceTransition(_ context.Context, id st
 func (s *transitionStore) GetActiveSessionInterfaceTransition(_ context.Context, id domain.SessionID) (domain.SessionInterfaceTransition, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.activeErr != nil {
+		return domain.SessionInterfaceTransition{}, false, s.activeErr
+	}
 	for _, rec := range s.transitions {
 		if rec.SessionID == id && rec.Active() {
 			return rec, true, nil
