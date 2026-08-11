@@ -8,15 +8,16 @@ import {
 import { Download } from "lucide-react";
 import type { Metadata } from "next";
 import Image from "next/image";
-import { FaAndroid, FaApple, FaLinux, FaWindows } from "react-icons/fa";
-import { TestFlightDialog } from "./TestFlightDialog";
+import { FaApple, FaLinux, FaWindows } from "react-icons/fa";
+import { AndroidAppCTA } from "./AndroidAppCTA";
+import { MobileAppCTA } from "./MobileAppCTA";
 import { PlatformDownloadButton } from "./PlatformDownloadButton";
 import { DesktopAppPreview, PhoneAppPreview } from "./StaticAppPreviews";
 
 export const metadata: Metadata = {
   title: "Download",
   description:
-    "Download Agent Orchestrator for macOS, Windows, or Linux, and join the iOS TestFlight beta of the mobile companion.",
+    "Download Agent Orchestrator for macOS, Windows, or Linux, or join the AO Mobile beta on iOS and Android.",
 };
 
 interface GitHubReleaseAsset {
@@ -194,12 +195,13 @@ export default async function DownloadPage() {
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            <article className="flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5">
+            <article className="order-2 flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5 md:order-1">
               <div className="relative mb-5 h-80 overflow-hidden rounded-xl sm:h-[360px]">
                 <Image
-                  src="/feature3.png"
+                  src="/optimized/feature3.webp"
                   alt=""
                   fill
+                  preload
                   sizes="(max-width: 767px) 100vw, 50vw"
                   className="object-cover"
                 />
@@ -221,12 +223,13 @@ export default async function DownloadPage() {
               </div>
             </article>
 
-            <article className="flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5">
+            <article className="order-1 flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5 md:order-2">
               <div className="relative mb-5 h-80 overflow-hidden rounded-xl sm:h-[360px]">
                 <Image
-                  src="/feature.png"
+                  src="/optimized/feature.webp"
                   alt=""
                   fill
+                  preload
                   sizes="(max-width: 767px) 100vw, 50vw"
                   className="object-cover"
                 />
@@ -241,11 +244,8 @@ export default async function DownloadPage() {
                   anywhere.
                 </p>
                 <div className="mt-6 flex flex-wrap items-center gap-3">
-                  <TestFlightDialog />
-                  <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-3xl border border-border px-3 py-2 text-sm font-semibold tracking-[-0.5px] text-muted-foreground sm:px-6 sm:py-3 sm:text-base">
-                    <FaAndroid className="size-4 shrink-0" aria-hidden="true" />
-                    Android coming soon
-                  </span>
+                  <MobileAppCTA />
+                  <AndroidAppCTA />
                 </div>
               </div>
             </article>

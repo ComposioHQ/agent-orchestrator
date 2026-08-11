@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -30,6 +32,10 @@ type fakeStore struct {
 	num           int
 	deleteErr     error
 	upsertWTErr   error
+	listAllErr    error
+	// agentSwitchStore is wired only by agent-switch tests so fakeLCM can model
+	// Lifecycle Manager's atomic ownership-boundary commands.
+	agentSwitchStore any
 	// worktrees maps session ID to its saved worktree rows (shutdown-saved marker).
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
 	// sharedLog, when non-nil, receives an ordered call entry for each
@@ -63,6 +69,16 @@ func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) e
 	f.sessions[rec.ID] = rec
 	return nil
 }
+func (f *fakeStore) RecordSessionLatestUserPrompt(_ context.Context, id domain.SessionID, prompt string, updatedAt time.Time) (bool, error) {
+	rec, ok := f.sessions[id]
+	if !ok || rec.IsTerminated || rec.UpdatedAt.After(updatedAt) {
+		return false, nil
+	}
+	rec.Metadata.LatestUserPrompt = prompt
+	rec.UpdatedAt = updatedAt
+	f.sessions[id] = rec
+	return true, nil
+}
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	r, ok := f.sessions[id]
 	return r, ok, nil
@@ -77,6 +93,9 @@ func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domai
 	return out, nil
 }
 func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, error) {
+	if f.listAllErr != nil {
+		return nil, f.listAllErr
+	}
 	var out []domain.SessionRecord
 	for _, r := range f.sessions {
 		out = append(out, r)
@@ -92,7 +111,8 @@ func (f *fakeStore) DeleteSession(_ context.Context, id domain.SessionID) (bool,
 		return false, nil
 	}
 	// Mirror the sqlite gate: only delete rows still in seed state.
-	if rec.IsTerminated || rec.Metadata.WorkspacePath != "" || rec.Metadata.RuntimeHandleID != "" || rec.Metadata.AgentSessionID != "" || rec.Metadata.Prompt != "" {
+	if rec.IsTerminated || rec.Metadata.WorkspacePath != "" || rec.Metadata.RuntimeHandleID != "" || rec.Metadata.AgentSessionID != "" || rec.Metadata.Prompt != "" ||
+		rec.Metadata.LatestUserPrompt != "" || rec.Metadata.LatestAssistantUpdate != "" || rec.Metadata.NativeTranscriptPath != "" {
 		return false, nil
 	}
 	delete(f.sessions, id)
@@ -149,6 +169,9 @@ func (l *fakeLCM) PrepareLaunch(id domain.SessionID, launchID string) error {
 func (l *fakeLCM) CancelLaunch(id domain.SessionID, launchID string) {
 	l.cancelled = append(l.cancelled, string(id)+":"+launchID)
 }
+func (l *fakeLCM) ReleaseLaunch(id domain.SessionID, launchID string) {
+	l.cancelled = append(l.cancelled, string(id)+":"+launchID)
+}
 func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
 	l.completed++
 	rec := l.store.sessions[id]
@@ -181,6 +204,24 @@ func (l *fakeLCM) CommitControllerEpoch(
 	l.store.sessions[id] = rec
 	return true, nil
 }
+func (l *fakeLCM) ConfirmAgentSwitchSourceStopped(ctx context.Context, confirmation domain.AgentSwitchSourceStopConfirmation) (bool, error) {
+	store, ok := l.store.agentSwitchStore.(interface {
+		ConfirmAgentSwitchSourceStopped(context.Context, domain.AgentSwitchSourceStopConfirmation) (bool, error)
+	})
+	if !ok {
+		return false, errors.New("fake lifecycle: agent-switch source-stop persistence unavailable")
+	}
+	return store.ConfirmAgentSwitchSourceStopped(ctx, confirmation)
+}
+func (l *fakeLCM) ActivateAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchTargetActivation) (bool, error) {
+	store, ok := l.store.agentSwitchStore.(interface {
+		ActivateAgentSwitchTarget(context.Context, domain.AgentSwitchTargetActivation) (bool, error)
+	})
+	if !ok {
+		return false, errors.New("fake lifecycle: agent-switch target activation persistence unavailable")
+	}
+	return store.ActivateAgentSwitchTarget(ctx, activation)
+}
 func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	if l.terminated == nil {
 		l.terminated = map[domain.SessionID]int{}
@@ -196,15 +237,31 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 type fakeRuntime struct {
 	createErr          error
 	destroyErr         error
+	destroyErrSequence []error
+	onDestroy          func(call int, handle ports.RuntimeHandle)
 	created, destroyed int
 	lastCfg            ports.RuntimeConfig
 	outputs            []string
 	outputCalls        int
 	outputErr          error
+	interruptErr       error
+	interrupts         []string
+	onInterrupt        func(ports.RuntimeHandle)
 	// aliveByHandle maps a RuntimeHandle.ID to its liveness; missing = false.
-	aliveByHandle map[string]bool
-	aliveErr      error
-	destroyedIDs  []string
+	aliveByHandle           map[string]bool
+	aliveErr                error
+	supervisedErr           error
+	supervisedAliveOverride *bool
+	supervisedSequence      []bool
+	destroyedIDs            []string
+}
+
+func (r *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) error {
+	r.interrupts = append(r.interrupts, handle.ID)
+	if r.onInterrupt != nil {
+		r.onInterrupt(handle)
+	}
+	return r.interruptErr
 }
 
 type fakePreviewLifecycle struct {
@@ -248,6 +305,13 @@ func (r *fakeRestartRuntime) Restart(_ context.Context, handle ports.RuntimeHand
 	return handle, nil
 }
 
+func (r *fakeRestartRuntime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
+	if r.onRestart != nil {
+		r.onRestart()
+	}
+	return r.fakeRuntime.Destroy(ctx, handle)
+}
+
 type blockingRestartRuntime struct {
 	*fakeRuntime
 	entered chan struct{}
@@ -261,24 +325,66 @@ func (r *blockingRestartRuntime) Restart(_ context.Context, handle ports.Runtime
 	return handle, nil
 }
 
+func (r *blockingRestartRuntime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
+	close(r.entered)
+	<-r.release
+	return r.fakeRuntime.Destroy(ctx, handle)
+}
+
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	if r.createErr != nil {
 		return ports.RuntimeHandle{}, r.createErr
 	}
 	r.lastCfg = cfg
 	r.created++
-	return ports.RuntimeHandle{ID: "h1"}, nil
+	handle := ports.RuntimeHandle{ID: "h1"}
+	if r.aliveByHandle == nil {
+		r.aliveByHandle = map[string]bool{}
+	}
+	r.aliveByHandle[handle.ID] = true
+	return handle, nil
 }
 func (r *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
+	call := r.destroyed
 	r.destroyed++
 	r.destroyedIDs = append(r.destroyedIDs, handle.ID)
-	return r.destroyErr
+	if r.onDestroy != nil {
+		r.onDestroy(call, handle)
+	}
+	destroyErr := r.destroyErr
+	if call < len(r.destroyErrSequence) {
+		destroyErr = r.destroyErrSequence[call]
+	}
+	if destroyErr != nil {
+		return destroyErr
+	}
+	if r.aliveByHandle != nil {
+		r.aliveByHandle[handle.ID] = false
+	}
+	return nil
 }
 func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bool, error) {
 	if r.aliveErr != nil {
 		return false, r.aliveErr
 	}
 	return r.aliveByHandle[handle.ID], nil
+}
+func (r *fakeRuntime) IsSupervisedProcessAlive(_ context.Context, handle ports.RuntimeHandle, _ ports.SupervisedProcessRef) (bool, error) {
+	if r.supervisedErr != nil {
+		return false, r.supervisedErr
+	}
+	if r.supervisedAliveOverride != nil {
+		return *r.supervisedAliveOverride, nil
+	}
+	return r.aliveByHandle[handle.ID], nil
+}
+func (r *fakeRuntime) IsExactSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
+	if len(r.supervisedSequence) > 0 {
+		alive := r.supervisedSequence[0]
+		r.supervisedSequence = r.supervisedSequence[1:]
+		return alive, nil
+	}
+	return r.IsSupervisedProcessAlive(ctx, handle, ref)
 }
 func (r *fakeRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int) (string, error) {
 	r.outputCalls++
@@ -293,6 +399,12 @@ func (r *fakeRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int)
 		r.outputs = r.outputs[1:]
 	}
 	return out, nil
+}
+func (r *fakeRuntime) GetStyledOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
+	if r.outputErr != nil {
+		return "", r.outputErr
+	}
+	return "", nil
 }
 
 type fakeAgent struct{}
@@ -712,12 +824,20 @@ func fakeWorkspaceRepoName(info ports.WorkspaceInfo) string {
 }
 
 type fakeMessenger struct {
-	msgs []string
-	err  error
+	msgs   []string
+	err    error
+	errFor func(domain.SessionID, string) error
+	onSend func(domain.SessionID, string)
 }
 
-func (m *fakeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
+func (m *fakeMessenger) Send(_ context.Context, id domain.SessionID, msg string) error {
 	m.msgs = append(m.msgs, msg)
+	if m.onSend != nil {
+		m.onSend(id, msg)
+	}
+	if m.errFor != nil {
+		return m.errFor(id, msg)
+	}
 	return m.err
 }
 
@@ -732,7 +852,7 @@ func TestSend_WrapsCopilotOrchestratorMessageWithDelegationDirective(t *testing.
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
-	if err := m.Send(ctx, "mer-1", "make the button red"); err != nil {
+	if err := m.Send(ctx, "mer-1", "make the button red", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(msg.msgs) != 1 {
@@ -763,7 +883,7 @@ func TestSend_DoesNotWrapCopilotWorkerMessage(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
-	if err := m.Send(ctx, "mer-2", "make the button red"); err != nil {
+	if err := m.Send(ctx, "mer-2", "make the button red", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := msg.msgs[0]; got != "make the button red" {
@@ -782,11 +902,106 @@ func TestSend_DoesNotWrapNonCopilotOrchestratorMessage(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
-	if err := m.Send(ctx, "mer-1", "make the button red"); err != nil {
+	if err := m.Send(ctx, "mer-1", "make the button red", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := msg.msgs[0]; got != "make the button red" {
 		t.Fatalf("non-copilot orchestrator message = %q, want original", got)
+	}
+}
+
+func TestSend_WritesAttachmentAndAppendsReference(t *testing.T) {
+	dir := t.TempDir()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessClaudeCode,
+		Metadata:  domain.SessionMetadata{WorkspacePath: dir},
+	}
+	msg := &fakeMessenger{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
+
+	attachment := &ports.SpawnAttachment{Ext: ".png", Data: []byte("snapshot-bytes")}
+	if err := m.Send(ctx, "mer-1", "Make the button blue.", attachment); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(msg.msgs) != 1 {
+		t.Fatalf("messages = %d, want 1", len(msg.msgs))
+	}
+	got := msg.msgs[0]
+	if !strings.HasPrefix(got, "Make the button blue.\n\n") {
+		t.Fatalf("delivered message lost the original text: %q", got)
+	}
+	if !strings.Contains(got, "Attached files (read these files in the workspace for context):") {
+		t.Fatalf("delivered message missing attachment reference block: %q", got)
+	}
+
+	// The referenced path in the delivered message must be the file actually
+	// written to disk, not just well-formed text.
+	refLine := ""
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "- .ao/attachments/attachment-") {
+			refLine = strings.TrimPrefix(line, "- ")
+		}
+	}
+	if refLine == "" {
+		t.Fatalf("no attachment reference line found in: %q", got)
+	}
+	writtenBytes, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(refLine)))
+	if err != nil {
+		t.Fatalf("read written attachment: %v", err)
+	}
+	if string(writtenBytes) != "snapshot-bytes" {
+		t.Errorf("written attachment content = %q, want %q", writtenBytes, "snapshot-bytes")
+	}
+
+	if len(ws.calls) == 0 || !strings.Contains(ws.calls[0], "AddExclude") {
+		t.Errorf("workspace calls = %v, want AddExclude", ws.calls)
+	}
+}
+
+func TestSend_WithoutAttachmentSkipsWorkspaceWrite(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	msg := &fakeMessenger{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
+
+	if err := m.Send(ctx, "mer-1", "make the button red", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := msg.msgs[0]; got != "make the button red" {
+		t.Fatalf("message = %q, want unchanged original", got)
+	}
+	if len(ws.calls) != 0 {
+		t.Errorf("workspace calls = %v, want none when no attachment is sent", ws.calls)
+	}
+}
+
+// A session with no WorkspacePath has nowhere safe to write an attachment:
+// StageAttachments' filepath.Join would otherwise produce a relative
+// ".ao/attachments" path, writing beneath the daemon's own working directory
+// instead of the session's worktree and handing the agent a reference it
+// cannot reach. Send must refuse rather than silently mis-deliver.
+func TestSend_RejectsAttachmentWithEmptyWorkspace(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	msg := &fakeMessenger{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
+
+	attachment := &ports.SpawnAttachment{Ext: ".png", Data: []byte("snapshot-bytes")}
+	err := m.Send(ctx, "mer-1", "Make the button blue.", attachment)
+	if err == nil {
+		t.Fatal("want an error for a session with no workspace, got nil")
+	}
+	if len(msg.msgs) != 0 {
+		t.Errorf("messenger calls = %v, want none: the send must not proceed after the attachment write fails", msg.msgs)
 	}
 }
 
@@ -1170,6 +1385,50 @@ func TestResumeAgent_RejectsConcurrentRequest(t *testing.T) {
 	close(runtime.release)
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first resume: %v", err)
+	}
+}
+
+func TestResumeAgent_ReleasesInputGateAfterInterfaceTransitionRejection(t *testing.T) {
+	tests := []struct {
+		name       string
+		activeErr  error
+		transition domain.SessionInterfaceTransition
+		wantError  string
+	}{
+		{
+			name:      "transition lookup error",
+			activeErr: errors.New("transition store unavailable"),
+			wantError: "transition store unavailable",
+		},
+		{
+			name: "active transition",
+			transition: domain.SessionInterfaceTransition{
+				ID: "transition-1", SessionID: "mer-1", Phase: domain.SessionInterfaceTransitionDraining,
+			},
+			wantError: ErrInterfaceTransitionInProgress.Error(),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+			agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+			manager, store, _ := newExitedResumeManager(t, runtime, agent)
+			transitionStore := newTransitionStore()
+			transitionStore.projects = store.projects
+			transitionStore.sessions = store.sessions
+			transitionStore.activeErr = tt.activeErr
+			if tt.transition.ID != "" {
+				transitionStore.transitions[tt.transition.ID] = tt.transition
+			}
+			manager.store = transitionStore
+
+			if _, err := manager.ResumeAgentWithMode(ctx, "mer-1"); err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("ResumeAgentWithMode error = %v, want %q", err, tt.wantError)
+			}
+			if manager.SessionMutationInProgress("mer-1") {
+				t.Fatal("interface-transition rejection left input admission closed")
+			}
+		})
 	}
 }
 
@@ -1860,8 +2119,10 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	m, st, rt, ws := newManager()
 	preview := &fakePreviewLifecycle{}
 	browser := &fakeBrowserLifecycle{}
+	reviewer := &fakeReviewerTerminator{}
 	m.preview = preview
 	m.browser = browser
+	m.SetReviewerTerminator(reviewer)
 	dataDir := t.TempDir()
 	m.dataDir = dataDir
 	st.sessions["mer-1"] = mkLive("mer-1")
@@ -1881,7 +2142,36 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	if !reflect.DeepEqual(browser.destroyed, []domain.SessionID{"mer-1"}) {
 		t.Fatalf("browser destroys = %v, want [mer-1]", browser.destroyed)
 	}
+	if !reflect.DeepEqual(reviewer.calls, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("reviewer terminates = %v, want [mer-1]", reviewer.calls)
+	}
+	if len(reviewer.bodies) != 1 || !strings.Contains(reviewer.bodies[0], "termination") {
+		t.Fatalf("reviewer terminate bodies = %v", reviewer.bodies)
+	}
 	requireNoPromptDir(t, dataDir, "mer-1")
+}
+
+func TestKill_ReviewerTeardownFailureLeavesSessionActive(t *testing.T) {
+	m, st, rt, ws := newManager()
+	m.SetReviewerTerminator(&fakeReviewerTerminator{err: errors.New("reviewer still alive")})
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err == nil || !strings.Contains(err.Error(), "reviewer still alive") {
+		t.Fatalf("freed=%v err=%v, want reviewer teardown error", freed, err)
+	}
+	if freed {
+		t.Fatal("workspace must not be reported freed when reviewer teardown fails")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("worker runtime destroy calls = %d, want 1", rt.destroyed)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("workspace destroy calls = %d, want 0 after reviewer failure", ws.destroyed)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must remain active when reviewer teardown fails")
+	}
 }
 
 // TestKill_TerminatesIncompleteHandle: a session whose runtime handle or
@@ -1915,6 +2205,42 @@ func (f *fakeShellTerminalCloser) BeginSessionTeardown(_ context.Context, id dom
 			*f.sharedLog = append(*f.sharedLog, "EndSessionTeardown:"+string(id))
 		}
 	}, nil
+}
+
+type fakeReviewerTerminator struct {
+	calls         []domain.SessionID
+	bodies        []string
+	teardownCalls []domain.SessionID
+	restoreCalls  []domain.SessionID
+	err           error
+	teardownErr   error
+	restoreErr    error
+	sharedLog     *[]string
+}
+
+func (f *fakeReviewerTerminator) TerminateReviewer(_ context.Context, id domain.SessionID, body string) error {
+	f.calls = append(f.calls, id)
+	f.bodies = append(f.bodies, body)
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "TerminateReviewer:"+string(id))
+	}
+	return f.err
+}
+
+func (f *fakeReviewerTerminator) TeardownReviewerTerminal(_ context.Context, id domain.SessionID) error {
+	f.teardownCalls = append(f.teardownCalls, id)
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "TeardownReviewerTerminal:"+string(id))
+	}
+	return f.teardownErr
+}
+
+func (f *fakeReviewerTerminator) RestoreReviewer(_ context.Context, id domain.SessionID) error {
+	f.restoreCalls = append(f.restoreCalls, id)
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "RestoreReviewer:"+string(id))
+	}
+	return f.restoreErr
 }
 
 // TestKill_ClosesScopedShellTerminalsBeforeWorkspaceTeardown is the regression
@@ -2200,6 +2526,58 @@ func TestRestore_ReopensTerminal(t *testing.T) {
 	}
 	if rt.created != 1 {
 		t.Fatal("restore should relaunch")
+	}
+}
+
+func TestRestore_RestoresReviewerWithoutTerminating(t *testing.T) {
+	m, st, rt, _ := newManager()
+	reviewer := &fakeReviewerTerminator{err: errors.New("reviewer still alive")}
+	m.SetReviewerTerminator(reviewer)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+	rec := st.sessions["mer-1"]
+	rec.Kind = domain.KindWorker
+	rec.Harness = domain.HarnessClaudeCode
+	st.sessions["mer-1"] = rec
+
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime created = %d, want 1", rt.created)
+	}
+	if len(reviewer.calls) != 0 {
+		t.Fatalf("reviewer terminates = %v, want none", reviewer.calls)
+	}
+	if !reflect.DeepEqual(reviewer.restoreCalls, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("reviewer restores = %v, want [mer-1]", reviewer.restoreCalls)
+	}
+}
+
+func TestRestore_ReviewerRestoreFailureLeavesWorkerRestored(t *testing.T) {
+	m, st, rt, _ := newManager()
+	reviewer := &fakeReviewerTerminator{restoreErr: errors.New("reviewer unavailable")}
+	m.SetReviewerTerminator(reviewer)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+	rec := st.sessions["mer-1"]
+	rec.Kind = domain.KindWorker
+	rec.Harness = domain.HarnessClaudeCode
+	st.sessions["mer-1"] = rec
+
+	res, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+	if res.Session.ID != "mer-1" || res.Session.IsTerminated {
+		t.Fatalf("restore result session = %+v, want active mer-1", res.Session)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime created = %d, want 1", rt.created)
+	}
+	if !reflect.DeepEqual(reviewer.restoreCalls, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("reviewer restores = %v, want [mer-1]", reviewer.restoreCalls)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("worker session must remain restored when reviewer restore fails")
 	}
 }
 
@@ -2600,6 +2978,9 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	if got := st.sessions[s.ID].Metadata.Branch; got != "ao/mer-1/root" {
 		t.Fatalf("default branch = %q, want ao/mer-1/root", got)
 	}
+	if !st.sessions[s.ID].AutoInjectReview {
+		t.Fatal("automatic review injection must default to enabled")
+	}
 }
 
 func TestSpawn_DefaultsBranchUnderDevNamespaceForDevDataDir(t *testing.T) {
@@ -2791,7 +3172,7 @@ func TestSpawnWorker_IncludesReviewCIAndPlanningInstructions(t *testing.T) {
 		"mark every thread you fixed as resolved",
 		"multiple PRs/MRs with CI failures or review comments",
 		"decide the order based on blockers, stack order, failing scope, and user priority",
-		"native subagent or task-delegation support",
+		"Do not use the agent runtime's built-in subagent or task-delegation tools",
 		"For complex tasks, write a short implementation plan before editing",
 	} {
 		if !strings.Contains(systemPrompt, want) {
@@ -4514,6 +4895,87 @@ func TestSaveAndTeardownAll_ClosesScopedShellTerminalsBeforeForceDestroy(t *test
 	}
 }
 
+func TestSaveAndTeardownAll_TeardownsReviewerTerminalWithoutTerminate(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	reviewer := &fakeReviewerTerminator{sharedLog: &sharedLog}
+	m.SetReviewerTerminator(reviewer)
+	ws.stashRef = "refs/ao/preserved/mer-1"
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", RuntimeHandleID: "h1"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+	if len(reviewer.calls) != 0 {
+		t.Fatalf("reviewer terminates = %v, want none for shutdown save/teardown", reviewer.calls)
+	}
+	if len(reviewer.teardownCalls) != 1 || reviewer.teardownCalls[0] != "mer-1" {
+		t.Fatalf("reviewer teardowns = %v, want [mer-1]", reviewer.teardownCalls)
+	}
+	teardownIdx, forceIdx := -1, -1
+	for i, c := range sharedLog {
+		switch c {
+		case "TeardownReviewerTerminal:mer-1":
+			teardownIdx = i
+		case "ForceDestroy:mer-1":
+			forceIdx = i
+		}
+	}
+	if teardownIdx == -1 || forceIdx == -1 {
+		t.Fatalf("call log missing expected entries: %v", sharedLog)
+	}
+	if teardownIdx >= forceIdx {
+		t.Fatalf("call order = %v, want reviewer teardown before force destroy", sharedLog)
+	}
+}
+
+func TestSaveAndTeardownAllThenRestoreAll_TeardownsAndRestoresReviewerTerminal(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	reviewer := &fakeReviewerTerminator{}
+	m.SetReviewerTerminator(reviewer)
+	ws.stashRef = "refs/ao/preserved/mer-1"
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:   "/ws/mer-1",
+			Branch:          "ao/mer-1/root",
+			RuntimeHandleID: "h1",
+			AgentSessionID:  "agent-w",
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+	if len(reviewer.teardownCalls) != 1 || reviewer.teardownCalls[0] != "mer-1" {
+		t.Fatalf("reviewer teardowns = %v, want [mer-1]", reviewer.teardownCalls)
+	}
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("RestoreAll runtime creates = %d, want 1", rt.created)
+	}
+	if len(reviewer.restoreCalls) != 1 || reviewer.restoreCalls[0] != "mer-1" {
+		t.Fatalf("reviewer restores = %v, want [mer-1]", reviewer.restoreCalls)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be live after RestoreAll")
+	}
+}
+
 func TestSaveAndTeardownAll_SkipsScratchSessions(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
 	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents()}
@@ -6029,7 +6491,7 @@ func TestReconcileReap_TerminatedAndDeadTmuxLeftAlone(t *testing.T) {
 
 // signalingAgent is a fakeAgent that advertises BOTH a prompt-submit and a
 // blocked activity signal, so Manager.Send runs confirmActive for its harness
-// (see ports.ActivitySignaler).
+// (see ports.SubmitActivitySignaler and ports.BlockedActivitySignaler).
 type signalingAgent struct{ fakeAgent }
 
 func (signalingAgent) EmitsSubmitActivity() bool  { return true }
@@ -6069,7 +6531,7 @@ func newSendTestManager(t *testing.T, agent ports.Agent, messenger ports.AgentMe
 }
 
 func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
-	// A harness whose adapter does NOT implement ActivitySignaler (plain
+	// A harness whose adapter does NOT implement the activity-signal interfaces (plain
 	// fakeAgent) must skip confirmActive entirely: one Send, no nudges, and the
 	// call returns immediately without polling.
 	st := newFakeStore()
@@ -6078,7 +6540,7 @@ func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 	m := newSendTestManager(t, fakeAgent{}, msg, st)
 
 	start := time.Now()
-	if err := m.Send(context.Background(), "s1", "hello"); err != nil {
+	if err := m.Send(context.Background(), "s1", "hello", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
@@ -6087,6 +6549,19 @@ func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 	// Hookless path returns within milliseconds (no 2s+ confirmation wait).
 	if dt := time.Since(start); dt > 250*time.Millisecond {
 		t.Fatalf("Send took %s for a hookless harness; confirmActive should have been skipped", dt)
+	}
+}
+
+func TestSend_RecordsDeliveredUserInput(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code"}
+	m := newSendTestManager(t, fakeAgent{}, &fakeMessenger{}, st)
+
+	if err := m.Send(context.Background(), "s1", "continue with the migration", nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if got := st.sessions["s1"].Metadata.LatestUserPrompt; got != "continue with the migration" {
+		t.Fatalf("LatestUserPrompt = %q, want delivered user input", got)
 	}
 }
 
@@ -6102,7 +6577,7 @@ func TestSend_ConfirmsAndNudgesUntilActive(t *testing.T) {
 	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "do the thing"); err != nil {
+	if err := m.Send(context.Background(), "s1", "do the thing", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 2 {
@@ -6130,7 +6605,7 @@ func TestSend_ConfirmBudgetCapsRetries(t *testing.T) {
 	var logBuf bytes.Buffer
 	m.logger = slog.New(slog.NewTextHandler(&logBuf, nil))
 
-	if err := m.Send(context.Background(), "s1", "stuck prompt"); err != nil {
+	if err := m.Send(context.Background(), "s1", "stuck prompt", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) > m.sendConfirm.maxAttempts {
@@ -6159,7 +6634,7 @@ func TestSend_BlockedSessionRejectsDelivery(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	err := m.Send(context.Background(), "s1", "status update please")
+	err := m.Send(context.Background(), "s1", "status update please", nil)
 	if !errors.Is(err, ErrAwaitingDecision) {
 		t.Fatalf("Send error = %v, want ErrAwaitingDecision", err)
 	}
@@ -6175,7 +6650,7 @@ func TestSend_ExitedAgentRejectsDelivery(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	err := m.Send(context.Background(), "s1", "status update please")
+	err := m.Send(context.Background(), "s1", "status update please", nil)
 	if !errors.Is(err, ErrAgentExited) {
 		t.Fatalf("Send error = %v, want ErrAgentExited", err)
 	}
@@ -6194,7 +6669,7 @@ func TestSend_NoNudgeWhenBlockedAppearsMidWait(t *testing.T) {
 	msg := &blockOnSendMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "run the migration"); err != nil {
+	if err := m.Send(context.Background(), "s1", "run the migration", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
@@ -6212,7 +6687,7 @@ func TestSend_StillNudgesWhenWaitingInput(t *testing.T) {
 	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "do the thing"); err != nil {
+	if err := m.Send(context.Background(), "s1", "do the thing", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 2 {
@@ -6264,7 +6739,7 @@ func TestSend_NoNudgeWhenBlockedAppearsBeforeNudge(t *testing.T) {
 	})
 	m.sendConfirm = sendConfirmConfig{pollInterval: time.Millisecond, attemptDeadline: 0, maxAttempts: 3}
 
-	if err := m.Send(context.Background(), "s1", "run the migration"); err != nil {
+	if err := m.Send(context.Background(), "s1", "run the migration", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
@@ -6285,7 +6760,7 @@ func TestSend_SkipsConfirmForSubmitOnlyHarness(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, submitOnlyAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "do the thing"); err != nil {
+	if err := m.Send(context.Background(), "s1", "do the thing", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
@@ -6309,6 +6784,29 @@ func TestHarnessNudgeSafe(t *testing.T) {
 	m4 := New(Deps{Agents: missingAgents{}})
 	if m4.harnessNudgeSafe("claude-code") {
 		t.Fatalf("unresolved harness reported as nudge-safe")
+	}
+}
+
+func TestSwitchTargetsOnlyRetryEnterWhenActivitySignalsMakeItSafe(t *testing.T) {
+	agents := switchTestAgents{
+		domain.HarnessClaudeCode: claudecode.New(),
+		domain.HarnessCodex:      codex.New(),
+	}
+	m := New(Deps{Agents: agents})
+
+	cases := []struct {
+		harness domain.AgentHarness
+		want    bool
+	}{
+		{domain.HarnessClaudeCode, true},
+		{domain.HarnessCodex, false},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.harness), func(t *testing.T) {
+			if got := m.harnessNudgeSafe(tc.harness); got != tc.want {
+				t.Fatalf("harnessNudgeSafe(%q) = %v, want %v", tc.harness, got, tc.want)
+			}
+		})
 	}
 }
 

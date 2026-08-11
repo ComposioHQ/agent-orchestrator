@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,7 @@ var commandSpecs = map[string]commandSpec{
 	"agy":      {args: []string{"models"}, parser: parseIDLines},
 	"kilocode": {args: []string{"models"}, parser: parseIDLines},
 	"pi":       {args: []string{"--list-models"}, parser: parsePiModels},
+	"kimchi":   {args: []string{"--list-models"}, parser: parsePiModels},
 	"kimi":     {args: []string{"provider", "list", "--json"}, parser: parseJSONModels},
 	"auggie":   {args: []string{"models", "list", "--json"}, parser: parseJSONModels},
 	"devin":    {args: []string{"models", "list", "--format", "json"}, parser: parseJSONModels},
@@ -74,6 +76,12 @@ func Base(agentID string) ports.AgentModelCatalog {
 			model("gpt-5.4", "GPT-5.4", false),
 			model("gpt-5.4-mini", "GPT-5.4 mini", false),
 			model("gpt-5.3-codex", "GPT-5.3-Codex", false),
+		)
+	case "muse":
+		return catalog(agentID, "official-catalog", true, now,
+			model("muse-spark", "Muse Spark", true),
+			model("muse-spark-1.1", "Muse Spark 1.1", false),
+			model("muse-spark-1.2", "Muse Spark 1.2", false),
 		)
 	case "amp":
 		c := catalog(agentID, "official-modes", false, now,
@@ -121,9 +129,12 @@ func (Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscover
 	return Discover(ctx, request.AgentID, request.Binary, request.WorkingDir, request.Env)
 }
 
-// BinaryVersion returns a stable fingerprint for the installed agent binary.
-func (Discoverer) BinaryVersion(ctx context.Context, binary string) string {
-	return BinaryVersion(ctx, binary)
+// CatalogFingerprint returns a stable fingerprint of the discovery inputs: the
+// installed agent binary plus the configuration this adapter reads to build the
+// catalog. Folding configuration in is what lets a settings edit invalidate a
+// cached catalog, since the binary alone does not change when settings do.
+func (Discoverer) CatalogFingerprint(ctx context.Context, request ports.AgentModelDiscoveryRequest) string {
+	return CatalogFingerprint(ctx, request.AgentID, request.Binary, request.WorkingDir, request.Env)
 }
 
 // Manual returns the manual-entry fallback catalog for an agent.
@@ -132,6 +143,9 @@ func (Discoverer) Manual(agentID string) ports.AgentModelCatalog { return Manual
 // Discover executes model catalog discovery for an agent binary.
 func Discover(ctx context.Context, agentID, binary, workingDir string, env map[string]string) (ports.AgentModelCatalog, error) {
 	base := Base(agentID)
+	if agentID == "claude-code" {
+		return withClaudeCodeDefault(base, workingDir, env), nil
+	}
 	spec, ok := commandSpecs[agentID]
 	if !ok {
 		return base, nil
@@ -158,6 +172,88 @@ func Discover(ctx context.Context, agentID, binary, workingDir string, env map[s
 	base.Source = "cli"
 	base.FetchedAt = time.Now().UTC()
 	return base, nil
+}
+
+// claudeCodeSettingsReadLimit bounds how much of a settings file AO parses. The
+// documented files are small; a pathological one must not stall discovery.
+const claudeCodeSettingsReadLimit = 1 << 20
+
+// withClaudeCodeDefault flags the model Claude Code will actually run with.
+// Claude Code exposes no non-interactive command that reports its resolved
+// model, but the value it resolves is readable: AO passes no --model, so the
+// choice comes from ANTHROPIC_MODEL or the "model" key in the settings files,
+// nearest scope first. When none of them set a model the CLI picks internally
+// and AO must not guess, so the catalog keeps no default and the picker keeps
+// showing "Agent default".
+func withClaudeCodeDefault(base ports.AgentModelCatalog, workingDir string, env map[string]string) ports.AgentModelCatalog {
+	resolved := claudeCodeResolvedModel(workingDir, env)
+	if resolved == "" {
+		return base
+	}
+	models := make([]ports.AgentModelInfo, len(base.Models))
+	copy(models, base.Models)
+	base.Models = models
+	for i := range base.Models {
+		if strings.EqualFold(base.Models[i].ID, resolved) {
+			base.Models[i].IsDefault = true
+			return base
+		}
+	}
+	// A configured model that is not one of the published aliases (an explicit
+	// snapshot id, or an alias variant such as "opus[1m]") still has to be
+	// selectable, otherwise the picker would show a default it cannot round-trip.
+	base.Models = append(base.Models, model(resolved, resolved, true))
+	return base
+}
+
+// claudeCodeResolvedModel returns the configured Claude Code model, or "" when
+// no scope sets one. Order mirrors Claude Code's own precedence, narrowed to the
+// sources AO can read without running the CLI.
+func claudeCodeResolvedModel(workingDir string, env map[string]string) string {
+	if fromEnv := strings.TrimSpace(env["ANTHROPIC_MODEL"]); fromEnv != "" {
+		return fromEnv
+	}
+	if fromEnv := strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL")); fromEnv != "" {
+		return fromEnv
+	}
+	var candidates []string
+	if dir := strings.TrimSpace(workingDir); dir != "" {
+		candidates = append(candidates,
+			filepath.Join(dir, ".claude", "settings.local.json"),
+			filepath.Join(dir, ".claude", "settings.json"),
+		)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".claude", "settings.json"))
+	}
+	for _, candidate := range candidates {
+		if configured := claudeCodeSettingsModel(candidate); configured != "" {
+			return configured
+		}
+	}
+	return ""
+}
+
+// claudeCodeSettingsModel reads one settings file's "model". An unreadable or
+// malformed file is not an error worth surfacing: the picker degrades to no
+// default, exactly as if the key were absent.
+func claudeCodeSettingsModel(path string) string {
+	file, err := os.Open(path) //nolint:gosec // path is derived from the project dir and the user's home
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = file.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(file, claudeCodeSettingsReadLimit))
+	if err != nil {
+		return ""
+	}
+	var settings struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(settings.Model)
 }
 
 func hasDiscoverySource(agentID string) bool {
@@ -232,6 +328,34 @@ func BinaryVersion(ctx context.Context, binary string) string {
 	_, _ = hash.Write([]byte{0})
 	_, _ = hash.Write([]byte(strconv.FormatInt(info.ModTime().UnixNano(), 10)))
 	return fmt.Sprintf("%x", hash.Sum(nil)[:8])
+}
+
+// CatalogFingerprint hashes every discovery input for an agent: the resolved
+// executable, plus the configuration values the adapter reads. A cached catalog
+// stays valid only while this is unchanged, so configuration AO reads during
+// discovery must be represented here or an edit would never take effect.
+func CatalogFingerprint(ctx context.Context, agentID, binary, workingDir string, env map[string]string) string {
+	binaryVersion := BinaryVersion(ctx, binary)
+	config := discoveryConfigInputs(agentID, workingDir, env)
+	if config == "" {
+		// Keep the executable-only fingerprint byte-identical to what earlier
+		// daemons wrote, so upgrading does not invalidate every cached catalog.
+		return binaryVersion
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(binaryVersion))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(config))
+	return fmt.Sprintf("%x", hash.Sum(nil)[:8])
+}
+
+// discoveryConfigInputs returns the configuration an agent's discovery consults,
+// or "" when the catalog depends on the binary alone.
+func discoveryConfigInputs(agentID, workingDir string, env map[string]string) string {
+	if agentID != "claude-code" {
+		return ""
+	}
+	return "model=" + claudeCodeResolvedModel(workingDir, env)
 }
 
 func catalog(agentID, source string, allowCustom bool, at time.Time, models ...ports.AgentModelInfo) ports.AgentModelCatalog {
@@ -386,13 +510,44 @@ func parseJSONModels(output []byte) ([]ports.AgentModelInfo, error) {
 					IsDefault: firstBool(node, "isDefault", "is_default", "default"),
 				})
 			}
-			for _, child := range node {
+			for key, child := range node {
+				if key == "models" {
+					if modelMap, ok := child.(map[string]any); ok {
+						for alias, item := range modelMap {
+							if modelNode, ok := item.(map[string]any); ok && strings.TrimSpace(alias) != "" && looksLikeModelAliasRecord(modelNode) {
+								label := firstString(modelNode, "displayName", "display_name", "model_name", "label", "name")
+								if label == "" {
+									label = alias
+								}
+								models = append(models, ports.AgentModelInfo{
+									ID:        strings.TrimSpace(alias),
+									Label:     label,
+									Provider:  firstString(modelNode, "provider", "providerId", "provider_id"),
+									IsDefault: firstBool(modelNode, "isDefault", "is_default", "default"),
+								})
+								continue
+							}
+							walk(item)
+						}
+						continue
+					}
+				}
 				walk(child)
 			}
 		}
 	}
 	walk(root)
 	return normalize(models), nil
+}
+
+func looksLikeModelAliasRecord(node map[string]any) bool {
+	if _, isModelContainer := node["models"]; isModelContainer {
+		return false
+	}
+	return firstString(node,
+		"modelId", "model_id", "model_uid", "slug", "model",
+		"provider", "providerId", "provider_id",
+	) != ""
 }
 
 func firstString(node map[string]any, keys ...string) string {

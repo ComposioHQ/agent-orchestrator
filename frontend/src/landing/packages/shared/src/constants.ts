@@ -53,14 +53,21 @@ export const DOWNLOAD_URL_LINUX = "https://github.com/Untrivial-ai/agent-orchest
 
 // AO Mobile. iOS ships as a TestFlight beta — the same link the desktop app's
 // Connect Mobile panel opens (frontend/src/renderer/components/settings/
-// ConnectMobileGetApp.tsx), so the two must be changed together. Android is on
-// its way to Play (see docs/android-play-setup.md) and has no public link yet.
+// ConnectMobileGetApp.tsx), so the two must be changed together.
 export const TESTFLIGHT_URL = "https://testflight.apple.com/join/t4U3fu2H";
 
 /** Apple's TestFlight app itself — step one, and useless to skip. */
 export const TESTFLIGHT_APP_URL = "https://apps.apple.com/app/testflight/id899247664";
 
-export const AGENT_HARNESSES = 23;
+/** Public self-join Group that grants eligibility for the Android closed test. */
+export const ANDROID_TESTER_GROUP_URL =
+  "https://groups.google.com/g/ao-mobile-testers/about";
+
+/** Google Play page where an eligible Group member opts in and installs. */
+export const ANDROID_TEST_OPT_IN_URL =
+  "https://play.google.com/apps/testing/aoagents.dev";
+
+export const AGENT_HARNESSES = 24;
 export const TAGLINE = "Stop babysitting agents. Start merging real work.";
 export const HERO_SUBHEADLINE = "Run a fleet of coding agents while keeping branches, reviews, and CI failures manageable.";
 export const HERO_SECONDARY_SUBHEADLINE = "Isolated workspaces for Claude Code, Codex, and any CLI agent. Review every change from one dashboard. Free and open source.";
