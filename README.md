@@ -220,13 +220,12 @@ restoring newer revoked grants. Repository removals, suspension, deletion, and
 explicit disconnect revoke grants; project creation checks an active grant in
 the same database transaction.
 
-The GitHub App must request organization **Members: read** permission so AO can
-prove that the person completing an organization installation is an active
-organization admin. It also needs repository metadata/contents permissions
-appropriate for the later worker and the `installation` and
-`installation_repositories` webhook events. AO fails closed when the members
-permission is absent; ordinary organization members cannot bind an
-installation.
+The GitHub App currently allows only GitHub's required **Metadata: read** and
+organization **Members: read** permissions. It subscribes only to the
+`installation` and `installation_repositories` webhook events. AO fails closed
+when those exact settings drift: ordinary organization members cannot bind an
+installation, and unused write access is not left available before workers need
+it. Add narrowly scoped repository permissions later with the worker feature.
 
 The one GitHub App is a production-owned integration. Its global setup,
 OAuth-callback, and webhook URLs must point to `https://api.aoagents.dev`.

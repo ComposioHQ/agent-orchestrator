@@ -61,7 +61,7 @@ func TestClientUsesPKCEAndVerifiesUserInstallation(t *testing.T) {
 			_, _ = w.Write([]byte(`{
 				"id":1234,
 				"slug":"ao-app",
-				"permissions":{"members":"read"},
+				"permissions":{"members":"read","metadata":"read"},
 				"events":["installation","installation_repositories"]
 			}`))
 		default:
@@ -173,7 +173,24 @@ func TestClientCheckRejectsIncompleteAppConfiguration(t *testing.T) {
 	defer server.Close()
 
 	err := testClient(t, server.URL).Check(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "Members read") {
+	if err == nil || !strings.Contains(err.Error(), "members read") {
+		t.Fatalf("Check() error = %v", err)
+	}
+}
+
+func TestClientCheckRejectsExcessAppPermissions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":1234,
+			"slug":"ao-app",
+			"permissions":{"members":"read","metadata":"read","administration":"write"},
+			"events":["installation","installation_repositories"]
+		}`))
+	}))
+	defer server.Close()
+
+	err := testClient(t, server.URL).Check(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unexpected administration write") {
 		t.Fatalf("Check() error = %v", err)
 	}
 }
