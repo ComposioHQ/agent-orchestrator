@@ -610,7 +610,7 @@ describe("ProjectSettingsForm", () => {
 		expect(greptileOption).not.toHaveTextContent("Auth unknown");
 		await userEvent.click(greptileOption);
 		expect(reviewerAgent).toHaveTextContent("Greptile CLI");
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		submitSettings();
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
@@ -835,7 +835,7 @@ describe("ProjectSettingsForm", () => {
 			"Codex",
 			"Cursor",
 			"OpenCode",
-			"gGreptile CLI",
+			"Greptile CLI",
 			"GitHub Copilot",
 			"Goose",
 			"Kilo Code",

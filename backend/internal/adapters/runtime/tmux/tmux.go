@@ -1174,7 +1174,9 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 	b.WriteString(strings.Join(parts, " "))
 	if cfg.TerminalBehavior == ports.TerminalOutputOnly {
 		// remain-on-exit retains the output without starting another process.
-	} else if cfg.Env["AO_SUPERVISED_PROCESS"] == "1" {
+		return b.String()
+	}
+	if cfg.Env["AO_SUPERVISED_PROCESS"] == "1" {
 		// cat consumes and discards any input that arrived while the supervised
 		// child was exiting. Runtime Restart/Destroy replaces or kills the pane.
 		b.WriteString(`; exec cat >/dev/null`)
