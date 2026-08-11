@@ -47,3 +47,30 @@ func TestHealthReportsDeploymentIdentity(t *testing.T) {
 		t.Fatalf("request log = %#v", entry)
 	}
 }
+
+func TestGitHubHealthReportsDisabledWithoutProductionCredentials(t *testing.T) {
+	server := New(Options{
+		Environment: "staging",
+		Release:     "sha-staging",
+	})
+	request := httptest.NewRequest(http.MethodGet, "/github/healthz", nil)
+	response := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
+	}
+	var body map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != "disabled" ||
+		body["environment"] != "staging" ||
+		body["release"] != "sha-staging" {
+		t.Fatalf("GitHub health body = %#v", body)
+	}
+}

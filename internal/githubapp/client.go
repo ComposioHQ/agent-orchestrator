@@ -68,6 +68,13 @@ type Installation struct {
 	SuspendedAt         *time.Time        `json:"suspended_at"`
 }
 
+type App struct {
+	ID          int64             `json:"id"`
+	Slug        string            `json:"slug"`
+	Permissions map[string]string `json:"permissions"`
+	Events      []string          `json:"events"`
+}
+
 type InstallationOwner struct {
 	ID    int64  `json:"id"`
 	Login string `json:"login"`
@@ -145,6 +152,49 @@ func (c *Client) InstallationURL(state string) string {
 	query := url.Values{"state": {state}}
 	return c.webBaseURL + "/apps/" + url.PathEscape(c.appSlug) +
 		"/installations/new?" + query.Encode()
+}
+
+func (c *Client) Check(ctx context.Context) error {
+	var app App
+	if err := c.appJSON(ctx, http.MethodGet, "/app", nil, &app); err != nil {
+		return err
+	}
+	if app.ID != c.appID || app.Slug != c.appSlug {
+		return errors.New("GitHub returned a different App identity")
+	}
+	requiredPermissions := map[string]string{
+		"members":  "read",
+		"metadata": "read",
+	}
+	for permission, expected := range requiredPermissions {
+		if app.Permissions[permission] != expected {
+			return fmt.Errorf("GitHub App requires %s %s permission", permission, expected)
+		}
+	}
+	for permission, access := range app.Permissions {
+		if expected, ok := requiredPermissions[permission]; !ok || access != expected {
+			return fmt.Errorf("GitHub App has unexpected %s %s permission", permission, access)
+		}
+	}
+	requiredEvents := map[string]bool{
+		"installation":              true,
+		"installation_repositories": true,
+	}
+	events := make(map[string]bool, len(app.Events))
+	for _, event := range app.Events {
+		events[event] = true
+	}
+	for event := range requiredEvents {
+		if !events[event] {
+			return fmt.Errorf("GitHub App requires %s event", event)
+		}
+	}
+	for event := range events {
+		if !requiredEvents[event] {
+			return fmt.Errorf("GitHub App has unexpected %s event", event)
+		}
+	}
+	return nil
 }
 
 func (c *Client) OAuthURL(state, challenge string) string {

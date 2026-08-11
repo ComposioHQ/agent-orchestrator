@@ -35,6 +35,8 @@ def build_task_definition(
     log_group: str,
     region: str,
     runtime_database_user: str = "",
+    environment_overrides: dict[str, str] | None = None,
+    secret_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     task = source["taskDefinition"]
     payload = {
@@ -72,9 +74,19 @@ def build_task_definition(
         )
     elif container_name == "migration":
         values["AO_CLOUD_RUNTIME_DATABASE_USER"] = runtime_database_user
+    values.update(environment_overrides or {})
     container["environment"] = [
         {"name": name, "value": value}
         for name, value in sorted(values.items())
+    ]
+    secrets = {
+        item["name"]: item["valueFrom"]
+        for item in container.get("secrets", [])
+    }
+    secrets.update(secret_overrides or {})
+    container["secrets"] = [
+        {"name": name, "valueFrom": value}
+        for name, value in sorted(secrets.items())
     ]
     log_options = container["logConfiguration"]["options"]
     log_options.update(

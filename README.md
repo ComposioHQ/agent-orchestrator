@@ -54,8 +54,12 @@ CNAMEs and AWS-managed TLS:
 
 ACM certificates in `eu-north-1` terminate TLS. Both ECS services run two
 healthy replicas, `/healthz` reports deployment identity, and `/readyz` verifies
-database connectivity plus draining state. Their task security groups accept
-port 8080 only from the corresponding public ALB security group. CloudWatch
+database connectivity plus draining state. Production also exposes
+`/github/healthz`, which validates the configured App identity, permissions, and
+events with GitHub and returns `503` when GitHub is disabled, misconfigured, or
+unavailable. It is diagnostic only and is not an ALB target-health dependency.
+Their task security groups accept port
+8080 only from the corresponding public ALB security group. CloudWatch
 deployment alarms and the operations dashboard use the public ALB target
 groups.
 
@@ -216,20 +220,19 @@ restoring newer revoked grants. Repository removals, suspension, deletion, and
 explicit disconnect revoke grants; project creation checks an active grant in
 the same database transaction.
 
-The GitHub App must request organization **Members: read** permission so AO can
-prove that the person completing an organization installation is an active
-organization admin. It also needs repository metadata/contents permissions
-appropriate for the later worker and the `installation` and
-`installation_repositories` webhook events. AO fails closed when the members
-permission is absent; ordinary organization members cannot bind an
-installation.
+The GitHub App currently allows only GitHub's required **Metadata: read** and
+organization **Members: read** permissions. It subscribes only to the
+`installation` and `installation_repositories` webhook events. AO fails closed
+when those exact settings drift: ordinary organization members cannot bind an
+installation, and unused write access is not left available before workers need
+it. Add narrowly scoped repository permissions later with the worker feature.
 
 The one GitHub App is a production-owned integration. Its global setup,
 OAuth-callback, and webhook URLs must point to `https://api.aoagents.dev`.
-Staging and local configurations reject GitHub App credentials. The hosted
-tasks currently leave GitHub disabled until the production secret and task
-mapping are installed; a future broker must explicitly return
-environment-scoped grants before staging or local UI enables GitHub.
+Staging and local configurations reject GitHub App credentials. Production
+loads the App credentials from Secrets Manager through the ECS task definition.
+A future broker must explicitly return environment-scoped grants before staging
+or local UI enables GitHub.
 
 Staging and production intentionally share one WorkOS environment while keeping
 their AO databases separate. Desktop login continues to use the

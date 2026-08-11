@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
@@ -45,6 +46,20 @@ type Service struct {
 	installTTL    time.Duration
 	logger        *slog.Logger
 	workerID      string
+	checkMu       sync.Mutex
+	checkAt       time.Time
+	checkErr      error
+}
+
+func (s *Service) Check(ctx context.Context) error {
+	s.checkMu.Lock()
+	defer s.checkMu.Unlock()
+	if !s.checkAt.IsZero() && time.Since(s.checkAt) < 30*time.Second {
+		return s.checkErr
+	}
+	s.checkErr = s.client.Check(ctx)
+	s.checkAt = time.Now()
+	return s.checkErr
 }
 
 func NewService(

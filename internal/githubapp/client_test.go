@@ -52,6 +52,18 @@ func TestClientUsesPKCEAndVerifiesUserInstallation(t *testing.T) {
 				"permissions":{"contents":"read"},
 				"events":["installation"]
 			}`))
+		case "/app":
+			authorization := r.Header.Get("Authorization")
+			if !strings.HasPrefix(authorization, "Bearer ") ||
+				len(strings.Split(strings.TrimPrefix(authorization, "Bearer "), ".")) != 3 {
+				t.Errorf("invalid GitHub App authorization: %q", authorization)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":1234,
+				"slug":"ao-app",
+				"permissions":{"members":"read","metadata":"read"},
+				"events":["installation","installation_repositories"]
+			}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -59,6 +71,9 @@ func TestClientUsesPKCEAndVerifiesUserInstallation(t *testing.T) {
 	defer server.Close()
 
 	client := testClient(t, server.URL)
+	if err := client.Check(context.Background()); err != nil {
+		t.Fatalf("check GitHub App: %v", err)
+	}
 	oauthURL, err := url.Parse(client.OAuthURL("state-value", "challenge-value"))
 	if err != nil {
 		t.Fatal(err)
@@ -143,6 +158,40 @@ func TestClientUsesPKCEAndVerifiesUserInstallation(t *testing.T) {
 	)
 	if err != nil || canAdminister {
 		t.Fatalf("different personal installation owner accepted: allowed=%v err=%v", canAdminister, err)
+	}
+}
+
+func TestClientCheckRejectsIncompleteAppConfiguration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":1234,
+			"slug":"ao-app",
+			"permissions":{"metadata":"read"},
+			"events":["installation"]
+		}`))
+	}))
+	defer server.Close()
+
+	err := testClient(t, server.URL).Check(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "members read") {
+		t.Fatalf("Check() error = %v", err)
+	}
+}
+
+func TestClientCheckRejectsExcessAppPermissions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":1234,
+			"slug":"ao-app",
+			"permissions":{"members":"read","metadata":"read","administration":"write"},
+			"events":["installation","installation_repositories"]
+		}`))
+	}))
+	defer server.Close()
+
+	err := testClient(t, server.URL).Check(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unexpected administration write") {
+		t.Fatalf("Check() error = %v", err)
 	}
 }
 

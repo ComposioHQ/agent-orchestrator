@@ -124,6 +124,12 @@ aws_cli secretsmanager describe-secret \
 	--secret-id ao-cloud/production/migration-database-url >/dev/null
 aws_cli secretsmanager describe-secret \
 	--secret-id ao-cloud/production/workos >/dev/null
+github_secret_arn="$(
+	aws_cli secretsmanager describe-secret \
+		--secret-id ao-cloud/production/github \
+		--query ARN \
+		--output text
+)"
 
 register_api_task() {
 	local source payload
@@ -141,7 +147,15 @@ register_api_task() {
 				--release "$release" \
 				--environment production \
 				--log-group /ao-cloud/production/control-plane \
-				--region "$REGION"
+				--region "$REGION" \
+				--set-environment AO_CLOUD_PUBLIC_URL=https://api.aoagents.dev \
+				--set-secret "AO_CLOUD_GITHUB_APP_ID=${github_secret_arn}:app_id::" \
+				--set-secret "AO_CLOUD_GITHUB_APP_SLUG=${github_secret_arn}:app_slug::" \
+				--set-secret "AO_CLOUD_GITHUB_CLIENT_ID=${github_secret_arn}:client_id::" \
+				--set-secret "AO_CLOUD_GITHUB_CLIENT_SECRET=${github_secret_arn}:client_secret::" \
+				--set-secret "AO_CLOUD_GITHUB_PRIVATE_KEY=${github_secret_arn}:private_key::" \
+				--set-secret "AO_CLOUD_GITHUB_WEBHOOK_SECRET=${github_secret_arn}:webhook_secret::" \
+				--set-secret "AO_CLOUD_GITHUB_STATE_KEY=${github_secret_arn}:state_key::"
 	)"
 	aws_cli ecs register-task-definition \
 		--cli-input-json "$payload" \
@@ -364,12 +378,25 @@ then
 	exit 1
 fi
 
-./scripts/verify-ecs-service.py \
-	--region "$REGION" \
-	--cluster "$PRODUCTION_CLUSTER" \
-	--service "$PRODUCTION_SERVICE" \
-	--alarm "$ROLLBACK_ALARM" \
-	--expected-task-definition "$api_task" >/dev/null
+verification_error=""
+for _ in $(seq 1 18); do
+	if verification_error="$(
+		./scripts/verify-ecs-service.py \
+			--region "$REGION" \
+			--cluster "$PRODUCTION_CLUSTER" \
+			--service "$PRODUCTION_SERVICE" \
+			--alarm "$ROLLBACK_ALARM" \
+			--expected-task-definition "$api_task" 2>&1
+	)"; then
+		verification_error=""
+		break
+	fi
+	sleep 10
+done
+if [[ -n "$verification_error" ]]; then
+	echo "$verification_error" >&2
+	exit 1
+fi
 trap - EXIT
 
 printf 'Promoted release %s\nImage digest: %s\nTask definition: %s\n' \
