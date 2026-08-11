@@ -252,7 +252,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 				continue
 			}
 			if completion.Err != nil {
-				if _, updateErr := store.UpdateReviewRunResult(resultCtx, completion.RunID, domain.ReviewRunFailed, domain.VerdictNone, completion.Err.Error(), ""); updateErr != nil {
+				if _, updateErr := store.UpdateReviewRunResult(resultCtx, completion.RunID, domain.ReviewRunFailed, domain.VerdictNone, completion.Err.Error(), "", run.AutoInjectReview); updateErr != nil {
 					log.Error("record one-shot reviewer failure", "worker", workerID, "run", completion.RunID, "error", updateErr)
 				}
 				continue
