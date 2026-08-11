@@ -509,6 +509,7 @@ type WorkspaceRepo struct {
 	Name          string
 	RelativePath  string
 	RepoOriginURL string
-	RegisteredAt  time.Time
 	DefaultBranch string
+	RegisteredAt  time.Time
+	GitStatus     string
 }
