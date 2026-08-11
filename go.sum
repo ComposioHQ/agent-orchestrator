@@ -1,5 +1,5 @@
-github.com/Untrivial-ai/agent-orchestrator/backend v0.0.0-20260810195726-f1377e6822ee h1:Fr1I7C1+WsZDMWwRxXNkhTP8+HyuZvAnisEl6AULOmQ=
-github.com/Untrivial-ai/agent-orchestrator/backend v0.0.0-20260810195726-f1377e6822ee/go.mod h1:+JSl0Lxewd6N3O+iVuO4ikyarctRB98Bw41F7TVEGSI=
+github.com/Untrivial-ai/agent-orchestrator/backend v0.0.0-20260811164213-0b1b6ad5aa88 h1:GAw18uKmUweS6Et3C7tVSk8WnPiUQ5SbcIMfuv2wTYI=
+github.com/Untrivial-ai/agent-orchestrator/backend v0.0.0-20260811164213-0b1b6ad5aa88/go.mod h1:+JSl0Lxewd6N3O+iVuO4ikyarctRB98Bw41F7TVEGSI=
 github.com/coreos/go-oidc/v3 v3.20.0 h1:EtE0WIBHk03N+DqGkY4+UONzzZHk7amKt6IyNd7OsZE=
 github.com/coreos/go-oidc/v3 v3.20.0/go.mod h1:DYCf24+ncYi+XkIH97GY1+dqoRlbaSI26KVTCI9SrY4=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

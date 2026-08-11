@@ -39,8 +39,8 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	).Scan(&tableCount); err != nil {
 		t.Fatal(err)
 	}
-	if tableCount != 28 {
-		t.Fatalf("found %d AO tables, want 28", tableCount)
+	if tableCount != 30 {
+		t.Fatalf("found %d AO tables, want 30", tableCount)
 	}
 	var forcedRLSTableCount int
 	if err := pool.QueryRow(
@@ -95,6 +95,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		"second-"+suffix,
 		now,
 	)
+	exerciseGitHubStore(t, ctx, store, first, firstOrg, second, now)
 
 	projectInput := domain.CreateProject{
 		DisplayName:   "API",
@@ -473,6 +474,282 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		50,
 	); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("WorkOS token without selected organization error = %v", err)
+	}
+}
+
+func exerciseGitHubStore(
+	t *testing.T,
+	ctx context.Context,
+	store *Store,
+	owner domain.Principal,
+	orgID string,
+	other domain.Principal,
+	now time.Time,
+) {
+	t.Helper()
+	installState := make([]byte, 32)
+	oauthState := make([]byte, 32)
+	if _, err := rand.Read(installState); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rand.Read(oauthState); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := store.CreateGitHubInstallAttempt(
+		ctx,
+		owner,
+		orgID,
+		installState,
+		now.Add(10*time.Minute),
+	)
+	if err != nil {
+		t.Fatalf("create GitHub install attempt: %v", err)
+	}
+	if err := store.ValidateGitHubInstallState(ctx, installState); err != nil {
+		t.Fatalf("validate GitHub install state: %v", err)
+	}
+	if err := store.withTenant(ctx, owner, orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(
+			ctx,
+			`UPDATE ao_org_memberships
+			SET role = 'member'
+			WHERE org_id = $1 AND user_id = $2`,
+			orgID,
+			owner.UserID,
+		)
+		return err
+	}); err != nil {
+		t.Fatalf("downgrade GitHub installer: %v", err)
+	}
+	if err := store.ValidateGitHubInstallState(
+		ctx,
+		installState,
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("downgraded GitHub installer state error = %v", err)
+	}
+	if err := store.withTenant(ctx, owner, orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(
+			ctx,
+			`UPDATE ao_org_memberships
+			SET role = 'owner'
+			WHERE org_id = $1 AND user_id = $2`,
+			orgID,
+			owner.UserID,
+		)
+		return err
+	}); err != nil {
+		t.Fatalf("restore GitHub installer: %v", err)
+	}
+	githubInstallationID := now.UnixNano()
+	pending := domain.GitHubInstallation{
+		GitHubInstallationID: githubInstallationID,
+		GitHubAccountID:      githubInstallationID + 1,
+		AccountLogin:         "test-org",
+		AccountType:          "Organization",
+		RepositorySelection:  "selected",
+		Permissions:          json.RawMessage(`{"contents":"read"}`),
+		Events:               []string{"installation", "installation_repositories"},
+	}
+	if _, err := store.BeginGitHubOAuth(
+		ctx,
+		installState,
+		pending,
+		oauthState,
+		[]byte("encrypted-pkce-verifier"),
+		make([]byte, 12),
+		now.Add(10*time.Minute),
+	); err != nil {
+		t.Fatalf("begin GitHub OAuth: %v", err)
+	}
+	if err := store.ValidateGitHubInstallState(ctx, installState); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reused install state error = %v", err)
+	}
+	oauthAttempt, err := store.GitHubOAuthAttempt(ctx, oauthState)
+	if err != nil {
+		t.Fatalf("load GitHub OAuth attempt: %v", err)
+	}
+	if oauthAttempt.ID != attempt.ID ||
+		oauthAttempt.PendingGitHubInstallationID != githubInstallationID {
+		t.Fatalf("OAuth attempt = %#v", oauthAttempt)
+	}
+	installation, err := store.CompleteGitHubInstallation(
+		ctx,
+		oauthState,
+		pending,
+	)
+	if err != nil {
+		t.Fatalf("complete GitHub installation: %v", err)
+	}
+	if _, err := store.GitHubOAuthAttempt(ctx, oauthState); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reused OAuth state error = %v", err)
+	}
+	repositoryID := githubInstallationID + 2
+	repository := domain.GitHubRepository{
+		GitHubRepositoryID: repositoryID,
+		GitHubOwnerID:      pending.GitHubAccountID,
+		Name:               "api",
+		FullName:           "test-org/api",
+		HTMLURL:            "https://github.com/test-org/api",
+		CloneURL:           "https://github.com/test-org/api.git",
+		SSHURL:             "git@github.com:test-org/api.git",
+		DefaultBranch:      "main",
+		Visibility:         "private",
+		IsPrivate:          true,
+		GitHubUpdatedAt:    &now,
+	}
+	syncGeneration, err := store.BeginGitHubRepositorySync(ctx, installation)
+	if err != nil {
+		t.Fatalf("begin GitHub repository sync: %v", err)
+	}
+	if err := store.ReconcileGitHubRepositories(
+		ctx,
+		orgID,
+		installation,
+		syncGeneration,
+		[]domain.GitHubRepository{repository},
+	); err != nil {
+		t.Fatalf("reconcile GitHub repositories: %v", err)
+	}
+	staleGeneration, err := store.BeginGitHubRepositorySync(ctx, installation)
+	if err != nil {
+		t.Fatalf("begin stale GitHub repository sync: %v", err)
+	}
+	currentGeneration, err := store.BeginGitHubRepositorySync(ctx, installation)
+	if err != nil {
+		t.Fatalf("begin current GitHub repository sync: %v", err)
+	}
+	if err := store.ReconcileGitHubRepositories(
+		ctx,
+		orgID,
+		installation,
+		staleGeneration,
+		nil,
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale GitHub repository sync error = %v", err)
+	}
+	if err := store.ReconcileGitHubRepositories(
+		ctx,
+		orgID,
+		installation,
+		currentGeneration,
+		[]domain.GitHubRepository{repository},
+	); err != nil {
+		t.Fatalf("reconcile current GitHub repository sync: %v", err)
+	}
+	repositories, hasMore, err := store.ListGitHubRepositories(
+		ctx,
+		owner,
+		orgID,
+		nil,
+		50,
+	)
+	if err != nil || hasMore || len(repositories) != 1 ||
+		repositories[0].GitHubRepositoryID != repositoryID ||
+		repositories[0].RevokedAt != nil {
+		t.Fatalf("GitHub repositories = %#v, hasMore=%v, err=%v", repositories, hasMore, err)
+	}
+	if _, _, err := store.ListGitHubRepositories(
+		ctx,
+		other,
+		orgID,
+		nil,
+		50,
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("cross-tenant GitHub repository list error = %v", err)
+	}
+	project, err := store.CreateGitHubProject(
+		ctx,
+		owner,
+		orgID,
+		"github-project-"+attempt.ID,
+		domain.CreateGitHubProject{GitHubRepositoryID: repositoryID},
+	)
+	if err != nil || project.RepositoryURL != "https://github.com/test-org/api" {
+		t.Fatalf("create GitHub project = %#v, err=%v", project, err)
+	}
+	delivery := domain.GitHubWebhookDelivery{
+		DeliveryID:           "delivery-" + attempt.ID,
+		Event:                "installation_repositories",
+		Action:               "added",
+		GitHubInstallationID: githubInstallationID,
+		Payload:              []byte(`{"action":"added"}`),
+	}
+	payloadHash := make([]byte, 32)
+	if _, err := rand.Read(payloadHash); err != nil {
+		t.Fatal(err)
+	}
+	inserted, err := store.InsertGitHubWebhook(ctx, delivery, payloadHash)
+	if err != nil || !inserted {
+		t.Fatalf("insert GitHub webhook: inserted=%v err=%v", inserted, err)
+	}
+	inserted, err = store.InsertGitHubWebhook(ctx, delivery, payloadHash)
+	if err != nil || inserted {
+		t.Fatalf("deduplicate GitHub webhook: inserted=%v err=%v", inserted, err)
+	}
+	tamperedHash := append([]byte(nil), payloadHash...)
+	tamperedHash[0] ^= 0xff
+	if _, err := store.InsertGitHubWebhook(
+		ctx,
+		delivery,
+		tamperedHash,
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("tampered duplicate webhook error = %v", err)
+	}
+	workerID := "integration-worker-" + attempt.ID
+	claimedOwnDelivery := false
+	for range 20 {
+		claimed, err := store.ClaimGitHubWebhook(
+			ctx,
+			workerID,
+			now.Add(time.Minute),
+		)
+		if err != nil {
+			t.Fatalf("claim GitHub webhook: %v", err)
+		}
+		if err := store.CompleteGitHubWebhook(
+			ctx,
+			claimed.DeliveryID,
+			workerID,
+		); err != nil {
+			t.Fatalf("complete GitHub webhook: %v", err)
+		}
+		if claimed.DeliveryID == delivery.DeliveryID {
+			claimedOwnDelivery = true
+			break
+		}
+	}
+	if !claimedOwnDelivery {
+		t.Fatal("new GitHub webhook was not claimable")
+	}
+	inFlightGeneration, err := store.BeginGitHubRepositorySync(ctx, installation)
+	if err != nil {
+		t.Fatalf("begin in-flight GitHub repository sync: %v", err)
+	}
+	if _, err := store.DisconnectGitHubInstallation(
+		ctx,
+		owner,
+		orgID,
+		installation.ID,
+	); err != nil {
+		t.Fatalf("disconnect GitHub installation: %v", err)
+	}
+	if err := store.ReconcileGitHubRepositories(
+		ctx,
+		orgID,
+		installation,
+		inFlightGeneration,
+		[]domain.GitHubRepository{repository},
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("sync after GitHub disconnect error = %v", err)
+	}
+	if _, err := store.CreateGitHubProject(
+		ctx,
+		owner,
+		orgID,
+		"github-project-revoked-"+attempt.ID,
+		domain.CreateGitHubProject{GitHubRepositoryID: repositoryID},
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("project from revoked GitHub grant error = %v", err)
 	}
 }
 

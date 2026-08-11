@@ -1,0 +1,47 @@
+name: Update public submodule pointer
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  update-pointer:
+    runs-on: ubuntu-latest
+    env:
+      PUBLIC_REPO_TOKEN: ${{ secrets.AO_PUBLIC_REPO_TOKEN }}
+    steps:
+      - name: Check out public repository
+        if: env.PUBLIC_REPO_TOKEN != ''
+        uses: actions/checkout@v4
+        with:
+          repository: Untrivial-ai/agent-orchestrator
+          token: ${{ secrets.AO_PUBLIC_REPO_TOKEN }}
+          submodules: false
+
+      - name: Point optional submodule at private main
+        if: env.PUBLIC_REPO_TOKEN != ''
+        run: |
+          if git config --file .gitmodules --get-regexp \
+            '^submodule\.private/ao-cloud\.path$' >/dev/null; then
+            git update-index --add --cacheinfo \
+              "160000,${GITHUB_SHA},private/ao-cloud"
+          else
+            echo "Public main does not contain the optional AO Cloud submodule yet."
+          fi
+
+      - name: Open or update pointer pull request
+        if: env.PUBLIC_REPO_TOKEN != ''
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.AO_PUBLIC_REPO_TOKEN }}
+          branch: chore/update-ao-cloud-pointer
+          delete-branch: true
+          commit-message: "chore: update AO Cloud submodule pointer"
+          title: "chore: update AO Cloud submodule pointer"
+          body: |
+            Updates the optional `private/ao-cloud` gitlink to the latest
+            commit on private `ao-cloud/main`.
+          labels: dependencies

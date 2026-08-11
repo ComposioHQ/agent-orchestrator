@@ -203,8 +203,26 @@ hostname. Access-token verification and user synchronization are stateless
 across API replicas, with durable identity and organization state in PostgreSQL.
 No ALB stickiness is required.
 
-The founding schema includes GitHub installation, repository-grant, and webhook
-delivery tables, but GitHub callback and webhook HTTP handlers are not
-implemented yet. Do not configure GitHub callbacks against these hostnames until
-that integration exists. Its callback state and webhook delivery processing
-must use PostgreSQL so any healthy replica can receive a request.
+GitHub App setup, OAuth verification, repository synchronization, disconnect,
+and webhook handlers are implemented with PostgreSQL-backed state:
+
+- setup URL: `https://api.aoagents.dev/api/cloud/v1/github/install/setup`
+- OAuth callback:
+  `https://api.aoagents.dev/api/cloud/v1/github/oauth/callback`
+- webhook URL: `https://api.aoagents.dev/api/cloud/v1/github/webhooks`
+
+The shared GitHub App must route these three global URLs to production. Staging
+must not independently enable the same App credentials: its callback state
+would live in a different database. Staging may exercise the public typed
+contract and WorkOS auth, while GitHub installation testing goes through the
+production broker. Before enabling the production task, store the App ID, slug,
+client credentials, RSA private key, webhook secret, and a base64 32-byte state
+key in Secrets Manager and map all `AO_CLOUD_GITHUB_*` variables plus
+`AO_CLOUD_PUBLIC_URL=https://api.aoagents.dev` into the task definition.
+Configure the App with organization `Members: read`; AO uses that permission to
+verify active organization-admin authority before binding an installation.
+
+No callback or webhook relies on replica memory. Callback routes, encrypted
+PKCE verification state, installation routing, repository grants, and the
+leased webhook inbox are durable in the production database, so any healthy
+replica can receive a request and no ALB stickiness is required.
