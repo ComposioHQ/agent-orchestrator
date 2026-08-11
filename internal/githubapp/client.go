@@ -68,6 +68,11 @@ type Installation struct {
 	SuspendedAt         *time.Time        `json:"suspended_at"`
 }
 
+type App struct {
+	ID   int64  `json:"id"`
+	Slug string `json:"slug"`
+}
+
 type InstallationOwner struct {
 	ID    int64  `json:"id"`
 	Login string `json:"login"`
@@ -145,6 +150,17 @@ func (c *Client) InstallationURL(state string) string {
 	query := url.Values{"state": {state}}
 	return c.webBaseURL + "/apps/" + url.PathEscape(c.appSlug) +
 		"/installations/new?" + query.Encode()
+}
+
+func (c *Client) Check(ctx context.Context) error {
+	var app App
+	if err := c.appJSON(ctx, http.MethodGet, "/app", nil, &app); err != nil {
+		return err
+	}
+	if app.ID != c.appID || app.Slug != c.appSlug {
+		return errors.New("GitHub returned a different App identity")
+	}
+	return nil
 }
 
 func (c *Client) OAuthURL(state, challenge string) string {

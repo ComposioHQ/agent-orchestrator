@@ -54,8 +54,11 @@ CNAMEs and AWS-managed TLS:
 
 ACM certificates in `eu-north-1` terminate TLS. Both ECS services run two
 healthy replicas, `/healthz` reports deployment identity, and `/readyz` verifies
-database connectivity plus draining state. Their task security groups accept
-port 8080 only from the corresponding public ALB security group. CloudWatch
+database connectivity plus draining state. Production also exposes
+`/github/healthz`, which validates the configured App identity with GitHub and
+returns `503` when GitHub is disabled or unavailable. It is diagnostic only and
+is not an ALB target-health dependency. Their task security groups accept port
+8080 only from the corresponding public ALB security group. CloudWatch
 deployment alarms and the operations dashboard use the public ALB target
 groups.
 
@@ -226,10 +229,10 @@ installation.
 
 The one GitHub App is a production-owned integration. Its global setup,
 OAuth-callback, and webhook URLs must point to `https://api.aoagents.dev`.
-Staging and local configurations reject GitHub App credentials. The hosted
-tasks currently leave GitHub disabled until the production secret and task
-mapping are installed; a future broker must explicitly return
-environment-scoped grants before staging or local UI enables GitHub.
+Staging and local configurations reject GitHub App credentials. Production
+loads the App credentials from Secrets Manager through the ECS task definition.
+A future broker must explicitly return environment-scoped grants before staging
+or local UI enables GitHub.
 
 Staging and production intentionally share one WorkOS environment while keeping
 their AO databases separate. Desktop login continues to use the

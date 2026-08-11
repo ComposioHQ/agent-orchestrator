@@ -59,6 +59,35 @@ type githubProjectStore interface {
 	) (domain.Project, error)
 }
 
+func (s *Server) githubHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	response := map[string]string{
+		"environment": s.environment,
+		"release":     s.release,
+	}
+	if s.github == nil {
+		response["status"] = "disabled"
+		writeJSON(w, http.StatusServiceUnavailable, response)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := s.github.Check(ctx); err != nil {
+		s.logger.Warn(
+			"check GitHub App connectivity",
+			"error",
+			err,
+			"request_id",
+			requestID(r),
+		)
+		response["status"] = "unavailable"
+		writeJSON(w, http.StatusServiceUnavailable, response)
+		return
+	}
+	response["status"] = "ok"
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (s *Server) startGitHubInstallation(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	if requireUUID(orgID, "orgId") != nil {

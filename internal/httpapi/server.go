@@ -107,6 +107,7 @@ func New(options Options) *Server {
 	router.Use(server.requestLog)
 	router.Get("/healthz", server.health)
 	router.Get("/readyz", server.ready)
+	router.Get("/github/healthz", server.githubHealth)
 	if server.github != nil {
 		router.Get("/api/cloud/v1/github/install/setup", server.githubSetupCallback)
 		router.Get("/api/cloud/v1/github/oauth/callback", server.githubOAuthCallback)

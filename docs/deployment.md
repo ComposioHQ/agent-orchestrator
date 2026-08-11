@@ -238,17 +238,25 @@ and webhook handlers are implemented with PostgreSQL-backed state:
   `https://api.aoagents.dev/api/cloud/v1/github/oauth/callback`
 - webhook URL: `https://api.aoagents.dev/api/cloud/v1/github/webhooks`
 
-The shared GitHub App must route these three global URLs to production. Staging
-must not independently enable the same App credentials: its callback state
-would live in a different database. Staging may exercise the public typed
-contract and WorkOS auth, but its GitHub UI must remain disabled until the
-production broker exists. The current hosted tasks do not map GitHub
-credentials. Before enabling the production task, store the App ID, slug, client
-credentials, RSA private key, webhook secret, and a base64 32-byte state key in
-Secrets Manager and map all `AO_CLOUD_GITHUB_*` variables plus
-`AO_CLOUD_PUBLIC_URL=https://api.aoagents.dev` into the task definition.
+The shared GitHub App routes these three global URLs to production. Staging must
+not independently enable the same App credentials: its callback state would
+live in a different database. Staging may exercise the public typed contract
+and WorkOS auth, but its GitHub UI must remain disabled until the production
+broker exists. Production reads the App ID, slug, client credentials, RSA
+private key, webhook secret, and base64 32-byte state key from Secrets Manager
+through the ECS task definition. `AO_CLOUD_PUBLIC_URL` is
+`https://api.aoagents.dev`.
 Configure the App with organization `Members: read`; AO uses that permission to
 verify active organization-admin authority before binding an installation.
+
+`GET /github/healthz` signs an App JWT, calls GitHub's authenticated `/app`
+endpoint, and verifies both the App ID and slug. It returns `200` with
+`status: ok` only when that round trip succeeds. Staging intentionally returns
+`503` with `status: disabled`; production returns `503` with
+`status: unavailable` when credentials are present but GitHub cannot be
+validated. The result is cached briefly to avoid turning the diagnostic into a
+GitHub API amplification path. Do not use this route as the ALB health check:
+GitHub outages must not restart otherwise healthy control-plane tasks.
 
 No callback or webhook relies on replica memory. Callback routes, encrypted
 PKCE verification state, installation routing, repository grants, and the
