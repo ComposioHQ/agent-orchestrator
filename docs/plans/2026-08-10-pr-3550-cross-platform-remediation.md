@@ -334,6 +334,22 @@ respawn outcome, readiness failure, liveness-probe failure, and cleanup failure.
 Because this changes the head, all hosted checks and the exact-current-head
 review must run again before the collaborator response or re-review request.
 
+Review round 2 inspected exact range
+`cfbefa4cdbd5e8c8e020177e53d105f10e5f44ee..9ab0bc5e70a0bd6f91b6e9e806beff409d34343d`
+separately from CI. All hosted jobs for that head passed, including the three
+native platform config steps. The independent review found one further
+actionable failure-cleanup defect: `Create` discarded `Destroy` errors after a
+successful `new-session`, so a readiness failure followed by a failed scope
+release could return no handle while leaving an unowned worker active.
+
+The correction routes every failure after successful `new-session` through a
+single `cleanupFailedCreate` path. Cleanup detaches from caller cancellation,
+retains the existing bounded runtime and containment timeouts, and joins a
+cleanup failure with the original setup/readiness error. Hermetic tests cover
+the readiness-plus-release failure and prove cleanup still runs when the caller
+context is canceled. This changes the head again, so hosted checks and an
+independent exact-current-head review must restart from the new commit.
+
 The review also retained the ADR's documented out-of-scope residual: changing
 the daemon-wide containment setting across a restart is not a durable
 per-session migration, and crash-time scope reconciliation/persisted cleanup

@@ -111,6 +111,7 @@ type fakeContainment struct {
 	wrapped     []string
 	waited      []string
 	released    []string
+	releaseCtxs []error
 }
 
 func (f *fakeContainment) Validate(context.Context) error {
@@ -131,8 +132,9 @@ func (f *fakeContainment) WaitActive(_ context.Context, unit string) error {
 	return f.waitErr
 }
 
-func (f *fakeContainment) Release(_ context.Context, unit string) error {
+func (f *fakeContainment) Release(ctx context.Context, unit string) error {
 	f.released = append(f.released, unit)
+	f.releaseCtxs = append(f.releaseCtxs, ctx.Err())
 	return f.releaseErr
 }
 
@@ -156,6 +158,54 @@ func TestScopedCreateAddsRemainOnExitAndVerifiesScope(t *testing.T) {
 	}
 	if !strings.Contains(fr.calls[0].args[len(fr.calls[0].args)-1], "wrapped-launch") {
 		t.Fatalf("new-session did not use wrapped launch: %#v", fr.calls[0].args)
+	}
+}
+
+func TestScopedCreateReportsCleanupFailureWhenReadinessFails(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &scriptedReleaseContainment{
+		waitErr:     errors.New("scope state unavailable"),
+		releaseErrs: []error{errors.New("scope still active")},
+	}
+	r.containment = fc
+	fr.outputs = [][]byte{nil, nil}
+
+	_, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "scope state unavailable") || !strings.Contains(err.Error(), "scope still active") {
+		t.Fatalf("Create error = %v, want readiness and cleanup failures", err)
+	}
+	if countCalls(fr, "kill-session") != 1 || !reflect.DeepEqual(fc.released, []string{"ao-session-sess-1.scope"}) {
+		t.Fatalf("runtime calls = %#v, releases = %#v", fr.calls, fc.released)
+	}
+}
+
+func TestScopedCreateCleanupIgnoresCallerCancellation(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &fakeContainment{}
+	r.containment = fc
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fr.hook = func(_ context.Context, call int) error {
+		if call == 2 {
+			cancel()
+		}
+		return nil
+	}
+
+	_, err := r.Create(ctx, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Create error = %v, want caller cancellation", err)
+	}
+	if countCalls(fr, "kill-session") != 1 || len(fc.releaseCtxs) != 1 || fc.releaseCtxs[0] != nil {
+		t.Fatalf("runtime calls = %#v, release contexts = %#v", fr.calls, fc.releaseCtxs)
 	}
 }
 

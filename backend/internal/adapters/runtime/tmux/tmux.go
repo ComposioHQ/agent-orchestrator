@@ -328,52 +328,64 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	}
 	if r.containment != nil {
 		if _, err := r.run(ctx, setRemainOnExitArgs(id)...); err != nil {
-			_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
-			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set remain-on-exit %s: %w", id, err)
+			cause := fmt.Errorf("tmux runtime: set remain-on-exit %s: %w", id, err)
+			return ports.RuntimeHandle{}, r.cleanupFailedCreate(ctx, id, cause)
 		}
 		if err := r.containment.WaitActive(ctx, unit); err != nil {
-			_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
-			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify process containment %s: %w", id, err)
+			cause := fmt.Errorf("tmux runtime: verify process containment %s: %w", id, err)
+			return ports.RuntimeHandle{}, r.cleanupFailedCreate(ctx, id, cause)
 		}
 	}
 	if err := r.verifyPaneWorkingDirectory(ctx, id, cfg.WorkspacePath); err != nil {
-		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
-		return ports.RuntimeHandle{}, err
+		return ports.RuntimeHandle{}, r.cleanupFailedCreate(ctx, id, err)
 	}
 
 	// Hide the status bar in the embedded terminal: it clutters the view and
 	// was not designed for the in-browser display context.
 	if _, err := r.run(ctx, setStatusOffArgs(id)...); err != nil {
-		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set status %s: %w", id, err)
+		cause := fmt.Errorf("tmux runtime: set status %s: %w", id, err)
+		return ports.RuntimeHandle{}, r.cleanupFailedCreate(ctx, id, cause)
 	}
 
 	// Enable mouse mode so the embedded terminal's SGR wheel reports scroll the
 	// pane (see setMouseOnArgs). Without it, wheel scrolling silently no-ops.
 	if _, err := r.run(ctx, setMouseOnArgs(id)...); err != nil {
-		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set mouse %s: %w", id, err)
+		cause := fmt.Errorf("tmux runtime: set mouse %s: %w", id, err)
+		return ports.RuntimeHandle{}, r.cleanupFailedCreate(ctx, id, cause)
 	}
 
 	// Size the shared window to the largest attached client, not the most recent
 	// one, so a small secondary viewer (e.g. the phone) can't strip down a larger
 	// client's view (see setWindowSizeLargestArgs).
 	if _, err := r.run(ctx, setWindowSizeLargestArgs(id)...); err != nil {
-		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set window-size %s: %w", id, err)
+		cause := fmt.Errorf("tmux runtime: set window-size %s: %w", id, err)
+		return ports.RuntimeHandle{}, r.cleanupFailedCreate(ctx, id, cause)
 	}
 
 	handle := ports.RuntimeHandle{ID: id}
 	alive, err := r.IsAlive(ctx, handle)
 	if err != nil {
-		_ = r.Destroy(context.Background(), handle)
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify session %s: %w", id, err)
+		cause := fmt.Errorf("tmux runtime: verify session %s: %w", id, err)
+		return ports.RuntimeHandle{}, r.cleanupFailedCreate(ctx, id, cause)
 	}
 	if !alive {
-		_ = r.Destroy(context.Background(), handle)
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited before ready", id)
+		cause := fmt.Errorf("tmux runtime: session %s exited before ready", id)
+		return ports.RuntimeHandle{}, r.cleanupFailedCreate(ctx, id, cause)
 	}
 	return handle, nil
+}
+
+// cleanupFailedCreate tears down a tmux session after new-session succeeded
+// but Create could not prove the runtime ready. The caller never receives a
+// handle on these paths, so cleanup must outlive caller cancellation and must
+// report any failure that could leave an unowned session or scope behind.
+// Destroy's tmux, reaper, and containment operations enforce their own bounded
+// timeouts.
+func (r *Runtime) cleanupFailedCreate(ctx context.Context, id string, cause error) error {
+	if err := r.Destroy(context.WithoutCancel(ctx), ports.RuntimeHandle{ID: id}); err != nil {
+		return errors.Join(cause, fmt.Errorf("tmux runtime: cleanup failed session %s: %w", id, err))
+	}
+	return cause
 }
 
 // Restart replaces the command in an existing pane while preserving the tmux
