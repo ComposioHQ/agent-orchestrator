@@ -253,7 +253,7 @@ describe("TerminalSwitchAgentButton", () => {
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 
-	it("shows a static recovery warning when target startup is unconfirmed", async () => {
+	it("opens recovery details when target startup is unconfirmed", async () => {
 		const recoverySwitch = switchRecord({ errorCode: "target_start_unconfirmed" });
 		const exitedSession = {
 			...worker,
@@ -265,9 +265,12 @@ describe("TerminalSwitchAgentButton", () => {
 
 		const button = await screen.findByRole("button", { name: "Agent switch needs recovery" });
 		expect(button).not.toHaveAttribute("aria-busy");
-		expect(button).toBeDisabled();
+		expect(button).not.toBeDisabled();
 		expect(button.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
-		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		await userEvent.click(button);
+		expect(screen.getByRole("dialog", { name: "Switch agent" })).toHaveTextContent(
+			"Target startup could not be confirmed",
+		);
 	});
 
 	it("keeps a terminal failure available for a fresh switch attempt", async () => {

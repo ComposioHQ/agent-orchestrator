@@ -1276,7 +1276,7 @@ describe("Sidebar", () => {
 		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
 	});
 
-	it("shows ordinary switch progress before exited activity", () => {
+	it("keeps runtime activity on the dot while showing switch progress separately", () => {
 		renderSidebar({
 			workspaces: [{
 				...workspace,
@@ -1292,9 +1292,9 @@ describe("Sidebar", () => {
 		const row = screen.getByLabelText("Open fix login");
 		expect(row).toHaveAccessibleDescription("Switching to Codex");
 		expect(within(row).getByText("Switching to Codex")).toBeInTheDocument();
-		expect(within(row).queryByText("Exited")).not.toBeInTheDocument();
 		const dot = row.querySelector<HTMLElement>("[data-session-status]");
-		expect(dot).toHaveClass("bg-status-working", "animate-status-pulse");
+		expect(dot).toHaveClass("bg-status-exited");
+		expect(dot).not.toHaveClass("animate-status-pulse");
 	});
 
 	it("shows sessions on load and hides them once collapsed", async () => {

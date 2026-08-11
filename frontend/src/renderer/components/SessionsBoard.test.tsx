@@ -367,7 +367,7 @@ describe("SessionsBoard", () => {
 		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
 	});
 
-	it("shows ordinary switch progress before an exited card status", () => {
+	it("keeps the Kanban status on a card while its agent is switching", () => {
 		const worker = boardSession({
 			id: "s-switching",
 			title: "switching worker",
@@ -387,10 +387,10 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const card = screen.getByText("switching worker").closest('[data-testid="board-session-card"]') as HTMLElement;
-		const status = within(card).getByText("Switching to Codex").closest("span") as HTMLElement;
-		expect(status).toHaveClass("text-status-working");
-		expect(status.querySelector("span")).toHaveClass("animate-status-pulse");
-		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
+		const status = within(card).getByText("Exited").closest("span") as HTMLElement;
+		expect(status).toHaveClass("text-status-exited");
+		expect(status.querySelector("span")).not.toHaveClass("animate-status-pulse");
+		expect(within(card).queryByText("Switching to Codex")).not.toBeInTheDocument();
 	});
 
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {

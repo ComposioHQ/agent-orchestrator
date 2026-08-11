@@ -624,7 +624,7 @@
 	"switchAgent.error.targetReadyFailed": "移行先エージェントの準備が完了しませんでした",
 	"switchAgent.error.targetStartUnconfirmed": "移行先エージェントの起動を確認できません",
 	"switchAgent.progressTitle": "{{source}} から {{target}} に切り替え中",
-	"switchAgent.permissionRequired": "切り替え元のエージェントで権限の判断が必要です。引き継ぎを続行するには、ターミナルの確認画面を確認してください。",
+	"switchAgent.sourceInput.description": "切り替え元のエージェントで入力が必要です。引き継ぎを続行するには、ターミナルの確認画面を確認してください。",
 	"switchAgent.recovery.description": "AO は移行先エージェントが起動したか確認できませんでした。2 つのエージェントが同じセッションを操作しないよう、ターミナル入力はロックされたままです。",
 	"switchAgent.recovery.title": "移行先エージェントの起動を確認できませんでした",
 	"switchAgent.state.completed": "完了",

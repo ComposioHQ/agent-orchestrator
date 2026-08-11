@@ -612,7 +612,7 @@
 	"switchAgent.error.targetReadyFailed": "Target agent did not become ready",
 	"switchAgent.error.targetStartUnconfirmed": "Target startup unconfirmed",
 	"switchAgent.progressTitle": "Switching from {{source}} to {{target}}",
-	"switchAgent.permissionRequired": "The source agent requires a permission decision. Review the terminal prompt to continue the handoff.",
+	"switchAgent.sourceInput.description": "The source agent needs input. Review the terminal prompt to continue the handoff.",
 	"switchAgent.recovery.description": "AO could not confirm whether the target agent started. Terminal input remains locked to prevent two agents from owning the session.",
 	"switchAgent.recovery.title": "Target startup could not be confirmed",
 	"switchAgent.state.completed": "Completed",

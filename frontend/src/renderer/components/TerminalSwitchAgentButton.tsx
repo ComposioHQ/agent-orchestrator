@@ -31,7 +31,7 @@ export function TerminalSwitchAgentButton({
 	const controlPresentation = presentation?.outcome === "success" ? undefined : presentation;
 	const switching = controlPresentation?.outcome === "in_progress";
 	const warning = controlPresentation?.outcome === "failure" || controlPresentation?.outcome === "recovery";
-	const blocksNewSwitch = switching || controlPresentation?.outcome === "recovery";
+	const blocksNewSwitch = switching;
 
 	useEffect(() => {
 		if (switchError) onOpenChange?.(true);

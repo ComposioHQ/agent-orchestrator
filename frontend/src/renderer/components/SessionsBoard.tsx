@@ -32,10 +32,6 @@ import {
 	type AttentionZone,
 	type AttentionZoneView,
 } from "../lib/session-presentation";
-import {
-	deriveSessionAgentSwitchPresentation,
-	getAgentSwitchStatusView,
-} from "../lib/agent-switch-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import {
 	useSessionUsageSummaries,
@@ -848,21 +844,8 @@ function SessionCard({
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const badge = getSessionStatusView(session.status, t);
 	const activity = getAgentActivityView(session.activity, t);
-	const switchPresentation = deriveSessionAgentSwitchPresentation(session);
-	const switchStatusView = switchPresentation
-		? getAgentSwitchStatusView(switchPresentation)
-		: undefined;
-	const switchLabel = switchPresentation
-		? t(switchPresentation.compactLabelKey, switchPresentation.values)
-		: undefined;
 	const showLiveActivity = session.status === "working" && activity.state === "active";
-	const activityIndicatorClassName = switchStatusView
-		? switchPresentation?.tone === "working"
-			? switchStatusView.indicatorClassName
-			: "bg-current"
-		: showLiveActivity
-			? activity.indicatorClassName
-			: "bg-current";
+	const activityIndicatorClassName = showLiveActivity ? activity.indicatorClassName : "bg-current";
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -961,8 +944,8 @@ function SessionCard({
 			<div className="flex flex-col gap-1.5 px-3.5 py-2">
 				<div className="flex items-center justify-between gap-2">
 					<span
-							className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", switchStatusView?.textClassName ?? badge.className)}
-							style={switchStatusView ? { color: switchStatusView.color } : showLiveActivity ? { color: activity.tone } : undefined}
+						className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}
+						style={showLiveActivity ? { color: activity.tone } : undefined}
 					>
 						<span
 							aria-hidden="true"
@@ -971,7 +954,7 @@ function SessionCard({
 								activityIndicatorClassName,
 							)}
 						/>
-						{switchLabel ?? badge.label}
+						{badge.label}
 					</span>
 					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
 						<SessionUsageMetric usage={usage} />

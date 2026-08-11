@@ -594,7 +594,7 @@ func newSwitchTestManager(t *testing.T, runtime runtimeController) (*Manager, *s
 	messenger := &fakeMessenger{}
 	lcm := &fakeLCM{store: store.fakeStore}
 	store.agentSwitchStore = store
-	launches := []string{"target-generation"}
+	launches := []string{"target-generation", "source-rollback-generation"}
 	manager := New(Deps{
 		Runtime:   runtime,
 		Agents:    switchTestAgents{domain.HarnessClaudeCode: source, domain.HarnessCodex: target},
@@ -1636,6 +1636,46 @@ func TestSwitchAgentCreateErrorWithTargetHandleUsesConservativeCleanup(t *testin
 	}
 }
 
+func TestSwitchAgentRestoresSourceAfterConclusivePreActivationTargetFailure(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{
+		createIDs:          []string{"target-handle", "source-rollback-handle"},
+		supervisedSequence: []bool{false},
+	}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+	source := manager.agents.(switchTestAgents)[domain.HarnessClaudeCode].(*switchTestAgent)
+	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
+
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
+		TargetHarness:  domain.HarnessCodex,
+		IdempotencyKey: "rollback-safe-target-failure",
+	})
+	if err == nil || !strings.Contains(err.Error(), "target generation exited before activation") {
+		t.Fatalf("switch error = %v, want conclusive target startup failure", err)
+	}
+	if sw.State != domain.AgentSwitchFailed {
+		t.Fatalf("switch state = %q, want failed", sw.State)
+	}
+	rec := store.sessions["proj-1"]
+	if rec.Harness != domain.HarnessClaudeCode || rec.Activity.State != domain.ActivityIdle {
+		t.Fatalf("rolled back session = harness %q activity %q, want live Claude source", rec.Harness, rec.Activity.State)
+	}
+	if rec.Metadata.RuntimeLaunchID != "source-rollback-generation" || rec.Metadata.RuntimeHandleID == "" {
+		t.Fatalf("rolled back runtime metadata = launch %q handle %q", rec.Metadata.RuntimeLaunchID, rec.Metadata.RuntimeHandleID)
+	}
+	if !runtime.aliveByHandle[rec.Metadata.RuntimeHandleID] {
+		t.Fatal("rolled back source runtime is not alive")
+	}
+	if runtime.created != 2 || runtime.restarted != 0 {
+		t.Fatalf("runtime target/source creates and restarts = %d/%d, want 2/0", runtime.created, runtime.restarted)
+	}
+	if target.cleanupCalls != 1 || source.hookCalls != 1 {
+		t.Fatalf("workspace cleanup/source restore hooks = %d/%d, want 1/1", target.cleanupCalls, source.hookCalls)
+	}
+	if manager.SessionMutationInProgress("proj-1") {
+		t.Fatal("successful source rollback left the switch input gate closed")
+	}
+}
+
 func TestSwitchAgentTranscriptReadFailureUsesSingleTerminalFallback(t *testing.T) {
 	const terminalSentinel = "TRANSCRIPT_READ_FAILURE_TERMINAL_FALLBACK"
 	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{outputs: []string{terminalSentinel}}}
@@ -2588,6 +2628,7 @@ func TestSwitchAgentRetainedProbeAndCleanupFailureRecoversUsingOpaqueHandle(t *t
 	probeErr := errors.New("target generation probe unavailable")
 	cleanupErr := errors.New("target cleanup unavailable")
 	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{
+		createIDs:          []string{"h1", "source-rollback-handle"},
 		supervisedErr:      probeErr,
 		destroyErrSequence: []error{nil, cleanupErr},
 	}}
@@ -2628,7 +2669,7 @@ func TestSwitchAgentRetainedProbeAndCleanupFailureRecoversUsingOpaqueHandle(t *t
 	if runtime.aliveByHandle["h1"] {
 		t.Fatal("reconciliation left the rejected target runtime alive")
 	}
-	if rec := store.sessions["proj-1"]; rec.Harness != domain.HarnessClaudeCode || rec.Metadata.RuntimeHandleID != "proj-1" {
+	if rec := store.sessions["proj-1"]; rec.Harness != domain.HarnessClaudeCode || rec.Metadata.RuntimeHandleID != "source-rollback-handle" {
 		t.Fatalf("rejected target changed durable ownership: %+v", rec)
 	}
 	if len(messenger.msgs) != 0 {
@@ -2710,9 +2751,10 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 		wantErrorCode domain.AgentSwitchErrorCode
 		wantError     string
 		wantGated     bool
+		wantActivity  domain.ActivityState
 	}{
 		{name: "pre-stop keeps source", state: domain.AgentSwitchPreparingHandoff, runtimeAlive: true, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: "daemon_restart_pre_stop"},
-		{name: "stopped source stays source-owned and exited", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: "daemon_restart_post_stop"},
+		{name: "stopped source is restored", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: "daemon_restart_post_stop", wantActivity: domain.ActivityIdle},
 		{name: "inconclusive source probe safely retains source ownership", state: domain.AgentSwitchStoppingSource, runtimeErr: errors.New("probe unavailable"), wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: "source_stop_unconfirmed"},
 		{name: "exact starting target is adopted by opaque handle without delivery", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, targetHandle: "opaque-target-handle", wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessCodex, wantHandle: "opaque-target-handle", wantErrorCode: "daemon_restart_before_delivery"},
 		{name: "starting target without a durable handle requires recovery", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, wantState: domain.AgentSwitchStartingTarget, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorTargetStartUnconfirmed, wantGated: true},
@@ -2780,6 +2822,11 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 			}
 			if gotHarness := store.sessions["proj-1"].Harness; gotHarness != tt.wantHarness {
 				t.Fatalf("reconciled owner = %q, want %q", gotHarness, tt.wantHarness)
+			}
+			if tt.wantActivity != "" {
+				if gotActivity := store.sessions["proj-1"].Activity.State; gotActivity != tt.wantActivity {
+					t.Fatalf("reconciled activity = %q, want %q", gotActivity, tt.wantActivity)
+				}
 			}
 			if tt.wantHandle != "" {
 				if gotHandle := store.sessions["proj-1"].Metadata.RuntimeHandleID; gotHandle != tt.wantHandle {

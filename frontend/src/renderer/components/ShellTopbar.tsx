@@ -25,10 +25,6 @@ import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
-import {
-	deriveSessionAgentSwitchPresentation,
-	getAgentSwitchStatusView,
-} from "../lib/agent-switch-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
@@ -469,13 +465,6 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 }
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
-	const agentSwitch = deriveSessionAgentSwitchPresentation(session);
-	const switchStatusView = agentSwitch ? getAgentSwitchStatusView(agentSwitch) : undefined;
 	const activity = getAgentActivityView(session.activity, t);
-	const label = agentSwitch ? t(agentSwitch.compactLabelKey, agentSwitch.values) : activity.label;
-	const tone = switchStatusView?.color ?? activity.tone;
-	const breathe = switchStatusView?.breathe ?? activity.breathe;
-	return (
-		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-3.5 py-2 text-sm" />
-	);
+	return <StatusPill label={activity.label} tone={activity.tone} breathe={activity.breathe} leading="none" className="px-3.5 py-2 text-sm" />;
 }

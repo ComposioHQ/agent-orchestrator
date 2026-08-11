@@ -228,7 +228,7 @@ describe("ShellTopbar status pill", () => {
 		expect(screen.getByText("Working")).toBeInTheDocument();
 	});
 
-	it("shows ordinary switch progress before exited activity", () => {
+	it("keeps runtime activity in the status pill while the agent is switching", () => {
 		renderTopbar(sessionWith({
 			status: "exited",
 			activity: {
@@ -238,10 +238,10 @@ describe("ShellTopbar status pill", () => {
 			activeAgentSwitch: activeAgentSwitch(),
 		}));
 
-		const pill = screen.getByText("Switching to Codex").closest("span") as HTMLElement;
-		expect(pill).toHaveStyle({ color: "var(--color-status-working)" });
-		expect(pill.querySelector("span")).toHaveClass("animate-status-pulse");
-		expect(screen.queryByText("Exited")).not.toBeInTheDocument();
+		const pill = screen.getByText("Exited").closest("span") as HTMLElement;
+		expect(pill).toHaveStyle({ color: "var(--color-status-exited)" });
+		expect(pill.querySelector("span")).not.toHaveClass("animate-status-pulse");
+		expect(screen.queryByText("Switching to Codex")).not.toBeInTheDocument();
 	});
 });
 

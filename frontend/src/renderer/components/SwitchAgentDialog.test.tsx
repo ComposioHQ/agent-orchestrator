@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentModelsQueryKey } from "../hooks/useAgentModelsQuery";
@@ -153,5 +153,46 @@ describe("SwitchAgentDialog", () => {
 
 		expect(screen.getByRole("alert")).toHaveTextContent("target agent is unavailable");
 		expect(screen.getByRole("dialog", { name: "Switch agent" })).toBeInTheDocument();
+	});
+
+	it("closes the stale composer when a durable switch starts elsewhere", async () => {
+		const onOpenChange = vi.fn();
+		renderDialog({
+			...worker,
+			activeAgentSwitch: {
+				agentHandoffStatus: "requested",
+				fromHarness: "claude-code",
+				id: "switch-external",
+				state: "preparing_handoff",
+				targetHarness: "codex",
+			},
+		}, onOpenChange);
+
+		await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+		expect(switchMocks.mutate).not.toHaveBeenCalled();
+	});
+
+	it("shows a recovery explanation and refreshes durable state", async () => {
+		const recoverySession = {
+			...worker,
+			activeAgentSwitch: {
+				agentHandoffStatus: "received",
+				errorCode: "target_start_unconfirmed",
+				fromHarness: "claude-code",
+				id: "switch-recovery",
+				state: "starting_target",
+				targetHarness: "codex",
+			},
+		} satisfies WorkspaceSession;
+		const { queryClient } = renderDialog(recoverySession);
+		const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
+		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
+
+		expect(within(dialog).getByText("Target startup could not be confirmed")).toBeInTheDocument();
+		expect(within(dialog).queryByRole("button", { name: "Target agent" })).not.toBeInTheDocument();
+		await userEvent.click(within(dialog).getByRole("button", { name: "Refresh" }));
+
+		expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-agent-switches", "sess-1"] });
+		expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 	});
 });

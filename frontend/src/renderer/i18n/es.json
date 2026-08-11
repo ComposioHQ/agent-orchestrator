@@ -633,7 +633,7 @@
 	"switchAgent.error.targetReadyFailed": "El agente de destino no llegó a estar listo",
 	"switchAgent.error.targetStartUnconfirmed": "Inicio del agente de destino sin confirmar",
 	"switchAgent.progressTitle": "Cambiando de {{source}} a {{target}}",
-	"switchAgent.permissionRequired": "El agente de origen requiere una decisión de permiso. Revise la solicitud del terminal para continuar la transferencia.",
+	"switchAgent.sourceInput.description": "El agente de origen necesita una entrada. Revise la solicitud del terminal para continuar la transferencia.",
 	"switchAgent.recovery.description": "AO no pudo confirmar si el agente de destino se inició. La entrada del terminal permanece bloqueada para evitar que dos agentes controlen la sesión.",
 	"switchAgent.recovery.title": "No se pudo confirmar el inicio del agente de destino",
 	"switchAgent.state.completed": "Completado",

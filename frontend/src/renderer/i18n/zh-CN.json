@@ -608,7 +608,7 @@
 	"switchAgent.error.targetReadyFailed": "目标代理未能就绪",
 	"switchAgent.error.targetStartUnconfirmed": "目标代理启动状态未确认",
 	"switchAgent.progressTitle": "正在从 {{source}} 切换到 {{target}}",
-	"switchAgent.permissionRequired": "源代理需要权限确认。请查看终端提示以继续交接。",
+	"switchAgent.sourceInput.description": "源代理需要输入。请查看终端提示以继续交接。",
 	"switchAgent.recovery.description": "AO 无法确认目标代理是否已启动。终端输入将保持锁定，以防两个代理同时控制此会话。",
 	"switchAgent.recovery.title": "无法确认目标代理是否已启动",
 	"switchAgent.state.completed": "已完成",

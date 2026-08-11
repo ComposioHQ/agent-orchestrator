@@ -71,8 +71,8 @@ describe("deriveAgentSwitchPresentation", () => {
 	});
 
 	it.each([
-		["blocked", true, "switchAgent.permissionRequired"],
-		["waiting_input", true, "switchAgent.permissionRequired"],
+		["blocked", true, "switchAgent.sourceInput.description"],
+		["waiting_input", true, "switchAgent.sourceInput.description"],
 		["active", false, "switchAgent.state.preparingHandoff"],
 	] as const)(
 		"maps a requested source handoff with %s activity to preparation",

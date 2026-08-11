@@ -1,8 +1,9 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, Repeat2, X } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { LoaderCircle, Repeat2, TriangleAlert, X } from "lucide-react";
+import { type FormEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { agentSwitchesQueryKey, agentSwitchNeedsRecovery, isTerminalAgentSwitch } from "../hooks/useAgentSwitches";
 import {
 	createSwitchAgentIdempotencyKey,
 	clearSwitchAgentState,
@@ -10,6 +11,7 @@ import {
 	useSwitchAgent,
 	useSwitchAgentState,
 } from "../hooks/useSwitchAgent";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { AGENT_LABELS, AGENT_OPTIONS, agentLabel } from "../lib/agent-options";
 import type { WorkspaceSession } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
@@ -109,6 +111,15 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 	const switchAgent = useSwitchAgent();
 	const switchMutation = useSwitchAgentState(session.id);
 	const admissionPending = switchMutation.isPending;
+	const durableSwitch = session.activeAgentSwitch;
+	const recoveryRequired = durableSwitch ? agentSwitchNeedsRecovery(durableSwitch) : false;
+	const durableSwitching = Boolean(
+		durableSwitch && !isTerminalAgentSwitch(durableSwitch) && !recoveryRequired,
+	);
+	const [refreshingRecovery, setRefreshingRecovery] = useState(false);
+	useEffect(() => {
+		if (open && durableSwitching) onOpenChange(false);
+	}, [durableSwitching, onOpenChange, open]);
 	const clearFailedAttempt = () => {
 		if (!switchMutation.error) return;
 		clearSwitchAgentState(queryClient, session.id);
@@ -124,7 +135,7 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		if (admissionPending) return;
+		if (admissionPending || durableSwitching || recoveryRequired) return;
 		switchAgent.mutate(
 			{
 				session,
@@ -137,6 +148,17 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 	};
 
 	const error = switchMutation.error;
+	const refreshRecovery = async () => {
+		setRefreshingRecovery(true);
+		try {
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: agentSwitchesQueryKey(session.id) }),
+				queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+			]);
+		} finally {
+			setRefreshingRecovery(false);
+		}
+	};
 
 	return (
 		<Dialog.Root
@@ -171,6 +193,31 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 						{t("switchAgent.description", { current: agentLabel(session.provider) })}
 					</Dialog.Description>
 
+					{recoveryRequired ? (
+						<div className="flex flex-col gap-4 px-4 pb-4 pt-4">
+							<div className="flex items-start gap-3 rounded-lg border border-warning/40 bg-warning/5 px-3 py-3">
+								<TriangleAlert aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-warning" />
+								<div className="min-w-0">
+									<p className="font-mono text-control font-medium text-foreground">
+										{t("switchAgent.recovery.title")}
+									</p>
+									<p className="mt-1 text-caption leading-4 text-muted-foreground">
+										{t("switchAgent.recovery.description")}
+									</p>
+								</div>
+							</div>
+							<Button
+								className="self-end"
+								disabled={refreshingRecovery}
+								onClick={() => void refreshRecovery()}
+								type="button"
+								variant="outline"
+							>
+								{refreshingRecovery ? <LoaderCircle aria-hidden="true" className="size-icon-sm animate-spin" /> : null}
+								{t("settings.project.refresh")}
+							</Button>
+						</div>
+					) : (
 					<form className="flex flex-col gap-3 px-4 pb-4 pt-4" onSubmit={submit}>
 						{error || modelWarning ? (
 							<div>
@@ -235,6 +282,7 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 							</Button>
 						</div>
 					</form>
+					)}
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>

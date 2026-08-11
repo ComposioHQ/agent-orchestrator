@@ -7,6 +7,7 @@ import {
 	Minus,
 	Plus,
 	TriangleAlert,
+	X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
@@ -25,7 +26,6 @@ import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_
 import { getAgentActivityView } from "../lib/session-presentation";
 import {
 	deriveAgentSwitchPresentation,
-	getAgentSwitchStatusView,
 	type AgentSwitchPresentation,
 } from "../lib/agent-switch-presentation";
 import { agentLabel } from "../lib/agent-options";
@@ -122,15 +122,14 @@ export function CenterPane({
 	const observedNonterminalSwitchIdsRef = useRef(new Set<string>());
 	const mountedSessionIdRef = useRef(session?.id);
 	const sourceFocusSwitchIdRef = useRef<string | undefined>(undefined);
-	const targetFocusSwitchIdRef = useRef<string | undefined>(undefined);
 	const announcedAlertKeysRef = useRef(new Set<string>());
 	const [transientSuccessSwitchId, setTransientSuccessSwitchId] = useState<string>();
+	const [dismissedFailureSwitchId, setDismissedFailureSwitchId] = useState<string>();
 	const [alertAnnouncement, setAlertAnnouncement] = useState<{ key: string; text: string }>();
 	if (mountedSessionIdRef.current !== session?.id) {
 		mountedSessionIdRef.current = session?.id;
 		observedNonterminalSwitchIdsRef.current = new Set();
 		sourceFocusSwitchIdRef.current = undefined;
-		targetFocusSwitchIdRef.current = undefined;
 		announcedAlertKeysRef.current = new Set();
 	}
 	const sessionAgentSwitch = session?.activeAgentSwitch;
@@ -200,7 +199,9 @@ export function CenterPane({
 	const workerInputDisabled =
 		target.kind === "worker" && (agentInputDisabled || switchLocksWorkerInput || switchSelectorOpen);
 	const shownPresentation =
-		presentation?.outcome === "success"
+		presentation?.outcome === "failure" && dismissedFailureSwitchId === agentSwitch?.id
+			? undefined
+			: presentation?.outcome === "success"
 			? transientSuccessSwitchId === agentSwitch?.id
 				? presentation
 				: undefined
@@ -245,6 +246,7 @@ export function CenterPane({
 
 	useEffect(() => {
 		setTransientSuccessSwitchId(undefined);
+		setDismissedFailureSwitchId(undefined);
 		setAlertAnnouncement(undefined);
 	}, [session?.id]);
 
@@ -265,13 +267,6 @@ export function CenterPane({
 		sourceFocusSwitchIdRef.current = agentSwitch.id;
 		if (target.kind !== "worker") onSelectSessionTerminal?.();
 	}, [agentSwitch, onSelectSessionTerminal, presentation?.allowSourceInput, target.kind]);
-
-	useEffect(() => {
-		if (!agentSwitch || !observedSettledSwitch) return;
-		if (targetFocusSwitchIdRef.current === agentSwitch.id) return;
-		targetFocusSwitchIdRef.current = agentSwitch.id;
-		onSelectSessionTerminal?.();
-	}, [agentSwitch, observedSettledSwitch, onSelectSessionTerminal]);
 
 	const alertKey =
 		agentSwitch && presentation?.allowSourceInput
@@ -580,7 +575,15 @@ export function CenterPane({
 					/>
 				</div>
 				{switchSelectorOpen ? null : shownPresentation && agentSwitch && target.kind === "worker" ? (
-					<AgentSwitchTerminalOverlay agentSwitch={agentSwitch} presentation={shownPresentation} />
+					<AgentSwitchTerminalOverlay
+						agentSwitch={agentSwitch}
+						onDismiss={
+							shownPresentation.outcome === "failure"
+								? () => setDismissedFailureSwitchId(agentSwitch.id)
+								: undefined
+						}
+						presentation={shownPresentation}
+					/>
 				) : shownPresentation && agentSwitch ? (
 					<AgentSwitchTerminalStrip
 						onSelectSessionTerminal={onSelectSessionTerminal}
@@ -599,11 +602,13 @@ export function CenterPane({
 
 type AgentSwitchTerminalOverlayProps = {
 	agentSwitch: AgentSwitchSummary;
+	onDismiss?: () => void;
 	presentation: AgentSwitchPresentation;
 };
 
 function AgentSwitchTerminalOverlay({
 	agentSwitch,
+	onDismiss,
 	presentation,
 }: AgentSwitchTerminalOverlayProps) {
 	const { t } = useTranslation();
@@ -639,7 +644,8 @@ function AgentSwitchTerminalOverlay({
 		>
 			{sourceInput || staticWarning || success ? (
 				<div className={cn(
-					"agent-switch-attention-card flex max-w-md items-start gap-3 rounded-lg border bg-surface/95 px-4 py-3 text-left shadow-lg",
+					"agent-switch-attention-card pointer-events-auto relative flex max-w-md items-start gap-3 rounded-lg border bg-surface/95 px-4 py-3 text-left shadow-lg",
+					onDismiss && "pr-11",
 					success
 						? "border-success/40"
 						: presentation.tone === "danger"
@@ -661,6 +667,16 @@ function AgentSwitchTerminalOverlay({
 						<p className="font-mono text-control font-medium text-foreground">{title}</p>
 						<p className="mt-1 text-caption leading-4 text-muted-foreground">{description}</p>
 					</div>
+					{onDismiss ? (
+						<button
+							aria-label={t("common.close")}
+							className="absolute right-2 top-2 grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+							onClick={onDismiss}
+							type="button"
+						>
+							<X aria-hidden="true" className="size-icon-sm" />
+						</button>
+					) : null}
 				</div>
 			) : (
 				<div
@@ -681,7 +697,7 @@ function AgentSwitchTerminalOverlay({
 								viewBox="0 0 112 16"
 							>
 								<path
-									className="text-muted-foreground/40"
+									className="text-foreground/55"
 									d="M1 8H109"
 									data-testid="agent-switch-transfer-shaft-line"
 									stroke="currentColor"
@@ -689,7 +705,7 @@ function AgentSwitchTerminalOverlay({
 									strokeWidth="1.5"
 								/>
 								<path
-									className="text-accent"
+									className="text-foreground/55"
 									d="M102 1L109 8L102 15"
 									data-testid="agent-switch-transfer-arrowhead"
 									stroke="currentColor"
@@ -825,14 +841,9 @@ function SessionPaneTab({
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	const activity = session ? getAgentActivityView(session.activity, t) : undefined;
-	const switchStatus = switchPresentation
-		? getAgentSwitchStatusView(switchPresentation)
-		: undefined;
-	const activityLabel = switchPresentation
-		? t(switchPresentation.compactLabelKey, switchPresentation.values)
-		: activity?.label;
-	const activityTone = switchStatus?.color ?? activity?.tone;
-	const activityBreathe = switchStatus?.breathe ?? activity?.breathe;
+	const activityLabel = activity?.label;
+	const activityTone = activity?.tone;
+	const activityBreathe = activity?.breathe;
 	const tabIcon = session ? <AgentAvatar className="size-icon-base" decorative provider={session.provider} /> : icon;
 	return (
 		<span

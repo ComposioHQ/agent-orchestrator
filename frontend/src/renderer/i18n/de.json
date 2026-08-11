@@ -624,7 +624,7 @@
 	"switchAgent.error.targetReadyFailed": "Ziel-Agent wurde nicht bereit",
 	"switchAgent.error.targetStartUnconfirmed": "Start des Ziel-Agenten unbestätigt",
 	"switchAgent.progressTitle": "Wechsel von {{source}} zu {{target}}",
-	"switchAgent.permissionRequired": "Der Quell-Agent benötigt eine Berechtigungsentscheidung. Prüfen Sie die Terminalabfrage, um die Übergabe fortzusetzen.",
+	"switchAgent.sourceInput.description": "Der Quell-Agent benötigt eine Eingabe. Prüfen Sie die Terminalabfrage, um die Übergabe fortzusetzen.",
 	"switchAgent.recovery.description": "AO konnte nicht bestätigen, ob der Ziel-Agent gestartet wurde. Die Terminaleingabe bleibt gesperrt, damit nicht zwei Agenten gleichzeitig die Sitzung übernehmen.",
 	"switchAgent.recovery.title": "Der Start des Ziel-Agenten konnte nicht bestätigt werden",
 	"switchAgent.state.completed": "Abgeschlossen",

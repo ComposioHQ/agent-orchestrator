@@ -26,10 +26,7 @@ import {
 	workerSessions,
 } from "../types/workspace";
 import { getAgentActivityView } from "../lib/session-presentation";
-import {
-	deriveSessionAgentSwitchPresentation,
-	getAgentSwitchStatusView,
-} from "../lib/agent-switch-presentation";
+import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -153,14 +150,10 @@ function useSelection() {
 // state is presented on cards and board lanes instead of repainting this dot.
 function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 	const activity = getAgentActivityView(session.activity);
-	const agentSwitch = deriveSessionAgentSwitchPresentation(session);
-	const indicatorClassName = agentSwitch
-		? getAgentSwitchStatusView(agentSwitch).indicatorClassName
-		: activity.indicatorClassName;
 	return (
 		<span
 			aria-hidden="true"
-			className={cn("size-2 shrink-0 rounded-full", indicatorClassName)}
+			className={cn("size-2 shrink-0 rounded-full", activity.indicatorClassName)}
 			data-session-status=""
 		/>
 	);

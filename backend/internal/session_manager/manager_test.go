@@ -236,6 +236,7 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 
 type fakeRuntime struct {
 	createErr          error
+	createIDs          []string
 	destroyErr         error
 	destroyErrSequence []error
 	onDestroy          func(call int, handle ports.RuntimeHandle)
@@ -302,6 +303,10 @@ func (r *fakeRestartRuntime) Restart(_ context.Context, handle ports.RuntimeHand
 	if r.restartErr != nil {
 		return ports.RuntimeHandle{}, r.restartErr
 	}
+	if r.aliveByHandle == nil {
+		r.aliveByHandle = map[string]bool{}
+	}
+	r.aliveByHandle[handle.ID] = true
 	return handle, nil
 }
 
@@ -337,7 +342,12 @@ func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 	}
 	r.lastCfg = cfg
 	r.created++
-	handle := ports.RuntimeHandle{ID: "h1"}
+	handleID := "h1"
+	if len(r.createIDs) > 0 {
+		handleID = r.createIDs[0]
+		r.createIDs = r.createIDs[1:]
+	}
+	handle := ports.RuntimeHandle{ID: handleID}
 	if r.aliveByHandle == nil {
 		r.aliveByHandle = map[string]bool{}
 	}

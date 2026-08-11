@@ -217,8 +217,8 @@ describe("CenterPane toolbar session label", () => {
 		expect(arrow.querySelector(".lucide-arrow-right")).toBeNull();
 		expect(shaftLine).toHaveAttribute("d", "M1 8H109");
 		expect(arrowhead).toHaveAttribute("d", "M102 1L109 8L102 15");
-		expect(shaftLine).toHaveClass("text-muted-foreground/40");
-		expect(arrowhead).toHaveClass("text-accent");
+		expect(shaftLine).toHaveClass("text-foreground/55");
+		expect(arrowhead).toHaveClass("text-foreground/55");
 		expect(arrowhead.querySelector(".agent-switch-transfer-pulse")).toBeNull();
 		expect(shaft.querySelector(".agent-switch-transfer-pulse")).not.toBeNull();
 
@@ -298,7 +298,7 @@ describe("CenterPane toolbar session label", () => {
 		const status = screen.getByRole("status", { name: "Switching from Claude Code to Codex" });
 		expect(within(status).getByText("Switching from Claude Code to Codex")).toBeInTheDocument();
 		expect(within(status).getAllByText(description).length).toBeGreaterThan(0);
-		expect(screen.getByRole("tab", { name: "do the thing · Switching to Codex" })).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: "do the thing · Working" })).toBeInTheDocument();
 	});
 
 	it("keeps the preparation stage active while the source handoff is requested", () => {
@@ -416,7 +416,7 @@ describe("CenterPane toolbar session label", () => {
 	it.each([
 		["recovery", switchRecord({ errorCode: "target_start_unconfirmed", state: "starting_target" })],
 		["failure", switchRecord({ errorCode: "target_binary_missing", state: "failed" })],
-	] as const)("renders %s as a static one-time alert without busy animation", (_name, terminalSwitch) => {
+	] as const)("renders %s as a static alert without busy animation", (_name, terminalSwitch) => {
 		const activeSwitch = switchRecord({ id: terminalSwitch.id, state: "starting_target" });
 		agentSwitchMocks.switches.push(activeSwitch);
 		const view = renderCenterPane({ session: { ...worker, activeAgentSwitch: activeSwitch } });
@@ -434,7 +434,24 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByRole("alert")).toBeInTheDocument();
 	});
 
-	it("keeps completion covered until target settlement, then focuses once and shows transient success", () => {
+	it("lets the user dismiss a terminal switch failure without dismissing recovery", async () => {
+		const activeSwitch = switchRecord({ state: "starting_target" });
+		const failedSwitch = switchRecord({ errorCode: "target_binary_missing", state: "failed" });
+		agentSwitchMocks.switches.push(activeSwitch);
+		const view = renderCenterPane({ session: { ...worker, activeAgentSwitch: activeSwitch } });
+
+		agentSwitchMocks.switches.splice(0, 1, failedSwitch);
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane daemonReady session={worker} theme="dark" />
+			</TooltipProvider>,
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Close" }));
+		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
+	});
+
+	it("keeps completion covered until target settlement without stealing terminal selection", () => {
 		vi.useFakeTimers();
 		const activeSwitch = switchRecord({ state: "delivering_context" });
 		const completedSwitch: AgentSwitch = { ...activeSwitch, state: "completed" };
@@ -457,7 +474,7 @@ describe("CenterPane toolbar session label", () => {
 				<CenterPane daemonReady onSelectSessionTerminal={onSelectSessionTerminal} session={settledSession} theme="dark" />
 			</TooltipProvider>,
 		);
-		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+		expect(onSelectSessionTerminal).not.toHaveBeenCalled();
 		expect(screen.getByText("terminal body")).toHaveAttribute("data-focus-requested", "true");
 		expect(screen.getByRole("status")).toHaveTextContent("Completed");
 
@@ -466,7 +483,7 @@ describe("CenterPane toolbar session label", () => {
 				<CenterPane daemonReady onSelectSessionTerminal={onSelectSessionTerminal} session={settledSession} theme="dark" />
 			</TooltipProvider>,
 		);
-		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+		expect(onSelectSessionTerminal).not.toHaveBeenCalled();
 		act(() => vi.advanceTimersByTime(3_100));
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
 		vi.useRealTimers();
@@ -491,7 +508,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 	});
 
-	it("observes a cold unsettled completion, then selects and focuses its target on settlement", () => {
+	it("observes a cold unsettled completion without changing the selected terminal", () => {
 		const onSelectSessionTerminal = vi.fn();
 		agentSwitchMocks.switches.push(switchRecord({ state: "completed" }));
 
@@ -511,7 +528,7 @@ describe("CenterPane toolbar session label", () => {
 			</TooltipProvider>,
 		);
 
-		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+		expect(onSelectSessionTerminal).not.toHaveBeenCalled();
 		expect(screen.getByText("terminal body")).toHaveAttribute("data-focus-requested", "true");
 		expect(screen.getByRole("status")).toHaveTextContent("Completed");
 	});
